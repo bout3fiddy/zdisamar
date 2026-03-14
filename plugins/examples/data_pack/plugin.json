@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "example.cross_sections",
+  "version": "0.1.0",
+  "lane": "declarative",
+  "capabilities": [
+    {
+      "slot": "absorber.provider",
+      "name": "example.cross_sections"
+    }
+  ],
+  "provenance": {
+    "description": "Example declarative data-pack plugin for spectroscopy datasets."
+  }
+}

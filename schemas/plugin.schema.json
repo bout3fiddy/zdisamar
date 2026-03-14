@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zdisamar.dev/schemas/plugin.schema.json",
+  "title": "zdisamar plugin manifest",
+  "type": "object",
+  "required": ["schema_version", "id", "version", "lane", "capabilities"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "id": { "type": "string" },
+    "version": { "type": "string" },
+    "lane": { "type": "string", "enum": ["declarative", "native"] },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["slot", "name"],
+        "properties": {
+          "slot": { "type": "string" },
+          "name": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

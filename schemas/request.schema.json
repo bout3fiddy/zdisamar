@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zdisamar.dev/schemas/request.schema.json",
+  "title": "zdisamar request",
+  "type": "object",
+  "required": ["scene"],
+  "properties": {
+    "scene": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "spectral_grid": {
+          "type": "object",
+          "properties": {
+            "start_nm": { "type": "number" },
+            "end_nm": { "type": "number" },
+            "sample_count": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "requested_products": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "diagnostics": {
+      "type": "object",
+      "properties": {
+        "provenance": { "type": "boolean" },
+        "jacobians": { "type": "boolean" },
+        "internal_fields": { "type": "boolean" },
+        "materialize_cache_keys": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

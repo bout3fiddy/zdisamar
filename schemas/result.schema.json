@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zdisamar.dev/schemas/result.schema.json",
+  "title": "zdisamar result",
+  "type": "object",
+  "required": ["status", "plan_id", "scene_id", "provenance"],
+  "properties": {
+    "status": { "type": "string" },
+    "plan_id": { "type": "integer", "minimum": 0 },
+    "scene_id": { "type": "string" },
+    "diagnostics": {
+      "type": "object",
+      "properties": {
+        "summary": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["model_family", "solver_route", "numerical_mode"],
+      "properties": {
+        "model_family": { "type": "string" },
+        "solver_route": { "type": "string" },
+        "numerical_mode": { "type": "string" },
+        "plugin_versions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "dataset_hashes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
