@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "builtin.netcdf_cf",
+  "package": "builtin_exporters",
+  "version": "0.1.0",
+  "lane": "native",
+  "capabilities": [
+    {
+      "slot": "exporter",
+      "name": "builtin.netcdf_cf"
+    }
+  ],
+  "native": {
+    "abi_version": 1,
+    "entry_symbol": "zdisamar_plugin_entry_v1"
+  },
+  "provenance": {
+    "description": "Official NetCDF/CF exporter plugin."
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "scene": {
+    "id": "s5p-no2",
+    "spectral_grid": {
+      "start_nm": 405.0,
+      "end_nm": 465.0,
+      "sample_count": 121
+    }
+  },
+  "requested_products": [
+    "radiance",
+    "slant_column"
+  ],
+  "diagnostics": {
+    "provenance": true,
+    "jacobians": true
+  },
+  "exports": [
+    {
+      "format": "netcdf_cf",
+      "destination_uri": "file://outputs/s5p-no2.nc",
+      "dataset_name": "s5p_no2_window",
+      "include_provenance": true,
+      "compression": {
+        "codec": "gzip",
+        "level": 4
+      }
+    }
+  ]
+}

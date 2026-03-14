@@ -1,0 +1,27 @@
+{
+  "name": "disamar_standard",
+  "version": "0.1.0",
+  "model_family": "disamar_standard",
+  "description": "Bundled DISAMAR model family package on the shared zdisamar runtime.",
+  "exports": {
+    "official_formats": [
+      "netcdf_cf",
+      "zarr"
+    ]
+  },
+  "plugin_lanes": {
+    "declarative_default": true,
+    "native_requires_opt_in": true
+  },
+  "bundled_plugins": [
+    "example.cross_sections",
+    "example.native_retrieval",
+    "builtin.netcdf_cf",
+    "builtin.zarr"
+  ],
+  "data_assets": [
+    "data/cross_sections/",
+    "data/climatologies/",
+    "data/luts/"
+  ]
+}

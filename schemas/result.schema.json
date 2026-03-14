@@ -15,12 +15,33 @@
       },
       "additionalProperties": true
     },
+    "exports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["format", "artifact_uri", "plugin_id", "media_type"],
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": ["netcdf_cf", "zarr"]
+          },
+          "artifact_uri": { "type": "string" },
+          "plugin_id": { "type": "string" },
+          "media_type": { "type": "string" },
+          "dataset_name": { "type": "string" },
+          "includes_provenance": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
     "provenance": {
       "type": "object",
-      "required": ["model_family", "solver_route", "numerical_mode"],
+      "required": ["model_family", "solver_route", "transport_family", "derivative_mode", "numerical_mode"],
       "properties": {
         "model_family": { "type": "string" },
         "solver_route": { "type": "string" },
+        "transport_family": { "type": "string" },
+        "derivative_mode": { "type": "string" },
         "numerical_mode": { "type": "string" },
         "plugin_versions": {
           "type": "array",

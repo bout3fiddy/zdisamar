@@ -22,23 +22,15 @@ pub const Result = struct {
         plan_id: u64,
         workspace_label: []const u8,
         scene_id: []const u8,
-        model_family: []const u8,
-        numerical_mode: []const u8,
+        provenance: Provenance,
     ) Result {
         return .{
             .plan_id = plan_id,
             .workspace_label = workspace_label,
             .scene_id = scene_id,
-            .provenance = .{
-                .model_family = model_family,
-                .solver_route = "transport.dispatcher",
-                .numerical_mode = numerical_mode,
-                .plan_id = plan_id,
-                .workspace_label = workspace_label,
-                .scene_id = scene_id,
-            },
+            .provenance = provenance,
             .diagnostics = .{
-                .summary = "Scaffold execution path only; transport and retrieval kernels are not wired yet.",
+                .summary = "Prepared transport routing and provenance are wired; full transport and retrieval numerics remain scaffold-only.",
             },
         };
     }

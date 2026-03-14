@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "id": "example.cross_sections",
+  "package": "disamar_standard",
   "version": "0.1.0",
   "lane": "declarative",
   "capabilities": [

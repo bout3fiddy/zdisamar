@@ -28,4 +28,13 @@ pub const Catalog = struct {
         self.exporters.deinit(allocator);
         self.* = .{};
     }
+
+    pub fn supportsModelFamily(self: *const Catalog, name: []const u8) bool {
+        for (self.model_families.items) |family| {
+            if (std.mem.eql(u8, family.name, name)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };

@@ -7,10 +7,12 @@
   "properties": {
     "schema_version": { "type": "integer", "const": 1 },
     "id": { "type": "string" },
+    "package": { "type": "string" },
     "version": { "type": "string" },
     "lane": { "type": "string", "enum": ["declarative", "native"] },
     "capabilities": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
         "required": ["slot", "name"],
@@ -21,10 +23,42 @@
         "additionalProperties": false
       }
     },
+    "native": {
+      "type": "object",
+      "required": ["abi_version", "entry_symbol"],
+      "properties": {
+        "abi_version": { "type": "integer", "const": 1 },
+        "entry_symbol": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      },
+      "additionalProperties": false
+    },
     "provenance": {
       "type": "object",
       "additionalProperties": true
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "lane": { "const": "declarative" } },
+        "required": ["lane"]
+      },
+      "then": {
+        "not": { "required": ["native"] }
+      }
+    },
+    {
+      "if": {
+        "properties": { "lane": { "const": "native" } },
+        "required": ["lane"]
+      },
+      "then": {
+        "required": ["native"]
+      }
+    }
+  ],
   "additionalProperties": false
 }

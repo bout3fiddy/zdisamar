@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "upstream": "vendor/disamar-fortran",
+  "cases": [
+    {
+      "id": "transport_scalar_baseline",
+      "component": "transport",
+      "upstream_case": "DISAMAR_CASE_TRANSPORT_SCALAR",
+      "metrics": [
+        "toa_radiance"
+      ],
+      "tolerances": {
+        "absolute": 1e-08,
+        "relative": 0.0001
+      },
+      "status": "planned"
+    },
+    {
+      "id": "transport_derivative_mode",
+      "component": "transport",
+      "upstream_case": "DISAMAR_CASE_TRANSPORT_DERIVATIVE",
+      "metrics": [
+        "toa_radiance",
+        "jacobian_column"
+      ],
+      "tolerances": {
+        "absolute": 1e-07,
+        "relative": 0.001
+      },
+      "status": "planned"
+    },
+    {
+      "id": "retrieval_oe_iteration",
+      "component": "retrieval",
+      "upstream_case": "DISAMAR_CASE_RETRIEVAL_OE",
+      "metrics": [
+        "state_update_norm",
+        "cost_function"
+      ],
+      "tolerances": {
+        "absolute": 1e-06,
+        "relative": 0.005
+      },
+      "status": "planned"
+    },
+    {
+      "id": "retrieval_doas_slant_column",
+      "component": "retrieval",
+      "upstream_case": "DISAMAR_CASE_RETRIEVAL_DOAS",
+      "metrics": [
+        "slant_column",
+        "fit_residual"
+      ],
+      "tolerances": {
+        "absolute": 1e-06,
+        "relative": 0.005
+      },
+      "status": "planned"
+    },
+    {
+      "id": "retrieval_dismas_multiband",
+      "component": "retrieval",
+      "upstream_case": "DISAMAR_CASE_RETRIEVAL_DISMAS",
+      "metrics": [
+        "state_update_norm",
+        "multi_band_cost"
+      ],
+      "tolerances": {
+        "absolute": 1e-06,
+        "relative": 0.005
+      },
+      "status": "planned"
+    }
+  ]
+}

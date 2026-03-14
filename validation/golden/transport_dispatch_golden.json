@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "scenario": "nadir_scalar_none",
+      "family": "adding",
+      "derivative_mode": "none"
+    },
+    {
+      "scenario": "limb_polarized_analytical_plugin",
+      "family": "labos",
+      "derivative_mode": "analytical_plugin"
+    },
+    {
+      "scenario": "nadir_scalar_numerical",
+      "family": "adding",
+      "derivative_mode": "numerical"
+    }
+  ]
+}

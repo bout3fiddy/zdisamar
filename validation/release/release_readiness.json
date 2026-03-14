@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "required_commands": [
+    "zig build",
+    "zig build test",
+    "./zig-out/bin/zdisamar --config data/examples/legacy_config.in"
+  ],
+  "required_packages": [
+    {
+      "name": "disamar_standard",
+      "version": "0.1.0"
+    },
+    {
+      "name": "builtin_exporters",
+      "version": "0.1.0"
+    },
+    {
+      "name": "mission_s5p",
+      "version": "0.1.0"
+    }
+  ],
+  "required_plugin_versions": [
+    "builtin.cross_sections@0.1.0",
+    "builtin.dispatcher@0.1.0",
+    "builtin.netcdf_cf@0.1.0",
+    "builtin.zarr@0.1.0"
+  ],
+  "required_artifacts": [
+    "validation/compatibility/parity_matrix.json",
+    "validation/golden/result_provenance_golden.json",
+    "validation/perf/perf_matrix.json",
+    "validation/plugin_tests/plugin_validation_matrix.json",
+    "data/examples/export_result_netcdf.json"
+  ]
+}

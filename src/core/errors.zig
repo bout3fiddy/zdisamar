@@ -3,5 +3,13 @@ pub const Error = error{
     InvalidPlan,
     InvalidRequest,
     MissingScene,
+    MissingModelFamily,
+    MissingTransportRoute,
+    MissingObservationInstrument,
+    UnsupportedModelFamily,
+    PreparedPlanLimitExceeded,
+    WorkspacePlanMismatch,
+    DerivativeModeMismatch,
+    UnsupportedDerivativeMode,
     UnsupportedCapability,
 };
