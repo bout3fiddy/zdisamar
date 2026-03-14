@@ -6,8 +6,8 @@ Architecture and Fortran mapping references used by these packages now live unde
 
 ## Mandatory Invocable Skills
 
-- `[$workflows](/Users/swadhinnanda/.agents/skills/workflows/SKILL.md)` must be invoked before resuming or executing any work package so agents follow the standard lifecycle, status updates, and resume semantics.
-- `[$coding](/Users/swadhinnanda/.agents/skills/coding/SKILL.md)` must be invoked before implementation so agents keep a reuse-first read path, make modular changes, avoid fallback shims, and record verification.
+- `$workflows` must be invoked before resuming or executing any work package so agents follow the standard lifecycle, status updates, and resume semantics.
+- `$coding` must be invoked before implementation so agents keep a reuse-first read path, make modular changes, avoid fallback shims, and record verification.
 
 ## Completion Gate
 

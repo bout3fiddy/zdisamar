@@ -51,8 +51,8 @@ ARCHITECTURE RULE
 
 ## Mandatory Invocable Skills
 
-- `[$workflows](/Users/swadhinnanda/.agents/skills/workflows/SKILL.md)`
-- `[$coding](/Users/swadhinnanda/.agents/skills/coding/SKILL.md)`
+- `$workflows`
+- `$coding`
 
 ## Metadata
 
