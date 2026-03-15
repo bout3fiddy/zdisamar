@@ -12,4 +12,6 @@ pub const Error = error{
     DerivativeModeMismatch,
     UnsupportedDerivativeMode,
     UnsupportedCapability,
+    PluginPrepareFailed,
+    PluginExecutionFailed,
 };

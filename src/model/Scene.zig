@@ -1,79 +1,21 @@
 const std = @import("std");
 const errors = @import("../core/errors.zig");
 
-pub const LayoutRequirements = struct {
-    spectral_start_nm: f64 = 270.0,
-    spectral_end_nm: f64 = 2400.0,
-    spectral_sample_count: u32 = 0,
-    layer_count: u32 = 0,
-    state_parameter_count: u32 = 0,
-    measurement_count: u32 = 0,
-};
-
-pub const SpectralGrid = struct {
-    start_nm: f64 = 270.0,
-    end_nm: f64 = 2400.0,
-    sample_count: u32 = 0,
-};
-
-pub const Atmosphere = struct {
-    layer_count: u32 = 0,
-    has_clouds: bool = false,
-    has_aerosols: bool = false,
-};
-
-pub const Geometry = struct {
-    solar_zenith_deg: f64 = 0.0,
-    viewing_zenith_deg: f64 = 0.0,
-    relative_azimuth_deg: f64 = 0.0,
-};
-
-pub const ObservationModel = struct {
-    instrument: []const u8 = "generic",
-    regime: ObservationRegime = .nadir,
-    sampling: []const u8 = "native",
-    noise_model: []const u8 = "none",
-};
-
-pub const ObservationRegime = enum {
-    nadir,
-    limb,
-    occultation,
-};
-
-pub const DerivativeMode = enum {
-    none,
-    semi_analytical,
-    analytical_plugin,
-    numerical,
-};
-
-pub const StateVector = struct {
-    parameter_names: []const []const u8 = &[_][]const u8{},
-    value_count: u32 = 0,
-};
-
-pub const MeasurementVector = struct {
-    product: []const u8 = "radiance",
-    sample_count: u32 = 0,
-
-    pub fn validate(self: MeasurementVector) errors.Error!void {
-        if (self.product.len == 0) return errors.Error.InvalidRequest;
-        if (self.sample_count == 0) return errors.Error.InvalidRequest;
-    }
-};
-
-pub const InverseProblem = struct {
-    id: []const u8 = "inverse-0",
-    state_vector: StateVector = .{},
-    measurements: MeasurementVector = .{},
-
-    pub fn validate(self: InverseProblem) errors.Error!void {
-        if (self.id.len == 0) return errors.Error.InvalidRequest;
-        if (self.state_vector.value_count == 0) return errors.Error.InvalidRequest;
-        try self.measurements.validate();
-    }
-};
+pub const LayoutRequirements = @import("LayoutRequirements.zig").LayoutRequirements;
+pub const Atmosphere = @import("Atmosphere.zig").Atmosphere;
+pub const Geometry = @import("Geometry.zig").Geometry;
+pub const SpectralGrid = @import("Spectrum.zig").SpectralGrid;
+pub const Surface = @import("Surface.zig").Surface;
+pub const Cloud = @import("Cloud.zig").Cloud;
+pub const Aerosol = @import("Aerosol.zig").Aerosol;
+pub const Instrument = @import("Instrument.zig").Instrument;
+pub const ObservationModel = @import("ObservationModel.zig").ObservationModel;
+pub const ObservationRegime = @import("ObservationModel.zig").ObservationRegime;
+pub const StateVector = @import("StateVector.zig").StateVector;
+pub const Measurement = @import("Measurement.zig").Measurement;
+pub const MeasurementVector = @import("Measurement.zig").MeasurementVector;
+pub const InverseProblem = @import("InverseProblem.zig").InverseProblem;
+pub const DerivativeMode = @import("InverseProblem.zig").DerivativeMode;
 
 pub const Blueprint = struct {
     id: []const u8 = "scene-template",
@@ -101,6 +43,9 @@ pub const Scene = struct {
     atmosphere: Atmosphere = .{},
     geometry: Geometry = .{},
     spectral_grid: SpectralGrid = .{},
+    surface: Surface = .{},
+    cloud: Cloud = .{},
+    aerosol: Aerosol = .{},
     observation_model: ObservationModel = .{},
 
     pub fn validate(self: Scene) errors.Error!void {
@@ -108,13 +53,12 @@ pub const Scene = struct {
             return errors.Error.MissingScene;
         }
 
-        if (self.spectral_grid.sample_count == 0) {
-            return errors.Error.InvalidRequest;
-        }
-
-        if (self.observation_model.instrument.len == 0) {
-            return errors.Error.MissingObservationInstrument;
-        }
+        try self.geometry.validate();
+        try self.spectral_grid.validate();
+        try self.surface.validate();
+        try self.cloud.validate();
+        try self.aerosol.validate();
+        try self.observation_model.validate();
     }
 
     pub fn layoutRequirements(self: Scene) LayoutRequirements {

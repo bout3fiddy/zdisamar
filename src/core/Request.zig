@@ -1,13 +1,7 @@
 const SceneModel = @import("../model/Scene.zig");
 const Plan = @import("Plan.zig").Plan;
+const DiagnosticsSpec = @import("diagnostics.zig").DiagnosticsSpec;
 const errors = @import("errors.zig");
-
-pub const DiagnosticsSpec = struct {
-    provenance: bool = true,
-    jacobians: bool = false,
-    internal_fields: bool = false,
-    materialize_cache_keys: bool = false,
-};
 
 pub const Request = struct {
     scene: SceneModel.Scene,

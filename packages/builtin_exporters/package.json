@@ -10,6 +10,11 @@
     "builtin.netcdf_cf",
     "builtin.zarr"
   ],
+  "adapter_backends": {
+    "netcdf_cf": "src/adapters/exporters/netcdf_cf.zig",
+    "zarr": "src/adapters/exporters/zarr.zig",
+    "diagnostic_csv_text": "src/adapters/exporters/diagnostic.zig"
+  },
   "manifest_paths": [
     "src/plugins/builtin/exporters/netcdf_cf.plugin.json",
     "src/plugins/builtin/exporters/zarr.plugin.json"

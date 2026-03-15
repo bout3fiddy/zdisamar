@@ -22,11 +22,18 @@
   "required_plugin_versions": [
     "builtin.cross_sections@0.1.0",
     "builtin.dispatcher@0.1.0",
+    "builtin.oe_solver@0.1.0",
+    "builtin.lambertian_surface@0.1.0",
+    "builtin.tropomi_response@0.1.0",
     "builtin.netcdf_cf@0.1.0",
     "builtin.zarr@0.1.0"
   ],
   "required_artifacts": [
+    "data/climatologies/bundle_manifest.json",
+    "data/cross_sections/bundle_manifest.json",
+    "data/luts/bundle_manifest.json",
     "validation/compatibility/parity_matrix.json",
+    "validation/compatibility/vendor_import_registry.json",
     "validation/golden/result_provenance_golden.json",
     "validation/perf/perf_matrix.json",
     "validation/plugin_tests/plugin_validation_matrix.json",

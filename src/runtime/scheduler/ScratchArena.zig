@@ -60,3 +60,8 @@ test "scratch arena keeps the largest reserved capacities across resets" {
     try std.testing.expectEqual(@as(u64, 3), scratch.reserve_count);
     try std.testing.expectEqual(@as(u64, 2), scratch.reset_count);
 }
+
+test "scheduler package includes thread context and batch runner implementations" {
+    _ = @import("ThreadContext.zig");
+    _ = @import("BatchRunner.zig");
+}

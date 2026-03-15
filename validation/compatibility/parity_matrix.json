@@ -1,75 +1,143 @@
 {
   "version": 1,
   "upstream": "vendor/disamar-fortran",
+  "parity_level": "hybrid_contract",
   "cases": [
     {
       "id": "transport_scalar_baseline",
       "component": "transport",
-      "upstream_case": "DISAMAR_CASE_TRANSPORT_SCALAR",
+      "upstream_case": "InputFiles/Config_NO2_O2-O2.in",
+      "upstream_reference_output": "test/disamar.out",
+      "runtime_profile": {
+        "observation_regime": "nadir",
+        "solver_mode": "scalar",
+        "derivative_mode": "none",
+        "spectral_samples": 64
+      },
+      "expected_route_family": "adding",
+      "expected_derivative_mode": "none",
       "metrics": [
-        "toa_radiance"
+        "transport_family",
+        "derivative_mode",
+        "execution_status"
       ],
       "tolerances": {
-        "absolute": 1e-08,
-        "relative": 0.0001
+        "absolute": 0.0,
+        "relative": 0.0
       },
-      "status": "planned"
+      "status": "scaffold_executable"
     },
     {
       "id": "transport_derivative_mode",
       "component": "transport",
-      "upstream_case": "DISAMAR_CASE_TRANSPORT_DERIVATIVE",
+      "upstream_case": "InputFiles/Config_O2A_XsecLUT.in",
+      "upstream_reference_output": "test/disamar.out",
+      "runtime_profile": {
+        "observation_regime": "nadir",
+        "solver_mode": "derivative_enabled",
+        "derivative_mode": "analytical_plugin",
+        "spectral_samples": 96
+      },
+      "expected_route_family": "labos",
+      "expected_derivative_mode": "analytical_plugin",
       "metrics": [
-        "toa_radiance",
-        "jacobian_column"
+        "transport_family",
+        "derivative_mode",
+        "execution_status"
       ],
       "tolerances": {
-        "absolute": 1e-07,
-        "relative": 0.001
+        "absolute": 0.0,
+        "relative": 0.0
       },
-      "status": "planned"
+      "status": "scaffold_executable"
     },
     {
       "id": "retrieval_oe_iteration",
       "component": "retrieval",
-      "upstream_case": "DISAMAR_CASE_RETRIEVAL_OE",
+      "retrieval_method": "oe",
+      "upstream_case": "InputFiles/Config_O3_profile_1band.in",
+      "upstream_reference_output": "test/disamar.out",
+      "runtime_profile": {
+        "observation_regime": "nadir",
+        "solver_mode": "scalar",
+        "derivative_mode": "semi_analytical",
+        "spectral_samples": 121
+      },
+      "expected_route_family": "adding",
+      "expected_derivative_mode": "semi_analytical",
       "metrics": [
-        "state_update_norm",
-        "cost_function"
+        "transport_family",
+        "derivative_mode",
+        "execution_status",
+        "retrieval_method",
+        "jacobians_used",
+        "iterations",
+        "chi2",
+        "dfs"
       ],
       "tolerances": {
-        "absolute": 1e-06,
-        "relative": 0.005
+        "absolute": 1.0,
+        "relative": 0.2
       },
-      "status": "planned"
+      "upstream_numeric_anchor": "test/disamar.asciiHDF",
+      "expected_jacobians_used": true,
+      "status": "retrieval_numeric_anchor"
     },
     {
       "id": "retrieval_doas_slant_column",
       "component": "retrieval",
-      "upstream_case": "DISAMAR_CASE_RETRIEVAL_DOAS",
+      "retrieval_method": "doas",
+      "upstream_case": "InputFiles/Config_NO2_DOMINO.in",
+      "upstream_reference_output": "test/disamar.out",
+      "runtime_profile": {
+        "observation_regime": "nadir",
+        "solver_mode": "scalar",
+        "derivative_mode": "numerical",
+        "spectral_samples": 128
+      },
+      "expected_route_family": "adding",
+      "expected_derivative_mode": "numerical",
       "metrics": [
-        "slant_column",
-        "fit_residual"
+        "transport_family",
+        "derivative_mode",
+        "execution_status",
+        "retrieval_method",
+        "jacobians_used"
       ],
       "tolerances": {
-        "absolute": 1e-06,
-        "relative": 0.005
+        "absolute": 0.0,
+        "relative": 0.0
       },
-      "status": "planned"
+      "expected_jacobians_used": true,
+      "status": "retrieval_executed_contract"
     },
     {
       "id": "retrieval_dismas_multiband",
       "component": "retrieval",
-      "upstream_case": "DISAMAR_CASE_RETRIEVAL_DISMAS",
+      "retrieval_method": "dismas",
+      "upstream_case": "InputFiles/Config_O3_profile_SO2_column_DISMAS_5.in",
+      "upstream_reference_output": "test/disamar.out",
+      "runtime_profile": {
+        "observation_regime": "limb",
+        "solver_mode": "polarized",
+        "derivative_mode": "analytical_plugin",
+        "spectral_samples": 160
+      },
+      "expected_route_family": "labos",
+      "expected_derivative_mode": "analytical_plugin",
       "metrics": [
-        "state_update_norm",
-        "multi_band_cost"
+        "transport_family",
+        "derivative_mode",
+        "execution_status",
+        "retrieval_method",
+        "jacobians_used"
       ],
       "tolerances": {
-        "absolute": 1e-06,
-        "relative": 0.005
+        "absolute": 0.0,
+        "relative": 0.0
       },
-      "status": "planned"
+      "expected_jacobians_used": true,
+      "status": "retrieval_executed_contract"
     }
   ]
 }

@@ -11,14 +11,28 @@ const Scene = @import("../model/Scene.zig").Scene;
 const errors = @import("errors.zig");
 const PluginManifest = @import("../plugins/loader/manifest.zig").PluginManifest;
 const CapabilityRegistry = @import("../plugins/registry/CapabilityRegistry.zig").CapabilityRegistry;
+const PluginRuntime = @import("../plugins/loader/runtime.zig");
+const DatasetCache = @import("../runtime/cache/DatasetCache.zig").DatasetCache;
+const LUTCache = @import("../runtime/cache/LUTCache.zig").LUTCache;
+const PlanCache = @import("../runtime/cache/PlanCache.zig").PlanCache;
 const PreparedPlanCache = @import("../runtime/cache/PreparedPlanCache.zig").PreparedPlanCache;
+const BatchRunnerModule = @import("../runtime/scheduler/BatchRunner.zig");
+const BatchRunner = BatchRunnerModule.BatchRunner;
+const BatchJob = BatchRunnerModule.BatchJob;
+const ThreadContext = @import("../runtime/scheduler/ThreadContext.zig").ThreadContext;
 const TransportCommon = @import("../kernels/transport/common.zig");
 const TransportDispatcher = @import("../kernels/transport/dispatcher.zig");
+const MeasurementSpace = @import("../kernels/transport/measurement_space.zig");
+const ReferenceData = @import("../model/ReferenceData.zig");
+const OpticsPrepare = @import("../kernels/optics/prepare.zig");
+const Diagnostics = @import("diagnostics.zig").Diagnostics;
+const Logging = @import("logging.zig");
 
 pub const EngineOptions = struct {
     abi_version: u32 = 1,
     allow_native_plugins: bool = false,
     max_prepared_plans: usize = 64,
+    log_policy: Logging.Policy = .{},
 };
 
 pub const Engine = struct {
@@ -26,16 +40,25 @@ pub const Engine = struct {
     options: EngineOptions,
     catalog: Catalog = .{},
     registry: CapabilityRegistry = .{},
+    dataset_cache: DatasetCache,
+    lut_cache: LUTCache,
+    plan_cache: PlanCache,
     next_plan_id: u64 = 1,
 
     pub fn init(allocator: std.mem.Allocator, options: EngineOptions) Engine {
         return .{
             .allocator = allocator,
             .options = options,
+            .dataset_cache = DatasetCache.init(allocator),
+            .lut_cache = LUTCache.init(allocator),
+            .plan_cache = PlanCache.init(allocator, .{ .max_entries = options.max_prepared_plans }),
         };
     }
 
     pub fn deinit(self: *Engine) void {
+        self.plan_cache.deinit();
+        self.lut_cache.deinit();
+        self.dataset_cache.deinit();
         self.registry.deinit(self.allocator);
         self.catalog.deinit(self.allocator);
     }
@@ -43,10 +66,24 @@ pub const Engine = struct {
     pub fn bootstrapBuiltinCatalog(self: *Engine) !void {
         try self.catalog.bootstrapBuiltin(self.allocator);
         try self.registry.bootstrapBuiltin(self.allocator);
+        try self.dataset_cache.upsert("builtin.cross_sections", "sha256:builtin-cross-sections-demo");
     }
 
     pub fn registerPluginManifest(self: *Engine, manifest: PluginManifest) !void {
         try self.registry.registerManifest(self.allocator, manifest, self.options.allow_native_plugins);
+        for (manifest.provenance.dataset_hashes, 0..) |dataset_hash, index| {
+            var key_buffer: [128]u8 = undefined;
+            const cache_id = try std.fmt.bufPrint(&key_buffer, "{s}#{d}", .{ manifest.id, index });
+            try self.dataset_cache.upsert(cache_id, dataset_hash);
+        }
+    }
+
+    pub fn registerDatasetArtifact(self: *Engine, id: []const u8, dataset_hash: []const u8) !void {
+        try self.dataset_cache.upsert(id, dataset_hash);
+    }
+
+    pub fn registerLUTArtifact(self: *Engine, dataset_id: []const u8, lut_id: []const u8, shape: LUTCache.Shape) !void {
+        try self.lut_cache.upsert(dataset_id, lut_id, shape);
     }
 
     pub fn preparePlan(self: *Engine, template: PlanModule.Template) !Plan {
@@ -77,9 +114,26 @@ pub const Engine = struct {
         };
 
         const plugin_snapshot = try self.registry.snapshot();
+        var plugin_runtime = PluginRuntime.PreparedPluginRuntime.init();
+        errdefer plugin_runtime.deinit();
+        plugin_runtime.resolveSnapshot(&plugin_snapshot) catch {
+            return errors.Error.PluginPrepareFailed;
+        };
+        plugin_runtime.prepareForPlan(.{
+            .plan_id = self.next_plan_id,
+            .model_family = template.model_family,
+            .transport_route = template.transport,
+            .solver_mode = @tagName(template.solver_mode),
+        }) catch {
+            return errors.Error.PluginPrepareFailed;
+        };
+        const dataset_hash_count = @max(
+            plugin_snapshot.datasetHashes().len,
+            self.dataset_cache.count(),
+        );
         const prepared_cache = try PreparedPlanCache.initFromBlueprint(
             template.scene_blueprint,
-            @intCast(plugin_snapshot.datasetHashes().len),
+            @intCast(dataset_hash_count),
         );
         const plan = Plan.init(
             self.next_plan_id,
@@ -87,7 +141,9 @@ pub const Engine = struct {
             transport_route,
             prepared_cache,
             plugin_snapshot,
+            plugin_runtime,
         );
+        try self.plan_cache.put(plan.id, prepared_cache);
         self.next_plan_id += 1;
         return plan;
     }
@@ -97,12 +153,43 @@ pub const Engine = struct {
         return Workspace.init(label);
     }
 
+    pub fn createThreadContext(self: *Engine, label: []const u8) !ThreadContext {
+        return ThreadContext.init(self.allocator, label);
+    }
+
+    pub fn createBatchRunner(self: *Engine) BatchRunner {
+        return BatchRunner.init(self.allocator);
+    }
+
+    pub fn runBatch(
+        self: *Engine,
+        runner: *BatchRunner,
+        thread: *ThreadContext,
+        exec_ctx: ?*anyopaque,
+        execute_fn: BatchRunnerModule.ExecuteFn,
+    ) !void {
+        try runner.run(thread, &self.plan_cache, exec_ctx, execute_fn);
+    }
+
     pub fn execute(self: *Engine, plan: *const Plan, workspace: *Workspace, request: Request) !Result {
-        _ = self;
         try plan.assertReady();
+        try request.validateForPlan(plan);
+        plan.plugin_runtime.executeForRequest(.{
+            .plan_id = plan.id,
+            .scene_id = request.scene.id,
+            .workspace_label = workspace.label,
+            .requested_product_count = @intCast(request.requested_products.len),
+        }) catch |err| switch (err) {
+            error.PluginExecutionFailed,
+            error.PluginEntryRejected,
+            error.PluginEntryIncompatibleAbi,
+            error.MissingExecuteHook,
+            => return errors.Error.PluginExecutionFailed,
+            else => return errors.Error.PluginExecutionFailed,
+        };
         try workspace.beginExecution(plan.id);
         workspace.prepareScratch(&plan.prepared_cache);
-        try request.validateForPlan(plan);
+        _ = self.plan_cache.markRun(plan.id);
 
         const provenance = Provenance.fromPlan(
             plan,
@@ -111,12 +198,43 @@ pub const Engine = struct {
             @tagName(plan.template.solver_mode),
         );
 
-        return Result.init(
+        var profile = try ReferenceData.buildDemoClimatology(self.allocator);
+        defer profile.deinit(self.allocator);
+        var cross_sections = try ReferenceData.buildDemoCrossSections(self.allocator);
+        defer cross_sections.deinit(self.allocator);
+        var line_list = try ReferenceData.buildDemoSpectroscopyLines(self.allocator);
+        defer line_list.deinit(self.allocator);
+        var lut = try ReferenceData.buildDemoAirmassFactorLut(self.allocator);
+        defer lut.deinit(self.allocator);
+        var prepared_optics = try OpticsPrepare.prepareWithSpectroscopy(
+            self.allocator,
+            request.scene,
+            profile,
+            cross_sections,
+            line_list,
+            lut,
+        );
+        defer prepared_optics.deinit(self.allocator);
+
+        const measurement_space = try MeasurementSpace.simulateSummary(
+            self.allocator,
+            request.scene,
+            plan.transport_route,
+            prepared_optics,
+        );
+
+        var result = Result.init(
             plan.id,
             workspace.label,
             request.scene.id,
             provenance,
         );
+        result.measurement_space = measurement_space;
+        result.diagnostics = Diagnostics.fromSpec(
+            request.diagnostics,
+            "Measurement-space forward operator executed with typed optical preparation, transport routing, calibration, convolution, and noise materialization.",
+        );
+        return result;
     }
 };
 
@@ -182,6 +300,39 @@ test "execute enforces workspace plan binding and derivative-mode contracts" {
     request.expected_derivative_mode = .semi_analytical;
     try std.testing.expectError(errors.Error.DerivativeModeMismatch, engine.execute(&scalar_plan, &workspace, request));
     try std.testing.expectError(errors.Error.WorkspacePlanMismatch, engine.execute(&derivative_plan, &workspace, Request.init(scene)));
+}
+
+test "execute leaves workspace untouched when request validation fails" {
+    var engine = Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const first_plan = try engine.preparePlan(.{});
+    const second_plan = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .derivative_mode = .semi_analytical,
+        },
+    });
+
+    var workspace = engine.createWorkspace("validation-guard");
+
+    try std.testing.expectError(
+        errors.Error.MissingScene,
+        engine.execute(&first_plan, &workspace, Request.init(.{
+            .id = "",
+            .spectral_grid = .{ .sample_count = 8 },
+        })),
+    );
+    try std.testing.expectEqual(@as(?u64, null), workspace.bound_plan_id);
+    try std.testing.expectEqual(@as(u64, 0), workspace.execution_count);
+    try std.testing.expectEqual(@as(u64, 0), workspace.scratch.reserve_count);
+
+    const result = try engine.execute(&second_plan, &workspace, Request.init(.{
+        .id = "scene-after-error",
+        .spectral_grid = .{ .sample_count = 8 },
+    }));
+    try std.testing.expectEqual(second_plan.id, result.plan_id);
+    try std.testing.expectEqual(second_plan.id, workspace.bound_plan_id.?);
 }
 
 test "prepared plans keep plugin snapshots when registry changes later" {
@@ -257,4 +408,59 @@ test "prepared plans own reusable cache hints and workspaces own reusable scratc
 
     workspace.reset();
     try std.testing.expectEqual(@as(u64, 1), workspace.scratch.reset_count);
+}
+
+test "engine owns runtime caches and batch scheduling helpers explicitly" {
+    const Ctx = struct {
+        executed: usize = 0,
+    };
+
+    const Callbacks = struct {
+        fn execute(
+            ctx_ptr: ?*anyopaque,
+            thread: *ThreadContext,
+            job: BatchJob,
+            prepared: *const PreparedPlanCache,
+        ) !void {
+            _ = thread;
+            _ = job;
+            _ = prepared;
+            const ctx: *Ctx = @ptrCast(@alignCast(ctx_ptr.?));
+            ctx.executed += 1;
+        }
+    };
+
+    var engine = Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    try engine.registerDatasetArtifact("climatology.base", "sha256:climatology-base");
+    try engine.registerLUTArtifact("climatology.base", "temperature_273", .{
+        .spectral_bins = 32,
+        .layer_count = 12,
+        .coefficient_count = 4,
+    });
+
+    const plan = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .measurement_count_hint = 24,
+        },
+    });
+    try std.testing.expect(engine.plan_cache.get(plan.id) != null);
+    try std.testing.expectEqual(@as(usize, 2), engine.dataset_cache.count());
+    try std.testing.expectEqual(@as(usize, 1), engine.lut_cache.count());
+
+    var thread = try engine.createThreadContext("batch-thread");
+    defer thread.deinit();
+    var runner = engine.createBatchRunner();
+    defer runner.deinit();
+    try runner.enqueue(.{ .plan_id = plan.id, .scene_id = "scene-batch-a" });
+    try runner.enqueue(.{ .plan_id = plan.id, .scene_id = "scene-batch-b" });
+
+    var ctx: Ctx = .{};
+    try engine.runBatch(&runner, &thread, &ctx, Callbacks.execute);
+
+    try std.testing.expectEqual(@as(usize, 2), ctx.executed);
+    try std.testing.expectEqual(@as(u64, 2), runner.completed_jobs);
+    try std.testing.expectEqual(@as(u64, 2), engine.plan_cache.get(plan.id).?.run_count);
 }

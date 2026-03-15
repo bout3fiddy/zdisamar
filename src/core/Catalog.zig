@@ -13,6 +13,14 @@ pub const Catalog = struct {
     pub fn bootstrapBuiltin(self: *Catalog, allocator: std.mem.Allocator) !void {
         if (self.bootstrapped) return;
 
+        const start_model_family_count = self.model_families.items.len;
+        const start_exporter_count = self.exporters.items.len;
+        errdefer {
+            self.model_families.items.len = start_model_family_count;
+            self.exporters.items.len = start_exporter_count;
+            self.bootstrapped = false;
+        }
+
         try self.model_families.append(allocator, .{
             .name = "disamar_standard",
             .description = "Bundled DISAMAR 1D family on the reusable RT platform scaffold.",

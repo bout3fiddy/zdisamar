@@ -15,6 +15,25 @@
       },
       "additionalProperties": true
     },
+    "measurement_space": {
+      "type": "object",
+      "properties": {
+        "sample_count": { "type": "integer", "minimum": 0 },
+        "wavelength_start_nm": { "type": "number" },
+        "wavelength_end_nm": { "type": "number" },
+        "mean_radiance": { "type": "number" },
+        "mean_irradiance": { "type": "number" },
+        "mean_reflectance": { "type": "number" },
+        "mean_noise_sigma": { "type": "number" },
+        "mean_jacobian": {
+          "anyOf": [
+            { "type": "number" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "exports": {
       "type": "array",
       "items": {
@@ -48,6 +67,18 @@
           "items": { "type": "string" }
         },
         "dataset_hashes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "native_capability_slots": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "native_entry_symbols": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "native_library_paths": {
           "type": "array",
           "items": { "type": "string" }
         }

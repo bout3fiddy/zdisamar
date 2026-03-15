@@ -18,6 +18,5 @@
 
 ## Commands
 
-- `./scripts/bootstrap-upstream.sh` refreshes the local DISAMAR Fortran reference clone.
 - `zig build test` is the default verification command.
 - `zig build` builds the scaffold CLI and library.

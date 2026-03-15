@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "upstream_root": "vendor/disamar-fortran",
+  "imports": [
+    {
+      "bundle_manifest": "data/climatologies/bundle_manifest.json",
+      "local_asset": "data/climatologies/us_standard_1976_profile.csv",
+      "upstream_candidates": [
+        "climatologies/",
+        "InputFiles/atmospheric_profiles/"
+      ]
+    },
+    {
+      "bundle_manifest": "data/cross_sections/bundle_manifest.json",
+      "local_asset": "data/cross_sections/no2_405_465_demo.csv",
+      "upstream_candidates": [
+        "RefSpec/",
+        "InputFiles/Config_NO2_DOMINO.in"
+      ]
+    },
+    {
+      "bundle_manifest": "data/cross_sections/bundle_manifest.json",
+      "local_asset": "data/cross_sections/no2_demo_lines.hitran",
+      "upstream_candidates": [
+        "RefSpec/",
+        "InputFiles/Config_O2A_XsecLUT.in"
+      ]
+    },
+    {
+      "bundle_manifest": "data/luts/bundle_manifest.json",
+      "local_asset": "data/luts/airmass_factor_nadir_demo.csv",
+      "upstream_candidates": [
+        "expCoefFiles/",
+        "InputFiles/Config_O2A_XsecLUT.in"
+      ]
+    }
+  ]
+}

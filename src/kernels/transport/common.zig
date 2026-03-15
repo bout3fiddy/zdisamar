@@ -32,6 +32,8 @@ pub const ForwardInput = struct {
     wavelength_nm: f64 = 440.0,
     spectral_weight: f64 = 1.0,
     air_mass_factor: f64 = 1.0,
+    optical_depth: f64 = 0.5,
+    single_scatter_albedo: f64 = 0.95,
 };
 
 pub const ForwardResult = struct {

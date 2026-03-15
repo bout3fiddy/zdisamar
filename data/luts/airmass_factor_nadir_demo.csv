@@ -1,0 +1,6 @@
+solar_zenith_deg,view_zenith_deg,relative_azimuth_deg,airmass_factor
+20.0,0.0,0.0,1.064
+40.0,10.0,30.0,1.241
+60.0,20.0,60.0,1.756
+70.0,30.0,90.0,2.231
+75.0,40.0,120.0,2.941

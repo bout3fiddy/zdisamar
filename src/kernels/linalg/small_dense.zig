@@ -1,0 +1,80 @@
+pub const Error = error{
+    SingularMatrix,
+};
+
+pub fn solve2x2(matrix: [2][2]f64, rhs: [2]f64) Error![2]f64 {
+    const det = matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
+    if (@abs(det) < 1e-12) return Error.SingularMatrix;
+
+    return .{
+        (rhs[0] * matrix[1][1] - rhs[1] * matrix[0][1]) / det,
+        (matrix[0][0] * rhs[1] - matrix[1][0] * rhs[0]) / det,
+    };
+}
+
+pub fn solve3x3(matrix: [3][3]f64, rhs: [3]f64) Error![3]f64 {
+    var a = matrix;
+    var b = rhs;
+
+    for (0..3) |pivot| {
+        var best_row = pivot;
+        var best_value = @abs(a[pivot][pivot]);
+        for (pivot + 1..3) |row| {
+            const candidate = @abs(a[row][pivot]);
+            if (candidate > best_value) {
+                best_row = row;
+                best_value = candidate;
+            }
+        }
+        if (best_value < 1e-12) return Error.SingularMatrix;
+
+        if (best_row != pivot) {
+            const tmp_row = a[pivot];
+            a[pivot] = a[best_row];
+            a[best_row] = tmp_row;
+
+            const tmp_rhs = b[pivot];
+            b[pivot] = b[best_row];
+            b[best_row] = tmp_rhs;
+        }
+
+        const pivot_value = a[pivot][pivot];
+        for (pivot..3) |column| a[pivot][column] /= pivot_value;
+        b[pivot] /= pivot_value;
+
+        for (0..3) |row| {
+            if (row == pivot) continue;
+            const factor = a[row][pivot];
+            for (pivot..3) |column| {
+                a[row][column] -= factor * a[pivot][column];
+            }
+            b[row] -= factor * b[pivot];
+        }
+    }
+
+    return b;
+}
+
+test "small dense solver solves a 2x2 system" {
+    const solution = try solve2x2(.{
+        .{ 4.0, 1.0 },
+        .{ 2.0, 3.0 },
+    }, .{ 1.0, 2.0 });
+
+    try std.testing.expectApproxEqRel(@as(f64, 0.1), solution[0], 1e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.6), solution[1], 1e-12);
+}
+
+test "small dense solver solves a 3x3 system" {
+    const solution = try solve3x3(.{
+        .{ 3.0, 1.0, -1.0 },
+        .{ 2.0, 4.0, 1.0 },
+        .{ -1.0, 2.0, 5.0 },
+    }, .{ 4.0, 1.0, 1.0 });
+
+    try std.testing.expectApproxEqRel(@as(f64, 2.0), solution[0], 1e-12);
+    try std.testing.expectApproxEqRel(@as(f64, -1.0), solution[1], 1e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 1.0), solution[2], 1e-12);
+}
+
+const std = @import("std");

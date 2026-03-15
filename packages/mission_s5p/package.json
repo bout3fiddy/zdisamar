@@ -13,7 +13,7 @@
     "native_requires_opt_in": true
   },
   "bundled_plugins": [
-    "example.native_surface",
+    "builtin.tropomi_response",
     "builtin.netcdf_cf"
   ]
 }

@@ -11,6 +11,8 @@ const ProvenanceGolden = struct {
     plugin_inventory_generation_min: u64,
     required_plugin_version: []const u8,
     required_dataset_hash: []const u8,
+    required_native_capability_slot: []const u8,
+    required_native_entry_symbol: []const u8,
 };
 
 test "golden provenance defaults remain stable" {
@@ -66,4 +68,22 @@ test "golden provenance defaults remain stable" {
         }
     }
     try std.testing.expect(saw_dataset_hash);
+
+    var saw_native_slot = false;
+    for (result.provenance.native_capability_slots) |slot| {
+        if (std.mem.eql(u8, slot, parsed.value.required_native_capability_slot)) {
+            saw_native_slot = true;
+            break;
+        }
+    }
+    try std.testing.expect(saw_native_slot);
+
+    var saw_entry_symbol = false;
+    for (result.provenance.native_entry_symbols) |entry_symbol| {
+        if (std.mem.eql(u8, entry_symbol, parsed.value.required_native_entry_symbol)) {
+            saw_entry_symbol = true;
+            break;
+        }
+    }
+    try std.testing.expect(saw_entry_symbol);
 }

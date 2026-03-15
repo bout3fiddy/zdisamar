@@ -13,6 +13,7 @@ pub const ProvenanceMetadata = struct {
 pub const NativeContract = struct {
     abi_version: u32 = 1,
     entry_symbol: []const u8 = "zdisamar_plugin_entry_v1",
+    library_path: ?[]const u8 = null,
 };
 
 pub const CapabilityDecl = struct {

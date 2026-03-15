@@ -1,5 +1,6 @@
 const SceneModel = @import("../model/Scene.zig");
 const PluginRegistry = @import("../plugins/registry/CapabilityRegistry.zig");
+const PluginRuntime = @import("../plugins/loader/runtime.zig");
 const PreparedPlanCache = @import("../runtime/cache/PreparedPlanCache.zig").PreparedPlanCache;
 const TransportRoute = @import("../kernels/transport/common.zig").Route;
 const errors = @import("errors.zig");
@@ -33,6 +34,7 @@ pub const Plan = struct {
     transport_route: TransportRoute,
     prepared_cache: PreparedPlanCache = .{},
     plugin_snapshot: PluginRegistry.PluginSnapshot = .{},
+    plugin_runtime: PluginRuntime.PreparedPluginRuntime = PluginRuntime.PreparedPluginRuntime.init(),
     prepared: bool = true,
 
     pub fn init(
@@ -41,6 +43,7 @@ pub const Plan = struct {
         transport_route: TransportRoute,
         prepared_cache: PreparedPlanCache,
         plugin_snapshot: PluginRegistry.PluginSnapshot,
+        plugin_runtime: PluginRuntime.PreparedPluginRuntime,
     ) Plan {
         return .{
             .id = id,
@@ -48,7 +51,13 @@ pub const Plan = struct {
             .transport_route = transport_route,
             .prepared_cache = prepared_cache,
             .plugin_snapshot = plugin_snapshot,
+            .plugin_runtime = plugin_runtime,
         };
+    }
+
+    pub fn deinit(self: *Plan) void {
+        self.plugin_runtime.deinit();
+        self.* = undefined;
     }
 
     pub fn assertReady(self: *const Plan) errors.Error!void {

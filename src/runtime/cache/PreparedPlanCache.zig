@@ -60,3 +60,9 @@ test "prepared cache derives reusable layout hints from the scene blueprint" {
     try std.testing.expect(cache.layer_axis != null);
     try std.testing.expect(cache.state_axis != null);
 }
+
+test "cache package includes dataset, lut, and plan cache implementations" {
+    _ = @import("DatasetCache.zig");
+    _ = @import("LUTCache.zig");
+    _ = @import("PlanCache.zig");
+}

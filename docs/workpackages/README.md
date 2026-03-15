@@ -2,7 +2,11 @@
 
 These work package files were derived from the migration goals in `docs/specs/original-plan.md` and aligned to the scaffold in `src/`, `packages/`, `tests/`, and `validation/`.
 
-Architecture and Fortran mapping references used by these packages now live under local-only `docs/specs/` notes rather than tracked `specs/` files.
+For work-package authoring and execution, prefer the stable local reference set in `docs/specs/`:
+
+- `docs/specs/architecture.md`
+- `docs/specs/fortran-mapping.md`
+- `docs/specs/original-plan.md`
 
 ## Mandatory Invocable Skills
 
@@ -20,10 +24,11 @@ An agent may only mark a `WP-*` entry as done after every checkbox in that item 
 
 The matching rollup row in that work-package file must be updated in the same change.
 
-Each package now lives as a single Markdown file under `docs/workpackages/`.
+Packages may be either a single Markdown file or a folder under `docs/workpackages/`. New multi-item packages should follow the folder layout from the work-package workflow with a required `overview.md` entry point.
 
 ## Package Index
 
+- `docs/workpackages/feature_spec_completeness_2026-03-14/`
 - `docs/workpackages/migration_core_runtime_model_2026-03-14.md`
 - `docs/workpackages/migration_memory_layout_linalg_2026-03-14.md`
 - `docs/workpackages/migration_transport_retrieval_2026-03-14.md`

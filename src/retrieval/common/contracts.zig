@@ -18,7 +18,14 @@ pub const Error = error{
     MissingMeasurements,
     MissingMeasurementProduct,
     DerivativeModeRequired,
-} || error{
+    ShapeMismatch,
+    InvalidStateValue,
+    SingularMatrix,
+    OutOfMemory,
+    InvalidSampleCount,
+    InvalidBounds,
+    IndexOutOfRange,
+    KernelShapeMismatch,
     CatalogNotBootstrapped,
     InvalidPlan,
     InvalidRequest,
@@ -32,6 +39,8 @@ pub const Error = error{
     DerivativeModeMismatch,
     UnsupportedDerivativeMode,
     UnsupportedCapability,
+    PluginPrepareFailed,
+    PluginExecutionFailed,
 };
 
 pub const RetrievalProblem = struct {
@@ -98,6 +107,9 @@ pub const SolverOutcome = struct {
     cost: f64,
     converged: bool,
     jacobians_used: bool,
+    dfs: f64,
+    residual_norm: f64,
+    step_norm: f64,
 };
 
 pub fn derivativeRequirement(method: Method) DerivativeRequirement {
@@ -115,6 +127,9 @@ pub fn outcome(
     cost: f64,
     converged: bool,
     jacobians_used: bool,
+    dfs: f64,
+    residual_norm: f64,
+    step_norm: f64,
 ) SolverOutcome {
     return .{
         .method = method,
@@ -125,6 +140,9 @@ pub fn outcome(
         .cost = cost,
         .converged = converged,
         .jacobians_used = jacobians_used,
+        .dfs = dfs,
+        .residual_norm = residual_norm,
+        .step_norm = step_norm,
     };
 }
 

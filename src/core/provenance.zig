@@ -13,6 +13,9 @@ pub const Provenance = struct {
     scene_id: []const u8 = "",
     plugin_versions: []const []const u8 = &[_][]const u8{},
     dataset_hashes: []const []const u8 = &[_][]const u8{},
+    native_capability_slots: []const []const u8 = &[_][]const u8{},
+    native_entry_symbols: []const []const u8 = &[_][]const u8{},
+    native_library_paths: []const []const u8 = &[_][]const u8{},
 
     pub fn fromPlan(
         plan: *const Plan,
@@ -32,6 +35,9 @@ pub const Provenance = struct {
             .scene_id = scene_id,
             .plugin_versions = plan.plugin_snapshot.pluginVersions(),
             .dataset_hashes = plan.plugin_snapshot.datasetHashes(),
+            .native_capability_slots = plan.plugin_snapshot.nativeCapabilitySlots(),
+            .native_entry_symbols = plan.plugin_snapshot.nativeEntrySymbols(),
+            .native_library_paths = plan.plugin_snapshot.nativeLibraryPaths(),
         };
     }
 };

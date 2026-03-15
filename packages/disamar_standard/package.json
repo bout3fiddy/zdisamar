@@ -14,8 +14,10 @@
     "native_requires_opt_in": true
   },
   "bundled_plugins": [
-    "example.cross_sections",
-    "example.native_retrieval",
+    "builtin.cross_sections",
+    "builtin.transport_dispatcher",
+    "builtin.oe_solver",
+    "builtin.lambertian_surface",
     "builtin.netcdf_cf",
     "builtin.zarr"
   ],
@@ -23,5 +25,10 @@
     "data/cross_sections/",
     "data/climatologies/",
     "data/luts/"
+  ],
+  "data_bundle_manifests": [
+    "data/cross_sections/bundle_manifest.json",
+    "data/climatologies/bundle_manifest.json",
+    "data/luts/bundle_manifest.json"
   ]
 }
