@@ -1,6 +1,20 @@
 const Abi = @import("../../abi/abi_types.zig");
 const DynLib = @import("../../loader/dynlib.zig");
 const Manifest = @import("../../loader/manifest.zig");
+const Slots = @import("../../slots.zig");
+
+pub const generic_response_manifest: Manifest.PluginManifest = .{
+    .id = "builtin.generic_response",
+    .package = "disamar_standard",
+    .version = "0.1.0",
+    .lane = .declarative,
+    .capabilities = &[_]Manifest.CapabilityDecl{
+        .{
+            .slot = Slots.instrument_response,
+            .name = "builtin.generic_response",
+        },
+    },
+};
 
 pub const tropomi_response_manifest: Manifest.PluginManifest = .{
     .id = "builtin.tropomi_response",
@@ -9,7 +23,7 @@ pub const tropomi_response_manifest: Manifest.PluginManifest = .{
     .lane = .native,
     .capabilities = &[_]Manifest.CapabilityDecl{
         .{
-            .slot = "instrument.response",
+            .slot = Slots.instrument_response,
             .name = "builtin.tropomi_response",
         },
     },
@@ -18,7 +32,7 @@ pub const tropomi_response_manifest: Manifest.PluginManifest = .{
 
 const capabilities = [_]Abi.Capability{
     .{
-        .slot = "instrument.response",
+        .slot = Slots.instrument_response,
         .name = "builtin.tropomi_response",
     },
 };

@@ -7,8 +7,10 @@ test "engine lifecycle increments plan ids and returns successful result" {
 
     try engine.bootstrapBuiltinCatalog();
 
-    const first_plan = try engine.preparePlan(.{});
-    const second_plan = try engine.preparePlan(.{});
+    var first_plan = try engine.preparePlan(.{});
+    defer first_plan.deinit();
+    var second_plan = try engine.preparePlan(.{});
+    defer second_plan.deinit();
     try std.testing.expectEqual(@as(u64, 1), first_plan.id);
     try std.testing.expectEqual(@as(u64, 2), second_plan.id);
 
@@ -22,7 +24,7 @@ test "engine lifecycle increments plan ids and returns successful result" {
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
     try std.testing.expectEqualStrings("scene-unit-001", result.scene_id);
-    try std.testing.expectEqualStrings("transport.dispatcher", result.provenance.solver_route);
+    try std.testing.expectEqualStrings("builtin.dispatcher", result.provenance.solver_route);
     try std.testing.expect(result.measurement_space_product != null);
 }
 
@@ -31,7 +33,8 @@ test "engine execute rejects missing scene id" {
     defer engine.deinit();
 
     try engine.bootstrapBuiltinCatalog();
-    const plan = try engine.preparePlan(.{});
+    var plan = try engine.preparePlan(.{});
+    defer plan.deinit();
     var workspace = engine.createWorkspace("unit-suite");
 
     try std.testing.expectError(

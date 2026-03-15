@@ -191,8 +191,10 @@ fn toPlanTemplate(desc: *const PlanDesc) BridgeError!PlanModule.Template {
 
     return .{
         .model_family = std.mem.span(desc.model_family),
-        .transport = std.mem.span(desc.transport_solver),
-        .retrieval = if (desc.retrieval_algorithm) |value| std.mem.span(value) else null,
+        .providers = .{
+            .transport_solver = std.mem.span(desc.transport_solver),
+            .retrieval_algorithm = if (desc.retrieval_algorithm) |value| std.mem.span(value) else null,
+        },
         .solver_mode = switch (desc.solver_mode) {
             .scalar => .scalar,
             .polarized => .polarized,
@@ -397,7 +399,7 @@ test "c abi lifecycle prepares and executes a typed request" {
     var plan: ?*CPlan = null;
     try std.testing.expectEqual(StatusCode.ok, zdisamar_plan_prepare(engine, &.{
         .model_family = "disamar_standard",
-        .transport_solver = "transport.dispatcher",
+        .transport_solver = "builtin.dispatcher",
         .solver_mode = .scalar,
     }, &plan));
     defer zdisamar_plan_destroy(plan);
@@ -427,5 +429,5 @@ test "c abi lifecycle prepares and executes a typed request" {
     try std.testing.expectEqual(@as(u64, 1), result.plan_id);
     try std.testing.expectEqual(StatusCode.ok, result.status);
     try std.testing.expectEqualStrings("scene-c-api", std.mem.span(result.scene_id.?));
-    try std.testing.expectEqualStrings("transport.dispatcher", std.mem.span(result.solver_route.?));
+    try std.testing.expectEqualStrings("builtin.dispatcher", std.mem.span(result.solver_route.?));
 }

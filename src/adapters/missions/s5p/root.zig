@@ -101,7 +101,9 @@ pub fn build(options: BuildOptions) MissionRun {
     return .{
         .plan_template = .{
             .model_family = "disamar_standard",
-            .transport = "transport.dispatcher",
+            .providers = .{
+                .transport_solver = "builtin.dispatcher",
+            },
             .scene_blueprint = .{
                 .id = options.scene_id,
                 .spectral_grid = spectral_grid,
@@ -112,6 +114,7 @@ pub fn build(options: BuildOptions) MissionRun {
         },
         .request = request,
         .export_request = .{
+            .plugin_id = "builtin.netcdf_cf",
             .format = ExportFormat.netcdf_cf,
             .destination_uri = options.destination_uri,
             .dataset_name = options.scene_id,
@@ -203,7 +206,9 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
     return .{
         .plan_template = .{
             .model_family = "disamar_standard",
-            .transport = "transport.dispatcher",
+            .providers = .{
+                .transport_solver = "builtin.dispatcher",
+            },
             .scene_blueprint = .{
                 .id = options.scene_id,
                 .spectral_grid = spectral_grid,
@@ -214,6 +219,7 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
         },
         .request = request,
         .export_request = .{
+            .plugin_id = "builtin.netcdf_cf",
             .format = ExportFormat.netcdf_cf,
             .destination_uri = options.destination_uri,
             .dataset_name = options.scene_id,

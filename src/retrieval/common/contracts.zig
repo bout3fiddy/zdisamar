@@ -1,5 +1,9 @@
 const std = @import("std");
-const zdisamar = @import("zdisamar");
+const Request = @import("../../core/Request.zig").Request;
+const DerivativeMode = @import("../../model/Scene.zig").DerivativeMode;
+const InverseProblem = @import("../../model/Scene.zig").InverseProblem;
+const LayoutRequirements = @import("../../model/Scene.zig").LayoutRequirements;
+const Scene = @import("../../model/Scene.zig").Scene;
 
 pub const Method = enum {
     oe,
@@ -44,12 +48,12 @@ pub const Error = error{
 };
 
 pub const RetrievalProblem = struct {
-    scene: zdisamar.Scene,
-    inverse_problem: zdisamar.InverseProblem,
-    derivative_mode: zdisamar.DerivativeMode,
+    scene: Scene,
+    inverse_problem: InverseProblem,
+    derivative_mode: DerivativeMode,
     jacobians_requested: bool = false,
 
-    pub fn fromRequest(request: zdisamar.Request) Error!RetrievalProblem {
+    pub fn fromRequest(request: Request) Error!RetrievalProblem {
         try request.scene.validate();
 
         const inverse_problem = request.inverse_problem orelse return Error.MissingInverseProblem;
@@ -83,7 +87,7 @@ pub const RetrievalProblem = struct {
         }
     }
 
-    pub fn layoutRequirements(self: RetrievalProblem) zdisamar.LayoutRequirements {
+    pub fn layoutRequirements(self: RetrievalProblem) LayoutRequirements {
         var requirements = self.scene.layoutRequirements();
         requirements.state_parameter_count = self.inverse_problem.state_vector.value_count;
         requirements.measurement_count = self.inverse_problem.measurements.sample_count;
@@ -102,7 +106,7 @@ pub const SolverOutcome = struct {
     method: Method,
     scene_id: []const u8,
     inverse_problem_id: []const u8,
-    derivative_mode: zdisamar.DerivativeMode,
+    derivative_mode: DerivativeMode,
     iterations: u32,
     cost: f64,
     converged: bool,
@@ -147,7 +151,7 @@ pub fn outcome(
 }
 
 test "retrieval contracts enforce canonical problem invariants" {
-    const request = zdisamar.Request{
+    const request = Request{
         .scene = .{
             .id = "scene-common",
             .atmosphere = .{ .layer_count = 18 },
@@ -186,7 +190,7 @@ test "retrieval contracts enforce canonical problem invariants" {
 }
 
 test "retrieval problem requires inverse problem in request conversion" {
-    const request = zdisamar.Request{
+    const request = Request{
         .scene = .{
             .id = "scene-no-inverse",
             .spectral_grid = .{ .sample_count = 8 },

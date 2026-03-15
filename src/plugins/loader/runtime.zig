@@ -1,17 +1,14 @@
 const std = @import("std");
 const Abi = @import("../abi/abi_types.zig");
-const HostApi = @import("../abi/host_api.zig");
 const BuiltinPlugins = @import("../builtin/root.zig");
-const Manifest = @import("manifest.zig");
-const ResolverModule = @import("resolver.zig");
 const CapabilityRegistry = @import("../registry/CapabilityRegistry.zig");
-
-pub const max_prepared_native_capabilities: usize = CapabilityRegistry.max_snapshot_capabilities;
+const HostApi = @import("../abi/host_api.zig");
+const ResolverModule = @import("resolver.zig");
 
 pub const PlanPrepareContext = struct {
     plan_id: u64,
     model_family: []const u8,
-    transport_route: []const u8,
+    transport_provider: []const u8,
     solver_mode: []const u8,
 };
 
@@ -22,14 +19,12 @@ pub const RequestExecuteContext = struct {
     requested_product_count: u32,
 };
 
-pub const NativeCapabilityRuntime = struct {
-    slot: []const u8,
-    provider: []const u8,
+pub const NativePluginRuntime = struct {
     manifest_id: []const u8,
     version: []const u8,
     resolution: ResolverModule.NativeResolution,
 
-    pub fn deinit(self: *NativeCapabilityRuntime) void {
+    pub fn deinit(self: *NativePluginRuntime) void {
         if (self.resolution.plugin_vtable.destroy) |destroy| {
             destroy(null);
         }
@@ -40,8 +35,7 @@ pub const NativeCapabilityRuntime = struct {
 
 pub const PreparedPluginRuntime = struct {
     host_api_ref: HostApi.HostApiRef = .{},
-    native_count: usize = 0,
-    native_capabilities: [max_prepared_native_capabilities]NativeCapabilityRuntime = undefined,
+    native_plugins: []NativePluginRuntime = &.{},
 
     pub fn init() PreparedPluginRuntime {
         var runtime: PreparedPluginRuntime = .{};
@@ -49,79 +43,71 @@ pub const PreparedPluginRuntime = struct {
         return runtime;
     }
 
-    pub fn deinit(self: *PreparedPluginRuntime) void {
-        var remaining = self.native_count;
-        while (remaining > 0) {
-            remaining -= 1;
-            self.native_capabilities[remaining].deinit();
-        }
+    pub fn deinit(self: *PreparedPluginRuntime, allocator: std.mem.Allocator) void {
+        for (self.native_plugins) |*plugin| plugin.deinit();
+        if (self.native_plugins.len != 0) allocator.free(self.native_plugins);
         self.* = init();
     }
 
     pub fn resolveSnapshot(
         self: *PreparedPluginRuntime,
+        allocator: std.mem.Allocator,
         snapshot: *const CapabilityRegistry.PluginSnapshot,
+        allow_native_plugins: bool,
     ) Error!void {
-        for (snapshot.capabilities[0..snapshot.capability_count]) |capability| {
-            if (capability.lane != .native) continue;
-            if (std.mem.eql(u8, capability.slot, "exporter")) continue;
-            if (self.native_count >= self.native_capabilities.len) {
-                return error.TooManyNativeCapabilities;
-            }
+        var native_count: usize = 0;
+        for (snapshot.manifests) |manifest| {
+            if (manifest.manifest.lane == .native) native_count += 1;
+        }
 
-            const source = if (capability.native_library_path) |path|
+        self.native_plugins = try allocator.alloc(NativePluginRuntime, native_count);
+        errdefer allocator.free(self.native_plugins);
+
+        var resolved_count: usize = 0;
+        errdefer {
+            for (self.native_plugins[0..resolved_count]) |*plugin| plugin.deinit();
+        }
+
+        for (snapshot.manifests) |manifest| {
+            if (manifest.manifest.lane != .native) continue;
+
+            const source = if (manifest.manifest.native.?.library_path) |path|
                 ResolverModule.ResolutionSource{ .dynamic_path = path }
-            else if (BuiltinPlugins.staticSymbolsFor(capability.manifest_id)) |symbols|
+            else if (BuiltinPlugins.staticSymbolsFor(manifest.manifest.id)) |symbols|
                 ResolverModule.ResolutionSource{ .static_symbols = symbols }
             else
                 return error.MissingNativeSource;
 
-            const resolver = ResolverModule.Resolver.init(true, self.host_api_ref.asAbi());
-            const native_entry_symbol = capability.native_entry_symbol orelse Abi.plugin_entry_symbol;
-            const manifest_capabilities = [_]Manifest.CapabilityDecl{
-                .{
-                    .slot = capability.slot,
-                    .name = capability.provider,
-                },
+            const native_allowed = switch (source) {
+                .dynamic_path => allow_native_plugins,
+                .static_symbols => true,
             };
-            const manifest: Manifest.PluginManifest = .{
-                .id = capability.manifest_id,
-                .package = capability.package,
-                .version = capability.version,
-                .lane = .native,
-                .capabilities = &manifest_capabilities,
-                .native = .{
-                    .entry_symbol = native_entry_symbol,
-                    .library_path = capability.native_library_path,
-                },
-            };
+            const resolver = ResolverModule.Resolver.init(native_allowed, self.host_api_ref.asAbi());
             var resolution = try resolver.resolveNative(.{
-                .manifest = manifest,
+                .manifest = manifest.manifest,
                 .source = source,
             });
             errdefer resolution.close();
 
-            self.native_capabilities[self.native_count] = .{
-                .slot = capability.slot,
-                .provider = capability.provider,
-                .manifest_id = capability.manifest_id,
-                .version = capability.version,
+            self.native_plugins[resolved_count] = .{
+                .manifest_id = manifest.manifest.id,
+                .version = manifest.manifest.version,
                 .resolution = resolution,
             };
-            self.native_count += 1;
+            resolved_count += 1;
         }
     }
 
     pub fn prepareForPlan(self: *PreparedPluginRuntime, context: PlanPrepareContext) Error!void {
-        for (self.native_capabilities[0..self.native_count]) |capability| {
-            const prepare = capability.resolution.plugin_vtable.prepare orelse return error.MissingPrepareHook;
+        for (self.native_plugins) |plugin| {
+            const prepare = plugin.resolution.plugin_vtable.prepare orelse return error.MissingPrepareHook;
             try mapPrepareStatus(prepare(&context, null));
         }
     }
 
     pub fn executeForRequest(self: *const PreparedPluginRuntime, context: RequestExecuteContext) Error!void {
-        for (self.native_capabilities[0..self.native_count]) |capability| {
-            const execute = capability.resolution.plugin_vtable.execute orelse return error.MissingExecuteHook;
+        for (self.native_plugins) |plugin| {
+            const execute = plugin.resolution.plugin_vtable.execute orelse return error.MissingExecuteHook;
             try mapExecuteStatus(execute(&context, null));
         }
     }
@@ -129,7 +115,6 @@ pub const PreparedPluginRuntime = struct {
 
 pub const Error = ResolverModule.Error || error{
     MissingNativeSource,
-    TooManyNativeCapabilities,
     MissingPrepareHook,
     MissingExecuteHook,
     PluginPrepareRejected,
@@ -154,21 +139,26 @@ fn mapExecuteStatus(raw_status: i32) Error!void {
     };
 }
 
-test "prepared plugin runtime resolves builtin native capabilities once per snapshot" {
+test "prepared plugin runtime resolves selected builtin native manifests once per plan snapshot" {
     var registry: CapabilityRegistry.CapabilityRegistry = .{};
     defer registry.deinit(std.testing.allocator);
-    try registry.bootstrapBuiltin(std.testing.allocator);
+    try registry.bootstrapBuiltin(std.testing.allocator, true);
 
-    const snapshot = try registry.snapshot();
+    var snapshot = try registry.snapshotSelection(std.testing.allocator, .{
+        .retrieval_algorithm = "builtin.oe_solver",
+        .instrument_response = "builtin.tropomi_response",
+    });
+    defer snapshot.deinit(std.testing.allocator);
+
     var runtime = PreparedPluginRuntime.init();
-    defer runtime.deinit();
+    defer runtime.deinit(std.testing.allocator);
 
-    try runtime.resolveSnapshot(&snapshot);
-    try std.testing.expectEqual(@as(usize, 4), runtime.native_count);
+    try runtime.resolveSnapshot(std.testing.allocator, &snapshot, true);
+    try std.testing.expectEqual(@as(usize, 4), runtime.native_plugins.len);
     try runtime.prepareForPlan(.{
         .plan_id = 1,
         .model_family = "disamar_standard",
-        .transport_route = "transport.dispatcher",
+        .transport_provider = "builtin.dispatcher",
         .solver_mode = "scalar",
     });
     try runtime.executeForRequest(.{

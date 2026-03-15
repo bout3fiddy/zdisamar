@@ -11,14 +11,15 @@ test "s5p mission adapter drives typed engine execution" {
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(mission_run.plan_template);
+    var plan = try engine.preparePlan(mission_run.plan_template);
+    defer plan.deinit();
     var workspace = engine.createWorkspace("mission-suite");
     var result = try engine.execute(&plan, &workspace, mission_run.request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
     try std.testing.expectEqualStrings("s5p-no2", result.scene_id);
-    try std.testing.expectEqualStrings("transport.dispatcher", result.provenance.solver_route);
+    try std.testing.expectEqualStrings("builtin.dispatcher", result.provenance.solver_route);
     try std.testing.expectEqual(.netcdf_cf, mission_run.export_request.format);
     try std.testing.expect(result.measurement_space_product != null);
 }
@@ -35,7 +36,8 @@ test "s5p operational mission adapter drives engine execution from measured spec
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(mission_run.plan_template);
+    var plan = try engine.preparePlan(mission_run.plan_template);
+    defer plan.deinit();
     var workspace = engine.createWorkspace("mission-operational");
     var result = try engine.execute(&plan, &workspace, mission_run.request);
     defer result.deinit(std.testing.allocator);
@@ -59,7 +61,8 @@ test "s5p operational mission adapter applies geometry and auxiliary metadata re
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(mission_run.plan_template);
+    var plan = try engine.preparePlan(mission_run.plan_template);
+    defer plan.deinit();
     var workspace = engine.createWorkspace("mission-operational-aux");
     var result = try engine.execute(&plan, &workspace, mission_run.request);
     defer result.deinit(std.testing.allocator);
@@ -89,7 +92,8 @@ test "s5p operational mission adapter executes explicit isrf table metadata" {
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(mission_run.plan_template);
+    var plan = try engine.preparePlan(mission_run.plan_template);
+    defer plan.deinit();
     var workspace = engine.createWorkspace("mission-operational-isrf-table");
     var result = try engine.execute(&plan, &workspace, mission_run.request);
     defer result.deinit(std.testing.allocator);
@@ -118,7 +122,8 @@ test "s5p operational mission adapter executes O2 and O2-O2 refspec replacement 
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(mission_run.plan_template);
+    var plan = try engine.preparePlan(mission_run.plan_template);
+    defer plan.deinit();
     var workspace = engine.createWorkspace("mission-operational-refspec");
     var result = try engine.execute(&plan, &workspace, mission_run.request);
     defer result.deinit(std.testing.allocator);

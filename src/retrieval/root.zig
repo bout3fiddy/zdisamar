@@ -1,11 +1,19 @@
-pub const common = @import("common/root.zig");
-pub const oe = @import("oe/root.zig");
-pub const doas = @import("doas/root.zig");
-pub const dismas = @import("dismas/root.zig");
+const zdisamar = @import("zdisamar");
+const std = @import("std");
+
+pub const common = struct {
+    pub const contracts = zdisamar.RetrievalContracts;
+    pub const covariance = zdisamar.RetrievalCovariance;
+    pub const diagnostics = zdisamar.RetrievalDiagnostics;
+    pub const forward_model = zdisamar.RetrievalForwardModel;
+    pub const priors = zdisamar.RetrievalPriors;
+    pub const synthetic_forward = zdisamar.RetrievalSyntheticForward;
+};
+
+pub const oe = zdisamar.RetrievalOE;
+pub const doas = zdisamar.RetrievalDOAS;
+pub const dismas = zdisamar.RetrievalDISMAS;
 
 test {
-    _ = @import("common/root.zig");
-    _ = @import("oe/root.zig");
-    _ = @import("doas/root.zig");
-    _ = @import("dismas/root.zig");
+    std.testing.refAllDecls(@This());
 }

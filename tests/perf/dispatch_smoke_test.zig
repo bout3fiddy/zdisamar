@@ -15,7 +15,8 @@ test "perf smoke executes repeated prepared plans without failure" {
             workspace.reset();
         }
 
-        const plan = try engine.preparePlan(.{});
+        var plan = try engine.preparePlan(.{});
+        defer plan.deinit();
         const request = zdisamar.Request.init(.{
             .id = "scene-perf",
             .spectral_grid = .{ .sample_count = 16 },

@@ -191,7 +191,8 @@ test "performance harness executes perf matrix scenarios with bounded runtime" {
         var i: u32 = 0;
         while (i < iterations) : (i += 1) {
             workspace.reset();
-            const plan = try engine.preparePlan(template);
+            var plan = try engine.preparePlan(template);
+            defer plan.deinit();
             const request = zdisamar.Request.init(.{
                 .id = "scene-perf-matrix",
                 .spectral_grid = requestSpectralGrid(plan.template),

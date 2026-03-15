@@ -82,6 +82,14 @@ fn parseRetrievalMethod(value: []const u8) !retrieval.common.contracts.Method {
     return error.InvalidRetrievalMethod;
 }
 
+fn retrievalProviderId(method: retrieval.common.contracts.Method) []const u8 {
+    return switch (method) {
+        .oe => "builtin.oe_solver",
+        .doas => "builtin.doas_solver",
+        .dismas => "builtin.dismas_solver",
+    };
+}
+
 fn makeRetrievalRequest(
     case: ParityCase,
     regime: zdisamar.ObservationRegime,
@@ -319,6 +327,15 @@ fn executeRetrievalCase(case: ParityCase, request: zdisamar.Request) !retrieval.
     };
 }
 
+fn measurementProviders(plan: zdisamar.Plan) zdisamar.transport.measurement_space.ProviderBindings {
+    return .{
+        .transport = plan.providers.transport,
+        .surface = plan.providers.surface,
+        .instrument = plan.providers.instrument,
+        .noise = plan.providers.noise,
+    };
+}
+
 fn parseVendorAsciiHdfAnchor(path: []const u8, allocator: std.mem.Allocator) !VendorRetrievalAnchor {
     const raw = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
     defer allocator.free(raw);
@@ -456,8 +473,14 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
         const derivative_mode = try parseDerivativeMode(case.runtime_profile.derivative_mode);
         const regime = try parseObservationRegime(case.runtime_profile.observation_regime);
 
-        const plan = try engine.preparePlan(.{
+        var plan = try engine.preparePlan(.{
             .solver_mode = solver_mode,
+            .providers = .{
+                .retrieval_algorithm = if (std.mem.eql(u8, case.component, "retrieval"))
+                    retrievalProviderId(try parseRetrievalMethod(case.retrieval_method orelse return error.MissingRetrievalMethod))
+                else
+                    null,
+            },
             .scene_blueprint = .{
                 .id = case.id,
                 .observation_regime = regime,
@@ -470,6 +493,7 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
                 .measurement_count_hint = case.runtime_profile.spectral_samples,
             },
         });
+        defer plan.deinit();
 
         workspace.reset();
         const case_scene = makeSceneForCase(case, regime);
@@ -531,6 +555,7 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
                 case_scene,
                 plan.transport_route,
                 prepared,
+                measurementProviders(plan),
             );
             try std.testing.expectEqual(case.runtime_profile.spectral_samples, summary.sample_count);
             try std.testing.expect(summary.mean_radiance > 0.0);

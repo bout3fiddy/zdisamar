@@ -1,11 +1,16 @@
 const std = @import("std");
 const Result = @import("../../core/Result.zig").Result;
+const ExporterProviders = @import("../../plugins/providers/exporter.zig");
 const Spec = @import("spec.zig");
 const NetcdfCf = @import("netcdf_cf.zig");
 const Zarr = @import("zarr.zig");
 const Diagnostic = @import("diagnostic.zig");
 
 pub const Error =
+    error{
+        UnknownExporterProvider,
+        ExporterFormatMismatch,
+    } ||
     NetcdfCf.Error ||
     Zarr.Error ||
     Diagnostic.Error;
@@ -24,7 +29,10 @@ pub fn write(
     request: Spec.ExportRequest,
     result: Result,
 ) Error!ExportReport {
-    return switch (request.format) {
+    const provider = ExporterProviders.resolve(request.plugin_id) orelse return error.UnknownExporterProvider;
+    if (provider.format != request.format) return error.ExporterFormatMismatch;
+
+    return switch (provider.kind) {
         .netcdf_cf => {
             const report = try NetcdfCf.write(request, result, allocator);
             return .{
@@ -55,6 +63,7 @@ pub fn exportDiagnostic(
 
 test "writer dispatches based on export format metadata" {
     const request: Spec.ExportRequest = .{
+        .plugin_id = "builtin.netcdf_cf",
         .format = .netcdf_cf,
         .destination_uri = "file://out/dispatch.nc",
     };

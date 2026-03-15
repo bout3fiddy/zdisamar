@@ -1,6 +1,7 @@
 const Abi = @import("../../abi/abi_types.zig");
 const DynLib = @import("../../loader/dynlib.zig");
 const Manifest = @import("../../loader/manifest.zig");
+const Slots = @import("../../slots.zig");
 
 pub const oe_solver_manifest: Manifest.PluginManifest = .{
     .id = "builtin.oe_solver",
@@ -9,16 +10,42 @@ pub const oe_solver_manifest: Manifest.PluginManifest = .{
     .lane = .native,
     .capabilities = &[_]Manifest.CapabilityDecl{
         .{
-            .slot = "retrieval.algorithm",
+            .slot = Slots.retrieval_algorithm,
             .name = "builtin.oe_solver",
         },
     },
     .native = .{},
 };
 
+pub const doas_solver_manifest: Manifest.PluginManifest = .{
+    .id = "builtin.doas_solver",
+    .package = "disamar_standard",
+    .version = "0.1.0",
+    .lane = .declarative,
+    .capabilities = &[_]Manifest.CapabilityDecl{
+        .{
+            .slot = Slots.retrieval_algorithm,
+            .name = "builtin.doas_solver",
+        },
+    },
+};
+
+pub const dismas_solver_manifest: Manifest.PluginManifest = .{
+    .id = "builtin.dismas_solver",
+    .package = "disamar_standard",
+    .version = "0.1.0",
+    .lane = .declarative,
+    .capabilities = &[_]Manifest.CapabilityDecl{
+        .{
+            .slot = Slots.retrieval_algorithm,
+            .name = "builtin.dismas_solver",
+        },
+    },
+};
+
 const capabilities = [_]Abi.Capability{
     .{
-        .slot = "retrieval.algorithm",
+        .slot = Slots.retrieval_algorithm,
         .name = "builtin.oe_solver",
     },
 };

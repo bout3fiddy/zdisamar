@@ -58,7 +58,8 @@ pub fn run(allocator: std.mem.Allocator, argv: []const []const u8, writer: anyty
 
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(prepared.plan_template);
+    var plan = try engine.preparePlan(prepared.plan_template);
+    defer plan.deinit();
     var workspace = engine.createWorkspace(prepared.workspace_label);
     const request = prepared.toRequest();
     var result = try engine.execute(&plan, &workspace, request);
@@ -172,9 +173,9 @@ fn applyOverrides(
         prepared.plan_template.scene_blueprint.id = scene_id;
     }
     if (overrides.model_family) |model_family| prepared.plan_template.model_family = model_family;
-    if (overrides.transport) |transport| prepared.plan_template.transport = transport;
+    if (overrides.transport) |transport| prepared.plan_template.providers.transport_solver = transport;
     if (overrides.retrieval) |retrieval| {
-        prepared.plan_template.retrieval = if (std.mem.eql(u8, retrieval, "none")) null else retrieval;
+        prepared.plan_template.providers.retrieval_algorithm = if (std.mem.eql(u8, retrieval, "none")) null else retrieval;
     }
     if (overrides.solver_mode) |solver_mode| prepared.plan_template.solver_mode = solver_mode;
     if (overrides.diagnostics.jacobians) |jacobians| prepared.diagnostics.jacobians = jacobians;

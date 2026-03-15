@@ -534,6 +534,7 @@ test "zarr exporter emits group metadata and array stores" {
     defer std.testing.allocator.free(destination_uri);
 
     const report = try write(.{
+        .plugin_id = "builtin.zarr",
         .format = .zarr,
         .destination_uri = destination_uri,
         .dataset_name = "scene-zarr",

@@ -59,12 +59,12 @@ pub fn applyValue(
     }
 
     if (std.mem.eql(u8, key, "transport")) {
-        prepared.plan_template.transport = value;
+        prepared.plan_template.providers.transport_solver = value;
         return;
     }
 
     if (std.mem.eql(u8, key, "retrieval")) {
-        prepared.plan_template.retrieval = if (std.mem.eql(u8, value, "none")) null else value;
+        prepared.plan_template.providers.retrieval_algorithm = if (std.mem.eql(u8, value, "none")) null else value;
         return;
     }
 

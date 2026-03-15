@@ -55,18 +55,29 @@ pub const linalg = @import("kernels/linalg/root.zig");
 pub const spectra = @import("kernels/spectra/root.zig");
 pub const PluginManifest = @import("plugins/loader/manifest.zig").PluginManifest;
 pub const PluginCapabilityDecl = @import("plugins/loader/manifest.zig").CapabilityDecl;
+pub const PluginProviderSelection = @import("plugins/selection.zig").ProviderSelection;
 pub const PluginAbiTypes = @import("plugins/abi/abi_types.zig");
 pub const PluginHostApi = @import("plugins/abi/host_api.zig");
 pub const PluginDynLib = @import("plugins/loader/dynlib.zig");
 pub const PluginResolver = @import("plugins/loader/resolver.zig");
 pub const PluginRuntime = @import("plugins/loader/runtime.zig");
 pub const PluginBuiltin = @import("plugins/builtin/root.zig");
+pub const PluginProviders = @import("plugins/providers/root.zig");
 pub const builtin_exporters_catalog = @import("plugins/builtin/exporters/catalog.zig");
 pub const exporters = @import("adapters/exporters/root.zig");
 pub const ingest = @import("adapters/ingest/root.zig");
 pub const mission_s5p = @import("adapters/missions/s5p/root.zig");
 pub const c_api = @import("api/c/bridge.zig");
 pub const zig_wrappers = @import("api/zig/wrappers.zig");
+pub const RetrievalContracts = @import("retrieval/common/contracts.zig");
+pub const RetrievalForwardModel = @import("retrieval/common/forward_model.zig");
+pub const RetrievalCovariance = @import("retrieval/common/covariance.zig");
+pub const RetrievalDiagnostics = @import("retrieval/common/diagnostics.zig");
+pub const RetrievalPriors = @import("retrieval/common/priors.zig");
+pub const RetrievalSyntheticForward = @import("retrieval/common/synthetic_forward.zig");
+pub const RetrievalOE = @import("retrieval/oe/root.zig");
+pub const RetrievalDOAS = @import("retrieval/doas/root.zig");
+pub const RetrievalDISMAS = @import("retrieval/dismas/root.zig");
 
 test "engine scaffold prepares a plan and returns provenance" {
     var engine = Engine.init(std.testing.allocator, .{});
@@ -74,7 +85,8 @@ test "engine scaffold prepares a plan and returns provenance" {
 
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(.{});
+    var plan = try engine.preparePlan(.{});
+    defer plan.deinit();
     var workspace = engine.createWorkspace("unit");
     const request = Request.init(.{
         .id = "scene-unit",
@@ -86,7 +98,7 @@ test "engine scaffold prepares a plan and returns provenance" {
     try std.testing.expectEqual(Result.Status.success, result.status);
     try std.testing.expectEqual(@as(u64, 1), result.plan_id);
     try std.testing.expectEqualStrings("scene-unit", result.scene_id);
-    try std.testing.expectEqualStrings("transport.dispatcher", result.provenance.solver_route);
+    try std.testing.expectEqualStrings("builtin.dispatcher", result.provenance.solver_route);
     try std.testing.expect(result.measurement_space != null);
     try std.testing.expect(result.measurement_space_product != null);
 }

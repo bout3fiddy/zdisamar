@@ -24,23 +24,13 @@ pub const ExportFormat = enum {
             .zarr => "application/vnd+zarr",
         };
     }
-
-    pub fn defaultPluginId(self: ExportFormat) []const u8 {
-        return switch (self) {
-            .netcdf_cf => "builtin.netcdf_cf",
-            .zarr => "builtin.zarr",
-        };
-    }
 };
 
 test "export format metadata remains stable for official formats" {
     try std.testing.expectEqualStrings("netcdf_cf", ExportFormat.netcdf_cf.id());
     try std.testing.expectEqualStrings(".nc", ExportFormat.netcdf_cf.extension());
     try std.testing.expectEqualStrings("application/x-netcdf", ExportFormat.netcdf_cf.mediaType());
-    try std.testing.expectEqualStrings("builtin.netcdf_cf", ExportFormat.netcdf_cf.defaultPluginId());
-
     try std.testing.expectEqualStrings("zarr", ExportFormat.zarr.id());
     try std.testing.expectEqualStrings(".zarr", ExportFormat.zarr.extension());
     try std.testing.expectEqualStrings("application/vnd+zarr", ExportFormat.zarr.mediaType());
-    try std.testing.expectEqualStrings("builtin.zarr", ExportFormat.zarr.defaultPluginId());
 }

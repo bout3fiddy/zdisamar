@@ -1,6 +1,7 @@
 const Abi = @import("../../abi/abi_types.zig");
 const DynLib = @import("../../loader/dynlib.zig");
 const Manifest = @import("../../loader/manifest.zig");
+const Slots = @import("../../slots.zig");
 
 pub const lambertian_surface_manifest: Manifest.PluginManifest = .{
     .id = "builtin.lambertian_surface",
@@ -9,16 +10,29 @@ pub const lambertian_surface_manifest: Manifest.PluginManifest = .{
     .lane = .native,
     .capabilities = &[_]Manifest.CapabilityDecl{
         .{
-            .slot = "surface.model",
+            .slot = Slots.surface_model,
             .name = "builtin.lambertian_surface",
         },
     },
     .native = .{},
 };
 
+pub const directional_lambertian_surface_manifest: Manifest.PluginManifest = .{
+    .id = "builtin.directional_lambertian_surface",
+    .package = "disamar_standard",
+    .version = "0.1.0",
+    .lane = .declarative,
+    .capabilities = &[_]Manifest.CapabilityDecl{
+        .{
+            .slot = Slots.surface_model,
+            .name = "builtin.directional_lambertian_surface",
+        },
+    },
+};
+
 const capabilities = [_]Abi.Capability{
     .{
-        .slot = "surface.model",
+        .slot = Slots.surface_model,
         .name = "builtin.lambertian_surface",
     },
 };

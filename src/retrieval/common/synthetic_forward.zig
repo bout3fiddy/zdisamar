@@ -1,6 +1,9 @@
 const std = @import("std");
-const zdisamar = @import("zdisamar");
 const common = @import("contracts.zig");
+const forward_model = @import("forward_model.zig");
+const Scene = @import("../../model/Scene.zig").Scene;
+const ExecutionMode = @import("../../kernels/transport/common.zig").ExecutionMode;
+const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
 
 pub const MaxSamples: usize = 256;
 
@@ -65,58 +68,21 @@ pub fn summarizeState(
     problem: common.RetrievalProblem,
     method: common.Method,
     state: []const f64,
-) common.Error!zdisamar.transport.measurement_space.MeasurementSpaceSummary {
+    evaluator: forward_model.SummaryEvaluator,
+) common.Error!MeasurementSpaceSummary {
     _ = try validateShape(problem, method);
 
     const scene = sceneForState(problem.scene, state);
-    const route = try zdisamar.transport.common.prepareRoute(.{
-        .regime = scene.observation_model.regime,
-        .execution_mode = executionMode(problem, method),
-        .derivative_mode = problem.derivative_mode,
-    });
-
-    var arena_storage: [256 * 1024]u8 = undefined;
-    var arena = std.heap.FixedBufferAllocator.init(&arena_storage);
-    const allocator = arena.allocator();
-
-    var prepared = zdisamar.runtime.reference.bundled_optics.prepareForScene(allocator, scene) catch |err| switch (err) {
-        error.OutOfMemory => return common.Error.OutOfMemory,
-        else => return common.Error.InvalidRequest,
-    };
-    defer prepared.deinit(allocator);
-
-    const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    var wavelengths: [MaxSamples]f64 = undefined;
-    var radiance: [MaxSamples]f64 = undefined;
-    var irradiance: [MaxSamples]f64 = undefined;
-    var reflectance: [MaxSamples]f64 = undefined;
-    var scratch: [MaxSamples]f64 = undefined;
-    var jacobian: [MaxSamples]f64 = undefined;
-    var noise_sigma: [MaxSamples]f64 = undefined;
-
-    return zdisamar.transport.measurement_space.simulate(scene, route, prepared, .{
-        .wavelengths = wavelengths[0..sample_count],
-        .radiance = radiance[0..sample_count],
-        .irradiance = irradiance[0..sample_count],
-        .reflectance = reflectance[0..sample_count],
-        .scratch = scratch[0..sample_count],
-        .jacobian = if (problem.derivative_mode == .none and !problem.jacobians_requested)
-            null
-        else
-            jacobian[0..sample_count],
-        .noise_sigma = noise_sigma[0..sample_count],
-    }) catch |err| switch (err) {
-        error.InvalidSampleCount,
-        error.InvalidBounds,
-        error.IndexOutOfRange,
-        error.KernelShapeMismatch,
-        => common.Error.ShapeMismatch,
-        else => err,
+    _ = executionMode(problem, method);
+    return evaluator.evaluate(evaluator.context, scene) catch |err| switch (err) {
+        error.OutOfMemory => common.Error.OutOfMemory,
+        error.InvalidRequest => common.Error.InvalidRequest,
+        else => common.Error.InvalidRequest,
     };
 }
 
 pub fn featureVector(
-    summary: zdisamar.transport.measurement_space.MeasurementSpaceSummary,
+    summary: MeasurementSpaceSummary,
     method: common.Method,
 ) FeatureVector {
     return switch (method) {
@@ -161,7 +127,7 @@ pub fn residualNorm(lhs: FeatureVector, rhs: FeatureVector) f64 {
     return std.math.sqrt(total);
 }
 
-fn sceneForState(base: zdisamar.Scene, state: []const f64) zdisamar.Scene {
+fn sceneForState(base: Scene, state: []const f64) Scene {
     var scene = base;
     if (scene.id.len == 0) scene.id = "retrieval-synthetic";
     if (scene.spectral_grid.sample_count < 8) scene.spectral_grid.sample_count = 8;
@@ -172,9 +138,6 @@ fn sceneForState(base: zdisamar.Scene, state: []const f64) zdisamar.Scene {
     if (scene.atmosphere.layer_count == 0) scene.atmosphere.layer_count = 24;
     if (scene.observation_model.instrument.len == 0) scene.observation_model.instrument = "retrieval-synthetic";
     if (scene.observation_model.sampling.len == 0) scene.observation_model.sampling = "operational";
-    if (scene.observation_model.noise_model.len == 0 or std.mem.eql(u8, scene.observation_model.noise_model, "none")) {
-        scene.observation_model.noise_model = "shot_noise";
-    }
 
     scene.surface.albedo = std.math.clamp(0.04 + 0.60 * state[0], 0.01, 0.95);
 
@@ -201,7 +164,7 @@ fn sceneForState(base: zdisamar.Scene, state: []const f64) zdisamar.Scene {
     return scene;
 }
 
-fn executionMode(problem: common.RetrievalProblem, method: common.Method) zdisamar.transport.common.ExecutionMode {
+fn executionMode(problem: common.RetrievalProblem, method: common.Method) ExecutionMode {
     return switch (method) {
         .dismas => .polarized,
         .oe, .doas => switch (problem.scene.observation_model.regime) {
@@ -233,7 +196,25 @@ test "synthetic forward summary exposes method-shaped feature vectors" {
         .jacobians_requested = true,
     };
 
-    const summary = try summarizeState(problem, .oe, &[_]f64{ 0.2, 0.1 });
+    const evaluator: forward_model.SummaryEvaluator = .{
+        .context = undefined,
+        .evaluate = struct {
+            fn evaluate(_: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary {
+                _ = scene;
+                return .{
+                    .sample_count = 32,
+                    .wavelength_start_nm = 405.0,
+                    .wavelength_end_nm = 465.0,
+                    .mean_radiance = 1.0,
+                    .mean_irradiance = 2.0,
+                    .mean_reflectance = 0.5,
+                    .mean_noise_sigma = 0.1,
+                    .mean_jacobian = 0.05,
+                };
+            }
+        }.evaluate,
+    };
+    const summary = try summarizeState(problem, .oe, &[_]f64{ 0.2, 0.1 }, evaluator);
     const features = featureVector(summary, .oe);
     try std.testing.expect(features.len == 2);
     try std.testing.expect(features.values[0] > 0.0);

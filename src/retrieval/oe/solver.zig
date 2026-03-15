@@ -2,12 +2,18 @@ const std = @import("std");
 const common = @import("../common/contracts.zig");
 const covariance = @import("../common/covariance.zig");
 const diagnostics = @import("../common/diagnostics.zig");
+const forward_model = @import("../common/forward_model.zig");
 const priors = @import("../common/priors.zig");
 const synthetic_forward = @import("../common/synthetic_forward.zig");
-const zdisamar = @import("zdisamar");
-const small_dense = zdisamar.linalg.small_dense;
+const Scene = @import("../../model/Scene.zig").Scene;
+const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
+const small_dense = @import("../../kernels/linalg/small_dense.zig");
 
 pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome {
+    return solveWithEvaluator(problem, forward_model.defaultEvaluator());
+}
+
+pub fn solveWithEvaluator(problem: common.RetrievalProblem, evaluator: forward_model.SummaryEvaluator) common.Error!common.SolverOutcome {
     try problem.validateForMethod(.oe);
     _ = try synthetic_forward.validateShape(problem, .oe);
 
@@ -16,7 +22,7 @@ pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome
     var target_state = [_]f64{ 0.0, 0.0 };
     synthetic_forward.targetState(problem, .oe, target_state[0..]);
     const target = synthetic_forward.featureVector(
-        try synthetic_forward.summarizeState(problem, .oe, target_state[0..]),
+        try synthetic_forward.summarizeState(problem, .oe, target_state[0..], evaluator),
         .oe,
     );
 
@@ -29,7 +35,7 @@ pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome
 
     while (iterations < 6) : (iterations += 1) {
         const predicted = synthetic_forward.featureVector(
-            try synthetic_forward.summarizeState(problem, .oe, state[0..]),
+            try synthetic_forward.summarizeState(problem, .oe, state[0..], evaluator),
             .oe,
         );
         const residual = [2]f64{
@@ -53,7 +59,7 @@ pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome
             var perturbed = state;
             perturbed[column] += 1e-3;
             const perturbed_features = synthetic_forward.featureVector(
-                try synthetic_forward.summarizeState(problem, .oe, perturbed[0..]),
+                try synthetic_forward.summarizeState(problem, .oe, perturbed[0..], evaluator),
                 .oe,
             );
             jacobian[0][column] = (perturbed_features.values[0] - predicted.values[0]) / 1e-3;
@@ -140,7 +146,24 @@ test "oe retrieval requires derivative mode and converges with jacobians" {
         .jacobians_requested = true,
     };
 
-    const result = try solve(problem);
+    const evaluator: forward_model.SummaryEvaluator = .{
+        .context = undefined,
+        .evaluate = struct {
+            fn evaluate(_: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary {
+                return .{
+                    .sample_count = scene.spectral_grid.sample_count,
+                    .wavelength_start_nm = 405.0,
+                    .wavelength_end_nm = 465.0,
+                    .mean_radiance = 1.1,
+                    .mean_irradiance = 2.0,
+                    .mean_reflectance = 0.55,
+                    .mean_noise_sigma = 0.08,
+                    .mean_jacobian = 0.06,
+                };
+            }
+        }.evaluate,
+    };
+    const result = try solveWithEvaluator(problem, evaluator);
     try std.testing.expectEqual(common.Method.oe, result.method);
     try std.testing.expect(result.jacobians_used);
     try std.testing.expect(result.converged);

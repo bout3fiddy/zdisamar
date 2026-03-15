@@ -1,6 +1,7 @@
 const Abi = @import("../../abi/abi_types.zig");
 const DynLib = @import("../../loader/dynlib.zig");
 const Manifest = @import("../../loader/manifest.zig");
+const Slots = @import("../../slots.zig");
 
 pub const transport_dispatcher_manifest: Manifest.PluginManifest = .{
     .id = "builtin.transport_dispatcher",
@@ -9,7 +10,7 @@ pub const transport_dispatcher_manifest: Manifest.PluginManifest = .{
     .lane = .native,
     .capabilities = &[_]Manifest.CapabilityDecl{
         .{
-            .slot = "transport.solver",
+            .slot = Slots.transport_solver,
             .name = "builtin.dispatcher",
         },
     },
@@ -18,7 +19,7 @@ pub const transport_dispatcher_manifest: Manifest.PluginManifest = .{
 
 const capabilities = [_]Abi.Capability{
     .{
-        .slot = "transport.solver",
+        .slot = Slots.transport_solver,
         .name = "builtin.dispatcher",
     },
 };

@@ -12,6 +12,7 @@ const errors = @import("errors.zig");
 const PluginManifest = @import("../plugins/loader/manifest.zig").PluginManifest;
 const CapabilityRegistry = @import("../plugins/registry/CapabilityRegistry.zig").CapabilityRegistry;
 const PluginRuntime = @import("../plugins/loader/runtime.zig");
+const PluginProviders = @import("../plugins/providers/root.zig");
 const DatasetCache = @import("../runtime/cache/DatasetCache.zig").DatasetCache;
 const LUTCache = @import("../runtime/cache/LUTCache.zig").LUTCache;
 const PlanCache = @import("../runtime/cache/PlanCache.zig").PlanCache;
@@ -21,11 +22,10 @@ const BatchRunner = BatchRunnerModule.BatchRunner;
 const BatchJob = BatchRunnerModule.BatchJob;
 const ThreadContext = @import("../runtime/scheduler/ThreadContext.zig").ThreadContext;
 const TransportCommon = @import("../kernels/transport/common.zig");
-const TransportDispatcher = @import("../kernels/transport/dispatcher.zig");
 const MeasurementSpace = @import("../kernels/transport/measurement_space.zig");
-const Diagnostics = @import("diagnostics.zig").Diagnostics;
+const RetrievalContracts = @import("../retrieval/common/contracts.zig");
+const RetrievalForwardModel = @import("../retrieval/common/forward_model.zig");
 const Logging = @import("logging.zig");
-const BundledOptics = @import("../runtime/reference/BundledOptics.zig");
 
 pub const EngineOptions = struct {
     abi_version: u32 = 1,
@@ -64,7 +64,7 @@ pub const Engine = struct {
 
     pub fn bootstrapBuiltinCatalog(self: *Engine) !void {
         try self.catalog.bootstrapBuiltin(self.allocator);
-        try self.registry.bootstrapBuiltin(self.allocator);
+        try self.registry.bootstrapBuiltin(self.allocator, self.options.allow_native_plugins);
         try self.dataset_cache.upsert("builtin.cross_sections", "sha256:builtin-cross-sections-demo");
     }
 
@@ -100,11 +100,11 @@ pub const Engine = struct {
             return errors.Error.PreparedPlanLimitExceeded;
         }
 
-        if (!std.mem.eql(u8, template.transport, "transport.dispatcher")) {
+        const providers = PluginProviders.PreparedProviders.resolve(template.providers) catch {
             return errors.Error.UnsupportedCapability;
-        }
+        };
 
-        const transport_route = TransportDispatcher.prepare(.{
+        const transport_route = providers.transport.prepareRoute(.{
             .regime = template.scene_blueprint.observation_regime,
             .execution_mode = transportExecutionMode(template.solver_mode),
             .derivative_mode = template.scene_blueprint.derivative_mode,
@@ -112,16 +112,20 @@ pub const Engine = struct {
             error.UnsupportedDerivativeMode => return errors.Error.UnsupportedDerivativeMode,
         };
 
-        const plugin_snapshot = try self.registry.snapshot();
+        var plugin_snapshot = self.registry.snapshotSelection(self.allocator, template.providers) catch {
+            return errors.Error.UnsupportedCapability;
+        };
+        errdefer plugin_snapshot.deinit(self.allocator);
+
         var plugin_runtime = PluginRuntime.PreparedPluginRuntime.init();
-        errdefer plugin_runtime.deinit();
-        plugin_runtime.resolveSnapshot(&plugin_snapshot) catch {
+        errdefer plugin_runtime.deinit(self.allocator);
+        plugin_runtime.resolveSnapshot(self.allocator, &plugin_snapshot, self.options.allow_native_plugins) catch {
             return errors.Error.PluginPrepareFailed;
         };
         plugin_runtime.prepareForPlan(.{
             .plan_id = self.next_plan_id,
             .model_family = template.model_family,
-            .transport_route = template.transport,
+            .transport_provider = template.providers.transport_solver,
             .solver_mode = @tagName(template.solver_mode),
         }) catch {
             return errors.Error.PluginPrepareFailed;
@@ -135,12 +139,14 @@ pub const Engine = struct {
             @intCast(dataset_hash_count),
         );
         const plan = Plan.init(
+            self.allocator,
             self.next_plan_id,
             template,
             transport_route,
             prepared_cache,
             plugin_snapshot,
             plugin_runtime,
+            providers,
         );
         try self.plan_cache.put(plan.id, prepared_cache);
         self.next_plan_id += 1;
@@ -173,6 +179,7 @@ pub const Engine = struct {
     pub fn execute(self: *Engine, plan: *const Plan, workspace: *Workspace, request: Request) !Result {
         try plan.assertReady();
         try request.validateForPlan(plan);
+
         plan.plugin_runtime.executeForRequest(.{
             .plan_id = plan.id,
             .scene_id = request.scene.id,
@@ -190,14 +197,16 @@ pub const Engine = struct {
         workspace.prepareScratch(&plan.prepared_cache);
         _ = self.plan_cache.markRun(plan.id);
 
-        const provenance = Provenance.fromPlan(
+        var provenance = Provenance.fromPlan(
+            self.allocator,
             plan,
             workspace.label,
             request.scene.id,
             @tagName(plan.template.solver_mode),
-        );
+        ) catch return errors.Error.PluginPrepareFailed;
+        errdefer provenance.deinit(self.allocator);
 
-        var prepared_optics = BundledOptics.prepareForScene(self.allocator, request.scene) catch |err| switch (err) {
+        var prepared_optics = plan.providers.optics.prepareForScene(self.allocator, request.scene) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => return errors.Error.InvalidRequest,
         };
@@ -208,6 +217,7 @@ pub const Engine = struct {
             request.scene,
             plan.transport_route,
             prepared_optics,
+            measurementProviders(plan),
         );
         errdefer measurement_space_product.deinit(self.allocator);
 
@@ -218,9 +228,27 @@ pub const Engine = struct {
             provenance,
         );
         result.attachMeasurementSpaceProduct(measurement_space_product);
-        result.diagnostics = Diagnostics.fromSpec(
+        if (request.inverse_problem != null) {
+            const retrieval_provider = plan.providers.retrieval orelse return errors.Error.UnsupportedCapability;
+            const retrieval_problem = RetrievalContracts.RetrievalProblem.fromRequest(request) catch {
+                return errors.Error.InvalidRequest;
+            };
+            const retrieval_context: RetrievalExecutionContext = .{
+                .allocator = self.allocator,
+                .plan = plan,
+            };
+            const retrieval_outcome = retrieval_provider.solve(retrieval_problem, .{
+                .context = @ptrCast(&retrieval_context),
+                .evaluate = evaluateRetrievalScene,
+            }) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return errors.Error.InvalidRequest,
+            };
+            result.attachRetrievalOutcome(retrieval_outcome);
+        }
+        result.diagnostics = plan.providers.diagnostics.materialize(
             request.diagnostics,
-            "Measurement-space forward operator executed with typed optical preparation, transport routing, calibration, convolution, noise materialization, and owned spectral payloads.",
+            "Plugin-selected forward and retrieval providers executed with typed scene preparation and owned provenance.",
         );
         return result;
     }
@@ -233,6 +261,35 @@ fn transportExecutionMode(solver_mode: PlanModule.SolverMode) TransportCommon.Ex
     };
 }
 
+fn measurementProviders(plan: *const Plan) MeasurementSpace.ProviderBindings {
+    return .{
+        .transport = plan.providers.transport,
+        .surface = plan.providers.surface,
+        .instrument = plan.providers.instrument,
+        .noise = plan.providers.noise,
+    };
+}
+
+const RetrievalExecutionContext = struct {
+    allocator: std.mem.Allocator,
+    plan: *const Plan,
+};
+
+fn evaluateRetrievalScene(context: *const anyopaque, scene: Scene) anyerror!MeasurementSpace.MeasurementSpaceSummary {
+    const typed_context: *const RetrievalExecutionContext = @ptrCast(@alignCast(context));
+
+    var prepared_optics = try typed_context.plan.providers.optics.prepareForScene(typed_context.allocator, scene);
+    defer prepared_optics.deinit(typed_context.allocator);
+
+    return MeasurementSpace.simulateSummary(
+        typed_context.allocator,
+        scene,
+        typed_context.plan.transport_route,
+        prepared_optics,
+        measurementProviders(typed_context.plan),
+    );
+}
+
 test "preparePlan validates lifecycle prerequisites and plan templates" {
     var engine = Engine.init(std.testing.allocator, .{ .max_prepared_plans = 1 });
     defer engine.deinit();
@@ -240,9 +297,14 @@ test "preparePlan validates lifecycle prerequisites and plan templates" {
     try std.testing.expectError(errors.Error.CatalogNotBootstrapped, engine.preparePlan(.{}));
     try engine.bootstrapBuiltinCatalog();
     try std.testing.expectError(errors.Error.UnsupportedModelFamily, engine.preparePlan(.{ .model_family = "unknown" }));
-    try std.testing.expectError(errors.Error.UnsupportedCapability, engine.preparePlan(.{ .transport = "transport.custom" }));
+    try std.testing.expectError(errors.Error.UnsupportedCapability, engine.preparePlan(.{
+        .providers = .{
+            .transport_solver = "transport.custom",
+        },
+    }));
 
-    _ = try engine.preparePlan(.{});
+    var first_plan = try engine.preparePlan(.{});
+    defer first_plan.deinit();
     try std.testing.expectError(errors.Error.PreparedPlanLimitExceeded, engine.preparePlan(.{}));
 }
 
@@ -251,22 +313,24 @@ test "preparePlan resolves typed transport routes from plan-time observation and
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const scalar_plan = try engine.preparePlan(.{
+    var scalar_plan = try engine.preparePlan(.{
         .scene_blueprint = .{
             .observation_regime = .nadir,
             .derivative_mode = .semi_analytical,
         },
     });
+    defer scalar_plan.deinit();
     try std.testing.expectEqual(TransportCommon.TransportFamily.adding, scalar_plan.transport_route.family);
     try std.testing.expectEqual(TransportCommon.DerivativeMode.semi_analytical, scalar_plan.transport_route.derivative_mode);
 
-    const polarized_plan = try engine.preparePlan(.{
+    var polarized_plan = try engine.preparePlan(.{
         .solver_mode = .polarized,
         .scene_blueprint = .{
             .observation_regime = .limb,
             .derivative_mode = .analytical_plugin,
         },
     });
+    defer polarized_plan.deinit();
     try std.testing.expectEqual(TransportCommon.TransportFamily.labos, polarized_plan.transport_route.family);
     try std.testing.expectEqual(TransportCommon.ExecutionMode.polarized, polarized_plan.transport_route.execution_mode);
     try std.testing.expectEqual(TransportCommon.Regime.limb, polarized_plan.transport_route.regime);
@@ -277,8 +341,10 @@ test "execute enforces workspace plan binding and derivative-mode contracts" {
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const scalar_plan = try engine.preparePlan(.{ .scene_blueprint = .{ .derivative_mode = .none } });
-    const derivative_plan = try engine.preparePlan(.{ .scene_blueprint = .{ .derivative_mode = .semi_analytical } });
+    var scalar_plan = try engine.preparePlan(.{ .scene_blueprint = .{ .derivative_mode = .none } });
+    defer scalar_plan.deinit();
+    var derivative_plan = try engine.preparePlan(.{ .scene_blueprint = .{ .derivative_mode = .semi_analytical } });
+    defer derivative_plan.deinit();
 
     var workspace = engine.createWorkspace("unit");
     const scene: Scene = .{ .id = "scene", .spectral_grid = .{ .sample_count = 4 } };
@@ -296,12 +362,14 @@ test "execute leaves workspace untouched when request validation fails" {
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const first_plan = try engine.preparePlan(.{});
-    const second_plan = try engine.preparePlan(.{
+    var first_plan = try engine.preparePlan(.{});
+    defer first_plan.deinit();
+    var second_plan = try engine.preparePlan(.{
         .scene_blueprint = .{
             .derivative_mode = .semi_analytical,
         },
     });
+    defer second_plan.deinit();
 
     var workspace = engine.createWorkspace("validation-guard");
 
@@ -330,7 +398,8 @@ test "prepared plans keep plugin snapshots when registry changes later" {
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const first_plan = try engine.preparePlan(.{});
+    var first_plan = try engine.preparePlan(.{});
+    defer first_plan.deinit();
 
     try engine.registerPluginManifest(.{
         .id = "example.extra_dataset",
@@ -347,7 +416,8 @@ test "prepared plans keep plugin snapshots when registry changes later" {
         },
     });
 
-    const second_plan = try engine.preparePlan(.{});
+    var second_plan = try engine.preparePlan(.{});
+    defer second_plan.deinit();
 
     try std.testing.expect(second_plan.plugin_snapshot.generation > first_plan.plugin_snapshot.generation);
     try std.testing.expect(second_plan.plugin_snapshot.pluginVersionCount() > first_plan.plugin_snapshot.pluginVersionCount());
@@ -372,7 +442,7 @@ test "prepared plans own reusable cache hints and workspaces own reusable scratc
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(.{
+    var plan = try engine.preparePlan(.{
         .scene_blueprint = .{
             .spectral_grid = .{
                 .start_nm = 405.0,
@@ -384,6 +454,7 @@ test "prepared plans own reusable cache hints and workspaces own reusable scratc
             .measurement_count_hint = 121,
         },
     });
+    defer plan.deinit();
 
     var workspace = engine.createWorkspace("cache-suite");
     const request = Request.init(.{
@@ -434,11 +505,12 @@ test "engine owns runtime caches and batch scheduling helpers explicitly" {
         .coefficient_count = 4,
     });
 
-    const plan = try engine.preparePlan(.{
+    var plan = try engine.preparePlan(.{
         .scene_blueprint = .{
             .measurement_count_hint = 24,
         },
     });
+    defer plan.deinit();
     try std.testing.expect(engine.plan_cache.get(plan.id) != null);
     try std.testing.expectEqual(@as(usize, 2), engine.dataset_cache.count());
     try std.testing.expectEqual(@as(usize, 1), engine.lut_cache.count());

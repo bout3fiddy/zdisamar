@@ -1,11 +1,17 @@
 const std = @import("std");
 const common = @import("../common/contracts.zig");
 const diagnostics = @import("../common/diagnostics.zig");
+const forward_model = @import("../common/forward_model.zig");
 const synthetic_forward = @import("../common/synthetic_forward.zig");
-const zdisamar = @import("zdisamar");
-const small_dense = zdisamar.linalg.small_dense;
+const Scene = @import("../../model/Scene.zig").Scene;
+const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
+const small_dense = @import("../../kernels/linalg/small_dense.zig");
 
 pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome {
+    return solveWithEvaluator(problem, forward_model.defaultEvaluator());
+}
+
+pub fn solveWithEvaluator(problem: common.RetrievalProblem, evaluator: forward_model.SummaryEvaluator) common.Error!common.SolverOutcome {
     try problem.validateForMethod(.dismas);
     _ = try synthetic_forward.validateShape(problem, .dismas);
 
@@ -14,7 +20,7 @@ pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome
     var target_state = [_]f64{ 0.0, 0.0, 0.0 };
     synthetic_forward.targetState(problem, .dismas, target_state[0..]);
     const target = synthetic_forward.featureVector(
-        try synthetic_forward.summarizeState(problem, .dismas, target_state[0..]),
+        try synthetic_forward.summarizeState(problem, .dismas, target_state[0..], evaluator),
         .dismas,
     );
 
@@ -27,7 +33,7 @@ pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome
 
     while (iterations < 7) : (iterations += 1) {
         const predicted = synthetic_forward.featureVector(
-            try synthetic_forward.summarizeState(problem, .dismas, state[0..]),
+            try synthetic_forward.summarizeState(problem, .dismas, state[0..], evaluator),
             .dismas,
         );
         const residual = [3]f64{
@@ -41,7 +47,7 @@ pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome
             var perturbed = state;
             perturbed[column] += 1e-3;
             const perturbed_features = synthetic_forward.featureVector(
-                try synthetic_forward.summarizeState(problem, .dismas, perturbed[0..]),
+                try synthetic_forward.summarizeState(problem, .dismas, perturbed[0..], evaluator),
                 .dismas,
             );
             for (0..3) |row| {
@@ -126,12 +132,29 @@ test "dismas retrieval requires explicit derivative mode" {
         .jacobians_requested = true,
     };
 
-    const ok = try solve(base_problem);
+    const evaluator: forward_model.SummaryEvaluator = .{
+        .context = undefined,
+        .evaluate = struct {
+            fn evaluate(_: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary {
+                return .{
+                    .sample_count = scene.spectral_grid.sample_count,
+                    .wavelength_start_nm = 405.0,
+                    .wavelength_end_nm = 465.0,
+                    .mean_radiance = 1.2,
+                    .mean_irradiance = 2.4,
+                    .mean_reflectance = 0.52,
+                    .mean_noise_sigma = 0.07,
+                    .mean_jacobian = 0.09,
+                };
+            }
+        }.evaluate,
+    };
+    const ok = try solveWithEvaluator(base_problem, evaluator);
     try std.testing.expectEqual(common.Method.dismas, ok.method);
     try std.testing.expect(ok.jacobians_used);
     try std.testing.expect(ok.dfs > 0.0);
 
     var missing_mode = base_problem;
     missing_mode.derivative_mode = .none;
-    try std.testing.expectError(common.Error.DerivativeModeRequired, solve(missing_mode));
+    try std.testing.expectError(common.Error.DerivativeModeRequired, solveWithEvaluator(missing_mode, evaluator));
 }

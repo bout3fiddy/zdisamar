@@ -1,7 +1,7 @@
 {
   "engine_version": "0.1.0-dev",
   "model_family_default": "disamar_standard",
-  "solver_route_default": "transport.dispatcher",
+  "solver_route_default": "builtin.dispatcher",
   "transport_family_default": "adding",
   "derivative_mode_default": "none",
   "numerical_mode_default": "scalar",

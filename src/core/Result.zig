@@ -3,6 +3,7 @@ const Provenance = @import("provenance.zig").Provenance;
 const std = @import("std");
 const MeasurementSpaceSummary = @import("../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
 const MeasurementSpaceProduct = @import("../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
+const RetrievalOutcome = @import("../retrieval/common/contracts.zig").SolverOutcome;
 
 const Allocator = std.mem.Allocator;
 
@@ -21,6 +22,7 @@ pub const Result = struct {
     diagnostics: Diagnostics = .{},
     measurement_space: ?MeasurementSpaceSummary = null,
     measurement_space_product: ?MeasurementSpaceProduct = null,
+    retrieval: ?RetrievalOutcome = null,
 
     pub fn init(
         plan_id: u64,
@@ -42,10 +44,15 @@ pub const Result = struct {
         self.measurement_space_product = product;
     }
 
+    pub fn attachRetrievalOutcome(self: *Result, outcome: RetrievalOutcome) void {
+        self.retrieval = outcome;
+    }
+
     pub fn deinit(self: *Result, allocator: Allocator) void {
         if (self.measurement_space_product) |*product| {
             product.deinit(allocator);
             self.measurement_space_product = null;
         }
+        self.provenance.deinit(allocator);
     }
 };

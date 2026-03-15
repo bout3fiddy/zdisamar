@@ -35,7 +35,8 @@ test "golden provenance defaults remain stable" {
     defer engine.deinit();
 
     try engine.bootstrapBuiltinCatalog();
-    const plan = try engine.preparePlan(.{});
+    var plan = try engine.preparePlan(.{});
+    defer plan.deinit();
     var workspace = engine.createWorkspace("golden-suite");
     const request = zdisamar.Request.init(.{
         .id = "scene-golden-001",

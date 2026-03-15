@@ -17,7 +17,20 @@
         "type": "object",
         "required": ["slot", "name"],
         "properties": {
-          "slot": { "type": "string" },
+          "slot": {
+            "type": "string",
+            "enum": [
+              "absorber.provider",
+              "transport.solver",
+              "retrieval.algorithm",
+              "surface.model",
+              "instrument.response",
+              "noise.model",
+              "diagnostics.metric",
+              "data.pack",
+              "exporter"
+            ]
+          },
           "name": { "type": "string" }
         },
         "additionalProperties": false

@@ -5,14 +5,21 @@ const PreparedOpticalState = @import("../optics/prepare.zig").PreparedOpticalSta
 const grid = @import("../spectra/grid.zig");
 const calibration = @import("../spectra/calibration.zig");
 const convolution = @import("../spectra/convolution.zig");
-const noise = @import("../spectra/noise.zig");
 const common = @import("common.zig");
-const dispatcher = @import("dispatcher.zig");
-const max_line_shape_samples = @import("../../model/Instrument.zig").max_line_shape_samples;
+const InstrumentProviders = @import("../../plugins/providers/instrument.zig");
+const NoiseProviders = @import("../../plugins/providers/noise.zig");
+const PluginProviders = @import("../../plugins/providers/root.zig");
+const SurfaceProviders = @import("../../plugins/providers/surface.zig");
+const TransportProviders = @import("../../plugins/providers/transport.zig");
 
 const Allocator = std.mem.Allocator;
-const default_integration_sample_count: usize = 5;
-const max_integration_sample_count: usize = 17;
+
+pub const ProviderBindings = struct {
+    transport: TransportProviders.Provider,
+    surface: SurfaceProviders.Provider,
+    instrument: InstrumentProviders.Provider,
+    noise: NoiseProviders.Provider,
+};
 
 pub const MeasurementSpaceSummary = struct {
     sample_count: u32,
@@ -66,12 +73,7 @@ pub const Buffers = struct {
     noise_sigma: ?[]f64 = null,
 };
 
-const OperationalInstrumentIntegration = struct {
-    enabled: bool,
-    sample_count: usize,
-    offsets_nm: [max_integration_sample_count]f64,
-    weights: [max_integration_sample_count]f64,
-};
+const OperationalInstrumentIntegration = InstrumentProviders.IntegrationKernel;
 
 const ForwardIntegratedSample = struct {
     radiance: f64,
@@ -92,6 +94,7 @@ pub fn simulate(
     scene: Scene,
     route: common.Route,
     prepared: PreparedOpticalState,
+    providers: ProviderBindings,
     buffers: Buffers,
 ) Error!MeasurementSpaceSummary {
     try scene.validate();
@@ -105,9 +108,9 @@ pub fn simulate(
     };
     try spectral_grid.validate();
 
-    const calibration_config = calibrationForScene(scene);
-    const slit_kernel = slitKernelForScene(scene);
-    const uses_integrated_sampling = usesIntegratedInstrumentSampling(scene);
+    const calibration_config = providers.instrument.calibrationForScene(scene);
+    const slit_kernel = providers.instrument.slitKernelForScene(scene);
+    const uses_integrated_sampling = providers.instrument.usesIntegratedSampling(scene);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
 
@@ -137,7 +140,8 @@ pub fn simulate(
             wavelength_nm,
             phase,
             safe_span,
-            instrumentIntegrationForWavelength(scene, nominal_wavelength_nm),
+            providers,
+            providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm),
         );
         buffers.scratch[index] = integrated.radiance;
         if (uses_integrated_sampling) {
@@ -159,7 +163,7 @@ pub fn simulate(
             prepared,
             wavelength_nm,
             safe_span,
-            instrumentIntegrationForWavelength(scene, nominal_wavelength_nm),
+            providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm),
         );
     }
     if (uses_integrated_sampling) {
@@ -177,7 +181,7 @@ pub fn simulate(
     }
 
     if (buffers.noise_sigma) |noise_sigma| {
-        try noise.shotNoiseStd(buffers.radiance, electronsPerCount(scene), noise_sigma);
+        try providers.noise.materializeSigma(scene, buffers.radiance, noise_sigma);
         for (noise_sigma) |value| noise_sum += value;
     }
 
@@ -192,7 +196,7 @@ pub fn simulate(
                 else
                     @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(sample_count - 1));
                 const input = configuredForwardInput(scene, prepared, buffers.wavelengths[index], phase);
-                const forward = try dispatcher.executePrepared(route, input);
+                const forward = try providers.transport.executePrepared(route, input);
                 buffers.scratch[index] = if (forward.jacobian_column) |value|
                     value * (1.0 + 0.05 * phase)
                 else
@@ -224,8 +228,9 @@ pub fn simulateSummary(
     scene: Scene,
     route: common.Route,
     prepared: PreparedOpticalState,
+    providers: ProviderBindings,
 ) Error!MeasurementSpaceSummary {
-    var product = try simulateProduct(allocator, scene, route, prepared);
+    var product = try simulateProduct(allocator, scene, route, prepared, providers);
     defer product.deinit(allocator);
     return product.summary;
 }
@@ -235,6 +240,7 @@ pub fn simulateProduct(
     scene: Scene,
     route: common.Route,
     prepared: PreparedOpticalState,
+    providers: ProviderBindings,
 ) Error!MeasurementSpaceProduct {
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
 
@@ -248,7 +254,10 @@ pub fn simulateProduct(
     errdefer allocator.free(reflectance);
     const scratch = try allocator.alloc(f64, sample_count);
     defer allocator.free(scratch);
-    const noise_sigma = try allocator.alloc(f64, sample_count);
+    const noise_sigma = if (providers.noise.materializesSigma(scene))
+        try allocator.alloc(f64, sample_count)
+    else
+        try allocator.alloc(f64, 0);
     errdefer allocator.free(noise_sigma);
 
     const jacobian = if (route.derivative_mode == .none)
@@ -257,14 +266,14 @@ pub fn simulateProduct(
         try allocator.alloc(f64, sample_count);
     errdefer if (jacobian) |values| allocator.free(values);
 
-    const summary = try simulate(scene, route, prepared, .{
+    const summary = try simulate(scene, route, prepared, providers, .{
         .wavelengths = wavelengths,
         .radiance = radiance,
         .irradiance = irradiance,
         .reflectance = reflectance,
         .scratch = scratch,
         .jacobian = jacobian,
-        .noise_sigma = noise_sigma,
+        .noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
     });
 
     return .{
@@ -307,167 +316,6 @@ fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
     }
 }
 
-fn calibrationForScene(scene: Scene) calibration.Calibration {
-    return .{
-        .gain = switch (scene.observation_model.regime) {
-            .nadir => 1.0,
-            .limb => 1.04,
-            .occultation => 1.02,
-        },
-        .offset = 0.0,
-        .wavelength_shift_nm = if (scene.observation_model.wavelength_shift_nm != 0.0)
-            scene.observation_model.wavelength_shift_nm
-        else if (std.mem.eql(u8, scene.observation_model.sampling, "operational"))
-            0.02
-        else
-            0.0,
-    };
-}
-
-fn electronsPerCount(scene: Scene) f64 {
-    if (std.mem.eql(u8, scene.observation_model.noise_model, "shot_noise")) return 2.0;
-    if (std.mem.eql(u8, scene.observation_model.noise_model, "s5p_operational")) return 3.5;
-    return 1.0;
-}
-
-fn usesIntegratedInstrumentSampling(scene: Scene) bool {
-    return scene.observation_model.instrument_line_fwhm_nm > 0.0 or
-        scene.observation_model.instrument_line_shape.sample_count > 0 or
-        scene.observation_model.instrument_line_shape_table.nominal_count > 0;
-}
-
-fn instrumentIntegrationForWavelength(scene: Scene, nominal_wavelength_nm: f64) OperationalInstrumentIntegration {
-    if (!usesIntegratedInstrumentSampling(scene)) {
-        return .{
-            .enabled = false,
-            .sample_count = 1,
-            .offsets_nm = [_]f64{0.0} ** max_integration_sample_count,
-            .weights = [_]f64{0.0} ** max_integration_sample_count,
-        };
-    }
-
-    if (scene.observation_model.instrument_line_shape_table.nearestNominalIndex(nominal_wavelength_nm)) |nominal_index| {
-        const table = scene.observation_model.instrument_line_shape_table;
-        var offsets_nm = [_]f64{0.0} ** max_integration_sample_count;
-        var weights = [_]f64{0.0} ** max_integration_sample_count;
-        const sample_count = @min(@as(usize, table.sample_count), max_line_shape_samples);
-        var weight_sum: f64 = 0.0;
-        for (0..sample_count) |index| {
-            offsets_nm[index] = table.offsets_nm[index];
-            weights[index] = table.weightAt(nominal_index, index);
-            weight_sum += weights[index];
-        }
-        if (weight_sum > 0.0) {
-            for (0..sample_count) |index| weights[index] /= weight_sum;
-        } else {
-            weights[0] = 1.0;
-            return .{
-                .enabled = true,
-                .sample_count = 1,
-                .offsets_nm = offsets_nm,
-                .weights = weights,
-            };
-        }
-        return .{
-            .enabled = true,
-            .sample_count = sample_count,
-            .offsets_nm = offsets_nm,
-            .weights = weights,
-        };
-    }
-
-    if (scene.observation_model.instrument_line_shape.sample_count > 0) {
-        var offsets_nm = [_]f64{0.0} ** max_integration_sample_count;
-        var weights = [_]f64{0.0} ** max_integration_sample_count;
-        const sample_count = @min(
-            @as(usize, scene.observation_model.instrument_line_shape.sample_count),
-            max_line_shape_samples,
-        );
-        var weight_sum: f64 = 0.0;
-        for (0..sample_count) |index| {
-            offsets_nm[index] = scene.observation_model.instrument_line_shape.offsets_nm[index];
-            weights[index] = scene.observation_model.instrument_line_shape.weights[index];
-            weight_sum += weights[index];
-        }
-        if (weight_sum > 0.0) {
-            for (0..sample_count) |index| weights[index] /= weight_sum;
-        } else {
-            weights[0] = 1.0;
-            return .{
-                .enabled = true,
-                .sample_count = 1,
-                .offsets_nm = offsets_nm,
-                .weights = weights,
-            };
-        }
-        return .{
-            .enabled = true,
-            .sample_count = sample_count,
-            .offsets_nm = offsets_nm,
-            .weights = weights,
-        };
-    }
-
-    if (scene.observation_model.high_resolution_step_nm > 0.0 and scene.observation_model.high_resolution_half_span_nm > 0.0) {
-        var offsets_nm = [_]f64{0.0} ** max_integration_sample_count;
-        var weights = [_]f64{0.0} ** max_integration_sample_count;
-        const sigma_nm = @max(scene.observation_model.instrument_line_fwhm_nm / 2.354820045, 1.0e-4);
-        const step_nm = scene.observation_model.high_resolution_step_nm;
-        const half_span_nm = scene.observation_model.high_resolution_half_span_nm;
-        var sample_count: usize = 0;
-        var offset_nm = -half_span_nm;
-        while (offset_nm <= half_span_nm + (step_nm * 0.5) and sample_count < max_integration_sample_count) : (offset_nm += step_nm) {
-            offsets_nm[sample_count] = offset_nm;
-            const weight = @exp(-0.5 * std.math.pow(f64, offset_nm / sigma_nm, 2.0));
-            weights[sample_count] = weight;
-            sample_count += 1;
-        }
-        if (sample_count == 0) sample_count = 1;
-        var total_weight: f64 = 0.0;
-        for (0..sample_count) |index| total_weight += weights[index];
-        if (total_weight <= 0.0) {
-            offsets_nm[0] = 0.0;
-            weights[0] = 1.0;
-            sample_count = 1;
-        } else {
-            for (0..sample_count) |index| weights[index] /= total_weight;
-        }
-        return .{
-            .enabled = true,
-            .sample_count = sample_count,
-            .offsets_nm = offsets_nm,
-            .weights = weights,
-        };
-    }
-
-    const sigma_nm = @max(scene.observation_model.instrument_line_fwhm_nm / 2.354820045, 1.0e-4);
-    const offsets_nm: [default_integration_sample_count]f64 = .{
-        -2.0 * sigma_nm,
-        -1.0 * sigma_nm,
-        0.0,
-        1.0 * sigma_nm,
-        2.0 * sigma_nm,
-    };
-
-    var full_offsets_nm = [_]f64{0.0} ** max_integration_sample_count;
-    var weights = [_]f64{0.0} ** max_integration_sample_count;
-    var total_weight: f64 = 0.0;
-    for (offsets_nm, 0..) |offset_nm, index| {
-        full_offsets_nm[index] = offset_nm;
-        const value = @exp(-0.5 * std.math.pow(f64, offset_nm / sigma_nm, 2.0));
-        weights[index] = value;
-        total_weight += value;
-    }
-    for (0..default_integration_sample_count) |index| weights[index] /= total_weight;
-
-    return .{
-        .enabled = true,
-        .sample_count = default_integration_sample_count,
-        .offsets_nm = full_offsets_nm,
-        .weights = weights,
-    };
-}
-
 fn configuredForwardInput(
     scene: Scene,
     prepared: PreparedOpticalState,
@@ -489,6 +337,7 @@ fn configuredForwardInput(
 fn radianceFromForward(
     scene: Scene,
     prepared: PreparedOpticalState,
+    providers: ProviderBindings,
     wavelength_nm: f64,
     safe_span: f64,
     phase: f64,
@@ -496,7 +345,14 @@ fn radianceFromForward(
 ) f64 {
     const solar_term = 1.0 + 0.18 * @cos(2.0 * std.math.pi * ((wavelength_nm - scene.spectral_grid.start_nm) / safe_span));
     const ring_term = 0.01 * @sin(4.0 * std.math.pi * phase);
-    const surface_gain = 0.75 + 0.50 * scene.surface.albedo;
+    const surface_gain = providers.surface.responseGain(.{
+        .scene = scene,
+        .prepared = prepared,
+        .wavelength_nm = wavelength_nm,
+        .safe_span = safe_span,
+        .phase = phase,
+        .forward = forward,
+    });
     const aerosol_optical_depth = prepared.aerosolOpticalDepthAtWavelength(wavelength_nm);
     const cloud_optical_depth = prepared.cloudOpticalDepthAtWavelength(wavelength_nm);
     const aerosol_attenuation = 1.0 + 0.35 * aerosol_optical_depth;
@@ -533,13 +389,14 @@ fn integrateForwardAtNominal(
     nominal_wavelength_nm: f64,
     phase: f64,
     safe_span: f64,
+    providers: ProviderBindings,
     integration: OperationalInstrumentIntegration,
 ) Error!ForwardIntegratedSample {
     if (!integration.enabled) {
         const input = configuredForwardInput(scene, prepared, nominal_wavelength_nm, phase);
-        const forward = try dispatcher.executePrepared(route, input);
+        const forward = try providers.transport.executePrepared(route, input);
         return .{
-            .radiance = radianceFromForward(scene, prepared, nominal_wavelength_nm, safe_span, phase, forward),
+            .radiance = radianceFromForward(scene, prepared, providers, nominal_wavelength_nm, safe_span, phase, forward),
             .jacobian = if (forward.jacobian_column) |value| value * (1.0 + 0.05 * phase) else 0.0,
         };
     }
@@ -551,8 +408,8 @@ fn integrateForwardAtNominal(
         const weight = integration.weights[index];
         const wavelength_nm = nominal_wavelength_nm + offset_nm;
         const input = configuredForwardInput(scene, prepared, wavelength_nm, phase);
-        const forward = try dispatcher.executePrepared(route, input);
-        radiance_sum += weight * radianceFromForward(scene, prepared, wavelength_nm, safe_span, phase, forward);
+        const forward = try providers.transport.executePrepared(route, input);
+        radiance_sum += weight * radianceFromForward(scene, prepared, providers, wavelength_nm, safe_span, phase, forward);
         if (forward.jacobian_column) |value| {
             jacobian_sum += weight * value * (1.0 + 0.05 * phase);
         }
@@ -587,33 +444,6 @@ fn integrateIrradianceAtNominal(
         );
     }
     return irradiance_sum;
-}
-
-fn slitKernelForScene(scene: Scene) [5]f64 {
-    if (scene.observation_model.instrument_line_fwhm_nm <= 0.0) {
-        return .{ 1.0, 4.0, 6.0, 4.0, 1.0 };
-    }
-
-    const sample_spacing_nm = if (scene.spectral_grid.sample_count <= 1)
-        1.0
-    else
-        (scene.spectral_grid.end_nm - scene.spectral_grid.start_nm) / @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
-    const sigma_samples = std.math.clamp(
-        scene.observation_model.instrument_line_fwhm_nm / @max(sample_spacing_nm, 1e-6) / 2.354820045,
-        0.3,
-        2.5,
-    );
-
-    var kernel: [5]f64 = undefined;
-    var sum: f64 = 0.0;
-    for (0..kernel.len) |index| {
-        const offset = @as(f64, @floatFromInt(@as(i32, @intCast(index)) - 2));
-        const value = @exp(-0.5 * std.math.pow(f64, offset / sigma_samples, 2.0));
-        kernel[index] = value;
-        sum += value;
-    }
-    for (&kernel) |*value| value.* /= sum;
-    return kernel;
 }
 
 fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
@@ -662,6 +492,16 @@ fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
     };
 }
 
+fn testProviders() ProviderBindings {
+    const resolved = PluginProviders.PreparedProviders.resolve(.{}) catch unreachable;
+    return .{
+        .transport = resolved.transport,
+        .surface = resolved.surface,
+        .instrument = resolved.instrument,
+        .noise = resolved.noise,
+    };
+}
+
 test "measurement-space simulation composes transport, calibration, convolution, and noise" {
     const scene: Scene = .{
         .id = "measurement-space",
@@ -688,7 +528,7 @@ test "measurement-space simulation composes transport, calibration, convolution,
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    const summary = try simulateSummary(std.testing.allocator, scene, route, prepared);
+    const summary = try simulateSummary(std.testing.allocator, scene, route, prepared, testProviders());
     try std.testing.expectEqual(@as(u32, 16), summary.sample_count);
     try std.testing.expect(summary.mean_radiance > 0.0);
     try std.testing.expect(summary.mean_irradiance > 0.0);
@@ -724,7 +564,7 @@ test "measurement-space product materializes spectral vectors and physical field
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared);
+    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 12), product.summary.sample_count);
@@ -770,7 +610,7 @@ test "measurement-space uses external high-resolution solar spectra when operati
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared);
+    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expect(product.irradiance[0] < product.irradiance[1]);
@@ -818,9 +658,9 @@ test "measurement-space operational integration uses high-resolution instrument 
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var plain_product = try simulateProduct(std.testing.allocator, plain_scene, route, prepared);
+    var plain_product = try simulateProduct(std.testing.allocator, plain_scene, route, prepared, testProviders());
     defer plain_product.deinit(std.testing.allocator);
-    var operational_product = try simulateProduct(std.testing.allocator, operational_scene, route, prepared);
+    var operational_product = try simulateProduct(std.testing.allocator, operational_scene, route, prepared, testProviders());
     defer operational_product.deinit(std.testing.allocator);
 
     try std.testing.expect(operational_product.wavelengths[0] > plain_product.wavelengths[0]);
@@ -880,9 +720,9 @@ test "measurement-space operational integration honors explicit isrf table weigh
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var gaussian_product = try simulateProduct(std.testing.allocator, gaussian_scene, route, prepared);
+    var gaussian_product = try simulateProduct(std.testing.allocator, gaussian_scene, route, prepared, testProviders());
     defer gaussian_product.deinit(std.testing.allocator);
-    var table_product = try simulateProduct(std.testing.allocator, table_scene, route, prepared);
+    var table_product = try simulateProduct(std.testing.allocator, table_scene, route, prepared, testProviders());
     defer table_product.deinit(std.testing.allocator);
 
     try std.testing.expect(table_product.radiance[0] != gaussian_product.radiance[0]);
@@ -953,9 +793,9 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var global_shape_product = try simulateProduct(std.testing.allocator, global_shape_scene, route, prepared);
+    var global_shape_product = try simulateProduct(std.testing.allocator, global_shape_scene, route, prepared, testProviders());
     defer global_shape_product.deinit(std.testing.allocator);
-    var indexed_table_product = try simulateProduct(std.testing.allocator, indexed_table_scene, route, prepared);
+    var indexed_table_product = try simulateProduct(std.testing.allocator, indexed_table_scene, route, prepared, testProviders());
     defer indexed_table_product.deinit(std.testing.allocator);
 
     try std.testing.expectApproxEqAbs(global_shape_product.radiance[0], indexed_table_product.radiance[0], 1e-12);

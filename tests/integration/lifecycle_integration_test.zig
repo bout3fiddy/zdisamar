@@ -7,10 +7,11 @@ test "integration lifecycle preserves typed plan and provenance route" {
 
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(.{
+    var plan = try engine.preparePlan(.{
         .model_family = "disamar_standard",
         .solver_mode = .derivative_enabled,
     });
+    defer plan.deinit();
     var workspace = engine.createWorkspace("integration-suite");
 
     const request = zdisamar.Request.init(.{

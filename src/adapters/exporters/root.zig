@@ -50,6 +50,7 @@ test "netcdf/cf exporter writes file payload to destination uri" {
     const report = try writer.write(
         std.testing.allocator,
         .{
+            .plugin_id = "builtin.netcdf_cf",
             .format = .netcdf_cf,
             .destination_uri = destination_uri,
             .dataset_name = "scene-export",
@@ -82,6 +83,7 @@ test "zarr exporter writes structured store files" {
     const report = try writer.write(
         std.testing.allocator,
         .{
+            .plugin_id = "builtin.zarr",
             .format = .zarr,
             .destination_uri = destination_uri,
             .dataset_name = "scene-export",
@@ -153,5 +155,5 @@ test "diagnostic exporter writes csv and text artifacts" {
     defer std.testing.allocator.free(txt_payload);
 
     try std.testing.expect(std.mem.startsWith(u8, csv_payload, "plan_id,scene_id"));
-    try std.testing.expect(std.mem.containsAtLeast(u8, txt_payload, 1, "solver_route: transport.dispatcher"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, txt_payload, 1, "solver_route: builtin.dispatcher"));
 }

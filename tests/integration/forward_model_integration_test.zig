@@ -6,7 +6,7 @@ test "engine execute materializes measurement-space summaries through the typed 
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const plan = try engine.preparePlan(.{
+    var plan = try engine.preparePlan(.{
         .scene_blueprint = .{
             .observation_regime = .limb,
             .derivative_mode = .semi_analytical,
@@ -19,6 +19,7 @@ test "engine execute materializes measurement-space summaries through the typed 
             .measurement_count_hint = 48,
         },
     });
+    defer plan.deinit();
 
     var workspace = engine.createWorkspace("forward-integration");
     var request = zdisamar.Request.init(.{

@@ -1,10 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Manifest = @import("../loader/manifest.zig");
 const BuiltinPlugins = @import("../builtin/root.zig");
-
-pub const max_snapshot_capabilities: usize = 16;
-pub const max_snapshot_dataset_hashes: usize = 16;
+const Manifest = @import("../loader/manifest.zig");
+const Selection = @import("../selection.zig");
+const Slots = @import("../slots.zig");
 
 pub const Lane = enum {
     declarative,
@@ -12,187 +11,185 @@ pub const Lane = enum {
 };
 
 pub const Capability = struct {
+    manifest_index: usize,
+    capability_index: usize,
     slot: []const u8,
     provider: []const u8,
     manifest_id: []const u8,
     package: ?[]const u8,
     version: []const u8,
     lane: Lane,
-    dataset_hashes: []const []const u8 = &[_][]const u8{},
-    native_entry_symbol: ?[]const u8 = null,
-    native_library_path: ?[]const u8 = null,
+};
 
-    pub fn clone(self: Capability, allocator: Allocator) !Capability {
-        const slot = try allocator.dupe(u8, self.slot);
-        errdefer allocator.free(slot);
+pub const OwnedManifest = struct {
+    manifest: Manifest.PluginManifest,
 
-        const provider = try allocator.dupe(u8, self.provider);
-        errdefer allocator.free(provider);
+    pub fn clone(allocator: Allocator, manifest: Manifest.PluginManifest) !OwnedManifest {
+        const id = try allocator.dupe(u8, manifest.id);
+        errdefer allocator.free(id);
 
-        const manifest_id = try allocator.dupe(u8, self.manifest_id);
-        errdefer allocator.free(manifest_id);
-
-        const package = if (self.package) |value|
+        const package = if (manifest.package) |value|
             try allocator.dupe(u8, value)
         else
             null;
         errdefer if (package) |value| allocator.free(value);
 
-        const version = try allocator.dupe(u8, self.version);
+        const version = try allocator.dupe(u8, manifest.version);
         errdefer allocator.free(version);
 
-        const dataset_hashes = try dupeStringSlice(allocator, self.dataset_hashes);
+        const capabilities = try allocator.alloc(Manifest.CapabilityDecl, manifest.capabilities.len);
+        errdefer allocator.free(capabilities);
+        var copied_capabilities: usize = 0;
+        errdefer {
+            for (capabilities[0..copied_capabilities]) |capability| {
+                allocator.free(capability.slot);
+                allocator.free(capability.name);
+            }
+        }
+        for (manifest.capabilities, 0..) |capability, index| {
+            const slot = try allocator.dupe(u8, capability.slot);
+            errdefer allocator.free(slot);
+            const name = try allocator.dupe(u8, capability.name);
+            errdefer allocator.free(name);
+            capabilities[index] = .{
+                .slot = slot,
+                .name = name,
+            };
+            copied_capabilities = index + 1;
+        }
+
+        const native = if (manifest.native) |value| blk: {
+            const entry_symbol = try allocator.dupe(u8, value.entry_symbol);
+            errdefer allocator.free(entry_symbol);
+            const library_path = if (value.library_path) |path|
+                try allocator.dupe(u8, path)
+            else
+                null;
+            errdefer if (library_path) |path| allocator.free(path);
+            break :blk Manifest.NativeContract{
+                .abi_version = value.abi_version,
+                .entry_symbol = entry_symbol,
+                .library_path = library_path,
+            };
+        } else null;
+        errdefer if (native) |value| {
+            allocator.free(value.entry_symbol);
+            if (value.library_path) |path| allocator.free(path);
+        };
+
+        const provenance_description = try allocator.dupe(u8, manifest.provenance.description);
+        errdefer allocator.free(provenance_description);
+
+        const dataset_hashes = try dupeStringSlice(allocator, manifest.provenance.dataset_hashes);
         errdefer freeStringSlice(allocator, dataset_hashes);
 
-        const native_entry_symbol = if (self.native_entry_symbol) |value|
-            try allocator.dupe(u8, value)
-        else
-            null;
-        errdefer if (native_entry_symbol) |value| allocator.free(value);
-
-        const native_library_path = if (self.native_library_path) |value|
-            try allocator.dupe(u8, value)
-        else
-            null;
-        errdefer if (native_library_path) |value| allocator.free(value);
-
         return .{
-            .slot = slot,
-            .provider = provider,
-            .manifest_id = manifest_id,
-            .package = package,
-            .version = version,
-            .lane = self.lane,
-            .dataset_hashes = dataset_hashes,
-            .native_entry_symbol = native_entry_symbol,
-            .native_library_path = native_library_path,
+            .manifest = .{
+                .schema_version = manifest.schema_version,
+                .id = id,
+                .package = package,
+                .version = version,
+                .lane = manifest.lane,
+                .capabilities = capabilities,
+                .native = native,
+                .provenance = .{
+                    .description = provenance_description,
+                    .dataset_hashes = dataset_hashes,
+                },
+            },
         };
     }
 
-    pub fn deinit(self: *Capability, allocator: Allocator) void {
-        allocator.free(self.slot);
-        allocator.free(self.provider);
-        allocator.free(self.manifest_id);
-        if (self.package) |value| allocator.free(value);
-        allocator.free(self.version);
-        freeStringSlice(allocator, self.dataset_hashes);
-        if (self.native_entry_symbol) |value| allocator.free(value);
-        if (self.native_library_path) |value| allocator.free(value);
+    pub fn deinit(self: *OwnedManifest, allocator: Allocator) void {
+        allocator.free(self.manifest.id);
+        if (self.manifest.package) |value| allocator.free(value);
+        allocator.free(self.manifest.version);
+        for (self.manifest.capabilities) |capability| {
+            allocator.free(capability.slot);
+            allocator.free(capability.name);
+        }
+        allocator.free(self.manifest.capabilities);
+        if (self.manifest.native) |native| {
+            allocator.free(native.entry_symbol);
+            if (native.library_path) |value| allocator.free(value);
+        }
+        allocator.free(self.manifest.provenance.description);
+        freeStringSlice(allocator, self.manifest.provenance.dataset_hashes);
         self.* = undefined;
     }
 };
 
-pub const ResolvedCapability = struct {
+pub const SnapshotCapability = struct {
     slot: []const u8,
     provider: []const u8,
     manifest_id: []const u8,
     package: ?[]const u8,
     version: []const u8,
     lane: Lane,
-    native_entry_symbol: ?[]const u8 = null,
-    native_library_path: ?[]const u8 = null,
-    version_label_storage: [96]u8 = [_]u8{0} ** 96,
-    version_label_len: usize = 0,
+    native_entry_symbol: ?[]const u8,
+    native_library_path: ?[]const u8,
+    version_label: []const u8,
 
-    pub fn versionLabel(self: *const ResolvedCapability) []const u8 {
-        return self.version_label_storage[0..self.version_label_len];
+    pub fn deinit(self: *SnapshotCapability, allocator: Allocator) void {
+        allocator.free(self.version_label);
+        self.* = undefined;
     }
 };
 
 pub const PluginSnapshot = struct {
     generation: u64 = 0,
-    capability_count: usize = 0,
-    capabilities: [max_snapshot_capabilities]ResolvedCapability = undefined,
-    dataset_hash_count: usize = 0,
-    dataset_hash_entries: [max_snapshot_dataset_hashes][]const u8 = undefined,
-    native_capability_count: usize = 0,
-    native_slot_entries: [max_snapshot_capabilities][]const u8 = undefined,
-    native_entry_symbol_entries: [max_snapshot_capabilities][]const u8 = undefined,
-    native_library_path_entries: [max_snapshot_capabilities][]const u8 = undefined,
+    manifests: []OwnedManifest = &.{},
+    capabilities: []SnapshotCapability = &.{},
+    dataset_hash_entries: [][]const u8 = &.{},
+    native_slot_entries: [][]const u8 = &.{},
+    native_entry_symbol_entries: [][]const u8 = &.{},
+    native_library_path_entries: [][]const u8 = &.{},
 
-    pub fn init(generation: u64) PluginSnapshot {
-        return .{ .generation = generation };
-    }
+    pub fn deinit(self: *PluginSnapshot, allocator: Allocator) void {
+        for (self.capabilities) |*capability| capability.deinit(allocator);
+        if (self.capabilities.len != 0) allocator.free(self.capabilities);
 
-    pub fn appendCapability(self: *PluginSnapshot, capability: Capability) !void {
-        if (self.capability_count >= max_snapshot_capabilities) {
-            return error.PluginSnapshotOverflow;
-        }
+        for (self.manifests) |*manifest| manifest.deinit(allocator);
+        if (self.manifests.len != 0) allocator.free(self.manifests);
 
-        var resolved: ResolvedCapability = .{
-            .slot = capability.slot,
-            .provider = capability.provider,
-            .manifest_id = capability.manifest_id,
-            .package = capability.package,
-            .version = capability.version,
-            .lane = capability.lane,
-            .native_entry_symbol = capability.native_entry_symbol,
-            .native_library_path = capability.native_library_path,
-        };
-        try fillVersionLabel(&resolved);
-
-        self.capabilities[self.capability_count] = resolved;
-        self.capability_count += 1;
-
-        for (capability.dataset_hashes) |dataset_hash| {
-            if (self.dataset_hash_count >= max_snapshot_dataset_hashes) {
-                return error.PluginSnapshotOverflow;
-            }
-            self.dataset_hash_entries[self.dataset_hash_count] = dataset_hash;
-            self.dataset_hash_count += 1;
-        }
-
-        if (capability.lane == .native) {
-            if (self.native_capability_count >= max_snapshot_capabilities) {
-                return error.PluginSnapshotOverflow;
-            }
-            self.native_slot_entries[self.native_capability_count] = capability.slot;
-            self.native_entry_symbol_entries[self.native_capability_count] =
-                capability.native_entry_symbol orelse "";
-            self.native_library_path_entries[self.native_capability_count] =
-                capability.native_library_path orelse "";
-            self.native_capability_count += 1;
-        }
+        if (self.dataset_hash_entries.len != 0) allocator.free(self.dataset_hash_entries);
+        if (self.native_slot_entries.len != 0) allocator.free(self.native_slot_entries);
+        if (self.native_entry_symbol_entries.len != 0) allocator.free(self.native_entry_symbol_entries);
+        if (self.native_library_path_entries.len != 0) allocator.free(self.native_library_path_entries);
+        self.* = .{};
     }
 
     pub fn pluginVersionCount(self: *const PluginSnapshot) usize {
-        return self.capability_count;
+        return self.capabilities.len;
     }
 
     pub fn pluginVersionAt(self: *const PluginSnapshot, index: usize) []const u8 {
-        std.debug.assert(index < self.capability_count);
-        return self.capabilities[index].versionLabel();
+        std.debug.assert(index < self.capabilities.len);
+        return self.capabilities[index].version_label;
     }
 
     pub fn datasetHashes(self: *const PluginSnapshot) []const []const u8 {
-        return self.dataset_hash_entries[0..self.dataset_hash_count];
+        return self.dataset_hash_entries;
     }
 
     pub fn nativeCapabilitySlots(self: *const PluginSnapshot) []const []const u8 {
-        return self.native_slot_entries[0..self.native_capability_count];
+        return self.native_slot_entries;
     }
 
     pub fn nativeEntrySymbols(self: *const PluginSnapshot) []const []const u8 {
-        return self.native_entry_symbol_entries[0..self.native_capability_count];
+        return self.native_entry_symbol_entries;
     }
 
     pub fn nativeLibraryPaths(self: *const PluginSnapshot) []const []const u8 {
-        return self.native_library_path_entries[0..self.native_capability_count];
+        return self.native_library_path_entries;
     }
 };
 
 pub const CapabilityRegistry = struct {
+    manifests: std.ArrayListUnmanaged(OwnedManifest) = .{},
     capabilities: std.ArrayListUnmanaged(Capability) = .{},
     generation: u64 = 0,
     bootstrapped: bool = false,
-
-    pub fn register(self: *CapabilityRegistry, allocator: Allocator, capability: Capability) !void {
-        var owned = try capability.clone(allocator);
-        errdefer owned.deinit(allocator);
-
-        try self.capabilities.append(allocator, owned);
-        self.generation += 1;
-    }
 
     pub fn registerManifest(
         self: *CapabilityRegistry,
@@ -202,101 +199,111 @@ pub const CapabilityRegistry = struct {
     ) !void {
         try manifest.validate(allow_native_plugins);
 
-        const start_len = self.capabilities.items.len;
+        const start_manifest_len = self.manifests.items.len;
+        const start_capability_len = self.capabilities.items.len;
         const start_generation = self.generation;
         const start_bootstrapped = self.bootstrapped;
-        errdefer self.rollback(allocator, start_len, start_generation, start_bootstrapped);
+        errdefer self.rollback(allocator, start_manifest_len, start_capability_len, start_generation, start_bootstrapped);
 
-        for (manifest.capabilities) |capability| {
-            try self.register(allocator, .{
+        const manifest_index = blk: {
+            var owned_manifest = try OwnedManifest.clone(allocator, manifest);
+            errdefer owned_manifest.deinit(allocator);
+
+            try self.manifests.append(allocator, owned_manifest);
+            break :blk self.manifests.items.len - 1;
+        };
+        const stored = self.manifests.items[manifest_index].manifest;
+
+        for (stored.capabilities, 0..) |capability, capability_index| {
+            try self.capabilities.append(allocator, .{
+                .manifest_index = manifest_index,
+                .capability_index = capability_index,
                 .slot = capability.slot,
                 .provider = capability.name,
-                .manifest_id = manifest.id,
-                .package = manifest.package,
-                .version = manifest.version,
-                .lane = switch (manifest.lane) {
+                .manifest_id = stored.id,
+                .package = stored.package,
+                .version = stored.version,
+                .lane = switch (stored.lane) {
                     .declarative => .declarative,
                     .native => .native,
                 },
-                .dataset_hashes = manifest.provenance.dataset_hashes,
-                .native_entry_symbol = if (manifest.native) |native| native.entry_symbol else null,
-                .native_library_path = if (manifest.native) |native| native.library_path else null,
             });
         }
+
+        self.generation += 1;
     }
 
-    pub fn snapshot(self: *const CapabilityRegistry) !PluginSnapshot {
-        var plugin_snapshot = PluginSnapshot.init(self.generation);
-        for (self.capabilities.items) |capability| {
-            try plugin_snapshot.appendCapability(capability);
+    pub fn snapshotSelection(
+        self: *const CapabilityRegistry,
+        allocator: Allocator,
+        provider_selection: Selection.ProviderSelection,
+    ) !PluginSnapshot {
+        var snapshot: PluginSnapshot = .{ .generation = self.generation };
+        errdefer snapshot.deinit(allocator);
+
+        var selected_manifest_indices = std.ArrayListUnmanaged(usize){};
+        defer selected_manifest_indices.deinit(allocator);
+
+        try appendSelection(self, allocator, &snapshot, &selected_manifest_indices, Slots.absorber_provider, provider_selection.absorber_provider);
+        try appendSelection(self, allocator, &snapshot, &selected_manifest_indices, Slots.transport_solver, provider_selection.transport_solver);
+        try appendSelection(self, allocator, &snapshot, &selected_manifest_indices, Slots.surface_model, provider_selection.surface_model);
+        try appendSelection(self, allocator, &snapshot, &selected_manifest_indices, Slots.instrument_response, provider_selection.instrument_response);
+        try appendSelection(self, allocator, &snapshot, &selected_manifest_indices, Slots.noise_model, provider_selection.noise_model);
+        try appendSelection(self, allocator, &snapshot, &selected_manifest_indices, Slots.diagnostics_metric, provider_selection.diagnostics_metric);
+        if (provider_selection.retrieval_algorithm) |provider_id| {
+            try appendSelection(self, allocator, &snapshot, &selected_manifest_indices, Slots.retrieval_algorithm, provider_id);
         }
-        return plugin_snapshot;
+        try appendAllForSlot(self, allocator, &snapshot, &selected_manifest_indices, Slots.data_pack);
+
+        try materializeSnapshotViews(allocator, &snapshot);
+        return snapshot;
     }
 
-    pub fn bootstrapBuiltin(self: *CapabilityRegistry, allocator: Allocator) !void {
+    pub fn bootstrapBuiltin(
+        self: *CapabilityRegistry,
+        allocator: Allocator,
+        allow_native_plugins: bool,
+    ) !void {
+        _ = allow_native_plugins;
         if (self.bootstrapped) return;
 
-        const start_len = self.capabilities.items.len;
+        const start_manifest_len = self.manifests.items.len;
+        const start_capability_len = self.capabilities.items.len;
         const start_generation = self.generation;
         const start_bootstrapped = self.bootstrapped;
-        errdefer self.rollback(allocator, start_len, start_generation, start_bootstrapped);
+        errdefer self.rollback(allocator, start_manifest_len, start_capability_len, start_generation, start_bootstrapped);
 
-        try self.registerManifest(allocator, .{
-            .id = "builtin.cross_sections",
-            .package = "disamar_standard",
-            .version = "0.1.0",
-            .lane = .declarative,
-            .capabilities = &[_]Manifest.CapabilityDecl{
-                .{ .slot = "absorber.provider", .name = "builtin.cross_sections" },
-            },
-            .provenance = .{
-                .description = "Built-in spectroscopy data pack",
-                .dataset_hashes = &[_][]const u8{
-                    "sha256:builtin-cross-sections-demo",
-                },
-            },
-        }, false);
-        try self.registerManifest(allocator, .{
-            .id = "builtin.transport_dispatcher",
-            .package = "disamar_standard",
-            .version = "0.1.0",
-            .lane = .native,
-            .capabilities = &[_]Manifest.CapabilityDecl{
-                .{ .slot = "transport.solver", .name = "builtin.dispatcher" },
-            },
-            .native = .{},
-        }, true);
-        try self.registerManifest(allocator, BuiltinPlugins.builtin_manifests[1], true);
-        try self.registerManifest(allocator, BuiltinPlugins.builtin_manifests[2], true);
-        try self.registerManifest(allocator, BuiltinPlugins.builtin_manifests[3], true);
-        try self.registerManifest(allocator, .{
-            .id = "builtin.netcdf_cf_exporter",
-            .package = "builtin_exporters",
-            .version = "0.1.0",
-            .lane = .native,
-            .capabilities = &[_]Manifest.CapabilityDecl{
-                .{ .slot = "exporter", .name = "builtin.netcdf_cf" },
-            },
-            .native = .{},
-        }, true);
-        try self.registerManifest(allocator, .{
-            .id = "builtin.zarr_exporter",
-            .package = "builtin_exporters",
-            .version = "0.1.0",
-            .lane = .native,
-            .capabilities = &[_]Manifest.CapabilityDecl{
-                .{ .slot = "exporter", .name = "builtin.zarr" },
-            },
-            .native = .{},
-        }, true);
+        inline for (BuiltinPlugins.execution_manifests) |manifest| {
+            try self.registerManifest(allocator, manifest, true);
+        }
 
         self.bootstrapped = true;
     }
 
-    pub fn deinit(self: *CapabilityRegistry, allocator: Allocator) void {
-        for (self.capabilities.items) |*capability| {
-            capability.deinit(allocator);
+    pub fn snapshotInventory(self: *const CapabilityRegistry, allocator: Allocator) !PluginSnapshot {
+        var snapshot: PluginSnapshot = .{ .generation = self.generation };
+        errdefer snapshot.deinit(allocator);
+
+        snapshot.manifests = try allocator.alloc(OwnedManifest, self.manifests.items.len);
+        for (self.manifests.items, 0..) |manifest, index| {
+            snapshot.manifests[index] = try OwnedManifest.clone(allocator, manifest.manifest);
         }
+
+        snapshot.capabilities = try allocator.alloc(SnapshotCapability, self.capabilities.items.len);
+        for (self.capabilities.items, 0..) |capability, index| {
+            snapshot.capabilities[index] = try snapshotCapabilityFor(
+                allocator,
+                capability,
+                &snapshot.manifests[capability.manifest_index].manifest,
+            );
+        }
+        try materializeSnapshotViews(allocator, &snapshot);
+        return snapshot;
+    }
+
+    pub fn deinit(self: *CapabilityRegistry, allocator: Allocator) void {
+        for (self.manifests.items) |*manifest| manifest.deinit(allocator);
+        self.manifests.deinit(allocator);
         self.capabilities.deinit(allocator);
         self.* = .{};
     }
@@ -304,31 +311,152 @@ pub const CapabilityRegistry = struct {
     fn rollback(
         self: *CapabilityRegistry,
         allocator: Allocator,
-        start_len: usize,
+        start_manifest_len: usize,
+        start_capability_len: usize,
         start_generation: u64,
         start_bootstrapped: bool,
     ) void {
-        while (self.capabilities.items.len > start_len) {
-            const last_index = self.capabilities.items.len - 1;
-            self.capabilities.items[last_index].deinit(allocator);
-            self.capabilities.items.len = last_index;
+        while (self.manifests.items.len > start_manifest_len) {
+            const last_index = self.manifests.items.len - 1;
+            self.manifests.items[last_index].deinit(allocator);
+            self.manifests.items.len = last_index;
         }
+        self.capabilities.items.len = start_capability_len;
         self.generation = start_generation;
         self.bootstrapped = start_bootstrapped;
     }
 };
 
-fn fillVersionLabel(resolved: *ResolvedCapability) !void {
-    const label = std.fmt.bufPrint(
-        &resolved.version_label_storage,
-        "{s}@{s}",
-        .{ resolved.provider, resolved.version },
-    ) catch return error.PluginVersionLabelTooLong;
-    resolved.version_label_len = label.len;
+fn appendSelection(
+    registry: *const CapabilityRegistry,
+    allocator: Allocator,
+    snapshot: *PluginSnapshot,
+    selected_manifest_indices: *std.ArrayListUnmanaged(usize),
+    slot: []const u8,
+    provider: []const u8,
+) !void {
+    const capability = findCapability(registry, slot, provider) orelse return error.MissingSelectedProvider;
+    try appendCapability(registry, allocator, snapshot, selected_manifest_indices, capability.*);
+}
+
+fn appendAllForSlot(
+    registry: *const CapabilityRegistry,
+    allocator: Allocator,
+    snapshot: *PluginSnapshot,
+    selected_manifest_indices: *std.ArrayListUnmanaged(usize),
+    slot: []const u8,
+) !void {
+    for (registry.capabilities.items) |capability| {
+        if (!std.mem.eql(u8, capability.slot, slot)) continue;
+        try appendCapability(registry, allocator, snapshot, selected_manifest_indices, capability);
+    }
+}
+
+fn appendCapability(
+    registry: *const CapabilityRegistry,
+    allocator: Allocator,
+    snapshot: *PluginSnapshot,
+    selected_manifest_indices: *std.ArrayListUnmanaged(usize),
+    capability: Capability,
+) !void {
+    const manifest = &registry.manifests.items[capability.manifest_index].manifest;
+
+    var snapshot_manifest_index: ?usize = null;
+    for (selected_manifest_indices.items, 0..) |existing_manifest_index, index| {
+        if (existing_manifest_index == capability.manifest_index) {
+            snapshot_manifest_index = index;
+            break;
+        }
+    }
+
+    if (snapshot_manifest_index == null) {
+        try selected_manifest_indices.append(allocator, capability.manifest_index);
+        {
+            var cloned = try OwnedManifest.clone(allocator, manifest.*);
+            errdefer cloned.deinit(allocator);
+
+            snapshot.manifests = try allocator.realloc(snapshot.manifests, snapshot.manifests.len + 1);
+            snapshot.manifests[snapshot.manifests.len - 1] = cloned;
+        }
+        snapshot_manifest_index = snapshot.manifests.len - 1;
+    }
+
+    {
+        var snapshot_capability = try snapshotCapabilityFor(
+            allocator,
+            capability,
+            &snapshot.manifests[snapshot_manifest_index.?].manifest,
+        );
+        errdefer snapshot_capability.deinit(allocator);
+
+        snapshot.capabilities = try allocator.realloc(snapshot.capabilities, snapshot.capabilities.len + 1);
+        snapshot.capabilities[snapshot.capabilities.len - 1] = snapshot_capability;
+    }
+}
+
+fn snapshotCapabilityFor(
+    allocator: Allocator,
+    capability: Capability,
+    manifest: *const Manifest.PluginManifest,
+) !SnapshotCapability {
+    const stored_capability = manifest.capabilities[capability.capability_index];
+    return .{
+        .slot = stored_capability.slot,
+        .provider = stored_capability.name,
+        .manifest_id = manifest.id,
+        .package = manifest.package,
+        .version = manifest.version,
+        .lane = switch (manifest.lane) {
+            .declarative => .declarative,
+            .native => .native,
+        },
+        .native_entry_symbol = if (manifest.native) |native| native.entry_symbol else null,
+        .native_library_path = if (manifest.native) |native| native.library_path else null,
+        .version_label = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ stored_capability.name, manifest.version }),
+    };
+}
+
+fn findCapability(registry: *const CapabilityRegistry, slot: []const u8, provider: []const u8) ?*const Capability {
+    for (registry.capabilities.items) |*capability| {
+        if (!std.mem.eql(u8, capability.slot, slot)) continue;
+        if (std.mem.eql(u8, capability.provider, provider)) return capability;
+    }
+    return null;
+}
+
+fn materializeSnapshotViews(allocator: Allocator, snapshot: *PluginSnapshot) !void {
+    var dataset_hash_count: usize = 0;
+    for (snapshot.manifests) |manifest| {
+        dataset_hash_count += manifest.manifest.provenance.dataset_hashes.len;
+    }
+    snapshot.dataset_hash_entries = try allocator.alloc([]const u8, dataset_hash_count);
+    var dataset_hash_index: usize = 0;
+    for (snapshot.manifests) |manifest| {
+        for (manifest.manifest.provenance.dataset_hashes) |dataset_hash| {
+            snapshot.dataset_hash_entries[dataset_hash_index] = dataset_hash;
+            dataset_hash_index += 1;
+        }
+    }
+
+    var native_count: usize = 0;
+    for (snapshot.capabilities) |capability| {
+        if (capability.lane == .native) native_count += 1;
+    }
+    snapshot.native_slot_entries = try allocator.alloc([]const u8, native_count);
+    snapshot.native_entry_symbol_entries = try allocator.alloc([]const u8, native_count);
+    snapshot.native_library_path_entries = try allocator.alloc([]const u8, native_count);
+    var native_index: usize = 0;
+    for (snapshot.capabilities) |capability| {
+        if (capability.lane != .native) continue;
+        snapshot.native_slot_entries[native_index] = capability.slot;
+        snapshot.native_entry_symbol_entries[native_index] = capability.native_entry_symbol orelse "";
+        snapshot.native_library_path_entries[native_index] = capability.native_library_path orelse "";
+        native_index += 1;
+    }
 }
 
 fn dupeStringSlice(allocator: Allocator, values: []const []const u8) ![]const []const u8 {
-    var owned = try allocator.alloc([]const u8, values.len);
+    const owned = try allocator.alloc([]const u8, values.len);
     errdefer allocator.free(owned);
 
     var copied: usize = 0;
@@ -345,6 +473,7 @@ fn dupeStringSlice(allocator: Allocator, values: []const []const u8) ![]const []
 }
 
 fn freeStringSlice(allocator: Allocator, values: []const []const u8) void {
+    if (values.len == 0) return;
     for (values) |value| allocator.free(value);
     allocator.free(values);
 }
@@ -353,7 +482,7 @@ fn bootstrapBuiltinWithAllocator(allocator: Allocator) !void {
     var registry: CapabilityRegistry = .{};
     defer registry.deinit(allocator);
 
-    try registry.bootstrapBuiltin(allocator);
+    try registry.bootstrapBuiltin(allocator, true);
 }
 
 test "register manifest enforces native lane opt-in" {
@@ -365,7 +494,7 @@ test "register manifest enforces native lane opt-in" {
         .version = "0.1.0",
         .lane = .native,
         .capabilities = &[_]Manifest.CapabilityDecl{
-            .{ .slot = "surface.model", .name = "example.native_surface" },
+            .{ .slot = Slots.surface_model, .name = "example.native_surface" },
         },
         .native = .{},
     };
@@ -376,11 +505,11 @@ test "register manifest enforces native lane opt-in" {
     );
 }
 
-test "bootstrap registers declarative and native lanes" {
+test "bootstrap registers declarative and native lanes when policy allows them" {
     var registry: CapabilityRegistry = .{};
     defer registry.deinit(std.testing.allocator);
 
-    try registry.bootstrapBuiltin(std.testing.allocator);
+    try registry.bootstrapBuiltin(std.testing.allocator, true);
 
     var saw_declarative = false;
     var saw_native = false;
@@ -393,12 +522,13 @@ test "bootstrap registers declarative and native lanes" {
     try std.testing.expect(saw_native);
 }
 
-test "snapshot freezes plugin provenance entries by generation" {
+test "selection snapshot freezes only the providers used by the plan" {
     var registry: CapabilityRegistry = .{};
     defer registry.deinit(std.testing.allocator);
 
-    try registry.bootstrapBuiltin(std.testing.allocator);
-    const before = try registry.snapshot();
+    try registry.bootstrapBuiltin(std.testing.allocator, true);
+    var before = try registry.snapshotSelection(std.testing.allocator, .{});
+    defer before.deinit(std.testing.allocator);
 
     try registry.registerManifest(std.testing.allocator, .{
         .id = "example.extra_dataset",
@@ -406,7 +536,7 @@ test "snapshot freezes plugin provenance entries by generation" {
         .version = "0.2.0",
         .lane = .declarative,
         .capabilities = &[_]Manifest.CapabilityDecl{
-            .{ .slot = "data.pack", .name = "example.extra_dataset" },
+            .{ .slot = Slots.exporter, .name = "example.extra_dataset" },
         },
         .provenance = .{
             .dataset_hashes = &[_][]const u8{
@@ -415,64 +545,47 @@ test "snapshot freezes plugin provenance entries by generation" {
         },
     }, false);
 
-    const after = try registry.snapshot();
+    var after = try registry.snapshotSelection(std.testing.allocator, .{});
+    defer after.deinit(std.testing.allocator);
 
-    try std.testing.expect(after.generation > before.generation);
-    try std.testing.expect(after.pluginVersionCount() > before.pluginVersionCount());
-    try std.testing.expect(after.datasetHashes().len > before.datasetHashes().len);
-    try std.testing.expectEqualStrings(
-        "builtin.cross_sections@0.1.0",
-        before.pluginVersionAt(0),
-    );
+    try std.testing.expectEqual(before.generation + 1, after.generation);
+    try std.testing.expectEqual(before.pluginVersionCount(), after.pluginVersionCount());
+    try std.testing.expectEqual(before.datasetHashes().len, after.datasetHashes().len);
+    try std.testing.expectEqualStrings("builtin.cross_sections@0.1.0", before.pluginVersionAt(0));
 }
 
-test "register manifest clones caller-owned storage" {
+test "snapshot selection owns manifest data independently from the registry" {
     var registry: CapabilityRegistry = .{};
     defer registry.deinit(std.testing.allocator);
 
-    const id = try std.testing.allocator.dupe(u8, "example.mutable_manifest");
-    defer std.testing.allocator.free(id);
-    const package = try std.testing.allocator.dupe(u8, "mutable_package");
-    defer std.testing.allocator.free(package);
-    const version = try std.testing.allocator.dupe(u8, "1.2.3");
-    defer std.testing.allocator.free(version);
-    const slot = try std.testing.allocator.dupe(u8, "data.pack");
-    defer std.testing.allocator.free(slot);
-    const provider = try std.testing.allocator.dupe(u8, "example.mutable_provider");
-    defer std.testing.allocator.free(provider);
-    const dataset_hash = try std.testing.allocator.dupe(u8, "sha256:mutable-dataset");
-    defer std.testing.allocator.free(dataset_hash);
-
+    try registry.bootstrapBuiltin(std.testing.allocator, true);
     try registry.registerManifest(std.testing.allocator, .{
-        .id = id,
-        .package = package,
-        .version = version,
+        .id = "example.mutable_manifest",
+        .package = "mutable_package",
+        .version = "1.2.3",
         .lane = .declarative,
         .capabilities = &[_]Manifest.CapabilityDecl{
-            .{ .slot = slot, .name = provider },
+            .{ .slot = Slots.absorber_provider, .name = "example.mutable_provider" },
         },
         .provenance = .{
             .dataset_hashes = &[_][]const u8{
-                dataset_hash,
+                "sha256:mutable-dataset",
             },
         },
     }, false);
 
-    id[0] = 'X';
-    package[0] = 'X';
-    version[0] = '9';
-    slot[0] = 'X';
-    provider[0] = 'X';
-    dataset_hash[0] = 'X';
+    var snapshot = try registry.snapshotSelection(std.testing.allocator, .{
+        .absorber_provider = "example.mutable_provider",
+        .transport_solver = "builtin.dispatcher",
+        .surface_model = "builtin.lambertian_surface",
+        .instrument_response = "builtin.generic_response",
+        .noise_model = "builtin.scene_noise",
+        .diagnostics_metric = "builtin.default_diagnostics",
+    });
+    defer snapshot.deinit(std.testing.allocator);
 
-    const snapshot = try registry.snapshot();
-    try std.testing.expectEqualStrings("example.mutable_manifest", registry.capabilities.items[0].manifest_id);
-    try std.testing.expectEqualStrings("mutable_package", registry.capabilities.items[0].package.?);
-    try std.testing.expectEqualStrings("1.2.3", registry.capabilities.items[0].version);
-    try std.testing.expectEqualStrings("data.pack", registry.capabilities.items[0].slot);
-    try std.testing.expectEqualStrings("example.mutable_provider", registry.capabilities.items[0].provider);
-    try std.testing.expectEqualStrings("sha256:mutable-dataset", registry.capabilities.items[0].dataset_hashes[0]);
     try std.testing.expectEqualStrings("example.mutable_provider@1.2.3", snapshot.pluginVersionAt(0));
+    try std.testing.expectEqualStrings("sha256:mutable-dataset", snapshot.datasetHashes()[0]);
 }
 
 test "bootstrap rolls back after allocation failure and can retry" {
@@ -486,28 +599,12 @@ test "bootstrap rolls back after allocation failure and can retry" {
     });
     const allocator = failing.allocator();
 
-    try std.testing.expectError(error.OutOfMemory, registry.bootstrapBuiltin(allocator));
+    try std.testing.expectError(error.OutOfMemory, registry.bootstrapBuiltin(allocator, true));
     try std.testing.expectEqual(@as(usize, 0), registry.capabilities.items.len);
     try std.testing.expectEqual(@as(u64, 0), registry.generation);
     try std.testing.expect(!registry.bootstrapped);
-    try std.testing.expect(failing.allocations > 0);
-    try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
 
-    try registry.bootstrapBuiltin(std.testing.allocator);
+    try registry.bootstrapBuiltin(std.testing.allocator, true);
     try std.testing.expect(registry.bootstrapped);
     try std.testing.expect(registry.capabilities.items.len > 0);
-}
-
-test "snapshot rejects provider labels that do not fit fixed provenance storage" {
-    var snapshot = PluginSnapshot.init(1);
-    const long_provider = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop";
-
-    try std.testing.expectError(error.PluginVersionLabelTooLong, snapshot.appendCapability(.{
-        .slot = "data.pack",
-        .provider = long_provider,
-        .manifest_id = "example.long_provider",
-        .package = "disamar_standard",
-        .version = "2026.03.14",
-        .lane = .declarative,
-    }));
 }

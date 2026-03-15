@@ -590,6 +590,7 @@ test "netcdf/cf exporter renders a classic binary payload with named metadata ta
     });
 
     const payload = try renderNetcdfClassicPayload(std.testing.allocator, Spec.buildArtifact(.{
+        .plugin_id = "builtin.netcdf_cf",
         .format = .netcdf_cf,
         .destination_uri = "file://out/scene-a.nc",
         .dataset_name = "scene-a",

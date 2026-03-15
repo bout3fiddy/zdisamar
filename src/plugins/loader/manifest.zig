@@ -1,4 +1,5 @@
 const std = @import("std");
+const Slots = @import("../slots.zig");
 
 pub const ExecutionLane = enum {
     declarative,
@@ -42,6 +43,14 @@ pub const PluginManifest = struct {
         if (self.capabilities.len == 0) {
             return Error.MissingCapabilities;
         }
+        for (self.capabilities) |capability| {
+            if (capability.slot.len == 0 or capability.name.len == 0) {
+                return Error.InvalidManifest;
+            }
+            if (!Slots.isKnown(capability.slot)) {
+                return Error.UnknownCapabilitySlot;
+            }
+        }
 
         switch (self.lane) {
             .declarative => {
@@ -66,6 +75,7 @@ pub const Error = error{
     MissingEntrySymbol,
     NativePluginsDisabled,
     UnsupportedNativeAbiVersion,
+    UnknownCapabilitySlot,
 };
 
 test "declarative plugin validates without native contract" {
@@ -96,4 +106,17 @@ test "native plugin requires explicit opt-in and contract" {
 
     try std.testing.expectError(Error.NativePluginsDisabled, manifest.validate(false));
     try manifest.validate(true);
+}
+
+test "manifest validation rejects unknown capability slots" {
+    const manifest: PluginManifest = .{
+        .id = "example.invalid_slot",
+        .version = "0.1.0",
+        .lane = .declarative,
+        .capabilities = &[_]CapabilityDecl{
+            .{ .slot = "surface.typo", .name = "example.invalid_slot" },
+        },
+    };
+
+    try std.testing.expectError(Error.UnknownCapabilitySlot, manifest.validate(false));
 }

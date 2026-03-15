@@ -6,7 +6,8 @@ test "result provenance carries frozen plugin versions and dataset hashes from t
     defer engine.deinit();
 
     try engine.bootstrapBuiltinCatalog();
-    const plan_before = try engine.preparePlan(.{});
+    var plan_before = try engine.preparePlan(.{});
+    defer plan_before.deinit();
 
     try engine.registerPluginManifest(.{
         .id = "example.dataset_patch",
@@ -23,7 +24,8 @@ test "result provenance carries frozen plugin versions and dataset hashes from t
         },
     });
 
-    const plan_after = try engine.preparePlan(.{});
+    var plan_after = try engine.preparePlan(.{});
+    defer plan_after.deinit();
 
     var workspace = engine.createWorkspace("unit-provenance");
     const request = zdisamar.Request.init(.{

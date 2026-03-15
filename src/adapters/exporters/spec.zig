@@ -18,6 +18,7 @@ pub const Chunking = struct {
 };
 
 pub const ExportRequest = struct {
+    plugin_id: []const u8,
     format: ExportFormat,
     destination_uri: []const u8,
     dataset_name: []const u8 = "result",
@@ -41,7 +42,7 @@ pub fn buildArtifact(request: ExportRequest) ExportArtifact {
         .format = request.format,
         .destination_uri = request.destination_uri,
         .dataset_name = request.dataset_name,
-        .plugin_id = request.format.defaultPluginId(),
+        .plugin_id = request.plugin_id,
         .media_type = request.format.mediaType(),
         .extension = request.format.extension(),
         .includes_provenance = request.include_provenance,
@@ -50,6 +51,7 @@ pub fn buildArtifact(request: ExportRequest) ExportArtifact {
 
 test "adapter maps export request to stable artifact metadata" {
     const netcdf = buildArtifact(.{
+        .plugin_id = "builtin.netcdf_cf",
         .format = .netcdf_cf,
         .destination_uri = "file://out/scene.nc",
     });
@@ -58,6 +60,7 @@ test "adapter maps export request to stable artifact metadata" {
     try std.testing.expectEqualStrings(".nc", netcdf.extension);
 
     const zarr = buildArtifact(.{
+        .plugin_id = "builtin.zarr",
         .format = .zarr,
         .destination_uri = "file://out/scene.zarr",
         .dataset_name = "slant_column",
