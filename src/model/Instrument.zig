@@ -29,7 +29,7 @@ pub const OperationalReferenceGrid = struct {
                 return errors.Error.InvalidRequest;
             }
             if (previous_wavelength) |previous| {
-                if (wavelength_nm < previous) return errors.Error.InvalidRequest;
+                if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
             }
             previous_wavelength = wavelength_nm;
             weight_sum += weight;
@@ -72,7 +72,7 @@ pub const OperationalSolarSpectrum = struct {
                 return errors.Error.InvalidRequest;
             }
             if (previous_wavelength) |previous| {
-                if (wavelength_nm < previous) return errors.Error.InvalidRequest;
+                if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
             }
             previous_wavelength = wavelength_nm;
         }
@@ -155,7 +155,7 @@ pub const OperationalCrossSectionLut = struct {
         for (self.wavelengths_nm) |wavelength_nm| {
             if (!std.math.isFinite(wavelength_nm)) return errors.Error.InvalidRequest;
             if (previous_wavelength) |previous| {
-                if (wavelength_nm < previous) return errors.Error.InvalidRequest;
+                if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
             }
             previous_wavelength = wavelength_nm;
         }
@@ -607,4 +607,45 @@ test "operational reference grid and solar spectrum validate typed external inpu
         instrument.operational_solar_spectrum.interpolateIrradiance(760.9),
         1.0e10,
     );
+}
+
+test "operational typed carriers reject duplicate wavelengths" {
+    const invalid_grid: Instrument = .{
+        .name = "tropomi",
+        .sampling = "operational",
+        .noise_model = "s5p_operational",
+        .operational_refspec_grid = .{
+            .wavelengths_nm = &[_]f64{ 760.8, 760.8 },
+            .weights = &[_]f64{ 0.5, 0.5 },
+        },
+    };
+    try std.testing.expectError(errors.Error.InvalidRequest, invalid_grid.validate());
+
+    const invalid_solar: Instrument = .{
+        .name = "tropomi",
+        .sampling = "operational",
+        .noise_model = "s5p_operational",
+        .operational_solar_spectrum = .{
+            .wavelengths_nm = &[_]f64{ 760.8, 760.8 },
+            .irradiance = &[_]f64{ 2.7e14, 2.8e14 },
+        },
+    };
+    try std.testing.expectError(errors.Error.InvalidRequest, invalid_solar.validate());
+
+    const invalid_lut: Instrument = .{
+        .name = "tropomi",
+        .sampling = "operational",
+        .noise_model = "s5p_operational",
+        .o2_operational_lut = .{
+            .wavelengths_nm = &[_]f64{ 760.8, 760.8 },
+            .coefficients = &[_]f64{ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0 },
+            .temperature_coefficient_count = 2,
+            .pressure_coefficient_count = 2,
+            .min_temperature_k = 220.0,
+            .max_temperature_k = 320.0,
+            .min_pressure_hpa = 150.0,
+            .max_pressure_hpa = 1000.0,
+        },
+    };
+    try std.testing.expectError(errors.Error.InvalidRequest, invalid_lut.validate());
 }
