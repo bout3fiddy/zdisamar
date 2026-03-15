@@ -41,7 +41,8 @@ test "golden provenance defaults remain stable" {
         .id = "scene-golden-001",
         .spectral_grid = .{ .sample_count = 16 },
     });
-    const result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, request);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqualStrings(parsed.value.engine_version, result.provenance.engine_version);
     try std.testing.expectEqualStrings(parsed.value.model_family_default, result.provenance.model_family);
@@ -52,7 +53,7 @@ test "golden provenance defaults remain stable" {
     try std.testing.expect(result.provenance.plugin_inventory_generation >= parsed.value.plugin_inventory_generation_min);
 
     var saw_plugin_version = false;
-    for (result.provenance.plugin_versions) |plugin_version| {
+    for (result.provenance.pluginVersions()) |plugin_version| {
         if (std.mem.eql(u8, plugin_version, parsed.value.required_plugin_version)) {
             saw_plugin_version = true;
             break;

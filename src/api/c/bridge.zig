@@ -166,7 +166,7 @@ fn describeResultWithPointers(
             .invalid_request => .invalid_argument,
             .internal_error => .internal,
         },
-        .plugin_count = @as(u32, @intCast(result.provenance.plugin_versions.len)),
+        .plugin_count = @as(u32, @intCast(result.provenance.pluginVersionCount())),
     };
 }
 
@@ -353,11 +353,12 @@ export fn zdisamar_execute(
     const desc = request_desc orelse return .invalid_argument;
     const workspace_handle = castWorkspace(workspace_ptr);
     const request = toRequest(desc) catch |err| return mapError(err);
-    const result = castEngine(engine_ptr).engine.execute(
+    var result = castEngine(engine_ptr).engine.execute(
         &castPlan(@constCast(plan_ptr)).plan,
         &workspace_handle.workspace,
         request,
     ) catch |err| return mapError(err);
+    defer result.deinit(std.heap.c_allocator);
     workspace_handle.captureResultStrings(result) catch |err| return mapError(err);
     out_result.* = describeResultWithPointers(
         result,

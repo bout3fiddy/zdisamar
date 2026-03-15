@@ -31,6 +31,11 @@ pub const MissionRun = struct {
     request: Request,
     export_request: ExportSpec.ExportRequest,
     measurement_summary: ?Measurement = null,
+
+    pub fn deinit(self: *MissionRun, allocator: std.mem.Allocator) void {
+        self.request.scene.deinitOwned(allocator);
+        self.* = undefined;
+    }
 };
 
 pub const OperationalOptions = struct {
@@ -120,30 +125,76 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
 
     const spectral_grid = loaded.spectralGrid() orelse return error.InvalidOperationalInput;
     const measurement_summary = loaded.measurement("radiance");
+    const metadata = loaded.metadata;
     const requested_product = switch (options.product) {
         .no2_nadir => "slant_column.no2",
         .hcho_nadir => "slant_column.hcho",
     };
 
-    const scene: Scene = .{
+    const has_clouds = options.has_clouds or metadata.hasClouds();
+    const has_aerosols = options.has_aerosols or metadata.hasAerosols();
+
+    var scene: Scene = .{
         .id = options.scene_id,
         .atmosphere = .{
             .layer_count = options.layer_count,
-            .has_clouds = options.has_clouds,
-            .has_aerosols = options.has_aerosols,
+            .has_clouds = has_clouds,
+            .has_aerosols = has_aerosols,
         },
         .geometry = .{
-            .solar_zenith_deg = options.solar_zenith_deg,
-            .viewing_zenith_deg = options.viewing_zenith_deg,
-            .relative_azimuth_deg = options.relative_azimuth_deg,
+            .solar_zenith_deg = metadata.solar_zenith_deg orelse options.solar_zenith_deg,
+            .viewing_zenith_deg = metadata.viewing_zenith_deg orelse options.viewing_zenith_deg,
+            .relative_azimuth_deg = metadata.relative_azimuth_deg orelse options.relative_azimuth_deg,
         },
         .spectral_grid = spectral_grid,
+        .surface = if (metadata.surface_albedo) |albedo|
+            .{
+                .albedo = albedo,
+            }
+        else
+            .{},
+        .cloud = if (has_clouds)
+            .{
+                .enabled = true,
+                .optical_thickness = metadata.cloud_optical_thickness orelse 0.20,
+                .single_scatter_albedo = metadata.cloud_single_scatter_albedo orelse 0.998,
+                .asymmetry_factor = metadata.cloud_asymmetry_factor orelse 0.84,
+                .angstrom_exponent = metadata.cloud_angstrom_exponent orelse 0.25,
+                .top_altitude_km = metadata.cloud_top_altitude_km orelse 6.0,
+                .thickness_km = metadata.cloud_thickness_km orelse 1.5,
+            }
+        else
+            .{},
+        .aerosol = if (has_aerosols)
+            .{
+                .enabled = true,
+                .optical_depth = metadata.aerosol_optical_depth orelse 0.10,
+                .single_scatter_albedo = metadata.aerosol_single_scatter_albedo orelse 0.93,
+                .asymmetry_factor = metadata.aerosol_asymmetry_factor orelse 0.68,
+                .angstrom_exponent = metadata.aerosol_angstrom_exponent orelse 1.2,
+                .layer_center_km = metadata.aerosol_layer_center_km orelse 2.5,
+                .layer_width_km = metadata.aerosol_layer_width_km orelse 2.5,
+            }
+        else
+            .{},
         .observation_model = .{
             .instrument = options.instrument,
             .sampling = options.sampling,
             .noise_model = options.noise_model,
+            .wavelength_shift_nm = metadata.wavelength_shift_nm orelse 0.0,
+            .instrument_line_fwhm_nm = metadata.isrf_fwhm_nm orelse 0.0,
+            .high_resolution_step_nm = metadata.high_resolution_step_nm orelse 0.0,
+            .high_resolution_half_span_nm = metadata.high_resolution_half_span_nm orelse 0.0,
+            .instrument_line_shape = metadata.instrument_line_shape,
+            .instrument_line_shape_table = metadata.instrument_line_shape_table,
         },
     };
+    errdefer scene.deinitOwned(allocator);
+
+    scene.observation_model.operational_refspec_grid = try metadata.operational_refspec_grid.clone(allocator);
+    scene.observation_model.operational_solar_spectrum = try metadata.operational_solar_spectrum.clone(allocator);
+    scene.observation_model.o2_operational_lut = try metadata.o2_operational_lut.clone(allocator);
+    scene.observation_model.o2o2_operational_lut = try metadata.o2o2_operational_lut.clone(allocator);
 
     var request = Request.init(scene);
     request.expected_derivative_mode = options.derivative_mode;
@@ -185,17 +236,90 @@ test "s5p mission adapter builds typed plan, request, and export inputs" {
 }
 
 test "s5p operational adapter derives spectral grid from measured input" {
-    const mission_run = try buildOperational(std.testing.allocator, .{
+    var mission_run = try buildOperational(std.testing.allocator, .{
         .scene_id = "s5p-op-no2",
         .spectral_input_path = "data/examples/irr_rad_channels_demo.txt",
         .destination_uri = "file://out/s5p-op-no2.nc",
     });
+    defer mission_run.deinit(std.testing.allocator);
 
     try std.testing.expectEqualStrings("s5p-op-no2", mission_run.plan_template.scene_blueprint.id);
     try std.testing.expectEqual(@as(u32, 2), mission_run.plan_template.scene_blueprint.measurement_count_hint);
     try std.testing.expectEqualStrings("measured_channels", mission_run.request.scene.observation_model.sampling);
     try std.testing.expectEqualStrings("snr_from_input", mission_run.request.scene.observation_model.noise_model);
     try std.testing.expectEqual(@as(u32, 2), mission_run.measurement_summary.?.sample_count);
+}
+
+test "s5p operational adapter replaces geometry and auxiliary scene fields from metadata" {
+    var mission_run = try buildOperational(std.testing.allocator, .{
+        .scene_id = "s5p-op-aux",
+        .spectral_input_path = "data/examples/irr_rad_channels_operational_aux_demo.txt",
+        .destination_uri = "file://out/s5p-op-aux.nc",
+    });
+    defer mission_run.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(f64, 31.7), mission_run.request.scene.geometry.solar_zenith_deg);
+    try std.testing.expectEqual(@as(f64, 7.9), mission_run.request.scene.geometry.viewing_zenith_deg);
+    try std.testing.expectEqual(@as(f64, 143.4), mission_run.request.scene.geometry.relative_azimuth_deg);
+    try std.testing.expectEqual(@as(f64, 0.065), mission_run.request.scene.surface.albedo);
+    try std.testing.expect(mission_run.request.scene.atmosphere.has_clouds);
+    try std.testing.expect(mission_run.request.scene.atmosphere.has_aerosols);
+    try std.testing.expect(mission_run.request.scene.cloud.enabled);
+    try std.testing.expect(mission_run.request.scene.aerosol.enabled);
+    try std.testing.expectEqual(@as(f64, 0.22), mission_run.request.scene.cloud.optical_thickness);
+    try std.testing.expectEqual(@as(f64, 0.12), mission_run.request.scene.aerosol.optical_depth);
+    try std.testing.expectEqual(@as(f64, 0.018), mission_run.request.scene.observation_model.wavelength_shift_nm);
+    try std.testing.expectEqual(@as(f64, 0.54), mission_run.request.scene.observation_model.instrument_line_fwhm_nm);
+    try std.testing.expectEqual(@as(u32, 3), mission_run.measurement_summary.?.sample_count);
+}
+
+test "s5p operational adapter maps explicit high-resolution grid and isrf table metadata" {
+    var mission_run = try buildOperational(std.testing.allocator, .{
+        .scene_id = "s5p-op-isrf-table",
+        .spectral_input_path = "data/examples/irr_rad_channels_operational_isrf_table_demo.txt",
+        .destination_uri = "file://out/s5p-op-isrf-table.nc",
+    });
+    defer mission_run.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(f64, 0.08), mission_run.request.scene.observation_model.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.32), mission_run.request.scene.observation_model.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 5), mission_run.request.scene.observation_model.instrument_line_shape.sample_count);
+    try std.testing.expectEqual(@as(f64, -0.32), mission_run.request.scene.observation_model.instrument_line_shape.offsets_nm[0]);
+    try std.testing.expectEqual(@as(f64, 0.36), mission_run.request.scene.observation_model.instrument_line_shape.weights[2]);
+    try std.testing.expectEqual(@as(u16, 3), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_count);
+    try std.testing.expectEqual(@as(f64, 406.0), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_wavelengths_nm[1]);
+    try std.testing.expectEqual(@as(f64, 0.30), mission_run.request.scene.observation_model.instrument_line_shape_table.weightAt(1, 1));
+}
+
+test "s5p operational adapter maps O2 and O2-O2 refspec LUT metadata" {
+    var mission_run = try buildOperational(std.testing.allocator, .{
+        .scene_id = "s5p-op-refspec",
+        .spectral_input_path = "data/examples/irr_rad_channels_operational_refspec_demo.txt",
+        .destination_uri = "file://out/s5p-op-refspec.nc",
+        .sampling = "operational",
+        .noise_model = "s5p_operational",
+    });
+    defer mission_run.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("operational", mission_run.request.scene.observation_model.sampling);
+    try std.testing.expectEqualStrings("s5p_operational", mission_run.request.scene.observation_model.noise_model);
+    try std.testing.expect(mission_run.request.scene.observation_model.operational_refspec_grid.enabled());
+    try std.testing.expect(mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expectEqual(@as(usize, 3), mission_run.request.scene.observation_model.operational_refspec_grid.wavelengths_nm.len);
+    try std.testing.expectEqual(@as(usize, 5), mission_run.request.scene.observation_model.operational_solar_spectrum.wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.70), mission_run.request.scene.observation_model.operational_refspec_grid.weights[1], 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), mission_run.request.scene.observation_model.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
+    try std.testing.expect(mission_run.request.scene.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(mission_run.request.scene.observation_model.o2o2_operational_lut.enabled());
+    try std.testing.expectEqual(@as(usize, 3), mission_run.request.scene.observation_model.o2_operational_lut.wavelengths_nm.len);
+    try std.testing.expect(
+        mission_run.request.scene.observation_model.o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
+            mission_run.request.scene.observation_model.o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
+    );
+    try std.testing.expect(
+        mission_run.request.scene.observation_model.o2o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
+            mission_run.request.scene.observation_model.o2o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
+    );
 }
 
 const std = @import("std");

@@ -22,21 +22,21 @@ fn makeOutputRoot(prefix: []const u8, path_buffer: []u8) ![]const u8 {
 }
 
 fn makeResult() Result {
-    const plugin_versions = &[_][]const u8{
-        "builtin.netcdf_cf@0.1.0",
-        "builtin.zarr@0.1.0",
-    };
     const dataset_hashes = &[_][]const u8{
         "sha256:test-cross-sections",
         "sha256:test-lut",
     };
-    return Result.init(42, "export-suite", "scene-export", .{
+    var provenance: @import("../../core/provenance.zig").Provenance = .{
         .plan_id = 42,
         .workspace_label = "export-suite",
         .scene_id = "scene-export",
-        .plugin_versions = plugin_versions,
         .dataset_hashes = dataset_hashes,
+    };
+    provenance.setPluginVersions(&[_][]const u8{
+        "builtin.netcdf_cf@0.1.0",
+        "builtin.zarr@0.1.0",
     });
+    return Result.init(42, "export-suite", "scene-export", provenance);
 }
 
 test "netcdf/cf exporter writes file payload to destination uri" {

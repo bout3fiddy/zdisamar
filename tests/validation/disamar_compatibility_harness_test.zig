@@ -21,6 +21,13 @@ const ParityCase = struct {
     expected_derivative_mode: []const u8,
     expected_jacobians_used: ?bool = null,
     status: []const u8,
+    spectral_start_nm: f64 = 405.0,
+    spectral_end_nm: f64 = 465.0,
+    has_aerosols: bool = false,
+    has_clouds: bool = false,
+    use_o2a_spectroscopy: bool = false,
+    use_mie_phase_table: bool = false,
+    sublayer_divisions: u8 = 3,
     tolerances: struct {
         absolute: f64,
         relative: f64,
@@ -92,23 +99,7 @@ fn makeRetrievalRequest(
         .dismas => "multi_band_signal",
     };
 
-    const scene: zdisamar.Scene = .{
-        .id = case.id,
-        .spectral_grid = .{
-            .start_nm = 405.0,
-            .end_nm = 465.0,
-            .sample_count = case.runtime_profile.spectral_samples,
-        },
-        .observation_model = .{
-            .instrument = "compatibility-harness",
-            .regime = regime,
-            .sampling = "synthetic",
-            .noise_model = "shot_noise",
-        },
-        .atmosphere = .{
-            .layer_count = 24,
-        },
-    };
+    const scene = makeSceneForCase(case, regime);
 
     return .{
         .scene = scene,
@@ -126,6 +117,196 @@ fn makeRetrievalRequest(
         .expected_derivative_mode = derivative_mode,
         .diagnostics = .{ .jacobians = derivative_mode != .none },
     };
+}
+
+fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisamar.Scene {
+    return .{
+        .id = case.id,
+        .spectral_grid = .{
+            .start_nm = case.spectral_start_nm,
+            .end_nm = case.spectral_end_nm,
+            .sample_count = case.runtime_profile.spectral_samples,
+        },
+        .observation_model = .{
+            .instrument = "compatibility-harness",
+            .regime = regime,
+            .sampling = "synthetic",
+            .noise_model = "shot_noise",
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = case.sublayer_divisions,
+            .has_aerosols = case.has_aerosols,
+            .has_clouds = case.has_clouds,
+        },
+        .aerosol = if (case.has_aerosols)
+            .{
+                .enabled = true,
+                .optical_depth = 0.18,
+                .single_scatter_albedo = 0.94,
+                .asymmetry_factor = 0.72,
+                .angstrom_exponent = 1.2,
+                .reference_wavelength_nm = 550.0,
+                .layer_center_km = 2.0,
+                .layer_width_km = 2.0,
+            }
+        else
+            .{},
+        .cloud = if (case.has_clouds)
+            .{
+                .enabled = true,
+                .optical_thickness = 0.25,
+                .single_scatter_albedo = 0.998,
+                .asymmetry_factor = 0.84,
+                .angstrom_exponent = 0.25,
+                .reference_wavelength_nm = 550.0,
+                .top_altitude_km = 4.0,
+                .thickness_km = 1.5,
+            }
+        else
+            .{},
+    };
+}
+
+fn buildZeroContinuumTable(
+    allocator: std.mem.Allocator,
+    start_nm: f64,
+    end_nm: f64,
+) !zdisamar.reference_data.CrossSectionTable {
+    const midpoint_nm = (start_nm + end_nm) * 0.5;
+    return .{
+        .points = try allocator.dupe(zdisamar.reference_data.CrossSectionPoint, &.{
+            .{ .wavelength_nm = start_nm, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = midpoint_nm, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = end_nm, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+}
+
+fn prepareOpticalStateForCase(
+    allocator: std.mem.Allocator,
+    case: ParityCase,
+    scene: zdisamar.Scene,
+) !zdisamar.optics.prepare.PreparedOpticalState {
+    var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        allocator,
+        .climatology_profile,
+        "data/climatologies/bundle_manifest.json",
+        "us_standard_1976_profile",
+    );
+    defer climatology_asset.deinit(allocator);
+
+    var cross_section_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        allocator,
+        .cross_section_table,
+        "data/cross_sections/bundle_manifest.json",
+        "no2_405_465_demo",
+    );
+    defer cross_section_asset.deinit(allocator);
+
+    var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        allocator,
+        .lookup_table,
+        "data/luts/bundle_manifest.json",
+        "airmass_factor_nadir_demo",
+    );
+    defer lut_asset.deinit(allocator);
+
+    var profile = try climatology_asset.toClimatologyProfile(allocator);
+    defer profile.deinit(allocator);
+    var cross_sections = try cross_section_asset.toCrossSectionTable(allocator);
+    defer cross_sections.deinit(allocator);
+    if (case.use_o2a_spectroscopy) {
+        cross_sections.deinit(allocator);
+        cross_sections = try buildZeroContinuumTable(
+            allocator,
+            scene.spectral_grid.start_nm,
+            scene.spectral_grid.end_nm,
+        );
+    }
+    var lut = try lut_asset.toAirmassFactorLut(allocator);
+    defer lut.deinit(allocator);
+
+    var line_list: ?zdisamar.reference_data.SpectroscopyLineList = null;
+    defer if (line_list) |owned_line_list| {
+        var owned = owned_line_list;
+        owned.deinit(allocator);
+    };
+    var collision_induced_absorption: ?zdisamar.reference_data.CollisionInducedAbsorptionTable = null;
+    defer if (collision_induced_absorption) |owned_table| {
+        var owned = owned_table;
+        owned.deinit(allocator);
+    };
+
+    if (case.use_o2a_spectroscopy) {
+        var line_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+            allocator,
+            .spectroscopy_line_list,
+            "data/cross_sections/bundle_manifest.json",
+            "o2a_hitran_subset_07_hit08_tropomi",
+        );
+        defer line_asset.deinit(allocator);
+        var strong_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+            allocator,
+            .spectroscopy_strong_line_set,
+            "data/cross_sections/bundle_manifest.json",
+            "o2a_lisa_sdf_subset",
+        );
+        defer strong_asset.deinit(allocator);
+        var rmf_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+            allocator,
+            .spectroscopy_relaxation_matrix,
+            "data/cross_sections/bundle_manifest.json",
+            "o2a_lisa_rmf_subset",
+        );
+        defer rmf_asset.deinit(allocator);
+
+        var prepared_lines = try line_asset.toSpectroscopyLineList(allocator);
+        var strong_lines = try strong_asset.toSpectroscopyStrongLineSet(allocator);
+        defer strong_lines.deinit(allocator);
+        var relaxation_matrix = try rmf_asset.toSpectroscopyRelaxationMatrix(allocator);
+        defer relaxation_matrix.deinit(allocator);
+        try prepared_lines.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
+        line_list = prepared_lines;
+
+        var cia_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+            allocator,
+            .collision_induced_absorption_table,
+            "data/cross_sections/bundle_manifest.json",
+            "o2o2_bira_o2a_subset",
+        );
+        defer cia_asset.deinit(allocator);
+        collision_induced_absorption = try cia_asset.toCollisionInducedAbsorptionTable(allocator);
+    }
+
+    var mie_table: ?zdisamar.reference_data.MiePhaseTable = null;
+    defer if (mie_table) |owned_table| {
+        var owned = owned_table;
+        owned.deinit(allocator);
+    };
+
+    if (case.use_mie_phase_table) {
+        var mie_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+            allocator,
+            .mie_phase_table,
+            "data/luts/bundle_manifest.json",
+            "mie_dust_phase_subset",
+        );
+        defer mie_asset.deinit(allocator);
+        mie_table = try mie_asset.toMiePhaseTable(allocator);
+    }
+
+    return zdisamar.optics.prepare.prepareWithParticleTables(
+        allocator,
+        scene,
+        profile,
+        cross_sections,
+        collision_induced_absorption,
+        line_list,
+        lut,
+        mie_table,
+        null,
+    );
 }
 
 fn executeRetrievalCase(case: ParityCase, request: zdisamar.Request) !retrieval.common.contracts.SolverOutcome {
@@ -244,6 +425,10 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
                 std.mem.eql(u8, case.status, "retrieval_executed_contract") or
                 std.mem.eql(u8, case.status, "retrieval_numeric_anchor");
             try std.testing.expect(supported_status);
+        } else if (std.mem.eql(u8, case.component, "optics")) {
+            try std.testing.expectEqualStrings("optics_prepared_contract", case.status);
+        } else if (std.mem.eql(u8, case.component, "measurement_space")) {
+            try std.testing.expectEqualStrings("measurement_space_contract", case.status);
         } else {
             try std.testing.expectEqualStrings("scaffold_executable", case.status);
         }
@@ -278,8 +463,8 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
                 .observation_regime = regime,
                 .derivative_mode = derivative_mode,
                 .spectral_grid = .{
-                    .start_nm = 405.0,
-                    .end_nm = 465.0,
+                    .start_nm = case.spectral_start_nm,
+                    .end_nm = case.spectral_end_nm,
                     .sample_count = case.runtime_profile.spectral_samples,
                 },
                 .measurement_count_hint = case.runtime_profile.spectral_samples,
@@ -287,23 +472,13 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
         });
 
         workspace.reset();
-        var scene_id_storage: [128]u8 = undefined;
-        const scene_id = try std.fmt.bufPrint(&scene_id_storage, "scene-{s}", .{case.id});
+        const case_scene = makeSceneForCase(case, regime);
         const request = if (std.mem.eql(u8, case.component, "retrieval"))
             try makeRetrievalRequest(case, regime, derivative_mode)
         else
-            zdisamar.Request.init(.{
-                .id = scene_id,
-                .spectral_grid = .{
-                    .start_nm = 405.0,
-                    .end_nm = 465.0,
-                    .sample_count = case.runtime_profile.spectral_samples,
-                },
-                .observation_model = .{
-                    .regime = regime,
-                },
-            });
-        const result = try engine.execute(&plan, &workspace, request);
+            zdisamar.Request.init(case_scene);
+        var result = try engine.execute(&plan, &workspace, request);
+        defer result.deinit(std.testing.allocator);
 
         try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
         try std.testing.expectEqualStrings(case.expected_route_family, result.provenance.transport_family);
@@ -332,6 +507,38 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
                 try std.testing.expectEqual(anchor.solution_has_converged, outcome.converged);
                 try expectNear(outcome.cost, anchor.chi2, case.tolerances.absolute, case.tolerances.relative);
                 try expectNear(outcome.dfs, anchor.dfs, case.tolerances.absolute, case.tolerances.relative);
+            }
+        } else if (std.mem.eql(u8, case.component, "optics")) {
+            var prepared = try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);
+            defer prepared.deinit(std.testing.allocator);
+
+            try std.testing.expect(prepared.sublayers != null);
+            try std.testing.expect(prepared.sublayers.?.len > prepared.layers.len);
+            if (case.use_o2a_spectroscopy) {
+                try std.testing.expect(@abs(prepared.spectroscopy_lines.?.evaluateAt(771.3, prepared.effective_temperature_k, prepared.effective_pressure_hpa).line_mixing_sigma_cm2_per_molecule) > 0.0);
+                try std.testing.expect(prepared.collision_induced_absorption != null);
+                try std.testing.expect(prepared.cia_optical_depth > 0.0);
+            }
+            if (case.use_mie_phase_table) {
+                try std.testing.expect(prepared.sublayers.?[0].aerosol_phase_coefficients[1] > case_scene.aerosol.asymmetry_factor);
+            }
+        } else if (std.mem.eql(u8, case.component, "measurement_space")) {
+            var prepared = try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);
+            defer prepared.deinit(std.testing.allocator);
+
+            const summary = try zdisamar.transport.measurement_space.simulateSummary(
+                std.testing.allocator,
+                case_scene,
+                plan.transport_route,
+                prepared,
+            );
+            try std.testing.expectEqual(case.runtime_profile.spectral_samples, summary.sample_count);
+            try std.testing.expect(summary.mean_radiance > 0.0);
+            try std.testing.expect(summary.mean_reflectance > 0.0);
+            if (derivative_mode == .none) {
+                try std.testing.expect(summary.mean_jacobian == null);
+            } else {
+                try std.testing.expect(summary.mean_jacobian != null);
             }
         }
         executed_cases += 1;

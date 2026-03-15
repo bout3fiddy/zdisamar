@@ -138,6 +138,63 @@
       },
       "expected_jacobians_used": true,
       "status": "retrieval_executed_contract"
+    },
+    {
+      "id": "optics_o2a_strong_line_subgrid",
+      "component": "optics",
+      "upstream_case": "InputFiles/Config_O2A_XsecLUT.in",
+      "upstream_reference_output": "test/disamar.out",
+      "runtime_profile": {
+        "observation_regime": "nadir",
+        "solver_mode": "scalar",
+        "derivative_mode": "semi_analytical",
+        "spectral_samples": 161
+      },
+      "expected_route_family": "adding",
+      "expected_derivative_mode": "semi_analytical",
+      "spectral_start_nm": 760.8,
+      "spectral_end_nm": 771.5,
+      "use_o2a_spectroscopy": true,
+      "sublayer_divisions": 4,
+      "metrics": [
+        "sublayer_count",
+        "line_mixing_signal",
+        "transport_family",
+        "derivative_mode"
+      ],
+      "tolerances": {
+        "absolute": 0.0,
+        "relative": 0.0
+      },
+      "status": "optics_prepared_contract"
+    },
+    {
+      "id": "measurement_space_mie_aerosol",
+      "component": "measurement_space",
+      "upstream_case": "expCoefFiles/dust_300-2500.dat",
+      "upstream_reference_output": "test/disamar.out",
+      "runtime_profile": {
+        "observation_regime": "nadir",
+        "solver_mode": "derivative_enabled",
+        "derivative_mode": "semi_analytical",
+        "spectral_samples": 121
+      },
+      "expected_route_family": "adding",
+      "expected_derivative_mode": "semi_analytical",
+      "has_aerosols": true,
+      "use_mie_phase_table": true,
+      "sublayer_divisions": 4,
+      "metrics": [
+        "measurement_space_summary",
+        "miep_interpolated_coefficients",
+        "transport_family",
+        "derivative_mode"
+      ],
+      "tolerances": {
+        "absolute": 0.0,
+        "relative": 0.0
+      },
+      "status": "measurement_space_contract"
     }
   ]
 }

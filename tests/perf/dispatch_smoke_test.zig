@@ -20,7 +20,8 @@ test "perf smoke executes repeated prepared plans without failure" {
             .id = "scene-perf",
             .spectral_grid = .{ .sample_count = 16 },
         });
-        const result = try engine.execute(&plan, &workspace, request);
+        var result = try engine.execute(&plan, &workspace, request);
+        defer result.deinit(std.testing.allocator);
 
         try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
         checksum +%= result.plan_id;

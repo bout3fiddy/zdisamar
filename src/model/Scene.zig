@@ -1,5 +1,6 @@
 const std = @import("std");
 const errors = @import("../core/errors.zig");
+const Allocator = std.mem.Allocator;
 
 pub const LayoutRequirements = @import("LayoutRequirements.zig").LayoutRequirements;
 pub const Atmosphere = @import("Atmosphere.zig").Atmosphere;
@@ -68,6 +69,10 @@ pub const Scene = struct {
             .spectral_sample_count = self.spectral_grid.sample_count,
             .layer_count = self.atmosphere.layer_count,
         };
+    }
+
+    pub fn deinitOwned(self: *Scene, allocator: Allocator) void {
+        self.observation_model.deinitOwned(allocator);
     }
 };
 

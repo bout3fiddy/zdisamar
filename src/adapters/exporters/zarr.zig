@@ -42,7 +42,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
             result.provenance.derivative_mode,
             result.provenance.numerical_mode,
             @tagName(result.status),
-            result.provenance.plugin_versions.len,
+            result.provenance.pluginVersionCount(),
             result.provenance.dataset_hashes.len,
             result.provenance.native_capability_slots.len,
             result.provenance.native_entry_symbols.len,
@@ -56,6 +56,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         "metadata",
         "provenance",
         "diagnostics",
+        "measurement_space",
     };
     for (root_group_names) |group_name| {
         bytes_written += try writeSubgroup(allocator, store_path, group_name, &files_written);
@@ -143,13 +144,14 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         &files_written,
     );
 
-    if (result.provenance.plugin_versions.len > 0) {
+    const plugin_versions = result.provenance.pluginVersions();
+    if (plugin_versions.len > 0) {
         bytes_written += try writeStringArray(
             allocator,
             store_path,
             "provenance/plugin_versions",
             "provenance",
-            result.provenance.plugin_versions,
+            plugin_versions,
             &files_written,
         );
     }
@@ -195,7 +197,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
     }
 
     const provenance_counts = [_]i32{
-        try toI32(result.provenance.plugin_versions.len),
+        try toI32(plugin_versions.len),
         try toI32(result.provenance.dataset_hashes.len),
         try toI32(result.provenance.native_capability_slots.len),
         try toI32(result.provenance.native_entry_symbols.len),
@@ -232,6 +234,41 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         &diagnostic_flags,
         &files_written,
     );
+
+    if (result.measurement_space_product) |product| {
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/wavelength_nm", "measurement_space", product.wavelengths, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/toa_radiance", "measurement_space", product.radiance, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/solar_irradiance", "measurement_space", product.irradiance, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/reflectance", "measurement_space", product.reflectance, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/noise_sigma", "measurement_space", product.noise_sigma, &files_written);
+        if (product.jacobian) |jacobian| {
+            bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/jacobian", "measurement_space", jacobian, &files_written);
+        }
+
+        const effective_air_mass_factor = [_]f64{product.effective_air_mass_factor};
+        const effective_single_scatter_albedo = [_]f64{product.effective_single_scatter_albedo};
+        const effective_temperature_k = [_]f64{product.effective_temperature_k};
+        const effective_pressure_hpa = [_]f64{product.effective_pressure_hpa};
+        const gas_optical_depth = [_]f64{product.gas_optical_depth};
+        const cia_optical_depth = [_]f64{product.cia_optical_depth};
+        const aerosol_optical_depth = [_]f64{product.aerosol_optical_depth};
+        const cloud_optical_depth = [_]f64{product.cloud_optical_depth};
+        const total_optical_depth = [_]f64{product.total_optical_depth};
+        const depolarization_factor = [_]f64{product.depolarization_factor};
+        const d_optical_depth_d_temperature = [_]f64{product.d_optical_depth_d_temperature};
+
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/effective_air_mass_factor", "measurement_space", &effective_air_mass_factor, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/effective_single_scatter_albedo", "measurement_space", &effective_single_scatter_albedo, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/effective_temperature_k", "measurement_space", &effective_temperature_k, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/effective_pressure_hpa", "measurement_space", &effective_pressure_hpa, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/gas_optical_depth", "measurement_space", &gas_optical_depth, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/cia_optical_depth", "measurement_space", &cia_optical_depth, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/aerosol_optical_depth", "measurement_space", &aerosol_optical_depth, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/cloud_optical_depth", "measurement_space", &cloud_optical_depth, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/total_optical_depth", "measurement_space", &total_optical_depth, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/depolarization_factor", "measurement_space", &depolarization_factor, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/d_optical_depth_d_temperature", "measurement_space", &d_optical_depth_d_temperature, &files_written);
+    }
 
     return .{
         .artifact = artifact,
@@ -344,6 +381,48 @@ fn writeInt32Array(
     return bytes_written;
 }
 
+fn writeFloat64Array(
+    allocator: std.mem.Allocator,
+    store_path: []const u8,
+    relative_array_path: []const u8,
+    group_role: []const u8,
+    values: []const f64,
+    files_written: *u32,
+) !usize {
+    const chunk_payload = try encodeFloat64Chunk(allocator, values);
+    defer allocator.free(chunk_payload);
+
+    const zarray_payload = try std.fmt.allocPrint(
+        allocator,
+        "{{\n  \"chunks\": [{d}],\n  \"compressor\": null,\n  \"dtype\": \"<f8\",\n  \"fill_value\": 0.0,\n  \"filters\": null,\n  \"order\": \"C\",\n  \"shape\": [{d}],\n  \"zarr_format\": 2\n}}\n",
+        .{ values.len, values.len },
+    );
+    defer allocator.free(zarray_payload);
+
+    const zattrs_payload = try std.fmt.allocPrint(
+        allocator,
+        "{{\n  \"_ARRAY_DIMENSIONS\": [\"item\"],\n  \"content_type\": \"float64\",\n  \"group_role\": \"{s}\"\n}}\n",
+        .{group_role},
+    );
+    defer allocator.free(zattrs_payload);
+
+    var bytes_written: usize = 0;
+    bytes_written += try writeArrayDirectory(store_path, relative_array_path);
+
+    var zarray_rel_path: [std.fs.max_path_bytes]u8 = undefined;
+    const zarray_relative = try std.fmt.bufPrint(&zarray_rel_path, "{s}/.zarray", .{relative_array_path});
+    bytes_written += try writeStoreTextFile(store_path, zarray_relative, zarray_payload, files_written);
+
+    var zattrs_rel_path: [std.fs.max_path_bytes]u8 = undefined;
+    const zattrs_relative = try std.fmt.bufPrint(&zattrs_rel_path, "{s}/.zattrs", .{relative_array_path});
+    bytes_written += try writeStoreTextFile(store_path, zattrs_relative, zattrs_payload, files_written);
+
+    var chunk_rel_path: [std.fs.max_path_bytes]u8 = undefined;
+    const chunk_relative = try std.fmt.bufPrint(&chunk_rel_path, "{s}/0", .{relative_array_path});
+    bytes_written += try writeStoreBinaryFile(store_path, chunk_relative, chunk_payload, files_written);
+    return bytes_written;
+}
+
 fn writeArrayDirectory(store_path: []const u8, relative_array_path: []const u8) !usize {
     var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const array_path = try std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{ store_path, relative_array_path });
@@ -384,6 +463,15 @@ fn encodeInt32Chunk(allocator: std.mem.Allocator, values: []const i32) ![]u8 {
     return buffer.toOwnedSlice(allocator);
 }
 
+fn encodeFloat64Chunk(allocator: std.mem.Allocator, values: []const f64) ![]u8 {
+    var buffer = std.ArrayList(u8).empty;
+    defer buffer.deinit(allocator);
+
+    const writer = buffer.writer(allocator);
+    for (values) |value| try writer.writeInt(u64, @as(u64, @bitCast(value)), .little);
+    return buffer.toOwnedSlice(allocator);
+}
+
 fn maxStringLen(values: []const []const u8) usize {
     var max_len: usize = 1;
     for (values) |value| max_len = @max(max_len, value.len);
@@ -395,14 +483,47 @@ fn toI32(value: usize) Error!i32 {
 }
 
 test "zarr exporter emits group metadata and array stores" {
-    const plugin_versions = [_][]const u8{"builtin.zarr@0.1.0"};
     const dataset_hashes = [_][]const u8{"sha256:test-zarr"};
-    const result = Result.init(9, "ws-zarr", "scene-zarr", .{
+    var provenance: @import("../../core/provenance.zig").Provenance = .{
         .plan_id = 9,
         .workspace_label = "ws-zarr",
         .scene_id = "scene-zarr",
-        .plugin_versions = &plugin_versions,
         .dataset_hashes = &dataset_hashes,
+    };
+    provenance.setPluginVersions(&[_][]const u8{"builtin.zarr@0.1.0"});
+    var result = Result.init(9, "ws-zarr", "scene-zarr", provenance);
+    defer result.deinit(std.testing.allocator);
+
+    const jacobian = try std.testing.allocator.dupe(f64, &.{ 0.21, 0.18, 0.16 });
+    errdefer std.testing.allocator.free(jacobian);
+    result.attachMeasurementSpaceProduct(.{
+        .summary = .{
+            .sample_count = 3,
+            .wavelength_start_nm = 405.0,
+            .wavelength_end_nm = 465.0,
+            .mean_radiance = 0.42,
+            .mean_irradiance = 1.17,
+            .mean_reflectance = 0.36,
+            .mean_noise_sigma = 0.01,
+            .mean_jacobian = 0.18333333333333335,
+        },
+        .wavelengths = try std.testing.allocator.dupe(f64, &.{ 405.0, 435.0, 465.0 }),
+        .radiance = try std.testing.allocator.dupe(f64, &.{ 0.35, 0.42, 0.49 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 1.12, 1.17, 1.22 }),
+        .reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
+        .noise_sigma = try std.testing.allocator.dupe(f64, &.{ 0.01, 0.011, 0.012 }),
+        .jacobian = jacobian,
+        .effective_air_mass_factor = 1.25,
+        .effective_single_scatter_albedo = 0.92,
+        .effective_temperature_k = 266.0,
+        .effective_pressure_hpa = 550.0,
+        .gas_optical_depth = 0.19,
+        .cia_optical_depth = 0.03,
+        .aerosol_optical_depth = 0.07,
+        .cloud_optical_depth = 0.04,
+        .total_optical_depth = 0.30,
+        .depolarization_factor = 0.025,
+        .d_optical_depth_d_temperature = -1.5e-4,
     });
 
     var root_buffer: [std.fs.max_path_bytes]u8 = undefined;
@@ -418,7 +539,7 @@ test "zarr exporter emits group metadata and array stores" {
         .dataset_name = "scene-zarr",
     }, result, std.testing.allocator);
 
-    try std.testing.expect(report.files_written >= 20);
+    try std.testing.expect(report.files_written >= 40);
 
     const zgroup_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/scene.zarr/.zgroup", .{root});
     defer std.testing.allocator.free(zgroup_path);
@@ -426,6 +547,10 @@ test "zarr exporter emits group metadata and array stores" {
     defer std.testing.allocator.free(plugin_array_path);
     const plugin_chunk_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/scene.zarr/provenance/plugin_versions/0", .{root});
     defer std.testing.allocator.free(plugin_chunk_path);
+    const wavelength_array_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/scene.zarr/measurement_space/wavelength_nm/.zarray", .{root});
+    defer std.testing.allocator.free(wavelength_array_path);
+    const wavelength_chunk_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/scene.zarr/measurement_space/wavelength_nm/0", .{root});
+    defer std.testing.allocator.free(wavelength_chunk_path);
 
     const zgroup_payload = try std.fs.cwd().readFileAlloc(std.testing.allocator, zgroup_path, 8 * 1024);
     defer std.testing.allocator.free(zgroup_payload);
@@ -433,8 +558,14 @@ test "zarr exporter emits group metadata and array stores" {
     defer std.testing.allocator.free(zarray_payload);
     const chunk_payload = try std.fs.cwd().readFileAlloc(std.testing.allocator, plugin_chunk_path, 8 * 1024);
     defer std.testing.allocator.free(chunk_payload);
+    const wavelength_zarray = try std.fs.cwd().readFileAlloc(std.testing.allocator, wavelength_array_path, 8 * 1024);
+    defer std.testing.allocator.free(wavelength_zarray);
+    const wavelength_chunk = try std.fs.cwd().readFileAlloc(std.testing.allocator, wavelength_chunk_path, 8 * 1024);
+    defer std.testing.allocator.free(wavelength_chunk);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, zgroup_payload, 1, "\"zarr_format\": 2"));
     try std.testing.expect(std.mem.containsAtLeast(u8, zarray_payload, 1, "\"dtype\": \"|S"));
     try std.testing.expect(std.mem.containsAtLeast(u8, chunk_payload, 1, "builtin.zarr@0.1.0"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, wavelength_zarray, 1, "\"dtype\": \"<f8\""));
+    try std.testing.expectEqual(@as(usize, 24), wavelength_chunk.len);
 }

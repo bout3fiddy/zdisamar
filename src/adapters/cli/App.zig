@@ -61,7 +61,8 @@ pub fn run(allocator: std.mem.Allocator, argv: []const []const u8, writer: anyty
     const plan = try engine.preparePlan(prepared.plan_template);
     var workspace = engine.createWorkspace(prepared.workspace_label);
     const request = prepared.toRequest();
-    const result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, request);
+    defer result.deinit(allocator);
 
     try writer.print(
         "zdisamar adapter run: workspace={s} scene={s} model={s} plan_id={d} status={s} route={s}\n",

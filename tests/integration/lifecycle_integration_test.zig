@@ -17,11 +17,13 @@ test "integration lifecycle preserves typed plan and provenance route" {
         .id = "scene-integration-derivative",
         .spectral_grid = .{ .sample_count = 32 },
     });
-    const result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, request);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
     try std.testing.expectEqual(@as(u64, 1), result.plan_id);
     try std.testing.expectEqualStrings("disamar_standard", result.provenance.model_family);
     try std.testing.expectEqualStrings("derivative_enabled", result.provenance.numerical_mode);
     try std.testing.expectEqualStrings("integration-suite", result.workspace_label);
+    try std.testing.expect(result.measurement_space_product != null);
 }

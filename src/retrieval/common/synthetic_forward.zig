@@ -75,27 +75,14 @@ pub fn summarizeState(
         .derivative_mode = problem.derivative_mode,
     });
 
-    var arena_storage: [32 * 1024]u8 = undefined;
+    var arena_storage: [256 * 1024]u8 = undefined;
     var arena = std.heap.FixedBufferAllocator.init(&arena_storage);
     const allocator = arena.allocator();
 
-    var profile = try zdisamar.reference_data.buildDemoClimatology(allocator);
-    defer profile.deinit(allocator);
-    var cross_sections = try zdisamar.reference_data.buildDemoCrossSections(allocator);
-    defer cross_sections.deinit(allocator);
-    var line_list = try zdisamar.reference_data.buildDemoSpectroscopyLines(allocator);
-    defer line_list.deinit(allocator);
-    var lut = try zdisamar.reference_data.buildDemoAirmassFactorLut(allocator);
-    defer lut.deinit(allocator);
-
-    var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopy(
-        allocator,
-        scene,
-        profile,
-        cross_sections,
-        line_list,
-        lut,
-    );
+    var prepared = zdisamar.runtime.reference.bundled_optics.prepareForScene(allocator, scene) catch |err| switch (err) {
+        error.OutOfMemory => return common.Error.OutOfMemory,
+        else => return common.Error.InvalidRequest,
+    };
     defer prepared.deinit(allocator);
 
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);

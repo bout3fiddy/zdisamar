@@ -1,0 +1,76 @@
+meta solar_zenith_deg 31.9
+meta viewing_zenith_deg 7.8
+meta relative_azimuth_deg 142.6
+meta surface_albedo 0.062
+meta wavelength_shift_nm 0.011
+meta isrf_fwhm_nm 0.46
+meta hr_grid_step_nm 0.04
+meta hr_grid_half_span_nm 0.16
+meta refspec_wavelength_1 760.8
+meta refspec_wavelength_2 761.0
+meta refspec_wavelength_3 761.2
+meta refspec_gauss_weight_1 0.15
+meta refspec_gauss_weight_2 0.70
+meta refspec_gauss_weight_3 0.15
+meta hires_wavelength_1 760.6
+meta hires_wavelength_2 760.8
+meta hires_wavelength_3 761.0
+meta hires_wavelength_4 761.2
+meta hires_wavelength_5 761.4
+meta hires_solar_1 3.00e14
+meta hires_solar_2 2.90e14
+meta hires_solar_3 2.80e14
+meta hires_solar_4 2.70e14
+meta hires_solar_5 2.60e14
+meta o2_refspec_ntemperature 2
+meta o2_refspec_npressure 2
+meta o2_refspec_temperature_min 220.0
+meta o2_refspec_temperature_max 320.0
+meta o2_refspec_pressure_min 150.0
+meta o2_refspec_pressure_max 1000.0
+meta o2_refspec_wavelength_1 760.8
+meta o2_refspec_wavelength_2 761.0
+meta o2_refspec_wavelength_3 761.2
+meta o2_refspec_coeff_1_1_1 2.0e-24
+meta o2_refspec_coeff_2_1_1 0.30e-24
+meta o2_refspec_coeff_1_2_1 0.20e-24
+meta o2_refspec_coeff_2_2_1 0.05e-24
+meta o2_refspec_coeff_1_1_2 2.6e-24
+meta o2_refspec_coeff_2_1_2 0.35e-24
+meta o2_refspec_coeff_1_2_2 0.25e-24
+meta o2_refspec_coeff_2_2_2 0.06e-24
+meta o2_refspec_coeff_1_1_3 2.2e-24
+meta o2_refspec_coeff_2_1_3 0.32e-24
+meta o2_refspec_coeff_1_2_3 0.22e-24
+meta o2_refspec_coeff_2_2_3 0.05e-24
+meta o2o2_refspec_ntemperature 2
+meta o2o2_refspec_npressure 2
+meta o2o2_refspec_temperature_min 220.0
+meta o2o2_refspec_temperature_max 320.0
+meta o2o2_refspec_pressure_min 150.0
+meta o2o2_refspec_pressure_max 1000.0
+meta o2o2_refspec_wavelength_1 760.8
+meta o2o2_refspec_wavelength_2 761.0
+meta o2o2_refspec_wavelength_3 761.2
+meta o2o2_refspec_coeff_1_1_1 1.2e-46
+meta o2o2_refspec_coeff_2_1_1 0.20e-46
+meta o2o2_refspec_coeff_1_2_1 0.10e-46
+meta o2o2_refspec_coeff_2_2_1 0.03e-46
+meta o2o2_refspec_coeff_1_1_2 1.5e-46
+meta o2o2_refspec_coeff_2_1_2 0.20e-46
+meta o2o2_refspec_coeff_1_2_2 0.10e-46
+meta o2o2_refspec_coeff_2_2_2 0.03e-46
+meta o2o2_refspec_coeff_1_1_3 1.1e-46
+meta o2o2_refspec_coeff_2_1_3 0.18e-46
+meta o2o2_refspec_coeff_1_2_3 0.08e-46
+meta o2o2_refspec_coeff_2_2_3 0.02e-46
+start_channel_irr
+irr 760.8 3020.0 2.702296E+14
+irr 761.0 3010.0 2.682296E+14
+irr 761.2 3000.0 2.662296E+14
+end_channel_irr
+start_channel_rad
+rad 760.8 1485.0 1.116153E+13
+rad 761.0 1445.0 1.096153E+13
+rad 761.2 1405.0 1.076153E+13
+end_channel_rad

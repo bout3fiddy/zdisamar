@@ -103,7 +103,6 @@ pub const PluginSnapshot = struct {
     generation: u64 = 0,
     capability_count: usize = 0,
     capabilities: [max_snapshot_capabilities]ResolvedCapability = undefined,
-    plugin_version_entries: [max_snapshot_capabilities][]const u8 = undefined,
     dataset_hash_count: usize = 0,
     dataset_hash_entries: [max_snapshot_dataset_hashes][]const u8 = undefined,
     native_capability_count: usize = 0,
@@ -133,8 +132,6 @@ pub const PluginSnapshot = struct {
         try fillVersionLabel(&resolved);
 
         self.capabilities[self.capability_count] = resolved;
-        self.plugin_version_entries[self.capability_count] =
-            self.capabilities[self.capability_count].versionLabel();
         self.capability_count += 1;
 
         for (capability.dataset_hashes) |dataset_hash| {
@@ -158,8 +155,13 @@ pub const PluginSnapshot = struct {
         }
     }
 
-    pub fn pluginVersions(self: *const PluginSnapshot) []const []const u8 {
-        return self.plugin_version_entries[0..self.capability_count];
+    pub fn pluginVersionCount(self: *const PluginSnapshot) usize {
+        return self.capability_count;
+    }
+
+    pub fn pluginVersionAt(self: *const PluginSnapshot, index: usize) []const u8 {
+        std.debug.assert(index < self.capability_count);
+        return self.capabilities[index].versionLabel();
     }
 
     pub fn datasetHashes(self: *const PluginSnapshot) []const []const u8 {
@@ -416,11 +418,11 @@ test "snapshot freezes plugin provenance entries by generation" {
     const after = try registry.snapshot();
 
     try std.testing.expect(after.generation > before.generation);
-    try std.testing.expect(after.pluginVersions().len > before.pluginVersions().len);
+    try std.testing.expect(after.pluginVersionCount() > before.pluginVersionCount());
     try std.testing.expect(after.datasetHashes().len > before.datasetHashes().len);
     try std.testing.expectEqualStrings(
         "builtin.cross_sections@0.1.0",
-        before.pluginVersions()[0],
+        before.pluginVersionAt(0),
     );
 }
 
@@ -470,7 +472,7 @@ test "register manifest clones caller-owned storage" {
     try std.testing.expectEqualStrings("data.pack", registry.capabilities.items[0].slot);
     try std.testing.expectEqualStrings("example.mutable_provider", registry.capabilities.items[0].provider);
     try std.testing.expectEqualStrings("sha256:mutable-dataset", registry.capabilities.items[0].dataset_hashes[0]);
-    try std.testing.expectEqualStrings("example.mutable_provider@1.2.3", snapshot.pluginVersions()[0]);
+    try std.testing.expectEqualStrings("example.mutable_provider@1.2.3", snapshot.pluginVersionAt(0));
 }
 
 test "bootstrap rolls back after allocation failure and can retry" {

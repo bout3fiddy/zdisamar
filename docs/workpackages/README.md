@@ -31,6 +31,7 @@ Packages may be either a single Markdown file or a folder under `docs/workpackag
 - `docs/workpackages/feature_spec_completeness_2026-03-14/`
 - `docs/workpackages/feature_vendor_parity_followup_2026-03-15/`
 - `docs/workpackages/feature_vendor_parity_closure_2026-03-15/`
+- `docs/workpackages/feature_vendor_runtime_activation_2026-03-15/`
 - `docs/workpackages/migration_core_runtime_model_2026-03-14.md`
 - `docs/workpackages/migration_memory_layout_linalg_2026-03-14.md`
 - `docs/workpackages/migration_transport_retrieval_2026-03-14.md`

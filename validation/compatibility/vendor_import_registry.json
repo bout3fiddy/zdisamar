@@ -27,10 +27,50 @@
       ]
     },
     {
+      "bundle_manifest": "data/cross_sections/bundle_manifest.json",
+      "local_asset": "data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par",
+      "upstream_candidates": [
+        "RefSpec/07_HIT08_TROPOMI.par",
+        "InputFiles/Config_O2A_XsecLUT.in"
+      ]
+    },
+    {
+      "bundle_manifest": "data/cross_sections/bundle_manifest.json",
+      "local_asset": "data/cross_sections/o2a_lisa_sdf_subset.dat",
+      "upstream_candidates": [
+        "RefSpec/O2A_LISA_SDF.dat",
+        "InputFiles/Config_O2A_XsecLUT.in"
+      ]
+    },
+    {
+      "bundle_manifest": "data/cross_sections/bundle_manifest.json",
+      "local_asset": "data/cross_sections/o2a_lisa_rmf_subset.dat",
+      "upstream_candidates": [
+        "RefSpec/O2A_LISA_RMF.dat",
+        "InputFiles/Config_O2A_XsecLUT.in"
+      ]
+    },
+    {
+      "bundle_manifest": "data/cross_sections/bundle_manifest.json",
+      "local_asset": "data/cross_sections/o2o2_bira_o2a_subset.dat",
+      "upstream_candidates": [
+        "RefSpec/O2O2T_BIRA.dat",
+        "InputFiles/Config_O2A_XsecLUT.in"
+      ]
+    },
+    {
       "bundle_manifest": "data/luts/bundle_manifest.json",
       "local_asset": "data/luts/airmass_factor_nadir_demo.csv",
       "upstream_candidates": [
         "expCoefFiles/",
+        "InputFiles/Config_O2A_XsecLUT.in"
+      ]
+    },
+    {
+      "bundle_manifest": "data/luts/bundle_manifest.json",
+      "local_asset": "data/luts/mie_dust_phase_subset.csv",
+      "upstream_candidates": [
+        "expCoefFiles/dust_300-2500.dat",
         "InputFiles/Config_O2A_XsecLUT.in"
       ]
     }

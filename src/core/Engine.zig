@@ -23,10 +23,9 @@ const ThreadContext = @import("../runtime/scheduler/ThreadContext.zig").ThreadCo
 const TransportCommon = @import("../kernels/transport/common.zig");
 const TransportDispatcher = @import("../kernels/transport/dispatcher.zig");
 const MeasurementSpace = @import("../kernels/transport/measurement_space.zig");
-const ReferenceData = @import("../model/ReferenceData.zig");
-const OpticsPrepare = @import("../kernels/optics/prepare.zig");
 const Diagnostics = @import("diagnostics.zig").Diagnostics;
 const Logging = @import("logging.zig");
+const BundledOptics = @import("../runtime/reference/BundledOptics.zig");
 
 pub const EngineOptions = struct {
     abi_version: u32 = 1,
@@ -198,30 +197,19 @@ pub const Engine = struct {
             @tagName(plan.template.solver_mode),
         );
 
-        var profile = try ReferenceData.buildDemoClimatology(self.allocator);
-        defer profile.deinit(self.allocator);
-        var cross_sections = try ReferenceData.buildDemoCrossSections(self.allocator);
-        defer cross_sections.deinit(self.allocator);
-        var line_list = try ReferenceData.buildDemoSpectroscopyLines(self.allocator);
-        defer line_list.deinit(self.allocator);
-        var lut = try ReferenceData.buildDemoAirmassFactorLut(self.allocator);
-        defer lut.deinit(self.allocator);
-        var prepared_optics = try OpticsPrepare.prepareWithSpectroscopy(
-            self.allocator,
-            request.scene,
-            profile,
-            cross_sections,
-            line_list,
-            lut,
-        );
+        var prepared_optics = BundledOptics.prepareForScene(self.allocator, request.scene) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return errors.Error.InvalidRequest,
+        };
         defer prepared_optics.deinit(self.allocator);
 
-        const measurement_space = try MeasurementSpace.simulateSummary(
+        var measurement_space_product = try MeasurementSpace.simulateProduct(
             self.allocator,
             request.scene,
             plan.transport_route,
             prepared_optics,
         );
+        errdefer measurement_space_product.deinit(self.allocator);
 
         var result = Result.init(
             plan.id,
@@ -229,10 +217,10 @@ pub const Engine = struct {
             request.scene.id,
             provenance,
         );
-        result.measurement_space = measurement_space;
+        result.attachMeasurementSpaceProduct(measurement_space_product);
         result.diagnostics = Diagnostics.fromSpec(
             request.diagnostics,
-            "Measurement-space forward operator executed with typed optical preparation, transport routing, calibration, convolution, and noise materialization.",
+            "Measurement-space forward operator executed with typed optical preparation, transport routing, calibration, convolution, noise materialization, and owned spectral payloads.",
         );
         return result;
     }
@@ -295,7 +283,8 @@ test "execute enforces workspace plan binding and derivative-mode contracts" {
     var workspace = engine.createWorkspace("unit");
     const scene: Scene = .{ .id = "scene", .spectral_grid = .{ .sample_count = 4 } };
     var request = Request.init(scene);
-    _ = try engine.execute(&scalar_plan, &workspace, request);
+    var scalar_result = try engine.execute(&scalar_plan, &workspace, request);
+    defer scalar_result.deinit(std.testing.allocator);
 
     request.expected_derivative_mode = .semi_analytical;
     try std.testing.expectError(errors.Error.DerivativeModeMismatch, engine.execute(&scalar_plan, &workspace, request));
@@ -327,10 +316,11 @@ test "execute leaves workspace untouched when request validation fails" {
     try std.testing.expectEqual(@as(u64, 0), workspace.execution_count);
     try std.testing.expectEqual(@as(u64, 0), workspace.scratch.reserve_count);
 
-    const result = try engine.execute(&second_plan, &workspace, Request.init(.{
+    var result = try engine.execute(&second_plan, &workspace, Request.init(.{
         .id = "scene-after-error",
         .spectral_grid = .{ .sample_count = 8 },
     }));
+    defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(second_plan.id, result.plan_id);
     try std.testing.expectEqual(second_plan.id, workspace.bound_plan_id.?);
 }
@@ -360,18 +350,20 @@ test "prepared plans keep plugin snapshots when registry changes later" {
     const second_plan = try engine.preparePlan(.{});
 
     try std.testing.expect(second_plan.plugin_snapshot.generation > first_plan.plugin_snapshot.generation);
-    try std.testing.expect(second_plan.plugin_snapshot.pluginVersions().len > first_plan.plugin_snapshot.pluginVersions().len);
+    try std.testing.expect(second_plan.plugin_snapshot.pluginVersionCount() > first_plan.plugin_snapshot.pluginVersionCount());
 
     var workspace = engine.createWorkspace("snapshot-suite");
     const request = Request.init(.{
         .id = "scene-snapshot",
         .spectral_grid = .{ .sample_count = 8 },
     });
-    const first_result = try engine.execute(&first_plan, &workspace, request);
+    var first_result = try engine.execute(&first_plan, &workspace, request);
+    defer first_result.deinit(std.testing.allocator);
     workspace.reset();
-    const second_result = try engine.execute(&second_plan, &workspace, request);
+    var second_result = try engine.execute(&second_plan, &workspace, request);
+    defer second_result.deinit(std.testing.allocator);
 
-    try std.testing.expect(second_result.provenance.plugin_versions.len > first_result.provenance.plugin_versions.len);
+    try std.testing.expect(second_result.provenance.pluginVersionCount() > first_result.provenance.pluginVersionCount());
     try std.testing.expect(second_result.provenance.dataset_hashes.len > first_result.provenance.dataset_hashes.len);
 }
 
@@ -399,7 +391,8 @@ test "prepared plans own reusable cache hints and workspaces own reusable scratc
         .atmosphere = .{ .layer_count = 48 },
         .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 121 },
     });
-    _ = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, request);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 121), workspace.scratch.spectral_capacity);
     try std.testing.expectEqual(@as(usize, 48), workspace.scratch.layer_capacity);

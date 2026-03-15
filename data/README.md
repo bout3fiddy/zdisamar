@@ -19,9 +19,10 @@ Each bundle root includes a `bundle_manifest.json` with:
 - upstream reference roots in `vendor/disamar-fortran/`
 - tracked local assets and SHA-256 digests
 
-Cross-section bundles may include both CSV samples and fixed-width HITRAN-style
-line lists. Adapter ingestion normalizes those assets into the typed
-`ReferenceData` model before kernels consume them.
+Cross-section bundles may include CSV samples, fixed-width HITRAN-style
+line lists, strong-line sidecars, relaxation-matrix subsets, and bounded
+collision-induced absorption tables. Adapter ingestion normalizes those assets
+into typed `ReferenceData` structures before kernels consume them.
 
 ## Acquisition Notes
 

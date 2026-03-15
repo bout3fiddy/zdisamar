@@ -47,7 +47,7 @@ fn renderCsv(allocator: std.mem.Allocator, result: Result) ![]u8 {
             result.provenance.model_family,
             result.provenance.solver_route,
             @tagName(result.status),
-            result.provenance.plugin_versions.len,
+            result.provenance.pluginVersionCount(),
             result.provenance.dataset_hashes.len,
         },
     );
@@ -64,7 +64,7 @@ fn renderText(allocator: std.mem.Allocator, result: Result) ![]u8 {
             result.provenance.model_family,
             result.provenance.solver_route,
             @tagName(result.status),
-            result.provenance.plugin_versions.len,
+            result.provenance.pluginVersionCount(),
             result.provenance.dataset_hashes.len,
         },
     );

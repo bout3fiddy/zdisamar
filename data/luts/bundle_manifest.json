@@ -23,6 +23,21 @@
         "relative_azimuth_deg",
         "airmass_factor"
       ]
+    },
+    {
+      "id": "mie_dust_phase_subset",
+      "path": "data/luts/mie_dust_phase_subset.csv",
+      "format": "csv",
+      "sha256": "sha256:8d2a0cb7509b626364dc8dafb69111e6881b41ddb0214a83ae17faf60271c379",
+      "columns": [
+        "wavelength_nm",
+        "extinction_scale",
+        "single_scatter_albedo",
+        "phase_coeff_0",
+        "phase_coeff_1",
+        "phase_coeff_2",
+        "phase_coeff_3"
+      ]
     }
   ]
 }

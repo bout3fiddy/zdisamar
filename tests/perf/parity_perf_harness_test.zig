@@ -199,7 +199,8 @@ test "performance harness executes perf matrix scenarios with bounded runtime" {
                     .regime = plan.template.scene_blueprint.observation_regime,
                 },
             });
-            const result = try engine.execute(&plan, &workspace, request);
+            var result = try engine.execute(&plan, &workspace, request);
+            defer result.deinit(std.testing.allocator);
             try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
             checksum +%= result.plan_id;
         }

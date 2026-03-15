@@ -31,15 +31,17 @@ test "result provenance carries frozen plugin versions and dataset hashes from t
         .spectral_grid = .{ .sample_count = 8 },
     });
 
-    const before_result = try engine.execute(&plan_before, &workspace, request);
+    var before_result = try engine.execute(&plan_before, &workspace, request);
+    defer before_result.deinit(std.testing.allocator);
     workspace.reset();
-    const after_result = try engine.execute(&plan_after, &workspace, request);
+    var after_result = try engine.execute(&plan_after, &workspace, request);
+    defer after_result.deinit(std.testing.allocator);
 
     try std.testing.expect(after_result.provenance.plugin_inventory_generation > before_result.provenance.plugin_inventory_generation);
-    try std.testing.expect(after_result.provenance.plugin_versions.len > before_result.provenance.plugin_versions.len);
+    try std.testing.expect(after_result.provenance.pluginVersionCount() > before_result.provenance.pluginVersionCount());
     try std.testing.expect(after_result.provenance.dataset_hashes.len > before_result.provenance.dataset_hashes.len);
     try std.testing.expectEqualStrings(
         "builtin.cross_sections@0.1.0",
-        before_result.provenance.plugin_versions[0],
+        before_result.provenance.pluginVersionAt(0),
     );
 }

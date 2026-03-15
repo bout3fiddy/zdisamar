@@ -17,11 +17,13 @@ test "engine lifecycle increments plan ids and returns successful result" {
         .id = "scene-unit-001",
         .spectral_grid = .{ .sample_count = 16 },
     });
-    const result = try engine.execute(&first_plan, &workspace, request);
+    var result = try engine.execute(&first_plan, &workspace, request);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
     try std.testing.expectEqualStrings("scene-unit-001", result.scene_id);
     try std.testing.expectEqualStrings("transport.dispatcher", result.provenance.solver_route);
+    try std.testing.expect(result.measurement_space_product != null);
 }
 
 test "engine execute rejects missing scene id" {

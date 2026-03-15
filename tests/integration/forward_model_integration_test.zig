@@ -52,8 +52,10 @@ test "engine execute materializes measurement-space summaries through the typed 
         .jacobians = true,
     };
 
-    const result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, request);
+    defer result.deinit(std.testing.allocator);
     const measurement_space = result.measurement_space orelse return error.MissingMeasurementSummary;
+    const measurement_product = result.measurement_space_product orelse return error.MissingMeasurementProduct;
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
     try std.testing.expectEqual(@as(u32, 48), measurement_space.sample_count);
@@ -62,4 +64,5 @@ test "engine execute materializes measurement-space summaries through the typed 
     try std.testing.expect(measurement_space.mean_reflectance > 0.0);
     try std.testing.expect(measurement_space.mean_noise_sigma > 0.0);
     try std.testing.expect(measurement_space.mean_jacobian != null);
+    try std.testing.expectEqual(measurement_space.sample_count, @as(u32, @intCast(measurement_product.wavelengths.len)));
 }

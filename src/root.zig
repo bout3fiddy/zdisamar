@@ -25,6 +25,11 @@ pub const Surface = @import("model/Surface.zig").Surface;
 pub const Cloud = @import("model/Cloud.zig").Cloud;
 pub const Aerosol = @import("model/Aerosol.zig").Aerosol;
 pub const Instrument = @import("model/Instrument.zig").Instrument;
+pub const InstrumentLineShape = @import("model/Instrument.zig").InstrumentLineShape;
+pub const InstrumentLineShapeTable = @import("model/Instrument.zig").InstrumentLineShapeTable;
+pub const OperationalReferenceGrid = @import("model/Instrument.zig").OperationalReferenceGrid;
+pub const OperationalSolarSpectrum = @import("model/Instrument.zig").OperationalSolarSpectrum;
+pub const OperationalCrossSectionLut = @import("model/Instrument.zig").OperationalCrossSectionLut;
 pub const ObservationModel = @import("model/ObservationModel.zig").ObservationModel;
 pub const reference_data = @import("model/ReferenceData.zig");
 pub const ObservationRegime = @import("model/Scene.zig").ObservationRegime;
@@ -75,11 +80,13 @@ test "engine scaffold prepares a plan and returns provenance" {
         .id = "scene-unit",
         .spectral_grid = .{ .sample_count = 8 },
     });
-    const result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, request);
+    defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Result.Status.success, result.status);
     try std.testing.expectEqual(@as(u64, 1), result.plan_id);
     try std.testing.expectEqualStrings("scene-unit", result.scene_id);
     try std.testing.expectEqualStrings("transport.dispatcher", result.provenance.solver_route);
     try std.testing.expect(result.measurement_space != null);
+    try std.testing.expect(result.measurement_space_product != null);
 }

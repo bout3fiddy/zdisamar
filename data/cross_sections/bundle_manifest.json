@@ -28,6 +28,9 @@
       "format": "hitran_160",
       "sha256": "sha256:89d0e1641b9f723490aeba5410cc51468c0d95ea87065548f83cfd03e346dab5",
       "columns": [
+        "gas_index",
+        "isotope_number",
+        "abundance_fraction",
         "center_wavelength_nm",
         "line_strength_cm2_per_molecule",
         "air_half_width_nm",
@@ -35,6 +38,67 @@
         "lower_state_energy_cm1",
         "pressure_shift_nm",
         "line_mixing_coefficient"
+      ]
+    },
+    {
+      "id": "o2a_hitran_subset_07_hit08_tropomi",
+      "path": "data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par",
+      "format": "hitran_160",
+      "sha256": "sha256:776ac1e53cfcccc40327fe090406bc3077471e253d95a97cafe359d6a834e236",
+      "columns": [
+        "gas_index",
+        "isotope_number",
+        "abundance_fraction",
+        "center_wavelength_nm",
+        "line_strength_cm2_per_molecule",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "lower_state_energy_cm1",
+        "pressure_shift_nm",
+        "line_mixing_coefficient"
+      ]
+    },
+    {
+      "id": "o2a_lisa_sdf_subset",
+      "path": "data/cross_sections/o2a_lisa_sdf_subset.dat",
+      "format": "lisa_sdf",
+      "sha256": "sha256:ea1a65e8777085c1b871fd5d05655c5d082261a5184502b525b4f762bd0680ef",
+      "columns": [
+        "center_wavenumber_cm1",
+        "center_wavelength_nm",
+        "population_t0",
+        "dipole_ratio",
+        "dipole_t0",
+        "lower_state_energy_cm1",
+        "air_half_width_cm1",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "pressure_shift_cm1",
+        "pressure_shift_nm",
+        "rotational_index_m1"
+      ]
+    },
+    {
+      "id": "o2a_lisa_rmf_subset",
+      "path": "data/cross_sections/o2a_lisa_rmf_subset.dat",
+      "format": "lisa_rmf",
+      "sha256": "sha256:b3862b64a8e92bf28643b11077fe722f6603a7492660fe90d40c48fbdedebb14",
+      "columns": [
+        "wt0",
+        "temperature_exponent_bw"
+      ]
+    },
+    {
+      "id": "o2o2_bira_o2a_subset",
+      "path": "data/cross_sections/o2o2_bira_o2a_subset.dat",
+      "format": "bira_cia_poly",
+      "sha256": "sha256:fddb53e4921814210f3179d022cc30b200f2e4c2d4b2d509dbc44a8d139f1f81",
+      "columns": [
+        "wavelength_nm",
+        "a0",
+        "a1",
+        "a2",
+        "scale_factor_cm5_per_molecule2"
       ]
     }
   ]

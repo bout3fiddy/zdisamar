@@ -1,6 +1,10 @@
 const Diagnostics = @import("diagnostics.zig").Diagnostics;
 const Provenance = @import("provenance.zig").Provenance;
+const std = @import("std");
 const MeasurementSpaceSummary = @import("../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
+const MeasurementSpaceProduct = @import("../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
+
+const Allocator = std.mem.Allocator;
 
 pub const Result = struct {
     pub const Status = enum {
@@ -16,6 +20,7 @@ pub const Result = struct {
     provenance: Provenance = .{},
     diagnostics: Diagnostics = .{},
     measurement_space: ?MeasurementSpaceSummary = null,
+    measurement_space_product: ?MeasurementSpaceProduct = null,
 
     pub fn init(
         plan_id: u64,
@@ -30,5 +35,17 @@ pub const Result = struct {
             .provenance = provenance,
             .diagnostics = Diagnostics.fromSpec(.{ .provenance = true }, "Prepared transport routing and provenance are wired; full transport and retrieval numerics remain scaffold-only."),
         };
+    }
+
+    pub fn attachMeasurementSpaceProduct(self: *Result, product: MeasurementSpaceProduct) void {
+        self.measurement_space = product.summary;
+        self.measurement_space_product = product;
+    }
+
+    pub fn deinit(self: *Result, allocator: Allocator) void {
+        if (self.measurement_space_product) |*product| {
+            product.deinit(allocator);
+            self.measurement_space_product = null;
+        }
     }
 };

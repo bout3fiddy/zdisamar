@@ -30,6 +30,7 @@ const Attribute = struct {
     const Value = union(enum) {
         char: []const u8,
         int: i32,
+        double: f64,
     };
 };
 
@@ -41,11 +42,13 @@ const Variable = struct {
 
     const Data = union(enum) {
         char: []const u8,
+        double: []const f64,
     };
 
     fn dataLen(self: Variable) usize {
         return switch (self.data) {
             .char => |bytes| bytes.len,
+            .double => |values| values.len * @sizeOf(f64),
         };
     }
 };
@@ -120,12 +123,28 @@ fn renderNetcdfClassicPayload(
         .{ .name = "status", .value = .{ .char = @tagName(result.status) } },
         .{ .name = "plan_id", .value = .{ .char = plan_id_text } },
         .{ .name = "plugin_inventory_generation", .value = .{ .char = generation_text } },
-        .{ .name = "plugin_count", .value = .{ .int = try toI32(result.provenance.plugin_versions.len) } },
+        .{ .name = "plugin_count", .value = .{ .int = try toI32(result.provenance.pluginVersionCount()) } },
         .{ .name = "dataset_hash_count", .value = .{ .int = try toI32(result.provenance.dataset_hashes.len) } },
         .{ .name = "native_capability_count", .value = .{ .int = try toI32(result.provenance.native_capability_slots.len) } },
         .{ .name = "native_entry_symbol_count", .value = .{ .int = try toI32(result.provenance.native_entry_symbols.len) } },
         .{ .name = "native_library_path_count", .value = .{ .int = try toI32(result.provenance.native_library_paths.len) } },
     });
+
+    if (result.measurement_space_product) |product| {
+        try global_attributes.appendSlice(allocator, &.{
+            .{ .name = "effective_air_mass_factor", .value = .{ .double = product.effective_air_mass_factor } },
+            .{ .name = "effective_single_scatter_albedo", .value = .{ .double = product.effective_single_scatter_albedo } },
+            .{ .name = "effective_temperature_k", .value = .{ .double = product.effective_temperature_k } },
+            .{ .name = "effective_pressure_hpa", .value = .{ .double = product.effective_pressure_hpa } },
+            .{ .name = "gas_optical_depth", .value = .{ .double = product.gas_optical_depth } },
+            .{ .name = "cia_optical_depth", .value = .{ .double = product.cia_optical_depth } },
+            .{ .name = "aerosol_optical_depth", .value = .{ .double = product.aerosol_optical_depth } },
+            .{ .name = "cloud_optical_depth", .value = .{ .double = product.cloud_optical_depth } },
+            .{ .name = "total_optical_depth", .value = .{ .double = product.total_optical_depth } },
+            .{ .name = "depolarization_factor", .value = .{ .double = product.depolarization_factor } },
+            .{ .name = "d_optical_depth_d_temperature", .value = .{ .double = product.d_optical_depth_d_temperature } },
+        });
+    }
 
     try addStringVariable(allocator, &dimensions, &variables, "dataset_name_strlen", "dataset_name", artifact.dataset_name);
     try addStringVariable(allocator, &dimensions, &variables, "scene_id_strlen", "scene_id", result.scene_id);
@@ -147,7 +166,7 @@ fn renderNetcdfClassicPayload(
         "plugin_count",
         "plugin_strlen",
         "plugin_versions",
-        result.provenance.plugin_versions,
+        result.provenance.pluginVersions(),
     );
     try addStringListVariable(
         allocator,
@@ -189,6 +208,17 @@ fn renderNetcdfClassicPayload(
         "native_library_paths",
         result.provenance.native_library_paths,
     );
+
+    if (result.measurement_space_product) |product| {
+        try addDoubleVariable(allocator, &dimensions, &variables, "wavelength_sample_count", "wavelength_nm", product.wavelengths);
+        try addDoubleVariable(allocator, &dimensions, &variables, "radiance_sample_count", "toa_radiance", product.radiance);
+        try addDoubleVariable(allocator, &dimensions, &variables, "irradiance_sample_count", "solar_irradiance", product.irradiance);
+        try addDoubleVariable(allocator, &dimensions, &variables, "reflectance_sample_count", "reflectance", product.reflectance);
+        try addDoubleVariable(allocator, &dimensions, &variables, "noise_sample_count", "noise_sigma", product.noise_sigma);
+        if (product.jacobian) |jacobian| {
+            try addDoubleVariable(allocator, &dimensions, &variables, "jacobian_sample_count", "jacobian", jacobian);
+        }
+    }
 
     const header_size = try computeHeaderSize(dimensions.items, global_attributes.items, variables.items);
     var begins = try allocator.alloc(u32, variables.items.len);
@@ -255,6 +285,25 @@ fn addStringListVariable(
         .rank = 2,
         .dim_ids = .{ count_dimension_id, width_dimension_id },
         .data = .{ .char = payload },
+    });
+}
+
+fn addDoubleVariable(
+    allocator: std.mem.Allocator,
+    dimensions: *std.ArrayList(Dimension),
+    variables: *std.ArrayList(Variable),
+    dimension_name: []const u8,
+    variable_name: []const u8,
+    values: []const f64,
+) !void {
+    if (values.len == 0) return;
+
+    const dimension_id = try appendDimension(allocator, dimensions, dimension_name, values.len);
+    try variables.append(allocator, .{
+        .name = variable_name,
+        .rank = 1,
+        .dim_ids = .{ dimension_id, 0 },
+        .data = .{ .double = values },
     });
 }
 
@@ -385,6 +434,11 @@ fn writeAttributeList(writer: anytype, attributes: []const Attribute) !void {
                 try writer.writeInt(u32, 1, .big);
                 try writer.writeInt(i32, value, .big);
             },
+            .double => |value| {
+                try writer.writeInt(u32, @intFromEnum(NcType.double), .big);
+                try writer.writeInt(u32, 1, .big);
+                try writer.writeInt(u64, @as(u64, @bitCast(value)), .big);
+            },
         }
     }
 }
@@ -404,7 +458,7 @@ fn writeVariableList(writer: anytype, variables: []const Variable, begins: []con
             try writer.writeInt(u32, variable.dim_ids[dim_index], .big);
         }
         try writeAbsentList(writer);
-        try writer.writeInt(u32, @intFromEnum(NcType.char), .big);
+        try writer.writeInt(u32, @intFromEnum(variableNcType(variable)), .big);
         try writer.writeInt(u32, try toU32(align4(variable.dataLen())), .big);
         try writer.writeInt(u32, begins[index], .big);
     }
@@ -416,7 +470,20 @@ fn writeVariableData(writer: anytype, variable: Variable) !void {
             try writer.writeAll(value);
             try writePadding(writer, value.len);
         },
+        .double => |values| {
+            for (values) |value| {
+                try writer.writeInt(u64, @as(u64, @bitCast(value)), .big);
+            }
+            try writePadding(writer, values.len * @sizeOf(f64));
+        },
     }
+}
+
+fn variableNcType(variable: Variable) NcType {
+    return switch (variable.data) {
+        .char => .char,
+        .double => .double,
+    };
 }
 
 fn writeName(writer: anytype, name: []const u8) !void {
@@ -443,6 +510,7 @@ fn attributeValueLen(attribute: Attribute) usize {
     return switch (attribute.value) {
         .char => |value| value.len,
         .int => 4,
+        .double => 8,
     };
 }
 
@@ -471,21 +539,54 @@ fn toI32(value: usize) Error!i32 {
 }
 
 test "netcdf/cf exporter renders a classic binary payload with named metadata tables" {
-    const plugin_versions = [_][]const u8{"builtin.netcdf_cf@0.1.0"};
     const dataset_hashes = [_][]const u8{"sha256:test-dataset"};
     const native_capabilities = [_][]const u8{"exporter"};
     const native_symbols = [_][]const u8{"zdisamar_plugin_export"};
     const native_libraries = [_][]const u8{"plugins/libexporter.so"};
 
-    const result = Result.init(21, "ws", "scene-a", .{
+    var provenance: @import("../../core/provenance.zig").Provenance = .{
         .plan_id = 21,
         .workspace_label = "ws",
         .scene_id = "scene-a",
-        .plugin_versions = &plugin_versions,
         .dataset_hashes = &dataset_hashes,
         .native_capability_slots = &native_capabilities,
         .native_entry_symbols = &native_symbols,
         .native_library_paths = &native_libraries,
+    };
+    provenance.setPluginVersions(&[_][]const u8{"builtin.netcdf_cf@0.1.0"});
+    var result = Result.init(21, "ws", "scene-a", provenance);
+    defer result.deinit(std.testing.allocator);
+
+    const jacobian = try std.testing.allocator.dupe(f64, &.{ 0.21, 0.18, 0.16 });
+    errdefer std.testing.allocator.free(jacobian);
+    result.attachMeasurementSpaceProduct(.{
+        .summary = .{
+            .sample_count = 3,
+            .wavelength_start_nm = 405.0,
+            .wavelength_end_nm = 465.0,
+            .mean_radiance = 0.42,
+            .mean_irradiance = 1.17,
+            .mean_reflectance = 0.36,
+            .mean_noise_sigma = 0.01,
+            .mean_jacobian = 0.18333333333333335,
+        },
+        .wavelengths = try std.testing.allocator.dupe(f64, &.{ 405.0, 435.0, 465.0 }),
+        .radiance = try std.testing.allocator.dupe(f64, &.{ 0.35, 0.42, 0.49 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 1.12, 1.17, 1.22 }),
+        .reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
+        .noise_sigma = try std.testing.allocator.dupe(f64, &.{ 0.01, 0.011, 0.012 }),
+        .jacobian = jacobian,
+        .effective_air_mass_factor = 1.25,
+        .effective_single_scatter_albedo = 0.92,
+        .effective_temperature_k = 266.0,
+        .effective_pressure_hpa = 550.0,
+        .gas_optical_depth = 0.19,
+        .cia_optical_depth = 0.03,
+        .aerosol_optical_depth = 0.07,
+        .cloud_optical_depth = 0.04,
+        .total_optical_depth = 0.30,
+        .depolarization_factor = 0.025,
+        .d_optical_depth_d_temperature = -1.5e-4,
     });
 
     const payload = try renderNetcdfClassicPayload(std.testing.allocator, Spec.buildArtifact(.{
@@ -500,4 +601,8 @@ test "netcdf/cf exporter renders a classic binary payload with named metadata ta
     try std.testing.expect(std.mem.containsAtLeast(u8, payload, 1, "plugin_versions"));
     try std.testing.expect(std.mem.containsAtLeast(u8, payload, 1, "native_library_paths"));
     try std.testing.expect(std.mem.containsAtLeast(u8, payload, 1, "scene-a"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, payload, 1, "wavelength_nm"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, payload, 1, "toa_radiance"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, payload, 1, "effective_air_mass_factor"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, payload, 1, "cia_optical_depth"));
 }
