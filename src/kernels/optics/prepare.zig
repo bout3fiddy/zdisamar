@@ -4,9 +4,12 @@ const ReferenceData = @import("../../model/ReferenceData.zig");
 const OperationalReferenceGrid = @import("../../model/Instrument.zig").OperationalReferenceGrid;
 const OperationalCrossSectionLut = @import("../../model/Instrument.zig").OperationalCrossSectionLut;
 const transport_common = @import("../transport/common.zig");
+const BandMeans = @import("prepare/band_means.zig");
+const ParticleProfiles = @import("prepare/particle_profiles.zig");
+const PhaseFunctions = @import("prepare/phase_functions.zig");
 
 const Allocator = std.mem.Allocator;
-const phase_coefficient_count = 4;
+const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const oxygen_volume_mixing_ratio = 0.2095;
 
 pub const PreparedLayer = struct {
@@ -164,7 +167,7 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn aerosolOpticalDepthAtWavelength(self: PreparedOpticalState, wavelength_nm: f64) f64 {
-        return scaleOpticalDepth(
+        return ParticleProfiles.scaleOpticalDepth(
             self.aerosol_optical_depth,
             self.aerosol_reference_wavelength_nm,
             self.aerosol_angstrom_exponent,
@@ -173,7 +176,7 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn cloudOpticalDepthAtWavelength(self: PreparedOpticalState, wavelength_nm: f64) f64 {
-        return scaleOpticalDepth(
+        return ParticleProfiles.scaleOpticalDepth(
             self.cloud_optical_depth,
             self.cloud_reference_wavelength_nm,
             self.cloud_angstrom_exponent,
@@ -303,7 +306,7 @@ pub fn prepareWithParticleTables(
     );
     const altitude_span = @max(profile.maxAltitude(), 1.0);
     const layer_span_km = altitude_span / @as(f64, @floatFromInt(layer_count));
-    const base_single_scatter_albedo = computeSingleScatterAlbedo(scene);
+    const base_single_scatter_albedo = PhaseFunctions.computeSingleScatterAlbedo(scene);
 
     var total_optical_depth: f64 = 0.0;
     var total_temperature_weighted: f64 = 0.0;
@@ -319,7 +322,7 @@ pub fn prepareWithParticleTables(
     var total_d_optical_depth_d_temperature: f64 = 0.0;
     var depolarization_weighted: f64 = 0.0;
 
-    const aerosol_sublayer_distribution = try buildAerosolSublayerDistribution(
+    const aerosol_sublayer_distribution = try ParticleProfiles.buildAerosolSublayerDistribution(
         allocator,
         scene,
         profile,
@@ -327,7 +330,7 @@ pub fn prepareWithParticleTables(
         sublayer_divisions,
     );
     defer allocator.free(aerosol_sublayer_distribution);
-    const cloud_sublayer_distribution = try buildCloudSublayerDistribution(
+    const cloud_sublayer_distribution = try ParticleProfiles.buildCloudSublayerDistribution(
         allocator,
         scene,
         profile,
@@ -337,8 +340,8 @@ pub fn prepareWithParticleTables(
     defer allocator.free(cloud_sublayer_distribution);
     const aerosol_mie_point = if (aerosol_mie) |table| table.interpolate(midpoint_nm) else null;
     const cloud_mie_point = if (cloud_mie) |table| table.interpolate(midpoint_nm) else null;
-    const aerosol_phase_coefficients = if (aerosol_mie_point) |point| point.phase_coefficients else hgPhaseCoefficients(scene.aerosol.asymmetry_factor);
-    const cloud_phase_coefficients = if (cloud_mie_point) |point| point.phase_coefficients else hgPhaseCoefficients(scene.cloud.asymmetry_factor);
+    const aerosol_phase_coefficients = if (aerosol_mie_point) |point| point.phase_coefficients else PhaseFunctions.hgPhaseCoefficients(scene.aerosol.asymmetry_factor);
+    const cloud_phase_coefficients = if (cloud_mie_point) |point| point.phase_coefficients else PhaseFunctions.hgPhaseCoefficients(scene.cloud.asymmetry_factor);
     const aerosol_single_scatter_albedo = if (aerosol_mie_point) |point| point.single_scatter_albedo else scene.aerosol.single_scatter_albedo;
     const cloud_single_scatter_albedo = if (cloud_mie_point) |point| point.single_scatter_albedo else scene.cloud.single_scatter_albedo;
     const aerosol_extinction_scale = if (aerosol_mie_point) |point| point.extinction_scale else 1.0;
@@ -414,7 +417,7 @@ pub fn prepareWithParticleTables(
             const cloud_optical_depth = cloud_sublayer_distribution[sublayer_write_index] * cloud_extinction_scale;
             const aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo;
             const cloud_scattering_optical_depth = cloud_optical_depth * cloud_single_scatter_albedo;
-            const combined_phase_coefficients = combinePhaseCoefficients(
+            const combined_phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
                 gas_scattering_optical_depth,
                 aerosol_scattering_optical_depth,
                 cloud_scattering_optical_depth,
@@ -480,7 +483,7 @@ pub fn prepareWithParticleTables(
         const scattering = aerosol_scattering + cloud_scattering + gas_scattering;
         const absorption = @max(optical_depth - scattering, 1e-9);
         const layer_single_scatter_albedo = scattering / @max(scattering + absorption, 1e-9);
-        const depolarization = computeLayerDepolarization(scene, gas_scattering, aerosol_scattering, cloud_scattering);
+        const depolarization = PhaseFunctions.computeLayerDepolarization(scene, gas_scattering, aerosol_scattering, cloud_scattering);
         total_optical_depth += optical_depth;
         total_temperature_weighted += temperature * density;
         total_pressure_weighted += pressure * density;
@@ -518,8 +521,8 @@ pub fn prepareWithParticleTables(
     const effective_temperature = if (total_weight == 0.0) 0.0 else total_temperature_weighted / total_weight;
     const effective_pressure = if (total_weight == 0.0) 0.0 else total_pressure_weighted / total_weight;
     const line_means = if (operational_o2_lut.enabled())
-        LineBandMeans{
-            .line_mean_cross_section_cm2_per_molecule = computeOperationalBandMean(
+        BandMeans.LineBandMeans{
+            .line_mean_cross_section_cm2_per_molecule = BandMeans.computeOperationalBandMean(
                 scene,
                 operational_o2_lut,
                 effective_temperature,
@@ -528,11 +531,11 @@ pub fn prepareWithParticleTables(
             .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
         }
     else if (spectroscopy_lines) |line_list|
-        computeBandLineMeans(scene, line_list, effective_temperature, effective_pressure)
+        BandMeans.computeBandLineMeans(scene, line_list, effective_temperature, effective_pressure)
     else
-        LineBandMeans{};
+        BandMeans.LineBandMeans{};
     const cia_mean_sigma = if (operational_o2o2_lut.enabled())
-        computeOperationalBandMean(
+        BandMeans.computeOperationalBandMean(
             scene,
             operational_o2o2_lut,
             @max(effective_temperature, 150.0),
@@ -580,16 +583,6 @@ pub fn prepareWithParticleTables(
         .depolarization_factor = if (total_optical_depth == 0.0) 0.0 else depolarization_weighted / total_optical_depth,
         .total_optical_depth = total_optical_depth,
     };
-}
-
-fn computeSingleScatterAlbedo(scene: Scene) f64 {
-    const gas_ssa: f64 = 0.92;
-    const aerosol_ssa = if (scene.atmosphere.has_aerosols) scene.aerosol.single_scatter_albedo else gas_ssa;
-    const cloud_ssa = if (scene.atmosphere.has_clouds) scene.cloud.single_scatter_albedo else gas_ssa;
-    const aerosol_weight: f64 = if (scene.atmosphere.has_aerosols) 0.20 else 0.0;
-    const cloud_weight: f64 = if (scene.atmosphere.has_clouds) 0.30 else 0.0;
-    const gas_weight: f64 = 1.0 - aerosol_weight - cloud_weight;
-    return std.math.clamp(gas_weight * gas_ssa + aerosol_weight * aerosol_ssa + cloud_weight * cloud_ssa, 0.3, 0.999);
 }
 
 test "optical preparation derives deterministic layer optical depths from typed assets" {
@@ -655,225 +648,4 @@ test "optical preparation derives deterministic layer optical depths from typed 
     try std.testing.expect(input.optical_depth > 0.0);
     try std.testing.expectApproxEqAbs(@as(f64, 1.241), input.air_mass_factor, 1e-9);
     try std.testing.expect(prepared.totalCrossSectionAtWavelength(434.6) > prepared.totalCrossSectionAtWavelength(465.0));
-}
-
-const LineBandMeans = struct {
-    line_mean_cross_section_cm2_per_molecule: f64 = 0.0,
-    line_mixing_mean_cross_section_cm2_per_molecule: f64 = 0.0,
-};
-
-fn computeBandLineMeans(
-    scene: Scene,
-    line_list: ReferenceData.SpectroscopyLineList,
-    effective_temperature_k: f64,
-    effective_pressure_hpa: f64,
-) LineBandMeans {
-    const sample_count = @max(scene.spectral_grid.sample_count, @as(u32, 1));
-    const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
-    const wavelength_step = if (sample_count <= 1) 0.0 else span_nm / @as(f64, @floatFromInt(sample_count - 1));
-
-    var line_sum: f64 = 0.0;
-    var line_mixing_sum: f64 = 0.0;
-    for (0..sample_count) |index| {
-        const wavelength_nm = scene.spectral_grid.start_nm + wavelength_step * @as(f64, @floatFromInt(index));
-        const evaluation = line_list.evaluateAt(
-            wavelength_nm,
-            @max(effective_temperature_k, 150.0),
-            @max(effective_pressure_hpa, 1.0),
-        );
-        line_sum += evaluation.line_sigma_cm2_per_molecule;
-        line_mixing_sum += evaluation.line_mixing_sigma_cm2_per_molecule;
-    }
-
-    return .{
-        .line_mean_cross_section_cm2_per_molecule = line_sum / @as(f64, @floatFromInt(sample_count)),
-        .line_mixing_mean_cross_section_cm2_per_molecule = line_mixing_sum / @as(f64, @floatFromInt(sample_count)),
-    };
-}
-
-fn computeOperationalBandMean(
-    scene: Scene,
-    lut: OperationalCrossSectionLut,
-    effective_temperature_k: f64,
-    effective_pressure_hpa: f64,
-) f64 {
-    if (scene.observation_model.operational_refspec_grid.enabled()) {
-        return computeWeightedOperationalBandMean(
-            scene.observation_model.operational_refspec_grid,
-            lut,
-            effective_temperature_k,
-            effective_pressure_hpa,
-        );
-    }
-
-    const sample_count = @max(scene.spectral_grid.sample_count, @as(u32, 1));
-    const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
-    const wavelength_step = if (sample_count <= 1) 0.0 else span_nm / @as(f64, @floatFromInt(sample_count - 1));
-
-    var sigma_sum: f64 = 0.0;
-    for (0..sample_count) |index| {
-        const wavelength_nm = scene.spectral_grid.start_nm + wavelength_step * @as(f64, @floatFromInt(index));
-        sigma_sum += lut.sigmaAt(
-            wavelength_nm,
-            @max(effective_temperature_k, 150.0),
-            @max(effective_pressure_hpa, 1.0),
-        );
-    }
-
-    return sigma_sum / @as(f64, @floatFromInt(sample_count));
-}
-
-fn computeWeightedOperationalBandMean(
-    refspec_grid: OperationalReferenceGrid,
-    lut: OperationalCrossSectionLut,
-    effective_temperature_k: f64,
-    effective_pressure_hpa: f64,
-) f64 {
-    var sigma_sum: f64 = 0.0;
-    var weight_sum: f64 = 0.0;
-    for (refspec_grid.wavelengths_nm, refspec_grid.weights) |wavelength_nm, weight| {
-        sigma_sum += weight * lut.sigmaAt(
-            wavelength_nm,
-            @max(effective_temperature_k, 150.0),
-            @max(effective_pressure_hpa, 1.0),
-        );
-        weight_sum += weight;
-    }
-    return sigma_sum / @max(weight_sum, 1e-12);
-}
-
-fn scaleOpticalDepth(
-    optical_depth: f64,
-    reference_wavelength_nm: f64,
-    angstrom_exponent: f64,
-    wavelength_nm: f64,
-) f64 {
-    if (optical_depth == 0.0) return 0.0;
-    const safe_wavelength = @max(wavelength_nm, 1.0);
-    const safe_reference = @max(reference_wavelength_nm, 1.0);
-    return optical_depth * std.math.pow(f64, safe_reference / safe_wavelength, angstrom_exponent);
-}
-
-fn buildAerosolSublayerDistribution(
-    allocator: Allocator,
-    scene: Scene,
-    profile: ReferenceData.ClimatologyProfile,
-    layer_count: u32,
-    sublayer_divisions: u32,
-) ![]f64 {
-    return buildGaussianSublayerDistribution(
-        allocator,
-        scene,
-        profile,
-        layer_count,
-        sublayer_divisions,
-        scene.atmosphere.has_aerosols and scene.aerosol.enabled and scene.aerosol.optical_depth > 0.0,
-        scene.aerosol.optical_depth,
-        scene.aerosol.layer_center_km,
-        scene.aerosol.layer_width_km,
-    );
-}
-
-fn buildCloudSublayerDistribution(
-    allocator: Allocator,
-    scene: Scene,
-    profile: ReferenceData.ClimatologyProfile,
-    layer_count: u32,
-    sublayer_divisions: u32,
-) ![]f64 {
-    const cloud_center_km = scene.cloud.top_altitude_km - 0.5 * scene.cloud.thickness_km;
-    return buildGaussianSublayerDistribution(
-        allocator,
-        scene,
-        profile,
-        layer_count,
-        sublayer_divisions,
-        scene.atmosphere.has_clouds and scene.cloud.enabled and scene.cloud.optical_thickness > 0.0,
-        scene.cloud.optical_thickness,
-        cloud_center_km,
-        @max(scene.cloud.thickness_km * 0.5, 0.25),
-    );
-}
-
-fn buildGaussianSublayerDistribution(
-    allocator: Allocator,
-    scene: Scene,
-    profile: ReferenceData.ClimatologyProfile,
-    layer_count: u32,
-    sublayer_divisions: u32,
-    enabled: bool,
-    total_optical_depth: f64,
-    center_km: f64,
-    width_km: f64,
-) ![]f64 {
-    _ = scene;
-    const weights = try allocator.alloc(f64, @as(usize, layer_count) * @as(usize, sublayer_divisions));
-    errdefer allocator.free(weights);
-
-    if (!enabled or total_optical_depth == 0.0) {
-        @memset(weights, 0.0);
-        return weights;
-    }
-
-    var total_weight: f64 = 0.0;
-    const altitude_span = @max(profile.maxAltitude(), 1.0);
-    const total_slots = @as(usize, layer_count) * @as(usize, sublayer_divisions);
-    for (weights, 0..) |*slot, index| {
-        const altitude_fraction = (@as(f64, @floatFromInt(index)) + 0.5) / @as(f64, @floatFromInt(total_slots));
-        const altitude_km = altitude_span * altitude_fraction;
-        const delta = (altitude_km - center_km) / @max(width_km, 0.25);
-        const weight = @exp(-0.5 * delta * delta);
-        slot.* = weight;
-        total_weight += weight;
-    }
-    if (total_weight == 0.0) total_weight = 1.0;
-    for (weights) |*slot| slot.* = total_optical_depth * (slot.* / total_weight);
-    return weights;
-}
-
-fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
-    var coefficients = [_]f64{0.0} ** phase_coefficient_count;
-    coefficients[0] = 1.0;
-    for (1..phase_coefficient_count) |index| {
-        coefficients[index] = std.math.pow(f64, asymmetry_factor, @as(f64, @floatFromInt(index)));
-    }
-    return coefficients;
-}
-
-fn combinePhaseCoefficients(
-    gas_scattering_optical_depth: f64,
-    aerosol_scattering_optical_depth: f64,
-    cloud_scattering_optical_depth: f64,
-    aerosol_phase_coefficients: [phase_coefficient_count]f64,
-    cloud_phase_coefficients: [phase_coefficient_count]f64,
-) [phase_coefficient_count]f64 {
-    const gas_phase_coefficients = [_]f64{ 1.0, 0.0, 0.05, 0.0 };
-    const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
-    if (total_scattering == 0.0) return gas_phase_coefficients;
-
-    var combined = [_]f64{0.0} ** phase_coefficient_count;
-    for (0..phase_coefficient_count) |index| {
-        combined[index] =
-            (gas_scattering_optical_depth * gas_phase_coefficients[index] +
-                aerosol_scattering_optical_depth * aerosol_phase_coefficients[index] +
-                cloud_scattering_optical_depth * cloud_phase_coefficients[index]) / total_scattering;
-    }
-    combined[0] = 1.0;
-    return combined;
-}
-
-fn computeLayerDepolarization(
-    scene: Scene,
-    gas_scattering_tau: f64,
-    aerosol_scattering_tau: f64,
-    cloud_scattering_tau: f64,
-) f64 {
-    const total = gas_scattering_tau + aerosol_scattering_tau + cloud_scattering_tau;
-    if (total == 0.0) return 0.0;
-    const gas_fraction = gas_scattering_tau / total;
-    const aerosol_fraction = aerosol_scattering_tau / total;
-    const cloud_fraction = cloud_scattering_tau / total;
-    return gas_fraction * 0.0279 +
-        aerosol_fraction * (0.04 + 0.02 * (1.0 - scene.aerosol.asymmetry_factor)) +
-        cloud_fraction * (0.01 + 0.01 * (1.0 - scene.cloud.asymmetry_factor));
 }

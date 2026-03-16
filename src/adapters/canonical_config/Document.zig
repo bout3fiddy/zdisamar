@@ -1,5 +1,7 @@
 const std = @import("std");
 const yaml = @import("yaml.zig");
+const fields = @import("document_fields.zig");
+const yaml_helpers = @import("document_yaml_helpers.zig");
 const PlanTemplate = @import("../../core/Plan.zig").Template;
 const SolverMode = @import("../../core/Plan.zig").SolverMode;
 const DiagnosticsSpec = @import("../../core/diagnostics.zig").DiagnosticsSpec;
@@ -39,6 +41,34 @@ const StateBounds = @import("../../model/StateVector.zig").Bounds;
 const spectral_ascii = @import("../ingest/spectral_ascii.zig");
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
 const Allocator = std.mem.Allocator;
+const parseAssetKind = fields.parseAssetKind;
+const parseIngestAdapter = fields.parseIngestAdapter;
+const parseSolverMode = fields.parseSolverMode;
+const parseDerivativeMode = fields.parseDerivativeMode;
+const parseGeometryModel = fields.parseGeometryModel;
+const parseObservationRegime = fields.parseObservationRegime;
+const parseSpectroscopyMode = fields.parseSpectroscopyMode;
+const parseStateTransform = fields.parseStateTransform;
+const parseProductKind = fields.parseProductKind;
+const parseExportFormat = fields.parseExportFormat;
+const normalizeTransportProvider = fields.normalizeTransportProvider;
+const normalizeRetrievalProvider = fields.normalizeRetrievalProvider;
+const normalizeSurfaceProvider = fields.normalizeSurfaceProvider;
+const normalizeInstrumentProvider = fields.normalizeInstrumentProvider;
+const resolveInputPath = yaml_helpers.resolveInputPath;
+const pathExists = yaml_helpers.pathExists;
+const cloneMapSkipping = yaml_helpers.cloneMapSkipping;
+const ensureKnownFields = yaml_helpers.ensureKnownFields;
+const containsString = yaml_helpers.containsString;
+const expectMap = yaml_helpers.expectMap;
+const expectSeq = yaml_helpers.expectSeq;
+const expectString = yaml_helpers.expectString;
+const expectBool = yaml_helpers.expectBool;
+const expectI64 = yaml_helpers.expectI64;
+const expectU64 = yaml_helpers.expectU64;
+const expectF64 = yaml_helpers.expectF64;
+const requiredField = yaml_helpers.requiredField;
+const mapGet = yaml_helpers.mapGet;
 
 pub const Error = error{
     UnknownField,
@@ -64,9 +94,7 @@ pub const Metadata = struct {
     description: []const u8 = "",
 };
 
-pub const AssetKind = enum {
-    file,
-};
+pub const AssetKind = fields.AssetKind;
 
 pub const Asset = struct {
     name: []const u8,
@@ -76,9 +104,7 @@ pub const Asset = struct {
     resolved_path: []const u8,
 };
 
-pub const IngestAdapter = enum {
-    spectral_ascii,
-};
+pub const IngestAdapter = fields.IngestAdapter;
 
 pub const Ingest = struct {
     name: []const u8,
@@ -87,15 +113,7 @@ pub const Ingest = struct {
     loaded_spectra: spectral_ascii.LoadedSpectra,
 };
 
-pub const ProductKind = enum {
-    measurement_space,
-    state_vector,
-    fitted_measurement,
-    averaging_kernel,
-    jacobian,
-    result,
-    diagnostics,
-};
+pub const ProductKind = fields.ProductKind;
 
 pub const Product = struct {
     name: []const u8,
@@ -1364,110 +1382,6 @@ fn buildWarnings(
     return warnings;
 }
 
-fn parseAssetKind(kind: []const u8) !AssetKind {
-    if (std.mem.eql(u8, kind, "file")) return .file;
-    return Error.InvalidValue;
-}
-
-fn parseIngestAdapter(adapter: []const u8) !IngestAdapter {
-    if (std.mem.eql(u8, adapter, "spectral_ascii")) return .spectral_ascii;
-    return Error.UnsupportedIngestAdapter;
-}
-
-fn parseSolverMode(value: []const u8) !SolverMode {
-    if (std.mem.eql(u8, value, "scalar")) return .scalar;
-    if (std.mem.eql(u8, value, "polarized")) return .polarized;
-    if (std.mem.eql(u8, value, "derivative_enabled")) return .derivative_enabled;
-    return Error.InvalidValue;
-}
-
-fn parseDerivativeMode(value: []const u8) !DerivativeMode {
-    if (std.mem.eql(u8, value, "none")) return .none;
-    if (std.mem.eql(u8, value, "semi_analytical")) return .semi_analytical;
-    if (std.mem.eql(u8, value, "analytical_plugin")) return .analytical_plugin;
-    if (std.mem.eql(u8, value, "numerical")) return .numerical;
-    return Error.InvalidValue;
-}
-
-fn parseGeometryModel(value: []const u8) !GeometryModel {
-    if (std.mem.eql(u8, value, "plane_parallel")) return .plane_parallel;
-    if (std.mem.eql(u8, value, "pseudo_spherical")) return .pseudo_spherical;
-    if (std.mem.eql(u8, value, "spherical")) return .spherical;
-    return Error.InvalidValue;
-}
-
-fn parseObservationRegime(value: []const u8) !ObservationRegime {
-    if (std.mem.eql(u8, value, "nadir")) return .nadir;
-    if (std.mem.eql(u8, value, "limb")) return .limb;
-    if (std.mem.eql(u8, value, "occultation")) return .occultation;
-    return Error.InvalidValue;
-}
-
-fn parseSpectroscopyMode(value: []const u8) !SpectroscopyMode {
-    if (std.mem.eql(u8, value, "line_by_line")) return .line_by_line;
-    if (std.mem.eql(u8, value, "cia")) return .cia;
-    if (std.mem.eql(u8, value, "cross_sections")) return .cross_sections;
-    return Error.InvalidValue;
-}
-
-fn parseStateTransform(value: []const u8) !StateTransform {
-    if (std.mem.eql(u8, value, "none")) return .none;
-    if (std.mem.eql(u8, value, "log")) return .log;
-    if (std.mem.eql(u8, value, "logit")) return .logit;
-    return Error.InvalidValue;
-}
-
-fn parseProductKind(value: []const u8) !ProductKind {
-    if (std.mem.eql(u8, value, "measurement_space")) return .measurement_space;
-    if (std.mem.eql(u8, value, "state_vector")) return .state_vector;
-    if (std.mem.eql(u8, value, "fitted_measurement")) return .fitted_measurement;
-    if (std.mem.eql(u8, value, "averaging_kernel")) return .averaging_kernel;
-    if (std.mem.eql(u8, value, "jacobian")) return .jacobian;
-    if (std.mem.eql(u8, value, "result")) return .result;
-    if (std.mem.eql(u8, value, "diagnostics")) return .diagnostics;
-    return Error.InvalidValue;
-}
-
-fn parseExportFormat(value: []const u8) !ExportFormat {
-    if (std.mem.eql(u8, value, "netcdf_cf")) return .netcdf_cf;
-    if (std.mem.eql(u8, value, "zarr")) return .zarr;
-    return Error.InvalidValue;
-}
-
-fn normalizeTransportProvider(solver: []const u8, provider: []const u8) []const u8 {
-    if (provider.len != 0) {
-        if (std.mem.eql(u8, provider, "builtin.transport_dispatcher") or std.mem.eql(u8, provider, "builtin.dispatcher")) {
-            return "builtin.dispatcher";
-        }
-        return provider;
-    }
-    if (std.mem.eql(u8, solver, "dispatcher") or std.mem.eql(u8, solver, "builtin.dispatcher") or std.mem.eql(u8, solver, "builtin.transport_dispatcher")) {
-        return "builtin.dispatcher";
-    }
-    return "builtin.dispatcher";
-}
-
-fn normalizeRetrievalProvider(name: []const u8, explicit_provider: ?[]const u8) ?[]const u8 {
-    if (explicit_provider) |provider| return provider;
-    if (std.mem.eql(u8, name, "oe")) return "builtin.oe_solver";
-    if (std.mem.eql(u8, name, "doas")) return "builtin.doas_solver";
-    if (std.mem.eql(u8, name, "dismas")) return "builtin.dismas_solver";
-    if (name.len == 0) return null;
-    return name;
-}
-
-fn normalizeSurfaceProvider(explicit_provider: []const u8, model: []const u8) []const u8 {
-    if (explicit_provider.len != 0) return explicit_provider;
-    if (std.mem.eql(u8, model, "lambertian")) return "builtin.lambertian_surface";
-    return explicit_provider;
-}
-
-fn normalizeInstrumentProvider(explicit_provider: []const u8, instrument_name: []const u8) []const u8 {
-    if (explicit_provider.len != 0) return explicit_provider;
-    _ = instrument_name;
-    return "builtin.generic_response";
-}
-
 fn decodeProfileBinding(allocator: Allocator, value: yaml.Value) !Binding {
     if (value == .string) {
         const source = try expectString(value);
@@ -1612,120 +1526,6 @@ fn inferSpectralGrid(bands: SpectralBandSet) !SpectralGrid {
         .end_nm = end_nm,
         .sample_count = sample_count,
     };
-}
-
-fn resolveInputPath(allocator: Allocator, source_dir: []const u8, path: []const u8) ![]const u8 {
-    if (std.fs.path.isAbsolute(path)) {
-        const file = try std.fs.openFileAbsolute(path, .{});
-        file.close();
-        return try allocator.dupe(u8, path);
-    }
-
-    var current = source_dir;
-    while (true) {
-        const candidate = try std.fs.path.join(allocator, &.{ current, path });
-        if (pathExists(candidate)) return candidate;
-
-        const parent = std.fs.path.dirname(current) orelse break;
-        if (std.mem.eql(u8, parent, current)) break;
-        current = parent;
-    }
-
-    const direct = try allocator.dupe(u8, path);
-    if (pathExists(direct)) return direct;
-    return Error.MissingAsset;
-}
-
-fn pathExists(path: []const u8) bool {
-    std.fs.cwd().access(path, .{}) catch return false;
-    return true;
-}
-
-fn cloneMapSkipping(allocator: Allocator, entries: []const yaml.Entry, skipped_keys: []const []const u8) !yaml.Value {
-    var cloned = std.ArrayListUnmanaged(yaml.Entry){};
-    defer cloned.deinit(allocator);
-    for (entries) |entry| {
-        if (containsString(skipped_keys, entry.key)) continue;
-        try cloned.append(allocator, .{
-            .key = try allocator.dupe(u8, entry.key),
-            .value = try entry.value.clone(allocator),
-        });
-    }
-    return .{ .map = try cloned.toOwnedSlice(allocator) };
-}
-
-fn ensureKnownFields(entries: []const yaml.Entry, allowed: []const []const u8, strict: bool) !void {
-    if (!strict) return;
-    for (entries) |entry| {
-        if (!containsString(allowed, entry.key)) return Error.UnknownField;
-    }
-}
-
-fn containsString(values: []const []const u8, needle: []const u8) bool {
-    for (values) |value| {
-        if (std.mem.eql(u8, value, needle)) return true;
-    }
-    return false;
-}
-
-fn expectMap(value: yaml.Value) ![]const yaml.Entry {
-    return switch (value) {
-        .map => |entries| entries,
-        else => Error.InvalidType,
-    };
-}
-
-fn expectSeq(value: yaml.Value) ![]const yaml.Value {
-    return switch (value) {
-        .seq => |items| items,
-        else => Error.InvalidType,
-    };
-}
-
-fn expectString(value: yaml.Value) ![]const u8 {
-    return switch (value) {
-        .string => |text| text,
-        else => Error.InvalidType,
-    };
-}
-
-fn expectBool(value: yaml.Value) !bool {
-    return switch (value) {
-        .bool => |boolean| boolean,
-        else => Error.InvalidType,
-    };
-}
-
-fn expectI64(value: yaml.Value) !i64 {
-    return switch (value) {
-        .integer => |integer| integer,
-        else => Error.InvalidType,
-    };
-}
-
-fn expectU64(value: yaml.Value) !u64 {
-    const integer = try expectI64(value);
-    if (integer < 0) return Error.InvalidValue;
-    return @intCast(integer);
-}
-
-fn expectF64(value: yaml.Value) !f64 {
-    return switch (value) {
-        .integer => |integer| @floatFromInt(integer),
-        .float => |float_value| float_value,
-        else => Error.InvalidType,
-    };
-}
-
-fn requiredField(entries: []const yaml.Entry, key: []const u8) yaml.Value {
-    return mapGet(entries, key) orelse .null;
-}
-
-fn mapGet(entries: []const yaml.Entry, key: []const u8) ?yaml.Value {
-    for (entries) |entry| {
-        if (std.mem.eql(u8, entry.key, key)) return entry.value;
-    }
-    return null;
 }
 
 test "document resolves revised common example" {

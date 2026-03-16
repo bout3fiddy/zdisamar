@@ -1,5 +1,10 @@
 const std = @import("std");
 const hitran_partition_tables = @import("hitran_partition_tables.zig");
+const climatology = @import("reference/climatology.zig");
+const cross_section_types = @import("reference/cross_sections.zig");
+const cia = @import("reference/cia.zig");
+const airmass_phase = @import("reference/airmass_phase.zig");
+const demo_builders = @import("reference/demo_builders.zig");
 
 const Allocator = std.mem.Allocator;
 const max_strong_line_sidecars: usize = 32;
@@ -10,207 +15,12 @@ const hitran_hc_over_kb_cm_k = 1.4387770;
 const hitran_gas_constant_j_per_mol_k = 8.3144621;
 const hitran_speed_of_light_m_per_s = 2.99792458e8;
 
-pub const ClimatologyPoint = struct {
-    altitude_km: f64,
-    pressure_hpa: f64,
-    temperature_k: f64,
-    air_number_density_cm3: f64,
-};
-
-pub const ClimatologyProfile = struct {
-    rows: []ClimatologyPoint,
-
-    pub fn deinit(self: *ClimatologyProfile, allocator: Allocator) void {
-        allocator.free(self.rows);
-        self.* = undefined;
-    }
-
-    pub fn meanNumberDensity(self: ClimatologyProfile) f64 {
-        var total: f64 = 0.0;
-        for (self.rows) |row| total += row.air_number_density_cm3;
-        return if (self.rows.len == 0) 0.0 else total / @as(f64, @floatFromInt(self.rows.len));
-    }
-
-    pub fn interpolateDensity(self: ClimatologyProfile, altitude_km: f64) f64 {
-        if (self.rows.len == 0) return 0.0;
-        if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].air_number_density_cm3;
-
-        for (self.rows[0 .. self.rows.len - 1], self.rows[1..]) |left, right| {
-            if (altitude_km <= right.altitude_km) {
-                const span = right.altitude_km - left.altitude_km;
-                if (span == 0.0) return right.air_number_density_cm3;
-                const weight = (altitude_km - left.altitude_km) / span;
-                return left.air_number_density_cm3 + weight * (right.air_number_density_cm3 - left.air_number_density_cm3);
-            }
-        }
-        return self.rows[self.rows.len - 1].air_number_density_cm3;
-    }
-
-    pub fn interpolateTemperature(self: ClimatologyProfile, altitude_km: f64) f64 {
-        if (self.rows.len == 0) return 0.0;
-        if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].temperature_k;
-
-        for (self.rows[0 .. self.rows.len - 1], self.rows[1..]) |left, right| {
-            if (altitude_km <= right.altitude_km) {
-                const span = right.altitude_km - left.altitude_km;
-                if (span == 0.0) return right.temperature_k;
-                const weight = (altitude_km - left.altitude_km) / span;
-                return left.temperature_k + weight * (right.temperature_k - left.temperature_k);
-            }
-        }
-        return self.rows[self.rows.len - 1].temperature_k;
-    }
-
-    pub fn interpolatePressure(self: ClimatologyProfile, altitude_km: f64) f64 {
-        if (self.rows.len == 0) return 0.0;
-        if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].pressure_hpa;
-
-        for (self.rows[0 .. self.rows.len - 1], self.rows[1..]) |left, right| {
-            if (altitude_km <= right.altitude_km) {
-                const span = right.altitude_km - left.altitude_km;
-                if (span == 0.0) return right.pressure_hpa;
-                const weight = (altitude_km - left.altitude_km) / span;
-                return left.pressure_hpa + weight * (right.pressure_hpa - left.pressure_hpa);
-            }
-        }
-        return self.rows[self.rows.len - 1].pressure_hpa;
-    }
-
-    pub fn maxAltitude(self: ClimatologyProfile) f64 {
-        return if (self.rows.len == 0) 0.0 else self.rows[self.rows.len - 1].altitude_km;
-    }
-};
-
-pub const CrossSectionPoint = struct {
-    wavelength_nm: f64,
-    sigma_cm2_per_molecule: f64,
-};
-
-pub const CrossSectionTable = struct {
-    points: []CrossSectionPoint,
-
-    pub fn deinit(self: *CrossSectionTable, allocator: Allocator) void {
-        allocator.free(self.points);
-        self.* = undefined;
-    }
-
-    pub fn meanSigmaInRange(self: CrossSectionTable, start_nm: f64, end_nm: f64) f64 {
-        var total: f64 = 0.0;
-        var count: usize = 0;
-        for (self.points) |point| {
-            if (point.wavelength_nm < start_nm or point.wavelength_nm > end_nm) continue;
-            total += point.sigma_cm2_per_molecule;
-            count += 1;
-        }
-
-        if (count > 0) return total / @as(f64, @floatFromInt(count));
-        return self.interpolateSigma((start_nm + end_nm) * 0.5);
-    }
-
-    pub fn interpolateSigma(self: CrossSectionTable, wavelength_nm: f64) f64 {
-        if (self.points.len == 0) return 0.0;
-        if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0].sigma_cm2_per_molecule;
-
-        for (self.points[0 .. self.points.len - 1], self.points[1..]) |left, right| {
-            if (wavelength_nm <= right.wavelength_nm) {
-                const span = right.wavelength_nm - left.wavelength_nm;
-                if (span == 0.0) return right.sigma_cm2_per_molecule;
-                const weight = (wavelength_nm - left.wavelength_nm) / span;
-                return left.sigma_cm2_per_molecule + weight * (right.sigma_cm2_per_molecule - left.sigma_cm2_per_molecule);
-            }
-        }
-        return self.points[self.points.len - 1].sigma_cm2_per_molecule;
-    }
-};
-
-pub const CollisionInducedAbsorptionPoint = struct {
-    wavelength_nm: f64,
-    a0: f64,
-    a1: f64,
-    a2: f64,
-};
-
-pub const CollisionInducedAbsorptionTable = struct {
-    scale_factor_cm5_per_molecule2: f64,
-    points: []CollisionInducedAbsorptionPoint,
-
-    pub fn deinit(self: *CollisionInducedAbsorptionTable, allocator: Allocator) void {
-        allocator.free(self.points);
-        self.* = undefined;
-    }
-
-    pub fn clone(self: CollisionInducedAbsorptionTable, allocator: Allocator) !CollisionInducedAbsorptionTable {
-        return .{
-            .scale_factor_cm5_per_molecule2 = self.scale_factor_cm5_per_molecule2,
-            .points = try allocator.dupe(CollisionInducedAbsorptionPoint, self.points),
-        };
-    }
-
-    pub fn sigmaAt(self: CollisionInducedAbsorptionTable, wavelength_nm: f64, temperature_k: f64) f64 {
-        const coefficients = self.interpolateCoefficients(wavelength_nm);
-        const temperature_c = temperature_k - 273.15;
-        const raw_sigma = coefficients.a0 +
-            coefficients.a1 * temperature_c +
-            coefficients.a2 * temperature_c * temperature_c;
-        return self.scale_factor_cm5_per_molecule2 * @max(raw_sigma, 0.0);
-    }
-
-    pub fn dSigmaDTemperatureAt(self: CollisionInducedAbsorptionTable, wavelength_nm: f64, temperature_k: f64) f64 {
-        const coefficients = self.interpolateCoefficients(wavelength_nm);
-        const temperature_c = temperature_k - 273.15;
-        const raw_sigma = coefficients.a0 +
-            coefficients.a1 * temperature_c +
-            coefficients.a2 * temperature_c * temperature_c;
-        if (raw_sigma <= 0.0) return 0.0;
-        return self.scale_factor_cm5_per_molecule2 *
-            (coefficients.a1 + 2.0 * coefficients.a2 * temperature_c);
-    }
-
-    pub fn meanSigmaInRange(
-        self: CollisionInducedAbsorptionTable,
-        start_nm: f64,
-        end_nm: f64,
-        temperature_k: f64,
-    ) f64 {
-        var total: f64 = 0.0;
-        var count: usize = 0;
-        for (self.points) |point| {
-            if (point.wavelength_nm < start_nm or point.wavelength_nm > end_nm) continue;
-            total += self.sigmaAt(point.wavelength_nm, temperature_k);
-            count += 1;
-        }
-
-        if (count > 0) return total / @as(f64, @floatFromInt(count));
-        return self.sigmaAt((start_nm + end_nm) * 0.5, temperature_k);
-    }
-
-    fn interpolateCoefficients(self: CollisionInducedAbsorptionTable, wavelength_nm: f64) CollisionInducedAbsorptionPoint {
-        if (self.points.len == 0) {
-            return .{
-                .wavelength_nm = wavelength_nm,
-                .a0 = 0.0,
-                .a1 = 0.0,
-                .a2 = 0.0,
-            };
-        }
-        if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0];
-
-        for (self.points[0 .. self.points.len - 1], self.points[1..]) |left, right| {
-            if (wavelength_nm <= right.wavelength_nm) {
-                const span = right.wavelength_nm - left.wavelength_nm;
-                if (span == 0.0) return right;
-                const weight = (wavelength_nm - left.wavelength_nm) / span;
-                return .{
-                    .wavelength_nm = wavelength_nm,
-                    .a0 = left.a0 + weight * (right.a0 - left.a0),
-                    .a1 = left.a1 + weight * (right.a1 - left.a1),
-                    .a2 = left.a2 + weight * (right.a2 - left.a2),
-                };
-            }
-        }
-        return self.points[self.points.len - 1];
-    }
-};
+pub const ClimatologyPoint = climatology.ClimatologyPoint;
+pub const ClimatologyProfile = climatology.ClimatologyProfile;
+pub const CrossSectionPoint = cross_section_types.CrossSectionPoint;
+pub const CrossSectionTable = cross_section_types.CrossSectionTable;
+pub const CollisionInducedAbsorptionPoint = cia.CollisionInducedAbsorptionPoint;
+pub const CollisionInducedAbsorptionTable = cia.CollisionInducedAbsorptionTable;
 
 pub const SpectroscopyLine = struct {
     gas_index: u16 = 0,
@@ -486,105 +296,14 @@ pub const SpectroscopyLineList = struct {
     }
 };
 
-pub const AirmassFactorPoint = struct {
-    solar_zenith_deg: f64,
-    view_zenith_deg: f64,
-    relative_azimuth_deg: f64,
-    airmass_factor: f64,
-};
+pub const AirmassFactorPoint = airmass_phase.AirmassFactorPoint;
+pub const MiePhasePoint = airmass_phase.MiePhasePoint;
+pub const MiePhaseTable = airmass_phase.MiePhaseTable;
+pub const AirmassFactorLut = airmass_phase.AirmassFactorLut;
 
-pub const MiePhasePoint = struct {
-    wavelength_nm: f64,
-    extinction_scale: f64,
-    single_scatter_albedo: f64,
-    phase_coefficients: [4]f64,
-};
-
-pub const MiePhaseTable = struct {
-    points: []MiePhasePoint,
-
-    pub fn deinit(self: *MiePhaseTable, allocator: Allocator) void {
-        allocator.free(self.points);
-        self.* = undefined;
-    }
-
-    pub fn interpolate(self: MiePhaseTable, wavelength_nm: f64) MiePhasePoint {
-        if (self.points.len == 0) {
-            return .{
-                .wavelength_nm = wavelength_nm,
-                .extinction_scale = 1.0,
-                .single_scatter_albedo = 1.0,
-                .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-            };
-        }
-        if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0];
-
-        for (self.points[0 .. self.points.len - 1], self.points[1..]) |left, right| {
-            if (wavelength_nm <= right.wavelength_nm) {
-                const span = right.wavelength_nm - left.wavelength_nm;
-                if (span == 0.0) return right;
-                const weight = (wavelength_nm - left.wavelength_nm) / span;
-
-                var phase_coefficients: [4]f64 = undefined;
-                for (&phase_coefficients, 0..) |*slot, index| {
-                    slot.* = left.phase_coefficients[index] +
-                        weight * (right.phase_coefficients[index] - left.phase_coefficients[index]);
-                }
-                phase_coefficients[0] = 1.0;
-                return .{
-                    .wavelength_nm = wavelength_nm,
-                    .extinction_scale = left.extinction_scale + weight * (right.extinction_scale - left.extinction_scale),
-                    .single_scatter_albedo = left.single_scatter_albedo + weight * (right.single_scatter_albedo - left.single_scatter_albedo),
-                    .phase_coefficients = phase_coefficients,
-                };
-            }
-        }
-        return self.points[self.points.len - 1];
-    }
-};
-
-pub const AirmassFactorLut = struct {
-    points: []AirmassFactorPoint,
-
-    pub fn deinit(self: *AirmassFactorLut, allocator: Allocator) void {
-        allocator.free(self.points);
-        self.* = undefined;
-    }
-
-    pub fn nearest(self: AirmassFactorLut, solar_zenith_deg: f64, view_zenith_deg: f64, relative_azimuth_deg: f64) f64 {
-        if (self.points.len == 0) return 1.0;
-
-        var best_distance = std.math.inf(f64);
-        var best_value = self.points[0].airmass_factor;
-        for (self.points) |point| {
-            const delta_sza = point.solar_zenith_deg - solar_zenith_deg;
-            const delta_vza = point.view_zenith_deg - view_zenith_deg;
-            const delta_raa = point.relative_azimuth_deg - relative_azimuth_deg;
-            const distance = delta_sza * delta_sza + delta_vza * delta_vza + delta_raa * delta_raa;
-            if (distance < best_distance) {
-                best_distance = distance;
-                best_value = point.airmass_factor;
-            }
-        }
-        return best_value;
-    }
-};
-
-const demo_profile_rows = [_]ClimatologyPoint{
-    .{ .altitude_km = 0.0, .pressure_hpa = 1013.25, .temperature_k = 288.15, .air_number_density_cm3 = 2.547e19 },
-    .{ .altitude_km = 5.0, .pressure_hpa = 540.48, .temperature_k = 255.65, .air_number_density_cm3 = 1.149e19 },
-    .{ .altitude_km = 10.0, .pressure_hpa = 264.36, .temperature_k = 223.15, .air_number_density_cm3 = 5.413e18 },
-    .{ .altitude_km = 20.0, .pressure_hpa = 54.75, .temperature_k = 216.65, .air_number_density_cm3 = 1.095e18 },
-    .{ .altitude_km = 40.0, .pressure_hpa = 2.87, .temperature_k = 251.05, .air_number_density_cm3 = 8.24e16 },
-};
-
-const demo_cross_section_points = [_]CrossSectionPoint{
-    .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 6.21e-19 },
-    .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 5.72e-19 },
-    .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 5.13e-19 },
-    .{ .wavelength_nm = 470.0, .sigma_cm2_per_molecule = 4.42e-19 },
-    .{ .wavelength_nm = 490.0, .sigma_cm2_per_molecule = 3.98e-19 },
-};
+pub const buildDemoClimatology = demo_builders.buildDemoClimatology;
+pub const buildDemoCrossSections = demo_builders.buildDemoCrossSections;
+pub const buildDemoAirmassFactorLut = demo_builders.buildDemoAirmassFactorLut;
 
 const demo_spectroscopy_lines = [_]SpectroscopyLine{
     .{ .center_wavelength_nm = 429.8, .line_strength_cm2_per_molecule = 8.2e-21, .air_half_width_nm = 0.035, .temperature_exponent = 0.72, .lower_state_energy_cm1 = 112.0, .pressure_shift_nm = 0.002, .line_mixing_coefficient = 0.04 },
@@ -594,34 +313,9 @@ const demo_spectroscopy_lines = [_]SpectroscopyLine{
     .{ .center_wavelength_nm = 456.0, .line_strength_cm2_per_molecule = 5.4e-21, .air_half_width_nm = 0.030, .temperature_exponent = 0.81, .lower_state_energy_cm1 = 205.0, .pressure_shift_nm = 0.001, .line_mixing_coefficient = 0.02 },
 };
 
-const demo_airmass_factor_points = [_]AirmassFactorPoint{
-    .{ .solar_zenith_deg = 20.0, .view_zenith_deg = 0.0, .relative_azimuth_deg = 0.0, .airmass_factor = 1.08 },
-    .{ .solar_zenith_deg = 40.0, .view_zenith_deg = 10.0, .relative_azimuth_deg = 30.0, .airmass_factor = 1.241 },
-    .{ .solar_zenith_deg = 55.0, .view_zenith_deg = 20.0, .relative_azimuth_deg = 60.0, .airmass_factor = 1.58 },
-    .{ .solar_zenith_deg = 70.0, .view_zenith_deg = 30.0, .relative_azimuth_deg = 90.0, .airmass_factor = 2.11 },
-};
-
-pub fn buildDemoClimatology(allocator: Allocator) !ClimatologyProfile {
-    return .{
-        .rows = try allocator.dupe(ClimatologyPoint, demo_profile_rows[0..]),
-    };
-}
-
-pub fn buildDemoCrossSections(allocator: Allocator) !CrossSectionTable {
-    return .{
-        .points = try allocator.dupe(CrossSectionPoint, demo_cross_section_points[0..]),
-    };
-}
-
 pub fn buildDemoSpectroscopyLines(allocator: Allocator) !SpectroscopyLineList {
     return .{
         .lines = try allocator.dupe(SpectroscopyLine, demo_spectroscopy_lines[0..]),
-    };
-}
-
-pub fn buildDemoAirmassFactorLut(allocator: Allocator) !AirmassFactorLut {
-    return .{
-        .points = try allocator.dupe(AirmassFactorPoint, demo_airmass_factor_points[0..]),
     };
 }
 
