@@ -1,5 +1,7 @@
 # Plugins and Extension Boundaries
 
+If you want the simplest walkthrough first, read [Plugin System End-To-End Flow](./plugin-system-end-to-end.md) before this page.
+
 ## Purpose Of The Plugin System
 
 The plugin system exists to make capability selection explicit without weakening the scientific execution model. In a radiative-transfer and retrieval codebase, "extension" can easily become a source of hidden state, private callbacks, and irreproducible execution. The architecture in `zdisamar` is designed to avoid that failure mode.

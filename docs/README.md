@@ -6,12 +6,13 @@ This directory explains DISAMAR as an atmospheric radiative-transfer and retriev
 
 1. [DISAMAR Overview](./disamar-overview.md)
 2. [Architecture and Execution Model](./zig-architecture.md)
-3. [Operational O2 A-Band Path](./operational-o2a.md)
-4. [Reference Data and Runtime Bundles](./reference-data-and-bundles.md)
-5. [Retrieval and Measurement-Space Outputs](./retrieval-and-measurement-space.md)
-6. [Exporters and Result Artifacts](./exporters-and-artifacts.md)
-7. [Plugins and Extension Boundaries](./plugins-and-extension-boundaries.md)
-8. [Validation and Scientific Scope](./validation-and-parity.md)
+3. [Plugin System End-To-End Flow](./plugin-system-end-to-end.md)
+4. [Operational O2 A-Band Path](./operational-o2a.md)
+5. [Reference Data and Runtime Bundles](./reference-data-and-bundles.md)
+6. [Retrieval and Measurement-Space Outputs](./retrieval-and-measurement-space.md)
+7. [Exporters and Result Artifacts](./exporters-and-artifacts.md)
+8. [Plugins and Extension Boundaries](./plugins-and-extension-boundaries.md)
+9. [Validation and Scientific Scope](./validation-and-parity.md)
 
 ## Scope
 
