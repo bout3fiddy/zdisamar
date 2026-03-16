@@ -73,6 +73,61 @@ pub const Buffers = struct {
     noise_sigma: ?[]f64 = null,
 };
 
+pub const SummaryWorkspace = struct {
+    wavelengths: []f64 = &.{},
+    radiance: []f64 = &.{},
+    irradiance: []f64 = &.{},
+    reflectance: []f64 = &.{},
+    scratch: []f64 = &.{},
+    jacobian: []f64 = &.{},
+    noise_sigma: []f64 = &.{},
+
+    pub fn deinit(self: *SummaryWorkspace, allocator: Allocator) void {
+        freeBuffer(allocator, self.wavelengths);
+        freeBuffer(allocator, self.radiance);
+        freeBuffer(allocator, self.irradiance);
+        freeBuffer(allocator, self.reflectance);
+        freeBuffer(allocator, self.scratch);
+        freeBuffer(allocator, self.jacobian);
+        freeBuffer(allocator, self.noise_sigma);
+        self.* = .{};
+    }
+
+    fn buffers(
+        self: *SummaryWorkspace,
+        allocator: Allocator,
+        scene: Scene,
+        route: common.Route,
+        providers: ProviderBindings,
+    ) Error!Buffers {
+        const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
+        const wants_jacobian = route.derivative_mode != .none;
+        const wants_noise = providers.noise.materializesSigma(scene);
+
+        try ensureBufferCapacity(allocator, &self.wavelengths, sample_count);
+        try ensureBufferCapacity(allocator, &self.radiance, sample_count);
+        try ensureBufferCapacity(allocator, &self.irradiance, sample_count);
+        try ensureBufferCapacity(allocator, &self.reflectance, sample_count);
+        try ensureBufferCapacity(allocator, &self.scratch, sample_count);
+        if (wants_jacobian) {
+            try ensureBufferCapacity(allocator, &self.jacobian, sample_count);
+        }
+        if (wants_noise) {
+            try ensureBufferCapacity(allocator, &self.noise_sigma, sample_count);
+        }
+
+        return .{
+            .wavelengths = self.wavelengths[0..sample_count],
+            .radiance = self.radiance[0..sample_count],
+            .irradiance = self.irradiance[0..sample_count],
+            .reflectance = self.reflectance[0..sample_count],
+            .scratch = self.scratch[0..sample_count],
+            .jacobian = if (wants_jacobian) self.jacobian[0..sample_count] else null,
+            .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
+        };
+    }
+};
+
 const OperationalInstrumentIntegration = InstrumentProviders.IntegrationKernel;
 
 const ForwardIntegratedSample = struct {
@@ -230,9 +285,26 @@ pub fn simulateSummary(
     prepared: PreparedOpticalState,
     providers: ProviderBindings,
 ) Error!MeasurementSpaceSummary {
-    var product = try simulateProduct(allocator, scene, route, prepared, providers);
-    defer product.deinit(allocator);
-    return product.summary;
+    var workspace: SummaryWorkspace = .{};
+    defer workspace.deinit(allocator);
+    return simulateSummaryWithWorkspace(allocator, &workspace, scene, route, prepared, providers);
+}
+
+pub fn simulateSummaryWithWorkspace(
+    allocator: Allocator,
+    workspace: *SummaryWorkspace,
+    scene: Scene,
+    route: common.Route,
+    prepared: PreparedOpticalState,
+    providers: ProviderBindings,
+) Error!MeasurementSpaceSummary {
+    return simulate(
+        scene,
+        route,
+        prepared,
+        providers,
+        try workspace.buffers(allocator, scene, route, providers),
+    );
 }
 
 pub fn simulateProduct(
@@ -314,6 +386,16 @@ fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
     if (buffers.noise_sigma) |noise_sigma| {
         if (noise_sigma.len != sample_count) return error.ShapeMismatch;
     }
+}
+
+fn ensureBufferCapacity(allocator: Allocator, buffer: *[]f64, capacity: usize) Error!void {
+    if (buffer.*.len >= capacity) return;
+    freeBuffer(allocator, buffer.*);
+    buffer.* = try allocator.alloc(f64, capacity);
+}
+
+fn freeBuffer(allocator: Allocator, buffer: []f64) void {
+    if (buffer.len != 0) allocator.free(buffer);
 }
 
 fn configuredForwardInput(
@@ -536,6 +618,122 @@ test "measurement-space simulation composes transport, calibration, convolution,
     try std.testing.expect(summary.mean_reflectance < 10.0);
     try std.testing.expect(summary.mean_noise_sigma > 0.0);
     try std.testing.expect(summary.mean_jacobian != null);
+}
+
+test "measurement-space summary workspace reuses caller-owned buffers and matches full-product summaries" {
+    const scene: Scene = .{
+        .id = "measurement-summary-workspace",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 16,
+        },
+        .observation_model = .{
+            .instrument = "synthetic",
+            .regime = .nadir,
+            .sampling = "operational",
+            .noise_model = "shot_noise",
+        },
+        .atmosphere = .{
+            .layer_count = 12,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var workspace: SummaryWorkspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+
+    const first_summary = try simulateSummaryWithWorkspace(
+        std.testing.allocator,
+        &workspace,
+        scene,
+        route,
+        prepared,
+        testProviders(),
+    );
+    const wavelengths_ptr = @intFromPtr(workspace.wavelengths.ptr);
+    const radiance_ptr = @intFromPtr(workspace.radiance.ptr);
+    const jacobian_ptr = @intFromPtr(workspace.jacobian.ptr);
+    const noise_ptr = @intFromPtr(workspace.noise_sigma.ptr);
+
+    const second_summary = try simulateSummaryWithWorkspace(
+        std.testing.allocator,
+        &workspace,
+        scene,
+        route,
+        prepared,
+        testProviders(),
+    );
+    try std.testing.expectEqual(wavelengths_ptr, @intFromPtr(workspace.wavelengths.ptr));
+    try std.testing.expectEqual(radiance_ptr, @intFromPtr(workspace.radiance.ptr));
+    try std.testing.expectEqual(jacobian_ptr, @intFromPtr(workspace.jacobian.ptr));
+    try std.testing.expectEqual(noise_ptr, @intFromPtr(workspace.noise_sigma.ptr));
+
+    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    defer product.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(first_summary.sample_count, second_summary.sample_count);
+    try std.testing.expectApproxEqAbs(first_summary.mean_radiance, second_summary.mean_radiance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(first_summary.mean_radiance, product.summary.mean_radiance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(first_summary.mean_irradiance, product.summary.mean_irradiance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(first_summary.mean_reflectance, product.summary.mean_reflectance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(first_summary.mean_noise_sigma, product.summary.mean_noise_sigma, 1.0e-12);
+    try std.testing.expectApproxEqAbs(first_summary.mean_jacobian.?, product.summary.mean_jacobian.?, 1.0e-12);
+}
+
+test "measurement-space summary workspace supports routes without jacobians or noise materialization" {
+    const scene: Scene = .{
+        .id = "measurement-summary-no-noise",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 10,
+        },
+        .observation_model = .{
+            .instrument = "synthetic",
+            .regime = .nadir,
+            .sampling = "operational",
+            .noise_model = "none",
+        },
+        .atmosphere = .{
+            .layer_count = 12,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var workspace: SummaryWorkspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+
+    const summary = try simulateSummaryWithWorkspace(
+        std.testing.allocator,
+        &workspace,
+        scene,
+        route,
+        prepared,
+        testProviders(),
+    );
+    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    defer product.deinit(std.testing.allocator);
+
+    try std.testing.expect(summary.mean_radiance > 0.0);
+    try std.testing.expectEqual(@as(f64, 0.0), summary.mean_noise_sigma);
+    try std.testing.expect(summary.mean_jacobian == null);
+    try std.testing.expectEqual(@as(usize, 0), workspace.jacobian.len);
+    try std.testing.expectEqual(@as(usize, 0), workspace.noise_sigma.len);
+    try std.testing.expectEqual(@as(usize, 0), product.noise_sigma.len);
+    try std.testing.expect(product.jacobian == null);
 }
 
 test "measurement-space product materializes spectral vectors and physical fields" {

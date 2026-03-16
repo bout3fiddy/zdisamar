@@ -303,6 +303,8 @@ fn executeRetrievalIfRequested(
     if (request.inverse_problem == null) return;
 
     const retrieval_provider = plan.providers.retrieval orelse return errors.ExecutionError.InvalidRequest;
+    var summary_workspace: MeasurementSpace.SummaryWorkspace = .{};
+    defer summary_workspace.deinit(self.allocator);
     var retrieval_request = request;
     if (retrieval_request.measurement_binding == null and retrieval_request.inverse_problem != null) {
         const source = retrieval_request.inverse_problem.?.measurements.source;
@@ -321,6 +323,7 @@ fn executeRetrievalIfRequested(
     const retrieval_context: RetrievalExecutionContext = .{
         .allocator = self.allocator,
         .plan = plan,
+        .summary_workspace = &summary_workspace,
     };
     const retrieval_outcome = retrieval_provider.solve(self.allocator, retrieval_problem, .{
         .context = @ptrCast(&retrieval_context),
@@ -361,6 +364,7 @@ fn measurementProviders(plan: *const Plan) MeasurementSpace.ProviderBindings {
 const RetrievalExecutionContext = struct {
     allocator: std.mem.Allocator,
     plan: *const Plan,
+    summary_workspace: *MeasurementSpace.SummaryWorkspace,
 };
 
 fn evaluateRetrievalScene(context: *const anyopaque, scene: Scene) anyerror!MeasurementSpace.MeasurementSpaceSummary {
@@ -369,8 +373,9 @@ fn evaluateRetrievalScene(context: *const anyopaque, scene: Scene) anyerror!Meas
     var prepared_optics = try typed_context.plan.providers.optics.prepareForScene(typed_context.allocator, scene);
     defer prepared_optics.deinit(typed_context.allocator);
 
-    return MeasurementSpace.simulateSummary(
+    return MeasurementSpace.simulateSummaryWithWorkspace(
         typed_context.allocator,
+        typed_context.summary_workspace,
         scene,
         typed_context.plan.transport_route,
         prepared_optics,
@@ -809,6 +814,80 @@ test "prepared plans own reusable cache hints and workspaces own reusable scratc
 
     workspace.reset();
     try std.testing.expectEqual(@as(u64, 1), workspace.scratch.reset_count);
+}
+
+test "engine retrieval execution uses summary evaluation and still materializes retrieval products separately" {
+    var engine = Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    var plan = try engine.preparePlan(.{
+        .providers = .{
+            .retrieval_algorithm = "builtin.oe_solver",
+        },
+        .scene_blueprint = .{
+            .derivative_mode = .semi_analytical,
+            .measurement_count_hint = 24,
+        },
+    });
+    defer plan.deinit();
+
+    var workspace = engine.createWorkspace("retrieval-summary-suite");
+    var request = Request.init(.{
+        .id = "scene-retrieval-summary-suite",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 24,
+        },
+        .atmosphere = .{
+            .layer_count = 18,
+        },
+        .surface = .{
+            .albedo = 0.10,
+        },
+        .observation_model = .{
+            .instrument = "synthetic",
+            .regime = .nadir,
+            .sampling = "operational",
+            .noise_model = "shot_noise",
+        },
+    });
+    request.expected_derivative_mode = .semi_analytical;
+    request.diagnostics = .{
+        .provenance = true,
+        .jacobians = true,
+    };
+    request.inverse_problem = .{
+        .id = "inverse-summary-suite",
+        .state_vector = .{
+            .parameters = &[_]@import("../model/Scene.zig").StateParameter{
+                .{ .name = "surface_albedo", .target = "scene.surface.albedo", .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.02 } },
+                .{ .name = "aerosol_tau", .target = "scene.aerosols.plume.optical_depth_550_nm", .prior = .{ .enabled = true, .mean = 0.05, .sigma = 0.03 } },
+            },
+        },
+        .measurements = .{
+            .product = "radiance",
+            .observable = "radiance",
+            .sample_count = 24,
+            .source = .{ .kind = .external_observation, .name = "forward-measurement" },
+        },
+    };
+
+    var result = try engine.execute(&plan, &workspace, request);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.measurement_space != null);
+    try std.testing.expect(result.measurement_space_product != null);
+    try std.testing.expect(result.retrieval != null);
+    try std.testing.expect(result.retrieval.?.fitted_measurement != null);
+    try std.testing.expect(result.retrieval_products.fitted_measurement != null);
+    try std.testing.expect(result.retrieval_products.state_vector != null);
+    try std.testing.expect(result.retrieval_products.jacobian != null);
+    try std.testing.expectEqual(
+        result.retrieval.?.fitted_measurement.?.sample_count,
+        @as(u32, @intCast(result.retrieval_products.fitted_measurement.?.wavelengths.len)),
+    );
 }
 
 test "engine owns runtime caches and batch scheduling helpers explicitly" {
