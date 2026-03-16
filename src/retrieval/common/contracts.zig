@@ -44,6 +44,7 @@ pub const Error = error{
     WorkspacePlanMismatch,
     DerivativeModeMismatch,
     UnsupportedDerivativeMode,
+    UnsupportedExecutionMode,
     UnsupportedCapability,
     PluginPrepareFailed,
     PluginExecutionFailed,

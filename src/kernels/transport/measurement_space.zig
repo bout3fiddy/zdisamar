@@ -140,6 +140,7 @@ pub const Error =
     common.Error ||
     grid.Error ||
     convolution.Error ||
+    NoiseProviders.Error ||
     error{
         ShapeMismatch,
         OutOfMemory,

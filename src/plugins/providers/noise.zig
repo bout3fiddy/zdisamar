@@ -2,7 +2,7 @@ const std = @import("std");
 const noise = @import("../../kernels/spectra/noise.zig");
 const Scene = @import("../../model/Scene.zig").Scene;
 
-pub const Error = error{ShapeMismatch};
+pub const Error = noise.Error;
 
 pub const Provider = struct {
     id: []const u8,

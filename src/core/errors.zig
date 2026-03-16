@@ -9,6 +9,7 @@ pub const PreparationError = TemplateError || error{
     UnsupportedModelFamily,
     PreparedPlanLimitExceeded,
     UnsupportedDerivativeMode,
+    UnsupportedExecutionMode,
     UnsupportedCapability,
     PluginPrepareFailed,
 };

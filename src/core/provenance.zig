@@ -5,7 +5,7 @@ pub const Provenance = struct {
     engine_version: []const u8 = "0.1.0-dev",
     model_family: []const u8 = "disamar_standard",
     solver_route: []const u8 = "builtin.dispatcher",
-    transport_family: []const u8 = "adding",
+    transport_family: []const u8 = "surrogate_adding",
     derivative_mode: []const u8 = "none",
     numerical_mode: []const u8 = "scalar",
     plan_id: u64 = 0,
@@ -29,7 +29,7 @@ pub const Provenance = struct {
         return .{
             .model_family = plan.template.model_family,
             .solver_route = plan.template.providers.transport_solver,
-            .transport_family = @tagName(plan.transport_route.family),
+            .transport_family = plan.transport_route.family.provenanceLabel(),
             .derivative_mode = @tagName(plan.transport_route.derivative_mode),
             .numerical_mode = numerical_mode,
             .plan_id = plan.id,

@@ -3,18 +3,18 @@ const adding = @import("adding.zig");
 const common = @import("common.zig");
 const labos = @import("labos.zig");
 
-pub fn prepare(request: common.DispatchRequest) common.Error!common.Route {
+pub fn prepare(request: common.DispatchRequest) common.PrepareError!common.Route {
     return common.prepareRoute(request);
 }
 
-pub fn executePrepared(route: common.Route, input: common.ForwardInput) common.Error!common.ForwardResult {
+pub fn executePrepared(route: common.Route, input: common.ForwardInput) common.ExecuteError!common.ForwardResult {
     return switch (route.family) {
         .adding => adding.execute(route, input),
         .labos => labos.execute(route, input),
     };
 }
 
-pub fn execute(request: common.DispatchRequest, input: common.ForwardInput) common.Error!common.ForwardResult {
+pub fn execute(request: common.DispatchRequest, input: common.ForwardInput) common.ExecuteError!common.ForwardResult {
     const route = try prepare(request);
     return executePrepared(route, input);
 }

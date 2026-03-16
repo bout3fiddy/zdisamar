@@ -209,6 +209,7 @@ fn prepareTransportRoute(
         .derivative_mode = template.scene_blueprint.derivative_mode,
     }) catch |err| switch (err) {
         error.UnsupportedDerivativeMode => return errors.PreparationError.UnsupportedDerivativeMode,
+        error.UnsupportedExecutionMode => return errors.PreparationError.UnsupportedExecutionMode,
     };
 }
 

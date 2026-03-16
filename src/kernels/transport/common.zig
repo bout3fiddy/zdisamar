@@ -4,6 +4,24 @@ const SceneModel = @import("../../model/Scene.zig");
 pub const TransportFamily = enum {
     adding,
     labos,
+
+    pub fn classification(self: TransportFamily) ImplementationClass {
+        _ = self;
+        return .surrogate;
+    }
+
+    pub fn provenanceLabel(self: TransportFamily) []const u8 {
+        return switch (self) {
+            .adding => "surrogate_adding",
+            .labos => "surrogate_labos",
+        };
+    }
+};
+
+pub const ImplementationClass = enum {
+    supported,
+    surrogate,
+    scaffold,
 };
 
 pub const Regime = SceneModel.ObservationRegime;
@@ -45,17 +63,23 @@ pub const ForwardResult = struct {
     jacobian_column: ?f64,
 };
 
-pub const Error = error{
+pub const PrepareError = error{
     UnsupportedDerivativeMode,
+    UnsupportedExecutionMode,
 };
 
-pub fn prepareRoute(request: DispatchRequest) Error!Route {
+pub const ExecuteError = PrepareError || error{
+    SingularDoublingDenominator,
+};
+
+pub const Error = ExecuteError;
+
+pub fn prepareRoute(request: DispatchRequest) PrepareError!Route {
     const family = selectFamily(request);
 
     if (family == .adding and request.derivative_mode == .analytical_plugin) {
         return Error.UnsupportedDerivativeMode;
     }
-
     return .{
         .family = family,
         .regime = request.regime,
@@ -64,13 +88,17 @@ pub fn prepareRoute(request: DispatchRequest) Error!Route {
     };
 }
 
-pub fn estimateJacobian(mode: DerivativeMode, signal: f64) ?f64 {
+pub fn estimateSensitivityProxy(mode: DerivativeMode, signal: f64) ?f64 {
     return switch (mode) {
         .none => null,
         .semi_analytical => 0.10 * signal,
         .analytical_plugin => 0.12 * signal,
         .numerical => 0.08 * signal,
     };
+}
+
+pub fn estimateJacobian(mode: DerivativeMode, signal: f64) ?f64 {
+    return estimateSensitivityProxy(mode, signal);
 }
 
 fn selectFamily(request: DispatchRequest) TransportFamily {
@@ -91,6 +119,8 @@ test "prepare route resolves families and keeps derivative mode explicit" {
     });
     try std.testing.expectEqual(TransportFamily.adding, adding_route.family);
     try std.testing.expectEqual(DerivativeMode.semi_analytical, adding_route.derivative_mode);
+    try std.testing.expectEqual(ImplementationClass.surrogate, adding_route.family.classification());
+    try std.testing.expectEqualStrings("surrogate_adding", adding_route.family.provenanceLabel());
 
     const labos_route = try prepareRoute(.{
         .regime = .limb,
@@ -99,4 +129,13 @@ test "prepare route resolves families and keeps derivative mode explicit" {
     });
     try std.testing.expectEqual(TransportFamily.labos, labos_route.family);
     try std.testing.expectEqual(DerivativeMode.analytical_plugin, labos_route.derivative_mode);
+    try std.testing.expectEqualStrings("surrogate_labos", labos_route.family.provenanceLabel());
+
+    const polarized_nadir_route = try prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .polarized,
+        .derivative_mode = .none,
+    });
+    try std.testing.expectEqual(TransportFamily.adding, polarized_nadir_route.family);
+    try std.testing.expectEqual(ExecutionMode.polarized, polarized_nadir_route.execution_mode);
 }
