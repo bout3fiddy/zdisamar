@@ -1,0 +1,19 @@
+{
+  "name": "mission_s5p",
+  "version": "0.1.0",
+  "mission": "Sentinel-5P",
+  "depends_on_packages": [
+    "disamar_standard",
+    "builtin_exporters"
+  ],
+  "recommended_export_format": "netcdf_cf",
+  "example_data_root": "data/examples/",
+  "plugin_lanes": {
+    "declarative_default": true,
+    "native_requires_opt_in": true
+  },
+  "bundled_plugins": [
+    "builtin.tropomi_response",
+    "builtin.netcdf_cf"
+  ]
+}

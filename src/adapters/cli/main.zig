@@ -1,20 +1,11 @@
 const std = @import("std");
-const zdisamar = @import("zdisamar");
+const App = @import("App.zig");
 
 pub fn main() !void {
-    var engine = zdisamar.Engine.init(std.heap.page_allocator, .{});
-    defer engine.deinit();
+    const args = try std.process.argsAlloc(std.heap.page_allocator);
+    defer std.process.argsFree(std.heap.page_allocator, args);
 
-    try engine.bootstrapBuiltinCatalog();
-
-    const plan = try engine.preparePlan(.{});
-    var workspace = engine.createWorkspace("cli");
-    const request = zdisamar.Request.init(.{ .id = "demo-scene" });
-    const result = try engine.execute(&plan, &workspace, request);
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print(
-        "zdisamar scaffold: model={s} plan_id={d} status={s}\n",
-        .{ plan.template.model_family, result.plan_id, @tagName(result.status) },
-    );
+    const stdout = std.fs.File.stdout().deprecatedWriter();
+    const stderr = std.fs.File.stderr().deprecatedWriter();
+    try App.run(std.heap.page_allocator, args, stdout, stderr);
 }

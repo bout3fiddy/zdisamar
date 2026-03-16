@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "prepare_plan_scalar_smoke",
+      "plan_template": "default_scalar",
+      "iterations": 256,
+      "max_runtime_ms": 500,
+      "upstream_anchor": "InputFiles/Config_NO2_O2-O2.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "prepare_plan_derivative_smoke",
+      "plan_template": "derivative_enabled",
+      "iterations": 128,
+      "max_runtime_ms": 500,
+      "upstream_anchor": "InputFiles/Config_O2A_XsecLUT.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "layout_axis_sampling_smoke",
+      "plan_template": "layout_axis_sampling",
+      "iterations": 4096,
+      "max_runtime_ms": 150,
+      "upstream_anchor": "InputFiles/Config_O3_profile_1band.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "aosoa_block_access_smoke",
+      "plan_template": "layout_aosoa_block_access",
+      "iterations": 4096,
+      "max_runtime_ms": 150,
+      "upstream_anchor": "InputFiles/Config_NO2_DOMINO.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "interpolation_linear_smoke",
+      "plan_template": "kernel_interpolation_linear",
+      "iterations": 8192,
+      "max_runtime_ms": 200,
+      "upstream_anchor": "InputFiles/Config_NO2_O2-O2.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "quadrature_trapezoid_smoke",
+      "plan_template": "kernel_quadrature_trapezoid",
+      "iterations": 4096,
+      "max_runtime_ms": 200,
+      "upstream_anchor": "InputFiles/Config_O3_profile_1band.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "linalg_vector_ops_smoke",
+      "plan_template": "kernel_linalg_vector_ops",
+      "iterations": 8192,
+      "max_runtime_ms": 200,
+      "upstream_anchor": "InputFiles/Config_O2A_XsecLUT.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "transport_dispatch_adding_smoke",
+      "plan_template": "transport_dispatch_adding",
+      "iterations": 4096,
+      "max_runtime_ms": 220,
+      "upstream_anchor": "InputFiles/Config_NO2_DOMINO.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "transport_dispatch_labos_smoke",
+      "plan_template": "transport_dispatch_labos",
+      "iterations": 4096,
+      "max_runtime_ms": 220,
+      "upstream_anchor": "InputFiles/Config_O3_profile_SO2_column_DISMAS_5.in",
+      "status": "scaffold_executable"
+    },
+    {
+      "id": "transport_derivative_contract_smoke",
+      "plan_template": "transport_derivative_contract",
+      "iterations": 4096,
+      "max_runtime_ms": 240,
+      "upstream_anchor": "InputFiles/Config_O2A_XsecLUT.in",
+      "status": "scaffold_executable"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# vendor-style irradiance/radiance channel demo
+start_channel_irr
+irr 405.0 3000.0 3.402296E+14
+irr 406.0 2990.0 3.302296E+14
+end_channel_irr
+start_channel_rad
+rad 405.0 1485.0 1.116153E+13
+rad 406.0 1445.0 1.096153E+13
+end_channel_rad

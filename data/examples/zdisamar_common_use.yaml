@@ -1,0 +1,174 @@
+schema_version: 1
+
+metadata:
+  id: o2a_twin_common
+  workspace: demo-o2a
+  description: >
+    Synthetic O2 A-band retrieval where the truth uses a BRDF surface
+    and the retrieval assumes Lambertian reflection.
+
+templates:
+  o2a_base:
+    plan:
+      model_family: disamar_standard
+      transport:
+        solver: dispatcher
+      execution:
+        solver_mode: scalar
+        derivative_mode: none
+
+    scene:
+      geometry:
+        model: plane_parallel
+        solar_zenith_deg: 31.7
+        viewing_zenith_deg: 7.9
+        relative_azimuth_deg: 143.4
+
+      atmosphere:
+        layering:
+          layer_count: 48
+
+      bands:
+        o2a:
+          start_nm: 758.0
+          end_nm: 771.0
+          step_nm: 0.01
+
+      absorbers:
+        o2:
+          species: o2
+          spectroscopy:
+            model: line_by_line
+            provider: builtin.cross_sections
+        o2o2:
+          species: o2o2
+          spectroscopy:
+            model: cia
+            provider: builtin.cross_sections
+
+      surface:
+        model: lambertian
+        albedo: 0.05
+
+      measurement_model:
+        regime: nadir
+        instrument:
+          name: tropomi
+        sampling:
+          mode: native
+        spectral_response:
+          shape: gaussian
+          fwhm_nm: 0.54
+        noise:
+          model: shot_noise
+
+experiment:
+  simulation:
+    from: o2a_base
+
+    scene:
+      id: truth_scene
+      surface:
+        model: ross_li_brdf
+        parameters:
+          isotropic: 0.030
+          volumetric: 0.020
+          geometric: 0.010
+
+      aerosols:
+        plume:
+          model: hg_layer
+          optical_depth_550_nm: 0.18
+          single_scatter_albedo: 0.93
+          asymmetry_factor: 0.68
+          layer_center_km: 3.8
+          layer_width_km: 1.2
+
+    products:
+      truth_radiance:
+        kind: measurement_space
+        observable: radiance
+        apply_noise: true
+
+  retrieval:
+    from: o2a_base
+
+    plan:
+      execution:
+        derivative_mode: semi_analytical
+
+    scene:
+      id: retrieval_scene
+      surface:
+        model: lambertian
+        albedo: 0.04
+
+      aerosols:
+        plume:
+          model: hg_layer
+          optical_depth_550_nm: 0.10
+          single_scatter_albedo: 0.93
+          asymmetry_factor: 0.68
+          layer_center_km: 3.0
+          layer_width_km: 2.0
+
+    inverse:
+      algorithm:
+        name: oe
+        provider: builtin.oe_solver
+
+      measurement:
+        source: truth_radiance
+        observable: radiance
+        error_model:
+          from_source_noise: true
+
+      state:
+        aerosol_tau:
+          target: scene.aerosols.plume.optical_depth_550_nm
+          transform: log
+          prior:
+            mean: 0.10
+            sigma: 0.10
+
+        aerosol_height:
+          target: scene.aerosols.plume.layer_center_km
+          prior:
+            mean: 3.0
+            sigma: 1.0
+
+        surface_albedo:
+          target: scene.surface.albedo
+          transform: logit
+          prior:
+            mean: 0.04
+            sigma: 0.02
+          bounds: [0.0, 1.0]
+
+      fit_controls:
+        max_iterations: 8
+
+      convergence:
+        cost_relative: 1.0e-3
+
+    products:
+      retrieved_state:
+        kind: state_vector
+
+      fitted_radiance:
+        kind: fitted_measurement
+
+outputs:
+  - from: truth_radiance
+    format: netcdf_cf
+    destination_uri: file://out/truth_radiance.nc
+
+  - from: retrieved_state
+    format: zarr
+    destination_uri: file://out/retrieval.zarr
+
+validation:
+  strict_unknown_fields: true
+  require_resolved_stage_references: true
+  synthetic_retrieval:
+    warn_if_models_are_identical: true

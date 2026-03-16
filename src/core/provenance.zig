@@ -1,11 +1,116 @@
+const std = @import("std");
+const Plan = @import("Plan.zig").Plan;
+
 pub const Provenance = struct {
     engine_version: []const u8 = "0.1.0-dev",
     model_family: []const u8 = "disamar_standard",
-    solver_route: []const u8 = "transport.dispatcher",
+    solver_route: []const u8 = "builtin.dispatcher",
+    transport_family: []const u8 = "adding",
+    derivative_mode: []const u8 = "none",
     numerical_mode: []const u8 = "scalar",
     plan_id: u64 = 0,
+    plugin_inventory_generation: u64 = 0,
     workspace_label: []const u8 = "",
     scene_id: []const u8 = "",
-    plugin_versions: []const []const u8 = &[_][]const u8{},
-    dataset_hashes: []const []const u8 = &[_][]const u8{},
+    plugin_version_entries: []const []const u8 = &.{},
+    dataset_hashes: []const []const u8 = &.{},
+    native_capability_slots: []const []const u8 = &.{},
+    native_entry_symbols: []const []const u8 = &.{},
+    native_library_paths: []const []const u8 = &.{},
+    owns_entries: bool = false,
+
+    pub fn fromPlan(
+        allocator: std.mem.Allocator,
+        plan: *const Plan,
+        workspace_label: []const u8,
+        scene_id: []const u8,
+        numerical_mode: []const u8,
+    ) !Provenance {
+        return .{
+            .model_family = plan.template.model_family,
+            .solver_route = plan.template.providers.transport_solver,
+            .transport_family = @tagName(plan.transport_route.family),
+            .derivative_mode = @tagName(plan.transport_route.derivative_mode),
+            .numerical_mode = numerical_mode,
+            .plan_id = plan.id,
+            .plugin_inventory_generation = plan.plugin_snapshot.generation,
+            .workspace_label = workspace_label,
+            .scene_id = scene_id,
+            .plugin_version_entries = try dupeSnapshotVersionLabels(allocator, plan.plugin_snapshot.capabilities),
+            .dataset_hashes = try dupeStringSlice(allocator, plan.plugin_snapshot.datasetHashes()),
+            .native_capability_slots = try dupeStringSlice(allocator, plan.plugin_snapshot.nativeCapabilitySlots()),
+            .native_entry_symbols = try dupeStringSlice(allocator, plan.plugin_snapshot.nativeEntrySymbols()),
+            .native_library_paths = try dupeStringSlice(allocator, plan.plugin_snapshot.nativeLibraryPaths()),
+            .owns_entries = true,
+        };
+    }
+
+    pub fn deinit(self: *Provenance, allocator: std.mem.Allocator) void {
+        if (!self.owns_entries) {
+            self.* = .{};
+            return;
+        }
+        freeStringSlice(allocator, self.plugin_version_entries);
+        freeStringSlice(allocator, self.dataset_hashes);
+        freeStringSlice(allocator, self.native_capability_slots);
+        freeStringSlice(allocator, self.native_entry_symbols);
+        freeStringSlice(allocator, self.native_library_paths);
+        self.* = .{};
+    }
+
+    pub fn pluginVersionCount(self: *const Provenance) usize {
+        return self.plugin_version_entries.len;
+    }
+
+    pub fn pluginVersions(self: *const Provenance) []const []const u8 {
+        return self.plugin_version_entries;
+    }
+
+    pub fn pluginVersionAt(self: *const Provenance, index: usize) []const u8 {
+        std.debug.assert(index < self.plugin_version_entries.len);
+        return self.plugin_version_entries[index];
+    }
+
+    pub fn setPluginVersions(self: *Provenance, values: []const []const u8) void {
+        self.owns_entries = false;
+        self.plugin_version_entries = values;
+    }
 };
+
+fn dupeStringSlice(allocator: std.mem.Allocator, values: []const []const u8) ![]const []const u8 {
+    const owned = try allocator.alloc([]const u8, values.len);
+    errdefer allocator.free(owned);
+    var copied: usize = 0;
+    errdefer {
+        for (owned[0..copied]) |value| allocator.free(value);
+    }
+    for (values, 0..) |value, index| {
+        owned[index] = try allocator.dupe(u8, value);
+        copied = index + 1;
+    }
+    return owned;
+}
+
+fn dupeSnapshotVersionLabels(
+    allocator: std.mem.Allocator,
+    values: []const @import("../plugins/registry/CapabilityRegistry.zig").SnapshotCapability,
+) ![]const []const u8 {
+    const owned = try allocator.alloc([]const u8, values.len);
+    errdefer allocator.free(owned);
+
+    var copied: usize = 0;
+    errdefer {
+        for (owned[0..copied]) |value| allocator.free(value);
+    }
+    for (values, 0..) |value, index| {
+        owned[index] = try allocator.dupe(u8, value.version_label);
+        copied = index + 1;
+    }
+    return owned;
+}
+
+fn freeStringSlice(allocator: std.mem.Allocator, values: []const []const u8) void {
+    if (values.len == 0) return;
+    for (values) |value| allocator.free(value);
+    allocator.free(values);
+}

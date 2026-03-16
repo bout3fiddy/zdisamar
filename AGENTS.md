@@ -9,15 +9,14 @@
 
 ## Router
 
-- Start in [src/AGENTS.md](/Users/swadhinnanda/Projects/git/zdisamar/src/AGENTS.md) for source-tree work.
-- Use [specs/AGENTS.md](/Users/swadhinnanda/Projects/git/zdisamar/specs/AGENTS.md) for tracked architecture docs.
-- Use [packages/AGENTS.md](/Users/swadhinnanda/Projects/git/zdisamar/packages/AGENTS.md) for distributable bundles.
-- Use [tests/AGENTS.md](/Users/swadhinnanda/Projects/git/zdisamar/tests/AGENTS.md) and [validation/AGENTS.md](/Users/swadhinnanda/Projects/git/zdisamar/validation/AGENTS.md) for verification work.
-- Use [vendor/AGENTS.md](/Users/swadhinnanda/Projects/git/zdisamar/vendor/AGENTS.md) before touching any vendored reference assets.
-- Deep repo context lives in [.agents/repo-context/index.md](/Users/swadhinnanda/Projects/git/zdisamar/.agents/repo-context/index.md).
+- Start in [src/AGENTS.md](src/AGENTS.md) for source-tree work.
+- Use [specs/AGENTS.md](specs/AGENTS.md) for tracked architecture docs.
+- Use [packages/AGENTS.md](packages/AGENTS.md) for distributable bundles.
+- Use [tests/AGENTS.md](tests/AGENTS.md) and [validation/AGENTS.md](validation/AGENTS.md) for verification work.
+- Use [vendor/AGENTS.md](vendor/AGENTS.md) before touching any vendored reference assets.
+- Deep repo context lives in [.agents/repo-context/index.md](.agents/repo-context/index.md).
 
 ## Commands
 
-- `./scripts/bootstrap-upstream.sh` refreshes the local DISAMAR Fortran reference clone.
 - `zig build test` is the default verification command.
 - `zig build` builds the scaffold CLI and library.

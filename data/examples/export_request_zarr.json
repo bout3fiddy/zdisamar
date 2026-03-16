@@ -1,0 +1,33 @@
+{
+  "scene": {
+    "id": "scene-uvai",
+    "spectral_grid": {
+      "start_nm": 330.0,
+      "end_nm": 390.0,
+      "sample_count": 241
+    }
+  },
+  "requested_products": [
+    "uv_aerosol_index"
+  ],
+  "diagnostics": {
+    "provenance": true,
+    "jacobians": false
+  },
+  "exports": [
+    {
+      "format": "zarr",
+      "destination_uri": "file://outputs/scene-uvai.zarr",
+      "dataset_name": "uvai_cube",
+      "include_provenance": true,
+      "compression": {
+        "codec": "zstd",
+        "level": 3
+      },
+      "chunking": {
+        "spectra": 256,
+        "layers": 64
+      }
+    }
+  ]
+}

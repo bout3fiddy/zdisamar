@@ -1,0 +1,63 @@
+# vendor-style irradiance/radiance channel demo with explicit HR grid and ISRF table metadata
+meta solar_zenith_deg 31.7
+meta viewing_zenith_deg 7.9
+meta relative_azimuth_deg 143.4
+meta surface_albedo 0.065
+meta cloud_optical_thickness 0.22
+meta cloud_top_altitude_km 5.8
+meta cloud_thickness_km 1.4
+meta cloud_single_scatter_albedo 0.997
+meta cloud_asymmetry_factor 0.83
+meta aerosol_optical_depth 0.12
+meta aerosol_single_scatter_albedo 0.93
+meta aerosol_asymmetry_factor 0.69
+meta aerosol_angstrom_exponent 1.18
+meta aerosol_layer_center_km 2.2
+meta aerosol_layer_width_km 2.4
+meta wavelength_shift_nm 0.018
+meta isrf_fwhm_nm 0.54
+meta hr_grid_step_nm 0.08
+meta hr_grid_half_span_nm 0.32
+meta isrf_offset_nm_1 -0.32
+meta isrf_weight_1 0.08
+meta isrf_offset_nm_2 -0.16
+meta isrf_weight_2 0.24
+meta isrf_offset_nm_3 0.00
+meta isrf_weight_3 0.36
+meta isrf_offset_nm_4 0.16
+meta isrf_weight_4 0.22
+meta isrf_offset_nm_5 0.32
+meta isrf_weight_5 0.10
+meta isrf_table_nominal_nm_1 405.0
+meta isrf_table_nominal_nm_2 406.0
+meta isrf_table_nominal_nm_3 407.0
+meta isrf_table_offset_nm_1 -0.32
+meta isrf_table_offset_nm_2 -0.16
+meta isrf_table_offset_nm_3 0.00
+meta isrf_table_offset_nm_4 0.16
+meta isrf_table_offset_nm_5 0.32
+meta isrf_table_weight_1_1 0.08
+meta isrf_table_weight_1_2 0.24
+meta isrf_table_weight_1_3 0.36
+meta isrf_table_weight_1_4 0.22
+meta isrf_table_weight_1_5 0.10
+meta isrf_table_weight_2_1 0.18
+meta isrf_table_weight_2_2 0.30
+meta isrf_table_weight_2_3 0.30
+meta isrf_table_weight_2_4 0.15
+meta isrf_table_weight_2_5 0.07
+meta isrf_table_weight_3_1 0.05
+meta isrf_table_weight_3_2 0.18
+meta isrf_table_weight_3_3 0.34
+meta isrf_table_weight_3_4 0.26
+meta isrf_table_weight_3_5 0.17
+start_channel_irr
+irr 405.0 3000.0 3.402296E+14
+irr 406.0 2990.0 3.302296E+14
+irr 407.0 2985.0 3.252296E+14
+end_channel_irr
+start_channel_rad
+rad 405.0 1485.0 1.116153E+13
+rad 406.0 1445.0 1.096153E+13
+rad 407.0 1430.0 1.076153E+13
+end_channel_rad

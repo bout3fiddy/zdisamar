@@ -35,6 +35,46 @@
         "materialize_cache_keys": { "type": "boolean" }
       },
       "additionalProperties": false
+    },
+    "exports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["format", "destination_uri"],
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": ["netcdf_cf", "zarr"]
+          },
+          "destination_uri": { "type": "string" },
+          "dataset_name": { "type": "string" },
+          "include_provenance": { "type": "boolean" },
+          "compression": {
+            "type": "object",
+            "properties": {
+              "codec": {
+                "type": "string",
+                "enum": ["none", "zstd", "gzip"]
+              },
+              "level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 22
+              }
+            },
+            "additionalProperties": false
+          },
+          "chunking": {
+            "type": "object",
+            "properties": {
+              "spectra": { "type": "integer", "minimum": 1 },
+              "layers": { "type": "integer", "minimum": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "required_commands": [
+    "zig build",
+    "zig build test",
+    "./zig-out/bin/zdisamar run data/examples/canonical_config.yaml"
+  ],
+  "required_packages": [
+    {
+      "name": "disamar_standard",
+      "version": "0.1.0"
+    },
+    {
+      "name": "builtin_exporters",
+      "version": "0.1.0"
+    },
+    {
+      "name": "mission_s5p",
+      "version": "0.1.0"
+    }
+  ],
+  "required_plugin_versions": [
+    "builtin.cross_sections@0.1.0",
+    "builtin.dispatcher@0.1.0",
+    "builtin.oe_solver@0.1.0",
+    "builtin.lambertian_surface@0.1.0",
+    "builtin.tropomi_response@0.1.0",
+    "builtin.netcdf_cf@0.1.0",
+    "builtin.zarr@0.1.0"
+  ],
+  "required_artifacts": [
+    "data/examples/canonical_config.yaml",
+    "data/examples/zdisamar_common_use.yaml",
+    "data/examples/zdisamar_expert_o2a.yaml",
+    "data/climatologies/bundle_manifest.json",
+    "data/cross_sections/bundle_manifest.json",
+    "data/luts/bundle_manifest.json",
+    "specs/canonical_yaml_cutover.md",
+    "specs/legacy_config_mapping.md",
+    "validation/compatibility/parity_matrix.json",
+    "validation/compatibility/vendor_import_registry.json",
+    "validation/golden/result_provenance_golden.json",
+    "validation/perf/perf_matrix.json",
+    "validation/plugin_tests/plugin_validation_matrix.json",
+    "data/examples/export_result_netcdf.json"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "builtin_exporters",
+  "version": "0.1.0",
+  "description": "Official exporter bundle for NetCDF/CF and Zarr outputs.",
+  "official_formats": [
+    "netcdf_cf",
+    "zarr"
+  ],
+  "builtin_plugins": [
+    "builtin.netcdf_cf",
+    "builtin.zarr"
+  ],
+  "adapter_backends": {
+    "netcdf_cf": "src/adapters/exporters/netcdf_cf.zig",
+    "zarr": "src/adapters/exporters/zarr.zig",
+    "diagnostic_csv_text": "src/adapters/exporters/diagnostic.zig"
+  },
+  "manifest_paths": [
+    "src/plugins/builtin/exporters/netcdf_cf.plugin.json",
+    "src/plugins/builtin/exporters/zarr.plugin.json"
+  ],
+  "plugin_lanes": {
+    "declarative_default": true,
+    "native_requires_opt_in": true
+  }
+}

@@ -1,5 +1,7 @@
 .DS_Store
 .zig-cache/
+zig-cache/
 zig-out/
-vendor/disamar-fortran/
+vendor/
 docs/specs/
+docs/workpackages/
