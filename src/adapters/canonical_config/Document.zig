@@ -1738,7 +1738,7 @@ fn mapGet(entries: []const yaml.Entry, key: []const u8) ?yaml.Value {
 }
 
 test "document resolves revised common example" {
-    var document = try Document.parseFile(std.testing.allocator, "docs/specs/config/zdisamar_common_use_revised.yaml");
+    var document = try Document.parseFile(std.testing.allocator, "data/examples/zdisamar_common_use.yaml");
     defer document.deinit();
 
     var resolved = try document.resolve(std.testing.allocator);

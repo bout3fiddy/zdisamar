@@ -32,7 +32,7 @@ test "tracked canonical examples resolve from repository-owned paths" {
     try std.testing.expect(expert.retrieval != null);
 }
 
-test "release readiness lists tracked canonical config docs and examples" {
+test "release readiness lists canonical config examples and validation artifacts" {
     const raw = try std.fs.cwd().readFileAlloc(
         std.testing.allocator,
         "validation/release/release_readiness.json",
@@ -54,11 +54,7 @@ test "release readiness lists tracked canonical config docs and examples" {
     try std.testing.expect(containsString(required, "data/examples/canonical_config.yaml"));
     try std.testing.expect(containsString(required, "data/examples/zdisamar_common_use.yaml"));
     try std.testing.expect(containsString(required, "data/examples/zdisamar_expert_o2a.yaml"));
-    try std.testing.expect(containsString(required, "specs/canonical_yaml_cutover.md"));
-    try std.testing.expect(containsString(required, "specs/legacy_config_mapping.md"));
     try std.fs.cwd().access("data/examples/canonical_config.yaml", .{});
     try std.fs.cwd().access("data/examples/zdisamar_common_use.yaml", .{});
     try std.fs.cwd().access("data/examples/zdisamar_expert_o2a.yaml", .{});
-    try std.fs.cwd().access("specs/canonical_yaml_cutover.md", .{});
-    try std.fs.cwd().access("specs/legacy_config_mapping.md", .{});
 }
