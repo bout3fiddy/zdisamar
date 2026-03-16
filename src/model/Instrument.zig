@@ -497,6 +497,20 @@ pub const InstrumentLineShapeTable = struct {
 };
 
 pub const Instrument = struct {
+    pub const SamplingMode = enum {
+        native,
+        operational,
+        measured_channels,
+        synthetic,
+    };
+
+    pub const NoiseModelKind = enum {
+        none,
+        shot_noise,
+        s5p_operational,
+        snr_from_input,
+    };
+
     name: []const u8 = "generic",
     sampling: []const u8 = "native",
     noise_model: []const u8 = "none",
@@ -511,6 +525,22 @@ pub const Instrument = struct {
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
 
+    pub fn resolvedSampling(self: Instrument) errors.Error!SamplingMode {
+        if (std.mem.eql(u8, self.sampling, "native")) return .native;
+        if (std.mem.eql(u8, self.sampling, "operational")) return .operational;
+        if (std.mem.eql(u8, self.sampling, "measured_channels")) return .measured_channels;
+        if (std.mem.eql(u8, self.sampling, "synthetic")) return .synthetic;
+        return errors.Error.InvalidRequest;
+    }
+
+    pub fn resolvedNoiseModel(self: Instrument) errors.Error!NoiseModelKind {
+        if (std.mem.eql(u8, self.noise_model, "none")) return .none;
+        if (std.mem.eql(u8, self.noise_model, "shot_noise")) return .shot_noise;
+        if (std.mem.eql(u8, self.noise_model, "s5p_operational")) return .s5p_operational;
+        if (std.mem.eql(u8, self.noise_model, "snr_from_input")) return .snr_from_input;
+        return errors.Error.InvalidRequest;
+    }
+
     pub fn validate(self: Instrument) errors.Error!void {
         if (self.name.len == 0) {
             return errors.Error.MissingObservationInstrument;
@@ -518,10 +548,15 @@ pub const Instrument = struct {
         if (self.sampling.len == 0 or self.noise_model.len == 0) {
             return errors.Error.InvalidRequest;
         }
+        _ = try self.resolvedSampling();
+        _ = try self.resolvedNoiseModel();
         if (self.instrument_line_fwhm_nm < 0.0) {
             return errors.Error.InvalidRequest;
         }
         if (self.high_resolution_step_nm < 0.0 or self.high_resolution_half_span_nm < 0.0) {
+            return errors.Error.InvalidRequest;
+        }
+        if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
             return errors.Error.InvalidRequest;
         }
         try self.instrument_line_shape.validate();
@@ -564,6 +599,26 @@ test "operational cross-section lut evaluates vendor-style scaled log legendre e
     try std.testing.expect(warmer_sigma > sigma);
     try std.testing.expect(derivative > 0.0);
     try std.testing.expect(lut.sigmaAt(761.2, 260.0, 700.0) > lut.sigmaAt(760.8, 260.0, 700.0));
+}
+
+test "instrument resolves typed sampling and noise selectors" {
+    const instrument: Instrument = .{
+        .name = "synthetic",
+        .sampling = "measured_channels",
+        .noise_model = "snr_from_input",
+        .high_resolution_step_nm = 0.08,
+        .high_resolution_half_span_nm = 0.32,
+    };
+
+    try std.testing.expectEqual(Instrument.SamplingMode.measured_channels, try instrument.resolvedSampling());
+    try std.testing.expectEqual(Instrument.NoiseModelKind.snr_from_input, try instrument.resolvedNoiseModel());
+    try instrument.validate();
+
+    try std.testing.expectError(errors.Error.InvalidRequest, (Instrument{
+        .name = "synthetic",
+        .sampling = "mystery_mode",
+        .noise_model = "none",
+    }).validate());
 }
 
 test "instrument validation rejects malformed operational lut surfaces" {

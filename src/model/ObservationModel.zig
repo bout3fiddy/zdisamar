@@ -1,3 +1,4 @@
+const std = @import("std");
 const errors = @import("../core/errors.zig");
 const Binding = @import("Binding.zig").Binding;
 const Instrument = @import("Instrument.zig").Instrument;
@@ -6,7 +7,7 @@ const InstrumentLineShapeTable = @import("Instrument.zig").InstrumentLineShapeTa
 const OperationalReferenceGrid = @import("Instrument.zig").OperationalReferenceGrid;
 const OperationalSolarSpectrum = @import("Instrument.zig").OperationalSolarSpectrum;
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
-const Allocator = @import("std").mem.Allocator;
+const Allocator = std.mem.Allocator;
 
 pub const ObservationRegime = enum {
     nadir,
@@ -53,12 +54,25 @@ pub const ObservationModel = struct {
         };
     }
 
+    pub fn resolvedSampling(self: ObservationModel) errors.Error!Instrument.SamplingMode {
+        return self.instrumentSpec().resolvedSampling();
+    }
+
+    pub fn resolvedNoiseModel(self: ObservationModel) errors.Error!Instrument.NoiseModelKind {
+        return self.instrumentSpec().resolvedNoiseModel();
+    }
+
     pub fn validate(self: ObservationModel) errors.Error!void {
         try self.solar_spectrum_source.validate();
         try self.weighted_reference_grid_source.validate();
-        if (self.multiplicative_offset <= 0.0) {
+        if (!std.math.isFinite(self.multiplicative_offset) or self.multiplicative_offset <= 0.0) {
             return errors.Error.InvalidRequest;
         }
+        if (!std.math.isFinite(self.stray_light)) {
+            return errors.Error.InvalidRequest;
+        }
+        _ = try self.resolvedSampling();
+        _ = try self.resolvedNoiseModel();
         try self.instrumentSpec().validate();
     }
 
@@ -73,12 +87,24 @@ pub const ObservationModel = struct {
 };
 
 test "observation model carries calibration and supporting-data bindings" {
-    try (ObservationModel{
+    const model: ObservationModel = .{
         .instrument = "tropomi",
         .response_provider = "builtin.generic_response",
         .solar_spectrum_source = .{ .kind = .bundle_default },
         .weighted_reference_grid_source = .{ .kind = .ingest, .name = "refspec_demo.grid" },
+        .sampling = "operational",
+        .noise_model = "shot_noise",
         .multiplicative_offset = 1.002,
         .stray_light = 0.0007,
-    }).validate();
+    };
+
+    try std.testing.expectEqual(Instrument.SamplingMode.operational, try model.resolvedSampling());
+    try std.testing.expectEqual(Instrument.NoiseModelKind.shot_noise, try model.resolvedNoiseModel());
+    try model.validate();
+
+    try std.testing.expectError(errors.Error.InvalidRequest, (ObservationModel{
+        .instrument = "tropomi",
+        .sampling = "unexpected_sampling",
+        .noise_model = "none",
+    }).validate());
 }

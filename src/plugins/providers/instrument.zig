@@ -39,6 +39,7 @@ fn genericProvider(provider_id: []const u8) Provider {
 }
 
 fn calibrationForScene(scene: Scene) calibration.Calibration {
+    const sampling = scene.observation_model.resolvedSampling() catch .native;
     return .{
         .gain = switch (scene.observation_model.regime) {
             .nadir => 1.0,
@@ -48,7 +49,7 @@ fn calibrationForScene(scene: Scene) calibration.Calibration {
         .offset = 0.0,
         .wavelength_shift_nm = if (scene.observation_model.wavelength_shift_nm != 0.0)
             scene.observation_model.wavelength_shift_nm
-        else if (std.mem.eql(u8, scene.observation_model.sampling, "operational"))
+        else if (sampling == .operational)
             0.02
         else
             0.0,

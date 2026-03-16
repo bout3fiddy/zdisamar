@@ -41,6 +41,12 @@ pub const Request = struct {
     pub fn validateForPlan(self: Request, plan: *const Plan) errors.Error!void {
         try self.validate();
 
+        if (self.inverse_problem) |inverse_problem| {
+            if (inverse_problem.measurements.source.kind == .stage_product and self.measurement_binding == null) {
+                return errors.Error.InvalidRequest;
+            }
+        }
+
         if (self.expected_derivative_mode) |mode| {
             if (mode != plan.template.scene_blueprint.derivative_mode) {
                 return errors.Error.DerivativeModeMismatch;

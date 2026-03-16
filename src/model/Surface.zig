@@ -14,15 +14,25 @@ pub const Parameter = struct {
 };
 
 pub const Surface = struct {
+    pub const Kind = enum {
+        lambertian,
+    };
+
     kind: []const u8 = "lambertian",
     provider: []const u8 = "",
     albedo: f64 = 0.0,
     parameters: []const Parameter = &[_]Parameter{},
 
+    pub fn resolvedKind(self: Surface) errors.Error!Kind {
+        if (std.mem.eql(u8, self.kind, "lambertian")) return .lambertian;
+        return errors.Error.InvalidRequest;
+    }
+
     pub fn validate(self: Surface) errors.Error!void {
         if (self.kind.len == 0) {
             return errors.Error.InvalidRequest;
         }
+        _ = try self.resolvedKind();
         if (self.albedo < 0.0 or self.albedo > 1.0) {
             return errors.Error.InvalidRequest;
         }
@@ -38,11 +48,17 @@ pub const Surface = struct {
 };
 
 test "surface accepts named parameters" {
-    try (Surface{
+    const surface: Surface = .{
         .kind = "lambertian",
         .parameters = &[_]Parameter{
             .{ .name = "roughness_hint", .value = 0.03 },
             .{ .name = "slope_hint", .value = 0.02 },
         },
-    }).validate();
+    };
+    try std.testing.expectEqual(Surface.Kind.lambertian, try surface.resolvedKind());
+    try surface.validate();
+
+    try std.testing.expectError(errors.Error.InvalidRequest, (Surface{
+        .kind = "unknown_surface",
+    }).validate());
 }

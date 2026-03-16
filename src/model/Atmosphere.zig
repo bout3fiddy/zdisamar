@@ -13,6 +13,12 @@ pub const Atmosphere = struct {
     pub fn validate(self: Atmosphere) errors.Error!void {
         try self.profile_source.validate();
 
+        if (self.layer_count == 0 and
+            (self.has_clouds or self.has_aerosols or self.profile_source.enabled() or self.surface_pressure_hpa != 0.0))
+        {
+            return errors.Error.InvalidRequest;
+        }
+
         if (self.sublayer_divisions == 0) {
             return errors.Error.InvalidRequest;
         }
@@ -34,5 +40,12 @@ test "atmosphere validates profile source and positive surface pressure" {
     try @import("std").testing.expectError(
         errors.Error.InvalidRequest,
         (Atmosphere{ .surface_pressure_hpa = -1.0 }).validate(),
+    );
+    try @import("std").testing.expectError(
+        errors.Error.InvalidRequest,
+        (Atmosphere{
+            .has_aerosols = true,
+            .layer_count = 0,
+        }).validate(),
     );
 }

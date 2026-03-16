@@ -736,6 +736,56 @@ test "execute leaves workspace untouched when request validation fails" {
     try std.testing.expectEqual(second_plan.id, workspace.bound_plan_id.?);
 }
 
+test "execute rejects retrieval stage-product requests without a bound measurement" {
+    var engine = Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    var plan = try engine.preparePlan(.{
+        .providers = .{
+            .retrieval_algorithm = "builtin.oe_solver",
+        },
+        .scene_blueprint = .{
+            .derivative_mode = .semi_analytical,
+        },
+    });
+    defer plan.deinit();
+
+    var workspace = engine.createWorkspace("request-validation-suite");
+    var request = Request.init(.{
+        .id = "scene-missing-binding",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 16,
+        },
+        .atmosphere = .{
+            .layer_count = 18,
+        },
+        .observation_model = .{
+            .instrument = "synthetic",
+        },
+    });
+    request.expected_derivative_mode = .semi_analytical;
+    request.inverse_problem = .{
+        .id = "inverse-missing-binding",
+        .state_vector = .{
+            .parameters = &[_]@import("../model/Scene.zig").StateParameter{
+                .{ .name = "surface_albedo", .target = "scene.surface.albedo" },
+            },
+        },
+        .measurements = .{
+            .product = "radiance",
+            .observable = "radiance",
+            .sample_count = 16,
+            .source = .{ .kind = .stage_product, .name = "forward-stage" },
+        },
+    };
+
+    try std.testing.expectError(errors.Error.InvalidRequest, engine.execute(&plan, &workspace, request));
+    try std.testing.expectEqual(@as(?u64, null), workspace.bound_plan_id);
+}
+
 test "prepared plans keep plugin snapshots when registry changes later" {
     var engine = Engine.init(std.testing.allocator, .{ .allow_native_plugins = true });
     defer engine.deinit();
