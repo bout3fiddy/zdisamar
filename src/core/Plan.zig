@@ -69,6 +69,7 @@ pub const Plan = struct {
     }
 };
 
+// Keep the public lifecycle name explicit even though the concrete type stays `Plan`.
 pub const PreparedPlan = Plan;
 
 test "plan template validates existing provider selection" {
