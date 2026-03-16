@@ -46,6 +46,7 @@ test "netcdf/cf exporter writes file payload to destination uri" {
 
     const destination_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}/scene.nc", .{root});
     defer std.testing.allocator.free(destination_uri);
+    var result = makeResult();
 
     const report = try writer.write(
         std.testing.allocator,
@@ -55,7 +56,7 @@ test "netcdf/cf exporter writes file payload to destination uri" {
             .destination_uri = destination_uri,
             .dataset_name = "scene-export",
         },
-        makeResult(),
+        @import("spec.zig").ExportView.fromResult(&result),
     );
 
     try std.testing.expectEqual(@as(u32, 1), report.files_written);
@@ -79,6 +80,7 @@ test "zarr exporter writes structured store files" {
 
     const destination_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}/scene.zarr", .{root});
     defer std.testing.allocator.free(destination_uri);
+    var result = makeResult();
 
     const report = try writer.write(
         std.testing.allocator,
@@ -88,7 +90,7 @@ test "zarr exporter writes structured store files" {
             .destination_uri = destination_uri,
             .dataset_name = "scene-export",
         },
-        makeResult(),
+        @import("spec.zig").ExportView.fromResult(&result),
     );
     try std.testing.expect(report.files_written >= 20);
     try std.testing.expectEqualStrings("builtin.zarr", report.artifact.plugin_id);
@@ -130,18 +132,19 @@ test "diagnostic exporter writes csv and text artifacts" {
     defer std.testing.allocator.free(csv_uri);
     const txt_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}/diag.txt", .{root});
     defer std.testing.allocator.free(txt_uri);
+    var result = makeResult();
 
     _ = try writer.exportDiagnostic(
         std.testing.allocator,
         csv_uri,
         .csv,
-        makeResult(),
+        @import("spec.zig").ExportView.fromResult(&result),
     );
     _ = try writer.exportDiagnostic(
         std.testing.allocator,
         txt_uri,
         .text,
-        makeResult(),
+        @import("spec.zig").ExportView.fromResult(&result),
     );
 
     const csv_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/diag.csv", .{root});

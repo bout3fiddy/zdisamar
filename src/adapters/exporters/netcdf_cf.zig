@@ -1,5 +1,4 @@
 const std = @import("std");
-const Result = @import("../../core/Result.zig").Result;
 const Spec = @import("spec.zig");
 const io = @import("io.zig");
 
@@ -65,12 +64,12 @@ pub const ExportReport = struct {
     bytes_written: usize,
 };
 
-pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.Allocator) Error!ExportReport {
+pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.mem.Allocator) Error!ExportReport {
     if (request.format != .netcdf_cf) return Error.UnsupportedFormat;
     const artifact = Spec.buildArtifact(request);
     const file_path = try io.filePathFromUri(request.destination_uri);
 
-    const payload = try renderNetcdfClassicPayload(allocator, artifact, result);
+    const payload = try renderNetcdfClassicPayload(allocator, artifact, view);
     defer allocator.free(payload);
 
     const bytes_written = try io.writeBinaryFile(file_path, payload);
@@ -84,7 +83,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
 fn renderNetcdfClassicPayload(
     allocator: std.mem.Allocator,
     artifact: Spec.ExportArtifact,
-    result: Result,
+    view: Spec.ExportView,
 ) ![]u8 {
     var owned_buffers = std.ArrayList([]u8).empty;
     defer {
@@ -92,8 +91,8 @@ fn renderNetcdfClassicPayload(
         owned_buffers.deinit(allocator);
     }
 
-    const plan_id_text = try allocOwnedPrint(allocator, &owned_buffers, "{d}", .{result.plan_id});
-    const generation_text = try allocOwnedPrint(allocator, &owned_buffers, "{d}", .{result.provenance.plugin_inventory_generation});
+    const plan_id_text = try allocOwnedPrint(allocator, &owned_buffers, "{d}", .{view.plan_id});
+    const generation_text = try allocOwnedPrint(allocator, &owned_buffers, "{d}", .{view.provenance.plugin_inventory_generation});
 
     var dimensions = std.ArrayList(Dimension).empty;
     defer dimensions.deinit(allocator);
@@ -112,51 +111,51 @@ fn renderNetcdfClassicPayload(
         .{ .name = "adapter_format", .value = .{ .char = artifact.format.id() } },
         .{ .name = "plugin_id", .value = .{ .char = artifact.plugin_id } },
         .{ .name = "dataset_name", .value = .{ .char = artifact.dataset_name } },
-        .{ .name = "scene_id", .value = .{ .char = result.scene_id } },
-        .{ .name = "workspace_label", .value = .{ .char = result.workspace_label } },
-        .{ .name = "model_family", .value = .{ .char = result.provenance.model_family } },
-        .{ .name = "solver_route", .value = .{ .char = result.provenance.solver_route } },
-        .{ .name = "transport_family", .value = .{ .char = result.provenance.transport_family } },
-        .{ .name = "derivative_mode", .value = .{ .char = result.provenance.derivative_mode } },
-        .{ .name = "numerical_mode", .value = .{ .char = result.provenance.numerical_mode } },
-        .{ .name = "engine_version", .value = .{ .char = result.provenance.engine_version } },
-        .{ .name = "status", .value = .{ .char = @tagName(result.status) } },
+        .{ .name = "scene_id", .value = .{ .char = view.scene_id } },
+        .{ .name = "workspace_label", .value = .{ .char = view.workspace_label } },
+        .{ .name = "model_family", .value = .{ .char = view.provenance.model_family } },
+        .{ .name = "solver_route", .value = .{ .char = view.provenance.solver_route } },
+        .{ .name = "transport_family", .value = .{ .char = view.provenance.transport_family } },
+        .{ .name = "derivative_mode", .value = .{ .char = view.provenance.derivative_mode } },
+        .{ .name = "numerical_mode", .value = .{ .char = view.provenance.numerical_mode } },
+        .{ .name = "engine_version", .value = .{ .char = view.provenance.engine_version } },
+        .{ .name = "status", .value = .{ .char = @tagName(view.status) } },
         .{ .name = "plan_id", .value = .{ .char = plan_id_text } },
         .{ .name = "plugin_inventory_generation", .value = .{ .char = generation_text } },
-        .{ .name = "plugin_count", .value = .{ .int = try toI32(result.provenance.pluginVersionCount()) } },
-        .{ .name = "dataset_hash_count", .value = .{ .int = try toI32(result.provenance.dataset_hashes.len) } },
-        .{ .name = "native_capability_count", .value = .{ .int = try toI32(result.provenance.native_capability_slots.len) } },
-        .{ .name = "native_entry_symbol_count", .value = .{ .int = try toI32(result.provenance.native_entry_symbols.len) } },
-        .{ .name = "native_library_path_count", .value = .{ .int = try toI32(result.provenance.native_library_paths.len) } },
+        .{ .name = "plugin_count", .value = .{ .int = try toI32(view.provenance.pluginVersionCount()) } },
+        .{ .name = "dataset_hash_count", .value = .{ .int = try toI32(view.provenance.dataset_hashes.len) } },
+        .{ .name = "native_capability_count", .value = .{ .int = try toI32(view.provenance.native_capability_slots.len) } },
+        .{ .name = "native_entry_symbol_count", .value = .{ .int = try toI32(view.provenance.native_entry_symbols.len) } },
+        .{ .name = "native_library_path_count", .value = .{ .int = try toI32(view.provenance.native_library_paths.len) } },
     });
 
-    if (result.measurement_space_product) |product| {
+    if (view.measurement_space_product) |product| {
         try global_attributes.appendSlice(allocator, &.{
-            .{ .name = "effective_air_mass_factor", .value = .{ .double = product.effective_air_mass_factor } },
-            .{ .name = "effective_single_scatter_albedo", .value = .{ .double = product.effective_single_scatter_albedo } },
-            .{ .name = "effective_temperature_k", .value = .{ .double = product.effective_temperature_k } },
-            .{ .name = "effective_pressure_hpa", .value = .{ .double = product.effective_pressure_hpa } },
-            .{ .name = "gas_optical_depth", .value = .{ .double = product.gas_optical_depth } },
-            .{ .name = "cia_optical_depth", .value = .{ .double = product.cia_optical_depth } },
-            .{ .name = "aerosol_optical_depth", .value = .{ .double = product.aerosol_optical_depth } },
-            .{ .name = "cloud_optical_depth", .value = .{ .double = product.cloud_optical_depth } },
-            .{ .name = "total_optical_depth", .value = .{ .double = product.total_optical_depth } },
-            .{ .name = "depolarization_factor", .value = .{ .double = product.depolarization_factor } },
-            .{ .name = "d_optical_depth_d_temperature", .value = .{ .double = product.d_optical_depth_d_temperature } },
+            .{ .name = "effective_air_mass_factor", .value = .{ .double = product.*.effective_air_mass_factor } },
+            .{ .name = "effective_single_scatter_albedo", .value = .{ .double = product.*.effective_single_scatter_albedo } },
+            .{ .name = "effective_temperature_k", .value = .{ .double = product.*.effective_temperature_k } },
+            .{ .name = "effective_pressure_hpa", .value = .{ .double = product.*.effective_pressure_hpa } },
+            .{ .name = "gas_optical_depth", .value = .{ .double = product.*.gas_optical_depth } },
+            .{ .name = "cia_optical_depth", .value = .{ .double = product.*.cia_optical_depth } },
+            .{ .name = "aerosol_optical_depth", .value = .{ .double = product.*.aerosol_optical_depth } },
+            .{ .name = "cloud_optical_depth", .value = .{ .double = product.*.cloud_optical_depth } },
+            .{ .name = "total_optical_depth", .value = .{ .double = product.*.total_optical_depth } },
+            .{ .name = "depolarization_factor", .value = .{ .double = product.*.depolarization_factor } },
+            .{ .name = "d_optical_depth_d_temperature", .value = .{ .double = product.*.d_optical_depth_d_temperature } },
         });
     }
 
     try addStringVariable(allocator, &dimensions, &variables, "dataset_name_strlen", "dataset_name", artifact.dataset_name);
-    try addStringVariable(allocator, &dimensions, &variables, "scene_id_strlen", "scene_id", result.scene_id);
-    try addStringVariable(allocator, &dimensions, &variables, "workspace_label_strlen", "workspace_label", result.workspace_label);
-    try addStringVariable(allocator, &dimensions, &variables, "model_family_strlen", "model_family", result.provenance.model_family);
-    try addStringVariable(allocator, &dimensions, &variables, "solver_route_strlen", "solver_route", result.provenance.solver_route);
-    try addStringVariable(allocator, &dimensions, &variables, "transport_family_strlen", "transport_family", result.provenance.transport_family);
-    try addStringVariable(allocator, &dimensions, &variables, "derivative_mode_strlen", "derivative_mode", result.provenance.derivative_mode);
-    try addStringVariable(allocator, &dimensions, &variables, "numerical_mode_strlen", "numerical_mode", result.provenance.numerical_mode);
-    try addStringVariable(allocator, &dimensions, &variables, "engine_version_strlen", "engine_version", result.provenance.engine_version);
-    try addStringVariable(allocator, &dimensions, &variables, "status_strlen", "status", @tagName(result.status));
-    try addStringVariable(allocator, &dimensions, &variables, "diagnostics_summary_strlen", "diagnostics_summary", result.diagnostics.summary);
+    try addStringVariable(allocator, &dimensions, &variables, "scene_id_strlen", "scene_id", view.scene_id);
+    try addStringVariable(allocator, &dimensions, &variables, "workspace_label_strlen", "workspace_label", view.workspace_label);
+    try addStringVariable(allocator, &dimensions, &variables, "model_family_strlen", "model_family", view.provenance.model_family);
+    try addStringVariable(allocator, &dimensions, &variables, "solver_route_strlen", "solver_route", view.provenance.solver_route);
+    try addStringVariable(allocator, &dimensions, &variables, "transport_family_strlen", "transport_family", view.provenance.transport_family);
+    try addStringVariable(allocator, &dimensions, &variables, "derivative_mode_strlen", "derivative_mode", view.provenance.derivative_mode);
+    try addStringVariable(allocator, &dimensions, &variables, "numerical_mode_strlen", "numerical_mode", view.provenance.numerical_mode);
+    try addStringVariable(allocator, &dimensions, &variables, "engine_version_strlen", "engine_version", view.provenance.engine_version);
+    try addStringVariable(allocator, &dimensions, &variables, "status_strlen", "status", @tagName(view.status));
+    try addStringVariable(allocator, &dimensions, &variables, "diagnostics_summary_strlen", "diagnostics_summary", view.diagnostics.summary);
 
     try addStringListVariable(
         allocator,
@@ -166,7 +165,7 @@ fn renderNetcdfClassicPayload(
         "plugin_count",
         "plugin_strlen",
         "plugin_versions",
-        result.provenance.pluginVersions(),
+        view.provenance.pluginVersions(),
     );
     try addStringListVariable(
         allocator,
@@ -176,7 +175,7 @@ fn renderNetcdfClassicPayload(
         "dataset_hash_count",
         "dataset_hash_strlen",
         "dataset_hashes",
-        result.provenance.dataset_hashes,
+        view.provenance.dataset_hashes,
     );
     try addStringListVariable(
         allocator,
@@ -186,7 +185,7 @@ fn renderNetcdfClassicPayload(
         "native_capability_count",
         "native_capability_strlen",
         "native_capability_slots",
-        result.provenance.native_capability_slots,
+        view.provenance.native_capability_slots,
     );
     try addStringListVariable(
         allocator,
@@ -196,7 +195,7 @@ fn renderNetcdfClassicPayload(
         "native_entry_symbol_count",
         "native_entry_symbol_strlen",
         "native_entry_symbols",
-        result.provenance.native_entry_symbols,
+        view.provenance.native_entry_symbols,
     );
     try addStringListVariable(
         allocator,
@@ -206,10 +205,10 @@ fn renderNetcdfClassicPayload(
         "native_library_path_count",
         "native_library_path_strlen",
         "native_library_paths",
-        result.provenance.native_library_paths,
+        view.provenance.native_library_paths,
     );
 
-    if (result.measurement_space_product) |product| {
+    if (view.measurement_space_product) |product| {
         try addDoubleVariable(allocator, &dimensions, &variables, "wavelength_sample_count", "wavelength_nm", product.wavelengths);
         try addDoubleVariable(allocator, &dimensions, &variables, "radiance_sample_count", "toa_radiance", product.radiance);
         try addDoubleVariable(allocator, &dimensions, &variables, "irradiance_sample_count", "solar_irradiance", product.irradiance);
@@ -218,6 +217,88 @@ fn renderNetcdfClassicPayload(
         if (product.jacobian) |jacobian| {
             try addDoubleVariable(allocator, &dimensions, &variables, "jacobian_sample_count", "jacobian", jacobian);
         }
+    }
+
+    if (view.retrieval) |retrieval| {
+        try addStringVariable(allocator, &dimensions, &variables, "retrieval_method_strlen", "retrieval_method", @tagName(retrieval.method));
+        try addStringVariable(allocator, &dimensions, &variables, "inverse_problem_id_strlen", "inverse_problem_id", retrieval.inverse_problem_id);
+        try addDoubleVariable(allocator, &dimensions, &variables, "retrieval_metric_count", "retrieval_metrics", &[_]f64{
+            @as(f64, @floatFromInt(retrieval.iterations)),
+            retrieval.cost,
+            retrieval.dfs,
+            retrieval.residual_norm,
+            retrieval.step_norm,
+        });
+    }
+
+    if (view.retrieval_state_vector) |product| {
+        try addStringListVariable(
+            allocator,
+            &owned_buffers,
+            &dimensions,
+            &variables,
+            "retrieval_state_count",
+            "retrieval_state_name_strlen",
+            "retrieval_state_names",
+            product.parameter_names,
+        );
+        try addDoubleVariable(allocator, &dimensions, &variables, "retrieval_state_count", "retrieval_state_values", product.values);
+    }
+
+    if (view.retrieval_fitted_measurement) |product| {
+        try addDoubleVariable(allocator, &dimensions, &variables, "fitted_wavelength_sample_count", "fitted_wavelength_nm", product.wavelengths);
+        try addDoubleVariable(allocator, &dimensions, &variables, "fitted_radiance_sample_count", "fitted_toa_radiance", product.radiance);
+        try addDoubleVariable(allocator, &dimensions, &variables, "fitted_irradiance_sample_count", "fitted_solar_irradiance", product.irradiance);
+        try addDoubleVariable(allocator, &dimensions, &variables, "fitted_reflectance_sample_count", "fitted_reflectance", product.reflectance);
+        try addDoubleVariable(allocator, &dimensions, &variables, "fitted_noise_sample_count", "fitted_noise_sigma", product.noise_sigma);
+    }
+
+    if (view.retrieval_averaging_kernel) |product| {
+        try addStringListVariable(
+            allocator,
+            &owned_buffers,
+            &dimensions,
+            &variables,
+            "averaging_kernel_parameter_count",
+            "averaging_kernel_name_strlen",
+            "averaging_kernel_parameter_names",
+            product.parameter_names,
+        );
+        try addDoubleMatrixVariable(
+            allocator,
+            &dimensions,
+            &variables,
+            "averaging_kernel_row_count",
+            "averaging_kernel_column_count",
+            "averaging_kernel",
+            product.row_count,
+            product.column_count,
+            product.values,
+        );
+    }
+
+    if (view.retrieval_jacobian) |product| {
+        try addStringListVariable(
+            allocator,
+            &owned_buffers,
+            &dimensions,
+            &variables,
+            "retrieval_jacobian_parameter_count",
+            "retrieval_jacobian_name_strlen",
+            "retrieval_jacobian_parameter_names",
+            product.parameter_names,
+        );
+        try addDoubleMatrixVariable(
+            allocator,
+            &dimensions,
+            &variables,
+            "retrieval_jacobian_row_count",
+            "retrieval_jacobian_column_count",
+            "retrieval_jacobian",
+            product.row_count,
+            product.column_count,
+            product.values,
+        );
     }
 
     const header_size = try computeHeaderSize(dimensions.items, global_attributes.items, variables.items);
@@ -303,6 +384,30 @@ fn addDoubleVariable(
         .name = variable_name,
         .rank = 1,
         .dim_ids = .{ dimension_id, 0 },
+        .data = .{ .double = values },
+    });
+}
+
+fn addDoubleMatrixVariable(
+    allocator: std.mem.Allocator,
+    dimensions: *std.ArrayList(Dimension),
+    variables: *std.ArrayList(Variable),
+    row_dimension_name: []const u8,
+    column_dimension_name: []const u8,
+    variable_name: []const u8,
+    row_count: u32,
+    column_count: u32,
+    values: []const f64,
+) !void {
+    if (values.len == 0 or row_count == 0 or column_count == 0) return;
+    if (values.len != @as(usize, row_count) * @as(usize, column_count)) return error.ValueOutOfRange;
+
+    const row_dimension_id = try appendDimension(allocator, dimensions, row_dimension_name, row_count);
+    const column_dimension_id = try appendDimension(allocator, dimensions, column_dimension_name, column_count);
+    try variables.append(allocator, .{
+        .name = variable_name,
+        .rank = 2,
+        .dim_ids = .{ row_dimension_id, column_dimension_id },
         .data = .{ .double = values },
     });
 }
@@ -554,7 +659,7 @@ test "netcdf/cf exporter renders a classic binary payload with named metadata ta
         .native_library_paths = &native_libraries,
     };
     provenance.setPluginVersions(&[_][]const u8{"builtin.netcdf_cf@0.1.0"});
-    var result = Result.init(21, "ws", "scene-a", provenance);
+    var result = @import("../../core/Result.zig").Result.init(21, "ws", "scene-a", provenance);
     defer result.deinit(std.testing.allocator);
 
     const jacobian = try std.testing.allocator.dupe(f64, &.{ 0.21, 0.18, 0.16 });
@@ -594,7 +699,7 @@ test "netcdf/cf exporter renders a classic binary payload with named metadata ta
         .format = .netcdf_cf,
         .destination_uri = "file://out/scene-a.nc",
         .dataset_name = "scene-a",
-    }), result);
+    }), Spec.ExportView.fromResult(&result));
     defer std.testing.allocator.free(payload);
 
     try std.testing.expect(std.mem.startsWith(u8, payload, "CDF\x01"));

@@ -24,7 +24,11 @@ test "retrieval solvers share canonical problem model with method-specific polic
     };
     const oe_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(oe_request);
 
-    const oe_result = try retrieval.oe.solver.solve(oe_problem);
+    const oe_result = try retrieval.oe.solver.solve(std.testing.allocator, oe_problem);
+    defer {
+        var owned = oe_result;
+        owned.deinit(std.testing.allocator);
+    }
     try std.testing.expectEqual(retrieval.common.contracts.Method.oe, oe_result.method);
     try std.testing.expect(oe_result.jacobians_used);
 
@@ -44,7 +48,11 @@ test "retrieval solvers share canonical problem model with method-specific polic
         .expected_derivative_mode = .none,
         .diagnostics = .{ .jacobians = false },
     });
-    const doas_result = try retrieval.doas.solver.solve(doas_problem);
+    const doas_result = try retrieval.doas.solver.solve(std.testing.allocator, doas_problem);
+    defer {
+        var owned = doas_result;
+        owned.deinit(std.testing.allocator);
+    }
     try std.testing.expectEqual(retrieval.common.contracts.Method.doas, doas_result.method);
     try std.testing.expect(!doas_result.jacobians_used);
 
@@ -73,7 +81,11 @@ test "retrieval solvers share canonical problem model with method-specific polic
         .expected_derivative_mode = .numerical,
         .diagnostics = .{ .jacobians = true },
     });
-    const dismas_result = try retrieval.dismas.solver.solve(dismas_problem);
+    const dismas_result = try retrieval.dismas.solver.solve(std.testing.allocator, dismas_problem);
+    defer {
+        var owned = dismas_result;
+        owned.deinit(std.testing.allocator);
+    }
     try std.testing.expectEqual(retrieval.common.contracts.Method.dismas, dismas_result.method);
     try std.testing.expect(dismas_result.jacobians_used);
 

@@ -23,8 +23,10 @@ const BatchJob = BatchRunnerModule.BatchJob;
 const ThreadContext = @import("../runtime/scheduler/ThreadContext.zig").ThreadContext;
 const TransportCommon = @import("../kernels/transport/common.zig");
 const MeasurementSpace = @import("../kernels/transport/measurement_space.zig");
+const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
 const RetrievalContracts = @import("../retrieval/common/contracts.zig");
 const RetrievalForwardModel = @import("../retrieval/common/forward_model.zig");
+const RetrievalSyntheticForward = @import("../retrieval/common/synthetic_forward.zig");
 const Logging = @import("logging.zig");
 
 pub const EngineOptions = struct {
@@ -227,24 +229,47 @@ pub const Engine = struct {
             request.scene.id,
             provenance,
         );
+        errdefer result.deinit(self.allocator);
         result.attachMeasurementSpaceProduct(measurement_space_product);
         if (request.inverse_problem != null) {
             const retrieval_provider = plan.providers.retrieval orelse return errors.Error.UnsupportedCapability;
-            const retrieval_problem = RetrievalContracts.RetrievalProblem.fromRequest(request) catch {
+            var retrieval_request = request;
+            if (retrieval_request.measurement_binding == null and retrieval_request.inverse_problem != null) {
+                const source = retrieval_request.inverse_problem.?.measurements.source;
+                if (source.kind == .external_observation) {
+                    retrieval_request.measurement_binding = .{
+                        .source_name = if (source.name.len != 0) source.name else retrieval_request.inverse_problem.?.measurements.product,
+                        .observable = retrieval_request.inverse_problem.?.measurements.observable,
+                        .product = &result.measurement_space_product.?,
+                    };
+                }
+            }
+
+            const retrieval_problem = RetrievalContracts.RetrievalProblem.fromRequest(retrieval_request) catch {
                 return errors.Error.InvalidRequest;
             };
             const retrieval_context: RetrievalExecutionContext = .{
                 .allocator = self.allocator,
                 .plan = plan,
             };
-            const retrieval_outcome = retrieval_provider.solve(retrieval_problem, .{
+            const retrieval_outcome = retrieval_provider.solve(self.allocator, retrieval_problem, .{
                 .context = @ptrCast(&retrieval_context),
                 .evaluate = evaluateRetrievalScene,
             }) catch |err| switch (err) {
                 error.OutOfMemory => return err,
                 else => return errors.Error.InvalidRequest,
             };
+            const retrieval_products = materializeRetrievalProducts(
+                self.allocator,
+                plan,
+                retrieval_problem,
+                retrieval_outcome,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return errors.Error.InvalidRequest,
+            };
             result.attachRetrievalOutcome(retrieval_outcome);
+            result.attachRetrievalProducts(retrieval_products);
         }
         result.diagnostics = plan.providers.diagnostics.materialize(
             request.diagnostics,
@@ -288,6 +313,255 @@ fn evaluateRetrievalScene(context: *const anyopaque, scene: Scene) anyerror!Meas
         prepared_optics,
         measurementProviders(typed_context.plan),
     );
+}
+
+fn materializeRetrievalProducts(
+    allocator: std.mem.Allocator,
+    plan: *const Plan,
+    problem: RetrievalContracts.RetrievalProblem,
+    outcome: RetrievalContracts.SolverOutcome,
+) !Result.RetrievalProducts {
+    const fitted_scene = outcome.fitted_scene orelse return error.InvalidRequest;
+
+    var prepared_optics = try plan.providers.optics.prepareForScene(allocator, fitted_scene);
+    defer prepared_optics.deinit(allocator);
+
+    var fitted_measurement = try MeasurementSpace.simulateProduct(
+        allocator,
+        fitted_scene,
+        plan.transport_route,
+        prepared_optics,
+        measurementProviders(plan),
+    );
+    errdefer fitted_measurement.deinit(allocator);
+
+    const state_vector = try materializeStateVectorProduct(allocator, problem, outcome);
+    errdefer {
+        var owned = state_vector;
+        owned.deinit(allocator);
+    }
+
+    const jacobian = try materializeJacobianProduct(
+        allocator,
+        plan,
+        problem,
+        outcome,
+        fitted_measurement,
+    );
+    errdefer {
+        var owned = jacobian;
+        owned.deinit(allocator);
+    }
+
+    const averaging_kernel = try materializeAveragingKernelProduct(
+        allocator,
+        problem,
+        outcome,
+        jacobian,
+    );
+    errdefer {
+        var owned = averaging_kernel;
+        owned.deinit(allocator);
+    }
+
+    return .{
+        .state_vector = state_vector,
+        .fitted_measurement = fitted_measurement,
+        .averaging_kernel = averaging_kernel,
+        .jacobian = jacobian,
+    };
+}
+
+fn materializeStateVectorProduct(
+    allocator: std.mem.Allocator,
+    problem: RetrievalContracts.RetrievalProblem,
+    outcome: RetrievalContracts.SolverOutcome,
+) !Result.RetrievalStateVectorProduct {
+    const parameter_names = try duplicateParameterNames(allocator, problem);
+    errdefer freeStringSlice(allocator, parameter_names);
+
+    const values = try allocator.dupe(f64, outcome.state_estimate.values);
+    errdefer allocator.free(values);
+
+    return .{
+        .parameter_names = parameter_names,
+        .values = values,
+    };
+}
+
+fn materializeJacobianProduct(
+    allocator: std.mem.Allocator,
+    plan: *const Plan,
+    problem: RetrievalContracts.RetrievalProblem,
+    outcome: RetrievalContracts.SolverOutcome,
+    fitted_measurement: MeasurementSpaceProduct,
+) !Result.RetrievalMatrixProduct {
+    const parameter_names = try duplicateParameterNames(allocator, problem);
+    errdefer freeStringSlice(allocator, parameter_names);
+
+    const sample_count = fitted_measurement.wavelengths.len;
+    const state_count = outcome.state_estimate.values.len;
+    const values = try allocator.alloc(f64, sample_count * state_count);
+    errdefer allocator.free(values);
+
+    const observable = measurementObservable(problem);
+    for (0..state_count) |state_index| {
+        const perturbed_values = try allocator.dupe(f64, outcome.state_estimate.values);
+        defer allocator.free(perturbed_values);
+
+        const delta = jacobianStep(perturbed_values[state_index]);
+        perturbed_values[state_index] += delta;
+
+        const perturbed_scene = try RetrievalSyntheticForward.sceneForState(problem, perturbed_values);
+        var prepared_optics = try plan.providers.optics.prepareForScene(allocator, perturbed_scene);
+        defer prepared_optics.deinit(allocator);
+
+        var perturbed_product = try MeasurementSpace.simulateProduct(
+            allocator,
+            perturbed_scene,
+            plan.transport_route,
+            prepared_optics,
+            measurementProviders(plan),
+        );
+        defer perturbed_product.deinit(allocator);
+
+        for (0..sample_count) |sample_index| {
+            const base_value = measurementValue(fitted_measurement, observable, sample_index);
+            const perturbed_value = measurementValue(perturbed_product, observable, sample_index);
+            values[sample_index * state_count + state_index] = (perturbed_value - base_value) / delta;
+        }
+    }
+
+    return .{
+        .row_count = @intCast(sample_count),
+        .column_count = @intCast(state_count),
+        .parameter_names = parameter_names,
+        .values = values,
+    };
+}
+
+fn materializeAveragingKernelProduct(
+    allocator: std.mem.Allocator,
+    problem: RetrievalContracts.RetrievalProblem,
+    outcome: RetrievalContracts.SolverOutcome,
+    jacobian: Result.RetrievalMatrixProduct,
+) !Result.RetrievalMatrixProduct {
+    const parameter_names = try duplicateParameterNames(allocator, problem);
+    errdefer freeStringSlice(allocator, parameter_names);
+
+    const state_count = outcome.state_estimate.values.len;
+    const values = try allocator.alloc(f64, state_count * state_count);
+    errdefer allocator.free(values);
+    @memset(values, 0.0);
+
+    if (state_count != 0) {
+        const dfs_per_state = outcome.dfs / @as(f64, @floatFromInt(state_count));
+        for (0..state_count) |diag_index| {
+            var column_energy: f64 = 0.0;
+            for (0..jacobian.row_count) |row_index| {
+                const derivative = jacobian.values[row_index * state_count + diag_index];
+                column_energy += derivative * derivative;
+            }
+            values[diag_index * state_count + diag_index] = std.math.clamp(
+                dfs_per_state + 0.02 * std.math.sqrt(column_energy),
+                0.0,
+                1.0,
+            );
+        }
+
+        for (problem.inverse_problem.covariance_blocks) |block| {
+            for (block.member_names, 0..) |lhs_name, lhs_index| {
+                const lhs = parameterIndex(problem, lhs_name) orelse continue;
+                for (block.member_names[lhs_index + 1 ..]) |rhs_name| {
+                    const rhs = parameterIndex(problem, rhs_name) orelse continue;
+                    const coupled = 0.1 * block.correlation;
+                    values[lhs * state_count + rhs] = coupled;
+                    values[rhs * state_count + lhs] = coupled;
+                }
+            }
+        }
+    }
+
+    return .{
+        .row_count = @intCast(state_count),
+        .column_count = @intCast(state_count),
+        .parameter_names = parameter_names,
+        .values = values,
+    };
+}
+
+fn duplicateParameterNames(
+    allocator: std.mem.Allocator,
+    problem: RetrievalContracts.RetrievalProblem,
+) ![]const []const u8 {
+    const state_vector = problem.inverse_problem.state_vector;
+    if (state_vector.parameter_names.len != 0) {
+        return duplicateStringSlice(allocator, state_vector.parameter_names);
+    }
+    if (state_vector.parameters.len == 0) return &[_][]const u8{};
+
+    const names = try allocator.alloc([]const u8, state_vector.parameters.len);
+    errdefer allocator.free(names);
+
+    var copied: usize = 0;
+    errdefer {
+        for (names[0..copied]) |value| allocator.free(value);
+    }
+    for (state_vector.parameters, 0..) |parameter, index| {
+        names[index] = try allocator.dupe(u8, parameter.name);
+        copied = index + 1;
+    }
+    return names;
+}
+
+fn duplicateStringSlice(allocator: std.mem.Allocator, values: []const []const u8) ![]const []const u8 {
+    const owned = try allocator.alloc([]const u8, values.len);
+    errdefer allocator.free(owned);
+
+    var copied: usize = 0;
+    errdefer {
+        for (owned[0..copied]) |value| allocator.free(value);
+    }
+    for (values, 0..) |value, index| {
+        owned[index] = try allocator.dupe(u8, value);
+        copied = index + 1;
+    }
+    return owned;
+}
+
+fn freeStringSlice(allocator: std.mem.Allocator, values: []const []const u8) void {
+    if (values.len == 0) return;
+    for (values) |value| allocator.free(value);
+    allocator.free(values);
+}
+
+fn parameterIndex(problem: RetrievalContracts.RetrievalProblem, name: []const u8) ?usize {
+    const state_vector = problem.inverse_problem.state_vector;
+    if (state_vector.parameter_names.len != 0) {
+        for (state_vector.parameter_names, 0..) |parameter_name, index| {
+            if (std.mem.eql(u8, parameter_name, name)) return index;
+        }
+    }
+    for (state_vector.parameters, 0..) |parameter, index| {
+        if (std.mem.eql(u8, parameter.name, name)) return index;
+    }
+    return null;
+}
+
+fn measurementObservable(problem: RetrievalContracts.RetrievalProblem) []const u8 {
+    const observable = problem.inverse_problem.measurements.observable;
+    if (observable.len != 0) return observable;
+    return problem.inverse_problem.measurements.product;
+}
+
+fn measurementValue(product: MeasurementSpaceProduct, observable: []const u8, index: usize) f64 {
+    if (std.mem.eql(u8, observable, "reflectance")) return product.reflectance[index];
+    if (std.mem.eql(u8, observable, "irradiance")) return product.irradiance[index];
+    return product.radiance[index];
+}
+
+fn jacobianStep(value: f64) f64 {
+    return if (@abs(value) > 1.0e-6) 1.0e-3 * @abs(value) else 1.0e-3;
 }
 
 test "preparePlan validates lifecycle prerequisites and plan templates" {

@@ -1,5 +1,4 @@
 const std = @import("std");
-const Result = @import("../../core/Result.zig").Result;
 const ExporterProviders = @import("../../plugins/providers/exporter.zig");
 const Spec = @import("spec.zig");
 const NetcdfCf = @import("netcdf_cf.zig");
@@ -27,14 +26,14 @@ pub const DiagnosticFormat = Diagnostic.DiagnosticFormat;
 pub fn write(
     allocator: std.mem.Allocator,
     request: Spec.ExportRequest,
-    result: Result,
+    view: Spec.ExportView,
 ) Error!ExportReport {
     const provider = ExporterProviders.resolve(request.plugin_id) orelse return error.UnknownExporterProvider;
     if (provider.format != request.format) return error.ExporterFormatMismatch;
 
     return switch (provider.kind) {
         .netcdf_cf => {
-            const report = try NetcdfCf.write(request, result, allocator);
+            const report = try NetcdfCf.write(request, view, allocator);
             return .{
                 .artifact = report.artifact,
                 .files_written = report.files_written,
@@ -42,7 +41,7 @@ pub fn write(
             };
         },
         .zarr => {
-            const report = try Zarr.write(request, result, allocator);
+            const report = try Zarr.write(request, view, allocator);
             return .{
                 .artifact = report.artifact,
                 .files_written = report.files_written,
@@ -56,9 +55,16 @@ pub fn exportDiagnostic(
     allocator: std.mem.Allocator,
     destination_uri: []const u8,
     format: DiagnosticFormat,
-    result: Result,
+    view: Spec.ExportView,
 ) Error!DiagnosticReport {
-    return try Diagnostic.write(destination_uri, format, result, allocator);
+    return try Diagnostic.write(destination_uri, format, .{
+        .status = view.status,
+        .plan_id = view.plan_id,
+        .workspace_label = view.workspace_label,
+        .scene_id = view.scene_id,
+        .provenance = view.provenance,
+        .diagnostics = view.diagnostics,
+    }, allocator);
 }
 
 test "writer dispatches based on export format metadata" {

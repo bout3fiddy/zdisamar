@@ -321,9 +321,9 @@ fn executeRetrievalCase(case: ParityCase, request: zdisamar.Request) !retrieval.
     const problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(request);
     const method = try parseRetrievalMethod(case.retrieval_method orelse return error.MissingRetrievalMethod);
     return switch (method) {
-        .oe => retrieval.oe.solver.solve(problem),
-        .doas => retrieval.doas.solver.solve(problem),
-        .dismas => retrieval.dismas.solver.solve(problem),
+        .oe => retrieval.oe.solver.solve(std.testing.allocator, problem),
+        .doas => retrieval.doas.solver.solve(std.testing.allocator, problem),
+        .dismas => retrieval.dismas.solver.solve(std.testing.allocator, problem),
     };
 }
 
@@ -510,6 +510,10 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
 
         if (std.mem.eql(u8, case.component, "retrieval")) {
             const outcome = try executeRetrievalCase(case, request);
+            defer {
+                var owned = outcome;
+                owned.deinit(std.testing.allocator);
+            }
             try std.testing.expectEqualStrings(case.retrieval_method.?, @tagName(outcome.method));
             try std.testing.expectEqualStrings(case.id, outcome.scene_id);
             try std.testing.expect(outcome.iterations > 0);

@@ -4,10 +4,11 @@ const SolverOutcome = common.SolverOutcome;
 const doas = @import("../../retrieval/doas/solver.zig");
 const dismas = @import("../../retrieval/dismas/solver.zig");
 const oe = @import("../../retrieval/oe/solver.zig");
+const Allocator = @import("std").mem.Allocator;
 
 pub const Provider = struct {
     id: []const u8,
-    solve: *const fn (problem: common.RetrievalProblem, evaluator: forward_model.SummaryEvaluator) anyerror!SolverOutcome,
+    solve: *const fn (allocator: Allocator, problem: common.RetrievalProblem, evaluator: forward_model.SummaryEvaluator) anyerror!SolverOutcome,
 };
 
 pub fn resolve(provider_id: []const u8) ?Provider {

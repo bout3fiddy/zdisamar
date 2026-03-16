@@ -1,0 +1,70 @@
+# Canonical CLI example for release-readiness and smoke execution.
+schema_version: 1
+
+metadata:
+  id: "canonical-cli-smoke"
+  workspace: "canonical-cli-smoke"
+  description: "Minimal canonical YAML smoke example for the zdisamar CLI"
+
+templates:
+  base:
+    plan:
+      model_family: "disamar_standard"
+      transport:
+        solver: "dispatcher"
+      execution:
+        solver_mode: "polarized"
+        derivative_mode: "semi_analytical"
+    scene:
+      geometry:
+        model: "plane_parallel"
+        solar_zenith_deg: 32.500000
+        viewing_zenith_deg: 9.000000
+        relative_azimuth_deg: 145.000000
+      atmosphere:
+        layering:
+          layer_count: 48
+      bands:
+        band_1:
+          start_nm: 405.000000
+          end_nm: 465.000000
+          step_nm: 0.500000
+      absorbers: {}
+      surface:
+        model: "lambertian"
+        albedo: 0.000000
+      measurement_model:
+        regime: "nadir"
+        instrument:
+          name: "tropomi"
+        sampling:
+          mode: "native"
+        noise:
+          model: "shot_noise"
+      clouds:
+        legacy_cloud:
+          model: "legacy_binary_cloud"
+          optical_thickness: 0.000000
+
+experiment:
+  simulation:
+    from: "base"
+    scene:
+      id: "s5p-no2"
+    products:
+      radiance:
+        kind: "measurement_space"
+        observable: "radiance"
+      slant_column:
+        kind: "result"
+    diagnostics:
+      provenance: true
+      jacobians: true
+      internal_fields: false
+      materialize_cache_keys: false
+
+outputs: []
+
+validation:
+  strict_unknown_fields: true
+  require_resolved_stage_references: true

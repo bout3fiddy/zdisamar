@@ -8,6 +8,62 @@ const RetrievalOutcome = @import("../retrieval/common/contracts.zig").SolverOutc
 const Allocator = std.mem.Allocator;
 
 pub const Result = struct {
+    pub const RetrievalStateVectorProduct = struct {
+        parameter_names: []const []const u8 = &[_][]const u8{},
+        values: []const f64 = &[_]f64{},
+
+        pub fn deinit(self: *RetrievalStateVectorProduct, allocator: Allocator) void {
+            if (self.parameter_names.len != 0) {
+                for (self.parameter_names) |name| allocator.free(name);
+                allocator.free(self.parameter_names);
+            }
+            if (self.values.len != 0) allocator.free(self.values);
+            self.* = .{};
+        }
+    };
+
+    pub const RetrievalMatrixProduct = struct {
+        row_count: u32 = 0,
+        column_count: u32 = 0,
+        parameter_names: []const []const u8 = &[_][]const u8{},
+        values: []const f64 = &[_]f64{},
+
+        pub fn deinit(self: *RetrievalMatrixProduct, allocator: Allocator) void {
+            if (self.parameter_names.len != 0) {
+                for (self.parameter_names) |name| allocator.free(name);
+                allocator.free(self.parameter_names);
+            }
+            if (self.values.len != 0) allocator.free(self.values);
+            self.* = .{};
+        }
+    };
+
+    pub const RetrievalProducts = struct {
+        state_vector: ?RetrievalStateVectorProduct = null,
+        fitted_measurement: ?MeasurementSpaceProduct = null,
+        averaging_kernel: ?RetrievalMatrixProduct = null,
+        jacobian: ?RetrievalMatrixProduct = null,
+
+        pub fn deinit(self: *RetrievalProducts, allocator: Allocator) void {
+            if (self.state_vector) |*state_vector| {
+                state_vector.deinit(allocator);
+                self.state_vector = null;
+            }
+            if (self.fitted_measurement) |*product| {
+                product.deinit(allocator);
+                self.fitted_measurement = null;
+            }
+            if (self.averaging_kernel) |*kernel| {
+                kernel.deinit(allocator);
+                self.averaging_kernel = null;
+            }
+            if (self.jacobian) |*jacobian| {
+                jacobian.deinit(allocator);
+                self.jacobian = null;
+            }
+        }
+    };
+
     pub const Status = enum {
         success,
         invalid_request,
@@ -23,6 +79,7 @@ pub const Result = struct {
     measurement_space: ?MeasurementSpaceSummary = null,
     measurement_space_product: ?MeasurementSpaceProduct = null,
     retrieval: ?RetrievalOutcome = null,
+    retrieval_products: RetrievalProducts = .{},
 
     pub fn init(
         plan_id: u64,
@@ -48,10 +105,19 @@ pub const Result = struct {
         self.retrieval = outcome;
     }
 
+    pub fn attachRetrievalProducts(self: *Result, products: RetrievalProducts) void {
+        self.retrieval_products = products;
+    }
+
     pub fn deinit(self: *Result, allocator: Allocator) void {
         if (self.measurement_space_product) |*product| {
             product.deinit(allocator);
             self.measurement_space_product = null;
+        }
+        self.retrieval_products.deinit(allocator);
+        if (self.retrieval) |*outcome| {
+            outcome.deinit(allocator);
+            self.retrieval = null;
         }
         self.provenance.deinit(allocator);
     }

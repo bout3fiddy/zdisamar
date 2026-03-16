@@ -3,7 +3,7 @@
   "required_commands": [
     "zig build",
     "zig build test",
-    "./zig-out/bin/zdisamar --config data/examples/legacy_config.in"
+    "./zig-out/bin/zdisamar run data/examples/canonical_config.yaml"
   ],
   "required_packages": [
     {
@@ -29,9 +29,14 @@
     "builtin.zarr@0.1.0"
   ],
   "required_artifacts": [
+    "data/examples/canonical_config.yaml",
+    "data/examples/zdisamar_common_use.yaml",
+    "data/examples/zdisamar_expert_o2a.yaml",
     "data/climatologies/bundle_manifest.json",
     "data/cross_sections/bundle_manifest.json",
     "data/luts/bundle_manifest.json",
+    "specs/canonical_yaml_cutover.md",
+    "specs/legacy_config_mapping.md",
     "validation/compatibility/parity_matrix.json",
     "validation/compatibility/vendor_import_registry.json",
     "validation/golden/result_provenance_golden.json",

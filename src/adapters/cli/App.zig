@@ -3,239 +3,261 @@ const zdisamar = @import("zdisamar");
 const legacy_config = @import("legacy_config");
 
 pub const CliError = error{
-    MissingValue,
+    MissingCommand,
     UnknownOption,
+    UnknownCommand,
+    UnexpectedArgument,
 };
 
-pub const Overrides = struct {
-    workspace_label: ?[]const u8 = null,
-    config_path: ?[]const u8 = null,
-    scene_id: ?[]const u8 = null,
-    model_family: ?[]const u8 = null,
-    transport: ?[]const u8 = null,
-    retrieval: ?[]const u8 = null,
-    solver_mode: ?zdisamar.SolverMode = null,
-    diagnostics: DiagnosticOverrides = .{},
-    show_help: bool = false,
-    requested_products: std.ArrayListUnmanaged([]const u8) = .{},
-
-    pub fn deinit(self: *Overrides, allocator: std.mem.Allocator) void {
-        self.requested_products.deinit(allocator);
-        self.* = .{};
-    }
+pub const Command = union(enum) {
+    help,
+    run: []const u8,
+    config_validate: []const u8,
+    config_resolve: []const u8,
+    config_import: []const u8,
 };
 
-pub const DiagnosticOverrides = struct {
-    jacobians: ?bool = null,
-    internal_fields: ?bool = null,
-    materialize_cache_keys: ?bool = null,
-};
+pub fn run(allocator: std.mem.Allocator, argv: []const []const u8, stdout: anytype, stderr: anytype) !void {
+    const command = try parseArgs(argv);
+    switch (command) {
+        .help => try printHelp(stdout),
+        .run => |path| try runCanonicalConfig(allocator, path, stdout, stderr),
+        .config_validate => |path| try validateCanonicalConfig(allocator, path, stdout, stderr),
+        .config_resolve => |path| try resolveCanonicalConfig(allocator, path, stdout, stderr),
+        .config_import => |path| try importLegacyConfig(allocator, path, stdout, stderr),
+    }
+}
 
-pub fn run(allocator: std.mem.Allocator, argv: []const []const u8, writer: anytype) !void {
-    var overrides = try parseArgs(allocator, argv);
-    defer overrides.deinit(allocator);
+pub fn parseArgs(argv: []const []const u8) !Command {
+    if (argv.len <= 1) return .help;
+    if (isHelp(argv[1])) return .help;
 
-    if (overrides.show_help) {
-        try printHelp(writer);
-        return;
+    if (std.mem.eql(u8, argv[1], "run")) {
+        if (argv.len < 3) return CliError.MissingCommand;
+        if (argv.len != 3) return CliError.UnexpectedArgument;
+        return .{ .run = argv[2] };
     }
 
-    var config_bytes: ?[]u8 = null;
-    defer if (config_bytes) |bytes| allocator.free(bytes);
-
-    var prepared = legacy_config.PreparedRun{};
-    defer prepared.deinit(allocator);
-
-    if (overrides.config_path) |config_path| {
-        config_bytes = try std.fs.cwd().readFileAlloc(allocator, config_path, 1024 * 1024);
-        prepared = try legacy_config.parse(allocator, config_bytes.?);
+    if (std.mem.eql(u8, argv[1], "config")) {
+        if (argv.len == 2 or isHelp(argv[2])) return .help;
+        if (argv.len != 4) return CliError.UnexpectedArgument;
+        if (std.mem.eql(u8, argv[2], "validate")) return .{ .config_validate = argv[3] };
+        if (std.mem.eql(u8, argv[2], "resolve")) return .{ .config_resolve = argv[3] };
+        if (std.mem.eql(u8, argv[2], "import")) return .{ .config_import = argv[3] };
+        return CliError.UnknownCommand;
     }
 
-    try applyOverrides(allocator, &prepared, &overrides);
+    return CliError.UnknownOption;
+}
 
+fn runCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout: anytype, stderr: anytype) !void {
     var engine = zdisamar.Engine.init(allocator, .{});
     defer engine.deinit();
 
     try engine.bootstrapBuiltinCatalog();
 
-    var plan = try engine.preparePlan(prepared.plan_template);
-    defer plan.deinit();
-    var workspace = engine.createWorkspace(prepared.workspace_label);
-    const request = prepared.toRequest();
-    var result = try engine.execute(&plan, &workspace, request);
-    defer result.deinit(allocator);
+    const execution = try zdisamar.canonical_config.resolveCompileAndExecute(allocator, &engine, path);
+    defer {
+        var outcome = execution.outcome;
+        outcome.deinit();
+        var program = execution.program;
+        program.deinit();
+    }
 
-    try writer.print(
-        "zdisamar adapter run: workspace={s} scene={s} model={s} plan_id={d} status={s} route={s}\n",
+    try emitCanonicalWarnings(execution.program.experiment.warnings, stderr);
+    try stdout.print(
+        "zdisamar run: source={s} workspace={s} stages={d} outputs={d} warnings={d} status={s}\n",
         .{
-            prepared.workspace_label,
-            result.scene_id,
-            result.provenance.model_family,
-            result.plan_id,
-            @tagName(result.status),
-            result.provenance.solver_route,
+            execution.program.experiment.source_path,
+            effectiveWorkspace(execution.program.experiment),
+            execution.outcome.stage_outcomes.len,
+            execution.outcome.outputs.len,
+            execution.program.experiment.warnings.len,
+            overallStatus(&execution.outcome),
+        },
+    );
+
+    for (execution.outcome.stage_outcomes, 0..) |stage_outcome, index| {
+        const stage_execution = execution.program.stages[index];
+        try stdout.print(
+            "  stage={s} scene={s} model={s} plan_id={d} status={s} route={s}\n",
+            .{
+                @tagName(stage_execution.kind),
+                stage_outcome.result.scene_id,
+                stage_outcome.result.provenance.model_family,
+                stage_outcome.result.plan_id,
+                @tagName(stage_outcome.result.status),
+                stage_outcome.result.provenance.solver_route,
+            },
+        );
+    }
+}
+
+fn validateCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout: anytype, stderr: anytype) !void {
+    var experiment = try zdisamar.canonical_config.resolveFile(allocator, path);
+    errdefer experiment.deinit();
+
+    const program = try zdisamar.canonical_config.compileResolved(allocator, experiment);
+    defer {
+        var owned = program;
+        owned.deinit();
+    }
+
+    try emitCanonicalWarnings(program.experiment.warnings, stderr);
+    try stdout.print(
+        "zdisamar config validate: source={s} stages={d} outputs={d} warnings={d} status=valid\n",
+        .{
+            program.experiment.source_path,
+            program.stages.len,
+            program.outputs.len,
+            program.experiment.warnings.len,
         },
     );
 }
 
-pub fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Overrides {
-    var overrides = Overrides{};
-    errdefer overrides.deinit(allocator);
+fn resolveCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout: anytype, stderr: anytype) !void {
+    var experiment = try zdisamar.canonical_config.resolveFile(allocator, path);
+    errdefer experiment.deinit();
 
-    var index: usize = 1;
-    while (index < argv.len) {
-        const arg = argv[index];
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            overrides.show_help = true;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--config")) {
-            overrides.config_path = try nextValue(argv, &index);
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--workspace")) {
-            overrides.workspace_label = try nextValue(argv, &index);
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--scene")) {
-            overrides.scene_id = try nextValue(argv, &index);
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--model-family")) {
-            overrides.model_family = try nextValue(argv, &index);
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--transport")) {
-            overrides.transport = try nextValue(argv, &index);
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--retrieval")) {
-            overrides.retrieval = try nextValue(argv, &index);
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--solver-mode")) {
-            overrides.solver_mode = try parseSolverMode(try nextValue(argv, &index));
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--product")) {
-            try overrides.requested_products.append(allocator, try nextValue(argv, &index));
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--jacobians")) {
-            overrides.diagnostics.jacobians = true;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--internal-fields")) {
-            overrides.diagnostics.internal_fields = true;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--materialize-cache-keys")) {
-            overrides.diagnostics.materialize_cache_keys = true;
-            index += 1;
-            continue;
-        }
-
-        return CliError.UnknownOption;
+    const program = try zdisamar.canonical_config.compileResolved(allocator, experiment);
+    defer {
+        var owned = program;
+        owned.deinit();
     }
 
-    return overrides;
-}
-
-fn nextValue(argv: []const []const u8, index: *usize) ![]const u8 {
-    const value_index = index.* + 1;
-    if (value_index >= argv.len) return CliError.MissingValue;
-    index.* = value_index + 1;
-    return argv[value_index];
-}
-
-fn applyOverrides(
-    allocator: std.mem.Allocator,
-    prepared: *legacy_config.PreparedRun,
-    overrides: *Overrides,
-) !void {
-    if (overrides.workspace_label) |workspace_label| prepared.workspace_label = workspace_label;
-    if (overrides.scene_id) |scene_id| {
-        prepared.scene.id = scene_id;
-        prepared.plan_template.scene_blueprint.id = scene_id;
+    try emitCanonicalWarnings(program.experiment.warnings, stderr);
+    try stdout.print(
+        "source: {s}\nmetadata:\n  id: {s}\n  workspace: {s}\nstages:\n",
+        .{
+            program.experiment.source_path,
+            program.experiment.metadata.id,
+            effectiveWorkspace(program.experiment),
+        },
+    );
+    for (program.stages) |stage_execution| {
+        try stdout.print(
+            "  - kind: {s}\n    scene_id: {s}\n    model_family: {s}\n    transport_provider: {s}\n    solver_mode: {s}\n    derivative_mode: {s}\n",
+            .{
+                @tagName(stage_execution.kind),
+                stage_execution.stage.scene.id,
+                stage_execution.stage.plan.model_family,
+                stage_execution.stage.plan.providers.transport_solver,
+                @tagName(stage_execution.stage.plan.solver_mode),
+                @tagName(stage_execution.stage.plan.scene_blueprint.derivative_mode),
+            },
+        );
+        if (stage_execution.stage.plan.providers.retrieval_algorithm) |provider| {
+            try stdout.print("    retrieval_provider: {s}\n", .{provider});
+        }
+        if (stage_execution.stage.products.len == 0) {
+            try stdout.writeAll("    products: []\n");
+        } else {
+            try stdout.writeAll("    products:\n");
+            for (stage_execution.stage.products) |product| {
+                try stdout.print("      - name: {s}\n        kind: {s}\n", .{ product.name, @tagName(product.kind) });
+                if (product.observable.len != 0) {
+                    try stdout.print("        observable: {s}\n", .{product.observable});
+                }
+            }
+        }
     }
-    if (overrides.model_family) |model_family| prepared.plan_template.model_family = model_family;
-    if (overrides.transport) |transport| prepared.plan_template.providers.transport_solver = transport;
-    if (overrides.retrieval) |retrieval| {
-        prepared.plan_template.providers.retrieval_algorithm = if (std.mem.eql(u8, retrieval, "none")) null else retrieval;
-    }
-    if (overrides.solver_mode) |solver_mode| prepared.plan_template.solver_mode = solver_mode;
-    if (overrides.diagnostics.jacobians) |jacobians| prepared.diagnostics.jacobians = jacobians;
-    if (overrides.diagnostics.internal_fields) |internal_fields| prepared.diagnostics.internal_fields = internal_fields;
-    if (overrides.diagnostics.materialize_cache_keys) |materialize_cache_keys| {
-        prepared.diagnostics.materialize_cache_keys = materialize_cache_keys;
-    }
 
-    if (overrides.requested_products.items.len != 0) {
-        prepared.requested_products.deinit(allocator);
-        prepared.requested_products = overrides.requested_products;
-        overrides.requested_products = .{};
+    if (program.outputs.len == 0) {
+        try stdout.writeAll("outputs: []\n");
+    } else {
+        try stdout.writeAll("outputs:\n");
+        for (program.outputs) |job| {
+            try stdout.print(
+                "  - from: {s}\n    kind: {s}\n    format: {s}\n    destination_uri: {s}\n",
+                .{
+                    job.target.name,
+                    @tagName(job.target.kind),
+                    @tagName(job.output.format),
+                    job.output.destination_uri,
+                },
+            );
+        }
     }
 }
 
-fn parseSolverMode(value: []const u8) !zdisamar.SolverMode {
-    if (std.mem.eql(u8, value, "scalar")) return .scalar;
-    if (std.mem.eql(u8, value, "polarized")) return .polarized;
-    if (std.mem.eql(u8, value, "derivative_enabled")) return .derivative_enabled;
-    return legacy_config.ParseError.InvalidSolverMode;
+fn importLegacyConfig(allocator: std.mem.Allocator, path: []const u8, stdout: anytype, stderr: anytype) !void {
+    var imported = try legacy_config.importFile(allocator, path);
+    defer imported.deinit(allocator);
+
+    try emitImportWarnings(imported.warnings, stderr);
+    try stdout.writeAll(imported.yaml);
+}
+
+fn emitCanonicalWarnings(warnings: anytype, stderr: anytype) !void {
+    for (warnings) |warning| {
+        try stderr.print("warning: {s}\n", .{warning.message});
+    }
+}
+
+fn emitImportWarnings(warnings: []const legacy_config.ImportWarning, stderr: anytype) !void {
+    for (warnings) |warning| {
+        try stderr.print("warning: {s}\n", .{warning.message});
+    }
+}
+
+fn effectiveWorkspace(experiment: zdisamar.canonical_config.ResolvedExperiment) []const u8 {
+    if (experiment.metadata.workspace.len != 0) return experiment.metadata.workspace;
+    if (experiment.metadata.id.len != 0) return experiment.metadata.id;
+    return "canonical-config";
+}
+
+fn overallStatus(outcome: *const zdisamar.canonical_config.ExecutionOutcome) []const u8 {
+    for (outcome.stage_outcomes) |stage_outcome| {
+        if (stage_outcome.result.status != .success) return @tagName(stage_outcome.result.status);
+    }
+    return "success";
+}
+
+fn isHelp(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "--help") or
+        std.mem.eql(u8, arg, "-h") or
+        std.mem.eql(u8, arg, "help");
 }
 
 fn printHelp(writer: anytype) !void {
     try writer.writeAll(
-        \\Usage: zdisamar [--config PATH] [--workspace LABEL] [--scene ID]
-        \\                [--model-family NAME] [--transport NAME]
-        \\                [--retrieval NAME|none] [--solver-mode MODE]
-        \\                [--product NAME] [--jacobians]
-        \\                [--internal-fields] [--materialize-cache-keys]
+        \\Usage:
+        \\  zdisamar run CONFIG.yaml
+        \\  zdisamar config validate CONFIG.yaml
+        \\  zdisamar config resolve CONFIG.yaml
+        \\  zdisamar config import legacy_config.in
         \\
-        \\The CLI is an adapter over the typed Engine -> Plan -> Workspace -> Request -> Result API.
-        \\Legacy Config.in-style files can be translated with --config.
+        \\Canonical YAML is the runtime entrypoint.
+        \\Legacy Config.in support is import-only migration output on stdout.
         \\
     );
 }
 
-test "cli parser captures config path and typed overrides" {
+test "cli parser captures canonical command surface" {
     const argv = [_][]const u8{
         "zdisamar",
-        "--config",
+        "config",
+        "import",
         "data/examples/legacy_config.in",
-        "--workspace",
-        "cli",
-        "--scene",
-        "scene-inline",
-        "--solver-mode",
-        "polarized",
-        "--product",
-        "radiance",
-        "--jacobians",
     };
 
-    var parsed = try parseArgs(std.testing.allocator, &argv);
-    defer parsed.deinit(std.testing.allocator);
+    const parsed = try parseArgs(&argv);
+    switch (parsed) {
+        .config_import => |path| try std.testing.expectEqualStrings("data/examples/legacy_config.in", path),
+        else => return error.TestUnexpectedResult,
+    }
+}
 
-    try std.testing.expectEqualStrings("data/examples/legacy_config.in", parsed.config_path.?);
-    try std.testing.expectEqualStrings("cli", parsed.workspace_label.?);
-    try std.testing.expectEqualStrings("scene-inline", parsed.scene_id.?);
-    try std.testing.expectEqual(zdisamar.SolverMode.polarized, parsed.solver_mode.?);
-    try std.testing.expect(parsed.diagnostics.jacobians.?);
-    try std.testing.expectEqual(@as(usize, 1), parsed.requested_products.items.len);
-    try std.testing.expectEqualStrings("radiance", parsed.requested_products.items[0]);
+test "cli parser captures run command" {
+    const argv = [_][]const u8{
+        "zdisamar",
+        "run",
+        "data/examples/canonical_config.yaml",
+    };
+
+    const parsed = try parseArgs(&argv);
+    switch (parsed) {
+        .run => |path| try std.testing.expectEqualStrings("data/examples/canonical_config.yaml", path),
+        else => return error.TestUnexpectedResult,
+    }
 }

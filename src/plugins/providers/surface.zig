@@ -30,6 +30,12 @@ pub fn resolve(provider_id: []const u8) ?Provider {
             .responseGain = directionalLambertianGain,
         };
     }
+    if (std.mem.eql(u8, provider_id, "mission_s5p.ross_li")) {
+        return .{
+            .id = provider_id,
+            .responseGain = directionalLambertianGain,
+        };
+    }
     return null;
 }
 

@@ -14,10 +14,30 @@ pub const SolverMode = enum {
     derivative_enabled,
 };
 
+pub const TransportHints = struct {
+    stream_count: u8 = 0,
+
+    pub fn validate(self: TransportHints) errors.Error!void {
+        if (self.stream_count == 0) return;
+    }
+};
+
+pub const BackendConfig = struct {
+    kind: []const u8 = "cpu",
+
+    pub fn validate(self: BackendConfig) errors.Error!void {
+        if (self.kind.len == 0) {
+            return errors.Error.InvalidPlan;
+        }
+    }
+};
+
 pub const Template = struct {
     model_family: []const u8 = "disamar_standard",
     providers: PluginSelection.ProviderSelection = .{},
     solver_mode: SolverMode = .scalar,
+    transport_hints: TransportHints = .{},
+    backend: BackendConfig = .{},
     scene_blueprint: SceneModel.Blueprint = .{},
 
     pub fn validate(self: Template) errors.Error!void {
@@ -27,6 +47,8 @@ pub const Template = struct {
         if (self.providers.transport_solver.len == 0) {
             return errors.Error.MissingTransportRoute;
         }
+        try self.transport_hints.validate();
+        try self.backend.validate();
     }
 };
 
@@ -75,3 +97,11 @@ pub const Plan = struct {
         }
     }
 };
+
+test "plan template carries backend and transport hints with existing provider selection" {
+    try (Template{
+        .providers = .{ .transport_solver = "builtin.dispatcher" },
+        .transport_hints = .{ .stream_count = 16 },
+        .backend = .{ .kind = "cpu" },
+    }).validate();
+}

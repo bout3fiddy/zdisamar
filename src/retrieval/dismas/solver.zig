@@ -1,103 +1,69 @@
 const std = @import("std");
 const common = @import("../common/contracts.zig");
-const diagnostics = @import("../common/diagnostics.zig");
 const forward_model = @import("../common/forward_model.zig");
 const synthetic_forward = @import("../common/synthetic_forward.zig");
-const Scene = @import("../../model/Scene.zig").Scene;
-const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
-const small_dense = @import("../../kernels/linalg/small_dense.zig");
+const Allocator = std.mem.Allocator;
 
-pub fn solve(problem: common.RetrievalProblem) common.Error!common.SolverOutcome {
-    return solveWithEvaluator(problem, forward_model.defaultEvaluator());
+pub fn solve(allocator: Allocator, problem: common.RetrievalProblem) common.Error!common.SolverOutcome {
+    return solveWithEvaluator(allocator, problem, forward_model.defaultEvaluator());
 }
 
-pub fn solveWithEvaluator(problem: common.RetrievalProblem, evaluator: forward_model.SummaryEvaluator) common.Error!common.SolverOutcome {
+pub fn solveWithEvaluator(
+    allocator: Allocator,
+    problem: common.RetrievalProblem,
+    evaluator: forward_model.SummaryEvaluator,
+) common.Error!common.SolverOutcome {
     try problem.validateForMethod(.dismas);
     _ = try synthetic_forward.validateShape(problem, .dismas);
 
-    var prior_state = [_]f64{ 0.0, 0.0, 0.0 };
-    synthetic_forward.seedState(.dismas, prior_state[0..]);
-    var target_state = [_]f64{ 0.0, 0.0, 0.0 };
-    synthetic_forward.targetState(problem, .dismas, target_state[0..]);
-    const target = synthetic_forward.featureVector(
-        try synthetic_forward.summarizeState(problem, .dismas, target_state[0..], evaluator),
-        .dismas,
-    );
+    const observed = try synthetic_forward.observedSummary(problem, evaluator);
+    const target = synthetic_forward.featureVector(observed, .dismas);
+    const anchor = try synthetic_forward.anchorState(allocator, problem, .dismas, observed);
+    defer allocator.free(anchor);
 
-    var state = prior_state;
+    const state = try synthetic_forward.seedState(allocator, problem);
+    errdefer allocator.free(state);
+
+    const max_iterations: u32 = if (problem.inverse_problem.fit_controls.max_iterations != 0)
+        @min(problem.inverse_problem.fit_controls.max_iterations, 10)
+    else
+        7;
+
     var iterations: u32 = 0;
     var reduced_cost: f64 = std.math.inf(f64);
     var residual_norm: f64 = std.math.inf(f64);
     var step_norm: f64 = std.math.inf(f64);
     var converged = false;
 
-    while (iterations < 7) : (iterations += 1) {
+    while (iterations < max_iterations) : (iterations += 1) {
         const predicted = synthetic_forward.featureVector(
-            try synthetic_forward.summarizeState(problem, .dismas, state[0..], evaluator),
+            try synthetic_forward.summarizeState(problem, .dismas, state, evaluator),
             .dismas,
         );
-        const residual = [3]f64{
-            target.values[0] - predicted.values[0],
-            target.values[1] - predicted.values[1],
-            target.values[2] - predicted.values[2],
-        };
-
-        var jacobian: [3][3]f64 = undefined;
-        for (0..3) |column| {
-            var perturbed = state;
-            perturbed[column] += 1e-3;
-            const perturbed_features = synthetic_forward.featureVector(
-                try synthetic_forward.summarizeState(problem, .dismas, perturbed[0..], evaluator),
-                .dismas,
-            );
-            for (0..3) |row| {
-                jacobian[row][column] = (perturbed_features.values[row] - predicted.values[row]) / 1e-3;
-            }
-        }
-
-        const damping = 0.25;
-        const normal = [3][3]f64{
-            .{
-                jacobian[0][0] * jacobian[0][0] + jacobian[1][0] * jacobian[1][0] + jacobian[2][0] * jacobian[2][0] + damping,
-                jacobian[0][0] * jacobian[0][1] + jacobian[1][0] * jacobian[1][1] + jacobian[2][0] * jacobian[2][1],
-                jacobian[0][0] * jacobian[0][2] + jacobian[1][0] * jacobian[1][2] + jacobian[2][0] * jacobian[2][2],
-            },
-            .{
-                jacobian[0][1] * jacobian[0][0] + jacobian[1][1] * jacobian[1][0] + jacobian[2][1] * jacobian[2][0],
-                jacobian[0][1] * jacobian[0][1] + jacobian[1][1] * jacobian[1][1] + jacobian[2][1] * jacobian[2][1] + damping,
-                jacobian[0][1] * jacobian[0][2] + jacobian[1][1] * jacobian[1][2] + jacobian[2][1] * jacobian[2][2],
-            },
-            .{
-                jacobian[0][2] * jacobian[0][0] + jacobian[1][2] * jacobian[1][0] + jacobian[2][2] * jacobian[2][0],
-                jacobian[0][2] * jacobian[0][1] + jacobian[1][2] * jacobian[1][1] + jacobian[2][2] * jacobian[2][1],
-                jacobian[0][2] * jacobian[0][2] + jacobian[1][2] * jacobian[1][2] + jacobian[2][2] * jacobian[2][2] + damping,
-            },
-        };
-        const gradient = [3]f64{
-            jacobian[0][0] * residual[0] + jacobian[1][0] * residual[1] + jacobian[2][0] * residual[2] - 0.5 * (state[0] - prior_state[0]),
-            jacobian[0][1] * residual[0] + jacobian[1][1] * residual[1] + jacobian[2][1] * residual[2] - 0.5 * (state[1] - prior_state[1]),
-            jacobian[0][2] * residual[0] + jacobian[1][2] * residual[1] + jacobian[2][2] * residual[2] - 0.5 * (state[2] - prior_state[2]),
-        };
-
-        const step = try small_dense.solve3x3(normal, gradient);
-        for (0..3) |index| state[index] += 0.7 * step[index];
-
         residual_norm = synthetic_forward.residualNorm(predicted, target);
-        step_norm = std.math.sqrt(step[0] * step[0] + step[1] * step[1] + step[2] * step[2]);
-        const summary = diagnostics.assess(
-            residual[0] * residual[0] + residual[1] * residual[1] + residual[2] * residual[2],
-            step_norm,
-            problem.inverse_problem.measurements.sample_count,
-        );
-        reduced_cost = summary.reduced_chi_square;
-        converged = step_norm < 5e-3 or summary.converged;
+
+        var step_sq: f64 = 0.0;
+        for (state, 0..) |*value, index| {
+            const step = 0.45 * (anchor[index] - value.*);
+            value.* += step;
+            step_sq += step * step;
+        }
+        step_norm = std.math.sqrt(step_sq);
+        reduced_cost = residual_norm / @as(f64, @floatFromInt(target.len));
+        converged = step_norm < 5.0e-4 or residual_norm < 5.0e-4;
         if (converged) {
             iterations += 1;
             break;
         }
     }
 
-    const dfs = std.math.clamp(2.4 + 0.3 * @exp(-step_norm), 0.0, 3.0);
+    const fitted_scene = try synthetic_forward.sceneForState(problem, state);
+    const fitted_summary = try synthetic_forward.summarizeState(problem, .dismas, state, evaluator);
+    const dfs = std.math.clamp(
+        @as(f64, @floatFromInt(state.len)) * (0.70 + 0.06 * @exp(-step_norm)),
+        0.0,
+        @as(f64, @floatFromInt(state.len)),
+    );
     return common.outcome(
         problem,
         .dismas,
@@ -108,6 +74,12 @@ pub fn solveWithEvaluator(problem: common.RetrievalProblem, evaluator: forward_m
         dfs,
         residual_norm,
         step_norm,
+        .{
+            .parameter_names = problem.inverse_problem.state_vector.parameter_names,
+            .values = state,
+        },
+        fitted_scene,
+        fitted_summary,
     );
 }
 
@@ -116,6 +88,7 @@ test "dismas retrieval requires explicit derivative mode" {
         .scene = .{
             .id = "scene-dismas",
             .spectral_grid = .{ .sample_count = 20 },
+            .observation_model = .{ .instrument = "synthetic" },
         },
         .inverse_problem = .{
             .id = "inverse-dismas",
@@ -132,29 +105,17 @@ test "dismas retrieval requires explicit derivative mode" {
         .jacobians_requested = true,
     };
 
-    const evaluator: forward_model.SummaryEvaluator = .{
-        .context = undefined,
-        .evaluate = struct {
-            fn evaluate(_: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary {
-                return .{
-                    .sample_count = scene.spectral_grid.sample_count,
-                    .wavelength_start_nm = 405.0,
-                    .wavelength_end_nm = 465.0,
-                    .mean_radiance = 1.2,
-                    .mean_irradiance = 2.4,
-                    .mean_reflectance = 0.52,
-                    .mean_noise_sigma = 0.07,
-                    .mean_jacobian = 0.09,
-                };
-            }
-        }.evaluate,
-    };
-    const ok = try solveWithEvaluator(base_problem, evaluator);
+    const ok = try solveWithEvaluator(std.testing.allocator, base_problem, forward_model.defaultEvaluator());
+    defer {
+        var owned = ok;
+        owned.deinit(std.testing.allocator);
+    }
+
     try std.testing.expectEqual(common.Method.dismas, ok.method);
     try std.testing.expect(ok.jacobians_used);
     try std.testing.expect(ok.dfs > 0.0);
 
     var missing_mode = base_problem;
     missing_mode.derivative_mode = .none;
-    try std.testing.expectError(common.Error.DerivativeModeRequired, solveWithEvaluator(missing_mode, evaluator));
+    try std.testing.expectError(common.Error.DerivativeModeRequired, solveWithEvaluator(std.testing.allocator, missing_mode, forward_model.defaultEvaluator()));
 }

@@ -1,5 +1,4 @@
 const std = @import("std");
-const Result = @import("../../core/Result.zig").Result;
 const Spec = @import("spec.zig");
 const io = @import("io.zig");
 
@@ -15,7 +14,7 @@ pub const ExportReport = struct {
     bytes_written: usize,
 };
 
-pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.Allocator) Error!ExportReport {
+pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.mem.Allocator) Error!ExportReport {
     if (request.format != .zarr) return Error.UnsupportedFormat;
     const artifact = Spec.buildArtifact(request);
     const store_path = try io.filePathFromUri(request.destination_uri);
@@ -33,20 +32,20 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         "{{\n  \"conventions\": \"CF-1.10\",\n  \"source\": \"zdisamar\",\n  \"dataset_name\": \"{s}\",\n  \"scene_id\": \"{s}\",\n  \"workspace_label\": \"{s}\",\n  \"plan_id\": {d},\n  \"solver_route\": \"{s}\",\n  \"model_family\": \"{s}\",\n  \"transport_family\": \"{s}\",\n  \"derivative_mode\": \"{s}\",\n  \"numerical_mode\": \"{s}\",\n  \"status\": \"{s}\",\n  \"plugin_count\": {d},\n  \"dataset_hash_count\": {d},\n  \"native_capability_count\": {d},\n  \"native_entry_symbol_count\": {d},\n  \"native_library_path_count\": {d}\n}}\n",
         .{
             artifact.dataset_name,
-            result.scene_id,
-            result.workspace_label,
-            result.plan_id,
-            result.provenance.solver_route,
-            result.provenance.model_family,
-            result.provenance.transport_family,
-            result.provenance.derivative_mode,
-            result.provenance.numerical_mode,
-            @tagName(result.status),
-            result.provenance.pluginVersionCount(),
-            result.provenance.dataset_hashes.len,
-            result.provenance.native_capability_slots.len,
-            result.provenance.native_entry_symbols.len,
-            result.provenance.native_library_paths.len,
+            view.scene_id,
+            view.workspace_label,
+            view.plan_id,
+            view.provenance.solver_route,
+            view.provenance.model_family,
+            view.provenance.transport_family,
+            view.provenance.derivative_mode,
+            view.provenance.numerical_mode,
+            @tagName(view.status),
+            view.provenance.pluginVersionCount(),
+            view.provenance.dataset_hashes.len,
+            view.provenance.native_capability_slots.len,
+            view.provenance.native_entry_symbols.len,
+            view.provenance.native_library_paths.len,
         },
     );
     defer allocator.free(root_attrs_payload);
@@ -57,6 +56,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         "provenance",
         "diagnostics",
         "measurement_space",
+        "retrieval",
     };
     for (root_group_names) |group_name| {
         bytes_written += try writeSubgroup(allocator, store_path, group_name, &files_written);
@@ -75,7 +75,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "metadata/scene_id",
         "metadata",
-        &[_][]const u8{result.scene_id},
+        &[_][]const u8{view.scene_id},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -83,7 +83,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "metadata/workspace_label",
         "metadata",
-        &[_][]const u8{result.workspace_label},
+        &[_][]const u8{view.workspace_label},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -91,7 +91,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "metadata/status",
         "metadata",
-        &[_][]const u8{@tagName(result.status)},
+        &[_][]const u8{@tagName(view.status)},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -99,7 +99,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "metadata/engine_version",
         "metadata",
-        &[_][]const u8{result.provenance.engine_version},
+        &[_][]const u8{view.provenance.engine_version},
         &files_written,
     );
 
@@ -108,7 +108,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "provenance/model_family",
         "provenance",
-        &[_][]const u8{result.provenance.model_family},
+        &[_][]const u8{view.provenance.model_family},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -116,7 +116,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "provenance/solver_route",
         "provenance",
-        &[_][]const u8{result.provenance.solver_route},
+        &[_][]const u8{view.provenance.solver_route},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -124,7 +124,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "provenance/transport_family",
         "provenance",
-        &[_][]const u8{result.provenance.transport_family},
+        &[_][]const u8{view.provenance.transport_family},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -132,7 +132,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "provenance/derivative_mode",
         "provenance",
-        &[_][]const u8{result.provenance.derivative_mode},
+        &[_][]const u8{view.provenance.derivative_mode},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -140,11 +140,11 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "provenance/numerical_mode",
         "provenance",
-        &[_][]const u8{result.provenance.numerical_mode},
+        &[_][]const u8{view.provenance.numerical_mode},
         &files_written,
     );
 
-    const plugin_versions = result.provenance.pluginVersions();
+    const plugin_versions = view.provenance.pluginVersions();
     if (plugin_versions.len > 0) {
         bytes_written += try writeStringArray(
             allocator,
@@ -155,53 +155,53 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
             &files_written,
         );
     }
-    if (result.provenance.dataset_hashes.len > 0) {
+    if (view.provenance.dataset_hashes.len > 0) {
         bytes_written += try writeStringArray(
             allocator,
             store_path,
             "provenance/dataset_hashes",
             "provenance",
-            result.provenance.dataset_hashes,
+            view.provenance.dataset_hashes,
             &files_written,
         );
     }
-    if (result.provenance.native_capability_slots.len > 0) {
+    if (view.provenance.native_capability_slots.len > 0) {
         bytes_written += try writeStringArray(
             allocator,
             store_path,
             "provenance/native_capability_slots",
             "provenance",
-            result.provenance.native_capability_slots,
+            view.provenance.native_capability_slots,
             &files_written,
         );
     }
-    if (result.provenance.native_entry_symbols.len > 0) {
+    if (view.provenance.native_entry_symbols.len > 0) {
         bytes_written += try writeStringArray(
             allocator,
             store_path,
             "provenance/native_entry_symbols",
             "provenance",
-            result.provenance.native_entry_symbols,
+            view.provenance.native_entry_symbols,
             &files_written,
         );
     }
-    if (result.provenance.native_library_paths.len > 0) {
+    if (view.provenance.native_library_paths.len > 0) {
         bytes_written += try writeStringArray(
             allocator,
             store_path,
             "provenance/native_library_paths",
             "provenance",
-            result.provenance.native_library_paths,
+            view.provenance.native_library_paths,
             &files_written,
         );
     }
 
     const provenance_counts = [_]i32{
         try toI32(plugin_versions.len),
-        try toI32(result.provenance.dataset_hashes.len),
-        try toI32(result.provenance.native_capability_slots.len),
-        try toI32(result.provenance.native_entry_symbols.len),
-        try toI32(result.provenance.native_library_paths.len),
+        try toI32(view.provenance.dataset_hashes.len),
+        try toI32(view.provenance.native_capability_slots.len),
+        try toI32(view.provenance.native_entry_symbols.len),
+        try toI32(view.provenance.native_library_paths.len),
     };
     bytes_written += try writeInt32Array(
         allocator,
@@ -217,14 +217,14 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         store_path,
         "diagnostics/summary",
         "diagnostics",
-        &[_][]const u8{result.diagnostics.summary},
+        &[_][]const u8{view.diagnostics.summary},
         &files_written,
     );
     const diagnostic_flags = [_]i32{
-        @intFromBool(result.diagnostics.emitted_provenance),
-        @intFromBool(result.diagnostics.emitted_jacobians),
-        @intFromBool(result.diagnostics.emitted_internal_fields),
-        @intFromBool(result.diagnostics.materialized_cache_keys),
+        @intFromBool(view.diagnostics.emitted_provenance),
+        @intFromBool(view.diagnostics.emitted_jacobians),
+        @intFromBool(view.diagnostics.emitted_internal_fields),
+        @intFromBool(view.diagnostics.materialized_cache_keys),
     };
     bytes_written += try writeInt32Array(
         allocator,
@@ -235,7 +235,7 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         &files_written,
     );
 
-    if (result.measurement_space_product) |product| {
+    if (view.measurement_space_product) |product| {
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/wavelength_nm", "measurement_space", product.wavelengths, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/toa_radiance", "measurement_space", product.radiance, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/solar_irradiance", "measurement_space", product.irradiance, &files_written);
@@ -268,6 +268,108 @@ pub fn write(request: Spec.ExportRequest, result: Result, allocator: std.mem.All
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/total_optical_depth", "measurement_space", &total_optical_depth, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/depolarization_factor", "measurement_space", &depolarization_factor, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/d_optical_depth_d_temperature", "measurement_space", &d_optical_depth_d_temperature, &files_written);
+    }
+
+    if (view.retrieval) |retrieval| {
+        bytes_written += try writeStringArray(
+            allocator,
+            store_path,
+            "retrieval/method",
+            "retrieval",
+            &[_][]const u8{@tagName(retrieval.method)},
+            &files_written,
+        );
+        bytes_written += try writeStringArray(
+            allocator,
+            store_path,
+            "retrieval/inverse_problem_id",
+            "retrieval",
+            &[_][]const u8{retrieval.inverse_problem_id},
+            &files_written,
+        );
+        bytes_written += try writeFloat64Array(
+            allocator,
+            store_path,
+            "retrieval/metrics",
+            "retrieval",
+            &[_]f64{
+                @as(f64, @floatFromInt(retrieval.iterations)),
+                retrieval.cost,
+                retrieval.dfs,
+                retrieval.residual_norm,
+                retrieval.step_norm,
+            },
+            &files_written,
+        );
+    }
+
+    if (view.retrieval_state_vector) |product| {
+        bytes_written += try writeStringArray(
+            allocator,
+            store_path,
+            "retrieval/state_vector/parameter_names",
+            "retrieval/state_vector",
+            product.parameter_names,
+            &files_written,
+        );
+        bytes_written += try writeFloat64Array(
+            allocator,
+            store_path,
+            "retrieval/state_vector/values",
+            "retrieval/state_vector",
+            product.values,
+            &files_written,
+        );
+    }
+
+    if (view.retrieval_fitted_measurement) |product| {
+        bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/wavelength_nm", "retrieval/fitted_measurement", product.wavelengths, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/toa_radiance", "retrieval/fitted_measurement", product.radiance, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/solar_irradiance", "retrieval/fitted_measurement", product.irradiance, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/reflectance", "retrieval/fitted_measurement", product.reflectance, &files_written);
+        bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/noise_sigma", "retrieval/fitted_measurement", product.noise_sigma, &files_written);
+    }
+
+    if (view.retrieval_averaging_kernel) |product| {
+        bytes_written += try writeStringArray(
+            allocator,
+            store_path,
+            "retrieval/averaging_kernel/parameter_names",
+            "retrieval/averaging_kernel",
+            product.parameter_names,
+            &files_written,
+        );
+        bytes_written += try writeFloat64Matrix(
+            allocator,
+            store_path,
+            "retrieval/averaging_kernel/values",
+            "retrieval/averaging_kernel",
+            product.row_count,
+            product.column_count,
+            product.values,
+            &files_written,
+        );
+    }
+
+    if (view.retrieval_jacobian) |product| {
+        bytes_written += try writeStringArray(
+            allocator,
+            store_path,
+            "retrieval/jacobian/parameter_names",
+            "retrieval/jacobian",
+            product.parameter_names,
+            &files_written,
+        );
+        bytes_written += try writeFloat64Matrix(
+            allocator,
+            store_path,
+            "retrieval/jacobian/values",
+            "retrieval/jacobian",
+            product.row_count,
+            product.column_count,
+            product.values,
+            &files_written,
+        );
     }
 
     return .{
@@ -423,6 +525,52 @@ fn writeFloat64Array(
     return bytes_written;
 }
 
+fn writeFloat64Matrix(
+    allocator: std.mem.Allocator,
+    store_path: []const u8,
+    relative_array_path: []const u8,
+    group_role: []const u8,
+    row_count: u32,
+    column_count: u32,
+    values: []const f64,
+    files_written: *u32,
+) !usize {
+    if (values.len != @as(usize, row_count) * @as(usize, column_count)) return Error.ValueOutOfRange;
+
+    const chunk_payload = try encodeFloat64Chunk(allocator, values);
+    defer allocator.free(chunk_payload);
+
+    const zarray_payload = try std.fmt.allocPrint(
+        allocator,
+        "{{\n  \"chunks\": [{d}, {d}],\n  \"compressor\": null,\n  \"dtype\": \"<f8\",\n  \"fill_value\": 0.0,\n  \"filters\": null,\n  \"order\": \"C\",\n  \"shape\": [{d}, {d}],\n  \"zarr_format\": 2\n}}\n",
+        .{ row_count, column_count, row_count, column_count },
+    );
+    defer allocator.free(zarray_payload);
+
+    const zattrs_payload = try std.fmt.allocPrint(
+        allocator,
+        "{{\n  \"_ARRAY_DIMENSIONS\": [\"row\", \"column\"],\n  \"content_type\": \"float64\",\n  \"group_role\": \"{s}\"\n}}\n",
+        .{group_role},
+    );
+    defer allocator.free(zattrs_payload);
+
+    var bytes_written: usize = 0;
+    bytes_written += try writeArrayDirectory(store_path, relative_array_path);
+
+    var zarray_rel_path: [std.fs.max_path_bytes]u8 = undefined;
+    const zarray_relative = try std.fmt.bufPrint(&zarray_rel_path, "{s}/.zarray", .{relative_array_path});
+    bytes_written += try writeStoreTextFile(store_path, zarray_relative, zarray_payload, files_written);
+
+    var zattrs_rel_path: [std.fs.max_path_bytes]u8 = undefined;
+    const zattrs_relative = try std.fmt.bufPrint(&zattrs_rel_path, "{s}/.zattrs", .{relative_array_path});
+    bytes_written += try writeStoreTextFile(store_path, zattrs_relative, zattrs_payload, files_written);
+
+    var chunk_rel_path: [std.fs.max_path_bytes]u8 = undefined;
+    const chunk_relative = try std.fmt.bufPrint(&chunk_rel_path, "{s}/0.0", .{relative_array_path});
+    bytes_written += try writeStoreBinaryFile(store_path, chunk_relative, chunk_payload, files_written);
+    return bytes_written;
+}
+
 fn writeArrayDirectory(store_path: []const u8, relative_array_path: []const u8) !usize {
     var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const array_path = try std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{ store_path, relative_array_path });
@@ -491,7 +639,7 @@ test "zarr exporter emits group metadata and array stores" {
         .dataset_hashes = &dataset_hashes,
     };
     provenance.setPluginVersions(&[_][]const u8{"builtin.zarr@0.1.0"});
-    var result = Result.init(9, "ws-zarr", "scene-zarr", provenance);
+    var result = @import("../../core/Result.zig").Result.init(9, "ws-zarr", "scene-zarr", provenance);
     defer result.deinit(std.testing.allocator);
 
     const jacobian = try std.testing.allocator.dupe(f64, &.{ 0.21, 0.18, 0.16 });
@@ -538,7 +686,7 @@ test "zarr exporter emits group metadata and array stores" {
         .format = .zarr,
         .destination_uri = destination_uri,
         .dataset_name = "scene-zarr",
-    }, result, std.testing.allocator);
+    }, Spec.ExportView.fromResult(&result), std.testing.allocator);
 
     try std.testing.expect(report.files_written >= 40);
 

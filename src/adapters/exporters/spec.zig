@@ -1,5 +1,10 @@
 const std = @import("std");
 const ExportFormat = @import("format.zig").ExportFormat;
+const Result = @import("../../core/Result.zig").Result;
+const Provenance = @import("../../core/provenance.zig").Provenance;
+const Diagnostics = @import("../../core/diagnostics.zig").Diagnostics;
+const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
+const RetrievalOutcome = @import("../../retrieval/common/contracts.zig").SolverOutcome;
 
 pub const Compression = struct {
     codec: Codec = .none,
@@ -25,6 +30,38 @@ pub const ExportRequest = struct {
     include_provenance: bool = true,
     compression: Compression = .{},
     chunking: ?Chunking = null,
+};
+
+pub const ExportView = struct {
+    status: Result.Status,
+    plan_id: u64,
+    workspace_label: []const u8,
+    scene_id: []const u8,
+    provenance: Provenance,
+    diagnostics: Diagnostics,
+    retrieval: ?RetrievalOutcome = null,
+    measurement_space_product: ?*const MeasurementSpaceProduct = null,
+    retrieval_state_vector: ?*const Result.RetrievalStateVectorProduct = null,
+    retrieval_fitted_measurement: ?*const MeasurementSpaceProduct = null,
+    retrieval_averaging_kernel: ?*const Result.RetrievalMatrixProduct = null,
+    retrieval_jacobian: ?*const Result.RetrievalMatrixProduct = null,
+
+    pub fn fromResult(result: *const Result) ExportView {
+        return .{
+            .status = result.status,
+            .plan_id = result.plan_id,
+            .workspace_label = result.workspace_label,
+            .scene_id = result.scene_id,
+            .provenance = result.provenance,
+            .diagnostics = result.diagnostics,
+            .retrieval = result.retrieval,
+            .measurement_space_product = if (result.measurement_space_product) |*product| product else null,
+            .retrieval_state_vector = if (result.retrieval_products.state_vector) |*product| product else null,
+            .retrieval_fitted_measurement = if (result.retrieval_products.fitted_measurement) |*product| product else null,
+            .retrieval_averaging_kernel = if (result.retrieval_products.averaging_kernel) |*product| product else null,
+            .retrieval_jacobian = if (result.retrieval_products.jacobian) |*product| product else null,
+        };
+    }
 };
 
 pub const ExportArtifact = struct {

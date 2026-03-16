@@ -2,6 +2,9 @@ const std = @import("std");
 const errors = @import("../core/errors.zig");
 
 pub const Aerosol = struct {
+    id: []const u8 = "",
+    model: []const u8 = "",
+    provider: []const u8 = "",
     enabled: bool = false,
     optical_depth: f64 = 0.0,
     single_scatter_albedo: f64 = 0.93,

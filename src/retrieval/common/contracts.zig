@@ -4,6 +4,8 @@ const DerivativeMode = @import("../../model/Scene.zig").DerivativeMode;
 const InverseProblem = @import("../../model/Scene.zig").InverseProblem;
 const LayoutRequirements = @import("../../model/Scene.zig").LayoutRequirements;
 const Scene = @import("../../model/Scene.zig").Scene;
+const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
+const Allocator = std.mem.Allocator;
 
 pub const Method = enum {
     oe,
@@ -48,10 +50,19 @@ pub const Error = error{
 };
 
 pub const RetrievalProblem = struct {
+    pub const ObservedMeasurement = struct {
+        source_name: []const u8 = "",
+        observable: []const u8 = "",
+        product_name: []const u8 = "",
+        sample_count: u32 = 0,
+        summary: MeasurementSpaceSummary,
+    };
+
     scene: Scene,
     inverse_problem: InverseProblem,
     derivative_mode: DerivativeMode,
     jacobians_requested: bool = false,
+    observed_measurement: ?ObservedMeasurement = null,
 
     pub fn fromRequest(request: Request) Error!RetrievalProblem {
         try request.scene.validate();
@@ -59,11 +70,25 @@ pub const RetrievalProblem = struct {
         const inverse_problem = request.inverse_problem orelse return Error.MissingInverseProblem;
         try inverse_problem.validate();
 
+        var observed_measurement: ?ObservedMeasurement = null;
+        if (request.measurement_binding) |binding| {
+            observed_measurement = .{
+                .source_name = binding.source_name,
+                .observable = if (binding.observable.len != 0) binding.observable else inverse_problem.measurements.observable,
+                .product_name = inverse_problem.measurements.product,
+                .sample_count = binding.product.summary.sample_count,
+                .summary = binding.product.summary,
+            };
+        } else if (inverse_problem.measurements.source.kind == .stage_product) {
+            return Error.MissingMeasurementProduct;
+        }
+
         return .{
             .scene = request.scene,
             .inverse_problem = inverse_problem,
             .derivative_mode = request.expected_derivative_mode orelse .none,
             .jacobians_requested = request.diagnostics.jacobians,
+            .observed_measurement = observed_measurement,
         };
     }
 
@@ -73,7 +98,7 @@ pub const RetrievalProblem = struct {
         if (self.inverse_problem.id.len == 0) {
             return Error.MissingInverseProblem;
         }
-        if (self.inverse_problem.state_vector.value_count == 0) {
+        if (self.inverse_problem.state_vector.count() == 0) {
             return Error.MissingStateVector;
         }
         if (self.inverse_problem.measurements.sample_count == 0) {
@@ -89,7 +114,7 @@ pub const RetrievalProblem = struct {
 
     pub fn layoutRequirements(self: RetrievalProblem) LayoutRequirements {
         var requirements = self.scene.layoutRequirements();
-        requirements.state_parameter_count = self.inverse_problem.state_vector.value_count;
+        requirements.state_parameter_count = self.inverse_problem.state_vector.count();
         requirements.measurement_count = self.inverse_problem.measurements.sample_count;
         return requirements;
     }
@@ -103,6 +128,16 @@ pub const RetrievalProblem = struct {
 };
 
 pub const SolverOutcome = struct {
+    pub const StateEstimate = struct {
+        parameter_names: []const []const u8 = &[_][]const u8{},
+        values: []f64 = &[_]f64{},
+
+        pub fn deinit(self: *StateEstimate, allocator: Allocator) void {
+            if (self.values.len != 0) allocator.free(self.values);
+            self.* = .{};
+        }
+    };
+
     method: Method,
     scene_id: []const u8,
     inverse_problem_id: []const u8,
@@ -114,6 +149,15 @@ pub const SolverOutcome = struct {
     dfs: f64,
     residual_norm: f64,
     step_norm: f64,
+    observed_measurement: ?RetrievalProblem.ObservedMeasurement = null,
+    fitted_measurement: ?MeasurementSpaceSummary = null,
+    state_estimate: StateEstimate = .{},
+    fitted_scene: ?Scene = null,
+
+    pub fn deinit(self: *SolverOutcome, allocator: Allocator) void {
+        self.state_estimate.deinit(allocator);
+        self.* = undefined;
+    }
 };
 
 pub fn derivativeRequirement(method: Method) DerivativeRequirement {
@@ -134,6 +178,9 @@ pub fn outcome(
     dfs: f64,
     residual_norm: f64,
     step_norm: f64,
+    state_estimate: SolverOutcome.StateEstimate,
+    fitted_scene: ?Scene,
+    fitted_measurement: ?MeasurementSpaceSummary,
 ) SolverOutcome {
     return .{
         .method = method,
@@ -147,6 +194,10 @@ pub fn outcome(
         .dfs = dfs,
         .residual_norm = residual_norm,
         .step_norm = step_norm,
+        .observed_measurement = problem.observed_measurement,
+        .fitted_measurement = fitted_measurement,
+        .state_estimate = state_estimate,
+        .fitted_scene = fitted_scene,
     };
 }
 
@@ -160,11 +211,13 @@ test "retrieval contracts enforce canonical problem invariants" {
         .inverse_problem = .{
             .id = "inverse-common",
             .state_vector = .{
-                .parameter_names = &[_][]const u8{"albedo"},
-                .value_count = 1,
+                .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
+                    .{ .name = "albedo", .target = "scene.surface.albedo" },
+                },
             },
             .measurements = .{
                 .product = "radiance",
+                .observable = "radiance",
                 .sample_count = 16,
             },
         },

@@ -1,4 +1,5 @@
 const errors = @import("../core/errors.zig");
+const Binding = @import("Binding.zig").Binding;
 const Instrument = @import("Instrument.zig").Instrument;
 const InstrumentLineShape = @import("Instrument.zig").InstrumentLineShape;
 const InstrumentLineShapeTable = @import("Instrument.zig").InstrumentLineShapeTable;
@@ -15,13 +16,18 @@ pub const ObservationRegime = enum {
 
 pub const ObservationModel = struct {
     instrument: []const u8 = "generic",
+    response_provider: []const u8 = "",
     regime: ObservationRegime = .nadir,
     sampling: []const u8 = "native",
     noise_model: []const u8 = "none",
     wavelength_shift_nm: f64 = 0.0,
+    multiplicative_offset: f64 = 1.0,
+    stray_light: f64 = 0.0,
     instrument_line_fwhm_nm: f64 = 0.0,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
+    solar_spectrum_source: Binding = .{},
+    weighted_reference_grid_source: Binding = .{},
     instrument_line_shape: InstrumentLineShape = .{},
     instrument_line_shape_table: InstrumentLineShapeTable = .{},
     operational_refspec_grid: OperationalReferenceGrid = .{},
@@ -48,6 +54,11 @@ pub const ObservationModel = struct {
     }
 
     pub fn validate(self: ObservationModel) errors.Error!void {
+        try self.solar_spectrum_source.validate();
+        try self.weighted_reference_grid_source.validate();
+        if (self.multiplicative_offset <= 0.0) {
+            return errors.Error.InvalidRequest;
+        }
         try self.instrumentSpec().validate();
     }
 
@@ -60,3 +71,14 @@ pub const ObservationModel = struct {
         self.o2o2_operational_lut = instrument.o2o2_operational_lut;
     }
 };
+
+test "observation model carries calibration and supporting-data bindings" {
+    try (ObservationModel{
+        .instrument = "tropomi",
+        .response_provider = "builtin.tropomi_response",
+        .solar_spectrum_source = .{ .kind = .bundle_default },
+        .weighted_reference_grid_source = .{ .kind = .ingest, .name = "refspec_demo.grid" },
+        .multiplicative_offset = 1.002,
+        .stray_light = 0.0007,
+    }).validate();
+}
