@@ -17,7 +17,6 @@ pub const AbsorberSet = @import("Absorber.zig").AbsorberSet;
 pub const Spectroscopy = @import("Absorber.zig").Spectroscopy;
 pub const SpectroscopyMode = @import("Absorber.zig").SpectroscopyMode;
 pub const Surface = @import("Surface.zig").Surface;
-pub const SurfaceParameter = @import("Surface.zig").Parameter;
 pub const Cloud = @import("Cloud.zig").Cloud;
 pub const Aerosol = @import("Aerosol.zig").Aerosol;
 pub const Instrument = @import("Instrument.zig").Instrument;
@@ -183,12 +182,8 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
             },
         },
         .surface = .{
-            .kind = "ross_li_brdf",
-            .parameters = &[_]SurfaceParameter{
-                .{ .name = "isotropic", .value = 0.028 },
-                .{ .name = "volumetric", .value = 0.019 },
-                .{ .name = "geometric", .value = 0.011 },
-            },
+            .kind = "lambertian",
+            .albedo = 0.028,
         },
         .observation_model = .{
             .instrument = "tropomi",

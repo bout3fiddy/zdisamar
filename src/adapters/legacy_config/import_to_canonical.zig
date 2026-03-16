@@ -166,8 +166,6 @@ fn renderPrepared(allocator: Allocator, source_path: []const u8, prepared: Prepa
     try writer.writeAll("    diagnostics:\n");
     try appendBoolField(writer, 3, "provenance", prepared.diagnostics.provenance);
     try appendBoolField(writer, 3, "jacobians", prepared.diagnostics.jacobians);
-    try appendBoolField(writer, 3, "internal_fields", prepared.diagnostics.internal_fields);
-    try appendBoolField(writer, 3, "materialize_cache_keys", prepared.diagnostics.materialize_cache_keys);
 
     try writer.writeAll("\noutputs: []\n\nvalidation:\n");
     try appendBoolField(writer, 1, "strict_unknown_fields", true);

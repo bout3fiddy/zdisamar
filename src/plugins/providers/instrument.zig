@@ -25,9 +25,6 @@ pub fn resolve(provider_id: []const u8) ?Provider {
     if (std.mem.eql(u8, provider_id, "builtin.generic_response")) {
         return genericProvider(provider_id);
     }
-    if (std.mem.eql(u8, provider_id, "builtin.tropomi_response")) {
-        return genericProvider(provider_id);
-    }
     return null;
 }
 

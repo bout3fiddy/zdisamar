@@ -8,16 +8,12 @@ const c_api = @import("../c/bridge.zig");
 pub const DiagnosticsFlags = packed struct(u32) {
     provenance: bool = true,
     jacobians: bool = false,
-    internal_fields: bool = false,
-    materialize_cache_keys: bool = false,
-    _padding: u28 = 0,
+    _padding: u30 = 0,
 
     pub fn fromSpec(spec: DiagnosticsSpec) DiagnosticsFlags {
         return .{
             .provenance = spec.provenance,
             .jacobians = spec.jacobians,
-            .internal_fields = spec.internal_fields,
-            .materialize_cache_keys = spec.materialize_cache_keys,
         };
     }
 
@@ -47,15 +43,11 @@ test "diagnostics flags preserve the request spec bits" {
     const flags = DiagnosticsFlags.fromSpec(.{
         .provenance = true,
         .jacobians = true,
-        .internal_fields = false,
-        .materialize_cache_keys = true,
     });
 
     try std.testing.expect(flags.provenance);
     try std.testing.expect(flags.jacobians);
-    try std.testing.expect(!flags.internal_fields);
-    try std.testing.expect(flags.materialize_cache_keys);
-    try std.testing.expectEqual(@as(u32, 0b1011), flags.toMask() & 0b1111);
+    try std.testing.expectEqual(@as(u32, 0b11), flags.toMask() & 0b11);
 }
 
 test "engine options view converts typed options to the C ABI descriptor" {

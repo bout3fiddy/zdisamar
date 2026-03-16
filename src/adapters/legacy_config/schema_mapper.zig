@@ -158,16 +158,6 @@ pub fn applyValue(
         return;
     }
 
-    if (std.mem.eql(u8, key, "diagnostics.internal_fields")) {
-        prepared.diagnostics.internal_fields = try parseBool(value);
-        return;
-    }
-
-    if (std.mem.eql(u8, key, "diagnostics.materialize_cache_keys")) {
-        prepared.diagnostics.materialize_cache_keys = try parseBool(value);
-        return;
-    }
-
     return ParseError.UnknownKey;
 }
 

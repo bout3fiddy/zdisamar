@@ -119,7 +119,6 @@ pub const SyntheticRetrievalPolicy = struct {
 pub const Validation = struct {
     strict_unknown_fields: bool = true,
     require_resolved_assets: bool = false,
-    require_supported_capabilities: bool = false,
     require_resolved_stage_references: bool = false,
     synthetic_retrieval: SyntheticRetrievalPolicy = .{},
 };
@@ -153,14 +152,17 @@ pub const Stage = struct {
 };
 
 pub const Document = struct {
-    arena_state: std.heap.ArenaAllocator,
+    owner_allocator: Allocator,
+    arena_state: *std.heap.ArenaAllocator,
     source_path: []const u8,
     source_dir: []const u8,
     source_bytes: []const u8,
     root: yaml.Value,
 
     pub fn parseFile(allocator: Allocator, path: []const u8) !Document {
-        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        const arena_state = try allocator.create(std.heap.ArenaAllocator);
+        errdefer allocator.destroy(arena_state);
+        arena_state.* = std.heap.ArenaAllocator.init(allocator);
         errdefer arena_state.deinit();
         const arena = arena_state.allocator();
 
@@ -172,6 +174,7 @@ pub const Document = struct {
         const root = try yaml.parse(arena, bytes);
 
         return .{
+            .owner_allocator = allocator,
             .arena_state = arena_state,
             .source_path = absolute_path,
             .source_dir = try arena.dupe(u8, std.fs.path.dirname(absolute_path) orelse "."),
@@ -181,7 +184,9 @@ pub const Document = struct {
     }
 
     pub fn parse(allocator: Allocator, source_name: []const u8, base_dir: []const u8, source_bytes: []const u8) !Document {
-        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        const arena_state = try allocator.create(std.heap.ArenaAllocator);
+        errdefer allocator.destroy(arena_state);
+        arena_state.* = std.heap.ArenaAllocator.init(allocator);
         errdefer arena_state.deinit();
         const arena = arena_state.allocator();
 
@@ -189,6 +194,7 @@ pub const Document = struct {
         const root = try yaml.parse(arena, bytes);
 
         return .{
+            .owner_allocator = allocator,
             .arena_state = arena_state,
             .source_path = try arena.dupe(u8, source_name),
             .source_dir = try arena.dupe(u8, base_dir),
@@ -199,11 +205,14 @@ pub const Document = struct {
 
     pub fn deinit(self: *Document) void {
         self.arena_state.deinit();
+        self.owner_allocator.destroy(self.arena_state);
         self.* = undefined;
     }
 
     pub fn resolve(self: *const Document, allocator: Allocator) !ResolvedExperiment {
-        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        const arena_state = try allocator.create(std.heap.ArenaAllocator);
+        errdefer allocator.destroy(arena_state);
+        arena_state.* = std.heap.ArenaAllocator.init(allocator);
         errdefer arena_state.deinit();
         const arena = arena_state.allocator();
 
@@ -254,6 +263,7 @@ pub const Document = struct {
         const warnings = try buildWarnings(arena, validation, simulation, retrieval);
 
         return .{
+            .owner_allocator = allocator,
             .arena_state = arena_state,
             .source_path = try arena.dupe(u8, self.source_path),
             .metadata = metadata,
@@ -269,7 +279,8 @@ pub const Document = struct {
 };
 
 pub const ResolvedExperiment = struct {
-    arena_state: std.heap.ArenaAllocator,
+    owner_allocator: Allocator,
+    arena_state: *std.heap.ArenaAllocator,
     source_path: []const u8,
     metadata: Metadata = .{},
     assets: []const Asset = &[_]Asset{},
@@ -282,6 +293,7 @@ pub const ResolvedExperiment = struct {
 
     pub fn deinit(self: *ResolvedExperiment) void {
         self.arena_state.deinit();
+        self.owner_allocator.destroy(self.arena_state);
         self.* = undefined;
     }
 
@@ -842,7 +854,6 @@ fn decodeValidation(allocator: Allocator, value: ?yaml.Value, strict: bool) !Val
     try ensureKnownFields(validation_map, &.{
         "strict_unknown_fields",
         "require_resolved_assets",
-        "require_supported_capabilities",
         "require_resolved_stage_references",
         "synthetic_retrieval",
     }, strict);
@@ -850,7 +861,6 @@ fn decodeValidation(allocator: Allocator, value: ?yaml.Value, strict: bool) !Val
     var validation: Validation = .{};
     if (mapGet(validation_map, "strict_unknown_fields")) |strict_unknown_fields| validation.strict_unknown_fields = try expectBool(strict_unknown_fields);
     if (mapGet(validation_map, "require_resolved_assets")) |require_assets| validation.require_resolved_assets = try expectBool(require_assets);
-    if (mapGet(validation_map, "require_supported_capabilities")) |require_capabilities| validation.require_supported_capabilities = try expectBool(require_capabilities);
     if (mapGet(validation_map, "require_resolved_stage_references")) |require_stage_refs| validation.require_resolved_stage_references = try expectBool(require_stage_refs);
     if (mapGet(validation_map, "synthetic_retrieval")) |synthetic_retrieval| {
         const synthetic_map = try expectMap(synthetic_retrieval);
@@ -919,22 +929,16 @@ fn decodePlan(allocator: Allocator, value: ?yaml.Value, strict: bool) !PlanTempl
     var template: PlanTemplate = .{};
     const plan_value = value orelse return template;
     const plan_map = try expectMap(plan_value);
-    try ensureKnownFields(plan_map, &.{ "model_family", "transport", "execution", "providers", "backend" }, strict);
+    try ensureKnownFields(plan_map, &.{ "model_family", "transport", "execution", "providers" }, strict);
 
     if (mapGet(plan_map, "model_family")) |model_family| template.model_family = try allocator.dupe(u8, try expectString(model_family));
 
     if (mapGet(plan_map, "transport")) |transport_value| {
         const transport_map = try expectMap(transport_value);
-        try ensureKnownFields(transport_map, &.{ "solver", "provider", "parameters" }, strict);
+        try ensureKnownFields(transport_map, &.{ "solver", "provider" }, strict);
         const solver = if (mapGet(transport_map, "solver")) |solver_value| try expectString(solver_value) else "";
         const provider = if (mapGet(transport_map, "provider")) |provider_value| try expectString(provider_value) else "";
         template.providers.transport_solver = normalizeTransportProvider(solver, provider);
-
-        if (mapGet(transport_map, "parameters")) |parameter_value| {
-            const parameter_map = try expectMap(parameter_value);
-            try ensureKnownFields(parameter_map, &.{"streams"}, strict);
-            if (mapGet(parameter_map, "streams")) |streams| template.transport_hints.stream_count = @intCast(try expectU64(streams));
-        }
     }
 
     if (mapGet(plan_map, "execution")) |execution_value| {
@@ -963,13 +967,6 @@ fn decodePlan(allocator: Allocator, value: ?yaml.Value, strict: bool) !PlanTempl
         if (mapGet(providers_map, "noise_model")) |noise_model| template.providers.noise_model = try allocator.dupe(u8, try expectString(noise_model));
         if (mapGet(providers_map, "diagnostics_metric")) |diagnostics_metric| template.providers.diagnostics_metric = try allocator.dupe(u8, try expectString(diagnostics_metric));
     }
-
-    if (mapGet(plan_map, "backend")) |backend_value| {
-        const backend_map = try expectMap(backend_value);
-        try ensureKnownFields(backend_map, &.{"kind"}, strict);
-        template.backend.kind = try allocator.dupe(u8, try expectString(requiredField(backend_map, "kind")));
-    }
-
     return template;
 }
 
@@ -1158,12 +1155,10 @@ fn decodeProducts(allocator: Allocator, value: ?yaml.Value, strict: bool) ![]con
 fn decodeDiagnostics(value: ?yaml.Value, strict: bool) !DiagnosticsSpec {
     const diagnostics_value = value orelse return .{};
     const diagnostics_map = try expectMap(diagnostics_value);
-    try ensureKnownFields(diagnostics_map, &.{ "provenance", "jacobians", "internal_fields", "materialize_cache_keys" }, strict);
+    try ensureKnownFields(diagnostics_map, &.{ "provenance", "jacobians" }, strict);
     return .{
         .provenance = if (mapGet(diagnostics_map, "provenance")) |provenance| try expectBool(provenance) else true,
         .jacobians = if (mapGet(diagnostics_map, "jacobians")) |jacobians| try expectBool(jacobians) else false,
-        .internal_fields = if (mapGet(diagnostics_map, "internal_fields")) |internal_fields| try expectBool(internal_fields) else false,
-        .materialize_cache_keys = if (mapGet(diagnostics_map, "materialize_cache_keys")) |cache_keys| try expectBool(cache_keys) else false,
     };
 }
 
@@ -1462,18 +1457,14 @@ fn normalizeRetrievalProvider(name: []const u8, explicit_provider: ?[]const u8) 
 }
 
 fn normalizeSurfaceProvider(explicit_provider: []const u8, model: []const u8) []const u8 {
-    if (explicit_provider.len != 0) {
-        if (std.mem.eql(u8, explicit_provider, "mission_s5p.ross_li")) return "builtin.directional_lambertian_surface";
-        return explicit_provider;
-    }
+    if (explicit_provider.len != 0) return explicit_provider;
     if (std.mem.eql(u8, model, "lambertian")) return "builtin.lambertian_surface";
-    if (std.mem.eql(u8, model, "ross_li_brdf")) return "builtin.directional_lambertian_surface";
     return explicit_provider;
 }
 
 fn normalizeInstrumentProvider(explicit_provider: []const u8, instrument_name: []const u8) []const u8 {
     if (explicit_provider.len != 0) return explicit_provider;
-    if (std.mem.eql(u8, instrument_name, "tropomi")) return "builtin.tropomi_response";
+    _ = instrument_name;
     return "builtin.generic_response";
 }
 

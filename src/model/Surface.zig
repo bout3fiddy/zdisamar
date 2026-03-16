@@ -37,13 +37,12 @@ pub const Surface = struct {
     }
 };
 
-test "surface accepts named model parameters" {
+test "surface accepts named parameters" {
     try (Surface{
-        .kind = "ross_li_brdf",
+        .kind = "lambertian",
         .parameters = &[_]Parameter{
-            .{ .name = "isotropic", .value = 0.03 },
-            .{ .name = "volumetric", .value = 0.02 },
-            .{ .name = "geometric", .value = 0.01 },
+            .{ .name = "roughness_hint", .value = 0.03 },
+            .{ .name = "slope_hint", .value = 0.02 },
         },
     }).validate();
 }

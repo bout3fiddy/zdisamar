@@ -24,18 +24,6 @@ pub fn resolve(provider_id: []const u8) ?Provider {
             .responseGain = lambertianGain,
         };
     }
-    if (std.mem.eql(u8, provider_id, "builtin.directional_lambertian_surface")) {
-        return .{
-            .id = provider_id,
-            .responseGain = directionalLambertianGain,
-        };
-    }
-    if (std.mem.eql(u8, provider_id, "mission_s5p.ross_li")) {
-        return .{
-            .id = provider_id,
-            .responseGain = directionalLambertianGain,
-        };
-    }
     return null;
 }
 
@@ -46,12 +34,4 @@ fn lambertianGain(context: EvaluationContext) f64 {
     _ = context.phase;
     _ = context.forward;
     return 0.75 + 0.50 * context.scene.surface.albedo;
-}
-
-fn directionalLambertianGain(context: EvaluationContext) f64 {
-    const mu0 = @max(@cos(std.math.degreesToRadians(context.scene.geometry.solar_zenith_deg)), 0.05);
-    const muv = @max(@cos(std.math.degreesToRadians(context.scene.geometry.viewing_zenith_deg)), 0.05);
-    const azimuth = std.math.degreesToRadians(context.scene.geometry.relative_azimuth_deg);
-    const anisotropy = 0.88 + 0.10 * @cos(azimuth) + 0.06 * (mu0 + muv);
-    return (0.68 + 0.55 * context.scene.surface.albedo) * anisotropy;
 }

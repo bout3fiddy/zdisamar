@@ -52,8 +52,18 @@ Current builtin native capability surfaces are:
   - slot: `retrieval.algorithm`
 - `builtin.lambertian_surface`
   - slot: `surface.model`
-- `builtin.tropomi_response`
+
+Current builtin declarative capability surfaces include:
+
+- `builtin.cross_sections`
+  - slot: `absorber.provider`
+- `builtin.generic_response`
   - slot: `instrument.response`
+- builtin noise registrations
+  - slot: `noise.model`
+  - providers catalogued today: `scene_noise`, `none_noise`, `shot_noise`, `s5p_operational_noise`
+- `builtin.default_diagnostics`
+  - slot: `diagnostics.metric`
 - builtin exporter registrations
   - slot: `exporter`
   - formats catalogued today: `netcdf_cf`, `zarr`

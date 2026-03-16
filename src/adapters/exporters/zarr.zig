@@ -223,8 +223,6 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
     const diagnostic_flags = [_]i32{
         @intFromBool(view.diagnostics.emitted_provenance),
         @intFromBool(view.diagnostics.emitted_jacobians),
-        @intFromBool(view.diagnostics.emitted_internal_fields),
-        @intFromBool(view.diagnostics.materialized_cache_keys),
     };
     bytes_written += try writeInt32Array(
         allocator,

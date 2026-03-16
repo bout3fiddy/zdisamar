@@ -13,7 +13,6 @@
     "native_requires_opt_in": true
   },
   "bundled_plugins": [
-    "builtin.tropomi_response",
-    "builtin.netcdf_cf"
+    "builtin.s5p_operational_noise"
   ]
 }

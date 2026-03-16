@@ -17,19 +17,6 @@ pub const lambertian_surface_manifest: Manifest.PluginManifest = .{
     .native = .{},
 };
 
-pub const directional_lambertian_surface_manifest: Manifest.PluginManifest = .{
-    .id = "builtin.directional_lambertian_surface",
-    .package = "disamar_standard",
-    .version = "0.1.0",
-    .lane = .declarative,
-    .capabilities = &[_]Manifest.CapabilityDecl{
-        .{
-            .slot = Slots.surface_model,
-            .name = "builtin.directional_lambertian_surface",
-        },
-    },
-};
-
 const capabilities = [_]Abi.Capability{
     .{
         .slot = Slots.surface_model,

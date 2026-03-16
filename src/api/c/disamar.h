@@ -40,8 +40,6 @@ typedef enum zdisamar_plugin_policy {
 
 #define ZDISAMAR_DIAGNOSTICS_PROVENANCE (1u << 0)
 #define ZDISAMAR_DIAGNOSTICS_JACOBIANS (1u << 1)
-#define ZDISAMAR_DIAGNOSTICS_INTERNAL_FIELDS (1u << 2)
-#define ZDISAMAR_DIAGNOSTICS_MATERIALIZE_CACHE_KEYS (1u << 3)
 
 typedef struct zdisamar_engine_options {
   uint32_t struct_size;

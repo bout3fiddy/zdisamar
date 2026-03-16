@@ -75,7 +75,7 @@ pub const ObservationModel = struct {
 test "observation model carries calibration and supporting-data bindings" {
     try (ObservationModel{
         .instrument = "tropomi",
-        .response_provider = "builtin.tropomi_response",
+        .response_provider = "builtin.generic_response",
         .solar_spectrum_source = .{ .kind = .bundle_default },
         .weighted_reference_grid_source = .{ .kind = .ingest, .name = "refspec_demo.grid" },
         .multiplicative_offset = 1.002,
