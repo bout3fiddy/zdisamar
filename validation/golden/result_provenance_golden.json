@@ -2,12 +2,12 @@
   "engine_version": "0.1.0-dev",
   "model_family_default": "disamar_standard",
   "solver_route_default": "builtin.dispatcher",
-  "transport_family_default": "adding",
+  "transport_family_default": "surrogate_adding",
   "derivative_mode_default": "none",
   "numerical_mode_default": "scalar",
   "plugin_inventory_generation_min": 7,
   "required_plugin_version": "builtin.cross_sections@0.1.0",
   "required_dataset_hash": "sha256:builtin-cross-sections-demo",
-  "required_native_capability_slot": "transport.solver",
-  "required_native_entry_symbol": "zdisamar_plugin_entry_v1"
+  "required_native_capability_slot": "",
+  "required_native_entry_symbol": ""
 }

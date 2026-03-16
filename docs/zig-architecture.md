@@ -15,7 +15,7 @@ The main repository layers are these.
 - `src/kernels/`
   - numerical kernels for optics preparation, transport, interpolation, quadrature, and linear algebra
 - `src/retrieval/`
-  - inverse-method layers such as OE, DOAS, and DISMAS built on the shared scene and measurement-space contracts
+  - inverse-method layers such as the OE-, DOAS-, and DISMAS-labeled surrogate retrieval lanes built on the shared scene and measurement-space contracts
 - `src/runtime/`
   - execution support such as bundle-backed reference-data preparation and caches
 - `src/adapters/`
@@ -121,7 +121,7 @@ The retrieval layer is intentionally separate from the transport kernels.
 - retrieval methods decide how that response is used in an inverse problem;
 - shared contracts hold priors, covariance structures, derivative requirements, and diagnostics.
 
-This makes it possible to host OE, DOAS, and DISMAS on the same physical scene description and the same measurement-space outputs while keeping method-specific policy readable.
+This makes it possible to host OE-, DOAS-, and DISMAS-labeled retrieval lanes on the same physical scene description and the same measurement-space outputs while keeping family-specific policy readable.
 
 ## Plugin Boundary
 

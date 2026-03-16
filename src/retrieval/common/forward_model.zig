@@ -10,11 +10,11 @@ pub const SummaryEvaluator = struct {
 pub fn defaultEvaluator() SummaryEvaluator {
     return .{
         .context = undefined,
-        .evaluate = evaluateSyntheticSummary,
+        .evaluate = evaluateSurrogateSummary,
     };
 }
 
-fn evaluateSyntheticSummary(_: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary {
+fn evaluateSurrogateSummary(_: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary {
     const sample_count = @max(scene.spectral_grid.sample_count, 8);
     const wavelength_start_nm = if (scene.spectral_grid.start_nm != 0.0) scene.spectral_grid.start_nm else 405.0;
     const wavelength_end_nm = if (scene.spectral_grid.end_nm > wavelength_start_nm)

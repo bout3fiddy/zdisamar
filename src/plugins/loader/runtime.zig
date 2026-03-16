@@ -73,7 +73,7 @@ pub const PreparedPluginRuntime = struct {
 
             const source = if (manifest.manifest.native.?.library_path) |path|
                 ResolverModule.ResolutionSource{ .dynamic_path = path }
-            else if (BuiltinPlugins.staticSymbolsFor(manifest.manifest.id)) |symbols|
+            else if (BuiltinPlugins.runtime_support.staticSymbolsFor(manifest.manifest.id)) |symbols|
                 ResolverModule.ResolutionSource{ .static_symbols = symbols }
             else
                 return error.MissingNativeSource;

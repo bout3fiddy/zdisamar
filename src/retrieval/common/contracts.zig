@@ -11,11 +11,28 @@ pub const Method = enum {
     oe,
     doas,
     dismas,
+
+    pub fn classification(self: Method) ImplementationClass {
+        _ = self;
+        return .surrogate;
+    }
+
+    pub fn implementationLabel(self: Method) []const u8 {
+        return switch (self) {
+            .oe => "surrogate_oe",
+            .doas => "surrogate_doas",
+            .dismas => "surrogate_dismas",
+        };
+    }
 };
 
 pub const DerivativeRequirement = enum {
     optional,
     required,
+};
+
+pub const ImplementationClass = enum {
+    surrogate,
 };
 
 pub const Error = error{
@@ -28,25 +45,9 @@ pub const Error = error{
     InvalidStateValue,
     SingularMatrix,
     OutOfMemory,
-    InvalidSampleCount,
-    InvalidBounds,
-    IndexOutOfRange,
-    KernelShapeMismatch,
-    CatalogNotBootstrapped,
-    InvalidPlan,
     InvalidRequest,
     MissingScene,
-    MissingModelFamily,
-    MissingTransportRoute,
     MissingObservationInstrument,
-    UnsupportedModelFamily,
-    PreparedPlanLimitExceeded,
-    WorkspacePlanMismatch,
-    DerivativeModeMismatch,
-    UnsupportedDerivativeMode,
-    UnsupportedCapability,
-    PluginPrepareFailed,
-    PluginExecutionFailed,
 };
 
 pub const RetrievalProblem = struct {
@@ -65,10 +66,12 @@ pub const RetrievalProblem = struct {
     observed_measurement: ?ObservedMeasurement = null,
 
     pub fn fromRequest(request: Request) Error!RetrievalProblem {
-        try request.scene.validate();
+        validateScene(request.scene) catch |err| return err;
 
         const inverse_problem = request.inverse_problem orelse return Error.MissingInverseProblem;
-        try inverse_problem.validate();
+        inverse_problem.validate() catch {
+            return Error.InvalidRequest;
+        };
 
         var observed_measurement: ?ObservedMeasurement = null;
         if (request.measurement_binding) |binding| {
@@ -93,7 +96,7 @@ pub const RetrievalProblem = struct {
     }
 
     pub fn validate(self: RetrievalProblem) Error!void {
-        try self.scene.validate();
+        try validateScene(self.scene);
 
         if (self.inverse_problem.id.len == 0) {
             return Error.MissingInverseProblem;
@@ -240,6 +243,8 @@ test "retrieval contracts enforce canonical problem invariants" {
         .jacobians_requested = true,
     };
     try std.testing.expectError(Error.DerivativeModeRequired, missing_mode.validateForMethod(.oe));
+    try std.testing.expectEqual(ImplementationClass.surrogate, Method.oe.classification());
+    try std.testing.expectEqualStrings("surrogate_oe", Method.oe.implementationLabel());
 }
 
 test "retrieval problem requires inverse problem in request conversion" {
@@ -256,4 +261,12 @@ test "retrieval problem requires inverse problem in request conversion" {
         Error.MissingInverseProblem,
         RetrievalProblem.fromRequest(request),
     );
+}
+
+fn validateScene(scene: Scene) Error!void {
+    scene.validate() catch |err| switch (err) {
+        error.MissingScene => return Error.MissingScene,
+        error.MissingObservationInstrument => return Error.MissingObservationInstrument,
+        else => return Error.InvalidRequest,
+    };
 }

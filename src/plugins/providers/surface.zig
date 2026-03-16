@@ -21,13 +21,13 @@ pub fn resolve(provider_id: []const u8) ?Provider {
     if (std.mem.eql(u8, provider_id, "builtin.lambertian_surface")) {
         return .{
             .id = provider_id,
-            .responseGain = lambertianGain,
+            .responseGain = surrogateLambertianGain,
         };
     }
     return null;
 }
 
-fn lambertianGain(context: EvaluationContext) f64 {
+fn surrogateLambertianGain(context: EvaluationContext) f64 {
     _ = context.prepared;
     _ = context.wavelength_nm;
     _ = context.safe_span;

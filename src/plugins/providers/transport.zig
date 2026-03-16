@@ -3,8 +3,8 @@ const dispatcher = @import("../../kernels/transport/dispatcher.zig");
 
 pub const Provider = struct {
     id: []const u8,
-    prepareRoute: *const fn (request: common.DispatchRequest) common.Error!common.Route,
-    executePrepared: *const fn (route: common.Route, input: common.ForwardInput) common.Error!common.ForwardResult,
+    prepareRoute: *const fn (request: common.DispatchRequest) common.PrepareError!common.Route,
+    executePrepared: *const fn (route: common.Route, input: common.ForwardInput) common.ExecuteError!common.ForwardResult,
 };
 
 pub fn resolve(provider_id: []const u8) ?Provider {

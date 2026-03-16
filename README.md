@@ -20,7 +20,7 @@ inputs are supported only as migration input through the importer.
 - Canonical scene, observation, and inverse-problem types in `src/model/`.
 - Reusable kernels for transport, optics, interpolation, quadrature, spectra,
   and linear algebra in `src/kernels/`.
-- Retrieval layers for OE, DOAS, and DISMAS in `src/retrieval/`.
+- Retrieval layers for OE-, DOAS-, and DISMAS-labeled surrogate solvers in `src/retrieval/`.
 - Runtime caches and reference-data preparation in `src/runtime/`.
 - Adapter-owned canonical YAML parsing, legacy import, exporter backends, and
   mission wiring in `src/adapters/`.
@@ -193,10 +193,15 @@ in practice:
 | `transport.solver: dispatcher` | use the builtin transport dispatcher |
 | `transport.provider: builtin.transport_dispatcher` | manifest/plugin id for that dispatcher lane |
 | resolved `transport_provider: builtin.dispatcher` | the concrete provider name reported by `config resolve` and run provenance |
-| `inverse.algorithm.name: oe` | request the optimal-estimation retrieval path |
-| `inverse.algorithm.provider: builtin.oe_solver` | explicit provider id for the OE solver |
+| `inverse.algorithm.name: oe` | request the OE-labeled surrogate retrieval lane |
+| `inverse.algorithm.provider: builtin.oe_solver` | explicit provider id for that OE-labeled surrogate solver |
 | `measurement_model.instrument.name: tropomi` | instrument family name; this defaults to `builtin.generic_response` if no explicit response provider is given |
-| `surface.model: lambertian` | flat Lambertian surface model |
+| `surface.model: lambertian` | request the builtin Lambertian-labeled surface-response lane |
+
+These family labels are routing names in the current scaffold. They identify the
+intended transport, retrieval, and surface roles without claiming that every
+named lane is already a method-faithful implementation of the corresponding
+literature algorithm.
 
 ## Where The Example Numbers Come From
 
@@ -526,8 +531,8 @@ build artifact.
 - `tests/integration/` exercises end-to-end typed execution.
 - `tests/golden/` checks stable provenance expectations.
 - `tests/validation/` checks schema and evidence assets.
-- `validation/compatibility/` stores bounded parity assets against the local
-  upstream Fortran reference.
+- `validation/compatibility/` stores bounded hybrid-contract parity assets
+  against the local upstream Fortran reference.
 - `validation/release/` ties commands, provenance expectations, and readiness
   gates together.
 

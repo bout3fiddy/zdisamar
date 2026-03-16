@@ -40,25 +40,42 @@ The 2024 geometry-dependent Lambert-equivalent-reflectivity climatology paper is
 
 The scientific vocabulary in the DISAMAR literature is specific. The main terms that appear throughout this repository are these.
 
+In this repository, those names serve two different roles:
+
+- they describe the literature families the project is trying to host,
+- they also label the current transport and retrieval lanes, which are still surrogate implementations in several places.
+
+So the definitions below describe the scientific target vocabulary. They should not be read as a claim that every current Zig kernel is already a method-faithful reproduction of that literature.
+
 ### Doubling-adding
 
 Doubling-adding is a multiple-scattering method for layered atmospheres. Each atmospheric layer is represented through reflection, transmission, and source terms; larger stacks are then assembled by recursively combining layers. The method is attractive for satellite retrieval work because it handles strong multiple scattering in a numerically stable way while keeping layer interfaces explicit.
+
+In the current Zig tree, the transport lane carrying the adding label is still a surrogate layered-scattering kernel. The name is preserved as a family label and routing seam, not as a claim of full doubling-adding fidelity.
 
 ### LABOS
 
 LABOS stands for layer-based orders of scattering. In practical terms it is an order-of-scattering formulation organized layer by layer, which makes it useful when a full multiple-scattering solution is not the only quantity of interest and when controlled approximations, perturbations, or derivative-like diagnostics are needed. In the DISAMAR literature, doubling-adding and LABOS are complementary transport lanes rather than competing codebases.
 
+In the current Zig tree, the LABOS-labeled lane is likewise still a surrogate transport path that preserves a typed route boundary while the numerics mature.
+
 ### Optimal estimation
 
 Optimal estimation, usually in the Rodgers sense, combines a forward model, a prior state, and error statistics to solve an inverse problem. In DISAMAR-class retrievals this means the code must provide Jacobians, state-vector handling, and consistent measurement-error treatment. The current implementation therefore treats derivatives and retrieval contracts as first-class data surfaces rather than optional bookkeeping.
+
+The current OE-labeled solver in `zdisamar` preserves that contract surface, but it should still be understood as a surrogate solver lane rather than a full Rodgers-style implementation.
 
 ### DOAS
 
 DOAS, differential optical absorption spectroscopy, fits narrow-band differential absorption structures after broad spectral structure has been removed or parameterized. It is useful when the retrieval target is the fine spectral signature of trace-gas absorption rather than the full absolute radiance field.
 
+The current DOAS-labeled solver preserves the typed route and observation contract for that family, but it remains a surrogate implementation today.
+
 ### DISMAS
 
 DISMAS is the direct intensity fitting strategy described in the DISAMAR literature. Instead of isolating only differential structure, it works directly in measurement space and therefore depends strongly on the quality of the forward operator, sampling model, and derivative information.
+
+The current DISMAS-labeled solver is also still a surrogate implementation. Its value today is that it preserves the direct-measurement-space seam and provenance route while the method-specific numerics remain under active construction.
 
 ## Why This Matters For `zdisamar`
 
@@ -66,7 +83,7 @@ The current implementation is organized around the consequences of those method 
 
 - `src/model/` carries one canonical scene and observation description.
 - `src/kernels/transport/` carries forward-operator families and measurement-space evaluation.
-- `src/retrieval/` carries OE, DOAS, and DISMAS method layers on shared contracts.
+- `src/retrieval/` carries OE-, DOAS-, and DISMAS-labeled retrieval layers on shared contracts.
 - `src/runtime/reference/` and `src/adapters/` carry the scientific input surfaces needed to prepare execution without letting file I/O leak into kernels.
 - `src/plugins/` carries capability registration and extension boundaries for transport, retrieval, surface, instrument, and exporter lanes.
 
@@ -89,4 +106,4 @@ After this overview:
 1. Read [Architecture and Execution Model](./zig-architecture.md) for the system-level layout.
 2. Read [Operational O2 A-Band Path](./operational-o2a.md) for the main operational science path.
 3. Read [Plugins and Extension Boundaries](./plugins-and-extension-boundaries.md) for the capability system.
-4. Read [Validation and Scientific Scope](./validation-and-parity.md) for the current validated envelope.
+4. Read [Validation and Scientific Scope](./validation-and-parity.md) for the current tested and validated contract envelope.

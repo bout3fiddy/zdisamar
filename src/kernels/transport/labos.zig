@@ -5,7 +5,7 @@ const doubling = @import("doubling.zig");
 const gauss_legendre = @import("../quadrature/gauss_legendre.zig");
 const source_integration = @import("../quadrature/source_integration.zig");
 
-pub fn execute(route: common.Route, input: common.ForwardInput) common.Error!common.ForwardResult {
+pub fn execute(route: common.Route, input: common.ForwardInput) common.ExecuteError!common.ForwardResult {
     if (route.family != .labos) unreachable;
 
     const mode_scale: f64 = switch (route.execution_mode) {
@@ -25,7 +25,7 @@ pub fn execute(route: common.Route, input: common.ForwardInput) common.Error!com
         input.spectral_weight * input.air_mass_factor,
     };
     const source_factor = source_integration.integrate(rule.weights[0..3], &source_terms) catch unreachable;
-    const layer = doubling.propagateHomogeneous(input.optical_depth, input.single_scatter_albedo, 2);
+    const layer = try doubling.propagateHomogeneous(input.optical_depth, input.single_scatter_albedo, 2);
     const toa = source_factor * layer.transmittance * mode_scale * regime_scale;
     return .{
         .family = route.family,
@@ -55,5 +55,5 @@ test "labos execution supports plugin analytical derivative mode" {
 
     try std.testing.expectEqual(common.TransportFamily.labos, result.family);
     try std.testing.expect(result.jacobian_column != null);
-    try std.testing.expect(result.jacobian_column.? > 0.0);
+    try std.testing.expect(result.jacobian_column.? < 0.0);
 }

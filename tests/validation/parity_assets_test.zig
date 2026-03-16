@@ -332,8 +332,8 @@ test "golden provenance fixture defines default release evidence keys" {
     try std.testing.expect(parsed.value.plugin_inventory_generation_min > 0);
     try std.testing.expect(parsed.value.required_plugin_version.len > 0);
     try std.testing.expect(parsed.value.required_dataset_hash.len > 0);
-    try std.testing.expect(parsed.value.required_native_capability_slot.len > 0);
-    try std.testing.expect(parsed.value.required_native_entry_symbol.len > 0);
+    try std.testing.expectEqual(@as(usize, 0), parsed.value.required_native_capability_slot.len);
+    try std.testing.expectEqual(@as(usize, 0), parsed.value.required_native_entry_symbol.len);
 }
 
 test "release readiness matrix ties commands packages and evidence together" {

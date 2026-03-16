@@ -2,7 +2,7 @@ const std = @import("std");
 const noise = @import("../../kernels/spectra/noise.zig");
 const Scene = @import("../../model/Scene.zig").Scene;
 
-pub const Error = error{ShapeMismatch};
+pub const Error = noise.Error;
 
 pub const Provider = struct {
     id: []const u8,
@@ -51,17 +51,18 @@ fn alwaysEnabled(_: Scene) bool {
 }
 
 fn sceneNoiseEnabled(scene: Scene) bool {
-    return !std.mem.eql(u8, scene.observation_model.noise_model, "none");
+    return switch (scene.observation_model.resolvedNoiseModel() catch return false) {
+        .none => false,
+        else => true,
+    };
 }
 
 fn sceneNoiseSigma(scene: Scene, signal: []const f64, output: []f64) Error!void {
-    if (std.mem.eql(u8, scene.observation_model.noise_model, "shot_noise")) {
-        return shotNoiseSigma(scene, signal, output);
-    }
-    if (std.mem.eql(u8, scene.observation_model.noise_model, "s5p_operational")) {
-        return s5pOperationalSigma(scene, signal, output);
-    }
-    return zeroSigma(scene, signal, output);
+    return switch (scene.observation_model.resolvedNoiseModel() catch .none) {
+        .shot_noise => shotNoiseSigma(scene, signal, output),
+        .s5p_operational => s5pOperationalSigma(scene, signal, output),
+        .none, .snr_from_input => zeroSigma(scene, signal, output),
+    };
 }
 
 fn zeroSigma(_: Scene, signal: []const f64, output: []f64) Error!void {

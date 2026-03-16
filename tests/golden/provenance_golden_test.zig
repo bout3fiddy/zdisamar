@@ -71,21 +71,29 @@ test "golden provenance defaults remain stable" {
     }
     try std.testing.expect(saw_dataset_hash);
 
-    var saw_native_slot = false;
-    for (result.provenance.native_capability_slots) |slot| {
-        if (std.mem.eql(u8, slot, parsed.value.required_native_capability_slot)) {
-            saw_native_slot = true;
-            break;
+    if (parsed.value.required_native_capability_slot.len == 0) {
+        try std.testing.expectEqual(@as(usize, 0), result.provenance.native_capability_slots.len);
+    } else {
+        var saw_native_slot = false;
+        for (result.provenance.native_capability_slots) |slot| {
+            if (std.mem.eql(u8, slot, parsed.value.required_native_capability_slot)) {
+                saw_native_slot = true;
+                break;
+            }
         }
+        try std.testing.expect(saw_native_slot);
     }
-    try std.testing.expect(saw_native_slot);
 
-    var saw_entry_symbol = false;
-    for (result.provenance.native_entry_symbols) |entry_symbol| {
-        if (std.mem.eql(u8, entry_symbol, parsed.value.required_native_entry_symbol)) {
-            saw_entry_symbol = true;
-            break;
+    if (parsed.value.required_native_entry_symbol.len == 0) {
+        try std.testing.expectEqual(@as(usize, 0), result.provenance.native_entry_symbols.len);
+    } else {
+        var saw_entry_symbol = false;
+        for (result.provenance.native_entry_symbols) |entry_symbol| {
+            if (std.mem.eql(u8, entry_symbol, parsed.value.required_native_entry_symbol)) {
+                saw_entry_symbol = true;
+                break;
+            }
         }
+        try std.testing.expect(saw_entry_symbol);
     }
-    try std.testing.expect(saw_entry_symbol);
 }

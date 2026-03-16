@@ -4,7 +4,7 @@
 
 The purpose of validation in `zdisamar` is to show that the current implementation carries the intended scientific surfaces of the DISAMAR model family and that those surfaces behave coherently across unit tests, integration tests, and bounded reference-implementation comparisons.
 
-An earlier Fortran implementation remains useful as a reference implementation for focused comparisons, but validation in this repository is broader than source-to-source matching. It has to cover:
+An earlier Fortran implementation remains useful as a reference implementation for focused comparisons, but validation in this repository is broader than source-to-source matching. The current compatibility stance is a bounded hybrid-contract envelope, not blanket numeric equivalence to every historical DISAMAR run. Validation here therefore has to cover:
 
 - scientific input preparation,
 - transport and measurement-space behavior,
@@ -32,15 +32,15 @@ Integration tests check that the engine, mission adapters, runtime bundle layer,
 
 ### Validation harnesses
 
-Validation harnesses make bounded comparison explicit. They record which scientific surfaces are under comparison and which imported datasets support those comparisons. This is where the repository states, in a falsifiable way, what is actually covered by the current validated envelope.
+Validation harnesses make bounded comparison explicit. They record which scientific surfaces are under comparison and which imported datasets support those comparisons. This is where the repository states, in a falsifiable way, what is actually covered by the current tested and validated contract envelope.
 
 ### Performance smoke tests
 
-Performance tests do not prove correctness, but they protect the architecture against regressions that would make scientific validation harder, for example accidental allocation blowups or dispatch-path changes that invalidate existing assumptions.
+Performance tests do not prove correctness, and they are not benchmark claims by themselves, but they protect the architecture against regressions that would make scientific validation harder, for example accidental allocation blowups or dispatch-path changes that invalidate existing assumptions.
 
-## Current Validated Envelope
+## Current Tested And Validated Contract Envelope
 
-The current implementation is validated for a bounded but operationally important envelope centered on oxygen A-band work and the surrounding scientific infrastructure. That envelope includes:
+The current implementation is tested and validated for a bounded but operationally important contract envelope centered on oxygen A-band work and the surrounding scientific infrastructure. That envelope includes:
 
 - bundle-backed climatology and spectroscopy ingestion,
 - typed HITRAN-style line lists and strong-line sidecars,
@@ -63,14 +63,15 @@ Safe claims:
 
 - the present repository carries the main oxygen A-band operational surfaces explicitly in typed state,
 - measurement-space outputs, provenance, and exporter inputs are validated on the normal execution path,
-- the codebase supports OE, DOAS, and DISMAS method families on a shared contracts layer,
-- the current implementation is aligned with the DISAMAR literature on forward-model and retrieval structure.
+- the codebase supports OE-, DOAS-, and DISMAS-labeled surrogate retrieval lanes on a shared contracts layer,
+- the current implementation preserves the DISAMAR family structure and typed execution seams needed for later method-faithful work.
 
 Claims that should remain qualified:
 
 - complete equivalence to every historical DISAMAR dataset,
 - mission equivalence beyond the currently exercised Sentinel-5P path,
 - equality of every numerical intermediate with any earlier implementation,
+- method-faithful implementation of every currently named transport or retrieval family,
 - blanket scientific coverage outside the documented and tested data surfaces.
 
 ## Literature Context
@@ -98,7 +99,7 @@ Representative files include:
 
 ## Reading Order
 
-If the goal is to understand the current validated envelope quickly:
+If the goal is to understand the current tested and validated contract envelope quickly:
 
 1. read [DISAMAR Overview](./disamar-overview.md),
 2. read [Operational O2 A-Band Path](./operational-o2a.md),

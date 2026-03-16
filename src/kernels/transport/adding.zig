@@ -5,7 +5,7 @@ const doubling = @import("doubling.zig");
 const gauss_legendre = @import("../quadrature/gauss_legendre.zig");
 const source_integration = @import("../quadrature/source_integration.zig");
 
-pub fn execute(route: common.Route, input: common.ForwardInput) common.Error!common.ForwardResult {
+pub fn execute(route: common.Route, input: common.ForwardInput) common.ExecuteError!common.ForwardResult {
     if (route.family != .adding) unreachable;
 
     // Adding solver lane intentionally does not accept plugin analytical derivatives.
@@ -29,7 +29,7 @@ pub fn execute(route: common.Route, input: common.ForwardInput) common.Error!com
         input.spectral_weight * input.air_mass_factor,
     };
     const source_factor = source_integration.integrate(rule.weights[0..2], &source_terms) catch unreachable;
-    const layer = doubling.propagateHomogeneous(input.optical_depth, input.single_scatter_albedo, 1);
+    const layer = try doubling.propagateHomogeneous(input.optical_depth, input.single_scatter_albedo, 1);
     const toa = source_factor * layer.transmittance * mode_scale * regime_scale;
     return .{
         .family = route.family,

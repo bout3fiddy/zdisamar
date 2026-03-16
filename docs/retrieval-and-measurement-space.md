@@ -55,19 +55,21 @@ This is the stable observation-side surface seen by retrieval code and exporters
 
 ## Method Families
 
-The repository currently exposes retrieval lanes for OE, DOAS, and DISMAS under `src/retrieval/`. They share contracts, priors, covariance handling, and synthetic-forward summary code while keeping method-specific policy separate.
+The repository currently exposes OE-, DOAS-, and DISMAS-labeled retrieval lanes under `src/retrieval/`. They share contracts, priors, covariance handling, and surrogate-forward summary code while keeping family-specific policy separate.
+
+Those family names are deliberate, but they should be read carefully: the current solvers preserve the intended retrieval seams and result surfaces without claiming that each lane is already a full method-faithful implementation of the corresponding literature algorithm.
 
 ### Optimal estimation
 
-The OE path treats the problem as a state-estimation task with priors and derivative information. In practice this means the solver expects Jacobian support and works directly with a physically interpretable forward response.
+The OE-labeled path treats the problem as a state-estimation task with priors and derivative information. In practice this means the solver expects Jacobian support and works directly with a physically interpretable forward response surface, but the current implementation remains a surrogate OE lane rather than a full Rodgers solver.
 
 ### DOAS
 
-The DOAS path emphasizes narrow-band differential structure. It still uses the same scene and observation contracts, but its solver policy is narrower and does not require the same derivative mode as OE or DISMAS.
+The DOAS-labeled path emphasizes narrow-band differential structure. It still uses the same scene and observation contracts, but its solver policy is narrower and does not require the same derivative mode as OE or DISMAS. Today it is a surrogate DOAS lane with truthful convergence reporting and typed state access, not a full differential-spectral fit implementation.
 
 ### DISMAS
 
-The DISMAS path fits directly in measurement space. That makes the fidelity of the forward product particularly important, because the method depends on the absolute shape of the simulated observation rather than only on differential structures.
+The DISMAS-labeled path fits directly in measurement space. That makes the fidelity of the forward product particularly important, because the method depends on the absolute shape of the simulated observation rather than only on differential structures. The current solver preserves that direct-measurement-space seam while remaining a surrogate DISMAS lane.
 
 ## Why Irradiance Is Part Of The Product
 
@@ -121,4 +123,4 @@ For one end-to-end path:
 3. read `src/kernels/transport/measurement_space.zig`,
 4. read `src/core/Result.zig`,
 5. read `src/retrieval/common/contracts.zig`,
-6. inspect the solver modules under `src/retrieval/oe/`, `src/retrieval/doas/`, and `src/retrieval/dismas/`.
+6. inspect `src/retrieval/common/synthetic_forward.zig` as the current surrogate-forward implementation and then the solver modules under `src/retrieval/oe/`, `src/retrieval/doas/`, and `src/retrieval/dismas/`.

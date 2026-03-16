@@ -107,6 +107,8 @@ The current builtin selections are:
   - current builtin provider: `builtin.cross_sections`
   - registered through the capability registry and carried into provenance
 
+The important qualifier is that provider identity and method fidelity are different questions. Today the transport and retrieval providers keep the intended family labels and typed seams, while several of the underlying builtin numerics are still surrogate implementations.
+
 ## 1. Start From The Outer Lifecycle
 
 Before looking at plugins, it helps to look at the execution model that contains them.
@@ -455,6 +457,8 @@ So the system has two cooperating layers:
 
 That is why a provider can be part of the selected execution stack while a manifest can also carry native runtime metadata about the same capability.
 
+In the current default engine configuration, the first layer is the one that actually runs builtin transport, retrieval, and surface logic. Native ABI resolution is only activated when `EngineOptions.allow_native_plugins` is enabled.
+
 ## 8. Declarative And Native Lanes
 
 The manifest layer distinguishes between `declarative` and `native`.
@@ -478,6 +482,8 @@ A native manifest contributes capability metadata and also resolves through the 
 
 The engine does not treat that distinction as cosmetic. It determines whether the runtime loader needs to resolve native entry points from the frozen snapshot.
 
+For builtin execution today, that lookup is opt-in rather than default: if native loading is disabled, builtin manifests that would otherwise be native still remain available as declarative capability records so typed provider dispatch and provenance stay stable.
+
 ## 9. Why Plan-Time Freezing Matters
 
 The plugin system is designed around a strong rule:
@@ -498,7 +504,7 @@ The kernel is not repeatedly asking the registry what to do.
 
 You can change the plugin inventory or choose different providers by preparing a new plan, while older plans keep their original frozen state.
 
-That last point is the practical meaning of "hot-swappable" in this architecture. It does not mean mutating an already-running plan in place. It means the next prepared plan can select a different capability stack without rewriting the engine lifecycle.
+That last point is the practical meaning of "hot-swappable" in this architecture. It does not mean mutating an already-running plan in place, and it does not imply that the default builtin execution path is dynamic-native today. It means the next prepared plan can select a different capability stack without rewriting the engine lifecycle.
 
 ## 10. Where Provenance Comes From
 

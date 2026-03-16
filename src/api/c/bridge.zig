@@ -241,6 +241,7 @@ fn mapError(err: anyerror) StatusCode {
         errors.Error.WorkspacePlanMismatch,
         errors.Error.DerivativeModeMismatch,
         errors.Error.UnsupportedDerivativeMode,
+        errors.Error.UnsupportedExecutionMode,
         errors.Error.UnsupportedCapability,
         errors.Error.PluginPrepareFailed,
         errors.Error.PluginExecutionFailed,
