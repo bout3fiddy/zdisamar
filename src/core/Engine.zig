@@ -891,6 +891,62 @@ test "engine retrieval execution uses summary evaluation and still materializes 
     );
 }
 
+test "engine translates retrieval-local invalid state targets into invalid requests" {
+    var engine = Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    var plan = try engine.preparePlan(.{
+        .providers = .{
+            .retrieval_algorithm = "builtin.oe_solver",
+        },
+        .scene_blueprint = .{
+            .derivative_mode = .semi_analytical,
+        },
+    });
+    defer plan.deinit();
+
+    var workspace = engine.createWorkspace("retrieval-invalid-target-suite");
+    var request = Request.init(.{
+        .id = "scene-retrieval-invalid-target-suite",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 24,
+        },
+        .atmosphere = .{
+            .layer_count = 18,
+        },
+        .observation_model = .{
+            .instrument = "synthetic",
+            .regime = .nadir,
+            .sampling = "operational",
+            .noise_model = "shot_noise",
+        },
+    });
+    request.expected_derivative_mode = .semi_analytical;
+    request.diagnostics = .{
+        .provenance = true,
+        .jacobians = true,
+    };
+    request.inverse_problem = .{
+        .id = "inverse-invalid-target-suite",
+        .state_vector = .{
+            .parameters = &[_]@import("../model/Scene.zig").StateParameter{
+                .{ .name = "bad_target", .target = "scene.unknown.target" },
+            },
+        },
+        .measurements = .{
+            .product = "radiance",
+            .observable = "radiance",
+            .sample_count = 24,
+            .source = .{ .kind = .external_observation, .name = "forward-measurement" },
+        },
+    };
+
+    try std.testing.expectError(errors.Error.InvalidRequest, engine.execute(&plan, &workspace, request));
+}
+
 test "engine owns runtime caches and batch scheduling helpers explicitly" {
     const Ctx = struct {
         executed: usize = 0,

@@ -14,20 +14,20 @@ pub fn solveWithEvaluator(
     evaluator: forward_model.SummaryEvaluator,
 ) common.Error!common.SolverOutcome {
     try problem.validateForMethod(.doas);
-    _ = try synthetic_forward.validateShape(problem, .doas);
+    const layout = try synthetic_forward.resolveStateLayout(problem);
 
     const observed = try synthetic_forward.observedSummary(problem, evaluator);
     const target = synthetic_forward.featureVector(observed, .doas);
-    const anchor = try synthetic_forward.anchorState(allocator, problem, .doas, observed);
+    const anchor = try synthetic_forward.anchorStateWithLayout(allocator, problem, .doas, observed, layout);
     defer allocator.free(anchor);
 
-    const state = try synthetic_forward.seedState(allocator, problem);
+    const state = try synthetic_forward.seedStateWithLayout(allocator, problem, layout);
     errdefer allocator.free(state);
 
     const max_iterations: u32 = if (problem.inverse_problem.fit_controls.max_iterations != 0)
-        @min(problem.inverse_problem.fit_controls.max_iterations, 8)
+        @min(problem.inverse_problem.fit_controls.max_iterations, 12)
     else
-        5;
+        8;
 
     var iterations: u32 = 0;
     var reduced_cost: f64 = std.math.inf(f64);
@@ -37,7 +37,7 @@ pub fn solveWithEvaluator(
 
     while (iterations < max_iterations) : (iterations += 1) {
         const predicted = synthetic_forward.featureVector(
-            try synthetic_forward.summarizeState(problem, .doas, state, evaluator),
+            try synthetic_forward.summarizeStateWithLayout(problem, .doas, state, evaluator, layout),
             .doas,
         );
         residual_norm = synthetic_forward.residualNorm(predicted, target);
@@ -56,10 +56,9 @@ pub fn solveWithEvaluator(
             break;
         }
     }
-    if (!converged) converged = true;
 
-    const fitted_scene = try synthetic_forward.sceneForState(problem, state);
-    const fitted_summary = try synthetic_forward.summarizeState(problem, .doas, state, evaluator);
+    const fitted_scene = try synthetic_forward.sceneForStateWithLayout(problem, state, layout);
+    const fitted_summary = try synthetic_forward.summarizeStateWithLayout(problem, .doas, state, evaluator, layout);
     const jacobians_used = problem.derivative_mode != .none and problem.jacobians_requested;
     const dfs = std.math.clamp(0.75 + 0.10 * @exp(-step_norm), 0.0, @as(f64, @floatFromInt(state.len)));
     return common.outcome(

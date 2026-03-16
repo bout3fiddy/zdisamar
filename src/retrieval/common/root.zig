@@ -4,6 +4,7 @@ pub const covariance = @import("covariance.zig");
 pub const forward_model = @import("forward_model.zig");
 pub const jacobian_chain = @import("jacobian_chain.zig");
 pub const synthetic_forward = @import("synthetic_forward.zig");
+pub const surrogate_forward = synthetic_forward;
 pub const transforms = @import("transforms.zig");
 pub const diagnostics = @import("diagnostics.zig");
 

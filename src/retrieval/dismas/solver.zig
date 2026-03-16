@@ -14,14 +14,14 @@ pub fn solveWithEvaluator(
     evaluator: forward_model.SummaryEvaluator,
 ) common.Error!common.SolverOutcome {
     try problem.validateForMethod(.dismas);
-    _ = try synthetic_forward.validateShape(problem, .dismas);
+    const layout = try synthetic_forward.resolveStateLayout(problem);
 
     const observed = try synthetic_forward.observedSummary(problem, evaluator);
     const target = synthetic_forward.featureVector(observed, .dismas);
-    const anchor = try synthetic_forward.anchorState(allocator, problem, .dismas, observed);
+    const anchor = try synthetic_forward.anchorStateWithLayout(allocator, problem, .dismas, observed, layout);
     defer allocator.free(anchor);
 
-    const state = try synthetic_forward.seedState(allocator, problem);
+    const state = try synthetic_forward.seedStateWithLayout(allocator, problem, layout);
     errdefer allocator.free(state);
 
     const max_iterations: u32 = if (problem.inverse_problem.fit_controls.max_iterations != 0)
@@ -37,7 +37,7 @@ pub fn solveWithEvaluator(
 
     while (iterations < max_iterations) : (iterations += 1) {
         const predicted = synthetic_forward.featureVector(
-            try synthetic_forward.summarizeState(problem, .dismas, state, evaluator),
+            try synthetic_forward.summarizeStateWithLayout(problem, .dismas, state, evaluator, layout),
             .dismas,
         );
         residual_norm = synthetic_forward.residualNorm(predicted, target);
@@ -57,8 +57,8 @@ pub fn solveWithEvaluator(
         }
     }
 
-    const fitted_scene = try synthetic_forward.sceneForState(problem, state);
-    const fitted_summary = try synthetic_forward.summarizeState(problem, .dismas, state, evaluator);
+    const fitted_scene = try synthetic_forward.sceneForStateWithLayout(problem, state, layout);
+    const fitted_summary = try synthetic_forward.summarizeStateWithLayout(problem, .dismas, state, evaluator, layout);
     const dfs = std.math.clamp(
         @as(f64, @floatFromInt(state.len)) * (0.70 + 0.06 * @exp(-step_norm)),
         0.0,
