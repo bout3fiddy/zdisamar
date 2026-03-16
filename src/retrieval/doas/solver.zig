@@ -61,7 +61,8 @@ pub fn solveWithEvaluator(
     const fitted_summary = try surrogate_forward.summarizeStateWithLayout(problem, .doas, state, evaluator, layout);
     const jacobians_used = problem.derivative_mode != .none and problem.jacobians_requested;
     const dfs = std.math.clamp(0.75 + 0.10 * @exp(-step_norm), 0.0, @as(f64, @floatFromInt(state.len)));
-    return common.outcome(
+    return try common.outcome(
+        allocator,
         problem,
         .doas,
         iterations,

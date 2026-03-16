@@ -119,6 +119,7 @@ fn makeRetrievalRequest(
             },
             .measurements = .{
                 .product = measurement_product,
+                .observable = "radiance",
                 .sample_count = case.runtime_profile.spectral_samples,
             },
         },
@@ -563,7 +564,7 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
             );
             try std.testing.expectEqual(case.runtime_profile.spectral_samples, summary.sample_count);
             try std.testing.expect(summary.mean_radiance > 0.0);
-            try std.testing.expect(summary.mean_reflectance > 0.0);
+            try std.testing.expect(summary.mean_surrogate_reflectance > 0.0);
             if (derivative_mode == .none) {
                 try std.testing.expect(summary.mean_jacobian == null);
             } else {

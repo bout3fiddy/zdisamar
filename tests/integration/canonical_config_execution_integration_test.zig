@@ -146,7 +146,7 @@ test "canonical execution runs a forward-only program and writes outputs" {
     try std.fs.cwd().access(truth_path, .{});
 }
 
-test "canonical execution runs a retrieval-only program" {
+test "canonical execution rejects retrieval-only external observations without an explicit measurement binding" {
     const yaml =
         \\schema_version: 1
         \\
@@ -233,20 +233,10 @@ test "canonical execution runs a retrieval-only program" {
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const execution = try executeResolvedSource("retrieval.yaml", ".", yaml, &engine);
-    defer {
-        var outcome = execution.outcome;
-        outcome.deinit();
-        var program = execution.program;
-        program.deinit();
-    }
-
-    try std.testing.expectEqual(@as(usize, 1), execution.outcome.stage_outcomes.len);
-    const result = execution.outcome.stage_outcomes[0].result;
-    try std.testing.expect(result.retrieval != null);
-    try std.testing.expect(result.retrieval_products.state_vector != null);
-    try std.testing.expect(result.retrieval_products.fitted_measurement != null);
-    try std.testing.expect(result.retrieval_products.jacobian != null);
+    try std.testing.expectError(
+        error.MissingMeasurementBinding,
+        executeResolvedSource("retrieval.yaml", ".", yaml, &engine),
+    );
 }
 
 test "canonical execution runs revised twin examples with routed outputs" {
@@ -319,6 +309,6 @@ test "canonical execution runs revised twin examples with routed outputs" {
     const expert_result = expert_execution.outcome.stage_outcomes[1].result;
     try std.testing.expect(expert_result.retrieval_products.state_vector != null);
     try std.testing.expect(expert_result.retrieval_products.fitted_measurement != null);
-    try std.testing.expect(expert_result.retrieval_products.averaging_kernel != null);
+    try std.testing.expectEqual(@as(?zdisamar.Result.RetrievalMatrixProduct, null), expert_result.retrieval_products.averaging_kernel);
     try std.testing.expect(expert_result.retrieval_products.jacobian != null);
 }

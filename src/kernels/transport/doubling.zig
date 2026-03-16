@@ -10,7 +10,8 @@ pub const Error = error{
 };
 
 pub fn propagateHomogeneous(optical_depth: f64, single_scatter_albedo: f64, doublings: u32) Error!LayerResponse {
-    const base_transmittance = std.math.exp(-optical_depth / @as(f64, @floatFromInt(@max(doublings, 1))));
+    const subdivisions = std.math.pow(f64, 2.0, @as(f64, @floatFromInt(doublings)));
+    const base_transmittance = std.math.exp(-optical_depth / subdivisions);
     const base_reflectance = (1.0 - base_transmittance) * single_scatter_albedo * 0.5;
 
     var response = LayerResponse{
@@ -42,4 +43,13 @@ test "doubling propagation preserves bounded reflectance and transmittance" {
 
 test "doubling propagation rejects singular reflectance denominators" {
     try std.testing.expectError(error.SingularDoublingDenominator, propagateHomogeneous(1000.0, 2.0, 1));
+}
+
+test "doubling propagation uses 2^n optical-depth subdivision" {
+    const one_doubling = try propagateHomogeneous(0.8, 0.95, 1);
+    const base_transmittance = std.math.exp(-0.8 / 2.0);
+    const base_reflectance = (1.0 - base_transmittance) * 0.95 * 0.5;
+    const denominator = 1.0 - base_reflectance * base_reflectance;
+    const expected = (base_transmittance * base_transmittance) / denominator;
+    try std.testing.expectApproxEqAbs(expected, one_doubling.transmittance, 1.0e-12);
 }

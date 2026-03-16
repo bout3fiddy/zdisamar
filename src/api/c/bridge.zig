@@ -376,11 +376,12 @@ test "default engine options lock C ABI fields" {
 }
 
 test "result description counts plugin provenance entries" {
-    const result = Result.init(7, "workspace-a", "scene-a", .{
+    var result = try Result.init(std.testing.allocator, 7, "workspace-a", "scene-a", .{
         .plan_id = 7,
         .workspace_label = "workspace-a",
         .scene_id = "scene-a",
     });
+    defer result.deinit(std.testing.allocator);
     const described = describeResult(result);
     try std.testing.expectEqual(@as(u64, 7), described.plan_id);
     try std.testing.expectEqual(@as(?[*:0]const u8, null), described.scene_id);

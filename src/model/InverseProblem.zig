@@ -79,7 +79,9 @@ pub const InverseProblem = struct {
     pub fn deinitOwned(self: *InverseProblem, allocator: Allocator) void {
         self.state_vector.deinitOwned(allocator);
         self.measurements.deinitOwned(allocator);
-        for (self.covariance_blocks) |*block| block.deinitOwned(allocator);
+        for (self.covariance_blocks) |block| {
+            if (block.member_names.len != 0) allocator.free(block.member_names);
+        }
         if (self.covariance_blocks.len != 0) allocator.free(self.covariance_blocks);
         self.* = .{};
     }

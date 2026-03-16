@@ -64,7 +64,8 @@ pub fn solveWithEvaluator(
         0.0,
         @as(f64, @floatFromInt(state.len)),
     );
-    return common.outcome(
+    return try common.outcome(
+        allocator,
         problem,
         .oe,
         iterations,
@@ -120,7 +121,7 @@ test "oe retrieval accepts canonical state vectors and converges" {
                 .wavelength_end_nm = 465.0,
                 .mean_radiance = 1.1,
                 .mean_irradiance = 2.0,
-                .mean_reflectance = 0.55,
+                .mean_surrogate_reflectance = 0.55,
                 .mean_noise_sigma = 0.08,
                 .mean_jacobian = 0.06,
             },
@@ -179,7 +180,7 @@ test "oe retrieval reports non-converged when the iteration budget is exhausted"
                 .wavelength_end_nm = 465.0,
                 .mean_radiance = 4.0,
                 .mean_irradiance = 2.0,
-                .mean_reflectance = 0.95,
+                .mean_surrogate_reflectance = 0.95,
                 .mean_noise_sigma = 0.10,
                 .mean_jacobian = -0.04,
             },

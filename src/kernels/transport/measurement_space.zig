@@ -14,6 +14,12 @@ const TransportProviders = @import("../../plugins/providers/transport.zig");
 
 const Allocator = std.mem.Allocator;
 
+// This field is still a placeholder sun-normalized proxy until WP-02 restores
+// method-faithful radiance/irradiance normalization. Export it with an explicit
+// surrogate label so downstream users do not treat it as a physical reflectance.
+pub const surrogate_reflectance_export_name = "surrogate_reflectance";
+pub const fitted_surrogate_reflectance_export_name = "fitted_surrogate_reflectance";
+
 pub const ProviderBindings = struct {
     transport: TransportProviders.Provider,
     surface: SurfaceProviders.Provider,
@@ -27,7 +33,7 @@ pub const MeasurementSpaceSummary = struct {
     wavelength_end_nm: f64,
     mean_radiance: f64,
     mean_irradiance: f64,
-    mean_reflectance: f64,
+    mean_surrogate_reflectance: f64,
     mean_noise_sigma: f64,
     mean_jacobian: ?f64 = null,
 };
@@ -37,7 +43,7 @@ pub const MeasurementSpaceProduct = struct {
     wavelengths: []f64,
     radiance: []f64,
     irradiance: []f64,
-    reflectance: []f64,
+    surrogate_reflectance: []f64,
     noise_sigma: []f64,
     jacobian: ?[]f64 = null,
     effective_air_mass_factor: f64,
@@ -56,7 +62,7 @@ pub const MeasurementSpaceProduct = struct {
         allocator.free(self.wavelengths);
         allocator.free(self.radiance);
         allocator.free(self.irradiance);
-        allocator.free(self.reflectance);
+        allocator.free(self.surrogate_reflectance);
         allocator.free(self.noise_sigma);
         if (self.jacobian) |values| allocator.free(values);
         self.* = undefined;
@@ -67,7 +73,7 @@ pub const Buffers = struct {
     wavelengths: []f64,
     radiance: []f64,
     irradiance: []f64,
-    reflectance: []f64,
+    surrogate_reflectance: []f64,
     scratch: []f64,
     jacobian: ?[]f64 = null,
     noise_sigma: ?[]f64 = null,
@@ -77,7 +83,7 @@ pub const SummaryWorkspace = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
     irradiance: []f64 = &.{},
-    reflectance: []f64 = &.{},
+    surrogate_reflectance: []f64 = &.{},
     scratch: []f64 = &.{},
     jacobian: []f64 = &.{},
     noise_sigma: []f64 = &.{},
@@ -86,7 +92,7 @@ pub const SummaryWorkspace = struct {
         freeBuffer(allocator, self.wavelengths);
         freeBuffer(allocator, self.radiance);
         freeBuffer(allocator, self.irradiance);
-        freeBuffer(allocator, self.reflectance);
+        freeBuffer(allocator, self.surrogate_reflectance);
         freeBuffer(allocator, self.scratch);
         freeBuffer(allocator, self.jacobian);
         freeBuffer(allocator, self.noise_sigma);
@@ -107,7 +113,7 @@ pub const SummaryWorkspace = struct {
         try ensureBufferCapacity(allocator, &self.wavelengths, sample_count);
         try ensureBufferCapacity(allocator, &self.radiance, sample_count);
         try ensureBufferCapacity(allocator, &self.irradiance, sample_count);
-        try ensureBufferCapacity(allocator, &self.reflectance, sample_count);
+        try ensureBufferCapacity(allocator, &self.surrogate_reflectance, sample_count);
         try ensureBufferCapacity(allocator, &self.scratch, sample_count);
         if (wants_jacobian) {
             try ensureBufferCapacity(allocator, &self.jacobian, sample_count);
@@ -120,7 +126,7 @@ pub const SummaryWorkspace = struct {
             .wavelengths = self.wavelengths[0..sample_count],
             .radiance = self.radiance[0..sample_count],
             .irradiance = self.irradiance[0..sample_count],
-            .reflectance = self.reflectance[0..sample_count],
+            .surrogate_reflectance = self.surrogate_reflectance[0..sample_count],
             .scratch = self.scratch[0..sample_count],
             .jacobian = if (wants_jacobian) self.jacobian[0..sample_count] else null,
             .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
@@ -172,7 +178,7 @@ pub fn simulate(
 
     var radiance_sum: f64 = 0.0;
     var irradiance_sum: f64 = 0.0;
-    var reflectance_sum: f64 = 0.0;
+    var surrogate_reflectance_sum: f64 = 0.0;
     var noise_sum: f64 = 0.0;
     var jacobian_sum: f64 = 0.0;
 
@@ -230,10 +236,10 @@ pub fn simulate(
     try calibration.applySignal(calibration_config, buffers.irradiance, buffers.irradiance);
 
     for (0..sample_count) |index| {
-        buffers.reflectance[index] = buffers.radiance[index] / @max(buffers.irradiance[index], 1e-9);
+        buffers.surrogate_reflectance[index] = buffers.radiance[index] / @max(buffers.irradiance[index], 1e-9);
         radiance_sum += buffers.radiance[index];
         irradiance_sum += buffers.irradiance[index];
-        reflectance_sum += buffers.reflectance[index];
+        surrogate_reflectance_sum += buffers.surrogate_reflectance[index];
     }
 
     if (buffers.noise_sigma) |noise_sigma| {
@@ -270,7 +276,7 @@ pub fn simulate(
         .wavelength_end_nm = buffers.wavelengths[sample_count - 1],
         .mean_radiance = radiance_sum / @as(f64, @floatFromInt(sample_count)),
         .mean_irradiance = irradiance_sum / @as(f64, @floatFromInt(sample_count)),
-        .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(sample_count)),
+        .mean_surrogate_reflectance = surrogate_reflectance_sum / @as(f64, @floatFromInt(sample_count)),
         .mean_noise_sigma = if (buffers.noise_sigma != null)
             noise_sum / @as(f64, @floatFromInt(sample_count))
         else
@@ -323,8 +329,8 @@ pub fn simulateProduct(
     errdefer allocator.free(radiance);
     const irradiance = try allocator.alloc(f64, sample_count);
     errdefer allocator.free(irradiance);
-    const reflectance = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(reflectance);
+    const surrogate_reflectance = try allocator.alloc(f64, sample_count);
+    errdefer allocator.free(surrogate_reflectance);
     const scratch = try allocator.alloc(f64, sample_count);
     defer allocator.free(scratch);
     const noise_sigma = if (providers.noise.materializesSigma(scene))
@@ -343,7 +349,7 @@ pub fn simulateProduct(
         .wavelengths = wavelengths,
         .radiance = radiance,
         .irradiance = irradiance,
-        .reflectance = reflectance,
+        .surrogate_reflectance = surrogate_reflectance,
         .scratch = scratch,
         .jacobian = jacobian,
         .noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
@@ -354,7 +360,7 @@ pub fn simulateProduct(
         .wavelengths = wavelengths,
         .radiance = radiance,
         .irradiance = irradiance,
-        .reflectance = reflectance,
+        .surrogate_reflectance = surrogate_reflectance,
         .noise_sigma = noise_sigma,
         .jacobian = jacobian,
         .effective_air_mass_factor = prepared.effective_air_mass_factor,
@@ -376,7 +382,7 @@ fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
         buffers.wavelengths.len != sample_count or
         buffers.radiance.len != sample_count or
         buffers.irradiance.len != sample_count or
-        buffers.reflectance.len != sample_count or
+        buffers.surrogate_reflectance.len != sample_count or
         buffers.scratch.len != sample_count)
     {
         return error.ShapeMismatch;
@@ -616,8 +622,8 @@ test "measurement-space simulation composes transport, calibration, convolution,
     try std.testing.expectEqual(@as(u32, 16), summary.sample_count);
     try std.testing.expect(summary.mean_radiance > 0.0);
     try std.testing.expect(summary.mean_irradiance > 0.0);
-    try std.testing.expect(summary.mean_reflectance > 0.0);
-    try std.testing.expect(summary.mean_reflectance < 10.0);
+    try std.testing.expect(summary.mean_surrogate_reflectance > 0.0);
+    try std.testing.expect(summary.mean_surrogate_reflectance < 10.0);
     try std.testing.expect(summary.mean_noise_sigma > 0.0);
     try std.testing.expect(summary.mean_jacobian != null);
 }
@@ -684,7 +690,7 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
     try std.testing.expectApproxEqAbs(first_summary.mean_radiance, second_summary.mean_radiance, 1.0e-12);
     try std.testing.expectApproxEqAbs(first_summary.mean_radiance, product.summary.mean_radiance, 1.0e-12);
     try std.testing.expectApproxEqAbs(first_summary.mean_irradiance, product.summary.mean_irradiance, 1.0e-12);
-    try std.testing.expectApproxEqAbs(first_summary.mean_reflectance, product.summary.mean_reflectance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(first_summary.mean_surrogate_reflectance, product.summary.mean_surrogate_reflectance, 1.0e-12);
     try std.testing.expectApproxEqAbs(first_summary.mean_noise_sigma, product.summary.mean_noise_sigma, 1.0e-12);
     try std.testing.expectApproxEqAbs(first_summary.mean_jacobian.?, product.summary.mean_jacobian.?, 1.0e-12);
 }
@@ -788,7 +794,7 @@ test "measurement-space product materializes spectral vectors and physical field
     try std.testing.expectEqual(@as(usize, 12), product.wavelengths.len);
     try std.testing.expect(product.radiance[0] > 0.0);
     try std.testing.expect(product.irradiance[0] > 0.0);
-    try std.testing.expect(product.reflectance[0] > 0.0);
+    try std.testing.expect(product.surrogate_reflectance[0] > 0.0);
     try std.testing.expect(product.noise_sigma[0] > 0.0);
     try std.testing.expect(product.jacobian != null);
     try std.testing.expectEqual(prepared.total_optical_depth, product.total_optical_depth);
@@ -832,10 +838,11 @@ test "measurement-space uses external high-resolution solar spectra when operati
 
     try std.testing.expect(product.irradiance[0] < product.irradiance[1]);
     try std.testing.expect(product.irradiance[1] < product.irradiance[2]);
-    try std.testing.expect(product.reflectance[0] > product.reflectance[2]);
+    try std.testing.expect(product.surrogate_reflectance[0] > product.surrogate_reflectance[2]);
 }
 
 test "measurement-space operational integration uses high-resolution instrument sampling" {
+    const operational_sigma = [_]f64{0.02} ** 12;
     const plain_scene: Scene = .{
         .id = "measurement-plain",
         .spectral_grid = .{
@@ -863,6 +870,7 @@ test "measurement-space operational integration uses high-resolution instrument 
             .noise_model = "snr_from_input",
             .wavelength_shift_nm = 0.018,
             .instrument_line_fwhm_nm = 0.54,
+            .ingested_noise_sigma = &operational_sigma,
         },
         .atmosphere = plain_scene.atmosphere,
     };
@@ -887,6 +895,7 @@ test "measurement-space operational integration uses high-resolution instrument 
 }
 
 test "measurement-space operational integration honors explicit isrf table weights" {
+    const gaussian_sigma = [_]f64{0.02} ** 12;
     const gaussian_scene: Scene = .{
         .id = "measurement-operational-gaussian",
         .spectral_grid = .{
@@ -903,6 +912,7 @@ test "measurement-space operational integration honors explicit isrf table weigh
             .instrument_line_fwhm_nm = 0.54,
             .high_resolution_step_nm = 0.08,
             .high_resolution_half_span_nm = 0.32,
+            .ingested_noise_sigma = &gaussian_sigma,
         },
         .atmosphere = .{
             .layer_count = 12,
@@ -925,6 +935,7 @@ test "measurement-space operational integration honors explicit isrf table weigh
                 .offsets_nm = .{ -0.32, -0.16, 0.0, 0.16, 0.32, 0.0, 0.0, 0.0, 0.0 },
                 .weights = .{ 0.08, 0.24, 0.36, 0.22, 0.10, 0.0, 0.0, 0.0, 0.0 },
             },
+            .ingested_noise_sigma = &gaussian_sigma,
         },
         .atmosphere = gaussian_scene.atmosphere,
     };
@@ -948,6 +959,7 @@ test "measurement-space operational integration honors explicit isrf table weigh
 }
 
 test "measurement-space operational integration selects wavelength-indexed isrf rows" {
+    const indexed_sigma = [_]f64{0.02} ** 3;
     const global_shape_scene: Scene = .{
         .id = "measurement-operational-global-shape",
         .spectral_grid = .{
@@ -969,6 +981,7 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
                 .offsets_nm = .{ -0.32, -0.16, 0.0, 0.16, 0.32, 0.0, 0.0, 0.0, 0.0 },
                 .weights = .{ 0.08, 0.24, 0.36, 0.22, 0.10, 0.0, 0.0, 0.0, 0.0 },
             },
+            .ingested_noise_sigma = &indexed_sigma,
         },
         .atmosphere = .{
             .layer_count = 12,
@@ -998,6 +1011,7 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
             .high_resolution_half_span_nm = 0.32,
             .instrument_line_shape = global_shape_scene.observation_model.instrument_line_shape,
             .instrument_line_shape_table = indexed_table,
+            .ingested_noise_sigma = &indexed_sigma,
         },
         .atmosphere = global_shape_scene.atmosphere,
     };

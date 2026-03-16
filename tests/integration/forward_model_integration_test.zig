@@ -62,7 +62,7 @@ test "engine execute materializes measurement-space summaries through the typed 
     try std.testing.expectEqual(@as(u32, 48), measurement_space.sample_count);
     try std.testing.expect(measurement_space.mean_radiance > 0.0);
     try std.testing.expect(measurement_space.mean_irradiance > 0.0);
-    try std.testing.expect(measurement_space.mean_reflectance > 0.0);
+    try std.testing.expect(measurement_space.mean_surrogate_reflectance > 0.0);
     try std.testing.expect(measurement_space.mean_noise_sigma > 0.0);
     try std.testing.expect(measurement_space.mean_jacobian != null);
     try std.testing.expectEqual(measurement_space.sample_count, @as(u32, @intCast(measurement_product.wavelengths.len)));

@@ -198,6 +198,7 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
     scene.observation_model.operational_solar_spectrum = try metadata.operational_solar_spectrum.clone(allocator);
     scene.observation_model.o2_operational_lut = try metadata.o2_operational_lut.clone(allocator);
     scene.observation_model.o2o2_operational_lut = try metadata.o2o2_operational_lut.clone(allocator);
+    scene.observation_model.ingested_noise_sigma = try loaded.noiseSigmaForKind(allocator, .radiance);
 
     var request = Request.init(scene);
     request.expected_derivative_mode = options.derivative_mode;

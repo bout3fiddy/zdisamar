@@ -3,6 +3,8 @@ const std = @import("std");
 pub const Error = error{
     ShapeMismatch,
     InvalidNoiseScaleFactor,
+    InvalidInputNoiseSigma,
+    MissingInputNoiseSigma,
     SingularWhiteningWeight,
 };
 
@@ -24,6 +26,17 @@ pub fn whitenResiduals(residual: []const f64, sigma: []const f64, output: []f64)
             return error.SingularWhiteningWeight;
         }
         slot.* = value / sigma_value;
+    }
+}
+
+pub fn copyInputSigma(input_sigma: []const f64, output: []f64) Error!void {
+    if (input_sigma.len == 0) return error.MissingInputNoiseSigma;
+    if (input_sigma.len != output.len) return error.ShapeMismatch;
+    for (input_sigma, output) |sigma_value, *slot| {
+        if (!std.math.isFinite(sigma_value) or sigma_value <= 0.0) {
+            return error.InvalidInputNoiseSigma;
+        }
+        slot.* = sigma_value;
     }
 }
 
@@ -49,4 +62,13 @@ test "noise helpers reject invalid scale factors and singular whitening weights"
     const invalid_sigma = [_]f64{0.0};
     var whitened: [1]f64 = undefined;
     try std.testing.expectError(error.SingularWhiteningWeight, whitenResiduals(&residual, &invalid_sigma, &whitened));
+}
+
+test "noise helpers require explicit positive sigma input for snr-driven paths" {
+    var sigma: [2]f64 = undefined;
+    try std.testing.expectError(error.MissingInputNoiseSigma, copyInputSigma(&.{}, &sigma));
+    try std.testing.expectError(error.InvalidInputNoiseSigma, copyInputSigma(&.{ 0.02, 0.0 }, &sigma));
+    try copyInputSigma(&.{ 0.02, 0.03 }, &sigma);
+    try std.testing.expectEqual(@as(f64, 0.02), sigma[0]);
+    try std.testing.expectEqual(@as(f64, 0.03), sigma[1]);
 }

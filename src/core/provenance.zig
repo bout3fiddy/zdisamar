@@ -26,16 +26,31 @@ pub const Provenance = struct {
         scene_id: []const u8,
         numerical_mode: []const u8,
     ) !Provenance {
+        const model_family = try allocator.dupe(u8, plan.template.model_family);
+        errdefer allocator.free(model_family);
+        const solver_route = try allocator.dupe(u8, plan.template.providers.transport_solver);
+        errdefer allocator.free(solver_route);
+        const transport_family = try allocator.dupe(u8, plan.transport_route.family.provenanceLabel());
+        errdefer allocator.free(transport_family);
+        const derivative_mode = try allocator.dupe(u8, @tagName(plan.transport_route.derivative_mode));
+        errdefer allocator.free(derivative_mode);
+        const owned_numerical_mode = try allocator.dupe(u8, numerical_mode);
+        errdefer allocator.free(owned_numerical_mode);
+        const owned_workspace_label = try allocator.dupe(u8, workspace_label);
+        errdefer allocator.free(owned_workspace_label);
+        const owned_scene_id = try allocator.dupe(u8, scene_id);
+        errdefer allocator.free(owned_scene_id);
+
         return .{
-            .model_family = plan.template.model_family,
-            .solver_route = plan.template.providers.transport_solver,
-            .transport_family = plan.transport_route.family.provenanceLabel(),
-            .derivative_mode = @tagName(plan.transport_route.derivative_mode),
-            .numerical_mode = numerical_mode,
+            .model_family = model_family,
+            .solver_route = solver_route,
+            .transport_family = transport_family,
+            .derivative_mode = derivative_mode,
+            .numerical_mode = owned_numerical_mode,
             .plan_id = plan.id,
             .plugin_inventory_generation = plan.plugin_snapshot.generation,
-            .workspace_label = workspace_label,
-            .scene_id = scene_id,
+            .workspace_label = owned_workspace_label,
+            .scene_id = owned_scene_id,
             .plugin_version_entries = try dupeSnapshotVersionLabels(allocator, plan.plugin_snapshot.capabilities),
             .dataset_hashes = try dupeStringSlice(allocator, plan.plugin_snapshot.datasetHashes()),
             .native_capability_slots = try dupeStringSlice(allocator, plan.plugin_snapshot.nativeCapabilitySlots()),
@@ -55,6 +70,13 @@ pub const Provenance = struct {
         freeStringSlice(allocator, self.native_capability_slots);
         freeStringSlice(allocator, self.native_entry_symbols);
         freeStringSlice(allocator, self.native_library_paths);
+        allocator.free(self.model_family);
+        allocator.free(self.solver_route);
+        allocator.free(self.transport_family);
+        allocator.free(self.derivative_mode);
+        allocator.free(self.numerical_mode);
+        allocator.free(self.workspace_label);
+        allocator.free(self.scene_id);
         self.* = .{};
     }
 

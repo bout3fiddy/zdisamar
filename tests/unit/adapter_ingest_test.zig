@@ -16,9 +16,18 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectEqualStrings("radiance", measurement.product);
     try std.testing.expectEqual(@as(u32, 2), measurement.sample_count);
 
-    const request = loaded.toRequest("demo-scene", &[_][]const u8{"radiance"});
+    var request = try loaded.toRequest(std.testing.allocator, "demo-scene", &[_][]const u8{"radiance"});
+    defer request.deinitOwned(std.testing.allocator);
     try std.testing.expectEqualStrings("demo-scene", request.scene.id);
     try std.testing.expectEqual(@as(u32, 2), request.scene.spectral_grid.sample_count);
+    try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.ingested_noise_sigma.len);
+    try std.testing.expectApproxEqRel(@as(f64, 1.116153e13 / 1485.0), request.scene.observation_model.ingested_noise_sigma[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 1.096153e13 / 1445.0), request.scene.observation_model.ingested_noise_sigma[1], 1.0e-12);
+
+    var copied_sigma: [2]f64 = undefined;
+    try zdisamar.spectra.noise.copyInputSigma(request.scene.observation_model.ingested_noise_sigma, &copied_sigma);
+    try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[0], copied_sigma[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[1], copied_sigma[1], 1.0e-12);
 }
 
 test "spectral ascii ingest preserves explicit high-resolution grid and isrf table metadata" {

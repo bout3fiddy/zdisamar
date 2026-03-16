@@ -222,7 +222,8 @@ pub const ExecutionProgram = struct {
             if (stage_execution.kind == .retrieval and stage_execution.stage.inverse != null) {
                 const source = stage_execution.stage.inverse.?.measurements.source;
                 switch (source.kind) {
-                    .none, .external_observation => {},
+                    .none => {},
+                    .external_observation => return error.MissingMeasurementBinding,
                     .stage_product => {
                         const source_ref = findProduct(self.products, source.name) orelse return error.MissingMeasurementBinding;
                         if (source_ref.kind != .measurement_space) return error.UnsupportedMeasurementBinding;

@@ -82,15 +82,16 @@ pub const Result = struct {
     retrieval_products: RetrievalProducts = .{},
 
     pub fn init(
+        allocator: Allocator,
         plan_id: u64,
         workspace_label: []const u8,
         scene_id: []const u8,
         provenance: Provenance,
-    ) Result {
+    ) !Result {
         return .{
             .plan_id = plan_id,
-            .workspace_label = workspace_label,
-            .scene_id = scene_id,
+            .workspace_label = try allocator.dupe(u8, workspace_label),
+            .scene_id = try allocator.dupe(u8, scene_id),
             .provenance = provenance,
             .diagnostics = Diagnostics.fromSpec(.{ .provenance = true }, "Prepared transport routing and provenance are wired; full transport and retrieval numerics remain scaffold-only."),
         };
@@ -102,7 +103,10 @@ pub const Result = struct {
     }
 
     pub fn attachRetrievalOutcome(self: *Result, outcome: RetrievalOutcome) void {
-        self.retrieval = outcome;
+        var owned = outcome;
+        // The retrieval result keeps fitted products, not a borrowed scene graph snapshot.
+        owned.fitted_scene = null;
+        self.retrieval = owned;
     }
 
     pub fn attachRetrievalProducts(self: *Result, products: RetrievalProducts) void {
@@ -120,11 +124,15 @@ pub const Result = struct {
             self.retrieval = null;
         }
         self.provenance.deinit(allocator);
+        allocator.free(self.workspace_label);
+        allocator.free(self.scene_id);
+        self.workspace_label = "";
+        self.scene_id = "";
     }
 };
 
 test "result can carry summary-only measurement-space output" {
-    var result = Result.init(7, "unit", "scene-summary", .{});
+    var result = try Result.init(std.testing.allocator, 7, "unit", "scene-summary", .{});
     defer result.deinit(std.testing.allocator);
 
     result.measurement_space = .{
@@ -133,11 +141,25 @@ test "result can carry summary-only measurement-space output" {
         .wavelength_end_nm = 310.0,
         .mean_radiance = 1.0,
         .mean_irradiance = 2.0,
-        .mean_reflectance = 0.5,
+        .mean_surrogate_reflectance = 0.5,
         .mean_noise_sigma = 0.01,
     };
 
     try std.testing.expect(result.measurement_space != null);
     try std.testing.expectEqual(@as(?MeasurementSpaceProduct, null), result.measurement_space_product);
     try std.testing.expectEqual(@as(u32, 4), result.measurement_space.?.sample_count);
+}
+
+test "result owns identifier strings independently of caller buffers" {
+    const workspace_label = try std.fmt.allocPrint(std.testing.allocator, "workspace-{d}", .{11});
+    const scene_id = try std.fmt.allocPrint(std.testing.allocator, "scene-{d}", .{29});
+
+    var result = try Result.init(std.testing.allocator, 11, workspace_label, scene_id, .{});
+    defer result.deinit(std.testing.allocator);
+
+    std.testing.allocator.free(workspace_label);
+    std.testing.allocator.free(scene_id);
+
+    try std.testing.expectEqualStrings("workspace-11", result.workspace_label);
+    try std.testing.expectEqualStrings("scene-29", result.scene_id);
 }

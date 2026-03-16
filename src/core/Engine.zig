@@ -32,6 +32,7 @@ const Logging = @import("logging.zig");
 pub const EngineOptions = struct {
     abi_version: u32 = 1,
     allow_native_plugins: bool = false,
+    // Cache capacity for prepared-plan reuse. This is not a lifetime-total cap.
     max_prepared_plans: usize = 64,
     log_policy: Logging.Policy = .{},
 };
@@ -96,10 +97,6 @@ pub const Engine = struct {
 
         if (!self.catalog.supportsModelFamily(template.model_family)) {
             return errors.PreparationError.UnsupportedModelFamily;
-        }
-
-        if (self.next_plan_id > self.options.max_prepared_plans) {
-            return errors.PreparationError.PreparedPlanLimitExceeded;
         }
 
         const providers = try resolvePlanProviders(template);
@@ -264,6 +261,7 @@ fn initializeResult(
     errdefer provenance.deinit(self.allocator);
 
     return Result.init(
+        self.allocator,
         plan.id,
         workspace.label,
         request.scene.id,
@@ -307,19 +305,7 @@ fn executeRetrievalIfRequested(
     const retrieval_provider = plan.providers.retrieval orelse return errors.ExecutionError.InvalidRequest;
     var summary_workspace: MeasurementSpace.SummaryWorkspace = .{};
     defer summary_workspace.deinit(self.allocator);
-    var retrieval_request = request;
-    if (retrieval_request.measurement_binding == null and retrieval_request.inverse_problem != null) {
-        const source = retrieval_request.inverse_problem.?.measurements.source;
-        if (source.kind == .external_observation) {
-            retrieval_request.measurement_binding = .{
-                .source_name = if (source.name.len != 0) source.name else retrieval_request.inverse_problem.?.measurements.product,
-                .observable = retrieval_request.inverse_problem.?.measurements.observable,
-                .product = &result.measurement_space_product.?,
-            };
-        }
-    }
-
-    const retrieval_problem = RetrievalContracts.RetrievalProblem.fromRequest(retrieval_request) catch {
+    const retrieval_problem = RetrievalContracts.RetrievalProblem.fromRequest(request) catch {
         return errors.ExecutionError.InvalidRequest;
     };
     const retrieval_context: RetrievalExecutionContext = .{
@@ -327,13 +313,14 @@ fn executeRetrievalIfRequested(
         .plan = plan,
         .summary_workspace = &summary_workspace,
     };
-    const retrieval_outcome = retrieval_provider.solve(self.allocator, retrieval_problem, .{
+    var retrieval_outcome = retrieval_provider.solve(self.allocator, retrieval_problem, .{
         .context = @ptrCast(&retrieval_context),
         .evaluate = evaluateRetrievalScene,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return errors.ExecutionError.InvalidRequest,
     };
+    errdefer retrieval_outcome.deinit(self.allocator);
     const retrieval_products = materializeRetrievalProducts(
         self.allocator,
         plan,
@@ -411,28 +398,39 @@ fn materializeRetrievalProducts(
         owned.deinit(allocator);
     }
 
-    const jacobian = try materializeJacobianProduct(
-        allocator,
-        plan,
-        problem,
-        outcome,
-        fitted_measurement,
-    );
-    errdefer {
-        var owned = jacobian;
-        owned.deinit(allocator);
-    }
+    const observable = measurementObservable(problem);
+    const supports_measurement_observable = std.mem.eql(u8, observable, "radiance") or
+        std.mem.eql(u8, observable, "irradiance") or
+        std.mem.eql(u8, observable, MeasurementSpace.surrogate_reflectance_export_name);
 
-    const averaging_kernel = try materializeAveragingKernelProduct(
-        allocator,
-        problem,
-        outcome,
-        jacobian,
-    );
-    errdefer {
-        var owned = averaging_kernel;
+    const jacobian = if (supports_measurement_observable)
+        try materializeJacobianProduct(
+            allocator,
+            plan,
+            problem,
+            outcome,
+            fitted_measurement,
+        )
+    else
+        null;
+    errdefer if (jacobian) |product| {
+        var owned = product;
         owned.deinit(allocator);
-    }
+    };
+
+    const averaging_kernel = if (outcome.method.classification() == .surrogate)
+        null
+    else
+        try materializeAveragingKernelProduct(
+            allocator,
+            problem,
+            outcome,
+            jacobian orelse return error.InvalidRequest,
+        );
+    errdefer if (averaging_kernel) |kernel| {
+        var owned = kernel;
+        owned.deinit(allocator);
+    };
 
     return .{
         .state_vector = state_vector,
@@ -496,8 +494,8 @@ fn materializeJacobianProduct(
         defer perturbed_product.deinit(allocator);
 
         for (0..sample_count) |sample_index| {
-            const base_value = measurementValue(fitted_measurement, observable, sample_index);
-            const perturbed_value = measurementValue(perturbed_product, observable, sample_index);
+            const base_value = try measurementValue(fitted_measurement, observable, sample_index);
+            const perturbed_value = try measurementValue(perturbed_product, observable, sample_index);
             values[sample_index * state_count + state_index] = (perturbed_value - base_value) / delta;
         }
     }
@@ -624,10 +622,13 @@ fn measurementObservable(problem: RetrievalContracts.RetrievalProblem) []const u
     return problem.inverse_problem.measurements.product;
 }
 
-fn measurementValue(product: MeasurementSpaceProduct, observable: []const u8, index: usize) f64 {
-    if (std.mem.eql(u8, observable, "reflectance")) return product.reflectance[index];
+fn measurementValue(product: MeasurementSpaceProduct, observable: []const u8, index: usize) errors.Error!f64 {
+    if (std.mem.eql(u8, observable, "radiance")) return product.radiance[index];
     if (std.mem.eql(u8, observable, "irradiance")) return product.irradiance[index];
-    return product.radiance[index];
+    if (std.mem.eql(u8, observable, @import("../kernels/transport/measurement_space.zig").surrogate_reflectance_export_name)) {
+        return product.surrogate_reflectance[index];
+    }
+    return errors.Error.InvalidRequest;
 }
 
 fn jacobianStep(value: f64) f64 {
@@ -649,7 +650,11 @@ test "preparePlan validates lifecycle prerequisites and plan templates" {
 
     var first_plan = try engine.preparePlan(.{});
     defer first_plan.deinit();
-    try std.testing.expectError(errors.Error.PreparedPlanLimitExceeded, engine.preparePlan(.{}));
+
+    var second_plan = try engine.preparePlan(.{});
+    defer second_plan.deinit();
+    try std.testing.expectEqual(@as(u64, first_plan.id + 1), second_plan.id);
+    try std.testing.expectEqual(@as(usize, 1), engine.plan_cache.count());
 }
 
 test "preparePlan resolves typed transport routes from plan-time observation and derivative choices" {
@@ -956,7 +961,7 @@ test "engine retrieval execution uses summary evaluation and still materializes 
             .product = "radiance",
             .observable = "radiance",
             .sample_count = 24,
-            .source = .{ .kind = .external_observation, .name = "forward-measurement" },
+            .source = .{},
         },
     };
 

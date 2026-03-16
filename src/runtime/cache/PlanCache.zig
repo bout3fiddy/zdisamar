@@ -11,6 +11,7 @@ pub const Entry = struct {
 };
 
 pub const Options = struct {
+    // Maximum prepared plans retained for reuse before oldest entries are evicted.
     max_entries: usize = 64,
 };
 

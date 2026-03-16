@@ -35,6 +35,7 @@ pub const ObservationModel = struct {
     operational_solar_spectrum: OperationalSolarSpectrum = .{},
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
+    ingested_noise_sigma: []const f64 = &.{},
 
     pub fn instrumentSpec(self: ObservationModel) Instrument {
         return .{
@@ -71,6 +72,11 @@ pub const ObservationModel = struct {
         if (!std.math.isFinite(self.stray_light)) {
             return errors.Error.InvalidRequest;
         }
+        for (self.ingested_noise_sigma) |value| {
+            if (!std.math.isFinite(value) or value <= 0.0) {
+                return errors.Error.InvalidRequest;
+            }
+        }
         _ = try self.resolvedSampling();
         _ = try self.resolvedNoiseModel();
         try self.instrumentSpec().validate();
@@ -83,6 +89,8 @@ pub const ObservationModel = struct {
         self.operational_solar_spectrum = instrument.operational_solar_spectrum;
         self.o2_operational_lut = instrument.o2_operational_lut;
         self.o2o2_operational_lut = instrument.o2o2_operational_lut;
+        if (self.ingested_noise_sigma.len != 0) allocator.free(self.ingested_noise_sigma);
+        self.ingested_noise_sigma = &.{};
     }
 };
 

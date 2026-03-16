@@ -1,6 +1,7 @@
 const std = @import("std");
 const Spec = @import("spec.zig");
 const io = @import("io.zig");
+const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
 
 pub const Error = error{
     UnsupportedFormat,
@@ -237,7 +238,14 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/wavelength_nm", "measurement_space", product.wavelengths, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/toa_radiance", "measurement_space", product.radiance, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/solar_irradiance", "measurement_space", product.irradiance, &files_written);
-        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/reflectance", "measurement_space", product.reflectance, &files_written);
+        bytes_written += try writeFloat64Array(
+            allocator,
+            store_path,
+            "measurement_space/" ++ MeasurementSpace.surrogate_reflectance_export_name,
+            "measurement_space",
+            product.surrogate_reflectance,
+            &files_written,
+        );
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/noise_sigma", "measurement_space", product.noise_sigma, &files_written);
         if (product.jacobian) |jacobian| {
             bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/jacobian", "measurement_space", jacobian, &files_written);
@@ -324,7 +332,14 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/wavelength_nm", "retrieval/fitted_measurement", product.wavelengths, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/toa_radiance", "retrieval/fitted_measurement", product.radiance, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/solar_irradiance", "retrieval/fitted_measurement", product.irradiance, &files_written);
-        bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/reflectance", "retrieval/fitted_measurement", product.reflectance, &files_written);
+        bytes_written += try writeFloat64Array(
+            allocator,
+            store_path,
+            "retrieval/fitted_measurement/" ++ MeasurementSpace.fitted_surrogate_reflectance_export_name,
+            "retrieval/fitted_measurement",
+            product.surrogate_reflectance,
+            &files_written,
+        );
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/noise_sigma", "retrieval/fitted_measurement", product.noise_sigma, &files_written);
     }
 
@@ -637,7 +652,7 @@ test "zarr exporter emits group metadata and array stores" {
         .dataset_hashes = &dataset_hashes,
     };
     provenance.setPluginVersions(&[_][]const u8{"builtin.zarr@0.1.0"});
-    var result = @import("../../core/Result.zig").Result.init(9, "ws-zarr", "scene-zarr", provenance);
+    var result = try @import("../../core/Result.zig").Result.init(std.testing.allocator, 9, "ws-zarr", "scene-zarr", provenance);
     defer result.deinit(std.testing.allocator);
 
     const jacobian = try std.testing.allocator.dupe(f64, &.{ 0.21, 0.18, 0.16 });
@@ -649,14 +664,14 @@ test "zarr exporter emits group metadata and array stores" {
             .wavelength_end_nm = 465.0,
             .mean_radiance = 0.42,
             .mean_irradiance = 1.17,
-            .mean_reflectance = 0.36,
+            .mean_surrogate_reflectance = 0.36,
             .mean_noise_sigma = 0.01,
             .mean_jacobian = 0.18333333333333335,
         },
         .wavelengths = try std.testing.allocator.dupe(f64, &.{ 405.0, 435.0, 465.0 }),
         .radiance = try std.testing.allocator.dupe(f64, &.{ 0.35, 0.42, 0.49 }),
         .irradiance = try std.testing.allocator.dupe(f64, &.{ 1.12, 1.17, 1.22 }),
-        .reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
+        .surrogate_reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
         .noise_sigma = try std.testing.allocator.dupe(f64, &.{ 0.01, 0.011, 0.012 }),
         .jacobian = jacobian,
         .effective_air_mass_factor = 1.25,

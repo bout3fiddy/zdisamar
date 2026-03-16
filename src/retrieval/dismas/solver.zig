@@ -64,7 +64,8 @@ pub fn solveWithEvaluator(
         0.0,
         @as(f64, @floatFromInt(state.len)),
     );
-    return common.outcome(
+    return try common.outcome(
+        allocator,
         problem,
         .dismas,
         iterations,

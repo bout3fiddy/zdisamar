@@ -61,7 +61,8 @@ fn sceneNoiseSigma(scene: Scene, signal: []const f64, output: []f64) Error!void 
     return switch (scene.observation_model.resolvedNoiseModel() catch .none) {
         .shot_noise => shotNoiseSigma(scene, signal, output),
         .s5p_operational => s5pOperationalSigma(scene, signal, output),
-        .none, .snr_from_input => zeroSigma(scene, signal, output),
+        .snr_from_input => ingestedSigma(scene, signal, output),
+        .none => zeroSigma(scene, signal, output),
     };
 }
 
@@ -76,4 +77,9 @@ fn shotNoiseSigma(_: Scene, signal: []const f64, output: []f64) Error!void {
 
 fn s5pOperationalSigma(_: Scene, signal: []const f64, output: []f64) Error!void {
     try noise.shotNoiseStd(signal, 3.5, output);
+}
+
+fn ingestedSigma(scene: Scene, signal: []const f64, output: []f64) Error!void {
+    _ = signal;
+    try noise.copyInputSigma(scene.observation_model.ingested_noise_sigma, output);
 }

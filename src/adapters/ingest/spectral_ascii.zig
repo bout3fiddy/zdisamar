@@ -381,15 +381,41 @@ pub const LoadedSpectra = struct {
 
     pub fn toRequest(
         self: LoadedSpectra,
+        allocator: std.mem.Allocator,
         scene_id: []const u8,
         requested_products: []const []const u8,
-    ) Request {
+    ) !Request {
         var scene: Scene = .{ .id = scene_id };
         if (self.spectralGrid()) |grid| scene.spectral_grid = grid;
+        const preferred_kind = if (self.channelCount(.radiance) > 0) ChannelKind.radiance else ChannelKind.irradiance;
+        scene.observation_model.ingested_noise_sigma = try self.noiseSigmaForKind(allocator, preferred_kind);
 
         var request = Request.init(scene);
         request.requested_products = requested_products;
         return request;
+    }
+
+    pub fn noiseSigmaForKind(
+        self: LoadedSpectra,
+        allocator: std.mem.Allocator,
+        kind: ChannelKind,
+    ) ![]const f64 {
+        const sample_count = self.sampleCount(kind);
+        if (sample_count == 0) return &[_]f64{};
+
+        const sigma = try allocator.alloc(f64, sample_count);
+        errdefer allocator.free(sigma);
+
+        var cursor: usize = 0;
+        for (self.channels) |channel| {
+            if (channel.kind != kind) continue;
+            for (channel.samples) |sample| {
+                if (!std.math.isFinite(sample.snr) or sample.snr <= 0.0) return ParseError.InvalidLine;
+                sigma[cursor] = @abs(sample.value) / sample.snr;
+                cursor += 1;
+            }
+        }
+        return sigma;
     }
 };
 
@@ -863,9 +889,11 @@ test "spectral ascii loader parses channelized irradiance and radiance input" {
     const grid = loaded.spectralGrid().?;
     try std.testing.expectEqual(@as(u32, 2), grid.sample_count);
 
-    const request = loaded.toRequest("spectral-scene", &[_][]const u8{"radiance"});
+    var request = try loaded.toRequest(std.testing.allocator, "spectral-scene", &[_][]const u8{"radiance"});
+    defer request.deinitOwned(std.testing.allocator);
     try std.testing.expectEqualStrings("spectral-scene", request.scene.id);
     try std.testing.expectEqualStrings("radiance", request.requested_products[0]);
+    try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.ingested_noise_sigma.len);
 }
 
 test "spectral ascii loader parses operational geometry and auxiliary metadata" {

@@ -60,3 +60,21 @@ test "plan cache and batch runner execute against thread-bound prepared plans" {
     try std.testing.expectEqual(@as(u64, 2), runner.completed_jobs);
     try std.testing.expectEqual(@as(u64, 2), plans.get(11).?.run_count);
 }
+
+test "engine can repeatedly prepare and dispose plans without exhausting cache capacity" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{ .max_prepared_plans = 1 });
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    var last_plan_id: u64 = 0;
+    var iteration: usize = 0;
+    while (iteration < 4) : (iteration += 1) {
+        var plan = try engine.preparePlan(.{});
+        try std.testing.expect(plan.id > last_plan_id);
+        try std.testing.expectEqual(@as(usize, 1), engine.plan_cache.count());
+        last_plan_id = plan.id;
+        plan.deinit();
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), engine.plan_cache.count());
+}

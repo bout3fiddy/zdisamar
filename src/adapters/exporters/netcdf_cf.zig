@@ -1,6 +1,7 @@
 const std = @import("std");
 const Spec = @import("spec.zig");
 const io = @import("io.zig");
+const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
 
 const NC_DIMENSION: u32 = 10;
 const NC_VARIABLE: u32 = 11;
@@ -212,7 +213,14 @@ fn renderNetcdfClassicPayload(
         try addDoubleVariable(allocator, &dimensions, &variables, "wavelength_sample_count", "wavelength_nm", product.wavelengths);
         try addDoubleVariable(allocator, &dimensions, &variables, "radiance_sample_count", "toa_radiance", product.radiance);
         try addDoubleVariable(allocator, &dimensions, &variables, "irradiance_sample_count", "solar_irradiance", product.irradiance);
-        try addDoubleVariable(allocator, &dimensions, &variables, "reflectance_sample_count", "reflectance", product.reflectance);
+        try addDoubleVariable(
+            allocator,
+            &dimensions,
+            &variables,
+            "surrogate_reflectance_sample_count",
+            MeasurementSpace.surrogate_reflectance_export_name,
+            product.surrogate_reflectance,
+        );
         try addDoubleVariable(allocator, &dimensions, &variables, "noise_sample_count", "noise_sigma", product.noise_sigma);
         if (product.jacobian) |jacobian| {
             try addDoubleVariable(allocator, &dimensions, &variables, "jacobian_sample_count", "jacobian", jacobian);
@@ -249,7 +257,14 @@ fn renderNetcdfClassicPayload(
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_wavelength_sample_count", "fitted_wavelength_nm", product.wavelengths);
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_radiance_sample_count", "fitted_toa_radiance", product.radiance);
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_irradiance_sample_count", "fitted_solar_irradiance", product.irradiance);
-        try addDoubleVariable(allocator, &dimensions, &variables, "fitted_reflectance_sample_count", "fitted_reflectance", product.reflectance);
+        try addDoubleVariable(
+            allocator,
+            &dimensions,
+            &variables,
+            "fitted_surrogate_reflectance_sample_count",
+            MeasurementSpace.fitted_surrogate_reflectance_export_name,
+            product.surrogate_reflectance,
+        );
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_noise_sample_count", "fitted_noise_sigma", product.noise_sigma);
     }
 
@@ -659,7 +674,7 @@ test "netcdf/cf exporter renders a classic binary payload with named metadata ta
         .native_library_paths = &native_libraries,
     };
     provenance.setPluginVersions(&[_][]const u8{"builtin.netcdf_cf@0.1.0"});
-    var result = @import("../../core/Result.zig").Result.init(21, "ws", "scene-a", provenance);
+    var result = try @import("../../core/Result.zig").Result.init(std.testing.allocator, 21, "ws", "scene-a", provenance);
     defer result.deinit(std.testing.allocator);
 
     const jacobian = try std.testing.allocator.dupe(f64, &.{ 0.21, 0.18, 0.16 });
@@ -671,14 +686,14 @@ test "netcdf/cf exporter renders a classic binary payload with named metadata ta
             .wavelength_end_nm = 465.0,
             .mean_radiance = 0.42,
             .mean_irradiance = 1.17,
-            .mean_reflectance = 0.36,
+            .mean_surrogate_reflectance = 0.36,
             .mean_noise_sigma = 0.01,
             .mean_jacobian = 0.18333333333333335,
         },
         .wavelengths = try std.testing.allocator.dupe(f64, &.{ 405.0, 435.0, 465.0 }),
         .radiance = try std.testing.allocator.dupe(f64, &.{ 0.35, 0.42, 0.49 }),
         .irradiance = try std.testing.allocator.dupe(f64, &.{ 1.12, 1.17, 1.22 }),
-        .reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
+        .surrogate_reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
         .noise_sigma = try std.testing.allocator.dupe(f64, &.{ 0.01, 0.011, 0.012 }),
         .jacobian = jacobian,
         .effective_air_mass_factor = 1.25,

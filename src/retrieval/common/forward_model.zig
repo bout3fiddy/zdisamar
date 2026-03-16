@@ -36,7 +36,7 @@ fn evaluateSurrogateSummary(_: *const anyopaque, scene: Scene) anyerror!Measurem
     const irradiance = @as(f64, 1.55) + @as(f64, 0.35) * mu0;
     const attenuation = @as(f64, 1.0) + @as(f64, 0.45) * aerosol_depth + @as(f64, 0.08) * cloud_depth;
     const mean_radiance = (@as(f64, 0.55) + @as(f64, 1.35) * albedo + @as(f64, 0.08) * geometry_scale) * regime_scale / attenuation;
-    const mean_reflectance = std.math.clamp(mean_radiance / @max(irradiance, @as(f64, 1e-6)), @as(f64, 0.02), @as(f64, 0.98));
+    const mean_surrogate_reflectance = std.math.clamp(mean_radiance / @max(irradiance, @as(f64, 1e-6)), @as(f64, 0.02), @as(f64, 0.98));
     const mean_noise_sigma = @as(f64, 0.02) + @as(f64, 0.03) * (@as(f64, 1.0) - albedo) + @as(f64, 0.01) * aerosol_depth + @as(f64, 0.004) * cloud_depth;
     const mean_jacobian = @as(f64, 0.04) + @as(f64, 0.015) * geometry_scale + @as(f64, 0.005) * @min(aerosol_depth + cloud_depth, @as(f64, 4.0));
 
@@ -46,7 +46,7 @@ fn evaluateSurrogateSummary(_: *const anyopaque, scene: Scene) anyerror!Measurem
         .wavelength_end_nm = wavelength_end_nm,
         .mean_radiance = mean_radiance,
         .mean_irradiance = irradiance,
-        .mean_reflectance = mean_reflectance,
+        .mean_surrogate_reflectance = mean_surrogate_reflectance,
         .mean_noise_sigma = mean_noise_sigma,
         .mean_jacobian = mean_jacobian,
     };

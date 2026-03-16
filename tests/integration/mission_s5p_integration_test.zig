@@ -47,6 +47,8 @@ test "s5p operational mission adapter drives engine execution from measured spec
     try std.testing.expectEqual(@as(u32, 2), mission_run.measurement_summary.?.sample_count);
     try std.testing.expectEqualStrings("measured_channels", mission_run.request.scene.observation_model.sampling);
     try std.testing.expect(result.measurement_space_product != null);
+    try std.testing.expect(result.measurement_space_product.?.noise_sigma[0] > 0.0);
+    try std.testing.expect(result.measurement_space_product.?.noise_sigma[1] > 0.0);
 }
 
 test "s5p operational mission adapter applies geometry and auxiliary metadata replacements" {

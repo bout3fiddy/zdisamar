@@ -3,7 +3,8 @@ const Plan = @import("Plan.zig").Plan;
 const DiagnosticsSpec = @import("diagnostics.zig").DiagnosticsSpec;
 const errors = @import("errors.zig");
 const MeasurementSpaceProduct = @import("../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
-const Allocator = @import("std").mem.Allocator;
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 pub const Request = struct {
     pub const MeasurementBinding = struct {
@@ -42,13 +43,30 @@ pub const Request = struct {
         try self.validate();
 
         if (self.inverse_problem) |inverse_problem| {
-            if (inverse_problem.measurements.source.kind == .stage_product and self.measurement_binding == null) {
-                return errors.Error.InvalidRequest;
+            switch (inverse_problem.measurements.source.kind) {
+                .stage_product, .external_observation => {
+                    const binding = self.measurement_binding orelse return errors.Error.InvalidRequest;
+                    if (inverse_problem.measurements.source.name.len != 0 and
+                        !std.mem.eql(u8, inverse_problem.measurements.source.name, binding.source_name))
+                    {
+                        return errors.Error.InvalidRequest;
+                    }
+                    if (binding.observable.len != 0 and
+                        inverse_problem.measurements.observable.len != 0 and
+                        !std.mem.eql(u8, inverse_problem.measurements.observable, binding.observable))
+                    {
+                        return errors.Error.InvalidRequest;
+                    }
+                    if (binding.product.summary.sample_count != inverse_problem.measurements.sample_count) {
+                        return errors.Error.InvalidRequest;
+                    }
+                },
+                else => {},
             }
         }
 
         if (self.expected_derivative_mode) |mode| {
-            if (mode != plan.template.scene_blueprint.derivative_mode) {
+            if (mode != plan.transport_route.derivative_mode) {
                 return errors.Error.DerivativeModeMismatch;
             }
         }

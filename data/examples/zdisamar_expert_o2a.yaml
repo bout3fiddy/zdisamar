@@ -202,9 +202,9 @@ experiment:
         observable: radiance
         apply_noise: true
 
-      truth_reflectance:
+      truth_surrogate_reflectance:
         kind: measurement_space
-        observable: reflectance
+        observable: surrogate_reflectance
         apply_noise: false
 
       truth_diagnostics:
@@ -356,9 +356,6 @@ experiment:
 
       fitted_radiance:
         kind: fitted_measurement
-
-      averaging_kernel:
-        kind: averaging_kernel
 
       jacobian:
         kind: jacobian
