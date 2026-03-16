@@ -830,6 +830,31 @@ test "prepared plans keep plugin snapshots when registry changes later" {
     try std.testing.expect(second_result.provenance.dataset_hashes.len > first_result.provenance.dataset_hashes.len);
 }
 
+test "default builtin execution stays on typed providers when native plugins are disabled" {
+    var engine = Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    var plan = try engine.preparePlan(.{});
+    defer plan.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), plan.plugin_runtime.native_plugins.len);
+    try std.testing.expectEqual(@as(usize, 0), plan.plugin_snapshot.nativeCapabilitySlots().len);
+
+    var workspace = engine.createWorkspace("typed-provider-only");
+    const request = Request.init(.{
+        .id = "scene-typed-provider-only",
+        .spectral_grid = .{ .sample_count = 8 },
+    });
+    var result = try engine.execute(&plan, &workspace, request);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Result.Status.success, result.status);
+    try std.testing.expectEqual(@as(usize, 0), result.provenance.native_capability_slots.len);
+    try std.testing.expectEqualStrings("builtin.dispatcher", result.provenance.solver_route);
+    try std.testing.expect(result.measurement_space != null);
+}
+
 test "prepared plans own reusable cache hints and workspaces own reusable scratch" {
     var engine = Engine.init(std.testing.allocator, .{});
     defer engine.deinit();

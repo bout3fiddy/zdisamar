@@ -23,7 +23,7 @@ pub const Catalog = struct {
 
         try self.model_families.append(allocator, .{
             .name = "disamar_standard",
-            .description = "Bundled DISAMAR 1D family on the reusable RT platform scaffold.",
+            .description = "Bundled DISAMAR 1D family on the reusable typed-provider RT scaffold.",
         });
         try self.exporters.append(allocator, "netcdf_cf");
         try self.exporters.append(allocator, "zarr");

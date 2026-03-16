@@ -264,7 +264,6 @@ pub const CapabilityRegistry = struct {
         allocator: Allocator,
         allow_native_plugins: bool,
     ) !void {
-        _ = allow_native_plugins;
         if (self.bootstrapped) return;
 
         const start_manifest_len = self.manifests.items.len;
@@ -273,8 +272,17 @@ pub const CapabilityRegistry = struct {
         const start_bootstrapped = self.bootstrapped;
         errdefer self.rollback(allocator, start_manifest_len, start_capability_len, start_generation, start_bootstrapped);
 
-        inline for (BuiltinPlugins.execution_manifests) |manifest| {
-            try self.registerManifest(allocator, manifest, true);
+        inline for (BuiltinPlugins.manifests.declarative) |manifest| {
+            try self.registerManifest(allocator, manifest, false);
+        }
+        if (allow_native_plugins) {
+            inline for (BuiltinPlugins.manifests.native_runtime) |manifest| {
+                try self.registerManifest(allocator, manifest, true);
+            }
+        } else {
+            inline for (BuiltinPlugins.manifests.native_runtime) |manifest| {
+                try self.registerManifest(allocator, manifestWithoutNativeLane(manifest), false);
+            }
         }
 
         self.bootstrapped = true;
@@ -337,6 +345,19 @@ fn appendSelection(
 ) !void {
     const capability = findCapability(registry, slot, provider) orelse return error.MissingSelectedProvider;
     try appendCapability(registry, allocator, snapshot, selected_manifest_indices, capability.*);
+}
+
+fn manifestWithoutNativeLane(manifest: Manifest.PluginManifest) Manifest.PluginManifest {
+    return .{
+        .schema_version = manifest.schema_version,
+        .id = manifest.id,
+        .package = manifest.package,
+        .version = manifest.version,
+        .lane = .declarative,
+        .capabilities = manifest.capabilities,
+        .native = null,
+        .provenance = manifest.provenance,
+    };
 }
 
 fn appendAllForSlot(
@@ -520,6 +541,20 @@ test "bootstrap registers declarative and native lanes when policy allows them" 
 
     try std.testing.expect(saw_declarative);
     try std.testing.expect(saw_native);
+}
+
+test "bootstrap omits native runtime manifests when policy disallows them" {
+    var registry: CapabilityRegistry = .{};
+    defer registry.deinit(std.testing.allocator);
+
+    try registry.bootstrapBuiltin(std.testing.allocator, false);
+
+    for (registry.capabilities.items) |capability| {
+        try std.testing.expectEqual(Lane.declarative, capability.lane);
+    }
+    try std.testing.expect(findCapability(&registry, Slots.transport_solver, "builtin.dispatcher") != null);
+    try std.testing.expect(findCapability(&registry, Slots.surface_model, "builtin.lambertian_surface") != null);
+    try std.testing.expect(findCapability(&registry, Slots.retrieval_algorithm, "builtin.oe_solver") != null);
 }
 
 test "selection snapshot freezes only the providers used by the plan" {
