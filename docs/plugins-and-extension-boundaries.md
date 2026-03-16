@@ -44,7 +44,9 @@ The builtin example in the current tree is:
 
 Native plugins resolve through the C ABI under `src/api/c` and `src/plugins/abi`. They expose a manifest, an entry symbol, and `prepare` / `execute` hooks.
 
-Current builtin native capability surfaces are:
+The native lane remains the only supported external ABI boundary, but the default engine policy keeps `allow_native_plugins = false`. In that default mode, builtin manifests that carry native metadata are still registered for provenance and provider selection, but execution stays on typed Zig providers unless native loading is explicitly enabled.
+
+Builtin manifests with opt-in native metadata are:
 
 - `builtin.transport_dispatcher`
   - slot: `transport.solver`
@@ -59,6 +61,7 @@ Current builtin declarative capability surfaces include:
   - slot: `absorber.provider`
 - `builtin.generic_response`
   - slot: `instrument.response`
+- default-mode typed-provider registrations for transport, retrieval, and surface lanes when native loading is disabled
 - builtin noise registrations
   - slot: `noise.model`
   - providers catalogued today: `scene_noise`, `none_noise`, `shot_noise`, `s5p_operational_noise`
@@ -86,7 +89,7 @@ The sequence is:
 
 1. manifests and builtin providers are registered,
 2. `Engine.preparePlan(...)` snapshots the registry,
-3. native capabilities are resolved from that snapshot,
+3. native capabilities are resolved from that snapshot only when native loading is enabled,
 4. the frozen capability inventory is attached to provenance,
 5. request execution observes the already-selected runtime.
 
@@ -111,7 +114,7 @@ They establish the slots that matter scientifically:
 
 They also prove that the manifest, registry, runtime-resolution, and provenance path is working end to end.
 
-At present, the core O2 A-band science path still lives mainly in the typed core, model, runtime, and adapter code rather than inside dynamically loaded physics plugins. The plugin system therefore should be understood as an active extension boundary with real provenance and runtime hooks, not as a claim that all scientific content has been moved out of the main codebase.
+At present, the core O2 A-band science path still lives mainly in the typed core, model, runtime, and adapter code rather than inside dynamically loaded physics plugins. The plugin system therefore should be understood as an explicit extension boundary with real provenance and optional runtime hooks, not as a claim that all scientific content has been moved out of the main codebase or that native loading is the default path today.
 
 ## What Should Not Be A Plugin
 

@@ -1,6 +1,6 @@
 # Documentation
 
-This directory explains DISAMAR as an atmospheric radiative-transfer and retrieval model family and documents the current implementation in `zdisamar`. Earlier operational implementations were developed in Fortran at KNMI, but the material here is written about the present codebase: its scientific scope, execution model, operational interfaces, extension boundaries, and validated reference-data surfaces.
+This directory explains DISAMAR as an atmospheric radiative-transfer and retrieval model family and documents the current implementation in `zdisamar`. Earlier operational implementations were developed in Fortran at KNMI, but the material here is written about the present codebase: its scientific scope, execution model, operational interfaces, extension boundaries, and bounded validation surfaces. Where the current code still uses surrogate transport or retrieval lanes, the docs should say so directly instead of implying completed method-faithful parity.
 
 ## Recommended Reading Order
 

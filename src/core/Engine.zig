@@ -26,7 +26,7 @@ const MeasurementSpace = @import("../kernels/transport/measurement_space.zig");
 const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
 const RetrievalContracts = @import("../retrieval/common/contracts.zig");
 const RetrievalForwardModel = @import("../retrieval/common/forward_model.zig");
-const RetrievalSyntheticForward = @import("../retrieval/common/synthetic_forward.zig");
+const RetrievalSurrogateForward = @import("../retrieval/common/synthetic_forward.zig");
 const Logging = @import("logging.zig");
 
 pub const EngineOptions = struct {
@@ -481,7 +481,7 @@ fn materializeJacobianProduct(
         const delta = jacobianStep(perturbed_values[state_index]);
         perturbed_values[state_index] += delta;
 
-        const perturbed_scene = try RetrievalSyntheticForward.sceneForState(problem, perturbed_values);
+        const perturbed_scene = try RetrievalSurrogateForward.sceneForState(problem, perturbed_values);
         var prepared_optics = try plan.providers.optics.prepareForScene(allocator, perturbed_scene);
         defer prepared_optics.deinit(allocator);
 

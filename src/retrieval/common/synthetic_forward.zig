@@ -412,16 +412,16 @@ fn executionMode(problem: common.RetrievalProblem, method: common.Method) Execut
     };
 }
 
-test "synthetic forward supports canonical multi-parameter state application" {
+test "surrogate forward supports canonical multi-parameter state application" {
     const problem: common.RetrievalProblem = .{
         .scene = .{
-            .id = "synthetic-forward",
+            .id = "surrogate-forward",
             .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 32 },
             .surface = .{ .albedo = 0.08 },
             .observation_model = .{ .instrument = "synthetic", .regime = .nadir },
         },
         .inverse_problem = .{
-            .id = "synthetic-forward",
+            .id = "surrogate-forward",
             .state_vector = .{
                 .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
                     .{ .name = "surface_albedo", .target = "scene.surface.albedo", .prior = .{ .enabled = true, .mean = 0.08, .sigma = 0.02 } },
@@ -476,15 +476,15 @@ test "synthetic forward supports canonical multi-parameter state application" {
     try std.testing.expect(scene.observation_model.wavelength_shift_nm != 0.0);
 }
 
-test "synthetic forward rejects unknown retrieval state targets during layout resolution" {
+test "surrogate forward rejects unknown retrieval state targets during layout resolution" {
     const problem: common.RetrievalProblem = .{
         .scene = .{
-            .id = "synthetic-forward-invalid-target",
+            .id = "surrogate-forward-invalid-target",
             .spectral_grid = .{ .sample_count = 16 },
             .observation_model = .{ .instrument = "synthetic" },
         },
         .inverse_problem = .{
-            .id = "synthetic-forward-invalid-target",
+            .id = "surrogate-forward-invalid-target",
             .state_vector = .{
                 .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
                     .{ .name = "unknown", .target = "scene.unknown.target" },

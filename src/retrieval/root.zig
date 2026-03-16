@@ -7,13 +7,17 @@ pub const common = struct {
     pub const diagnostics = zdisamar.retrieval_modules.common.diagnostics;
     pub const forward_model = zdisamar.retrieval_modules.common.forward_model;
     pub const priors = zdisamar.retrieval_modules.common.priors;
-    pub const synthetic_forward = zdisamar.retrieval_modules.common.synthetic_forward;
     pub const surrogate_forward = zdisamar.retrieval_modules.common.surrogate_forward;
 };
 
 pub const oe = zdisamar.retrieval_modules.oe;
 pub const doas = zdisamar.retrieval_modules.doas;
 pub const dismas = zdisamar.retrieval_modules.dismas;
+
+test "retrieval root surfaces surrogate forward naming" {
+    try std.testing.expect(@hasDecl(common, "surrogate_forward"));
+    try std.testing.expect(!@hasDecl(common, "synthetic_forward"));
+}
 
 test {
     std.testing.refAllDecls(@This());
