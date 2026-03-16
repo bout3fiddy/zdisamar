@@ -1,17 +1,26 @@
-pub const Error = error{
-    CatalogNotBootstrapped,
-    InvalidPlan,
-    InvalidRequest,
-    MissingScene,
+pub const TemplateError = error{
     MissingModelFamily,
     MissingTransportRoute,
-    MissingObservationInstrument,
+};
+
+pub const PreparationError = TemplateError || error{
+    OutOfMemory,
+    CatalogNotBootstrapped,
     UnsupportedModelFamily,
     PreparedPlanLimitExceeded,
-    WorkspacePlanMismatch,
-    DerivativeModeMismatch,
     UnsupportedDerivativeMode,
     UnsupportedCapability,
     PluginPrepareFailed,
+};
+
+pub const ExecutionError = error{
+    OutOfMemory,
+    InvalidRequest,
+    MissingScene,
+    MissingObservationInstrument,
+    WorkspacePlanMismatch,
+    DerivativeModeMismatch,
     PluginExecutionFailed,
 };
+
+pub const Error = PreparationError || ExecutionError;

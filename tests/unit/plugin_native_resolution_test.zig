@@ -2,10 +2,10 @@ const std = @import("std");
 const zdisamar = @import("zdisamar");
 
 test "plugin ABI and resolver modules are linked into the unit suite" {
-    _ = zdisamar.PluginAbiTypes;
-    _ = zdisamar.PluginHostApi;
-    _ = zdisamar.PluginDynLib;
-    _ = zdisamar.PluginResolver;
+    _ = zdisamar.plugin_internal.abi_types;
+    _ = zdisamar.plugin_internal.host_api;
+    _ = zdisamar.plugin_internal.dynlib;
+    _ = zdisamar.plugin_internal.resolver;
 }
 
 test "native plugin example manifests declare ABI v1 entry symbols" {

@@ -20,12 +20,12 @@ pub const Template = struct {
     solver_mode: SolverMode = .scalar,
     scene_blueprint: SceneModel.Blueprint = .{},
 
-    pub fn validate(self: Template) errors.Error!void {
+    pub fn validate(self: Template) errors.TemplateError!void {
         if (self.model_family.len == 0) {
-            return errors.Error.MissingModelFamily;
+            return errors.TemplateError.MissingModelFamily;
         }
         if (self.providers.transport_solver.len == 0) {
-            return errors.Error.MissingTransportRoute;
+            return errors.TemplateError.MissingTransportRoute;
         }
     }
 };
@@ -39,7 +39,6 @@ pub const Plan = struct {
     plugin_snapshot: PluginRegistry.PluginSnapshot = .{},
     plugin_runtime: PluginRuntime.PreparedPluginRuntime = PluginRuntime.PreparedPluginRuntime.init(),
     providers: PluginProviders.PreparedProviders = .{},
-    prepared: bool = true,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -68,13 +67,9 @@ pub const Plan = struct {
         self.plugin_snapshot.deinit(self.allocator);
         self.* = undefined;
     }
-
-    pub fn assertReady(self: *const Plan) errors.Error!void {
-        if (!self.prepared) {
-            return errors.Error.InvalidPlan;
-        }
-    }
 };
+
+pub const PreparedPlan = Plan;
 
 test "plan template validates existing provider selection" {
     try (Template{

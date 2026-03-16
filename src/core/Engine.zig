@@ -87,53 +87,27 @@ pub const Engine = struct {
         try self.lut_cache.upsert(dataset_id, lut_id, shape);
     }
 
-    pub fn preparePlan(self: *Engine, template: PlanModule.Template) !Plan {
+    pub fn preparePlan(self: *Engine, template: PlanModule.Template) errors.PreparationError!Plan {
         if (!self.catalog.bootstrapped) {
-            return errors.Error.CatalogNotBootstrapped;
+            return errors.PreparationError.CatalogNotBootstrapped;
         }
 
         try template.validate();
 
         if (!self.catalog.supportsModelFamily(template.model_family)) {
-            return errors.Error.UnsupportedModelFamily;
+            return errors.PreparationError.UnsupportedModelFamily;
         }
 
         if (self.next_plan_id > self.options.max_prepared_plans) {
-            return errors.Error.PreparedPlanLimitExceeded;
+            return errors.PreparationError.PreparedPlanLimitExceeded;
         }
 
-        const providers = PluginProviders.PreparedProviders.resolve(template.providers) catch {
-            return errors.Error.UnsupportedCapability;
-        };
-
-        const transport_route = providers.transport.prepareRoute(.{
-            .regime = template.scene_blueprint.observation_regime,
-            .execution_mode = transportExecutionMode(template.solver_mode),
-            .derivative_mode = template.scene_blueprint.derivative_mode,
-        }) catch |err| switch (err) {
-            error.UnsupportedDerivativeMode => return errors.Error.UnsupportedDerivativeMode,
-        };
-
-        var plugin_snapshot = self.registry.snapshotSelection(self.allocator, template.providers) catch {
-            return errors.Error.UnsupportedCapability;
-        };
-        errdefer plugin_snapshot.deinit(self.allocator);
-
-        var plugin_runtime = PluginRuntime.PreparedPluginRuntime.init();
-        errdefer plugin_runtime.deinit(self.allocator);
-        plugin_runtime.resolveSnapshot(self.allocator, &plugin_snapshot, self.options.allow_native_plugins) catch {
-            return errors.Error.PluginPrepareFailed;
-        };
-        plugin_runtime.prepareForPlan(.{
-            .plan_id = self.next_plan_id,
-            .model_family = template.model_family,
-            .transport_provider = template.providers.transport_solver,
-            .solver_mode = @tagName(template.solver_mode),
-        }) catch {
-            return errors.Error.PluginPrepareFailed;
-        };
+        const providers = try resolvePlanProviders(template);
+        const transport_route = try prepareTransportRoute(template, providers);
+        var plugin_state = try preparePluginState(self, template);
+        defer plugin_state.cleanupOnFailure(self.allocator);
         const dataset_hash_count = @max(
-            plugin_snapshot.datasetHashes().len,
+            plugin_state.snapshot.datasetHashes().len,
             self.dataset_cache.count(),
         );
         const prepared_cache = try PreparedPlanCache.initFromBlueprint(
@@ -146,11 +120,15 @@ pub const Engine = struct {
             template,
             transport_route,
             prepared_cache,
-            plugin_snapshot,
-            plugin_runtime,
+            plugin_state.snapshot,
+            plugin_state.runtime,
             providers,
         );
-        try self.plan_cache.put(plan.id, prepared_cache);
+        plugin_state = .{};
+        self.plan_cache.put(plan.id, prepared_cache) catch |err| switch (err) {
+            error.PlanCacheDisabled => return errors.PreparationError.PreparedPlanLimitExceeded,
+            error.OutOfMemory => return errors.PreparationError.OutOfMemory,
+        };
         self.next_plan_id += 1;
         return plan;
     }
@@ -178,8 +156,7 @@ pub const Engine = struct {
         try runner.run(thread, &self.plan_cache, exec_ctx, execute_fn);
     }
 
-    pub fn execute(self: *Engine, plan: *const Plan, workspace: *Workspace, request: Request) !Result {
-        try plan.assertReady();
+    pub fn execute(self: *Engine, plan: *const Plan, workspace: *Workspace, request: Request) errors.Error!Result {
         try request.validateForPlan(plan);
 
         plan.plugin_runtime.executeForRequest(.{
@@ -187,90 +164,16 @@ pub const Engine = struct {
             .scene_id = request.scene.id,
             .workspace_label = workspace.label,
             .requested_product_count = @intCast(request.requested_products.len),
-        }) catch |err| switch (err) {
-            error.PluginExecutionFailed,
-            error.PluginEntryRejected,
-            error.PluginEntryIncompatibleAbi,
-            error.MissingExecuteHook,
-            => return errors.Error.PluginExecutionFailed,
-            else => return errors.Error.PluginExecutionFailed,
-        };
+        }) catch |err| return mapPluginExecutionError(err);
         try workspace.beginExecution(plan.id);
         workspace.prepareScratch(&plan.prepared_cache);
         _ = self.plan_cache.markRun(plan.id);
 
-        var provenance = Provenance.fromPlan(
-            self.allocator,
-            plan,
-            workspace.label,
-            request.scene.id,
-            @tagName(plan.template.solver_mode),
-        ) catch return errors.Error.PluginPrepareFailed;
-        errdefer provenance.deinit(self.allocator);
-
-        var prepared_optics = plan.providers.optics.prepareForScene(self.allocator, request.scene) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => return errors.Error.InvalidRequest,
-        };
-        defer prepared_optics.deinit(self.allocator);
-
-        var measurement_space_product = try MeasurementSpace.simulateProduct(
-            self.allocator,
-            request.scene,
-            plan.transport_route,
-            prepared_optics,
-            measurementProviders(plan),
-        );
-        errdefer measurement_space_product.deinit(self.allocator);
-
-        var result = Result.init(
-            plan.id,
-            workspace.label,
-            request.scene.id,
-            provenance,
-        );
+        var result = try initializeResult(self, plan, workspace, request);
         errdefer result.deinit(self.allocator);
-        result.attachMeasurementSpaceProduct(measurement_space_product);
-        if (request.inverse_problem != null) {
-            const retrieval_provider = plan.providers.retrieval orelse return errors.Error.UnsupportedCapability;
-            var retrieval_request = request;
-            if (retrieval_request.measurement_binding == null and retrieval_request.inverse_problem != null) {
-                const source = retrieval_request.inverse_problem.?.measurements.source;
-                if (source.kind == .external_observation) {
-                    retrieval_request.measurement_binding = .{
-                        .source_name = if (source.name.len != 0) source.name else retrieval_request.inverse_problem.?.measurements.product,
-                        .observable = retrieval_request.inverse_problem.?.measurements.observable,
-                        .product = &result.measurement_space_product.?,
-                    };
-                }
-            }
 
-            const retrieval_problem = RetrievalContracts.RetrievalProblem.fromRequest(retrieval_request) catch {
-                return errors.Error.InvalidRequest;
-            };
-            const retrieval_context: RetrievalExecutionContext = .{
-                .allocator = self.allocator,
-                .plan = plan,
-            };
-            const retrieval_outcome = retrieval_provider.solve(self.allocator, retrieval_problem, .{
-                .context = @ptrCast(&retrieval_context),
-                .evaluate = evaluateRetrievalScene,
-            }) catch |err| switch (err) {
-                error.OutOfMemory => return err,
-                else => return errors.Error.InvalidRequest,
-            };
-            const retrieval_products = materializeRetrievalProducts(
-                self.allocator,
-                plan,
-                retrieval_problem,
-                retrieval_outcome,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => return err,
-                else => return errors.Error.InvalidRequest,
-            };
-            result.attachRetrievalOutcome(retrieval_outcome);
-            result.attachRetrievalProducts(retrieval_products);
-        }
+        try executeForwardProducts(self, plan, request, &result);
+        try executeRetrievalIfRequested(self, plan, request, &result);
         result.diagnostics = plan.providers.diagnostics.materialize(
             request.diagnostics,
             "Plugin-selected forward and retrieval providers executed with typed scene preparation and owned provenance.",
@@ -278,6 +181,166 @@ pub const Engine = struct {
         return result;
     }
 };
+
+const PluginPreparation = struct {
+    snapshot: @import("../plugins/registry/CapabilityRegistry.zig").PluginSnapshot = .{},
+    runtime: PluginRuntime.PreparedPluginRuntime = PluginRuntime.PreparedPluginRuntime.init(),
+
+    fn cleanupOnFailure(self: *PluginPreparation, allocator: std.mem.Allocator) void {
+        self.runtime.deinit(allocator);
+        self.snapshot.deinit(allocator);
+        self.* = .{};
+    }
+};
+
+fn resolvePlanProviders(template: PlanModule.Template) errors.PreparationError!PluginProviders.PreparedProviders {
+    return PluginProviders.PreparedProviders.resolve(template.providers) catch {
+        return errors.PreparationError.UnsupportedCapability;
+    };
+}
+
+fn prepareTransportRoute(
+    template: PlanModule.Template,
+    providers: PluginProviders.PreparedProviders,
+) errors.PreparationError!TransportCommon.Route {
+    return providers.transport.prepareRoute(.{
+        .regime = template.scene_blueprint.observation_regime,
+        .execution_mode = transportExecutionMode(template.solver_mode),
+        .derivative_mode = template.scene_blueprint.derivative_mode,
+    }) catch |err| switch (err) {
+        error.UnsupportedDerivativeMode => return errors.PreparationError.UnsupportedDerivativeMode,
+    };
+}
+
+fn preparePluginState(
+    self: *Engine,
+    template: PlanModule.Template,
+) errors.PreparationError!PluginPreparation {
+    var snapshot = self.registry.snapshotSelection(self.allocator, template.providers) catch {
+        return errors.PreparationError.UnsupportedCapability;
+    };
+    errdefer snapshot.deinit(self.allocator);
+
+    var runtime = PluginRuntime.PreparedPluginRuntime.init();
+    errdefer runtime.deinit(self.allocator);
+
+    runtime.resolveSnapshot(self.allocator, &snapshot, self.options.allow_native_plugins) catch {
+        return errors.PreparationError.PluginPrepareFailed;
+    };
+    runtime.prepareForPlan(.{
+        .plan_id = self.next_plan_id,
+        .model_family = template.model_family,
+        .transport_provider = template.providers.transport_solver,
+        .solver_mode = @tagName(template.solver_mode),
+    }) catch {
+        return errors.PreparationError.PluginPrepareFailed;
+    };
+
+    return .{
+        .snapshot = snapshot,
+        .runtime = runtime,
+    };
+}
+
+fn mapPluginExecutionError(_: PluginRuntime.Error) errors.ExecutionError {
+    return errors.ExecutionError.PluginExecutionFailed;
+}
+
+fn initializeResult(
+    self: *Engine,
+    plan: *const Plan,
+    workspace: *Workspace,
+    request: Request,
+) errors.ExecutionError!Result {
+    var provenance = Provenance.fromPlan(
+        self.allocator,
+        plan,
+        workspace.label,
+        request.scene.id,
+        @tagName(plan.template.solver_mode),
+    ) catch |err| return err;
+    errdefer provenance.deinit(self.allocator);
+
+    return Result.init(
+        plan.id,
+        workspace.label,
+        request.scene.id,
+        provenance,
+    );
+}
+
+fn executeForwardProducts(
+    self: *Engine,
+    plan: *const Plan,
+    request: Request,
+    result: *Result,
+) errors.ExecutionError!void {
+    var prepared_optics = plan.providers.optics.prepareForScene(self.allocator, request.scene) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return errors.ExecutionError.InvalidRequest,
+    };
+    defer prepared_optics.deinit(self.allocator);
+
+    const measurement_space_product = MeasurementSpace.simulateProduct(
+        self.allocator,
+        request.scene,
+        plan.transport_route,
+        prepared_optics,
+        measurementProviders(plan),
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return errors.ExecutionError.InvalidRequest,
+    };
+    result.attachMeasurementSpaceProduct(measurement_space_product);
+}
+
+fn executeRetrievalIfRequested(
+    self: *Engine,
+    plan: *const Plan,
+    request: Request,
+    result: *Result,
+) errors.ExecutionError!void {
+    if (request.inverse_problem == null) return;
+
+    const retrieval_provider = plan.providers.retrieval orelse return errors.ExecutionError.InvalidRequest;
+    var retrieval_request = request;
+    if (retrieval_request.measurement_binding == null and retrieval_request.inverse_problem != null) {
+        const source = retrieval_request.inverse_problem.?.measurements.source;
+        if (source.kind == .external_observation) {
+            retrieval_request.measurement_binding = .{
+                .source_name = if (source.name.len != 0) source.name else retrieval_request.inverse_problem.?.measurements.product,
+                .observable = retrieval_request.inverse_problem.?.measurements.observable,
+                .product = &result.measurement_space_product.?,
+            };
+        }
+    }
+
+    const retrieval_problem = RetrievalContracts.RetrievalProblem.fromRequest(retrieval_request) catch {
+        return errors.ExecutionError.InvalidRequest;
+    };
+    const retrieval_context: RetrievalExecutionContext = .{
+        .allocator = self.allocator,
+        .plan = plan,
+    };
+    const retrieval_outcome = retrieval_provider.solve(self.allocator, retrieval_problem, .{
+        .context = @ptrCast(&retrieval_context),
+        .evaluate = evaluateRetrievalScene,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return errors.ExecutionError.InvalidRequest,
+    };
+    const retrieval_products = materializeRetrievalProducts(
+        self.allocator,
+        plan,
+        retrieval_problem,
+        retrieval_outcome,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return errors.ExecutionError.InvalidRequest,
+    };
+    result.attachRetrievalOutcome(retrieval_outcome);
+    result.attachRetrievalProducts(retrieval_products);
+}
 
 fn transportExecutionMode(solver_mode: PlanModule.SolverMode) TransportCommon.ExecutionMode {
     return switch (solver_mode) {

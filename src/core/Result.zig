@@ -101,6 +101,10 @@ pub const Result = struct {
         self.measurement_space_product = product;
     }
 
+    pub fn attachMeasurementSpaceSummary(self: *Result, summary: MeasurementSpaceSummary) void {
+        self.measurement_space = summary;
+    }
+
     pub fn attachRetrievalOutcome(self: *Result, outcome: RetrievalOutcome) void {
         self.retrieval = outcome;
     }
@@ -122,3 +126,22 @@ pub const Result = struct {
         self.provenance.deinit(allocator);
     }
 };
+
+test "result can carry summary-only measurement-space output" {
+    var result = Result.init(7, "unit", "scene-summary", .{});
+    defer result.deinit(std.testing.allocator);
+
+    result.attachMeasurementSpaceSummary(.{
+        .sample_count = 4,
+        .wavelength_start_nm = 300.0,
+        .wavelength_end_nm = 310.0,
+        .mean_radiance = 1.0,
+        .mean_irradiance = 2.0,
+        .mean_reflectance = 0.5,
+        .mean_noise_sigma = 0.01,
+    });
+
+    try std.testing.expect(result.measurement_space != null);
+    try std.testing.expectEqual(@as(?MeasurementSpaceProduct, null), result.measurement_space_product);
+    try std.testing.expectEqual(@as(u32, 4), result.measurement_space.?.sample_count);
+}
