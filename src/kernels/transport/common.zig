@@ -19,9 +19,7 @@ pub const TransportFamily = enum {
 };
 
 pub const ImplementationClass = enum {
-    supported,
     surrogate,
-    scaffold,
 };
 
 pub const Regime = SceneModel.ObservationRegime;
