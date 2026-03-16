@@ -60,8 +60,6 @@ experiment:
     diagnostics:
       provenance: true
       jacobians: true
-      internal_fields: false
-      materialize_cache_keys: false
 
 outputs: []
 

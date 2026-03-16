@@ -146,7 +146,7 @@ test "prepared plugin runtime resolves selected builtin native manifests once pe
 
     var snapshot = try registry.snapshotSelection(std.testing.allocator, .{
         .retrieval_algorithm = "builtin.oe_solver",
-        .instrument_response = "builtin.tropomi_response",
+        .instrument_response = "builtin.generic_response",
     });
     defer snapshot.deinit(std.testing.allocator);
 
@@ -154,7 +154,7 @@ test "prepared plugin runtime resolves selected builtin native manifests once pe
     defer runtime.deinit(std.testing.allocator);
 
     try runtime.resolveSnapshot(std.testing.allocator, &snapshot, true);
-    try std.testing.expectEqual(@as(usize, 4), runtime.native_plugins.len);
+    try std.testing.expectEqual(@as(usize, 3), runtime.native_plugins.len);
     try runtime.prepareForPlan(.{
         .plan_id = 1,
         .model_family = "disamar_standard",

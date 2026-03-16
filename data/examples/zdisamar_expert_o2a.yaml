@@ -62,15 +62,10 @@ templates:
       transport:
         solver: dispatcher
         provider: builtin.transport_dispatcher
-        parameters:
-          streams: 16
 
       execution:
         solver_mode: scalar
         derivative_mode: none
-
-      backend:
-        kind: cpu
 
     scene:
       geometry:
@@ -138,7 +133,6 @@ templates:
 
         instrument:
           name: tropomi
-          response_provider: builtin.tropomi_response
 
         sampling:
           mode: native
@@ -170,12 +164,9 @@ experiment:
       id: truth_scene
 
       surface:
-        model: ross_li_brdf
-        provider: mission_s5p.ross_li
-        parameters:
-          isotropic: 0.028
-          volumetric: 0.019
-          geometric: 0.011
+        model: lambertian
+        provider: builtin.lambertian_surface
+        albedo: 0.062
 
       aerosols:
         plume:
@@ -221,7 +212,6 @@ experiment:
 
     diagnostics:
       provenance: true
-      internal_fields: true
 
   retrieval:
     from: o2a_reference_case
@@ -379,7 +369,6 @@ experiment:
     diagnostics:
       provenance: true
       jacobians: true
-      internal_fields: true
 
 outputs:
   - from: truth_radiance
@@ -399,7 +388,6 @@ outputs:
 validation:
   strict_unknown_fields: true
   require_resolved_assets: true
-  require_supported_capabilities: true
   require_resolved_stage_references: true
 
   synthetic_retrieval:

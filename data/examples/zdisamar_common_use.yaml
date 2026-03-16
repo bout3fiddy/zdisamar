@@ -4,8 +4,8 @@ metadata:
   id: o2a_twin_common
   workspace: demo-o2a
   description: >
-    Synthetic O2 A-band retrieval where the truth uses a BRDF surface
-    and the retrieval assumes Lambertian reflection.
+    Synthetic O2 A-band retrieval where the truth and retrieval use
+    different Lambertian surface albedos.
 
 templates:
   o2a_base:
@@ -69,11 +69,8 @@ experiment:
     scene:
       id: truth_scene
       surface:
-        model: ross_li_brdf
-        parameters:
-          isotropic: 0.030
-          volumetric: 0.020
-          geometric: 0.010
+        model: lambertian
+        albedo: 0.06
 
       aerosols:
         plume:

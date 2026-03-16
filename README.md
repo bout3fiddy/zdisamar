@@ -61,19 +61,11 @@ belongs in adapters or runtime preparation.
 | `tests/` | unit, integration, golden, perf, and validation-lane executable checks |
 | `validation/` | heavier parity, golden, plugin, perf, and release-readiness evidence |
 | `docs/` | architecture, plugin, operational, retrieval, exporter, and validation narrative |
-| `vendor/disamar-fortran/` | local gitignored upstream reference clone for comparison only |
 
 ## Prerequisites
 
 - Zig `0.15.2` or newer. The repo currently declares `minimum_zig_version =
   "0.15.2"` in [`build.zig.zon`](./build.zig.zon).
-- Optional: the local upstream DISAMAR reference clone for comparison work.
-
-Bootstrap or refresh the local upstream reference clone with:
-
-```bash
-./scripts/bootstrap-upstream.sh
-```
 
 ## Build And Verification
 
@@ -175,6 +167,93 @@ The expert example can be validated with:
 ```bash
 ./zig-out/bin/zdisamar config validate data/examples/zdisamar_expert_o2a.yaml
 ```
+
+### 5. Know Which Example To Start From
+
+Use the examples in this order:
+
+- `data/examples/canonical_config.yaml`
+  Smallest possible CLI smoke case.
+- `data/examples/zdisamar_common_use.yaml`
+  Best starting point for learning the simulation-plus-retrieval workflow.
+- `data/examples/zdisamar_expert_o2a.yaml`
+  Advanced example that adds assets, ingests, explicit providers, and
+  operational-support-data replacement surfaces.
+
+If you want to learn how to execute an experiment, start from
+`zdisamar_common_use.yaml`, not the expert example.
+
+## Provider Names Used In The Examples
+
+The examples mix a few different naming layers. These are the ones that matter
+in practice:
+
+| Example field | Meaning |
+| --- | --- |
+| `transport.solver: dispatcher` | use the builtin transport dispatcher |
+| `transport.provider: builtin.transport_dispatcher` | manifest/plugin id for that dispatcher lane |
+| resolved `transport_provider: builtin.dispatcher` | the concrete provider name reported by `config resolve` and run provenance |
+| `inverse.algorithm.name: oe` | request the optimal-estimation retrieval path |
+| `inverse.algorithm.provider: builtin.oe_solver` | explicit provider id for the OE solver |
+| `measurement_model.instrument.name: tropomi` | instrument family name; this defaults to `builtin.generic_response` if no explicit response provider is given |
+| `surface.model: lambertian` | flat Lambertian surface model |
+
+## Where The Example Numbers Come From
+
+The example values are not all the same kind of thing.
+
+### `zdisamar_common_use.yaml`
+
+This file is a synthetic scaffold scenario. Its geometry, aerosol, surface, and
+prior values are hand-chosen to demonstrate a meaningful two-stage retrieval:
+
+- a truth run and a retrieval run share one O2 A-band template,
+- the two stages intentionally use different surface and aerosol settings,
+- the retrieval stage starts from a simpler state than the simulation stage,
+- the mismatch is deliberate so the inverse problem is nontrivial.
+
+Treat those numbers as representative tutorial values, not as mission-calibrated
+constants or a real observed scene.
+
+### `zdisamar_expert_o2a.yaml`
+
+This file is also synthetic, but it is built to exercise more of the runtime:
+
+- asset-backed atmosphere and spectroscopy inputs,
+- ingest-backed ISRF table and operational reference-grid replacements,
+- nuisance parameters such as wavelength shift and multiplicative offset,
+- multiple exporter targets.
+
+Some values in the expert example are copied from the tracked demo ingest
+fixtures under `data/examples/irr_rad_channels_operational_*.txt` so that the
+config and the ingest-driven tests describe the same small operational-style
+scenario.
+
+### `irr_rad_channels_operational_*.txt`
+
+Those files are small demo fixtures consumed by the `spectral_ascii` ingest
+adapter. They define metadata such as:
+
+- geometry,
+- albedo,
+- cloud and aerosol summary properties,
+- wavelength shift,
+- instrument line shape / ISRF table samples,
+- reference-grid and solar-spectrum samples,
+- small O2 and O2-O2 lookup-table coefficient blocks.
+
+They are intentionally tiny and readable. They exist to exercise the parser and
+the operational-support-data path, not to represent a production Sentinel-5P
+granule.
+
+### Practical Rule
+
+When you adapt an example for your own experiment:
+
+- keep the structure,
+- replace the numbers with your own scene geometry, bands, absorber setup,
+  surface state, aerosol/cloud state, and measurement inputs,
+- keep only the providers and ingest surfaces you actually understand and need.
 
 ## Anatomy Of A Canonical YAML Experiment
 
@@ -285,7 +364,6 @@ as:
 
 - `strict_unknown_fields`
 - `require_resolved_assets`
-- `require_supported_capabilities`
 - `require_resolved_stage_references`
 - synthetic retrieval warnings for identical truth/retrieval models
 

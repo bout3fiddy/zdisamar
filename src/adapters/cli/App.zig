@@ -56,12 +56,10 @@ fn runCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout: an
 
     try engine.bootstrapBuiltinCatalog();
 
-    const execution = try zdisamar.canonical_config.resolveCompileAndExecute(allocator, &engine, path);
+    var execution = try zdisamar.canonical_config.resolveCompileAndExecute(allocator, &engine, path);
     defer {
-        var outcome = execution.outcome;
-        outcome.deinit();
-        var program = execution.program;
-        program.deinit();
+        execution.outcome.deinit();
+        execution.program.deinit();
     }
 
     try emitCanonicalWarnings(execution.program.experiment.warnings, stderr);
@@ -95,65 +93,80 @@ fn runCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout: an
 
 fn validateCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout: anytype, stderr: anytype) !void {
     var experiment = try zdisamar.canonical_config.resolveFile(allocator, path);
-    errdefer experiment.deinit();
+    defer experiment.deinit();
 
-    const program = try zdisamar.canonical_config.compileResolved(allocator, experiment);
-    defer {
-        var owned = program;
-        owned.deinit();
-    }
-
-    try emitCanonicalWarnings(program.experiment.warnings, stderr);
+    try emitCanonicalWarnings(experiment.warnings, stderr);
     try stdout.print(
         "zdisamar config validate: source={s} stages={d} outputs={d} warnings={d} status=valid\n",
         .{
-            program.experiment.source_path,
-            program.stages.len,
-            program.outputs.len,
-            program.experiment.warnings.len,
+            experiment.source_path,
+            stageCount(experiment),
+            experiment.outputs.len,
+            experiment.warnings.len,
         },
     );
 }
 
 fn resolveCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout: anytype, stderr: anytype) !void {
     var experiment = try zdisamar.canonical_config.resolveFile(allocator, path);
-    errdefer experiment.deinit();
+    defer experiment.deinit();
 
-    const program = try zdisamar.canonical_config.compileResolved(allocator, experiment);
-    defer {
-        var owned = program;
-        owned.deinit();
-    }
-
-    try emitCanonicalWarnings(program.experiment.warnings, stderr);
+    try emitCanonicalWarnings(experiment.warnings, stderr);
     try stdout.print(
         "source: {s}\nmetadata:\n  id: {s}\n  workspace: {s}\nstages:\n",
         .{
-            program.experiment.source_path,
-            program.experiment.metadata.id,
-            effectiveWorkspace(program.experiment),
+            experiment.source_path,
+            experiment.metadata.id,
+            effectiveWorkspace(experiment),
         },
     );
-    for (program.stages) |stage_execution| {
+    if (experiment.simulation) |stage| {
         try stdout.print(
             "  - kind: {s}\n    scene_id: {s}\n    model_family: {s}\n    transport_provider: {s}\n    solver_mode: {s}\n    derivative_mode: {s}\n",
             .{
-                @tagName(stage_execution.kind),
-                stage_execution.stage.scene.id,
-                stage_execution.stage.plan.model_family,
-                stage_execution.stage.plan.providers.transport_solver,
-                @tagName(stage_execution.stage.plan.solver_mode),
-                @tagName(stage_execution.stage.plan.scene_blueprint.derivative_mode),
+                "simulation",
+                stage.scene.id,
+                stage.plan.model_family,
+                stage.plan.providers.transport_solver,
+                @tagName(stage.plan.solver_mode),
+                @tagName(stage.plan.scene_blueprint.derivative_mode),
             },
         );
-        if (stage_execution.stage.plan.providers.retrieval_algorithm) |provider| {
+        if (stage.plan.providers.retrieval_algorithm) |provider| {
             try stdout.print("    retrieval_provider: {s}\n", .{provider});
         }
-        if (stage_execution.stage.products.len == 0) {
+        if (stage.products.len == 0) {
             try stdout.writeAll("    products: []\n");
         } else {
             try stdout.writeAll("    products:\n");
-            for (stage_execution.stage.products) |product| {
+            for (stage.products) |product| {
+                try stdout.print("      - name: {s}\n        kind: {s}\n", .{ product.name, @tagName(product.kind) });
+                if (product.observable.len != 0) {
+                    try stdout.print("        observable: {s}\n", .{product.observable});
+                }
+            }
+        }
+    }
+    if (experiment.retrieval) |stage| {
+        try stdout.print(
+            "  - kind: {s}\n    scene_id: {s}\n    model_family: {s}\n    transport_provider: {s}\n    solver_mode: {s}\n    derivative_mode: {s}\n",
+            .{
+                "retrieval",
+                stage.scene.id,
+                stage.plan.model_family,
+                stage.plan.providers.transport_solver,
+                @tagName(stage.plan.solver_mode),
+                @tagName(stage.plan.scene_blueprint.derivative_mode),
+            },
+        );
+        if (stage.plan.providers.retrieval_algorithm) |provider| {
+            try stdout.print("    retrieval_provider: {s}\n", .{provider});
+        }
+        if (stage.products.len == 0) {
+            try stdout.writeAll("    products: []\n");
+        } else {
+            try stdout.writeAll("    products:\n");
+            for (stage.products) |product| {
                 try stdout.print("      - name: {s}\n        kind: {s}\n", .{ product.name, @tagName(product.kind) });
                 if (product.observable.len != 0) {
                     try stdout.print("        observable: {s}\n", .{product.observable});
@@ -162,18 +175,18 @@ fn resolveCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout
         }
     }
 
-    if (program.outputs.len == 0) {
+    if (experiment.outputs.len == 0) {
         try stdout.writeAll("outputs: []\n");
     } else {
         try stdout.writeAll("outputs:\n");
-        for (program.outputs) |job| {
+        for (experiment.outputs) |output| {
             try stdout.print(
                 "  - from: {s}\n    kind: {s}\n    format: {s}\n    destination_uri: {s}\n",
                 .{
-                    job.target.name,
-                    @tagName(job.target.kind),
-                    @tagName(job.output.format),
-                    job.output.destination_uri,
+                    output.from,
+                    @tagName(findOutputKind(experiment, output.from) orelse .diagnostics),
+                    @tagName(output.format),
+                    output.destination_uri,
                 },
             );
         }
@@ -204,6 +217,17 @@ fn effectiveWorkspace(experiment: zdisamar.canonical_config.ResolvedExperiment) 
     if (experiment.metadata.workspace.len != 0) return experiment.metadata.workspace;
     if (experiment.metadata.id.len != 0) return experiment.metadata.id;
     return "canonical-config";
+}
+
+fn stageCount(experiment: zdisamar.canonical_config.ResolvedExperiment) usize {
+    var count: usize = 0;
+    if (experiment.simulation != null) count += 1;
+    if (experiment.retrieval != null) count += 1;
+    return count;
+}
+
+fn findOutputKind(experiment: zdisamar.canonical_config.ResolvedExperiment, name: []const u8) ?zdisamar.canonical_config.ProductKind {
+    return if (experiment.findProduct(name)) |product| product.kind else null;
 }
 
 fn overallStatus(outcome: *const zdisamar.canonical_config.ExecutionOutcome) []const u8 {

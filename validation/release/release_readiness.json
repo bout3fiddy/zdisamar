@@ -24,7 +24,7 @@
     "builtin.dispatcher@0.1.0",
     "builtin.oe_solver@0.1.0",
     "builtin.lambertian_surface@0.1.0",
-    "builtin.tropomi_response@0.1.0",
+    "builtin.generic_response@0.1.0",
     "builtin.netcdf_cf@0.1.0",
     "builtin.zarr@0.1.0"
   ],

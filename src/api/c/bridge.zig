@@ -78,8 +78,6 @@ pub const ResultDesc = extern struct {
 
 pub const diagnostics_provenance: u32 = 1 << 0;
 pub const diagnostics_jacobians: u32 = 1 << 1;
-pub const diagnostics_internal_fields: u32 = 1 << 2;
-pub const diagnostics_materialize_cache_keys: u32 = 1 << 3;
 
 const BridgeError = error{InvalidArgument};
 
@@ -220,8 +218,6 @@ fn toRequest(desc: *const RequestDesc) BridgeError!Request {
     request.diagnostics = .{
         .provenance = (desc.diagnostics_flags & diagnostics_provenance) != 0,
         .jacobians = (desc.diagnostics_flags & diagnostics_jacobians) != 0,
-        .internal_fields = (desc.diagnostics_flags & diagnostics_internal_fields) != 0,
-        .materialize_cache_keys = (desc.diagnostics_flags & diagnostics_materialize_cache_keys) != 0,
     };
     request.expected_derivative_mode = switch (desc.expected_derivative_mode) {
         .none => .none,

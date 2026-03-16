@@ -62,11 +62,10 @@ Sooner or later, a system like this wants to absorb new implementations from out
 
 That is the main reason the current design exists: it separates the stable execution lifecycle from the scientific implementations that need to evolve inside it.
 
-## Examples Of Plugins This Architecture Is Meant To Support
+## Current Capability Slots In The Tree
 
-The broader architectural direction is not that everything should be a plugin. The important pattern is that the major scientific blocks that evolve independently should be swappable under one stable execution contract.
-
-The useful question is not only "what plugin could be added?" but also "where would it land in the stack?"
+The current tree already exercises the main capability slots that participate in
+plan preparation and request execution.
 
 ```mermaid
 flowchart LR
@@ -81,312 +80,32 @@ flowchart LR
     A --> I[Data pack manifests]
 ```
 
-The examples below use the current stack shape. When an example maps to a future seam rather than an existing slot, that is stated explicitly.
+The current builtin selections are:
 
-### Example: correlated-k optics provider
-
-**Where it goes in the stack**
-
-- selected through `ProviderSelection.absorber_provider`
-- resolved by `src/plugins/providers/optics.zig`
-- executed through `plan.providers.optics.prepareForScene(...)`
-- used before the measurement-space kernel runs
-
-This is the right seam for anything that changes how optical properties are prepared from the scene and reference data.
-
-**Rough pseudocode**
-
-```zig
-pub fn resolve(provider_id: []const u8) ?Provider {
-    if (std.mem.eql(u8, provider_id, "example.correlated_k")) {
-        return .{
-            .id = provider_id,
-            .prepareForScene = correlatedKPrepareForScene,
-        };
-    }
-    return null;
-}
-
-fn correlatedKPrepareForScene(
-    allocator: Allocator,
-    scene: Scene,
-) !PreparedOpticalState {
-    const tables = try correlated_k.lookup(scene.atmosphere, scene.spectral_grid);
-    return PreparedOpticalState.fromTables(allocator, tables);
-}
-```
-
-### Example: Monte Carlo transport solver
-
-**Where it goes in the stack**
-
-- selected through `ProviderSelection.transport_solver`
-- resolved by `src/plugins/providers/transport.zig`
-- route preparation happens through `prepareRoute(...)`
-- wavelength-by-wavelength forward execution happens through `executePrepared(...)`
-- called from `src/kernels/transport/measurement_space.zig`
-
-This is the seam for any solver ladder: two-stream, DISORT-like, pseudo-spherical, approximate 3D, Monte Carlo, GPU references.
-
-**Rough pseudocode**
-
-```zig
-pub fn resolve(provider_id: []const u8) ?Provider {
-    if (std.mem.eql(u8, provider_id, "example.monte_carlo")) {
-        return .{
-            .id = provider_id,
-            .prepareRoute = monteCarloPrepareRoute,
-            .executePrepared = monteCarloExecutePrepared,
-        };
-    }
-    return null;
-}
-
-fn monteCarloPrepareRoute(request: common.DispatchRequest) !common.Route {
-    return .{
-        .family = .monte_carlo,
-        .derivative_mode = request.derivative_mode,
-    };
-}
-
-fn monteCarloExecutePrepared(
-    route: common.Route,
-    input: common.ForwardInput,
-) !common.ForwardResult {
-    _ = route;
-    return try mc_solver.run(input);
-}
-```
-
-### Example: BRDF or rough-ocean surface model
-
-**Where it goes in the stack**
-
-- selected through `ProviderSelection.surface_model`
-- resolved by `src/plugins/providers/surface.zig`
-- called inside measurement-space evaluation through `responseGain(...)`
-
-This is the seam for directional Lambertian models, Ross-Li style BRDFs, rough-ocean glint, Fresnel interfaces, and polarized surface-response approximations.
-
-**Rough pseudocode**
-
-```zig
-pub fn resolve(provider_id: []const u8) ?Provider {
-    if (std.mem.eql(u8, provider_id, "example.ross_li_surface")) {
-        return .{
-            .id = provider_id,
-            .responseGain = rossLiGain,
-        };
-    }
-    return null;
-}
-
-fn rossLiGain(context: EvaluationContext) f64 {
-    const angles = geometryKernel(context.scene.geometry);
-    const kernels = brdf.rossLi(angles);
-    return brdf.combine(
-        context.scene.surface.albedo,
-        kernels,
-        context.wavelength_nm,
-    );
-}
-```
-
-### Example: mission-specific instrument response
-
-**Where it goes in the stack**
-
-- selected through `ProviderSelection.instrument_response`
-- resolved by `src/plugins/providers/instrument.zig`
-- contributes calibration, slit-kernel, and integrated-sampling behavior
-- consumed inside `measurement_space.zig`
-
-This is the seam for mission SRFs, wavelength shifts, custom slit kernels, and line-shape tables.
-
-**Rough pseudocode**
-
-```zig
-pub fn resolve(provider_id: []const u8) ?Provider {
-    if (std.mem.eql(u8, provider_id, "example.mission_x_response")) {
-        return .{
-            .id = provider_id,
-            .calibrationForScene = missionXCalibration,
-            .usesIntegratedSampling = missionXUsesIntegratedSampling,
-            .integrationForWavelength = missionXIntegration,
-            .slitKernelForScene = missionXSlitKernel,
-        };
-    }
-    return null;
-}
-
-fn missionXCalibration(scene: Scene) calibration.Calibration {
-    return .{
-        .gain = 1.02,
-        .offset = 0.0,
-        .wavelength_shift_nm = scene.observation_model.wavelength_shift_nm,
-    };
-}
-```
-
-### Example: alternative noise model
-
-**Where it goes in the stack**
-
-- selected through `ProviderSelection.noise_model`
-- resolved by `src/plugins/providers/noise.zig`
-- called after radiance materialization through `materializeSigma(...)`
-
-This is the seam for shot-noise variants, operational noise parameterizations, detector-floor models, or scene-dependent heteroscedastic noise.
-
-**Rough pseudocode**
-
-```zig
-pub fn resolve(provider_id: []const u8) ?Provider {
-    if (std.mem.eql(u8, provider_id, "example.detector_noise")) {
-        return .{
-            .id = provider_id,
-            .materializesSigma = alwaysEnabled,
-            .materializeSigma = detectorNoiseSigma,
-        };
-    }
-    return null;
-}
-
-fn detectorNoiseSigma(
-    scene: Scene,
-    signal: []const f64,
-    output: []f64,
-) !void {
-    for (signal, output) |radiance, *sigma| {
-        sigma.* = detector.readNoise(scene) + @sqrt(@max(radiance, 0.0)) * 0.03;
-    }
-}
-```
-
-### Example: retrieval algorithm with a different inversion strategy
-
-**Where it goes in the stack**
-
-- selected through `ProviderSelection.retrieval_algorithm`
-- resolved by `src/plugins/providers/retrieval.zig`
-- called from `Engine.execute(...)` only when an inverse problem is requested
-- uses the evaluator callback to re-enter the forward model
-
-This is the seam for OE variants, DOAS variants, adjoint-based methods, analytical Jacobian solvers, and differentiable-retrieval backends.
-
-**Rough pseudocode**
-
-```zig
-pub fn resolve(provider_id: []const u8) ?Provider {
-    if (std.mem.eql(u8, provider_id, "example.adjoint_solver")) {
-        return .{
-            .id = provider_id,
-            .solve = adjointSolveWithEvaluator,
-        };
-    }
-    return null;
-}
-
-fn adjointSolveWithEvaluator(
-    problem: common.RetrievalProblem,
-    evaluator: forward_model.SummaryEvaluator,
-) !common.SolverOutcome {
-    const baseline = try evaluator.evaluate(problem.scene);
-    const gradient = try adjoint.compute(problem, evaluator);
-    return try optimizer.step(problem, baseline, gradient);
-}
-```
-
-### Example: alternate exporter family
-
-**Where it goes in the stack**
-
-- selected through `ExportRequest.plugin_id`
-- resolved by `src/plugins/providers/exporter.zig`
-- dispatched after result generation in `src/adapters/exporters/writer.zig`
-
-This is the seam for new artifact families such as cloud-optimized chunk stores, mission-specific bundles, or benchmark-friendly plain-table exports.
-
-**Rough pseudocode**
-
-```zig
-pub fn resolve(provider_id: []const u8) ?Provider {
-    if (std.mem.eql(u8, provider_id, "example.arrow_bundle")) {
-        return .{
-            .id = provider_id,
-            .format = .custom_arrow_bundle,
-            .media_type = "application/vnd.apache.arrow.file",
-            .extension = ".arrow",
-            .kind = .arrow_bundle,
-        };
-    }
-    return null;
-}
-```
-
-### Example: benchmark or optics data pack
-
-**Where it goes in the stack**
-
-- published as a `data.pack` manifest capability
-- registered through the capability registry rather than a hot-path provider resolver
-- carried into the plan snapshot and provenance through dataset hashes
-
-This is the seam for alternate spectroscopy packs, aerosol tables, cloud optics tables, benchmark scenes, or reference datasets that need stable provenance.
-
-**Rough pseudocode**
-
-```zig
-pub const benchmark_pack_manifest: Manifest.PluginManifest = .{
-    .id = "example.benchmark_pack",
-    .package = "benchmark_suite",
-    .version = "0.1.0",
-    .lane = .declarative,
-    .capabilities = &[_]Manifest.CapabilityDecl{
-        .{ .slot = Slots.data_pack, .name = "example.benchmark_pack" },
-    },
-    .provenance = .{
-        .description = "Benchmark optical-property and scene pack",
-        .dataset_hashes = &[_][]const u8{
-            "sha256:benchmark-pack-001",
-        },
-    },
-};
-```
-
-### Example: future measurement-product plugin
-
-**Where it would go in the stack**
-
-- this is not a first-class slot today
-- if added, it would likely sit between `measurement_space.zig` and `Result`
-- a plausible future slot name would be something like `measurement.product` or `measure.model`
-
-This is the seam for flux, BRDF, BRF, lidar-style products, actinic flux, or other derived observables that are not well described as exporters or diagnostics.
-
-**Rough pseudocode**
-
-```zig
-pub const Provider = struct {
-    id: []const u8,
-    materialize: *const fn (
-        allocator: Allocator,
-        scene: Scene,
-        product: MeasurementSpaceProduct,
-    ) anyerror!DerivedObservable,
-};
-
-fn brdfMaterialize(
-    allocator: Allocator,
-    scene: Scene,
-    product: MeasurementSpaceProduct,
-) !DerivedObservable {
-    _ = allocator;
-    return brdf.fromMeasurementSpace(scene.geometry, product.reflectance);
-}
-```
-
-The common property across all of these examples is that each one changes a scientific or operational block without requiring the engine lifecycle itself to be redesigned.
+- `ProviderSelection.absorber_provider`
+  - current builtin provider: `builtin.cross_sections`
+  - resolved by `src/plugins/providers/optics.zig`
+- `ProviderSelection.transport_solver`
+  - current builtin provider: `builtin.dispatcher`
+  - resolved by `src/plugins/providers/transport.zig`
+- `ProviderSelection.surface_model`
+  - current builtin provider: `builtin.lambertian_surface`
+  - resolved by `src/plugins/providers/surface.zig`
+- `ProviderSelection.instrument_response`
+  - current builtin provider: `builtin.generic_response`
+  - resolved by `src/plugins/providers/instrument.zig`
+- `ProviderSelection.noise_model`
+  - current builtin providers: `builtin.scene_noise`, `builtin.none_noise`, `builtin.shot_noise`, `builtin.s5p_operational_noise`
+  - resolved by `src/plugins/providers/noise.zig`
+- `ProviderSelection.retrieval_algorithm`
+  - current builtin providers: `builtin.oe_solver`, `builtin.doas_solver`, `builtin.dismas_solver`
+  - resolved by `src/plugins/providers/retrieval.zig`
+- `ExportRequest.plugin_id`
+  - current builtin providers: `builtin.netcdf_cf`, `builtin.zarr`
+  - resolved by `src/plugins/providers/exporter.zig`
+- data-pack manifests
+  - current builtin provider: `builtin.cross_sections`
+  - registered through the capability registry and carried into provenance
 
 ## 1. Start From The Outer Lifecycle
 
@@ -439,7 +158,6 @@ Examples:
 - `builtin.cross_sections`
 - `builtin.dispatcher`
 - `builtin.lambertian_surface`
-- `builtin.directional_lambertian_surface`
 - `builtin.generic_response`
 - `builtin.oe_solver`
 - `builtin.netcdf_cf`

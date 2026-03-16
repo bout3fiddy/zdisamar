@@ -294,11 +294,9 @@ pub fn resolveCompileAndExecute(
     var experiment = try DocumentModule.resolveFile(allocator, path);
     errdefer experiment.deinit();
 
-    const program = try compileResolved(allocator, experiment);
-    errdefer {
-        var owned = program;
-        owned.deinit();
-    }
+    var program = try compileResolved(allocator, experiment);
+    experiment = undefined;
+    errdefer program.deinit();
 
     const outcome = try program.execute(allocator, engine);
     return .{

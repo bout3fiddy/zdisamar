@@ -30,9 +30,7 @@
       "type": "object",
       "properties": {
         "provenance": { "type": "boolean" },
-        "jacobians": { "type": "boolean" },
-        "internal_fields": { "type": "boolean" },
-        "materialize_cache_keys": { "type": "boolean" }
+        "jacobians": { "type": "boolean" }
       },
       "additionalProperties": false
     },

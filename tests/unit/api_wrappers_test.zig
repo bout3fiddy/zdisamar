@@ -5,13 +5,9 @@ test "zig API wrappers expose diagnostics flags and result descriptors" {
     const flags = zdisamar.zig_wrappers.DiagnosticsFlags.fromSpec(.{
         .provenance = true,
         .jacobians = false,
-        .internal_fields = true,
-        .materialize_cache_keys = true,
     });
     try std.testing.expect(flags.provenance);
     try std.testing.expect(!flags.jacobians);
-    try std.testing.expect(flags.internal_fields);
-    try std.testing.expect(flags.materialize_cache_keys);
 
     const result = zdisamar.Result.init(9, "workspace-a", "scene-a", .{
         .plan_id = 9,
