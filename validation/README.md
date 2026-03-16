@@ -22,6 +22,5 @@ fast executable tests in `tests/`.
 ## Canonical Config Coverage
 
 - Tracked canonical YAML examples live under `data/examples/`.
-- Tracked cutover and migration notes live under `specs/`.
 - Validation-lane tests should keep release-readiness artifacts aligned with the
   canonical YAML CLI contract and importer-only legacy policy.
