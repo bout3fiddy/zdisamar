@@ -114,7 +114,7 @@ pub const Engine = struct {
             template.scene_blueprint,
             @intCast(dataset_hash_count),
         );
-        const plan = Plan.init(
+        var plan = Plan.init(
             self.allocator,
             self.next_plan_id,
             template,
@@ -124,6 +124,7 @@ pub const Engine = struct {
             plugin_state.runtime,
             providers,
         );
+        errdefer plan.deinit();
         plugin_state = .{};
         self.plan_cache.put(plan.id, prepared_cache) catch |err| switch (err) {
             error.PlanCacheDisabled => return errors.PreparationError.PreparedPlanLimitExceeded,
@@ -853,6 +854,15 @@ test "default builtin execution stays on typed providers when native plugins are
     try std.testing.expectEqual(@as(usize, 0), result.provenance.native_capability_slots.len);
     try std.testing.expectEqualStrings("builtin.dispatcher", result.provenance.solver_route);
     try std.testing.expect(result.measurement_space != null);
+}
+
+test "preparePlan releases resources when plan cache insertion fails" {
+    var engine = Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+    engine.plan_cache.options.max_entries = 0;
+
+    try std.testing.expectError(errors.PreparationError.PreparedPlanLimitExceeded, engine.preparePlan(.{}));
 }
 
 test "prepared plans own reusable cache hints and workspaces own reusable scratch" {

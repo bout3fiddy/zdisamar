@@ -6,6 +6,7 @@ pub fn dTransmittanceDOpticalDepth(optical_depth: f64) f64 {
     return -transmittance(optical_depth);
 }
 
+// Increasing optical depth reduces transmission, so this proxy is intentionally negative.
 pub fn opticalDepthSensitivityProxy(signal: f64, optical_depth: f64, derivative_scale: f64) f64 {
     return signal * derivative_scale * dTransmittanceDOpticalDepth(optical_depth);
 }

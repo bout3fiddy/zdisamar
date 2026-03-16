@@ -391,8 +391,9 @@ fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
 
 fn ensureBufferCapacity(allocator: Allocator, buffer: *[]f64, capacity: usize) Error!void {
     if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(f64, capacity);
     freeBuffer(allocator, buffer.*);
-    buffer.* = try allocator.alloc(f64, capacity);
+    buffer.* = replacement;
 }
 
 fn freeBuffer(allocator: Allocator, buffer: []f64) void {
@@ -735,6 +736,23 @@ test "measurement-space summary workspace supports routes without jacobians or n
     try std.testing.expectEqual(@as(usize, 0), workspace.noise_sigma.len);
     try std.testing.expectEqual(@as(usize, 0), product.noise_sigma.len);
     try std.testing.expect(product.jacobian == null);
+}
+
+test "ensureBufferCapacity preserves the original buffer on allocation failure" {
+    var storage: [96]u8 = undefined;
+    var fixed_buffer = std.heap.FixedBufferAllocator.init(&storage);
+    const allocator = fixed_buffer.allocator();
+
+    var buffer = try allocator.alloc(f64, 4);
+    errdefer allocator.free(buffer);
+    const original_ptr = buffer.ptr;
+    const original_len = buffer.len;
+
+    try std.testing.expectError(error.OutOfMemory, ensureBufferCapacity(allocator, &buffer, 32));
+    try std.testing.expect(buffer.ptr == original_ptr);
+    try std.testing.expectEqual(original_len, buffer.len);
+
+    allocator.free(buffer);
 }
 
 test "measurement-space product materializes spectral vectors and physical fields" {

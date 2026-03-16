@@ -88,19 +88,6 @@ pub fn prepareRoute(request: DispatchRequest) PrepareError!Route {
     };
 }
 
-pub fn estimateSensitivityProxy(mode: DerivativeMode, signal: f64) ?f64 {
-    return switch (mode) {
-        .none => null,
-        .semi_analytical => 0.10 * signal,
-        .analytical_plugin => 0.12 * signal,
-        .numerical => 0.08 * signal,
-    };
-}
-
-pub fn estimateJacobian(mode: DerivativeMode, signal: f64) ?f64 {
-    return estimateSensitivityProxy(mode, signal);
-}
-
 fn selectFamily(request: DispatchRequest) TransportFamily {
     return switch (request.regime) {
         .nadir => switch (request.derivative_mode) {

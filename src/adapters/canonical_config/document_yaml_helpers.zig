@@ -20,12 +20,12 @@ pub fn resolveInputPath(allocator: Allocator, source_dir: []const u8, path: []co
     if (std.fs.path.isAbsolute(path)) {
         const file = std.fs.openFileAbsolute(path, .{}) catch return error.MissingAsset;
         file.close();
-        return allocator.dupe(u8, path) catch return error.InvalidValue;
+        return try allocator.dupe(u8, path);
     }
 
     var current = source_dir;
     while (true) {
-        const candidate = std.fs.path.join(allocator, &.{ current, path }) catch return error.InvalidValue;
+        const candidate = try std.fs.path.join(allocator, &.{ current, path });
         if (pathExists(candidate)) return candidate;
         allocator.free(candidate);
 
@@ -34,7 +34,7 @@ pub fn resolveInputPath(allocator: Allocator, source_dir: []const u8, path: []co
         current = parent;
     }
 
-    const direct = allocator.dupe(u8, path) catch return error.InvalidValue;
+    const direct = try allocator.dupe(u8, path);
     if (pathExists(direct)) return direct;
     allocator.free(direct);
     return error.MissingAsset;
@@ -130,4 +130,14 @@ pub fn mapGet(entries: []const yaml.Entry, key: []const u8) ?yaml.Value {
         if (std.mem.eql(u8, entry.key, key)) return entry.value;
     }
     return null;
+}
+
+test "resolveInputPath preserves out-of-memory failures" {
+    var storage: [16]u8 = undefined;
+    var fixed_buffer = std.heap.FixedBufferAllocator.init(&storage);
+
+    try std.testing.expectError(
+        error.OutOfMemory,
+        resolveInputPath(fixed_buffer.allocator(), "/tmp", "relative-config.yaml"),
+    );
 }
