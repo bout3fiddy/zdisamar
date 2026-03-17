@@ -59,10 +59,48 @@
       ]
     },
     {
+      "id": "o2a_hitran_07_hit08_tropomi",
+      "path": "vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par",
+      "format": "hitran_160",
+      "sha256": "sha256:a380be78be60379201a397117eee58fbcd8ae228e8372449ddc8b6707c711507",
+      "columns": [
+        "gas_index",
+        "isotope_number",
+        "abundance_fraction",
+        "center_wavelength_nm",
+        "line_strength_cm2_per_molecule",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "lower_state_energy_cm1",
+        "pressure_shift_nm",
+        "line_mixing_coefficient"
+      ]
+    },
+    {
       "id": "o2a_lisa_sdf_subset",
       "path": "data/cross_sections/o2a_lisa_sdf_subset.dat",
       "format": "lisa_sdf",
       "sha256": "sha256:ea1a65e8777085c1b871fd5d05655c5d082261a5184502b525b4f762bd0680ef",
+      "columns": [
+        "center_wavenumber_cm1",
+        "center_wavelength_nm",
+        "population_t0",
+        "dipole_ratio",
+        "dipole_t0",
+        "lower_state_energy_cm1",
+        "air_half_width_cm1",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "pressure_shift_cm1",
+        "pressure_shift_nm",
+        "rotational_index_m1"
+      ]
+    },
+    {
+      "id": "o2a_lisa_sdf",
+      "path": "vendor/disamar-fortran/RefSpec/O2A_LISA_SDF.dat",
+      "format": "lisa_sdf",
+      "sha256": "sha256:292e5a28b8993bc8a221a02b1c75ecd4f48bc8d11c489b795bc21c821b85f868",
       "columns": [
         "center_wavenumber_cm1",
         "center_wavelength_nm",
@@ -89,10 +127,33 @@
       ]
     },
     {
+      "id": "o2a_lisa_rmf",
+      "path": "vendor/disamar-fortran/RefSpec/O2A_LISA_RMF.dat",
+      "format": "lisa_rmf",
+      "sha256": "sha256:469b71408dad0eb6875b4133250685bc0614978a4110df8a706860224ef4c432",
+      "columns": [
+        "wt0",
+        "temperature_exponent_bw"
+      ]
+    },
+    {
       "id": "o2o2_bira_o2a_subset",
       "path": "data/cross_sections/o2o2_bira_o2a_subset.dat",
       "format": "bira_cia_poly",
       "sha256": "sha256:fddb53e4921814210f3179d022cc30b200f2e4c2d4b2d509dbc44a8d139f1f81",
+      "columns": [
+        "wavelength_nm",
+        "a0",
+        "a1",
+        "a2",
+        "scale_factor_cm5_per_molecule2"
+      ]
+    },
+    {
+      "id": "o2o2_bira_o2a",
+      "path": "vendor/disamar-fortran/RefSpec/O2O2T_BIRA_full_spectrum.dat",
+      "format": "bira_cia_poly",
+      "sha256": "sha256:37bfd7662114816366c4e19d846715ae6aff5db2c48e10c49f02a20783d02cb4",
       "columns": [
         "wavelength_nm",
         "a0",

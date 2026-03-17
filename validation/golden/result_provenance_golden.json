@@ -4,6 +4,7 @@
   "solver_route_default": "builtin.dispatcher",
   "transport_family_default": "surrogate_adding",
   "derivative_mode_default": "none",
+  "derivative_semantics_default": "none",
   "numerical_mode_default": "scalar",
   "plugin_inventory_generation_min": 7,
   "required_plugin_version": "builtin.cross_sections@0.1.0",

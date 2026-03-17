@@ -30,15 +30,40 @@ pub const CrossSectionTable = struct {
     pub fn interpolateSigma(self: CrossSectionTable, wavelength_nm: f64) f64 {
         if (self.points.len == 0) return 0.0;
         if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0].sigma_cm2_per_molecule;
+        if (wavelength_nm >= self.points[self.points.len - 1].wavelength_nm) return self.points[self.points.len - 1].sigma_cm2_per_molecule;
 
-        for (self.points[0 .. self.points.len - 1], self.points[1..]) |left, right| {
-            if (wavelength_nm <= right.wavelength_nm) {
-                const span = right.wavelength_nm - left.wavelength_nm;
-                if (span == 0.0) return right.sigma_cm2_per_molecule;
-                const weight = (wavelength_nm - left.wavelength_nm) / span;
-                return left.sigma_cm2_per_molecule + weight * (right.sigma_cm2_per_molecule - left.sigma_cm2_per_molecule);
+        const bracket = self.bracketForWavelength(wavelength_nm) orelse return self.points[self.points.len - 1].sigma_cm2_per_molecule;
+        const left = self.points[bracket.left_index];
+        const right = self.points[bracket.right_index];
+        const span = right.wavelength_nm - left.wavelength_nm;
+        if (span == 0.0) return right.sigma_cm2_per_molecule;
+        const weight = (wavelength_nm - left.wavelength_nm) / span;
+        return left.sigma_cm2_per_molecule + weight * (right.sigma_cm2_per_molecule - left.sigma_cm2_per_molecule);
+    }
+
+    pub fn sigmaAtHighResolution(self: CrossSectionTable, wavelength_nm: f64) f64 {
+        return self.interpolateSigma(wavelength_nm);
+    }
+
+    pub fn bracketForWavelength(
+        self: CrossSectionTable,
+        wavelength_nm: f64,
+    ) ?struct { left_index: usize, right_index: usize } {
+        if (self.points.len < 2) return null;
+
+        var low: usize = 0;
+        var high: usize = self.points.len - 1;
+        while (low + 1 < high) {
+            const middle = low + (high - low) / 2;
+            if (self.points[middle].wavelength_nm <= wavelength_nm) {
+                low = middle;
+            } else {
+                high = middle;
             }
         }
-        return self.points[self.points.len - 1].sigma_cm2_per_molecule;
+        return .{
+            .left_index = low,
+            .right_index = high,
+        };
     }
 };

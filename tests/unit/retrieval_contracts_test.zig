@@ -24,7 +24,7 @@ test "retrieval common contracts enforce derivative requirement by method" {
         .diagnostics = .{ .jacobians = true },
     };
 
-    const base_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(request);
+    const base_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&request);
     try base_problem.validateForMethod(.oe);
 
     const layout = base_problem.layoutRequirements();
@@ -48,7 +48,7 @@ test "retrieval contracts require explicit external-observation bindings" {
     var wavelengths = [_]f64{ 760.5, 760.6 };
     var radiance = [_]f64{ 1.2, 1.1 };
     var irradiance = [_]f64{ 2.0, 2.0 };
-    var surrogate_reflectance = [_]f64{ 0.6, 0.55 };
+    var reflectance = [_]f64{ 0.6, 0.55 };
     var noise_sigma = [_]f64{ 0.01, 0.01 };
     var observed_product: zdisamar.transport.measurement_space.MeasurementSpaceProduct = .{
         .summary = .{
@@ -57,13 +57,13 @@ test "retrieval contracts require explicit external-observation bindings" {
             .wavelength_end_nm = 760.6,
             .mean_radiance = 1.15,
             .mean_irradiance = 2.0,
-            .mean_surrogate_reflectance = 0.575,
+            .mean_reflectance = 0.575,
             .mean_noise_sigma = 0.01,
         },
         .wavelengths = wavelengths[0..],
         .radiance = radiance[0..],
         .irradiance = irradiance[0..],
-        .surrogate_reflectance = surrogate_reflectance[0..],
+        .reflectance = reflectance[0..],
         .noise_sigma = noise_sigma[0..],
         .effective_air_mass_factor = 1.0,
         .effective_single_scatter_albedo = 0.0,
@@ -103,7 +103,7 @@ test "retrieval contracts require explicit external-observation bindings" {
 
     try std.testing.expectError(
         retrieval.common.contracts.Error.MissingMeasurementProduct,
-        retrieval.common.contracts.RetrievalProblem.fromRequest(request),
+        retrieval.common.contracts.RetrievalProblem.fromRequest(&request),
     );
 
     var bound_request = request;
@@ -112,19 +112,19 @@ test "retrieval contracts require explicit external-observation bindings" {
         .observable = "radiance",
         .product = &observed_product,
     };
-    const bound_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(bound_request);
+    const bound_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&bound_request);
     try std.testing.expect(bound_problem.observed_measurement != null);
     try std.testing.expectEqualStrings("observed_radiance", bound_problem.observed_measurement.?.source_name);
 
     var mismatched_observable_request = request;
     mismatched_observable_request.measurement_binding = .{
         .source_name = "observed_radiance",
-        .observable = zdisamar.transport.measurement_space.surrogate_reflectance_export_name,
+        .observable = zdisamar.transport.measurement_space.reflectance_export_name,
         .product = &observed_product,
     };
     try std.testing.expectError(
         retrieval.common.contracts.Error.InvalidRequest,
-        retrieval.common.contracts.RetrievalProblem.fromRequest(mismatched_observable_request),
+        retrieval.common.contracts.RetrievalProblem.fromRequest(&mismatched_observable_request),
     );
 }
 

@@ -1,6 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+// Helper interpolation tables used by optics preparation and transport support.
+// This module does not claim full AMF or scattering-solver capability on its own.
+
 pub const AirmassFactorPoint = struct {
     solar_zenith_deg: f64,
     view_zenith_deg: f64,
@@ -82,5 +85,9 @@ pub const AirmassFactorLut = struct {
             }
         }
         return best_value;
+    }
+
+    pub fn providesSupportOnly(_: AirmassFactorLut) bool {
+        return true;
     }
 };

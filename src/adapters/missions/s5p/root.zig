@@ -188,12 +188,12 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
             .instrument_line_fwhm_nm = metadata.isrf_fwhm_nm orelse 0.0,
             .high_resolution_step_nm = metadata.high_resolution_step_nm orelse 0.0,
             .high_resolution_half_span_nm = metadata.high_resolution_half_span_nm orelse 0.0,
-            .instrument_line_shape = metadata.instrument_line_shape,
-            .instrument_line_shape_table = metadata.instrument_line_shape_table,
         },
     };
     errdefer scene.deinitOwned(allocator);
 
+    scene.observation_model.instrument_line_shape = try metadata.instrument_line_shape.clone(allocator);
+    scene.observation_model.instrument_line_shape_table = try metadata.instrument_line_shape_table.clone(allocator);
     scene.observation_model.operational_refspec_grid = try metadata.operational_refspec_grid.clone(allocator);
     scene.observation_model.operational_solar_spectrum = try metadata.operational_solar_spectrum.clone(allocator);
     scene.observation_model.o2_operational_lut = try metadata.o2_operational_lut.clone(allocator);

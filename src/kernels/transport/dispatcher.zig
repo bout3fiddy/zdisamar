@@ -35,11 +35,11 @@ test "dispatcher picks adding lane for nadir without analytical plugin" {
     try std.testing.expect(result.jacobian_column != null);
 }
 
-test "dispatcher picks labos lane for limb and analytical plugin mode" {
+test "dispatcher picks labos lane for limb semi-analytical mode" {
     const route = try prepare(.{
         .regime = .limb,
-        .execution_mode = .polarized,
-        .derivative_mode = .analytical_plugin,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
     });
     try std.testing.expectEqual(common.TransportFamily.labos, route.family);
 

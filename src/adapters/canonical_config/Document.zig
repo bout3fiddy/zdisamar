@@ -24,6 +24,7 @@ const Cloud = @import("../../model/Cloud.zig").Cloud;
 const Aerosol = @import("../../model/Aerosol.zig").Aerosol;
 const ObservationModel = @import("../../model/ObservationModel.zig").ObservationModel;
 const ObservationRegime = @import("../../model/ObservationModel.zig").ObservationRegime;
+const BuiltinLineShapeKind = @import("../../model/Instrument.zig").BuiltinLineShapeKind;
 const Scene = @import("../../model/Scene.zig").Scene;
 const InverseProblem = @import("../../model/InverseProblem.zig").InverseProblem;
 const DerivativeMode = @import("../../model/InverseProblem.zig").DerivativeMode;
@@ -38,6 +39,8 @@ const StateParameter = @import("../../model/StateVector.zig").Parameter;
 const StateTransform = @import("../../model/StateVector.zig").Transform;
 const StatePrior = @import("../../model/StateVector.zig").Prior;
 const StateBounds = @import("../../model/StateVector.zig").Bounds;
+const ReferenceData = @import("../../model/ReferenceData.zig");
+const reference_assets = @import("../ingest/reference_assets.zig");
 const spectral_ascii = @import("../ingest/spectral_ascii.zig");
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
 const Allocator = std.mem.Allocator;
@@ -227,7 +230,10 @@ pub const Document = struct {
         self.* = undefined;
     }
 
-    pub fn resolve(self: *const Document, allocator: Allocator) !ResolvedExperiment {
+    pub fn resolve(self: *const Document, allocator: Allocator) !*ResolvedExperiment {
+        const resolved = try allocator.create(ResolvedExperiment);
+        errdefer allocator.destroy(resolved);
+
         const arena_state = try allocator.create(std.heap.ArenaAllocator);
         errdefer allocator.destroy(arena_state);
         arena_state.* = std.heap.ArenaAllocator.init(allocator);
@@ -269,7 +275,7 @@ pub const Document = struct {
         };
 
         const simulation = try resolution_context.resolveStage(.simulation, mapGet(experiment_map, "simulation"), null);
-        const retrieval = try resolution_context.resolveStage(.retrieval, mapGet(experiment_map, "retrieval"), if (simulation) |*value| &value.stage else null);
+        const retrieval = try resolution_context.resolveStage(.retrieval, mapGet(experiment_map, "retrieval"), if (simulation) |value| &value.stage else null);
         const outputs = try decodeOutputs(
             arena,
             mapGet(root_map, "outputs"),
@@ -280,19 +286,20 @@ pub const Document = struct {
         );
         const warnings = try buildWarnings(arena, validation, simulation, retrieval);
 
-        return .{
+        resolved.* = .{
             .owner_allocator = allocator,
             .arena_state = arena_state,
             .source_path = try arena.dupe(u8, self.source_path),
             .metadata = metadata,
             .assets = assets,
             .ingests = ingests,
-            .simulation = if (simulation) |value| value.stage else null,
-            .retrieval = if (retrieval) |value| value.stage else null,
+            .simulation = if (simulation) |value| &value.stage else null,
+            .retrieval = if (retrieval) |value| &value.stage else null,
             .outputs = outputs,
             .validation = validation,
             .warnings = warnings,
         };
+        return resolved;
     }
 };
 
@@ -303,16 +310,18 @@ pub const ResolvedExperiment = struct {
     metadata: Metadata = .{},
     assets: []const Asset = &[_]Asset{},
     ingests: []const Ingest = &[_]Ingest{},
-    simulation: ?Stage = null,
-    retrieval: ?Stage = null,
+    simulation: ?*const Stage = null,
+    retrieval: ?*const Stage = null,
     outputs: []const OutputSpec = &[_]OutputSpec{},
     validation: Validation = .{},
     warnings: []const Warning = &[_]Warning{},
 
     pub fn deinit(self: *ResolvedExperiment) void {
+        const owner_allocator = self.owner_allocator;
         self.arena_state.deinit();
-        self.owner_allocator.destroy(self.arena_state);
+        owner_allocator.destroy(self.arena_state);
         self.* = undefined;
+        owner_allocator.destroy(self);
     }
 
     pub fn findAsset(self: ResolvedExperiment, name: []const u8) ?Asset {
@@ -331,16 +340,16 @@ pub const ResolvedExperiment = struct {
 
     pub fn findProduct(self: ResolvedExperiment, name: []const u8) ?Product {
         if (self.simulation) |stage| {
-            if (findStageProduct(stage, name)) |product| return product;
+            if (findStageProduct(stage.*, name)) |product| return product;
         }
         if (self.retrieval) |stage| {
-            if (findStageProduct(stage, name)) |product| return product;
+            if (findStageProduct(stage.*, name)) |product| return product;
         }
         return null;
     }
 };
 
-pub fn resolveFile(allocator: Allocator, path: []const u8) !ResolvedExperiment {
+pub fn resolveFile(allocator: Allocator, path: []const u8) !*ResolvedExperiment {
     var document = try Document.parseFile(allocator, path);
     defer document.deinit();
     return document.resolve(allocator);
@@ -356,8 +365,7 @@ const MeasurementDecode = struct {
     source_name: []const u8,
 };
 
-const ObservationDecode = struct {
-    model: ObservationModel,
+const ObservationMetadata = struct {
     spectral_response_shape: []const u8 = "",
     spectral_response_table_source: Binding = .{},
     noise_seed: ?u64 = null,
@@ -369,8 +377,7 @@ const InverseDecode = struct {
     algorithm_damping: []const u8 = "",
 };
 
-const SceneDecode = struct {
-    scene: Scene,
+const SceneMetadata = struct {
     spectral_response_shape: []const u8 = "",
     spectral_response_table_source: Binding = .{},
     noise_seed: ?u64 = null,
@@ -390,19 +397,20 @@ const ResolveContext = struct {
         kind: StageKind,
         raw_stage: ?yaml.Value,
         simulation_stage: ?*const Stage,
-    ) !?StageResolution {
+    ) !?*StageResolution {
         const stage_value = raw_stage orelse return null;
         if (stage_value == .null) return null;
 
         var stack = std.ArrayListUnmanaged([]const u8){};
         defer stack.deinit(self.allocator);
 
-        const merged = try self.resolveComposableNode(stage_value, &stack);
-        const stage = try self.decodeStage(kind, merged, simulation_stage);
-        return .{
-            .merged = merged,
-            .stage = stage,
+        const resolution = try self.allocator.create(StageResolution);
+        resolution.* = .{
+            .merged = try self.resolveComposableNode(stage_value, &stack),
+            .stage = undefined,
         };
+        try self.populateStage(kind, resolution.merged, simulation_stage, &resolution.stage);
+        return resolution;
     }
 
     fn resolveComposableNode(
@@ -454,29 +462,30 @@ const ResolveContext = struct {
         return self.resolveComposableNode(template_value, stack);
     }
 
-    fn decodeStage(
+    fn populateStage(
         self: *const ResolveContext,
         kind: StageKind,
         merged: yaml.Value,
         simulation_stage: ?*const Stage,
-    ) !Stage {
+        stage: *Stage,
+    ) !void {
         const stage_map = try expectMap(merged);
         try ensureKnownFields(stage_map, if (kind == .simulation)
             &.{ "plan", "scene", "products", "diagnostics", "label", "description" }
         else
             &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description" }, self.strict_unknown_fields);
 
-        const scene_decode = try self.decodeScene(kind, mapGet(stage_map, "scene"));
-        var stage: Stage = .{
+        stage.* = .{
             .kind = kind,
             .plan = try decodePlan(self.allocator, mapGet(stage_map, "plan"), self.strict_unknown_fields),
-            .scene = scene_decode.scene,
+            .scene = undefined,
             .products = try decodeProducts(self.allocator, mapGet(stage_map, "products"), self.strict_unknown_fields),
             .diagnostics = try decodeDiagnostics(mapGet(stage_map, "diagnostics"), self.strict_unknown_fields),
-            .spectral_response_shape = scene_decode.spectral_response_shape,
-            .spectral_response_table_source = scene_decode.spectral_response_table_source,
-            .noise_seed = scene_decode.noise_seed,
         };
+        const scene_metadata = try self.populateScene(kind, mapGet(stage_map, "scene"), &stage.scene);
+        stage.spectral_response_shape = scene_metadata.spectral_response_shape;
+        stage.spectral_response_table_source = scene_metadata.spectral_response_table_source;
+        stage.noise_seed = scene_metadata.noise_seed;
 
         stage.plan.providers.surface_model = normalizeSurfaceProvider(stage.scene.surface.provider, stage.scene.surface.kind);
         stage.plan.providers.instrument_response = normalizeInstrumentProvider(stage.scene.observation_model.response_provider, stage.scene.observation_model.instrument);
@@ -506,11 +515,14 @@ const ResolveContext = struct {
         try stage.plan.validate();
         try stage.scene.validate();
         if (stage.inverse) |inverse| try inverse.validate();
-
-        return stage;
     }
 
-    fn decodeScene(self: *const ResolveContext, kind: StageKind, value: ?yaml.Value) !SceneDecode {
+    fn populateScene(
+        self: *const ResolveContext,
+        kind: StageKind,
+        value: ?yaml.Value,
+        scene: *Scene,
+    ) !SceneMetadata {
         const scene_map = try expectMap(value orelse return Error.MissingField);
         try ensureKnownFields(scene_map, &.{
             "id",
@@ -526,8 +538,12 @@ const ResolveContext = struct {
             "description",
         }, self.strict_unknown_fields);
 
-        const observation = try self.decodeObservationModel(mapGet(scene_map, "measurement_model"));
-        var scene: Scene = .{
+        var observation_model: ObservationModel = .{};
+        const observation_metadata = try self.populateObservationModel(
+            mapGet(scene_map, "measurement_model"),
+            &observation_model,
+        );
+        scene.* = .{
             .id = if (mapGet(scene_map, "id")) |scene_id| try self.allocator.dupe(u8, try expectString(scene_id)) else switch (kind) {
                 .simulation => "simulation-stage",
                 .retrieval => "retrieval-stage",
@@ -538,24 +554,27 @@ const ResolveContext = struct {
             .surface = try decodeSurface(self.allocator, mapGet(scene_map, "surface"), self.strict_unknown_fields),
             .cloud = try decodeCloud(mapGet(scene_map, "clouds"), self.strict_unknown_fields),
             .aerosol = try decodeAerosol(mapGet(scene_map, "aerosols"), self.strict_unknown_fields),
-            .observation_model = observation.model,
+            .observation_model = observation_model,
         };
 
         scene.spectral_grid = try inferSpectralGrid(scene.bands);
-        scene.observation_model.regime = observation.model.regime;
+        scene.observation_model.regime = observation_model.regime;
         scene.atmosphere.has_clouds = scene.cloud.enabled;
         scene.atmosphere.has_aerosols = scene.aerosol.enabled;
         scene.absorbers = try self.decodeAbsorbers(mapGet(scene_map, "absorbers"), &scene.observation_model);
 
         return .{
-            .scene = scene,
-            .spectral_response_shape = observation.spectral_response_shape,
-            .spectral_response_table_source = observation.spectral_response_table_source,
-            .noise_seed = observation.noise_seed,
+            .spectral_response_shape = observation_metadata.spectral_response_shape,
+            .spectral_response_table_source = observation_metadata.spectral_response_table_source,
+            .noise_seed = observation_metadata.noise_seed,
         };
     }
 
-    fn decodeObservationModel(self: *const ResolveContext, value: ?yaml.Value) !ObservationDecode {
+    fn populateObservationModel(
+        self: *const ResolveContext,
+        value: ?yaml.Value,
+        model: *ObservationModel,
+    ) !ObservationMetadata {
         const model_map = try expectMap(value orelse return Error.MissingField);
         try ensureKnownFields(model_map, &.{
             "regime",
@@ -570,42 +589,43 @@ const ResolveContext = struct {
             "description",
         }, self.strict_unknown_fields);
 
-        var result = ObservationDecode{
-            .model = .{},
-        };
+        model.* = .{};
+        var result: ObservationMetadata = .{};
 
         if (mapGet(model_map, "regime")) |regime| {
-            result.model.regime = try parseObservationRegime(try expectString(regime));
+            model.regime = try parseObservationRegime(try expectString(regime));
         }
 
         if (mapGet(model_map, "instrument")) |instrument_value| {
             const instrument_map = try expectMap(instrument_value);
             try ensureKnownFields(instrument_map, &.{ "name", "response_provider" }, self.strict_unknown_fields);
-            result.model.instrument = try self.allocator.dupe(u8, try expectString(requiredField(instrument_map, "name")));
+            model.instrument = try self.allocator.dupe(u8, try expectString(requiredField(instrument_map, "name")));
             if (mapGet(instrument_map, "response_provider")) |response_provider| {
-                result.model.response_provider = try self.allocator.dupe(u8, try expectString(response_provider));
+                model.response_provider = try self.allocator.dupe(u8, try expectString(response_provider));
             }
         }
 
         if (mapGet(model_map, "sampling")) |sampling_value| {
             const sampling_map = try expectMap(sampling_value);
             try ensureKnownFields(sampling_map, &.{ "mode", "high_resolution_step_nm", "high_resolution_half_span_nm" }, self.strict_unknown_fields);
-            if (mapGet(sampling_map, "mode")) |mode| result.model.sampling = try self.allocator.dupe(u8, try expectString(mode));
-            if (mapGet(sampling_map, "high_resolution_step_nm")) |step| result.model.high_resolution_step_nm = try expectF64(step);
-            if (mapGet(sampling_map, "high_resolution_half_span_nm")) |span| result.model.high_resolution_half_span_nm = try expectF64(span);
+            if (mapGet(sampling_map, "mode")) |mode| model.sampling = try self.allocator.dupe(u8, try expectString(mode));
+            if (mapGet(sampling_map, "high_resolution_step_nm")) |step| model.high_resolution_step_nm = try expectF64(step);
+            if (mapGet(sampling_map, "high_resolution_half_span_nm")) |span| model.high_resolution_half_span_nm = try expectF64(span);
         }
 
         if (mapGet(model_map, "spectral_response")) |response_value| {
             const response_map = try expectMap(response_value);
             try ensureKnownFields(response_map, &.{ "shape", "fwhm_nm", "table" }, self.strict_unknown_fields);
             if (mapGet(response_map, "shape")) |shape| {
-                result.spectral_response_shape = try self.allocator.dupe(u8, try expectString(shape));
+                const shape_name = try expectString(shape);
+                result.spectral_response_shape = try self.allocator.dupe(u8, shape_name);
+                model.builtin_line_shape = try BuiltinLineShapeKind.parse(shape_name);
             }
-            if (mapGet(response_map, "fwhm_nm")) |fwhm| result.model.instrument_line_fwhm_nm = try expectF64(fwhm);
+            if (mapGet(response_map, "fwhm_nm")) |fwhm| model.instrument_line_fwhm_nm = try expectF64(fwhm);
             if (mapGet(response_map, "table")) |table_value| {
                 const binding = try self.decodeIngestBinding(table_value);
                 result.spectral_response_table_source = binding;
-                result.model.instrument_line_shape_table = try resolveInstrumentLineShapeTable(self.ingests, binding);
+                model.instrument_line_shape_table = try resolveInstrumentLineShapeTable(self.ingests, binding);
             }
         }
 
@@ -614,9 +634,9 @@ const ResolveContext = struct {
             try ensureKnownFields(illumination_map, &.{"solar_spectrum"}, self.strict_unknown_fields);
             if (mapGet(illumination_map, "solar_spectrum")) |spectrum_value| {
                 const binding = try self.decodeSourceBinding(spectrum_value);
-                result.model.solar_spectrum_source = binding;
+                model.solar_spectrum_source = binding;
                 if (binding.kind == .ingest) {
-                    result.model.operational_solar_spectrum = try resolveOperationalSolarSpectrum(self.allocator, self.ingests, binding);
+                    model.operational_solar_spectrum = try resolveOperationalSolarSpectrum(self.allocator, self.ingests, binding);
                 }
             }
         }
@@ -626,23 +646,23 @@ const ResolveContext = struct {
             try ensureKnownFields(support_map, &.{"weighted_reference_grid"}, self.strict_unknown_fields);
             if (mapGet(support_map, "weighted_reference_grid")) |grid_value| {
                 const binding = try self.decodeIngestBinding(grid_value);
-                result.model.weighted_reference_grid_source = binding;
-                result.model.operational_refspec_grid = try resolveOperationalReferenceGrid(self.allocator, self.ingests, binding);
+                model.weighted_reference_grid_source = binding;
+                model.operational_refspec_grid = try resolveOperationalReferenceGrid(self.allocator, self.ingests, binding);
             }
         }
 
         if (mapGet(model_map, "calibration")) |calibration_value| {
             const calibration_map = try expectMap(calibration_value);
             try ensureKnownFields(calibration_map, &.{ "wavelength_shift_nm", "multiplicative_offset", "stray_light" }, self.strict_unknown_fields);
-            if (mapGet(calibration_map, "wavelength_shift_nm")) |shift| result.model.wavelength_shift_nm = try expectF64(shift);
-            if (mapGet(calibration_map, "multiplicative_offset")) |offset| result.model.multiplicative_offset = try expectF64(offset);
-            if (mapGet(calibration_map, "stray_light")) |stray_light| result.model.stray_light = try expectF64(stray_light);
+            if (mapGet(calibration_map, "wavelength_shift_nm")) |shift| model.wavelength_shift_nm = try expectF64(shift);
+            if (mapGet(calibration_map, "multiplicative_offset")) |offset| model.multiplicative_offset = try expectF64(offset);
+            if (mapGet(calibration_map, "stray_light")) |stray_light| model.stray_light = try expectF64(stray_light);
         }
 
         if (mapGet(model_map, "noise")) |noise_value| {
             const noise_map = try expectMap(noise_value);
             try ensureKnownFields(noise_map, &.{ "model", "seed" }, self.strict_unknown_fields);
-            if (mapGet(noise_map, "model")) |model| result.model.noise_model = try self.allocator.dupe(u8, try expectString(model));
+            if (mapGet(noise_map, "model")) |noise_model| model.noise_model = try self.allocator.dupe(u8, try expectString(noise_model));
             if (mapGet(noise_map, "seed")) |seed| result.noise_seed = @intCast(try expectU64(seed));
         }
 
@@ -709,6 +729,16 @@ const ResolveContext = struct {
                         observation_model.o2o2_operational_lut = try resolveOperationalLut(self.allocator, self.ingests, binding, "o2o2_operational_lut");
                     }
                 }
+                absorber.spectroscopy.resolved_line_list = try resolveSpectroscopyLineList(
+                    self.allocator,
+                    self.assets,
+                    absorber.spectroscopy,
+                );
+                absorber.spectroscopy.resolved_cia_table = try resolveCollisionInducedAbsorptionTable(
+                    self.allocator,
+                    self.assets,
+                    absorber.spectroscopy.cia_table,
+                );
             }
 
             absorbers[index] = absorber;
@@ -1321,8 +1351,8 @@ fn decodeMeasurementErrorModel(value: yaml.Value, strict: bool) !MeasurementErro
 fn decodeOutputs(
     allocator: Allocator,
     value: ?yaml.Value,
-    simulation: ?StageResolution,
-    retrieval: ?StageResolution,
+    simulation: ?*const StageResolution,
+    retrieval: ?*const StageResolution,
     strict: bool,
     validation: Validation,
 ) ![]const OutputSpec {
@@ -1351,12 +1381,12 @@ fn decodeOutputs(
 fn buildWarnings(
     allocator: Allocator,
     validation: Validation,
-    simulation: ?StageResolution,
-    retrieval: ?StageResolution,
+    simulation: ?*const StageResolution,
+    retrieval: ?*const StageResolution,
 ) ![]const Warning {
     if (simulation == null or retrieval == null) return &[_]Warning{};
-    const simulation_stage = simulation.?;
-    const retrieval_stage = retrieval.?;
+    const simulation_stage = simulation.?.*;
+    const retrieval_stage = retrieval.?.*;
 
     if (retrieval_stage.stage.inverse == null) return &[_]Warning{};
     if (retrieval_stage.stage.inverse.?.measurements.source.kind != .stage_product) return &[_]Warning{};
@@ -1441,6 +1471,75 @@ fn resolveOperationalReferenceGrid(allocator: Allocator, ingests: []const Ingest
     return ingest.loaded_spectra.metadata.operational_refspec_grid.clone(allocator);
 }
 
+fn resolveSpectroscopyLineList(
+    allocator: Allocator,
+    assets: []const Asset,
+    spectroscopy: Spectroscopy,
+) !?ReferenceData.SpectroscopyLineList {
+    if (spectroscopy.line_list.kind != .asset) return null;
+
+    var line_asset = try loadResolvedAsset(allocator, assets, spectroscopy.line_list, .spectroscopy_line_list);
+    defer line_asset.deinit(allocator);
+
+    var line_list = try line_asset.toSpectroscopyLineList(allocator);
+    errdefer line_list.deinit(allocator);
+
+    const wants_sidecars = spectroscopy.strong_lines.kind == .asset or spectroscopy.line_mixing.kind == .asset;
+    if (wants_sidecars) {
+        if (spectroscopy.strong_lines.kind != .asset or spectroscopy.line_mixing.kind != .asset) {
+            return Error.InvalidReference;
+        }
+
+        var strong_asset = try loadResolvedAsset(allocator, assets, spectroscopy.strong_lines, .spectroscopy_strong_line_set);
+        defer strong_asset.deinit(allocator);
+        var strong_lines = try strong_asset.toSpectroscopyStrongLineSet(allocator);
+        defer strong_lines.deinit(allocator);
+
+        var relaxation_asset = try loadResolvedAsset(allocator, assets, spectroscopy.line_mixing, .spectroscopy_relaxation_matrix);
+        defer relaxation_asset.deinit(allocator);
+        var relaxation_matrix = try relaxation_asset.toSpectroscopyRelaxationMatrix(allocator);
+        defer relaxation_matrix.deinit(allocator);
+
+        try line_list.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
+    }
+
+    return line_list;
+}
+
+fn resolveCollisionInducedAbsorptionTable(
+    allocator: Allocator,
+    assets: []const Asset,
+    binding: Binding,
+) !?ReferenceData.CollisionInducedAbsorptionTable {
+    if (binding.kind != .asset) return null;
+
+    var loaded = try loadResolvedAsset(
+        allocator,
+        assets,
+        binding,
+        .collision_induced_absorption_table,
+    );
+    defer loaded.deinit(allocator);
+    const table = try loaded.toCollisionInducedAbsorptionTable(allocator);
+    return table;
+}
+
+fn loadResolvedAsset(
+    allocator: Allocator,
+    assets: []const Asset,
+    binding: Binding,
+    kind: reference_assets.AssetKind,
+) !reference_assets.LoadedAsset {
+    const asset = findAsset(assets, binding.name) orelse return Error.MissingAsset;
+    return reference_assets.loadExternalAsset(
+        allocator,
+        kind,
+        asset.name,
+        asset.resolved_path,
+        asset.format,
+    );
+}
+
 fn resolveOperationalLut(
     allocator: Allocator,
     ingests: []const Ingest,
@@ -1498,7 +1597,7 @@ fn findStageProduct(stage: Stage, name: []const u8) ?Product {
     return null;
 }
 
-fn findProductAcrossStages(simulation: ?StageResolution, retrieval: ?StageResolution, name: []const u8) ?Product {
+fn findProductAcrossStages(simulation: ?*const StageResolution, retrieval: ?*const StageResolution, name: []const u8) ?Product {
     if (simulation) |value| {
         if (findStageProduct(value.stage, name)) |product| return product;
     }

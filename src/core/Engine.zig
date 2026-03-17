@@ -154,7 +154,7 @@ pub const Engine = struct {
         try runner.run(thread, &self.plan_cache, exec_ctx, execute_fn);
     }
 
-    pub fn execute(self: *Engine, plan: *const Plan, workspace: *Workspace, request: Request) errors.Error!Result {
+    pub fn execute(self: *Engine, plan: *const Plan, workspace: *Workspace, request: *const Request) errors.Error!Result {
         try request.validateForPlan(plan);
 
         plan.plugin_runtime.executeForRequest(.{
@@ -167,7 +167,8 @@ pub const Engine = struct {
         workspace.prepareScratch(&plan.prepared_cache);
         _ = self.plan_cache.markRun(plan.id);
 
-        var result = try initializeResult(self, plan, workspace, request);
+        var result: Result = undefined;
+        try initializeResult(self, plan, workspace, request, &result);
         errdefer result.deinit(self.allocator);
 
         try executeForwardProducts(self, plan, request, &result);
@@ -249,9 +250,12 @@ fn initializeResult(
     self: *Engine,
     plan: *const Plan,
     workspace: *Workspace,
-    request: Request,
-) errors.ExecutionError!Result {
-    var provenance = Provenance.fromPlan(
+    request: *const Request,
+    result: *Result,
+) errors.ExecutionError!void {
+    var provenance: Provenance = undefined;
+    Provenance.fromPlanOwned(
+        &provenance,
         self.allocator,
         plan,
         workspace.label,
@@ -260,7 +264,7 @@ fn initializeResult(
     ) catch |err| return err;
     errdefer provenance.deinit(self.allocator);
 
-    return Result.init(
+    try result.initOwned(
         self.allocator,
         plan.id,
         workspace.label,
@@ -272,10 +276,10 @@ fn initializeResult(
 fn executeForwardProducts(
     self: *Engine,
     plan: *const Plan,
-    request: Request,
+    request: *const Request,
     result: *Result,
 ) errors.ExecutionError!void {
-    var prepared_optics = plan.providers.optics.prepareForScene(self.allocator, request.scene) catch |err| switch (err) {
+    var prepared_optics = plan.providers.optics.prepareForScene(self.allocator, &request.scene) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return errors.ExecutionError.InvalidRequest,
     };
@@ -283,9 +287,9 @@ fn executeForwardProducts(
 
     const measurement_space_product = MeasurementSpace.simulateProduct(
         self.allocator,
-        request.scene,
+        &request.scene,
         plan.transport_route,
-        prepared_optics,
+        &prepared_optics,
         measurementProviders(plan),
     ) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -297,7 +301,7 @@ fn executeForwardProducts(
 fn executeRetrievalIfRequested(
     self: *Engine,
     plan: *const Plan,
-    request: Request,
+    request: *const Request,
     result: *Result,
 ) errors.ExecutionError!void {
     if (request.inverse_problem == null) return;
@@ -359,15 +363,15 @@ const RetrievalExecutionContext = struct {
 fn evaluateRetrievalScene(context: *const anyopaque, scene: Scene) anyerror!MeasurementSpace.MeasurementSpaceSummary {
     const typed_context: *const RetrievalExecutionContext = @ptrCast(@alignCast(context));
 
-    var prepared_optics = try typed_context.plan.providers.optics.prepareForScene(typed_context.allocator, scene);
+    var prepared_optics = try typed_context.plan.providers.optics.prepareForScene(typed_context.allocator, &scene);
     defer prepared_optics.deinit(typed_context.allocator);
 
     return MeasurementSpace.simulateSummaryWithWorkspace(
         typed_context.allocator,
         typed_context.summary_workspace,
-        scene,
+        &scene,
         typed_context.plan.transport_route,
-        prepared_optics,
+        &prepared_optics,
         measurementProviders(typed_context.plan),
     );
 }
@@ -380,14 +384,14 @@ fn materializeRetrievalProducts(
 ) !Result.RetrievalProducts {
     const fitted_scene = outcome.fitted_scene orelse return error.InvalidRequest;
 
-    var prepared_optics = try plan.providers.optics.prepareForScene(allocator, fitted_scene);
+    var prepared_optics = try plan.providers.optics.prepareForScene(allocator, &fitted_scene);
     defer prepared_optics.deinit(allocator);
 
     var fitted_measurement = try MeasurementSpace.simulateProduct(
         allocator,
-        fitted_scene,
+        &fitted_scene,
         plan.transport_route,
-        prepared_optics,
+        &prepared_optics,
         measurementProviders(plan),
     );
     errdefer fitted_measurement.deinit(allocator);
@@ -401,7 +405,7 @@ fn materializeRetrievalProducts(
     const observable = measurementObservable(problem);
     const supports_measurement_observable = std.mem.eql(u8, observable, "radiance") or
         std.mem.eql(u8, observable, "irradiance") or
-        std.mem.eql(u8, observable, MeasurementSpace.surrogate_reflectance_export_name);
+        std.mem.eql(u8, observable, MeasurementSpace.reflectance_export_name);
 
     const jacobian = if (supports_measurement_observable)
         try materializeJacobianProduct(
@@ -481,14 +485,14 @@ fn materializeJacobianProduct(
         perturbed_values[state_index] += delta;
 
         const perturbed_scene = try RetrievalSurrogateForward.sceneForState(problem, perturbed_values);
-        var prepared_optics = try plan.providers.optics.prepareForScene(allocator, perturbed_scene);
+        var prepared_optics = try plan.providers.optics.prepareForScene(allocator, &perturbed_scene);
         defer prepared_optics.deinit(allocator);
 
         var perturbed_product = try MeasurementSpace.simulateProduct(
             allocator,
-            perturbed_scene,
+            &perturbed_scene,
             plan.transport_route,
-            prepared_optics,
+            &prepared_optics,
             measurementProviders(plan),
         );
         defer perturbed_product.deinit(allocator);
@@ -625,8 +629,8 @@ fn measurementObservable(problem: RetrievalContracts.RetrievalProblem) []const u
 fn measurementValue(product: MeasurementSpaceProduct, observable: []const u8, index: usize) errors.Error!f64 {
     if (std.mem.eql(u8, observable, "radiance")) return product.radiance[index];
     if (std.mem.eql(u8, observable, "irradiance")) return product.irradiance[index];
-    if (std.mem.eql(u8, observable, @import("../kernels/transport/measurement_space.zig").surrogate_reflectance_export_name)) {
-        return product.surrogate_reflectance[index];
+    if (std.mem.eql(u8, observable, @import("../kernels/transport/measurement_space.zig").reflectance_export_name)) {
+        return product.reflectance[index];
     }
     return errors.Error.InvalidRequest;
 }
@@ -676,7 +680,7 @@ test "preparePlan resolves typed transport routes from plan-time observation and
         .solver_mode = .polarized,
         .scene_blueprint = .{
             .observation_regime = .limb,
-            .derivative_mode = .analytical_plugin,
+            .derivative_mode = .semi_analytical,
         },
     });
     defer polarized_plan.deinit();
@@ -698,12 +702,13 @@ test "execute enforces workspace plan binding and derivative-mode contracts" {
     var workspace = engine.createWorkspace("unit");
     const scene: Scene = .{ .id = "scene", .spectral_grid = .{ .sample_count = 4 } };
     var request = Request.init(scene);
-    var scalar_result = try engine.execute(&scalar_plan, &workspace, request);
+    var scalar_result = try engine.execute(&scalar_plan, &workspace, &request);
     defer scalar_result.deinit(std.testing.allocator);
 
     request.expected_derivative_mode = .semi_analytical;
-    try std.testing.expectError(errors.Error.DerivativeModeMismatch, engine.execute(&scalar_plan, &workspace, request));
-    try std.testing.expectError(errors.Error.WorkspacePlanMismatch, engine.execute(&derivative_plan, &workspace, Request.init(scene)));
+    try std.testing.expectError(errors.Error.DerivativeModeMismatch, engine.execute(&scalar_plan, &workspace, &request));
+    var workspace_mismatch_request = Request.init(scene);
+    try std.testing.expectError(errors.Error.WorkspacePlanMismatch, engine.execute(&derivative_plan, &workspace, &workspace_mismatch_request));
 }
 
 test "execute leaves workspace untouched when request validation fails" {
@@ -722,21 +727,23 @@ test "execute leaves workspace untouched when request validation fails" {
 
     var workspace = engine.createWorkspace("validation-guard");
 
+    var missing_scene_request = Request.init(.{
+        .id = "",
+        .spectral_grid = .{ .sample_count = 8 },
+    });
     try std.testing.expectError(
         errors.Error.MissingScene,
-        engine.execute(&first_plan, &workspace, Request.init(.{
-            .id = "",
-            .spectral_grid = .{ .sample_count = 8 },
-        })),
+        engine.execute(&first_plan, &workspace, &missing_scene_request),
     );
     try std.testing.expectEqual(@as(?u64, null), workspace.bound_plan_id);
     try std.testing.expectEqual(@as(u64, 0), workspace.execution_count);
     try std.testing.expectEqual(@as(u64, 0), workspace.scratch.reserve_count);
 
-    var result = try engine.execute(&second_plan, &workspace, Request.init(.{
+    var post_error_request = Request.init(.{
         .id = "scene-after-error",
         .spectral_grid = .{ .sample_count = 8 },
-    }));
+    });
+    var result = try engine.execute(&second_plan, &workspace, &post_error_request);
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqual(second_plan.id, result.plan_id);
     try std.testing.expectEqual(second_plan.id, workspace.bound_plan_id.?);
@@ -788,7 +795,7 @@ test "execute rejects retrieval stage-product requests without a bound measureme
         },
     };
 
-    try std.testing.expectError(errors.Error.InvalidRequest, engine.execute(&plan, &workspace, request));
+    try std.testing.expectError(errors.Error.InvalidRequest, engine.execute(&plan, &workspace, &request));
     try std.testing.expectEqual(@as(?u64, null), workspace.bound_plan_id);
 }
 
@@ -826,10 +833,10 @@ test "prepared plans keep plugin snapshots when registry changes later" {
         .id = "scene-snapshot",
         .spectral_grid = .{ .sample_count = 8 },
     });
-    var first_result = try engine.execute(&first_plan, &workspace, request);
+    var first_result = try engine.execute(&first_plan, &workspace, &request);
     defer first_result.deinit(std.testing.allocator);
     workspace.reset();
-    var second_result = try engine.execute(&second_plan, &workspace, request);
+    var second_result = try engine.execute(&second_plan, &workspace, &request);
     defer second_result.deinit(std.testing.allocator);
 
     try std.testing.expect(second_result.provenance.pluginVersionCount() > first_result.provenance.pluginVersionCount());
@@ -852,7 +859,7 @@ test "default builtin execution stays on typed providers when native plugins are
         .id = "scene-typed-provider-only",
         .spectral_grid = .{ .sample_count = 8 },
     });
-    var result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, &request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Result.Status.success, result.status);
@@ -895,7 +902,7 @@ test "prepared plans own reusable cache hints and workspaces own reusable scratc
         .atmosphere = .{ .layer_count = 48 },
         .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 121 },
     });
-    var result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, &request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 121), workspace.scratch.spectral_capacity);
@@ -965,7 +972,7 @@ test "engine retrieval execution uses summary evaluation and still materializes 
         },
     };
 
-    var result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, &request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.measurement_space != null);
@@ -1034,7 +1041,7 @@ test "engine translates retrieval-local invalid state targets into invalid reque
         },
     };
 
-    try std.testing.expectError(errors.Error.InvalidRequest, engine.execute(&plan, &workspace, request));
+    try std.testing.expectError(errors.Error.InvalidRequest, engine.execute(&plan, &workspace, &request));
 }
 
 test "engine owns runtime caches and batch scheduling helpers explicitly" {

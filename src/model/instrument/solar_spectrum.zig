@@ -6,11 +6,11 @@ pub const OperationalSolarSpectrum = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     irradiance: []const f64 = &[_]f64{},
 
-    pub fn enabled(self: OperationalSolarSpectrum) bool {
+    pub fn enabled(self: *const OperationalSolarSpectrum) bool {
         return self.wavelengths_nm.len > 0;
     }
 
-    pub fn validate(self: OperationalSolarSpectrum) errors.Error!void {
+    pub fn validate(self: *const OperationalSolarSpectrum) errors.Error!void {
         if (!self.enabled()) {
             if (self.irradiance.len != 0) return errors.Error.InvalidRequest;
             return;
@@ -42,7 +42,7 @@ pub const OperationalSolarSpectrum = struct {
         self.* = .{};
     }
 
-    pub fn interpolateIrradiance(self: OperationalSolarSpectrum, wavelength_nm: f64) f64 {
+    pub fn interpolateIrradiance(self: *const OperationalSolarSpectrum, wavelength_nm: f64) f64 {
         if (!self.enabled()) return 0.0;
         if (wavelength_nm <= self.wavelengths_nm[0]) return self.irradiance[0];
         for (self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1], self.wavelengths_nm[1..], self.irradiance[0 .. self.irradiance.len - 1], self.irradiance[1..]) |left_nm, right_nm, left_irradiance, right_irradiance| {

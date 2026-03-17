@@ -81,6 +81,28 @@ pub const Result = struct {
     retrieval: ?RetrievalOutcome = null,
     retrieval_products: RetrievalProducts = .{},
 
+    pub fn initOwned(
+        self: *Result,
+        allocator: Allocator,
+        plan_id: u64,
+        workspace_label: []const u8,
+        scene_id: []const u8,
+        provenance: Provenance,
+    ) !void {
+        const owned_workspace_label = try allocator.dupe(u8, workspace_label);
+        errdefer allocator.free(owned_workspace_label);
+        const owned_scene_id = try allocator.dupe(u8, scene_id);
+        errdefer allocator.free(owned_scene_id);
+
+        self.* = .{
+            .plan_id = plan_id,
+            .workspace_label = owned_workspace_label,
+            .scene_id = owned_scene_id,
+            .provenance = provenance,
+            .diagnostics = Diagnostics.fromSpec(.{ .provenance = true }, "Prepared transport routing and provenance are wired; full transport and retrieval numerics remain scaffold-only."),
+        };
+    }
+
     pub fn init(
         allocator: Allocator,
         plan_id: u64,
@@ -88,13 +110,9 @@ pub const Result = struct {
         scene_id: []const u8,
         provenance: Provenance,
     ) !Result {
-        return .{
-            .plan_id = plan_id,
-            .workspace_label = try allocator.dupe(u8, workspace_label),
-            .scene_id = try allocator.dupe(u8, scene_id),
-            .provenance = provenance,
-            .diagnostics = Diagnostics.fromSpec(.{ .provenance = true }, "Prepared transport routing and provenance are wired; full transport and retrieval numerics remain scaffold-only."),
-        };
+        var result: Result = undefined;
+        try result.initOwned(allocator, plan_id, workspace_label, scene_id, provenance);
+        return result;
     }
 
     pub fn attachMeasurementSpaceProduct(self: *Result, product: MeasurementSpaceProduct) void {
@@ -141,7 +159,7 @@ test "result can carry summary-only measurement-space output" {
         .wavelength_end_nm = 310.0,
         .mean_radiance = 1.0,
         .mean_irradiance = 2.0,
-        .mean_surrogate_reflectance = 0.5,
+        .mean_reflectance = 0.5,
         .mean_noise_sigma = 0.01,
     };
 

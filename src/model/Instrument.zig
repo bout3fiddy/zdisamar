@@ -13,6 +13,7 @@ pub const OperationalSolarSpectrum = @import("instrument/solar_spectrum.zig").Op
 pub const OperationalCrossSectionLut = @import("instrument/cross_section_lut.zig").OperationalCrossSectionLut;
 pub const InstrumentLineShape = @import("instrument/line_shape.zig").InstrumentLineShape;
 pub const InstrumentLineShapeTable = @import("instrument/line_shape.zig").InstrumentLineShapeTable;
+pub const BuiltinLineShapeKind = @import("instrument/line_shape.zig").BuiltinLineShapeKind;
 
 pub const Instrument = struct {
     pub const SamplingMode = enum {
@@ -34,6 +35,7 @@ pub const Instrument = struct {
     noise_model: []const u8 = "none",
     wavelength_shift_nm: f64 = 0.0,
     instrument_line_fwhm_nm: f64 = 0.0,
+    builtin_line_shape: BuiltinLineShapeKind = .gaussian,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
     instrument_line_shape: InstrumentLineShape = .{},
@@ -43,7 +45,7 @@ pub const Instrument = struct {
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
 
-    pub fn resolvedSampling(self: Instrument) errors.Error!SamplingMode {
+    pub fn resolvedSampling(self: *const Instrument) errors.Error!SamplingMode {
         if (std.mem.eql(u8, self.sampling, "native")) return .native;
         if (std.mem.eql(u8, self.sampling, "operational")) return .operational;
         if (std.mem.eql(u8, self.sampling, "measured_channels")) return .measured_channels;
@@ -51,7 +53,7 @@ pub const Instrument = struct {
         return errors.Error.InvalidRequest;
     }
 
-    pub fn resolvedNoiseModel(self: Instrument) errors.Error!NoiseModelKind {
+    pub fn resolvedNoiseModel(self: *const Instrument) errors.Error!NoiseModelKind {
         if (std.mem.eql(u8, self.noise_model, "none")) return .none;
         if (std.mem.eql(u8, self.noise_model, "shot_noise")) return .shot_noise;
         if (std.mem.eql(u8, self.noise_model, "s5p_operational")) return .s5p_operational;
@@ -59,7 +61,7 @@ pub const Instrument = struct {
         return errors.Error.InvalidRequest;
     }
 
-    pub fn validate(self: Instrument) errors.Error!void {
+    pub fn validate(self: *const Instrument) errors.Error!void {
         if (self.name.len == 0) {
             return errors.Error.MissingObservationInstrument;
         }
@@ -86,6 +88,8 @@ pub const Instrument = struct {
     }
 
     pub fn deinitOwned(self: *Instrument, allocator: Allocator) void {
+        self.instrument_line_shape.deinitOwned(allocator);
+        self.instrument_line_shape_table.deinitOwned(allocator);
         self.operational_refspec_grid.deinitOwned(allocator);
         self.operational_solar_spectrum.deinitOwned(allocator);
         self.o2_operational_lut.deinitOwned(allocator);

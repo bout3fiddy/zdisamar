@@ -16,6 +16,7 @@
       },
       "expected_route_family": "surrogate_adding",
       "expected_derivative_mode": "none",
+      "expected_derivative_semantics": "none",
       "metrics": [
         "transport_family",
         "derivative_mode",
@@ -35,11 +36,12 @@
       "runtime_profile": {
         "observation_regime": "nadir",
         "solver_mode": "derivative_enabled",
-        "derivative_mode": "analytical_plugin",
+        "derivative_mode": "semi_analytical",
         "spectral_samples": 96
       },
-      "expected_route_family": "surrogate_labos",
-      "expected_derivative_mode": "analytical_plugin",
+      "expected_route_family": "surrogate_adding",
+      "expected_derivative_mode": "semi_analytical",
+      "expected_derivative_semantics": "proxy",
       "metrics": [
         "transport_family",
         "derivative_mode",
@@ -65,6 +67,7 @@
       },
       "expected_route_family": "surrogate_adding",
       "expected_derivative_mode": "semi_analytical",
+      "expected_derivative_semantics": "proxy",
       "metrics": [
         "transport_family",
         "derivative_mode",
@@ -97,6 +100,7 @@
       },
       "expected_route_family": "surrogate_adding",
       "expected_derivative_mode": "numerical",
+      "expected_derivative_semantics": "proxy",
       "metrics": [
         "transport_family",
         "derivative_mode",
@@ -120,11 +124,12 @@
       "runtime_profile": {
         "observation_regime": "limb",
         "solver_mode": "polarized",
-        "derivative_mode": "analytical_plugin",
+        "derivative_mode": "semi_analytical",
         "spectral_samples": 160
       },
       "expected_route_family": "surrogate_labos",
-      "expected_derivative_mode": "analytical_plugin",
+      "expected_derivative_mode": "semi_analytical",
+      "expected_derivative_semantics": "proxy",
       "metrics": [
         "transport_family",
         "derivative_mode",
@@ -152,6 +157,7 @@
       },
       "expected_route_family": "surrogate_adding",
       "expected_derivative_mode": "semi_analytical",
+      "expected_derivative_semantics": "proxy",
       "spectral_start_nm": 760.8,
       "spectral_end_nm": 771.5,
       "use_o2a_spectroscopy": true,
@@ -181,7 +187,11 @@
       },
       "expected_route_family": "surrogate_adding",
       "expected_derivative_mode": "semi_analytical",
+      "expected_derivative_semantics": "proxy",
       "has_aerosols": true,
+      "spectral_start_nm": 760.8,
+      "spectral_end_nm": 771.5,
+      "use_o2a_spectroscopy": true,
       "use_mie_phase_table": true,
       "sublayer_divisions": 4,
       "metrics": [

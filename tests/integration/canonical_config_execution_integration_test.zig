@@ -42,8 +42,10 @@ fn executeResolvedSource(
     );
     defer document.deinit();
 
-    const resolved = try document.resolve(std.testing.allocator);
-    const program = try zdisamar.canonical_config.compileResolved(std.testing.allocator, resolved);
+    var resolved: ?*zdisamar.canonical_config.ResolvedExperiment = try document.resolve(std.testing.allocator);
+    errdefer if (resolved) |owned| owned.deinit();
+    const program = try zdisamar.canonical_config.compileResolved(std.testing.allocator, resolved.?);
+    resolved = null;
     errdefer {
         var owned = program;
         owned.deinit();

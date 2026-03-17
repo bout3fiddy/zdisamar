@@ -29,7 +29,7 @@ pub const Request = struct {
         return .{ .scene = scene };
     }
 
-    pub fn validate(self: Request) errors.Error!void {
+    pub fn validate(self: *const Request) errors.Error!void {
         try self.scene.validate();
         if (self.inverse_problem) |inverse_problem| {
             try inverse_problem.validate();
@@ -39,7 +39,7 @@ pub const Request = struct {
         }
     }
 
-    pub fn validateForPlan(self: Request, plan: *const Plan) errors.Error!void {
+    pub fn validateForPlan(self: *const Request, plan: *const Plan) errors.Error!void {
         try self.validate();
 
         if (self.inverse_problem) |inverse_problem| {

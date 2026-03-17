@@ -13,7 +13,7 @@ templates:
       transport:
         solver: "dispatcher"
       execution:
-        solver_mode: "polarized"
+        solver_mode: "scalar"
         derivative_mode: "semi_analytical"
     scene:
       geometry:

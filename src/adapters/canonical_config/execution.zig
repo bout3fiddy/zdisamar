@@ -82,12 +82,12 @@ pub const ExecutionOutcome = struct {
 
 pub const ExecutionProgram = struct {
     allocator: Allocator,
-    experiment: ResolvedExperiment,
+    experiment: *ResolvedExperiment,
     stages: []StageExecution,
     products: []ProductRef,
     outputs: []ExportJob,
 
-    pub fn init(allocator: Allocator, experiment: ResolvedExperiment) !ExecutionProgram {
+    pub fn init(allocator: Allocator, experiment: *ResolvedExperiment) !ExecutionProgram {
         var stage_count: usize = 0;
         if (experiment.simulation != null) stage_count += 1;
         if (experiment.retrieval != null) stage_count += 1;
@@ -117,7 +117,7 @@ pub const ExecutionProgram = struct {
             const product_names = try collectProductNames(allocator, stage.products);
             stages[stage_index] = .{
                 .kind = .simulation,
-                .stage = stage,
+                .stage = stage.*,
                 .product_names = product_names,
                 .diagnostics = stage.diagnostics,
             };
@@ -142,7 +142,7 @@ pub const ExecutionProgram = struct {
             const product_names = try collectProductNames(allocator, stage.products);
             stages[stage_index] = .{
                 .kind = .retrieval,
-                .stage = stage,
+                .stage = stage.*,
                 .product_names = product_names,
                 .diagnostics = diagnostics,
             };
@@ -247,7 +247,7 @@ pub const ExecutionProgram = struct {
 
             stage_outcomes[index] = .{
                 .kind = stage_execution.kind,
-                .result = try engine.execute(&plan, &workspace, request),
+                .result = try engine.execute(&plan, &workspace, &request),
             };
             executed_stage_count += 1;
         }
@@ -283,7 +283,7 @@ pub const ExecutionProgram = struct {
     }
 };
 
-pub fn compileResolved(allocator: Allocator, experiment: ResolvedExperiment) !ExecutionProgram {
+pub fn compileResolved(allocator: Allocator, experiment: *ResolvedExperiment) !ExecutionProgram {
     return ExecutionProgram.init(allocator, experiment);
 }
 
@@ -293,10 +293,11 @@ pub fn resolveCompileAndExecute(
     path: []const u8,
 ) !struct { program: ExecutionProgram, outcome: ExecutionOutcome } {
     var experiment = try DocumentModule.resolveFile(allocator, path);
-    errdefer experiment.deinit();
+    var experiment_owned = true;
+    errdefer if (experiment_owned) experiment.deinit();
 
     var program = try compileResolved(allocator, experiment);
-    experiment = undefined;
+    experiment_owned = false;
     errdefer program.deinit();
 
     const outcome = try program.execute(allocator, engine);

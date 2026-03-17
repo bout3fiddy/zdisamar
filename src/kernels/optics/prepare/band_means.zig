@@ -10,23 +10,31 @@ pub const LineBandMeans = struct {
 };
 
 pub fn computeBandLineMeans(
-    scene: Scene,
-    line_list: ReferenceData.SpectroscopyLineList,
+    allocator: std.mem.Allocator,
+    scene: *const Scene,
+    line_list: *const ReferenceData.SpectroscopyLineList,
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
-) LineBandMeans {
+) !LineBandMeans {
     const sample_count = @max(scene.spectral_grid.sample_count, @as(u32, 1));
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const wavelength_step = if (sample_count <= 1) 0.0 else span_nm / @as(f64, @floatFromInt(sample_count - 1));
+    var prepared_state = try line_list.prepareStrongLineState(
+        allocator,
+        @max(effective_temperature_k, 150.0),
+        @max(effective_pressure_hpa, 1.0),
+    );
+    defer if (prepared_state) |*state| state.deinit(allocator);
 
     var line_sum: f64 = 0.0;
     var line_mixing_sum: f64 = 0.0;
     for (0..sample_count) |index| {
         const wavelength_nm = scene.spectral_grid.start_nm + wavelength_step * @as(f64, @floatFromInt(index));
-        const evaluation = line_list.evaluateAt(
+        const evaluation = line_list.evaluateAtPrepared(
             wavelength_nm,
             @max(effective_temperature_k, 150.0),
             @max(effective_pressure_hpa, 1.0),
+            if (prepared_state) |*state| state else null,
         );
         line_sum += evaluation.line_sigma_cm2_per_molecule;
         line_mixing_sum += evaluation.line_mixing_sigma_cm2_per_molecule;
@@ -39,7 +47,7 @@ pub fn computeBandLineMeans(
 }
 
 pub fn computeOperationalBandMean(
-    scene: Scene,
+    scene: *const Scene,
     lut: OperationalCrossSectionLut,
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,

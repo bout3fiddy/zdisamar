@@ -1,7 +1,7 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
 
-fn resolveExperiment(source: []const u8) !zdisamar.canonical_config.ResolvedExperiment {
+fn resolveExperiment(source: []const u8) !*zdisamar.canonical_config.ResolvedExperiment {
     var document = try zdisamar.canonical_config.Document.parse(
         std.testing.allocator,
         "inline.yaml",

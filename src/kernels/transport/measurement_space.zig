@@ -13,12 +13,20 @@ const SurfaceProviders = @import("../../plugins/providers/surface.zig");
 const TransportProviders = @import("../../plugins/providers/transport.zig");
 
 const Allocator = std.mem.Allocator;
+const max_summary_samples: u32 = 128;
+const bundled_o2a_solar_wavelengths_nm = [_]f64{ 755.0, 758.0, 760.01, 761.99, 764.99, 770.0, 776.0 };
+const bundled_o2a_solar_irradiance = [_]f64{
+    4.805854615e14,
+    4.879049767e14,
+    4.858697784e14,
+    4.615924814e14,
+    4.832478218e14,
+    4.60914094e14,
+    4.759839792e14,
+};
 
-// This field is still a placeholder sun-normalized proxy until WP-02 restores
-// method-faithful radiance/irradiance normalization. Export it with an explicit
-// surrogate label so downstream users do not treat it as a physical reflectance.
-pub const surrogate_reflectance_export_name = "surrogate_reflectance";
-pub const fitted_surrogate_reflectance_export_name = "fitted_surrogate_reflectance";
+pub const reflectance_export_name = "reflectance";
+pub const fitted_reflectance_export_name = "fitted_reflectance";
 
 pub const ProviderBindings = struct {
     transport: TransportProviders.Provider,
@@ -33,7 +41,7 @@ pub const MeasurementSpaceSummary = struct {
     wavelength_end_nm: f64,
     mean_radiance: f64,
     mean_irradiance: f64,
-    mean_surrogate_reflectance: f64,
+    mean_reflectance: f64,
     mean_noise_sigma: f64,
     mean_jacobian: ?f64 = null,
 };
@@ -43,7 +51,7 @@ pub const MeasurementSpaceProduct = struct {
     wavelengths: []f64,
     radiance: []f64,
     irradiance: []f64,
-    surrogate_reflectance: []f64,
+    reflectance: []f64,
     noise_sigma: []f64,
     jacobian: ?[]f64 = null,
     effective_air_mass_factor: f64,
@@ -62,7 +70,7 @@ pub const MeasurementSpaceProduct = struct {
         allocator.free(self.wavelengths);
         allocator.free(self.radiance);
         allocator.free(self.irradiance);
-        allocator.free(self.surrogate_reflectance);
+        allocator.free(self.reflectance);
         allocator.free(self.noise_sigma);
         if (self.jacobian) |values| allocator.free(values);
         self.* = undefined;
@@ -73,8 +81,9 @@ pub const Buffers = struct {
     wavelengths: []f64,
     radiance: []f64,
     irradiance: []f64,
-    surrogate_reflectance: []f64,
+    reflectance: []f64,
     scratch: []f64,
+    layer_inputs: []common.LayerInput,
     jacobian: ?[]f64 = null,
     noise_sigma: ?[]f64 = null,
 };
@@ -83,8 +92,9 @@ pub const SummaryWorkspace = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
     irradiance: []f64 = &.{},
-    surrogate_reflectance: []f64 = &.{},
+    reflectance: []f64 = &.{},
     scratch: []f64 = &.{},
+    layer_inputs: []common.LayerInput = &.{},
     jacobian: []f64 = &.{},
     noise_sigma: []f64 = &.{},
 
@@ -92,8 +102,9 @@ pub const SummaryWorkspace = struct {
         freeBuffer(allocator, self.wavelengths);
         freeBuffer(allocator, self.radiance);
         freeBuffer(allocator, self.irradiance);
-        freeBuffer(allocator, self.surrogate_reflectance);
+        freeBuffer(allocator, self.reflectance);
         freeBuffer(allocator, self.scratch);
+        freeLayerBuffer(allocator, self.layer_inputs);
         freeBuffer(allocator, self.jacobian);
         freeBuffer(allocator, self.noise_sigma);
         self.* = .{};
@@ -102,19 +113,21 @@ pub const SummaryWorkspace = struct {
     fn buffers(
         self: *SummaryWorkspace,
         allocator: Allocator,
-        scene: Scene,
+        scene: *const Scene,
         route: common.Route,
         providers: ProviderBindings,
     ) Error!Buffers {
         const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
+        const layer_count: usize = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
         const wants_jacobian = route.derivative_mode != .none;
         const wants_noise = providers.noise.materializesSigma(scene);
 
         try ensureBufferCapacity(allocator, &self.wavelengths, sample_count);
         try ensureBufferCapacity(allocator, &self.radiance, sample_count);
         try ensureBufferCapacity(allocator, &self.irradiance, sample_count);
-        try ensureBufferCapacity(allocator, &self.surrogate_reflectance, sample_count);
+        try ensureBufferCapacity(allocator, &self.reflectance, sample_count);
         try ensureBufferCapacity(allocator, &self.scratch, sample_count);
+        try ensureLayerBufferCapacity(allocator, &self.layer_inputs, layer_count);
         if (wants_jacobian) {
             try ensureBufferCapacity(allocator, &self.jacobian, sample_count);
         }
@@ -126,8 +139,9 @@ pub const SummaryWorkspace = struct {
             .wavelengths = self.wavelengths[0..sample_count],
             .radiance = self.radiance[0..sample_count],
             .irradiance = self.irradiance[0..sample_count],
-            .surrogate_reflectance = self.surrogate_reflectance[0..sample_count],
+            .reflectance = self.reflectance[0..sample_count],
             .scratch = self.scratch[0..sample_count],
+            .layer_inputs = self.layer_inputs[0..layer_count],
             .jacobian = if (wants_jacobian) self.jacobian[0..sample_count] else null,
             .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
         };
@@ -139,6 +153,32 @@ const OperationalInstrumentIntegration = InstrumentProviders.IntegrationKernel;
 const ForwardIntegratedSample = struct {
     radiance: f64,
     jacobian: f64 = 0.0,
+};
+
+const spectral_cache_quantization_nm = 1.0e-6;
+
+const SpectralEvaluationCache = struct {
+    allocator: Allocator,
+    forward: std.AutoHashMap(i64, ForwardIntegratedSample),
+    irradiance: std.AutoHashMap(i64, f64),
+
+    fn init(allocator: Allocator) SpectralEvaluationCache {
+        return .{
+            .allocator = allocator,
+            .forward = std.AutoHashMap(i64, ForwardIntegratedSample).init(allocator),
+            .irradiance = std.AutoHashMap(i64, f64).init(allocator),
+        };
+    }
+
+    fn deinit(self: *SpectralEvaluationCache) void {
+        self.forward.deinit();
+        self.irradiance.deinit();
+        self.* = undefined;
+    }
+
+    fn keyFor(wavelength_nm: f64) i64 {
+        return @as(i64, @intFromFloat(std.math.round(wavelength_nm / spectral_cache_quantization_nm)));
+    }
 };
 
 pub const Error =
@@ -153,15 +193,18 @@ pub const Error =
     };
 
 pub fn simulate(
-    scene: Scene,
+    allocator: Allocator,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
     buffers: Buffers,
 ) Error!MeasurementSpaceSummary {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try validateBuffers(sample_count, buffers);
+    var evaluation_cache = SpectralEvaluationCache.init(allocator);
+    defer evaluation_cache.deinit();
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
@@ -178,7 +221,7 @@ pub fn simulate(
 
     var radiance_sum: f64 = 0.0;
     var irradiance_sum: f64 = 0.0;
-    var surrogate_reflectance_sum: f64 = 0.0;
+    var reflectance_sum: f64 = 0.0;
     var noise_sum: f64 = 0.0;
     var jacobian_sum: f64 = 0.0;
 
@@ -190,25 +233,22 @@ pub fn simulate(
         );
         buffers.wavelengths[index] = wavelength_nm;
 
-        const phase = if (sample_count <= 1)
-            0.0
-        else
-            @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(sample_count - 1));
+        var integration: OperationalInstrumentIntegration = undefined;
+        providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
 
         const integrated = try integrateForwardAtNominal(
             scene,
             route,
             prepared,
             wavelength_nm,
-            phase,
             safe_span,
             providers,
-            providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm),
+            buffers.layer_inputs[0..prepared.layers.len],
+            &evaluation_cache,
+            &integration,
         );
         buffers.scratch[index] = integrated.radiance;
-        if (uses_integrated_sampling) {
-            if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
-        }
+        if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
     }
     if (uses_integrated_sampling) {
         @memcpy(buffers.radiance, buffers.scratch);
@@ -220,12 +260,15 @@ pub fn simulate(
     for (0..sample_count) |index| {
         const wavelength_nm = buffers.wavelengths[index];
         const nominal_wavelength_nm = try spectral_grid.sampleAt(@intCast(index));
+        var integration: OperationalInstrumentIntegration = undefined;
+        providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
         buffers.scratch[index] = integrateIrradianceAtNominal(
             scene,
             prepared,
             wavelength_nm,
             safe_span,
-            providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm),
+            &evaluation_cache,
+            &integration,
         );
     }
     if (uses_integrated_sampling) {
@@ -233,13 +276,14 @@ pub fn simulate(
     } else {
         try convolution.apply(buffers.scratch, slit_kernel[0..], buffers.irradiance);
     }
-    try calibration.applySignal(calibration_config, buffers.irradiance, buffers.irradiance);
 
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
-        buffers.surrogate_reflectance[index] = buffers.radiance[index] / @max(buffers.irradiance[index], 1e-9);
+        buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
+            @max(buffers.irradiance[index] * solar_cosine, 1e-9);
         radiance_sum += buffers.radiance[index];
         irradiance_sum += buffers.irradiance[index];
-        surrogate_reflectance_sum += buffers.surrogate_reflectance[index];
+        reflectance_sum += buffers.reflectance[index];
     }
 
     if (buffers.noise_sigma) |noise_sigma| {
@@ -252,19 +296,8 @@ pub fn simulate(
         if (uses_integrated_sampling) {
             for (jacobian) |value| jacobian_sum += value;
         } else {
-            for (0..sample_count) |index| {
-                const phase = if (sample_count <= 1)
-                    0.0
-                else
-                    @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(sample_count - 1));
-                const input = configuredForwardInput(scene, prepared, buffers.wavelengths[index], phase);
-                const forward = try providers.transport.executePrepared(route, input);
-                buffers.scratch[index] = if (forward.jacobian_column) |value|
-                    value * (1.0 + 0.05 * phase)
-                else
-                    0.0;
-            }
-            try convolution.apply(buffers.scratch, slit_kernel[0..], jacobian);
+            try convolution.apply(jacobian, slit_kernel[0..], buffers.scratch);
+            @memcpy(jacobian, buffers.scratch);
             for (jacobian) |value| jacobian_sum += value;
         }
         mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
@@ -276,7 +309,7 @@ pub fn simulate(
         .wavelength_end_nm = buffers.wavelengths[sample_count - 1],
         .mean_radiance = radiance_sum / @as(f64, @floatFromInt(sample_count)),
         .mean_irradiance = irradiance_sum / @as(f64, @floatFromInt(sample_count)),
-        .mean_surrogate_reflectance = surrogate_reflectance_sum / @as(f64, @floatFromInt(sample_count)),
+        .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(sample_count)),
         .mean_noise_sigma = if (buffers.noise_sigma != null)
             noise_sum / @as(f64, @floatFromInt(sample_count))
         else
@@ -287,9 +320,9 @@ pub fn simulate(
 
 pub fn simulateSummary(
     allocator: Allocator,
-    scene: Scene,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
 ) Error!MeasurementSpaceSummary {
     var workspace: SummaryWorkspace = .{};
@@ -300,25 +333,30 @@ pub fn simulateSummary(
 pub fn simulateSummaryWithWorkspace(
     allocator: Allocator,
     workspace: *SummaryWorkspace,
-    scene: Scene,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
 ) Error!MeasurementSpaceSummary {
+    var summary_scene = scene.*;
+    if (summary_scene.spectral_grid.sample_count > max_summary_samples) {
+        summary_scene.spectral_grid.sample_count = max_summary_samples;
+    }
     return simulate(
-        scene,
+        allocator,
+        &summary_scene,
         route,
         prepared,
         providers,
-        try workspace.buffers(allocator, scene, route, providers),
+        try workspace.buffers(allocator, &summary_scene, route, providers),
     );
 }
 
 pub fn simulateProduct(
     allocator: Allocator,
-    scene: Scene,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
 ) Error!MeasurementSpaceProduct {
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
@@ -329,8 +367,8 @@ pub fn simulateProduct(
     errdefer allocator.free(radiance);
     const irradiance = try allocator.alloc(f64, sample_count);
     errdefer allocator.free(irradiance);
-    const surrogate_reflectance = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(surrogate_reflectance);
+    const reflectance = try allocator.alloc(f64, sample_count);
+    errdefer allocator.free(reflectance);
     const scratch = try allocator.alloc(f64, sample_count);
     defer allocator.free(scratch);
     const noise_sigma = if (providers.noise.materializesSigma(scene))
@@ -344,13 +382,16 @@ pub fn simulateProduct(
     else
         try allocator.alloc(f64, sample_count);
     errdefer if (jacobian) |values| allocator.free(values);
+    const layer_inputs = try allocator.alloc(common.LayerInput, prepared.layers.len);
+    defer allocator.free(layer_inputs);
 
-    const summary = try simulate(scene, route, prepared, providers, .{
+    const summary = try simulate(allocator, scene, route, prepared, providers, .{
         .wavelengths = wavelengths,
         .radiance = radiance,
         .irradiance = irradiance,
-        .surrogate_reflectance = surrogate_reflectance,
+        .reflectance = reflectance,
         .scratch = scratch,
+        .layer_inputs = layer_inputs,
         .jacobian = jacobian,
         .noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
     });
@@ -360,7 +401,7 @@ pub fn simulateProduct(
         .wavelengths = wavelengths,
         .radiance = radiance,
         .irradiance = irradiance,
-        .surrogate_reflectance = surrogate_reflectance,
+        .reflectance = reflectance,
         .noise_sigma = noise_sigma,
         .jacobian = jacobian,
         .effective_air_mass_factor = prepared.effective_air_mass_factor,
@@ -382,8 +423,9 @@ fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
         buffers.wavelengths.len != sample_count or
         buffers.radiance.len != sample_count or
         buffers.irradiance.len != sample_count or
-        buffers.surrogate_reflectance.len != sample_count or
-        buffers.scratch.len != sample_count)
+        buffers.reflectance.len != sample_count or
+        buffers.scratch.len != sample_count or
+        buffers.layer_inputs.len == 0)
     {
         return error.ShapeMismatch;
     }
@@ -402,39 +444,41 @@ fn ensureBufferCapacity(allocator: Allocator, buffer: *[]f64, capacity: usize) E
     buffer.* = replacement;
 }
 
+fn ensureLayerBufferCapacity(allocator: Allocator, buffer: *[]common.LayerInput, capacity: usize) Error!void {
+    if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(common.LayerInput, capacity);
+    freeLayerBuffer(allocator, buffer.*);
+    buffer.* = replacement;
+}
+
 fn freeBuffer(allocator: Allocator, buffer: []f64) void {
     if (buffer.len != 0) allocator.free(buffer);
 }
 
+fn freeLayerBuffer(allocator: Allocator, buffer: []common.LayerInput) void {
+    if (buffer.len != 0) allocator.free(buffer);
+}
+
 fn configuredForwardInput(
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
     wavelength_nm: f64,
-    phase: f64,
+    layer_inputs: []common.LayerInput,
 ) common.ForwardInput {
-    var input = prepared.toForwardInputAtWavelength(scene, wavelength_nm);
-    input.spectral_weight = 1.0 + 0.08 * @cos(2.0 * std.math.pi * phase);
-    input.air_mass_factor = prepared.effective_air_mass_factor * (0.98 + 0.04 * @sin(std.math.pi * phase));
-    input.optical_depth *= 0.85 + 0.30 * phase;
-    input.single_scatter_albedo = std.math.clamp(
-        prepared.effective_single_scatter_albedo - 0.03 * phase,
-        0.4,
-        0.999,
-    );
-    return input;
+    return prepared.toForwardInputAtWavelengthWithLayers(scene, wavelength_nm, layer_inputs);
 }
 
 fn radianceFromForward(
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
     wavelength_nm: f64,
     safe_span: f64,
     phase: f64,
     forward: common.ForwardResult,
 ) f64 {
-    const solar_term = 1.0 + 0.18 * @cos(2.0 * std.math.pi * ((wavelength_nm - scene.spectral_grid.start_nm) / safe_span));
-    const ring_term = 0.01 * @sin(4.0 * std.math.pi * phase);
+    const solar_irradiance = irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     const surface_gain = providers.surface.responseGain(.{
         .scene = scene,
         .prepared = prepared,
@@ -443,52 +487,90 @@ fn radianceFromForward(
         .phase = phase,
         .forward = forward,
     });
-    const aerosol_optical_depth = prepared.aerosolOpticalDepthAtWavelength(wavelength_nm);
-    const cloud_optical_depth = prepared.cloudOpticalDepthAtWavelength(wavelength_nm);
-    const aerosol_attenuation = 1.0 + 0.35 * aerosol_optical_depth;
-    const cloud_attenuation = 1.0 + 0.20 * cloud_optical_depth;
-    const depolarization_scale = 1.0 - 0.15 * prepared.depolarization_factor;
-
-    return (forward.toa_radiance * surface_gain * depolarization_scale * (0.92 + 0.08 * solar_term)) /
-        (aerosol_attenuation * cloud_attenuation) +
-        ring_term;
+    return solar_irradiance * solar_cosine * forward.toa_reflectance_factor * surface_gain / std.math.pi;
 }
 
 fn irradianceAtWavelength(
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
     wavelength_nm: f64,
     safe_span: f64,
 ) f64 {
     const source_irradiance = if (scene.observation_model.operational_solar_spectrum.enabled())
         scene.observation_model.operational_solar_spectrum.interpolateIrradiance(wavelength_nm)
+    else if (scene.observation_model.solar_spectrum_source.kind == .bundle_default)
+        bundledSolarIrradiance(wavelength_nm) orelse defaultSolarContinuumIrradiance(wavelength_nm)
     else
-        1.2 + 0.25 * @cos(std.math.pi * ((wavelength_nm - scene.spectral_grid.start_nm) / safe_span));
-    const aerosol_attenuation = 1.0 + 0.15 * prepared.aerosolOpticalDepthAtWavelength(wavelength_nm);
-    const cloud_attenuation = 1.0 + 0.10 * prepared.cloudOpticalDepthAtWavelength(wavelength_nm);
-    return @max(
-        (source_irradiance * @exp(-0.15 * prepared.totalOpticalDepthAtWavelength(wavelength_nm))) / (aerosol_attenuation * cloud_attenuation),
-        1e-6,
-    );
+        defaultSolarContinuumIrradiance(wavelength_nm);
+    _ = prepared;
+    _ = safe_span;
+    return @max(source_irradiance, 1e-6);
+}
+
+fn bundledSolarIrradiance(wavelength_nm: f64) ?f64 {
+    if (wavelength_nm < bundled_o2a_solar_wavelengths_nm[0] or wavelength_nm > bundled_o2a_solar_wavelengths_nm[bundled_o2a_solar_wavelengths_nm.len - 1]) {
+        return null;
+    }
+
+    if (wavelength_nm <= bundled_o2a_solar_wavelengths_nm[0]) return bundled_o2a_solar_irradiance[0];
+    for (
+        bundled_o2a_solar_wavelengths_nm[0 .. bundled_o2a_solar_wavelengths_nm.len - 1],
+        bundled_o2a_solar_wavelengths_nm[1..],
+        bundled_o2a_solar_irradiance[0 .. bundled_o2a_solar_irradiance.len - 1],
+        bundled_o2a_solar_irradiance[1..],
+    ) |left_nm, right_nm, left_irradiance, right_irradiance| {
+        if (wavelength_nm <= right_nm) {
+            const span = right_nm - left_nm;
+            if (span == 0.0) return right_irradiance;
+            const blend = (wavelength_nm - left_nm) / span;
+            return left_irradiance + blend * (right_irradiance - left_irradiance);
+        }
+    }
+    return bundled_o2a_solar_irradiance[bundled_o2a_solar_irradiance.len - 1];
+}
+
+fn defaultSolarContinuumIrradiance(wavelength_nm: f64) f64 {
+    const reference_wavelength_nm = 760.0;
+    const reference_irradiance = 4.87401e14;
+    return reference_irradiance *
+        planckContinuumShape(wavelength_nm, 5778.0) /
+        planckContinuumShape(reference_wavelength_nm, 5778.0);
+}
+
+fn planckContinuumShape(wavelength_nm: f64, temperature_k: f64) f64 {
+    const h = 6.62607015e-34;
+    const c = 2.99792458e8;
+    const k = 1.380649e-23;
+    const wavelength_m = @max(wavelength_nm, 1.0) * 1.0e-9;
+    const exponent = h * c / (wavelength_m * k * @max(temperature_k, 1.0));
+    const denominator = @max(std.math.expm1(exponent), 1.0e-12);
+    return (2.0 * h * c * c) /
+        std.math.pow(f64, wavelength_m, 5.0) /
+        denominator;
 }
 
 fn integrateForwardAtNominal(
-    scene: Scene,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     nominal_wavelength_nm: f64,
-    phase: f64,
     safe_span: f64,
     providers: ProviderBindings,
-    integration: OperationalInstrumentIntegration,
+    layer_inputs: []common.LayerInput,
+    cache: *SpectralEvaluationCache,
+    integration: *const OperationalInstrumentIntegration,
 ) Error!ForwardIntegratedSample {
     if (!integration.enabled) {
-        const input = configuredForwardInput(scene, prepared, nominal_wavelength_nm, phase);
-        const forward = try providers.transport.executePrepared(route, input);
-        return .{
-            .radiance = radianceFromForward(scene, prepared, providers, nominal_wavelength_nm, safe_span, phase, forward),
-            .jacobian = if (forward.jacobian_column) |value| value * (1.0 + 0.05 * phase) else 0.0,
-        };
+        return cachedForwardAtWavelength(
+            scene,
+            route,
+            prepared,
+            nominal_wavelength_nm,
+            safe_span,
+            providers,
+            layer_inputs,
+            cache,
+        );
     }
 
     var radiance_sum: f64 = 0.0;
@@ -497,12 +579,18 @@ fn integrateForwardAtNominal(
         const offset_nm = integration.offsets_nm[index];
         const weight = integration.weights[index];
         const wavelength_nm = nominal_wavelength_nm + offset_nm;
-        const input = configuredForwardInput(scene, prepared, wavelength_nm, phase);
-        const forward = try providers.transport.executePrepared(route, input);
-        radiance_sum += weight * radianceFromForward(scene, prepared, providers, wavelength_nm, safe_span, phase, forward);
-        if (forward.jacobian_column) |value| {
-            jacobian_sum += weight * value * (1.0 + 0.05 * phase);
-        }
+        const sample = try cachedForwardAtWavelength(
+            scene,
+            route,
+            prepared,
+            wavelength_nm,
+            safe_span,
+            providers,
+            layer_inputs,
+            cache,
+        );
+        radiance_sum += weight * sample.radiance;
+        jacobian_sum += weight * sample.jacobian;
     }
 
     return .{
@@ -512,28 +600,68 @@ fn integrateForwardAtNominal(
 }
 
 fn integrateIrradianceAtNominal(
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
     nominal_wavelength_nm: f64,
     safe_span: f64,
-    integration: OperationalInstrumentIntegration,
+    cache: *SpectralEvaluationCache,
+    integration: *const OperationalInstrumentIntegration,
 ) f64 {
     if (!integration.enabled) {
-        return irradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span);
+        return cachedIrradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span, cache);
     }
 
     var irradiance_sum: f64 = 0.0;
     for (0..integration.sample_count) |index| {
         const offset_nm = integration.offsets_nm[index];
         const weight = integration.weights[index];
-        irradiance_sum += weight * irradianceAtWavelength(
+        irradiance_sum += weight * cachedIrradianceAtWavelength(
             scene,
             prepared,
             nominal_wavelength_nm + offset_nm,
             safe_span,
+            cache,
         );
     }
     return irradiance_sum;
+}
+
+fn cachedForwardAtWavelength(
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    safe_span: f64,
+    providers: ProviderBindings,
+    layer_inputs: []common.LayerInput,
+    cache: *SpectralEvaluationCache,
+) Error!ForwardIntegratedSample {
+    const key = SpectralEvaluationCache.keyFor(wavelength_nm);
+    if (cache.forward.get(key)) |cached| return cached;
+
+    const input = configuredForwardInput(scene, prepared, wavelength_nm, layer_inputs);
+    const forward = try providers.transport.executePrepared(route, input);
+    const sample = ForwardIntegratedSample{
+        .radiance = radianceFromForward(scene, prepared, providers, wavelength_nm, safe_span, 0.0, forward),
+        .jacobian = if (forward.jacobian_column) |value| value else 0.0,
+    };
+    try cache.forward.put(key, sample);
+    return sample;
+}
+
+fn cachedIrradianceAtWavelength(
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    safe_span: f64,
+    cache: *SpectralEvaluationCache,
+) f64 {
+    const key = SpectralEvaluationCache.keyFor(wavelength_nm);
+    if (cache.irradiance.get(key)) |cached| return cached;
+
+    const value = irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
+    cache.irradiance.put(key, value) catch return value;
+    return value;
 }
 
 fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
@@ -618,12 +746,12 @@ test "measurement-space simulation composes transport, calibration, convolution,
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    const summary = try simulateSummary(std.testing.allocator, scene, route, prepared, testProviders());
+    const summary = try simulateSummary(std.testing.allocator, &scene, route, &prepared, testProviders());
     try std.testing.expectEqual(@as(u32, 16), summary.sample_count);
     try std.testing.expect(summary.mean_radiance > 0.0);
     try std.testing.expect(summary.mean_irradiance > 0.0);
-    try std.testing.expect(summary.mean_surrogate_reflectance > 0.0);
-    try std.testing.expect(summary.mean_surrogate_reflectance < 10.0);
+    try std.testing.expect(summary.mean_reflectance > 0.0);
+    try std.testing.expect(summary.mean_reflectance < 10.0);
     try std.testing.expect(summary.mean_noise_sigma > 0.0);
     try std.testing.expect(summary.mean_jacobian != null);
 }
@@ -660,9 +788,9 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
     const first_summary = try simulateSummaryWithWorkspace(
         std.testing.allocator,
         &workspace,
-        scene,
+        &scene,
         route,
-        prepared,
+        &prepared,
         testProviders(),
     );
     const wavelengths_ptr = @intFromPtr(workspace.wavelengths.ptr);
@@ -673,9 +801,9 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
     const second_summary = try simulateSummaryWithWorkspace(
         std.testing.allocator,
         &workspace,
-        scene,
+        &scene,
         route,
-        prepared,
+        &prepared,
         testProviders(),
     );
     try std.testing.expectEqual(wavelengths_ptr, @intFromPtr(workspace.wavelengths.ptr));
@@ -683,14 +811,14 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
     try std.testing.expectEqual(jacobian_ptr, @intFromPtr(workspace.jacobian.ptr));
     try std.testing.expectEqual(noise_ptr, @intFromPtr(workspace.noise_sigma.ptr));
 
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(first_summary.sample_count, second_summary.sample_count);
     try std.testing.expectApproxEqAbs(first_summary.mean_radiance, second_summary.mean_radiance, 1.0e-12);
     try std.testing.expectApproxEqAbs(first_summary.mean_radiance, product.summary.mean_radiance, 1.0e-12);
     try std.testing.expectApproxEqAbs(first_summary.mean_irradiance, product.summary.mean_irradiance, 1.0e-12);
-    try std.testing.expectApproxEqAbs(first_summary.mean_surrogate_reflectance, product.summary.mean_surrogate_reflectance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(first_summary.mean_reflectance, product.summary.mean_reflectance, 1.0e-12);
     try std.testing.expectApproxEqAbs(first_summary.mean_noise_sigma, product.summary.mean_noise_sigma, 1.0e-12);
     try std.testing.expectApproxEqAbs(first_summary.mean_jacobian.?, product.summary.mean_jacobian.?, 1.0e-12);
 }
@@ -727,12 +855,12 @@ test "measurement-space summary workspace supports routes without jacobians or n
     const summary = try simulateSummaryWithWorkspace(
         std.testing.allocator,
         &workspace,
-        scene,
+        &scene,
         route,
-        prepared,
+        &prepared,
         testProviders(),
     );
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expect(summary.mean_radiance > 0.0);
@@ -787,14 +915,14 @@ test "measurement-space product materializes spectral vectors and physical field
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 12), product.summary.sample_count);
     try std.testing.expectEqual(@as(usize, 12), product.wavelengths.len);
     try std.testing.expect(product.radiance[0] > 0.0);
     try std.testing.expect(product.irradiance[0] > 0.0);
-    try std.testing.expect(product.surrogate_reflectance[0] > 0.0);
+    try std.testing.expect(product.reflectance[0] > 0.0);
     try std.testing.expect(product.noise_sigma[0] > 0.0);
     try std.testing.expect(product.jacobian != null);
     try std.testing.expectEqual(prepared.total_optical_depth, product.total_optical_depth);
@@ -833,12 +961,48 @@ test "measurement-space uses external high-resolution solar spectra when operati
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expect(product.irradiance[0] < product.irradiance[1]);
     try std.testing.expect(product.irradiance[1] < product.irradiance[2]);
-    try std.testing.expect(product.surrogate_reflectance[0] > product.surrogate_reflectance[2]);
+    try std.testing.expect(product.reflectance[0] > product.reflectance[2]);
+}
+
+test "measurement-space uses bundled O2A solar spectra when bundle_default is requested" {
+    const scene: Scene = .{
+        .id = "measurement-bundled-o2a-solar",
+        .spectral_grid = .{
+            .start_nm = 760.0,
+            .end_nm = 770.0,
+            .sample_count = 11,
+        },
+        .observation_model = .{
+            .instrument = "tropomi",
+            .regime = .nadir,
+            .sampling = "native",
+            .noise_model = "shot_noise",
+            .solar_spectrum_source = .{ .kind = .bundle_default },
+        },
+        .atmosphere = .{
+            .layer_count = 12,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
+    });
+
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
+    defer product.deinit(std.testing.allocator);
+
+    try std.testing.expect(product.irradiance[0] > product.irradiance[2]);
+    try std.testing.expect(product.irradiance[2] < product.irradiance[5]);
+    try std.testing.expect(product.irradiance[5] > product.irradiance[10]);
 }
 
 test "measurement-space operational integration uses high-resolution instrument sampling" {
@@ -883,15 +1047,71 @@ test "measurement-space operational integration uses high-resolution instrument 
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var plain_product = try simulateProduct(std.testing.allocator, plain_scene, route, prepared, testProviders());
+    var plain_product = try simulateProduct(std.testing.allocator, &plain_scene, route, &prepared, testProviders());
     defer plain_product.deinit(std.testing.allocator);
-    var operational_product = try simulateProduct(std.testing.allocator, operational_scene, route, prepared, testProviders());
+    var operational_product = try simulateProduct(std.testing.allocator, &operational_scene, route, &prepared, testProviders());
     defer operational_product.deinit(std.testing.allocator);
 
     try std.testing.expect(operational_product.wavelengths[0] > plain_product.wavelengths[0]);
     try std.testing.expect(operational_product.radiance[0] != plain_product.radiance[0]);
     try std.testing.expect(operational_product.irradiance[0] != plain_product.irradiance[0]);
     try std.testing.expect(operational_product.jacobian != null);
+}
+
+test "measurement-space applies radiance calibration after instrument integration without rescaling irradiance" {
+    const base_scene: Scene = .{
+        .id = "measurement-calibration-base",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 12,
+        },
+        .observation_model = .{
+            .instrument = "tropomi",
+            .regime = .nadir,
+            .sampling = "native",
+            .noise_model = "shot_noise",
+            .instrument_line_fwhm_nm = 0.54,
+            .high_resolution_step_nm = 0.08,
+            .high_resolution_half_span_nm = 0.32,
+        },
+        .atmosphere = .{
+            .layer_count = 12,
+        },
+    };
+    const calibrated_scene: Scene = .{
+        .id = "measurement-calibration-adjusted",
+        .spectral_grid = base_scene.spectral_grid,
+        .observation_model = .{
+            .instrument = "tropomi",
+            .regime = .nadir,
+            .sampling = "native",
+            .noise_model = "shot_noise",
+            .instrument_line_fwhm_nm = 0.54,
+            .high_resolution_step_nm = 0.08,
+            .high_resolution_half_span_nm = 0.32,
+            .multiplicative_offset = 1.08,
+            .stray_light = 0.03,
+        },
+        .atmosphere = base_scene.atmosphere,
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
+    });
+
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var base_product = try simulateProduct(std.testing.allocator, &base_scene, route, &prepared, testProviders());
+    defer base_product.deinit(std.testing.allocator);
+    var calibrated_product = try simulateProduct(std.testing.allocator, &calibrated_scene, route, &prepared, testProviders());
+    defer calibrated_product.deinit(std.testing.allocator);
+
+    try std.testing.expect(calibrated_product.radiance[0] > base_product.radiance[0]);
+    try std.testing.expectApproxEqAbs(base_product.irradiance[0], calibrated_product.irradiance[0], 1.0e-12);
+    try std.testing.expect(calibrated_product.reflectance[0] > base_product.reflectance[0]);
 }
 
 test "measurement-space operational integration honors explicit isrf table weights" {
@@ -932,8 +1152,8 @@ test "measurement-space operational integration honors explicit isrf table weigh
             .high_resolution_half_span_nm = 0.32,
             .instrument_line_shape = .{
                 .sample_count = 5,
-                .offsets_nm = .{ -0.32, -0.16, 0.0, 0.16, 0.32, 0.0, 0.0, 0.0, 0.0 },
-                .weights = .{ 0.08, 0.24, 0.36, 0.22, 0.10, 0.0, 0.0, 0.0, 0.0 },
+                .offsets_nm = &[_]f64{ -0.32, -0.16, 0.0, 0.16, 0.32 },
+                .weights = &[_]f64{ 0.08, 0.24, 0.36, 0.22, 0.10 },
             },
             .ingested_noise_sigma = &gaussian_sigma,
         },
@@ -948,9 +1168,9 @@ test "measurement-space operational integration honors explicit isrf table weigh
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var gaussian_product = try simulateProduct(std.testing.allocator, gaussian_scene, route, prepared, testProviders());
+    var gaussian_product = try simulateProduct(std.testing.allocator, &gaussian_scene, route, &prepared, testProviders());
     defer gaussian_product.deinit(std.testing.allocator);
-    var table_product = try simulateProduct(std.testing.allocator, table_scene, route, prepared, testProviders());
+    var table_product = try simulateProduct(std.testing.allocator, &table_scene, route, &prepared, testProviders());
     defer table_product.deinit(std.testing.allocator);
 
     try std.testing.expect(table_product.radiance[0] != gaussian_product.radiance[0]);
@@ -978,8 +1198,8 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
             .high_resolution_half_span_nm = 0.32,
             .instrument_line_shape = .{
                 .sample_count = 5,
-                .offsets_nm = .{ -0.32, -0.16, 0.0, 0.16, 0.32, 0.0, 0.0, 0.0, 0.0 },
-                .weights = .{ 0.08, 0.24, 0.36, 0.22, 0.10, 0.0, 0.0, 0.0, 0.0 },
+                .offsets_nm = &[_]f64{ -0.32, -0.16, 0.0, 0.16, 0.32 },
+                .weights = &[_]f64{ 0.08, 0.24, 0.36, 0.22, 0.10 },
             },
             .ingested_noise_sigma = &indexed_sigma,
         },
@@ -987,16 +1207,20 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
             .layer_count = 12,
         },
     };
-    var indexed_table = @import("../../model/Instrument.zig").InstrumentLineShapeTable{};
-    indexed_table.nominal_count = 3;
-    indexed_table.sample_count = 5;
-    indexed_table.nominal_wavelengths_nm[0] = 405.0;
-    indexed_table.nominal_wavelengths_nm[1] = 406.0;
-    indexed_table.nominal_wavelengths_nm[2] = 407.0;
-    indexed_table.offsets_nm = .{ -0.32, -0.16, 0.0, 0.16, 0.32, 0.0, 0.0, 0.0, 0.0 };
-    for ([5]f64{ 0.08, 0.24, 0.36, 0.22, 0.10 }, 0..) |value, index| indexed_table.setWeight(0, index, value);
-    for ([5]f64{ 0.18, 0.30, 0.30, 0.15, 0.07 }, 0..) |value, index| indexed_table.setWeight(1, index, value);
-    for ([5]f64{ 0.05, 0.18, 0.34, 0.26, 0.17 }, 0..) |value, index| indexed_table.setWeight(2, index, value);
+    var indexed_table_nominals = [_]f64{ 405.0, 406.0, 407.0 };
+    var indexed_table_offsets = [_]f64{ -0.32, -0.16, 0.0, 0.16, 0.32 };
+    var indexed_table_weights = [_]f64{
+        0.08, 0.24, 0.36, 0.22, 0.10,
+        0.18, 0.30, 0.30, 0.15, 0.07,
+        0.05, 0.18, 0.34, 0.26, 0.17,
+    };
+    const indexed_table: @import("../../model/Instrument.zig").InstrumentLineShapeTable = .{
+        .nominal_count = 3,
+        .sample_count = 5,
+        .nominal_wavelengths_nm = indexed_table_nominals[0..],
+        .offsets_nm = indexed_table_offsets[0..],
+        .weights = indexed_table_weights[0..],
+    };
     const indexed_table_scene: Scene = .{
         .id = "measurement-operational-indexed-table",
         .spectral_grid = global_shape_scene.spectral_grid,
@@ -1024,9 +1248,9 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var global_shape_product = try simulateProduct(std.testing.allocator, global_shape_scene, route, prepared, testProviders());
+    var global_shape_product = try simulateProduct(std.testing.allocator, &global_shape_scene, route, &prepared, testProviders());
     defer global_shape_product.deinit(std.testing.allocator);
-    var indexed_table_product = try simulateProduct(std.testing.allocator, indexed_table_scene, route, prepared, testProviders());
+    var indexed_table_product = try simulateProduct(std.testing.allocator, &indexed_table_scene, route, &prepared, testProviders());
     defer indexed_table_product.deinit(std.testing.allocator);
 
     try std.testing.expectApproxEqAbs(global_shape_product.radiance[0], indexed_table_product.radiance[0], 1e-12);

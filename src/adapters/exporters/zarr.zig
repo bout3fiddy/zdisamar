@@ -30,7 +30,7 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
 
     const root_attrs_payload = try std.fmt.allocPrint(
         allocator,
-        "{{\n  \"conventions\": \"CF-1.10\",\n  \"source\": \"zdisamar\",\n  \"dataset_name\": \"{s}\",\n  \"scene_id\": \"{s}\",\n  \"workspace_label\": \"{s}\",\n  \"plan_id\": {d},\n  \"solver_route\": \"{s}\",\n  \"model_family\": \"{s}\",\n  \"transport_family\": \"{s}\",\n  \"derivative_mode\": \"{s}\",\n  \"numerical_mode\": \"{s}\",\n  \"status\": \"{s}\",\n  \"plugin_count\": {d},\n  \"dataset_hash_count\": {d},\n  \"native_capability_count\": {d},\n  \"native_entry_symbol_count\": {d},\n  \"native_library_path_count\": {d}\n}}\n",
+        "{{\n  \"conventions\": \"CF-1.10\",\n  \"source\": \"zdisamar\",\n  \"dataset_name\": \"{s}\",\n  \"scene_id\": \"{s}\",\n  \"workspace_label\": \"{s}\",\n  \"plan_id\": {d},\n  \"solver_route\": \"{s}\",\n  \"model_family\": \"{s}\",\n  \"transport_family\": \"{s}\",\n  \"derivative_mode\": \"{s}\",\n  \"derivative_semantics\": \"{s}\",\n  \"numerical_mode\": \"{s}\",\n  \"status\": \"{s}\",\n  \"plugin_count\": {d},\n  \"dataset_hash_count\": {d},\n  \"native_capability_count\": {d},\n  \"native_entry_symbol_count\": {d},\n  \"native_library_path_count\": {d}\n}}\n",
         .{
             artifact.dataset_name,
             view.scene_id,
@@ -40,6 +40,7 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
             view.provenance.model_family,
             view.provenance.transport_family,
             view.provenance.derivative_mode,
+            view.provenance.derivative_semantics,
             view.provenance.numerical_mode,
             @tagName(view.status),
             view.provenance.pluginVersionCount(),
@@ -134,6 +135,14 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         "provenance/derivative_mode",
         "provenance",
         &[_][]const u8{view.provenance.derivative_mode},
+        &files_written,
+    );
+    bytes_written += try writeStringArray(
+        allocator,
+        store_path,
+        "provenance/derivative_semantics",
+        "provenance",
+        &[_][]const u8{view.provenance.derivative_semantics},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -241,9 +250,9 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         bytes_written += try writeFloat64Array(
             allocator,
             store_path,
-            "measurement_space/" ++ MeasurementSpace.surrogate_reflectance_export_name,
+            "measurement_space/" ++ MeasurementSpace.reflectance_export_name,
             "measurement_space",
-            product.surrogate_reflectance,
+            product.reflectance,
             &files_written,
         );
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/noise_sigma", "measurement_space", product.noise_sigma, &files_written);
@@ -335,9 +344,9 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         bytes_written += try writeFloat64Array(
             allocator,
             store_path,
-            "retrieval/fitted_measurement/" ++ MeasurementSpace.fitted_surrogate_reflectance_export_name,
+            "retrieval/fitted_measurement/" ++ MeasurementSpace.fitted_reflectance_export_name,
             "retrieval/fitted_measurement",
-            product.surrogate_reflectance,
+            product.reflectance,
             &files_written,
         );
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/noise_sigma", "retrieval/fitted_measurement", product.noise_sigma, &files_written);
@@ -664,14 +673,14 @@ test "zarr exporter emits group metadata and array stores" {
             .wavelength_end_nm = 465.0,
             .mean_radiance = 0.42,
             .mean_irradiance = 1.17,
-            .mean_surrogate_reflectance = 0.36,
+            .mean_reflectance = 0.36,
             .mean_noise_sigma = 0.01,
             .mean_jacobian = 0.18333333333333335,
         },
         .wavelengths = try std.testing.allocator.dupe(f64, &.{ 405.0, 435.0, 465.0 }),
         .radiance = try std.testing.allocator.dupe(f64, &.{ 0.35, 0.42, 0.49 }),
         .irradiance = try std.testing.allocator.dupe(f64, &.{ 1.12, 1.17, 1.22 }),
-        .surrogate_reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
+        .reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
         .noise_sigma = try std.testing.allocator.dupe(f64, &.{ 0.01, 0.011, 0.012 }),
         .jacobian = jacobian,
         .effective_air_mass_factor = 1.25,

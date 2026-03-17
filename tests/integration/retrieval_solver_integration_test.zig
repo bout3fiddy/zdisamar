@@ -22,7 +22,7 @@ test "retrieval solvers share canonical problem model with method-specific polic
         .expected_derivative_mode = .semi_analytical,
         .diagnostics = .{ .jacobians = true },
     };
-    const oe_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(oe_request);
+    const oe_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&oe_request);
 
     const oe_result = try retrieval.oe.solver.solve(std.testing.allocator, oe_problem);
     defer {
@@ -32,7 +32,7 @@ test "retrieval solvers share canonical problem model with method-specific polic
     try std.testing.expectEqual(retrieval.common.contracts.Method.oe, oe_result.method);
     try std.testing.expect(oe_result.jacobians_used);
 
-    const doas_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(.{
+    const doas_request = zdisamar.Request{
         .scene = oe_request.scene,
         .inverse_problem = .{
             .id = "inverse-retrieval-doas",
@@ -47,7 +47,8 @@ test "retrieval solvers share canonical problem model with method-specific polic
         },
         .expected_derivative_mode = .none,
         .diagnostics = .{ .jacobians = false },
-    });
+    };
+    const doas_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&doas_request);
     const doas_result = try retrieval.doas.solver.solve(std.testing.allocator, doas_problem);
     defer {
         var owned = doas_result;
@@ -56,7 +57,7 @@ test "retrieval solvers share canonical problem model with method-specific polic
     try std.testing.expectEqual(retrieval.common.contracts.Method.doas, doas_result.method);
     try std.testing.expect(!doas_result.jacobians_used);
 
-    const dismas_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(.{
+    const dismas_request = zdisamar.Request{
         .scene = .{
             .id = "scene-retrieval-dismas",
             .observation_model = .{
@@ -80,7 +81,8 @@ test "retrieval solvers share canonical problem model with method-specific polic
         },
         .expected_derivative_mode = .numerical,
         .diagnostics = .{ .jacobians = true },
-    });
+    };
+    const dismas_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&dismas_request);
     const dismas_result = try retrieval.dismas.solver.solve(std.testing.allocator, dismas_problem);
     defer {
         var owned = dismas_result;

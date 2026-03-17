@@ -101,7 +101,7 @@ test "engine scaffold prepares a plan and returns provenance" {
         .id = "scene-unit",
         .spectral_grid = .{ .sample_count = 8 },
     });
-    var result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, &request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Result.Status.success, result.status);

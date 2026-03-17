@@ -70,7 +70,7 @@ pub const Scene = struct {
     aerosol: Aerosol = .{},
     observation_model: ObservationModel = .{},
 
-    pub fn validate(self: Scene) errors.Error!void {
+    pub fn validate(self: *const Scene) errors.Error!void {
         if (self.id.len == 0) {
             return errors.Error.MissingScene;
         }
@@ -86,7 +86,7 @@ pub const Scene = struct {
         try self.observation_model.validate();
     }
 
-    pub fn layoutRequirements(self: Scene) LayoutRequirements {
+    pub fn layoutRequirements(self: *const Scene) LayoutRequirements {
         return .{
             .spectral_start_nm = self.spectral_grid.start_nm,
             .spectral_end_nm = self.spectral_grid.end_nm,

@@ -118,6 +118,7 @@ fn renderNetcdfClassicPayload(
         .{ .name = "solver_route", .value = .{ .char = view.provenance.solver_route } },
         .{ .name = "transport_family", .value = .{ .char = view.provenance.transport_family } },
         .{ .name = "derivative_mode", .value = .{ .char = view.provenance.derivative_mode } },
+        .{ .name = "derivative_semantics", .value = .{ .char = view.provenance.derivative_semantics } },
         .{ .name = "numerical_mode", .value = .{ .char = view.provenance.numerical_mode } },
         .{ .name = "engine_version", .value = .{ .char = view.provenance.engine_version } },
         .{ .name = "status", .value = .{ .char = @tagName(view.status) } },
@@ -153,6 +154,7 @@ fn renderNetcdfClassicPayload(
     try addStringVariable(allocator, &dimensions, &variables, "solver_route_strlen", "solver_route", view.provenance.solver_route);
     try addStringVariable(allocator, &dimensions, &variables, "transport_family_strlen", "transport_family", view.provenance.transport_family);
     try addStringVariable(allocator, &dimensions, &variables, "derivative_mode_strlen", "derivative_mode", view.provenance.derivative_mode);
+    try addStringVariable(allocator, &dimensions, &variables, "derivative_semantics_strlen", "derivative_semantics", view.provenance.derivative_semantics);
     try addStringVariable(allocator, &dimensions, &variables, "numerical_mode_strlen", "numerical_mode", view.provenance.numerical_mode);
     try addStringVariable(allocator, &dimensions, &variables, "engine_version_strlen", "engine_version", view.provenance.engine_version);
     try addStringVariable(allocator, &dimensions, &variables, "status_strlen", "status", @tagName(view.status));
@@ -217,9 +219,9 @@ fn renderNetcdfClassicPayload(
             allocator,
             &dimensions,
             &variables,
-            "surrogate_reflectance_sample_count",
-            MeasurementSpace.surrogate_reflectance_export_name,
-            product.surrogate_reflectance,
+            "reflectance_sample_count",
+            MeasurementSpace.reflectance_export_name,
+            product.reflectance,
         );
         try addDoubleVariable(allocator, &dimensions, &variables, "noise_sample_count", "noise_sigma", product.noise_sigma);
         if (product.jacobian) |jacobian| {
@@ -261,9 +263,9 @@ fn renderNetcdfClassicPayload(
             allocator,
             &dimensions,
             &variables,
-            "fitted_surrogate_reflectance_sample_count",
-            MeasurementSpace.fitted_surrogate_reflectance_export_name,
-            product.surrogate_reflectance,
+            "fitted_reflectance_sample_count",
+            MeasurementSpace.fitted_reflectance_export_name,
+            product.reflectance,
         );
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_noise_sample_count", "fitted_noise_sigma", product.noise_sigma);
     }
@@ -686,14 +688,14 @@ test "netcdf/cf exporter renders a classic binary payload with named metadata ta
             .wavelength_end_nm = 465.0,
             .mean_radiance = 0.42,
             .mean_irradiance = 1.17,
-            .mean_surrogate_reflectance = 0.36,
+            .mean_reflectance = 0.36,
             .mean_noise_sigma = 0.01,
             .mean_jacobian = 0.18333333333333335,
         },
         .wavelengths = try std.testing.allocator.dupe(f64, &.{ 405.0, 435.0, 465.0 }),
         .radiance = try std.testing.allocator.dupe(f64, &.{ 0.35, 0.42, 0.49 }),
         .irradiance = try std.testing.allocator.dupe(f64, &.{ 1.12, 1.17, 1.22 }),
-        .surrogate_reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
+        .reflectance = try std.testing.allocator.dupe(f64, &.{ 0.3125, 0.3589743589, 0.4016393443 }),
         .noise_sigma = try std.testing.allocator.dupe(f64, &.{ 0.01, 0.011, 0.012 }),
         .jacobian = jacobian,
         .effective_air_mass_factor = 1.25,

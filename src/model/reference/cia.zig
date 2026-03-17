@@ -72,20 +72,33 @@ pub const CollisionInducedAbsorptionTable = struct {
             };
         }
         if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0];
+        if (wavelength_nm >= self.points[self.points.len - 1].wavelength_nm) return self.points[self.points.len - 1];
 
-        for (self.points[0 .. self.points.len - 1], self.points[1..]) |left, right| {
-            if (wavelength_nm <= right.wavelength_nm) {
-                const span = right.wavelength_nm - left.wavelength_nm;
-                if (span == 0.0) return right;
-                const weight = (wavelength_nm - left.wavelength_nm) / span;
-                return .{
-                    .wavelength_nm = wavelength_nm,
-                    .a0 = left.a0 + weight * (right.a0 - left.a0),
-                    .a1 = left.a1 + weight * (right.a1 - left.a1),
-                    .a2 = left.a2 + weight * (right.a2 - left.a2),
-                };
-            }
-        }
-        return self.points[self.points.len - 1];
+        const right_index = lowerBoundPointIndex(self.points, wavelength_nm);
+        const left = self.points[right_index - 1];
+        const right = self.points[right_index];
+        const span = right.wavelength_nm - left.wavelength_nm;
+        if (span == 0.0) return right;
+        const weight = (wavelength_nm - left.wavelength_nm) / span;
+        return .{
+            .wavelength_nm = wavelength_nm,
+            .a0 = left.a0 + weight * (right.a0 - left.a0),
+            .a1 = left.a1 + weight * (right.a1 - left.a1),
+            .a2 = left.a2 + weight * (right.a2 - left.a2),
+        };
     }
 };
+
+fn lowerBoundPointIndex(points: []const CollisionInducedAbsorptionPoint, wavelength_nm: f64) usize {
+    var low: usize = 0;
+    var high: usize = points.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (points[middle].wavelength_nm < wavelength_nm) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}

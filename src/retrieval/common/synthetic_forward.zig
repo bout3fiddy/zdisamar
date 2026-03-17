@@ -200,7 +200,7 @@ pub fn featureVector(
         .oe => .{
             .values = .{
                 summary.mean_radiance,
-                summary.mean_surrogate_reflectance,
+                summary.mean_reflectance,
                 0.0,
             },
             .len = 2,
@@ -220,7 +220,7 @@ pub fn featureVector(
         .dismas => .{
             .values = .{
                 summary.mean_radiance,
-                summary.mean_surrogate_reflectance,
+                summary.mean_reflectance,
                 summary.mean_noise_sigma + @abs(summary.mean_jacobian orelse 0.0),
             },
             .len = 3,
@@ -378,14 +378,14 @@ fn anchorForAccessor(
     };
     const signature = accessor.signature;
     const radiance = observed.mean_radiance;
-    const surrogate_reflectance = observed.mean_surrogate_reflectance;
+    const reflectance = observed.mean_reflectance;
     const jacobian = observed.mean_jacobian orelse observed.mean_noise_sigma;
 
     return switch (accessor.target) {
-        .surface_albedo => std.math.clamp(0.5 * seed + 0.5 * surrogate_reflectance * method_scale, 0.0, 1.0),
+        .surface_albedo => std.math.clamp(0.5 * seed + 0.5 * reflectance * method_scale, 0.0, 1.0),
         .aerosol_optical_depth_550_nm => @max(0.01, seed * 0.7 + method_scale * (0.08 + 0.12 / @max(radiance, 0.1))),
-        .aerosol_layer_center_km => @max(0.0, seed * 0.8 + method_scale * (2.0 + 4.0 * surrogate_reflectance + 0.2 * signature)),
-        .aerosol_layer_width_km => @max(0.1, seed * 0.8 + method_scale * (0.8 + 0.4 * surrogate_reflectance + 0.1 * signature)),
+        .aerosol_layer_center_km => @max(0.0, seed * 0.8 + method_scale * (2.0 + 4.0 * reflectance + 0.2 * signature)),
+        .aerosol_layer_width_km => @max(0.1, seed * 0.8 + method_scale * (0.8 + 0.4 * reflectance + 0.1 * signature)),
         .cloud_optical_thickness => @max(0.0, seed * 0.75 + method_scale * (0.15 + observed.mean_noise_sigma)),
         .wavelength_shift_nm => std.math.clamp(seed * 0.5 + 0.08 * jacobian * signature, -0.2, 0.2),
         .multiplicative_offset => std.math.clamp(1.0 + 0.03 * (radiance - 1.0) * signature, 0.9, 1.1),
@@ -449,7 +449,7 @@ test "surrogate forward supports canonical multi-parameter state application" {
                 .wavelength_end_nm = 465.0,
                 .mean_radiance = 1.1,
                 .mean_irradiance = 2.0,
-                .mean_surrogate_reflectance = 0.55,
+                .mean_reflectance = 0.55,
                 .mean_noise_sigma = 0.08,
                 .mean_jacobian = 0.06,
             },

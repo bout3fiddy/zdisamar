@@ -72,7 +72,7 @@ pub const RetrievalProblem = struct {
     jacobians_requested: bool = false,
     observed_measurement: ?ObservedMeasurement = null,
 
-    pub fn fromRequest(request: Request) Error!RetrievalProblem {
+    pub fn fromRequest(request: *const Request) Error!RetrievalProblem {
         validateScene(request.scene) catch |err| return err;
 
         const inverse_problem = request.inverse_problem orelse return Error.MissingInverseProblem;
@@ -295,7 +295,7 @@ test "retrieval contracts enforce canonical problem invariants" {
         .diagnostics = .{ .jacobians = true },
     };
 
-    const valid = try RetrievalProblem.fromRequest(request);
+    const valid = try RetrievalProblem.fromRequest(&request);
     try valid.validateForMethod(.oe);
 
     const layout = valid.layoutRequirements();
@@ -326,7 +326,7 @@ test "retrieval problem requires inverse problem in request conversion" {
 
     try std.testing.expectError(
         Error.MissingInverseProblem,
-        RetrievalProblem.fromRequest(request),
+        RetrievalProblem.fromRequest(&request),
     );
 }
 
@@ -369,7 +369,7 @@ test "solver outcomes own identifiers independently of request buffers" {
                     .wavelength_end_nm = 760.5,
                     .mean_radiance = 1.2,
                     .mean_irradiance = 2.0,
-                    .mean_surrogate_reflectance = 0.6,
+                    .mean_reflectance = 0.6,
                     .mean_noise_sigma = 0.01,
                 },
             },

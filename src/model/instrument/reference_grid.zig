@@ -6,11 +6,11 @@ pub const OperationalReferenceGrid = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     weights: []const f64 = &[_]f64{},
 
-    pub fn enabled(self: OperationalReferenceGrid) bool {
+    pub fn enabled(self: *const OperationalReferenceGrid) bool {
         return self.wavelengths_nm.len > 0;
     }
 
-    pub fn validate(self: OperationalReferenceGrid) errors.Error!void {
+    pub fn validate(self: *const OperationalReferenceGrid) errors.Error!void {
         if (!self.enabled()) {
             if (self.weights.len != 0) return errors.Error.InvalidRequest;
             return;

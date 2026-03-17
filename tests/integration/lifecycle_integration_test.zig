@@ -18,7 +18,7 @@ test "integration lifecycle preserves typed plan and provenance route" {
         .id = "scene-integration-derivative",
         .spectral_grid = .{ .sample_count = 32 },
     });
-    var result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, &request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);

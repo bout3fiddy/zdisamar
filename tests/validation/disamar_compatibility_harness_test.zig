@@ -19,6 +19,7 @@ const ParityCase = struct {
     runtime_profile: RuntimeProfile,
     expected_route_family: []const u8,
     expected_derivative_mode: []const u8,
+    expected_derivative_semantics: ?[]const u8 = null,
     expected_jacobians_used: ?bool = null,
     status: []const u8,
     spectral_start_nm: f64 = 405.0,
@@ -40,6 +41,72 @@ const ParityMatrix = struct {
     parity_level: []const u8,
     cases: []const ParityCase,
 };
+
+fn meanVectorInRange(
+    wavelengths_nm: []const f64,
+    values: []const f64,
+    start_nm: f64,
+    end_nm: f64,
+) f64 {
+    var sum: f64 = 0.0;
+    var count: usize = 0;
+    for (wavelengths_nm, values) |wavelength_nm, value| {
+        if (wavelength_nm < start_nm or wavelength_nm > end_nm) continue;
+        sum += value;
+        count += 1;
+    }
+    return if (count == 0) 0.0 else sum / @as(f64, @floatFromInt(count));
+}
+
+fn minVectorInRange(
+    wavelengths_nm: []const f64,
+    values: []const f64,
+    start_nm: f64,
+    end_nm: f64,
+) struct { wavelength_nm: f64, value: f64 } {
+    var best = std.math.inf(f64);
+    var best_wavelength = start_nm;
+    for (wavelengths_nm, values) |wavelength_nm, value| {
+        if (wavelength_nm < start_nm or wavelength_nm > end_nm) continue;
+        if (value < best) {
+            best = value;
+            best_wavelength = wavelength_nm;
+        }
+    }
+    return .{ .wavelength_nm = best_wavelength, .value = best };
+}
+
+fn maxVectorInRange(
+    wavelengths_nm: []const f64,
+    values: []const f64,
+    start_nm: f64,
+    end_nm: f64,
+) f64 {
+    var best = -std.math.inf(f64);
+    for (wavelengths_nm, values) |wavelength_nm, value| {
+        if (wavelength_nm < start_nm or wavelength_nm > end_nm) continue;
+        if (value > best) best = value;
+    }
+    return best;
+}
+
+fn expectBoundedO2AMorphology(
+    wavelengths_nm: []const f64,
+    reflectance: []const f64,
+) !void {
+    const trough = minVectorInRange(wavelengths_nm, reflectance, 760.8, 761.2);
+    const rebound_peak = maxVectorInRange(wavelengths_nm, reflectance, 761.8, 762.4);
+    const mid_band_mean = meanVectorInRange(wavelengths_nm, reflectance, 763.8, 765.5);
+    const red_wing_mean = meanVectorInRange(wavelengths_nm, reflectance, 769.8, 770.6);
+
+    try std.testing.expect(trough.wavelength_nm >= 760.8 and trough.wavelength_nm < 761.2);
+    try std.testing.expect(trough.value > 0.002 and trough.value < 0.12);
+    try std.testing.expect(rebound_peak > trough.value * 4.0 and rebound_peak < 0.25);
+    try std.testing.expect(mid_band_mean > trough.value * 4.0 and mid_band_mean < rebound_peak * 0.8);
+    try std.testing.expect(red_wing_mean > trough.value * 8.0);
+    try std.testing.expect(red_wing_mean > rebound_peak * 1.1);
+    try std.testing.expect(red_wing_mean > mid_band_mean * 1.4);
+}
 
 fn parseObservationRegime(value: []const u8) !zdisamar.ObservationRegime {
     if (std.mem.eql(u8, value, "nadir")) return .nadir;
@@ -129,7 +196,7 @@ fn makeRetrievalRequest(
 }
 
 fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisamar.Scene {
-    return .{
+    var scene: zdisamar.Scene = .{
         .id = case.id,
         .spectral_grid = .{
             .start_nm = case.spectral_start_nm,
@@ -175,6 +242,37 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
         else
             .{},
     };
+
+    if (case.use_o2a_spectroscopy) {
+        scene.geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 60.0,
+            .viewing_zenith_deg = 30.0,
+            .relative_azimuth_deg = 120.0,
+        };
+        scene.surface = .{
+            .kind = "lambertian",
+            .albedo = 0.20,
+        };
+        scene.observation_model.instrument = "compatibility-harness-o2a";
+        scene.observation_model.sampling = "native";
+        scene.observation_model.noise_model = "shot_noise";
+        scene.observation_model.instrument_line_fwhm_nm = 0.38;
+        scene.observation_model.builtin_line_shape = .flat_top_n4;
+        scene.observation_model.high_resolution_step_nm = 0.01;
+        scene.observation_model.high_resolution_half_span_nm = 1.14;
+
+        if (case.has_aerosols) {
+            scene.aerosol.single_scatter_albedo = 1.0;
+            scene.aerosol.asymmetry_factor = 0.70;
+            scene.aerosol.angstrom_exponent = 0.0;
+            scene.aerosol.reference_wavelength_nm = 760.0;
+            scene.aerosol.layer_center_km = 5.4;
+            scene.aerosol.layer_width_km = 0.4;
+        }
+    }
+
+    return scene;
 }
 
 fn buildZeroContinuumTable(
@@ -252,21 +350,21 @@ fn prepareOpticalStateForCase(
             allocator,
             .spectroscopy_line_list,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_hitran_subset_07_hit08_tropomi",
+            "o2a_hitran_07_hit08_tropomi",
         );
         defer line_asset.deinit(allocator);
         var strong_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
             allocator,
             .spectroscopy_strong_line_set,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_lisa_sdf_subset",
+            "o2a_lisa_sdf",
         );
         defer strong_asset.deinit(allocator);
         var rmf_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
             allocator,
             .spectroscopy_relaxation_matrix,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_lisa_rmf_subset",
+            "o2a_lisa_rmf",
         );
         defer rmf_asset.deinit(allocator);
 
@@ -282,7 +380,7 @@ fn prepareOpticalStateForCase(
             allocator,
             .collision_induced_absorption_table,
             "data/cross_sections/bundle_manifest.json",
-            "o2o2_bira_o2a_subset",
+            "o2o2_bira_o2a",
         );
         defer cia_asset.deinit(allocator);
         collision_induced_absorption = try cia_asset.toCollisionInducedAbsorptionTable(allocator);
@@ -307,19 +405,19 @@ fn prepareOpticalStateForCase(
 
     return zdisamar.optics.prepare.prepareWithParticleTables(
         allocator,
-        scene,
-        profile,
-        cross_sections,
-        collision_induced_absorption,
-        line_list,
-        lut,
-        mie_table,
+        &scene,
+        &profile,
+        &cross_sections,
+        if (collision_induced_absorption) |*table| table else null,
+        if (line_list) |*table| table else null,
+        &lut,
+        if (mie_table) |*table| table else null,
         null,
     );
 }
 
 fn executeRetrievalCase(case: ParityCase, request: zdisamar.Request) !retrieval.common.contracts.SolverOutcome {
-    const problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(request);
+    const problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&request);
     const method = try parseRetrievalMethod(case.retrieval_method orelse return error.MissingRetrievalMethod);
     return switch (method) {
         .oe => retrieval.oe.solver.solve(std.testing.allocator, problem),
@@ -502,12 +600,15 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
             try makeRetrievalRequest(case, regime, derivative_mode)
         else
             zdisamar.Request.init(case_scene);
-        var result = try engine.execute(&plan, &workspace, request);
+        var result = try engine.execute(&plan, &workspace, &request);
         defer result.deinit(std.testing.allocator);
 
         try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
         try std.testing.expectEqualStrings(case.expected_route_family, result.provenance.transport_family);
         try std.testing.expectEqualStrings(case.expected_derivative_mode, result.provenance.derivative_mode);
+        if (case.expected_derivative_semantics) |expected_derivative_semantics| {
+            try std.testing.expectEqualStrings(expected_derivative_semantics, result.provenance.derivative_semantics);
+        }
 
         if (std.mem.eql(u8, case.component, "retrieval")) {
             const outcome = try executeRetrievalCase(case, request);
@@ -555,20 +656,25 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
             var prepared = try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);
             defer prepared.deinit(std.testing.allocator);
 
-            const summary = try zdisamar.transport.measurement_space.simulateSummary(
+            var product = try zdisamar.transport.measurement_space.simulateProduct(
                 std.testing.allocator,
-                case_scene,
+                &case_scene,
                 plan.transport_route,
-                prepared,
+                &prepared,
                 measurementProviders(plan),
             );
+            defer product.deinit(std.testing.allocator);
+            const summary = product.summary;
             try std.testing.expectEqual(case.runtime_profile.spectral_samples, summary.sample_count);
             try std.testing.expect(summary.mean_radiance > 0.0);
-            try std.testing.expect(summary.mean_surrogate_reflectance > 0.0);
+            try std.testing.expect(summary.mean_reflectance > 0.0);
             if (derivative_mode == .none) {
                 try std.testing.expect(summary.mean_jacobian == null);
             } else {
                 try std.testing.expect(summary.mean_jacobian != null);
+            }
+            if (case.use_o2a_spectroscopy) {
+                try expectBoundedO2AMorphology(product.wavelengths, product.reflectance);
             }
         }
         executed_cases += 1;

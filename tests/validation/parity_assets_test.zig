@@ -20,6 +20,7 @@ const ParityCase = struct {
     runtime_profile: RuntimeProfile,
     expected_route_family: []const u8,
     expected_derivative_mode: []const u8,
+    expected_derivative_semantics: ?[]const u8 = null,
     metrics: []const []const u8,
     tolerances: ParityTolerances,
     status: []const u8,
@@ -172,6 +173,9 @@ test "parity matrix defines executable upstream contract and retrieval-check cas
         try std.testing.expect(case.runtime_profile.spectral_samples > 0);
         try std.testing.expect(case.expected_route_family.len > 0);
         try std.testing.expect(case.expected_derivative_mode.len > 0);
+        if (case.expected_derivative_semantics) |expected_derivative_semantics| {
+            try std.testing.expect(expected_derivative_semantics.len > 0);
+        }
         try std.testing.expect(case.metrics.len > 0);
         try std.testing.expect(case.tolerances.absolute >= 0);
         try std.testing.expect(case.tolerances.relative >= 0);

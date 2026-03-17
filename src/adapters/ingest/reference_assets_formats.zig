@@ -206,7 +206,7 @@ fn parseBiraCiaPolynomial(
 
     if (numeric_header_index < 3 or row_count == 0) return error.InvalidAssetFormat;
     if (expected_data_rows) |expected| {
-        if (expected != row_count) return error.InvalidAssetFormat;
+        if (row_count < expected) return error.InvalidAssetFormat;
     }
 
     return .{

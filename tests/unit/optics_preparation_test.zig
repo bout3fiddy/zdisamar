@@ -83,11 +83,11 @@ test "optical preparation bridges tracked assets into transport-ready state" {
 
     var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopy(
         std.testing.allocator,
-        scene,
-        profile,
-        cross_sections,
-        spectroscopy,
-        lut,
+        &scene,
+        &profile,
+        &cross_sections,
+        &spectroscopy,
+        &lut,
     );
     defer prepared.deinit(std.testing.allocator);
 
@@ -98,6 +98,7 @@ test "optical preparation bridges tracked assets into transport-ready state" {
     try std.testing.expectEqual(@as(f64, 0.0), prepared.line_mixing_mean_cross_section_cm2_per_molecule);
     try std.testing.expect(prepared.total_optical_depth > 0.0);
     try std.testing.expect(prepared.gas_optical_depth > 0.0);
+    try std.testing.expect(prepared.layers[0].gas_scattering_optical_depth > 0.0);
     try std.testing.expect(prepared.aerosol_optical_depth > 0.0);
     try std.testing.expect(prepared.d_optical_depth_d_temperature != 0.0);
     try std.testing.expectApproxEqAbs(@as(f64, 1.756), prepared.effective_air_mass_factor, 1e-9);
@@ -105,6 +106,7 @@ test "optical preparation bridges tracked assets into transport-ready state" {
     try std.testing.expect(prepared.aerosolOpticalDepthAtWavelength(405.0) > prepared.aerosolOpticalDepthAtWavelength(465.0));
     try std.testing.expect(prepared.totalOpticalDepthAtWavelength(405.0) > prepared.totalOpticalDepthAtWavelength(465.0));
     try std.testing.expect(prepared.sublayers.?[0].gas_extinction_optical_depth > 0.0);
+    try std.testing.expect(prepared.sublayers.?[0].gas_scattering_optical_depth > 0.0);
     try std.testing.expect(prepared.sublayers.?[0].d_gas_optical_depth_d_temperature != 0.0);
     try std.testing.expect(prepared.sublayers.?[0].combined_phase_coefficients[0] == 1.0);
     try std.testing.expect(prepared.sublayers.?[0].aerosol_single_scatter_albedo > 0.0);
@@ -117,10 +119,11 @@ test "optical preparation bridges tracked assets into transport-ready state" {
     });
     const result = try zdisamar.transport.dispatcher.executePrepared(
         route,
-        prepared.toForwardInput(scene),
+        prepared.toForwardInput(&scene),
     );
 
-    try std.testing.expect(result.toa_radiance > 0.0);
+    try std.testing.expect(result.toa_reflectance_factor >= 0.0);
+    try std.testing.expect(result.toa_reflectance_factor <= 1.0);
     try std.testing.expect(result.jacobian_column != null);
 }
 
@@ -233,24 +236,29 @@ test "optical preparation consumes vendor-shaped strong-line sidecars for bounde
 
     var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
         std.testing.allocator,
-        scene,
-        profile,
-        cross_sections,
-        cia_table,
-        line_list,
-        lut,
+        &scene,
+        &profile,
+        &cross_sections,
+        &cia_table,
+        &line_list,
+        &lut,
     );
     defer prepared.deinit(std.testing.allocator);
 
     const band_center = prepared.totalCrossSectionAtWavelength(771.3);
     const off_band = prepared.totalCrossSectionAtWavelength(766.0);
+    const gas_tau_band_center = prepared.gasOpticalDepthAtWavelength(771.3);
+    const gas_tau_off_band = prepared.gasOpticalDepthAtWavelength(766.0);
     try std.testing.expect(prepared.line_mean_cross_section_cm2_per_molecule > 0.0);
     try std.testing.expect(@abs(prepared.line_mixing_mean_cross_section_cm2_per_molecule) > 0.0);
     try std.testing.expect(prepared.collision_induced_absorption != null);
     try std.testing.expect(prepared.cia_optical_depth > 0.0);
+    try std.testing.expect(prepared.column_density_factor > 1.0e24);
     try std.testing.expect(prepared.collisionInducedOpticalDepthAtWavelength(761.0) > 0.0);
     try std.testing.expect(prepared.collisionInducedOpticalDepthAtWavelength(761.0) > prepared.collisionInducedOpticalDepthAtWavelength(771.3));
     try std.testing.expect(band_center > off_band);
+    try std.testing.expect(gas_tau_band_center > 0.0);
+    try std.testing.expect(gas_tau_band_center > gas_tau_off_band);
     try std.testing.expect(@abs(prepared.spectroscopy_lines.?.evaluateAt(771.3, prepared.effective_temperature_k, prepared.effective_pressure_hpa).line_mixing_sigma_cm2_per_molecule) > 0.0);
     try std.testing.expect(prepared.sublayers.?[prepared.sublayers.?.len - 1].combined_phase_coefficients[1] >= 0.0);
 }
@@ -366,12 +374,12 @@ test "optical preparation applies operational O2 and O2-O2 LUT replacements for 
 
     var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
         std.testing.allocator,
-        scene,
-        profile,
-        cross_sections,
+        &scene,
+        &profile,
+        &cross_sections,
         null,
         null,
-        lut,
+        &lut,
     );
     defer prepared.deinit(std.testing.allocator);
 
@@ -465,11 +473,11 @@ test "optical preparation materializes RTM-style gas sublayers with stable paren
 
     var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopy(
         std.testing.allocator,
-        scene,
-        profile,
-        cross_sections,
-        spectroscopy,
-        lut,
+        &scene,
+        &profile,
+        &cross_sections,
+        &spectroscopy,
+        &lut,
     );
     defer prepared.deinit(std.testing.allocator);
 
@@ -564,10 +572,10 @@ test "optical preparation distributes aerosol and cloud optical depth across HG-
 
     var prepared = try zdisamar.optics.prepare.prepare(
         std.testing.allocator,
-        scene,
-        profile,
-        cross_sections,
-        lut,
+        &scene,
+        &profile,
+        &cross_sections,
+        &lut,
     );
     defer prepared.deinit(std.testing.allocator);
 
@@ -660,13 +668,13 @@ test "optical preparation interpolates bounded Mie coefficient subsets when prov
 
     var prepared = try zdisamar.optics.prepare.prepareWithParticleTables(
         std.testing.allocator,
-        scene,
-        profile,
-        cross_sections,
+        &scene,
+        &profile,
+        &cross_sections,
         null,
         null,
-        lut,
-        mie_table,
+        &lut,
+        &mie_table,
         null,
     );
     defer prepared.deinit(std.testing.allocator);

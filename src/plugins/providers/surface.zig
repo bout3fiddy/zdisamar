@@ -4,8 +4,8 @@ const PreparedOpticalState = @import("../../kernels/optics/prepare.zig").Prepare
 const ForwardResult = @import("../../kernels/transport/common.zig").ForwardResult;
 
 pub const EvaluationContext = struct {
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
     wavelength_nm: f64,
     safe_span: f64,
     phase: f64,
@@ -21,17 +21,18 @@ pub fn resolve(provider_id: []const u8) ?Provider {
     if (std.mem.eql(u8, provider_id, "builtin.lambertian_surface")) {
         return .{
             .id = provider_id,
-            .responseGain = surrogateLambertianGain,
+            .responseGain = lambertianResponseGain,
         };
     }
     return null;
 }
 
-fn surrogateLambertianGain(context: EvaluationContext) f64 {
+fn lambertianResponseGain(context: EvaluationContext) f64 {
     _ = context.prepared;
     _ = context.wavelength_nm;
     _ = context.safe_span;
     _ = context.phase;
     _ = context.forward;
-    return 0.75 + 0.50 * context.scene.surface.albedo;
+    _ = context.scene;
+    return 1.0;
 }

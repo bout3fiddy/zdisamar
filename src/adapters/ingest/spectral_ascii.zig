@@ -304,6 +304,8 @@ pub const OperationalMetadata = struct {
     }
 
     pub fn deinitOwned(self: *OperationalMetadata, allocator: std.mem.Allocator) void {
+        self.instrument_line_shape.deinitOwned(allocator);
+        self.instrument_line_shape_table.deinitOwned(allocator);
         self.operational_refspec_grid.deinitOwned(allocator);
         self.operational_solar_spectrum.deinitOwned(allocator);
         self.o2_operational_lut.deinitOwned(allocator);
@@ -616,9 +618,9 @@ fn parseMetadataLine(
         metadata.high_resolution_step_nm = value;
     } else if (std.mem.eql(u8, key, "hr_grid_half_span_nm")) {
         metadata.high_resolution_half_span_nm = value;
-    } else if (try parseIndexedShapeField(&metadata.instrument_line_shape, key, value)) {
+    } else if (try parseIndexedShapeField(allocator, &metadata.instrument_line_shape, key, value)) {
         return;
-    } else if (try parseTableShapeField(&metadata.instrument_line_shape_table, key, value)) {
+    } else if (try parseTableShapeField(allocator, &metadata.instrument_line_shape_table, key, value)) {
         return;
     } else if (try parseIndexedVectorField(
         allocator,
@@ -759,14 +761,21 @@ fn parseIndexedVectorField(
     return true;
 }
 
-fn parseIndexedShapeField(shape: *InstrumentLineShape, key: []const u8, value: f64) ParseError!bool {
+fn parseIndexedShapeField(
+    allocator: std.mem.Allocator,
+    shape: *InstrumentLineShape,
+    key: []const u8,
+    value: f64,
+) ParseError!bool {
     if (try parseShapeIndex(key, "isrf_offset_nm_")) |index| {
-        shape.offsets_nm[index] = value;
+        try shape.ensureOwnedStorage(allocator);
+        @constCast(shape.offsets_nm)[index] = value;
         if (shape.sample_count < index + 1) shape.sample_count = @intCast(index + 1);
         return true;
     }
     if (try parseShapeIndex(key, "isrf_weight_")) |index| {
-        shape.weights[index] = value;
+        try shape.ensureOwnedStorage(allocator);
+        @constCast(shape.weights)[index] = value;
         if (shape.sample_count < index + 1) shape.sample_count = @intCast(index + 1);
         return true;
     }
@@ -781,19 +790,27 @@ fn parseShapeIndex(key: []const u8, prefix: []const u8) ParseError!?usize {
     return ordinal - 1;
 }
 
-fn parseTableShapeField(table: *InstrumentLineShapeTable, key: []const u8, value: f64) ParseError!bool {
+fn parseTableShapeField(
+    allocator: std.mem.Allocator,
+    table: *InstrumentLineShapeTable,
+    key: []const u8,
+    value: f64,
+) ParseError!bool {
     if (try parseNominalIndex(key, "isrf_table_nominal_nm_")) |nominal_index| {
-        table.nominal_wavelengths_nm[nominal_index] = value;
+        try table.ensureOwnedStorage(allocator);
+        @constCast(table.nominal_wavelengths_nm)[nominal_index] = value;
         if (table.nominal_count < nominal_index + 1) table.nominal_count = @intCast(nominal_index + 1);
         return true;
     }
     if (try parseShapeIndex(key, "isrf_table_offset_nm_")) |sample_index| {
-        table.offsets_nm[sample_index] = value;
+        try table.ensureOwnedStorage(allocator);
+        @constCast(table.offsets_nm)[sample_index] = value;
         if (table.sample_count < sample_index + 1) table.sample_count = @intCast(sample_index + 1);
         return true;
     }
     if (try parseDoubleIndex(key, "isrf_table_weight_")) |indices| {
         const nominal_index, const sample_index = indices;
+        try table.ensureOwnedStorage(allocator);
         table.setWeight(nominal_index, sample_index, value);
         if (table.nominal_count < nominal_index + 1) table.nominal_count = @intCast(nominal_index + 1);
         if (table.sample_count < sample_index + 1) table.sample_count = @intCast(sample_index + 1);

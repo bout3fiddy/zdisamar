@@ -83,7 +83,7 @@ The source audit already established that the current Zig tree is strongest in t
 | WP ID | Status | Last updated | Proof / validation pointer | Next action |
 | --- | --- | --- | --- | --- |
 | [WP-01](./wp-01-critical-correctness.md) | Done | 2026-03-16 | `wp-01-critical-correctness.md` Proof / validation | Start `WP-02` and replace surrogate forward shaping with physically defensible O2A transport + measurement-space behavior |
-| [WP-02](./wp-02-forward-transport-measurement-space.md) | Todo | 2026-03-16 | Planned validation in WP doc | Replace surrogate forward shaping with physically defensible transport + measurement-space behavior |
+| [WP-02](./wp-02-forward-transport-measurement-space.md) | Done | 2026-03-16 | `wp-02-forward-transport-measurement-space.md` Proof / validation | Start `WP-03` and resolve instrument, observation, noise, and ingest semantics on top of the repaired forward baseline |
 | [WP-03](./wp-03-observation-instrument-noise-ingest.md) | Todo | 2026-03-16 | Planned validation in WP doc | Resolve instrument/observation/noise semantics once and wire ingests all the way through execution |
 | [WP-04](./wp-04-optimal-estimation-parity.md) | Todo | 2026-03-16 | Planned validation in WP doc | Implement a real OE lane on top of the repaired forward path |
 | [WP-05](./wp-05-doas-dismas-parity.md) | Todo | 2026-03-16 | Planned validation in WP doc | Implement real DOAS and DISMAS spectral fitting after OE is stable |

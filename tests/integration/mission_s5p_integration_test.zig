@@ -14,7 +14,7 @@ test "s5p mission adapter drives typed engine execution" {
     var plan = try engine.preparePlan(mission_run.plan_template);
     defer plan.deinit();
     var workspace = engine.createWorkspace("mission-suite");
-    var result = try engine.execute(&plan, &workspace, mission_run.request);
+    var result = try engine.execute(&plan, &workspace, &mission_run.request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
@@ -39,7 +39,7 @@ test "s5p operational mission adapter drives engine execution from measured spec
     var plan = try engine.preparePlan(mission_run.plan_template);
     defer plan.deinit();
     var workspace = engine.createWorkspace("mission-operational");
-    var result = try engine.execute(&plan, &workspace, mission_run.request);
+    var result = try engine.execute(&plan, &workspace, &mission_run.request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
@@ -66,7 +66,7 @@ test "s5p operational mission adapter applies geometry and auxiliary metadata re
     var plan = try engine.preparePlan(mission_run.plan_template);
     defer plan.deinit();
     var workspace = engine.createWorkspace("mission-operational-aux");
-    var result = try engine.execute(&plan, &workspace, mission_run.request);
+    var result = try engine.execute(&plan, &workspace, &mission_run.request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
@@ -97,7 +97,7 @@ test "s5p operational mission adapter executes explicit isrf table metadata" {
     var plan = try engine.preparePlan(mission_run.plan_template);
     defer plan.deinit();
     var workspace = engine.createWorkspace("mission-operational-isrf-table");
-    var result = try engine.execute(&plan, &workspace, mission_run.request);
+    var result = try engine.execute(&plan, &workspace, &mission_run.request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
@@ -127,7 +127,7 @@ test "s5p operational mission adapter executes O2 and O2-O2 refspec replacement 
     var plan = try engine.preparePlan(mission_run.plan_template);
     defer plan.deinit();
     var workspace = engine.createWorkspace("mission-operational-refspec");
-    var result = try engine.execute(&plan, &workspace, mission_run.request);
+    var result = try engine.execute(&plan, &workspace, &mission_run.request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);

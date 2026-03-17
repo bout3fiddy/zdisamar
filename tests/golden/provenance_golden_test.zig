@@ -7,6 +7,7 @@ const ProvenanceGolden = struct {
     solver_route_default: []const u8,
     transport_family_default: []const u8,
     derivative_mode_default: []const u8,
+    derivative_semantics_default: []const u8,
     numerical_mode_default: []const u8,
     plugin_inventory_generation_min: u64,
     required_plugin_version: []const u8,
@@ -42,7 +43,7 @@ test "golden provenance defaults remain stable" {
         .id = "scene-golden-001",
         .spectral_grid = .{ .sample_count = 16 },
     });
-    var result = try engine.execute(&plan, &workspace, request);
+    var result = try engine.execute(&plan, &workspace, &request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqualStrings(parsed.value.engine_version, result.provenance.engine_version);
@@ -50,6 +51,7 @@ test "golden provenance defaults remain stable" {
     try std.testing.expectEqualStrings(parsed.value.solver_route_default, result.provenance.solver_route);
     try std.testing.expectEqualStrings(parsed.value.transport_family_default, result.provenance.transport_family);
     try std.testing.expectEqualStrings(parsed.value.derivative_mode_default, result.provenance.derivative_mode);
+    try std.testing.expectEqualStrings(parsed.value.derivative_semantics_default, result.provenance.derivative_semantics);
     try std.testing.expectEqualStrings(parsed.value.numerical_mode_default, result.provenance.numerical_mode);
     try std.testing.expect(result.provenance.plugin_inventory_generation >= parsed.value.plugin_inventory_generation_min);
 

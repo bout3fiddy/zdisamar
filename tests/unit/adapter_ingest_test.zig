@@ -158,6 +158,11 @@ test "reference asset ingest assembles vendor-shaped spectroscopy sidecars into 
     try std.testing.expect(evaluation.weak_line_sigma_cm2_per_molecule > 0.0);
     try std.testing.expect(evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
     try std.testing.expect(@abs(evaluation.line_mixing_sigma_cm2_per_molecule) > 0.0);
+    try std.testing.expectApproxEqAbs(
+        evaluation.weak_line_sigma_cm2_per_molecule + evaluation.strong_line_sigma_cm2_per_molecule,
+        evaluation.line_sigma_cm2_per_molecule,
+        1e-30,
+    );
     try std.testing.expect(evaluation.total_sigma_cm2_per_molecule > 0.0);
 }
 

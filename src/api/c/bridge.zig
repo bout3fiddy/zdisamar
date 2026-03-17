@@ -355,7 +355,7 @@ export fn zdisamar_execute(
     var result = castEngine(engine_ptr).engine.execute(
         &castPlan(@constCast(plan_ptr)).plan,
         &workspace_handle.workspace,
-        request,
+        &request,
     ) catch |err| return mapError(err);
     defer result.deinit(std.heap.c_allocator);
     workspace_handle.captureResultStrings(result) catch |err| return mapError(err);

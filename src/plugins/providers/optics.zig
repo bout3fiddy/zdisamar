@@ -6,7 +6,7 @@ const BundledOptics = @import("../../runtime/reference/BundledOptics.zig");
 
 pub const Provider = struct {
     id: []const u8,
-    prepareForScene: *const fn (allocator: Allocator, scene: Scene) anyerror!PreparedOpticalState,
+    prepareForScene: *const fn (allocator: Allocator, scene: *const Scene) anyerror!PreparedOpticalState,
 };
 
 pub fn resolve(provider_id: []const u8) ?Provider {

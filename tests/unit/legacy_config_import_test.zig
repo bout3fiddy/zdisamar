@@ -8,7 +8,7 @@ test "legacy import preserves flat adapter semantics through canonical execution
         \\model_family = disamar_standard
         \\transport = transport.dispatcher
         \\retrieval = none
-        \\solver_mode = polarized
+        \\solver_mode = scalar
         \\scene_id = s5p-no2
         \\spectral_start_nm = 405.0
         \\spectral_end_nm = 465.0
@@ -44,7 +44,8 @@ test "legacy import preserves flat adapter semantics through canonical execution
     var legacy_plan = try engine.preparePlan(prepared.plan_template);
     defer legacy_plan.deinit();
     var legacy_workspace = engine.createWorkspace(prepared.workspace_label);
-    var legacy_result = try engine.execute(&legacy_plan, &legacy_workspace, prepared.toRequest());
+    var legacy_request = prepared.toRequest();
+    var legacy_result = try engine.execute(&legacy_plan, &legacy_workspace, &legacy_request);
     defer legacy_result.deinit(std.testing.allocator);
 
     var document = try zdisamar.canonical_config.Document.parse(
@@ -55,8 +56,10 @@ test "legacy import preserves flat adapter semantics through canonical execution
     );
     defer document.deinit();
 
-    const resolved = try document.resolve(std.testing.allocator);
-    const program = try zdisamar.canonical_config.compileResolved(std.testing.allocator, resolved);
+    var resolved: ?*zdisamar.canonical_config.ResolvedExperiment = try document.resolve(std.testing.allocator);
+    errdefer if (resolved) |owned| owned.deinit();
+    const program = try zdisamar.canonical_config.compileResolved(std.testing.allocator, resolved.?);
+    resolved = null;
     defer {
         var owned = program;
         owned.deinit();
