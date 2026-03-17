@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 #define ZDISAMAR_ABI_VERSION 1u
-#define ZDISAMAR_PLUGIN_ABI_VERSION 1u
+#define ZDISAMAR_EXPERIMENTAL_C_ABI 0u
 
 typedef struct zdisamar_engine zdisamar_engine;
 typedef struct zdisamar_plan zdisamar_plan;
@@ -22,29 +22,14 @@ typedef enum zdisamar_status {
 
 typedef enum zdisamar_solver_mode {
   ZDISAMAR_SOLVER_SCALAR = 0,
-  ZDISAMAR_SOLVER_POLARIZED = 1,
-  ZDISAMAR_SOLVER_DERIVATIVE_ENABLED = 2
+  ZDISAMAR_SOLVER_POLARIZED = 1
 } zdisamar_solver_mode;
 
-typedef enum zdisamar_derivative_mode {
-  ZDISAMAR_DERIVATIVE_NONE = 0,
-  ZDISAMAR_DERIVATIVE_SEMI_ANALYTICAL = 1,
-  ZDISAMAR_DERIVATIVE_ANALYTICAL_PLUGIN = 2,
-  ZDISAMAR_DERIVATIVE_NUMERICAL = 3
-} zdisamar_derivative_mode;
-
-typedef enum zdisamar_plugin_policy {
-  ZDISAMAR_PLUGIN_POLICY_DECLARATIVE_ONLY = 0,
-  ZDISAMAR_PLUGIN_POLICY_ALLOW_TRUSTED_NATIVE = 1
-} zdisamar_plugin_policy;
-
 #define ZDISAMAR_DIAGNOSTICS_PROVENANCE (1u << 0)
-#define ZDISAMAR_DIAGNOSTICS_JACOBIANS (1u << 1)
 
 typedef struct zdisamar_engine_options {
   uint32_t struct_size;
   uint32_t abi_version;
-  zdisamar_plugin_policy plugin_policy;
   uint32_t max_prepared_plans;
 } zdisamar_engine_options;
 
@@ -53,7 +38,6 @@ typedef struct zdisamar_plan_desc {
   const char *transport_solver;
   const char *retrieval_algorithm;
   zdisamar_solver_mode solver_mode;
-  uint32_t expected_plugin_abi_version;
 } zdisamar_plan_desc;
 
 typedef struct zdisamar_scene_desc {
@@ -66,7 +50,6 @@ typedef struct zdisamar_scene_desc {
 typedef struct zdisamar_request_desc {
   struct zdisamar_scene_desc scene;
   uint32_t diagnostics_flags;
-  zdisamar_derivative_mode expected_derivative_mode;
 } zdisamar_request_desc;
 
 typedef struct zdisamar_result_desc {
@@ -77,6 +60,7 @@ typedef struct zdisamar_result_desc {
   uint32_t plugin_count;
 } zdisamar_result_desc;
 
+#if ZDISAMAR_EXPERIMENTAL_C_ABI
 zdisamar_status zdisamar_engine_create(zdisamar_engine **out_engine);
 zdisamar_status zdisamar_engine_create_with_options(
     const zdisamar_engine_options *options,
@@ -100,6 +84,7 @@ zdisamar_status zdisamar_execute(
     zdisamar_workspace *workspace,
     const zdisamar_request_desc *request_desc,
     zdisamar_result_desc *out_result);
+#endif
 
 #ifdef __cplusplus
 }

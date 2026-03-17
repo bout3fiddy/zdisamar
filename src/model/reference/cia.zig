@@ -1,4 +1,5 @@
 const std = @import("std");
+const cross_sections = @import("cross_sections.zig");
 const Allocator = std.mem.Allocator;
 
 pub const CollisionInducedAbsorptionPoint = struct {
@@ -101,4 +102,38 @@ fn lowerBoundPointIndex(points: []const CollisionInducedAbsorptionPoint, wavelen
         }
     }
     return low;
+}
+
+pub fn effectiveSigmaAtSamples(
+    allocator: Allocator,
+    table: CollisionInducedAbsorptionTable,
+    wavelengths_nm: []const f64,
+    temperature_k: f64,
+    weights: []const f64,
+    polynomial_order: u32,
+) ![]f64 {
+    if (wavelengths_nm.len != weights.len) return error.ShapeMismatch;
+
+    const sigma = try allocator.alloc(f64, wavelengths_nm.len);
+    defer allocator.free(sigma);
+    for (sigma, wavelengths_nm) |*slot, wavelength_nm| {
+        slot.* = table.sigmaAt(wavelength_nm, temperature_k);
+    }
+    return cross_sections.differentialVector(allocator, wavelengths_nm, sigma, weights, polynomial_order);
+}
+
+test "cia helpers project sigma onto the same differential fit space" {
+    const table: CollisionInducedAbsorptionTable = .{
+        .scale_factor_cm5_per_molecule2 = 1.0,
+        .points = &[_]CollisionInducedAbsorptionPoint{
+            .{ .wavelength_nm = 759.0, .a0 = 1.0, .a1 = 0.0, .a2 = 0.0 },
+            .{ .wavelength_nm = 762.0, .a0 = 2.0, .a1 = 0.0, .a2 = 0.0 },
+        },
+    };
+    const wavelengths = [_]f64{ 759.0, 760.0, 761.0, 762.0 };
+    const weights = [_]f64{ 1.0, 1.0, 1.0, 1.0 };
+    const sigma = try effectiveSigmaAtSamples(std.testing.allocator, table, &wavelengths, 273.15, &weights, 1);
+    defer std.testing.allocator.free(sigma);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), cross_sections.weightedMeanSamples(sigma, &weights), 1.0e-9);
 }

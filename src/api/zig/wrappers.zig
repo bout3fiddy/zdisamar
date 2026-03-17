@@ -22,16 +22,17 @@ pub const DiagnosticsFlags = packed struct(u32) {
     }
 };
 
+pub const ApiBridgeError = error{
+    AbiCapacityExceeded,
+};
+
 pub const EngineOptionsView = struct {
     options: EngineOptions = .{},
 
-    pub fn toC(self: EngineOptionsView) c_api.EngineOptionsDesc {
+    pub fn toC(self: EngineOptionsView) ApiBridgeError!c_api.EngineOptionsDesc {
         const max_prepared_plans = std.math.cast(u32, self.options.max_prepared_plans) orelse
-            @panic("max_prepared_plans exceeds C ABI capacity");
-        return c_api.defaultEngineOptions(
-            if (self.options.allow_native_plugins) .allow_trusted_native else .declarative_only,
-            max_prepared_plans,
-        );
+            return error.AbiCapacityExceeded;
+        return c_api.defaultEngineOptions(max_prepared_plans);
     }
 };
 
@@ -51,13 +52,11 @@ test "diagnostics flags preserve the request spec bits" {
 }
 
 test "engine options view converts typed options to the C ABI descriptor" {
-    const desc = (EngineOptionsView{
+    const desc = try (EngineOptionsView{
         .options = .{
-            .allow_native_plugins = true,
             .max_prepared_plans = 12,
         },
     }).toC();
 
-    try std.testing.expectEqual(c_api.PluginPolicy.allow_trusted_native, desc.plugin_policy);
     try std.testing.expectEqual(@as(u32, 12), desc.max_prepared_plans);
 }

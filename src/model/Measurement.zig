@@ -40,20 +40,43 @@ pub const ErrorModel = struct {
     }
 };
 
+pub const Quantity = enum {
+    radiance,
+    irradiance,
+    reflectance,
+    slant_column,
+
+    pub fn parse(value: []const u8) errors.Error!Quantity {
+        if (std.mem.eql(u8, value, "radiance")) return .radiance;
+        if (std.mem.eql(u8, value, "irradiance")) return .irradiance;
+        if (std.mem.eql(u8, value, "reflectance")) return .reflectance;
+        if (std.mem.eql(u8, value, "slant_column")) return .slant_column;
+        return errors.Error.InvalidRequest;
+    }
+
+    pub fn label(self: Quantity) []const u8 {
+        return @tagName(self);
+    }
+};
+
 pub const Measurement = struct {
-    product: []const u8 = "radiance",
-    observable: []const u8 = "",
+    product_name: []const u8 = "",
+    observable: Quantity = .radiance,
     sample_count: u32 = 0,
-    source: Binding = .{},
+    source: Binding = .none,
     mask: SpectralMask = .{},
     error_model: ErrorModel = .{},
 
     pub fn validate(self: Measurement) errors.Error!void {
-        if (self.product.len == 0) return errors.Error.InvalidRequest;
         if (self.sample_count == 0) return errors.Error.InvalidRequest;
         try self.source.validate();
         try self.mask.validate();
         try self.error_model.validate();
+    }
+
+    pub fn resolvedProductName(self: Measurement) []const u8 {
+        if (self.product_name.len != 0) return self.product_name;
+        return self.observable.label();
     }
 
     pub fn includesWavelength(self: Measurement, wavelength_nm: f64) bool {
@@ -84,10 +107,10 @@ pub const MeasurementVector = Measurement;
 
 test "measurement validates source masks and error model" {
     try (Measurement{
-        .product = "radiance",
-        .observable = "radiance",
+        .product_name = "radiance",
+        .observable = .radiance,
         .sample_count = 121,
-        .source = .{ .kind = .stage_product, .name = "truth_radiance" },
+        .source = .{ .stage_product = .{ .name = "truth_radiance" } },
         .mask = .{
             .band = "o2a",
             .exclude = &[_]SpectralWindow{
@@ -101,10 +124,10 @@ test "measurement validates source masks and error model" {
 
 test "measurement sample selection honors excluded spectral windows" {
     const measurement: Measurement = .{
-        .product = "radiance",
-        .observable = "radiance",
+        .product_name = "radiance",
+        .observable = .radiance,
         .sample_count = 3,
-        .source = .{ .kind = .stage_product, .name = "truth_radiance" },
+        .source = .{ .stage_product = .{ .name = "truth_radiance" } },
         .mask = .{
             .exclude = &[_]SpectralWindow{
                 .{ .start_nm = 760.0, .end_nm = 761.0 },

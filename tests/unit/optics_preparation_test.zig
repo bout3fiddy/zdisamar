@@ -1,5 +1,9 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
+const internal = @import("zdisamar_internal");
+const ReferenceData = internal.reference_data;
+const OpticsPrepare = internal.kernels.optics.prepare;
+const TransportDispatcher = internal.kernels.transport.dispatcher;
 
 test "optical preparation bridges tracked assets into transport-ready state" {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
@@ -81,7 +85,7 @@ test "optical preparation bridges tracked assets into transport-ready state" {
         },
     };
 
-    var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopy(
+    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
         std.testing.allocator,
         &scene,
         &profile,
@@ -112,12 +116,12 @@ test "optical preparation bridges tracked assets into transport-ready state" {
     try std.testing.expect(prepared.sublayers.?[0].aerosol_single_scatter_albedo > 0.0);
     try std.testing.expect(prepared.sublayers.?[0].cloud_single_scatter_albedo > 0.0);
 
-    const route = try zdisamar.transport.dispatcher.prepare(.{
+    const route = try TransportDispatcher.prepare(.{
         .regime = .nadir,
         .execution_mode = .scalar,
         .derivative_mode = .semi_analytical,
     });
-    const result = try zdisamar.transport.dispatcher.executePrepared(
+    const result = try TransportDispatcher.executePrepared(
         route,
         prepared.toForwardInput(&scene),
     );
@@ -175,8 +179,8 @@ test "optical preparation consumes vendor-shaped strong-line sidecars for bounde
 
     var profile = try climatology_asset.toClimatologyProfile(std.testing.allocator);
     defer profile.deinit(std.testing.allocator);
-    var cross_sections = zdisamar.reference_data.CrossSectionTable{
-        .points = try std.testing.allocator.dupe(zdisamar.reference_data.CrossSectionPoint, &.{
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
             .{ .wavelength_nm = 760.8, .sigma_cm2_per_molecule = 0.0 },
             .{ .wavelength_nm = 766.15, .sigma_cm2_per_molecule = 0.0 },
             .{ .wavelength_nm = 771.5, .sigma_cm2_per_molecule = 0.0 },
@@ -234,7 +238,7 @@ test "optical preparation consumes vendor-shaped strong-line sidecars for bounde
         },
     };
 
-    var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
+    var prepared = try OpticsPrepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
         std.testing.allocator,
         &scene,
         &profile,
@@ -283,8 +287,8 @@ test "optical preparation applies operational O2 and O2-O2 LUT replacements for 
     defer profile.deinit(std.testing.allocator);
     var lut = try lut_asset.toAirmassFactorLut(std.testing.allocator);
     defer lut.deinit(std.testing.allocator);
-    var cross_sections = zdisamar.reference_data.CrossSectionTable{
-        .points = try std.testing.allocator.dupe(zdisamar.reference_data.CrossSectionPoint, &.{
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
             .{ .wavelength_nm = 760.8, .sigma_cm2_per_molecule = 0.0 },
             .{ .wavelength_nm = 761.0, .sigma_cm2_per_molecule = 0.0 },
             .{ .wavelength_nm = 761.2, .sigma_cm2_per_molecule = 0.0 },
@@ -360,7 +364,7 @@ test "optical preparation applies operational O2 and O2-O2 LUT replacements for 
             .sample_count = 9,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .sampling = .operational,
             .noise_model = .s5p_operational,
             .reference_radiance = &[_]f64{1.0} ** 9,
@@ -374,7 +378,7 @@ test "optical preparation applies operational O2 and O2-O2 LUT replacements for 
         },
     };
 
-    var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
+    var prepared = try OpticsPrepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
         std.testing.allocator,
         &scene,
         &profile,
@@ -473,7 +477,7 @@ test "optical preparation materializes RTM-style gas sublayers with stable paren
         },
     };
 
-    var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopy(
+    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
         std.testing.allocator,
         &scene,
         &profile,
@@ -572,7 +576,7 @@ test "optical preparation distributes aerosol and cloud optical depth across HG-
         },
     };
 
-    var prepared = try zdisamar.optics.prepare.prepare(
+    var prepared = try OpticsPrepare.prepare(
         std.testing.allocator,
         &scene,
         &profile,
@@ -668,7 +672,7 @@ test "optical preparation interpolates bounded Mie coefficient subsets when prov
         },
     };
 
-    var prepared = try zdisamar.optics.prepare.prepareWithParticleTables(
+    var prepared = try OpticsPrepare.prepareWithParticleTables(
         std.testing.allocator,
         &scene,
         &profile,

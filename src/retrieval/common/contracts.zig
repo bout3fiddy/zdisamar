@@ -4,6 +4,7 @@ const DerivativeMode = @import("../../model/Scene.zig").DerivativeMode;
 const InverseProblem = @import("../../model/Scene.zig").InverseProblem;
 const LayoutRequirements = @import("../../model/Scene.zig").LayoutRequirements;
 const Measurement = @import("../../model/Scene.zig").Measurement;
+const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const Scene = @import("../../model/Scene.zig").Scene;
 const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
 const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
@@ -16,16 +17,15 @@ pub const Method = enum {
 
     pub fn classification(self: Method) ImplementationClass {
         return switch (self) {
-            .oe => .real,
-            .doas, .dismas => .surrogate,
+            .oe, .doas, .dismas => .real,
         };
     }
 
     pub fn implementationLabel(self: Method) []const u8 {
         return switch (self) {
             .oe => "rodgers_oe",
-            .doas => "surrogate_doas",
-            .dismas => "surrogate_dismas",
+            .doas => "classic_doas",
+            .dismas => "direct_intensity_dismas",
         };
     }
 };
@@ -38,6 +38,11 @@ pub const DerivativeRequirement = enum {
 pub const ImplementationClass = enum {
     surrogate,
     real,
+};
+
+pub const FitSpace = enum {
+    radiance,
+    differential_optical_depth,
 };
 
 pub const Error = error{
@@ -58,13 +63,13 @@ pub const Error = error{
 pub const RetrievalProblem = struct {
     pub const ObservedMeasurement = struct {
         source_name: []const u8 = "",
-        observable: []const u8 = "",
+        observable: MeasurementQuantity = .radiance,
         product_name: []const u8 = "",
         sample_count: u32 = 0,
-        product: *const MeasurementSpaceProduct,
+        product: Request.BorrowedMeasurementProduct,
 
         pub fn summary(self: ObservedMeasurement) MeasurementSpaceSummary {
-            return self.product.summary;
+            return self.product.product.summary;
         }
     };
 
@@ -84,33 +89,31 @@ pub const RetrievalProblem = struct {
 
         var observed_measurement: ?ObservedMeasurement = null;
         if (request.measurement_binding) |binding| {
-            if (inverse_problem.measurements.source.name.len != 0 and
-                !std.mem.eql(u8, inverse_problem.measurements.source.name, binding.source_name))
+            if (binding.source.kind() != inverse_problem.measurements.source.kind())
+                return Error.InvalidRequest;
+            const expected_source_name = inverse_problem.measurements.source.name();
+            if (expected_source_name.len != 0 and
+                !std.mem.eql(u8, expected_source_name, binding.source.name()))
             {
                 return Error.InvalidRequest;
             }
 
             const expected_observable = measurementObservable(inverse_problem.measurements);
-            const binding_observable = if (binding.observable.len != 0) binding.observable else expected_observable;
-            if (!std.mem.eql(u8, binding_observable, expected_observable)) {
-                return Error.InvalidRequest;
-            }
-
-            const selected_sample_count = inverse_problem.measurements.selectedSampleCount(binding.product.wavelengths);
+            const selected_sample_count = inverse_problem.measurements.selectedSampleCount(binding.borrowed_product.wavelengths());
             if (selected_sample_count != inverse_problem.measurements.sample_count) {
                 return Error.InvalidRequest;
             }
 
             observed_measurement = .{
-                .source_name = binding.source_name,
+                .source_name = binding.source.name(),
                 .observable = expected_observable,
-                .product_name = inverse_problem.measurements.product,
+                .product_name = inverse_problem.measurements.resolvedProductName(),
                 .sample_count = selected_sample_count,
-                .product = binding.product,
+                .product = binding.borrowed_product,
             };
-        } else if (inverse_problem.measurements.source.kind == .stage_product or
-            inverse_problem.measurements.source.kind == .external_observation or
-            inverse_problem.measurements.source.kind == .ingest)
+        } else if (inverse_problem.measurements.source.kind() == .stage_product or
+            inverse_problem.measurements.source.kind() == .external_observation or
+            inverse_problem.measurements.source.kind() == .ingest)
         {
             return Error.MissingMeasurementProduct;
         }
@@ -130,7 +133,6 @@ pub const RetrievalProblem = struct {
         if (self.inverse_problem.id.len == 0) return Error.MissingInverseProblem;
         if (self.inverse_problem.state_vector.count() == 0) return Error.MissingStateVector;
         if (self.inverse_problem.measurements.sample_count == 0) return Error.MissingMeasurements;
-        if (self.inverse_problem.measurements.product.len == 0) return Error.MissingMeasurementProduct;
         if (self.jacobians_requested and self.derivative_mode == .none) return Error.DerivativeModeRequired;
     }
 
@@ -146,18 +148,31 @@ pub const RetrievalProblem = struct {
         if (derivativeRequirement(method) == .required and self.derivative_mode == .none) {
             return Error.DerivativeModeRequired;
         }
-        if (method == .oe) {
-            self.inverse_problem.validateForOptimalEstimation() catch {
-                return Error.InvalidRequest;
-            };
-            if (self.observed_measurement == null) {
-                return Error.MissingMeasurementProduct;
-            }
+        switch (method) {
+            .oe => self.inverse_problem.validateForOptimalEstimation() catch return Error.InvalidRequest,
+            .doas => self.inverse_problem.validateForDoas() catch return Error.InvalidRequest,
+            .dismas => self.inverse_problem.validateForDismas() catch return Error.InvalidRequest,
+        }
+        if (self.observed_measurement == null) {
+            return Error.MissingMeasurementProduct;
         }
     }
 };
 
 pub const SolverOutcome = struct {
+    pub const FitDiagnostics = struct {
+        fit_space: FitSpace = .radiance,
+        polynomial_order: u32 = 0,
+        fit_sample_count: u32 = 0,
+        selected_rtm_sample_count: u32 = 0,
+        selection_zero_crossing_count: u32 = 0,
+        window_start_nm: f64 = 0.0,
+        window_end_nm: f64 = 0.0,
+        effective_air_mass_factor: f64 = 0.0,
+        weighted_residual_rms: f64 = 0.0,
+        effective_cross_section_rms: ?f64 = null,
+    };
+
     pub const StateEstimate = struct {
         parameter_names: []const []const u8 = &[_][]const u8{},
         values: []f64 = &[_]f64{},
@@ -185,14 +200,13 @@ pub const SolverOutcome = struct {
 
     pub const ObservedMeasurementSummary = struct {
         source_name: []const u8 = "",
-        observable: []const u8 = "",
+        observable: MeasurementQuantity = .radiance,
         product_name: []const u8 = "",
         sample_count: u32 = 0,
         summary: MeasurementSpaceSummary,
 
         pub fn deinitOwned(self: *ObservedMeasurementSummary, allocator: Allocator) void {
             if (self.source_name.len != 0) allocator.free(self.source_name);
-            if (self.observable.len != 0) allocator.free(self.observable);
             if (self.product_name.len != 0) allocator.free(self.product_name);
             self.* = undefined;
         }
@@ -209,6 +223,7 @@ pub const SolverOutcome = struct {
     dfs: f64,
     residual_norm: f64,
     step_norm: f64,
+    fit_diagnostics: ?FitDiagnostics = null,
     observed_measurement: ?ObservedMeasurementSummary = null,
     fitted_measurement: ?MeasurementSpaceSummary = null,
     state_estimate: StateEstimate = .{},
@@ -260,6 +275,7 @@ pub fn outcome(
     dfs: f64,
     residual_norm: f64,
     step_norm: f64,
+    fit_diagnostics: ?SolverOutcome.FitDiagnostics,
     state_estimate: SolverOutcome.StateEstimate,
     fitted_scene: ?Scene,
     fitted_measurement: ?MeasurementSpaceSummary,
@@ -293,6 +309,7 @@ pub fn outcome(
         .dfs = dfs,
         .residual_norm = residual_norm,
         .step_norm = step_norm,
+        .fit_diagnostics = fit_diagnostics,
         .observed_measurement = owned_observed_measurement,
         .fitted_measurement = fitted_measurement,
         .state_estimate = owned_state_estimate,
@@ -310,13 +327,11 @@ fn duplicateObservedMeasurement(
     if (measurement) |observed| {
         const source_name = try allocator.dupe(u8, observed.source_name);
         errdefer allocator.free(source_name);
-        const observable = try allocator.dupe(u8, observed.observable);
-        errdefer allocator.free(observable);
         const product_name = try allocator.dupe(u8, observed.product_name);
         errdefer allocator.free(product_name);
         return .{
             .source_name = source_name,
-            .observable = observable,
+            .observable = observed.observable,
             .product_name = product_name,
             .sample_count = observed.sample_count,
             .summary = observed.summary(),
@@ -347,9 +362,8 @@ fn duplicateStateEstimate(
     };
 }
 
-fn measurementObservable(measurement: Measurement) []const u8 {
-    if (measurement.observable.len != 0) return measurement.observable;
-    return measurement.product;
+fn measurementObservable(measurement: Measurement) MeasurementQuantity {
+    return measurement.observable;
 }
 
 fn validateScene(scene: Scene) Error!void {
@@ -407,17 +421,16 @@ test "retrieval contracts enforce canonical problem invariants" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 16,
-                .source = .{ .kind = .external_observation, .name = "obs" },
+                .source = .{ .external_observation = .{ .name = "obs" } },
                 .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
             },
         },
         .measurement_binding = .{
-            .source_name = "obs",
-            .observable = "radiance",
-            .product = &product,
+            .source = .{ .external_observation = .{ .name = "obs" } },
+            .borrowed_product = .init(&product),
         },
         .expected_derivative_mode = .semi_analytical,
         .diagnostics = .{ .jacobians = true },
@@ -425,6 +438,8 @@ test "retrieval contracts enforce canonical problem invariants" {
 
     const valid = try RetrievalProblem.fromRequest(&request);
     try valid.validateForMethod(.oe);
+    try valid.validateForMethod(.doas);
+    try valid.validateForMethod(.dismas);
 
     const layout = valid.layoutRequirements();
     try std.testing.expectEqual(@as(u32, 18), layout.layer_count);
@@ -438,8 +453,14 @@ test "retrieval contracts enforce canonical problem invariants" {
         .jacobians_requested = true,
     };
     try std.testing.expectError(Error.DerivativeModeRequired, missing_mode.validateForMethod(.oe));
+    try std.testing.expectError(Error.DerivativeModeRequired, missing_mode.validateForMethod(.doas));
+    try std.testing.expectError(Error.DerivativeModeRequired, missing_mode.validateForMethod(.dismas));
     try std.testing.expectEqual(ImplementationClass.real, Method.oe.classification());
+    try std.testing.expectEqual(ImplementationClass.real, Method.doas.classification());
+    try std.testing.expectEqual(ImplementationClass.real, Method.dismas.classification());
     try std.testing.expectEqualStrings("rodgers_oe", Method.oe.implementationLabel());
+    try std.testing.expectEqualStrings("classic_doas", Method.doas.implementationLabel());
+    try std.testing.expectEqualStrings("direct_intensity_dismas", Method.dismas.implementationLabel());
 }
 
 test "retrieval problem validates masked measurement counts against bound products" {
@@ -493,10 +514,10 @@ test "retrieval problem validates masked measurement counts against bound produc
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 3,
-                .source = .{ .kind = .external_observation, .name = "obs" },
+                .source = .{ .external_observation = .{ .name = "obs" } },
                 .mask = .{
                     .exclude = &[_]@import("../../model/Scene.zig").SpectralWindow{
                         .{ .start_nm = 760.0, .end_nm = 761.0 },
@@ -505,9 +526,8 @@ test "retrieval problem validates masked measurement counts against bound produc
             },
         },
         .measurement_binding = .{
-            .source_name = "obs",
-            .observable = "radiance",
-            .product = &product,
+            .source = .{ .external_observation = .{ .name = "obs" } },
+            .borrowed_product = .init(&product),
         },
         .expected_derivative_mode = .semi_analytical,
         .diagnostics = .{ .jacobians = true },
@@ -521,7 +541,6 @@ test "solver outcomes own identifiers independently of request buffers" {
     const scene_id = try std.fmt.allocPrint(std.testing.allocator, "scene-{d}", .{17});
     const inverse_problem_id = try std.fmt.allocPrint(std.testing.allocator, "inverse-{d}", .{23});
     const source_name = try std.fmt.allocPrint(std.testing.allocator, "source-{d}", .{5});
-    const observable = try std.testing.allocator.dupe(u8, "radiance");
     const product_name = try std.testing.allocator.dupe(u8, "radiance");
     const state_values = try std.testing.allocator.dupe(f64, &.{0.42});
     const jacobian_values = try std.testing.allocator.dupe(f64, &.{ 0.1, 0.2, 0.3, 0.4 });
@@ -568,18 +587,18 @@ test "solver outcomes own identifiers independently of request buffers" {
                     .value_count = 1,
                 },
                 .measurements = .{
-                    .product = "radiance",
-                    .observable = "radiance",
+                    .product_name = "radiance",
+                    .observable = .radiance,
                     .sample_count = 1,
                 },
             },
             .derivative_mode = .semi_analytical,
             .observed_measurement = .{
                 .source_name = source_name,
-                .observable = observable,
+                .observable = .radiance,
                 .product_name = product_name,
                 .sample_count = 1,
-                .product = &observed_product,
+                .product = .init(&observed_product),
             },
         },
         .oe,
@@ -590,6 +609,7 @@ test "solver outcomes own identifiers independently of request buffers" {
         0.5,
         0.2,
         0.1,
+        null,
         .{
             .parameter_names = &[_][]const u8{"x0"},
             .values = state_values,
@@ -612,7 +632,6 @@ test "solver outcomes own identifiers independently of request buffers" {
     std.testing.allocator.free(scene_id);
     std.testing.allocator.free(inverse_problem_id);
     std.testing.allocator.free(source_name);
-    std.testing.allocator.free(observable);
     std.testing.allocator.free(product_name);
 
     try std.testing.expectEqualStrings("scene-17", owned_outcome.scene_id);

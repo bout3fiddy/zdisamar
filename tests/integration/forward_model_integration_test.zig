@@ -102,7 +102,7 @@ test "engine execute materializes measurement-space summaries through the typed 
             .albedo = 0.08,
         },
         .observation_model = .{
-            .instrument = "integration-synthetic",
+            .instrument = .{ .custom = "integration-synthetic" },
             .regime = .limb,
             .sampling = .operational,
             .noise_model = .shot_noise,
@@ -194,7 +194,7 @@ test "engine execute produces bounded O2A morphology through the typed forward p
             .relative_azimuth_deg = 120.0,
         },
         .observation_model = .{
-            .instrument = "integration-o2a",
+            .instrument = .{ .custom = "integration-o2a" },
             .regime = .nadir,
             .sampling = .native,
             .noise_model = .shot_noise,

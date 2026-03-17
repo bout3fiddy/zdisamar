@@ -2,12 +2,13 @@ const std = @import("std");
 
 const Catalog = @import("Catalog.zig").Catalog;
 const PlanModule = @import("Plan.zig");
-const Plan = PlanModule.Plan;
+const PreparedPlan = PlanModule.PreparedPlan;
 const Request = @import("Request.zig").Request;
 const Result = @import("Result.zig").Result;
 const Workspace = @import("Workspace.zig").Workspace;
 const Provenance = @import("provenance.zig").Provenance;
 const Scene = @import("../model/Scene.zig").Scene;
+const MeasurementQuantity = @import("../model/Measurement.zig").Quantity;
 const errors = @import("errors.zig");
 const PluginManifest = @import("../plugins/loader/manifest.zig").PluginManifest;
 const CapabilityRegistry = @import("../plugins/registry/CapabilityRegistry.zig").CapabilityRegistry;
@@ -16,7 +17,7 @@ const PluginProviders = @import("../plugins/providers/root.zig");
 const DatasetCache = @import("../runtime/cache/DatasetCache.zig").DatasetCache;
 const LUTCache = @import("../runtime/cache/LUTCache.zig").LUTCache;
 const PlanCache = @import("../runtime/cache/PlanCache.zig").PlanCache;
-const PreparedPlanCache = @import("../runtime/cache/PreparedPlanCache.zig").PreparedPlanCache;
+const PreparedLayout = @import("../runtime/cache/PreparedLayout.zig").PreparedLayout;
 const BatchRunnerModule = @import("../runtime/scheduler/BatchRunner.zig");
 const BatchRunner = BatchRunnerModule.BatchRunner;
 const BatchJob = BatchRunnerModule.BatchJob;
@@ -88,7 +89,7 @@ pub const Engine = struct {
         try self.lut_cache.upsert(dataset_id, lut_id, shape);
     }
 
-    pub fn preparePlan(self: *Engine, template: PlanModule.Template) errors.PreparationError!Plan {
+    pub fn preparePlan(self: *Engine, template: PlanModule.Template) errors.PreparationError!PreparedPlan {
         if (!self.catalog.bootstrapped) {
             return errors.PreparationError.CatalogNotBootstrapped;
         }
@@ -107,23 +108,23 @@ pub const Engine = struct {
             plugin_state.snapshot.datasetHashes().len,
             self.dataset_cache.count(),
         );
-        const prepared_cache = try PreparedPlanCache.initFromBlueprint(
+        const prepared_layout = try PreparedLayout.initFromBlueprint(
             template.scene_blueprint,
             @intCast(dataset_hash_count),
         );
-        var plan = Plan.init(
+        var plan = PreparedPlan.init(
             self.allocator,
             self.next_plan_id,
             template,
             transport_route,
-            prepared_cache,
+            prepared_layout,
             plugin_state.snapshot,
             plugin_state.runtime,
             providers,
         );
         errdefer plan.deinit();
         plugin_state = .{};
-        self.plan_cache.put(plan.id, prepared_cache) catch |err| switch (err) {
+        self.plan_cache.put(plan.id, prepared_layout) catch |err| switch (err) {
             error.PlanCacheDisabled => return errors.PreparationError.PreparedPlanLimitExceeded,
             error.OutOfMemory => return errors.PreparationError.OutOfMemory,
         };
@@ -136,8 +137,9 @@ pub const Engine = struct {
         return Workspace.init(label);
     }
 
-    pub fn createThreadContext(self: *Engine, label: []const u8) !ThreadContext {
-        return ThreadContext.init(self.allocator, label);
+    pub fn createThreadContext(self: *Engine, label: []const u8) ThreadContext {
+        _ = self;
+        return ThreadContext.init(label);
     }
 
     pub fn createBatchRunner(self: *Engine) BatchRunner {
@@ -154,7 +156,7 @@ pub const Engine = struct {
         try runner.run(thread, &self.plan_cache, exec_ctx, execute_fn);
     }
 
-    pub fn execute(self: *Engine, plan: *const Plan, workspace: *Workspace, request: *const Request) errors.Error!Result {
+    pub fn execute(self: *Engine, plan: *const PreparedPlan, workspace: *Workspace, request: *const Request) errors.Error!Result {
         try request.validateForPlan(plan);
 
         plan.plugin_runtime.executeForRequest(.{
@@ -164,7 +166,7 @@ pub const Engine = struct {
             .requested_product_count = @intCast(request.requested_products.len),
         }) catch |err| return mapPluginExecutionError(err);
         try workspace.beginExecution(plan.id);
-        workspace.prepareScratch(&plan.prepared_cache);
+        workspace.prepareScratch(&plan.prepared_layout);
         _ = self.plan_cache.markRun(plan.id);
 
         var result: Result = undefined;
@@ -202,6 +204,9 @@ fn prepareTransportRoute(
     template: PlanModule.Template,
     providers: PluginProviders.PreparedProviders,
 ) errors.PreparationError!TransportCommon.Route {
+    if (template.solver_mode == .derivative_enabled) {
+        return errors.PreparationError.UnsupportedExecutionMode;
+    }
     return providers.transport.prepareRoute(.{
         .regime = template.scene_blueprint.observation_regime,
         .execution_mode = transportExecutionMode(template.solver_mode),
@@ -224,16 +229,21 @@ fn preparePluginState(
     var runtime = PluginRuntime.PreparedPluginRuntime.init();
     errdefer runtime.deinit(self.allocator);
 
-    runtime.resolveSnapshot(self.allocator, &snapshot, self.options.allow_native_plugins) catch {
-        return errors.PreparationError.PluginPrepareFailed;
+    runtime.resolveSnapshot(self.allocator, &snapshot, self.options.allow_native_plugins) catch |err| switch (err) {
+        error.MissingNativeSource => return errors.PreparationError.MissingNativeSource,
+        error.PluginEntryIncompatibleAbi => return errors.PreparationError.PluginEntryIncompatibleAbi,
+        else => return errors.PreparationError.PluginPrepareFailed,
     };
     runtime.prepareForPlan(.{
         .plan_id = self.next_plan_id,
         .model_family = template.model_family,
         .transport_provider = template.providers.transport_solver,
         .solver_mode = @tagName(template.solver_mode),
-    }) catch {
-        return errors.PreparationError.PluginPrepareFailed;
+    }) catch |err| switch (err) {
+        error.MissingPrepareHook => return errors.PreparationError.MissingPrepareHook,
+        error.PluginEntryIncompatibleAbi => return errors.PreparationError.PluginEntryIncompatibleAbi,
+        error.PluginPrepareRejected => return errors.PreparationError.PluginPrepareRejected,
+        else => return errors.PreparationError.PluginPrepareFailed,
     };
 
     return .{
@@ -242,13 +252,17 @@ fn preparePluginState(
     };
 }
 
-fn mapPluginExecutionError(_: PluginRuntime.Error) errors.ExecutionError {
-    return errors.ExecutionError.PluginExecutionFailed;
+fn mapPluginExecutionError(err: PluginRuntime.Error) errors.ExecutionError {
+    return switch (err) {
+        error.MissingExecuteHook => errors.ExecutionError.MissingExecuteHook,
+        error.PluginEntryIncompatibleAbi => errors.ExecutionError.PluginEntryIncompatibleAbi,
+        else => errors.ExecutionError.PluginExecutionFailed,
+    };
 }
 
 fn initializeResult(
     self: *Engine,
-    plan: *const Plan,
+    plan: *const PreparedPlan,
     workspace: *Workspace,
     request: *const Request,
     result: *Result,
@@ -275,7 +289,7 @@ fn initializeResult(
 
 fn executeForwardProducts(
     self: *Engine,
-    plan: *const Plan,
+    plan: *const PreparedPlan,
     request: *const Request,
     result: *Result,
 ) errors.ExecutionError!void {
@@ -300,7 +314,7 @@ fn executeForwardProducts(
 
 fn executeRetrievalIfRequested(
     self: *Engine,
-    plan: *const Plan,
+    plan: *const PreparedPlan,
     request: *const Request,
     result: *Result,
 ) errors.ExecutionError!void {
@@ -342,11 +356,12 @@ fn executeRetrievalIfRequested(
 fn transportExecutionMode(solver_mode: PlanModule.SolverMode) TransportCommon.ExecutionMode {
     return switch (solver_mode) {
         .polarized => .polarized,
-        .scalar, .derivative_enabled => .scalar,
+        .scalar => .scalar,
+        .derivative_enabled => unreachable,
     };
 }
 
-fn measurementProviders(plan: *const Plan) MeasurementSpace.ProviderBindings {
+fn measurementProviders(plan: *const PreparedPlan) MeasurementSpace.ProviderBindings {
     return .{
         .transport = plan.providers.transport,
         .surface = plan.providers.surface,
@@ -357,7 +372,7 @@ fn measurementProviders(plan: *const Plan) MeasurementSpace.ProviderBindings {
 
 const RetrievalExecutionContext = struct {
     allocator: std.mem.Allocator,
-    plan: *const Plan,
+    plan: *const PreparedPlan,
     summary_workspace: *MeasurementSpace.SummaryWorkspace,
 };
 
@@ -398,7 +413,7 @@ fn evaluateRetrievalSceneProduct(
 
 fn materializeRetrievalProducts(
     allocator: std.mem.Allocator,
-    plan: *const Plan,
+    plan: *const PreparedPlan,
     problem: RetrievalContracts.RetrievalProblem,
     outcome: RetrievalContracts.SolverOutcome,
 ) !Result.RetrievalProducts {
@@ -510,7 +525,7 @@ fn materializeMatrixProduct(
 
 fn materializeSurrogateJacobianProduct(
     allocator: std.mem.Allocator,
-    plan: *const Plan,
+    plan: *const PreparedPlan,
     problem: RetrievalContracts.RetrievalProblem,
     outcome: RetrievalContracts.SolverOutcome,
     fitted_measurement: MeasurementSpaceProduct,
@@ -564,9 +579,6 @@ fn duplicateParameterNames(
     problem: RetrievalContracts.RetrievalProblem,
 ) ![]const []const u8 {
     const state_vector = problem.inverse_problem.state_vector;
-    if (state_vector.parameter_names.len != 0) {
-        return duplicateStringSlice(allocator, state_vector.parameter_names);
-    }
     if (state_vector.parameters.len == 0) return &[_][]const u8{};
 
     const names = try allocator.alloc([]const u8, state_vector.parameters.len);
@@ -604,19 +616,17 @@ fn freeStringSlice(allocator: std.mem.Allocator, values: []const []const u8) voi
     allocator.free(values);
 }
 
-fn measurementObservable(problem: RetrievalContracts.RetrievalProblem) []const u8 {
-    const observable = problem.inverse_problem.measurements.observable;
-    if (observable.len != 0) return observable;
-    return problem.inverse_problem.measurements.product;
+fn measurementObservable(problem: RetrievalContracts.RetrievalProblem) MeasurementQuantity {
+    return problem.inverse_problem.measurements.observable;
 }
 
-fn measurementValue(product: MeasurementSpaceProduct, observable: []const u8, index: usize) errors.Error!f64 {
-    if (std.mem.eql(u8, observable, "radiance")) return product.radiance[index];
-    if (std.mem.eql(u8, observable, "irradiance")) return product.irradiance[index];
-    if (std.mem.eql(u8, observable, @import("../kernels/transport/measurement_space.zig").reflectance_export_name)) {
-        return product.reflectance[index];
-    }
-    return errors.Error.InvalidRequest;
+fn measurementValue(product: MeasurementSpaceProduct, observable: MeasurementQuantity, index: usize) errors.Error!f64 {
+    return switch (observable) {
+        .radiance => product.radiance[index],
+        .irradiance => product.irradiance[index],
+        .reflectance => product.reflectance[index],
+        .slant_column => errors.Error.InvalidRequest,
+    };
 }
 
 fn jacobianStep(value: f64) f64 {
@@ -760,7 +770,7 @@ test "execute rejects retrieval stage-product requests without a bound measureme
             .layer_count = 18,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
         },
     });
     request.expected_derivative_mode = .semi_analytical;
@@ -772,10 +782,10 @@ test "execute rejects retrieval stage-product requests without a bound measureme
             },
         },
         .measurements = .{
-            .product = "radiance",
-            .observable = "radiance",
+            .product_name = "radiance",
+            .observable = .radiance,
             .sample_count = 16,
-            .source = .{ .kind = .stage_product, .name = "forward-stage" },
+            .source = .{ .stage_product = .{ .name = "forward-stage" } },
         },
     };
 
@@ -929,7 +939,7 @@ test "engine retrieval execution preserves solver-owned oe products" {
             .albedo = 0.10,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
             .sampling = .operational,
             .noise_model = .shot_noise,
@@ -949,10 +959,10 @@ test "engine retrieval execution preserves solver-owned oe products" {
             },
         },
         .measurements = .{
-            .product = "radiance",
-            .observable = "radiance",
+            .product_name = "radiance",
+            .observable = .radiance,
             .sample_count = 24,
-            .source = .{ .kind = .external_observation, .name = "truth-radiance" },
+            .source = .{ .external_observation = .{ .name = "truth-radiance" } },
             .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
         },
     };
@@ -976,9 +986,8 @@ test "engine retrieval execution preserves solver-owned oe products" {
     );
     defer observed_product.deinit(std.testing.allocator);
     request.measurement_binding = .{
-        .source_name = "truth-radiance",
-        .observable = "radiance",
-        .product = &observed_product,
+        .source = .{ .external_observation = .{ .name = "truth-radiance" } },
+        .borrowed_product = .init(&observed_product),
     };
 
     var result = try engine.execute(&plan, &workspace, &request);
@@ -1037,7 +1046,7 @@ test "engine rejects retrieval requests with unset typed state targets" {
             .layer_count = 18,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
             .sampling = .operational,
             .noise_model = .shot_noise,
@@ -1056,10 +1065,10 @@ test "engine rejects retrieval requests with unset typed state targets" {
             },
         },
         .measurements = .{
-            .product = "radiance",
-            .observable = "radiance",
+            .product_name = "radiance",
+            .observable = .radiance,
             .sample_count = 24,
-            .source = .{ .kind = .external_observation, .name = "forward-measurement" },
+            .source = .{ .external_observation = .{ .name = "forward-measurement" } },
             .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
         },
     };
@@ -1074,9 +1083,8 @@ test "engine rejects retrieval requests with unset typed state targets" {
     );
     defer observed_product.deinit(std.testing.allocator);
     request.measurement_binding = .{
-        .source_name = "forward-measurement",
-        .observable = "radiance",
-        .product = &observed_product,
+        .source = .{ .external_observation = .{ .name = "forward-measurement" } },
+        .borrowed_product = .init(&observed_product),
     };
 
     try std.testing.expectError(errors.Error.InvalidRequest, engine.execute(&plan, &workspace, &request));
@@ -1092,11 +1100,11 @@ test "engine owns runtime caches and batch scheduling helpers explicitly" {
             ctx_ptr: ?*anyopaque,
             thread: *ThreadContext,
             job: BatchJob,
-            prepared: *const PreparedPlanCache,
+            prepared_layout: *const PreparedLayout,
         ) !void {
             _ = thread;
             _ = job;
-            _ = prepared;
+            _ = prepared_layout;
             const ctx: *Ctx = @ptrCast(@alignCast(ctx_ptr.?));
             ctx.executed += 1;
         }
@@ -1123,8 +1131,7 @@ test "engine owns runtime caches and batch scheduling helpers explicitly" {
     try std.testing.expectEqual(@as(usize, 2), engine.dataset_cache.count());
     try std.testing.expectEqual(@as(usize, 1), engine.lut_cache.count());
 
-    var thread = try engine.createThreadContext("batch-thread");
-    defer thread.deinit();
+    var thread = engine.createThreadContext("batch-thread");
     var runner = engine.createBatchRunner();
     defer runner.deinit();
     try runner.enqueue(.{ .plan_id = plan.id, .scene_id = "scene-batch-a" });

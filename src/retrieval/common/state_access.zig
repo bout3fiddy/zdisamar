@@ -178,7 +178,7 @@ fn sceneWithDefaults(base: Scene) Scene {
         scene.spectral_grid.end_nm = 465.0;
     }
     if (scene.atmosphere.layer_count == 0) scene.atmosphere.layer_count = 24;
-    if (scene.observation_model.instrument.len == 0) scene.observation_model.instrument = "retrieval-synthetic";
+    if (scene.observation_model.instrument == .unset) scene.observation_model.instrument = .{ .custom = "retrieval-synthetic" };
     if (scene.observation_model.multiplicative_offset <= 0.0) scene.observation_model.multiplicative_offset = 1.0;
     return scene;
 }
@@ -199,7 +199,7 @@ test "state access preserves explicit measured-channel axes" {
                 .sample_count = 2,
             },
             .observation_model = .{
-                .instrument = "tropomi",
+                .instrument = .tropomi,
                 .sampling = .measured_channels,
                 .measured_wavelengths_nm = &measured_wavelengths,
             },
@@ -212,8 +212,8 @@ test "state access preserves explicit measured-channel axes" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 2,
             },
         },
@@ -236,7 +236,7 @@ test "state access applies canonical typed targets without string heuristics" {
             .id = "state-access-scene",
             .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 32 },
             .surface = .{ .albedo = 0.08 },
-            .observation_model = .{ .instrument = "synthetic", .regime = .nadir },
+            .observation_model = .{ .instrument = .synthetic, .regime = .nadir },
         },
         .inverse_problem = .{
             .id = "state-access-inverse",
@@ -248,8 +248,8 @@ test "state access applies canonical typed targets without string heuristics" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 32,
             },
         },

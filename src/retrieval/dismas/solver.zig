@@ -1,11 +1,20 @@
 const std = @import("std");
 const common = @import("../common/contracts.zig");
 const forward_model = @import("../common/forward_model.zig");
-const state_access = @import("../common/state_access.zig");
+const spectral_fit = @import("../common/spectral_fit.zig");
 const surrogate_forward = @import("../common/surrogate_forward.zig");
 const Allocator = std.mem.Allocator;
 
 pub fn solve(allocator: Allocator, problem: common.RetrievalProblem) common.Error!common.SolverOutcome {
+    _ = allocator;
+    _ = problem;
+    return common.Error.InvalidRequest;
+}
+
+pub fn solveWithTestEvaluator(
+    allocator: Allocator,
+    problem: common.RetrievalProblem,
+) common.Error!common.SolverOutcome {
     return solveWithEvaluator(allocator, problem, surrogate_forward.testEvaluator());
 }
 
@@ -14,113 +23,72 @@ pub fn solveWithEvaluator(
     problem: common.RetrievalProblem,
     evaluator: forward_model.Evaluator,
 ) common.Error!common.SolverOutcome {
-    try problem.validateForMethod(.dismas);
-    const layout = try state_access.resolveStateLayout(problem);
-
-    const observed = try surrogate_forward.observedSummary(problem, evaluator);
-    const target = surrogate_forward.featureVector(observed, .dismas);
-    const anchor = try surrogate_forward.anchorStateWithLayout(allocator, problem, .dismas, observed, layout);
-    defer allocator.free(anchor);
-
-    const state = try state_access.seedStateWithLayout(allocator, problem, layout);
-    errdefer allocator.free(state);
-
-    const max_iterations: u32 = if (problem.inverse_problem.fit_controls.max_iterations != 0)
-        @min(problem.inverse_problem.fit_controls.max_iterations, 10)
-    else
-        7;
-
-    var iterations: u32 = 0;
-    var reduced_cost: f64 = std.math.inf(f64);
-    var residual_norm: f64 = std.math.inf(f64);
-    var step_norm: f64 = std.math.inf(f64);
-    var converged = false;
-
-    while (iterations < max_iterations) : (iterations += 1) {
-        const predicted = surrogate_forward.featureVector(
-            try surrogate_forward.summarizeStateWithLayout(problem, .dismas, state, evaluator, layout),
-            .dismas,
-        );
-        residual_norm = surrogate_forward.residualNorm(predicted, target);
-
-        var step_sq: f64 = 0.0;
-        for (state, 0..) |*value, index| {
-            const step = 0.45 * (anchor[index] - value.*);
-            value.* += step;
-            step_sq += step * step;
-        }
-        step_norm = std.math.sqrt(step_sq);
-        reduced_cost = residual_norm / @as(f64, @floatFromInt(target.len));
-        converged = step_norm < 5.0e-4 or residual_norm < 5.0e-4;
-        if (converged) {
-            iterations += 1;
-            break;
-        }
-    }
-
-    const fitted_scene = try state_access.sceneForStateWithLayout(problem, state, layout);
-    const fitted_summary = try surrogate_forward.summarizeStateWithLayout(problem, .dismas, state, evaluator, layout);
-    const dfs = std.math.clamp(
-        @as(f64, @floatFromInt(state.len)) * (0.70 + 0.06 * @exp(-step_norm)),
-        0.0,
-        @as(f64, @floatFromInt(state.len)),
-    );
-    return try common.outcome(
-        allocator,
-        problem,
-        .dismas,
-        iterations,
-        reduced_cost,
-        converged,
-        true,
-        dfs,
-        residual_norm,
-        step_norm,
-        .{
-            .parameter_names = problem.inverse_problem.state_vector.parameter_names,
-            .values = state,
-        },
-        fitted_scene,
-        fitted_summary,
-        null,
-        null,
-        null,
-    );
+    return spectral_fit.solveMethod(allocator, problem, evaluator, .dismas);
 }
 
-test "dismas retrieval requires explicit derivative mode" {
-    const base_problem: common.RetrievalProblem = .{
+test "dismas retrieval fits direct intensity on a spectral product" {
+    const product = try surrogate_forward.testEvaluator().evaluateProduct(
+        std.testing.allocator,
+        surrogate_forward.testEvaluator().context,
+        .{
+            .id = "scene-dismas-truth",
+            .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 96 },
+            .surface = .{ .albedo = 0.18 },
+            .aerosol = .{ .enabled = true, .optical_depth = 0.12, .layer_center_km = 4.5, .layer_width_km = 1.3 },
+            .observation_model = .{ .instrument = .synthetic, .wavelength_shift_nm = 0.01 },
+        },
+    );
+    defer {
+        var owned = product;
+        owned.deinit(std.testing.allocator);
+    }
+
+    const problem: common.RetrievalProblem = .{
         .scene = .{
             .id = "scene-dismas",
-            .spectral_grid = .{ .sample_count = 20 },
-            .observation_model = .{ .instrument = "synthetic" },
+            .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 96 },
+            .surface = .{ .albedo = 0.12 },
+            .aerosol = .{ .enabled = true, .optical_depth = 0.07, .layer_center_km = 4.5, .layer_width_km = 1.3 },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-dismas",
             .state_vector = .{
-                .parameter_names = &[_][]const u8{ "state_a", "state_b", "state_c" },
-                .value_count = 3,
+                .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
+                    .{ .name = "surface_albedo", .target = .surface_albedo, .transform = .logit, .prior = .{ .enabled = true, .mean = 0.14, .sigma = 0.06 }, .bounds = .{ .enabled = true, .min = 0.0, .max = 1.0 } },
+                    .{ .name = "aerosol_tau", .target = .aerosol_optical_depth_550_nm, .transform = .log, .prior = .{ .enabled = true, .mean = 0.1, .sigma = 0.05 }, .bounds = .{ .enabled = true, .min = 1.0e-4, .max = 2.0 } },
+                    .{ .name = "wavelength_shift", .target = .wavelength_shift_nm, .prior = .{ .enabled = true, .mean = 0.0, .sigma = 0.05 }, .bounds = .{ .enabled = true, .min = -0.2, .max = 0.2 } },
+                },
             },
             .measurements = .{
-                .product = "multi_band_signal",
-                .sample_count = 20,
+                .product_name = "radiance",
+                .observable = .radiance,
+                .sample_count = 96,
+                .source = .{ .external_observation = .{ .name = "truth" } },
+                .error_model = .{ .from_source_noise = true, .floor = 1.0e-5 },
             },
         },
         .derivative_mode = .numerical,
         .jacobians_requested = true,
+        .observed_measurement = .{
+            .source_name = "truth",
+            .observable = .radiance,
+            .product_name = "radiance",
+            .sample_count = 96,
+            .product = .init(&product),
+        },
     };
 
-    const ok = try solveWithEvaluator(std.testing.allocator, base_problem, surrogate_forward.testEvaluator());
+    const result = try solveWithEvaluator(std.testing.allocator, problem, surrogate_forward.testEvaluator());
     defer {
-        var owned = ok;
+        var owned = result;
         owned.deinit(std.testing.allocator);
     }
 
-    try std.testing.expectEqual(common.Method.dismas, ok.method);
-    try std.testing.expect(ok.jacobians_used);
-    try std.testing.expect(ok.dfs > 0.0);
-
-    var missing_mode = base_problem;
-    missing_mode.derivative_mode = .none;
-    try std.testing.expectError(common.Error.DerivativeModeRequired, solveWithEvaluator(std.testing.allocator, missing_mode, surrogate_forward.testEvaluator()));
+    try std.testing.expectEqual(common.Method.dismas, result.method);
+    try std.testing.expect(result.jacobians_used);
+    try std.testing.expect(result.jacobian != null);
+    try std.testing.expect(result.fit_diagnostics != null);
+    try std.testing.expectEqual(common.FitSpace.radiance, result.fit_diagnostics.?.fit_space);
+    try std.testing.expect(result.fit_diagnostics.?.selected_rtm_sample_count <= 64);
 }

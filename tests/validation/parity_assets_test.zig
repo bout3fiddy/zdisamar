@@ -103,6 +103,26 @@ const OeReferenceAnchor = struct {
     },
 };
 
+const DoasDominoReferenceAnchor = struct {
+    version: u32,
+    scenario: []const u8,
+    source_config: []const u8,
+    iterations: u32,
+    wavelength_amf_nm: f64,
+    total_slant_column_molec_cm2: f64,
+    stratospheric_vertical_column_molec_cm2: f64,
+    stratospheric_slant_column_molec_cm2: f64,
+    retrieved_trop_slant_column_molec_cm2: f64,
+    retrieved_trop_vertical_column_molec_cm2: f64,
+    trop_amf: f64,
+    precision_trop_vertical_column_molec_cm2: f64,
+    tolerances: struct {
+        slant_column_relative: f64,
+        vertical_column_relative: f64,
+        amf_absolute: f64,
+    },
+};
+
 const BundleAsset = struct {
     id: []const u8,
     path: []const u8,
@@ -381,6 +401,31 @@ test "oe reference anchor defines stable retrieval diagnostics" {
     try std.testing.expect(parsed.value.tolerances.cost_relative > 0.0);
     try std.testing.expect(parsed.value.tolerances.dfs_absolute > 0.0);
     try std.testing.expect(parsed.value.tolerances.state_absolute > 0.0);
+}
+
+test "domino DOAS reference anchor captures vendor classic-DOAS outputs" {
+    const raw = try readValidationFile("validation/golden/doas_domino_reference_anchor.json");
+    defer std.testing.allocator.free(raw);
+
+    const parsed = try std.json.parseFromSlice(
+        DoasDominoReferenceAnchor,
+        std.testing.allocator,
+        raw,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(u32, 1), parsed.value.version);
+    try std.testing.expect(parsed.value.scenario.len > 0);
+    try std.testing.expect(parsed.value.source_config.len > 0);
+    try std.testing.expect(parsed.value.iterations > 0);
+    try std.testing.expect(parsed.value.wavelength_amf_nm > 0.0);
+    try std.testing.expect(parsed.value.total_slant_column_molec_cm2 > 0.0);
+    try std.testing.expect(parsed.value.retrieved_trop_vertical_column_molec_cm2 > 0.0);
+    try std.testing.expect(parsed.value.trop_amf > 0.0);
+    try std.testing.expect(parsed.value.tolerances.slant_column_relative > 0.0);
+    try std.testing.expect(parsed.value.tolerances.vertical_column_relative > 0.0);
+    try std.testing.expect(parsed.value.tolerances.amf_absolute > 0.0);
 }
 
 test "release readiness matrix ties commands packages and evidence together" {

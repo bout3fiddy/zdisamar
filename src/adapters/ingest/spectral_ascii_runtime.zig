@@ -3,6 +3,7 @@ const Request = @import("../../core/Request.zig").Request;
 const Scene = @import("../../model/Scene.zig").Scene;
 const SpectralGrid = @import("../../model/Scene.zig").SpectralGrid;
 const Measurement = @import("../../model/Measurement.zig").Measurement;
+const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const OperationalSolarSpectrum = @import("../../model/Instrument.zig").OperationalSolarSpectrum;
 pub const ParseError = @import("spectral_ascii_metadata.zig").Error;
 
@@ -29,7 +30,8 @@ pub fn measurement(loaded: anytype, product: []const u8, radiance_kind: anytype,
     const radiance_count = sampleCount(loaded, radiance_kind);
     const total_samples = if (radiance_count > 0) radiance_count else sampleCount(loaded, irradiance_kind);
     return .{
-        .product = product,
+        .product_name = product,
+        .observable = MeasurementQuantity.parse(product) catch .radiance,
         .sample_count = total_samples,
     };
 }
@@ -200,7 +202,7 @@ pub fn toRequest(
     allocator: std.mem.Allocator,
     loaded: anytype,
     scene_id: []const u8,
-    requested_products: []const []const u8,
+    requested_products: []const Request.RequestedProduct,
     radiance_kind: anytype,
     irradiance_kind: anytype,
 ) !Request {

@@ -14,6 +14,27 @@ pub const Summary = struct {
     converged: bool,
 };
 
+pub const DifferentialSummary = struct {
+    common: Summary,
+    polynomial_order: u32,
+    effective_air_mass_factor: f64,
+    weighted_residual_rms: f64,
+    fit_window_start_nm: f64,
+    fit_window_end_nm: f64,
+    effective_cross_section_rms: ?f64 = null,
+};
+
+pub const DirectIntensitySummary = struct {
+    common: Summary,
+    polynomial_order: u32,
+    effective_air_mass_factor: f64,
+    weighted_residual_rms: f64,
+    fit_window_start_nm: f64,
+    fit_window_end_nm: f64,
+    selected_rtm_sample_count: u32,
+    selection_zero_crossing_count: u32,
+};
+
 pub fn assess(
     previous_total_cost: ?f64,
     measurement_cost: f64,
@@ -49,6 +70,84 @@ pub fn assess(
     };
 }
 
+pub fn assessDifferential(
+    previous_total_cost: ?f64,
+    measurement_cost: f64,
+    prior_cost: f64,
+    step: []const f64,
+    state: []const f64,
+    convergence: Convergence,
+    measurement_count: u32,
+    dfs: f64,
+    polynomial_order: u32,
+    effective_air_mass_factor: f64,
+    fit_window_start_nm: f64,
+    fit_window_end_nm: f64,
+    effective_cross_section_rms: ?f64,
+) DifferentialSummary {
+    const common_summary = assess(
+        previous_total_cost,
+        measurement_cost,
+        prior_cost,
+        step,
+        state,
+        convergence,
+        measurement_count,
+        dfs,
+    );
+    return .{
+        .common = common_summary,
+        .polynomial_order = polynomial_order,
+        .effective_air_mass_factor = effective_air_mass_factor,
+        .weighted_residual_rms = std.math.sqrt(
+            measurement_cost / @max(@as(f64, @floatFromInt(measurement_count)), 1.0),
+        ),
+        .fit_window_start_nm = fit_window_start_nm,
+        .fit_window_end_nm = fit_window_end_nm,
+        .effective_cross_section_rms = effective_cross_section_rms,
+    };
+}
+
+pub fn assessDirectIntensity(
+    previous_total_cost: ?f64,
+    measurement_cost: f64,
+    prior_cost: f64,
+    step: []const f64,
+    state: []const f64,
+    convergence: Convergence,
+    measurement_count: u32,
+    dfs: f64,
+    polynomial_order: u32,
+    effective_air_mass_factor: f64,
+    fit_window_start_nm: f64,
+    fit_window_end_nm: f64,
+    selected_rtm_sample_count: u32,
+    selection_zero_crossing_count: u32,
+) DirectIntensitySummary {
+    const common_summary = assess(
+        previous_total_cost,
+        measurement_cost,
+        prior_cost,
+        step,
+        state,
+        convergence,
+        measurement_count,
+        dfs,
+    );
+    return .{
+        .common = common_summary,
+        .polynomial_order = polynomial_order,
+        .effective_air_mass_factor = effective_air_mass_factor,
+        .weighted_residual_rms = std.math.sqrt(
+            measurement_cost / @max(@as(f64, @floatFromInt(measurement_count)), 1.0),
+        ),
+        .fit_window_start_nm = fit_window_start_nm,
+        .fit_window_end_nm = fit_window_end_nm,
+        .selected_rtm_sample_count = selected_rtm_sample_count,
+        .selection_zero_crossing_count = selection_zero_crossing_count,
+    };
+}
+
 test "retrieval diagnostics compute Rodgers-style convergence metrics" {
     const summary = assess(
         10.0,
@@ -63,4 +162,50 @@ test "retrieval diagnostics compute Rodgers-style convergence metrics" {
     try std.testing.expect(summary.converged);
     try std.testing.expectApproxEqRel(@as(f64, 0.25), summary.reduced_chi_square, 1e-12);
     try std.testing.expectApproxEqRel(@as(f64, 1.3), summary.dfs, 1e-12);
+}
+
+test "differential diagnostics report method-specific fit metadata" {
+    const summary = assessDifferential(
+        8.0,
+        2.0,
+        0.5,
+        &.{ 0.01, -0.02 },
+        &.{ 1.0, 1.5 },
+        .{ .cost_relative = 0.9, .state_relative = 0.1 },
+        10,
+        1.1,
+        3,
+        2.4,
+        759.0,
+        767.0,
+        0.7,
+    );
+    try std.testing.expect(summary.common.converged);
+    try std.testing.expectEqual(@as(u32, 3), summary.polynomial_order);
+    try std.testing.expectApproxEqRel(@as(f64, 2.4), summary.effective_air_mass_factor, 1.0e-12);
+    try std.testing.expect(summary.weighted_residual_rms > 0.0);
+    try std.testing.expect(summary.effective_cross_section_rms != null);
+}
+
+test "direct-intensity diagnostics track RTM selection metadata" {
+    const summary = assessDirectIntensity(
+        8.0,
+        3.0,
+        0.5,
+        &.{ 0.01, -0.02 },
+        &.{ 1.0, 1.5 },
+        .{ .cost_relative = 0.9, .state_relative = 0.1 },
+        12,
+        1.5,
+        1,
+        1.9,
+        405.0,
+        465.0,
+        64,
+        17,
+    );
+    try std.testing.expect(summary.common.converged);
+    try std.testing.expectEqual(@as(u32, 64), summary.selected_rtm_sample_count);
+    try std.testing.expectEqual(@as(u32, 17), summary.selection_zero_crossing_count);
+    try std.testing.expect(summary.weighted_residual_rms > 0.0);
 }

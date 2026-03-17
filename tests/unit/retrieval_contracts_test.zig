@@ -1,10 +1,11 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const retrieval = @import("retrieval");
+const internal = @import("zdisamar_internal");
+const retrieval = @import("zdisamar_internal").retrieval;
 
 const StateParameter = zdisamar.StateParameter;
 
-fn testObservedProduct() zdisamar.transport.measurement_space.MeasurementSpaceProduct {
+fn testObservedProduct() internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
     return .{
         .summary = .{
             .sample_count = 4,
@@ -44,7 +45,7 @@ test "oe contracts require typed state priors and bound spectral measurements" {
                 .end_nm = 762.0,
                 .sample_count = 4,
             },
-            .observation_model = .{ .instrument = "synthetic" },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-retrieval-unit",
@@ -60,10 +61,10 @@ test "oe contracts require typed state priors and bound spectral measurements" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 4,
-                .source = .{ .kind = .external_observation, .name = "truth_radiance" },
+                .source = .{ .external_observation = .{ .name = "truth_radiance" } },
                 .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
             },
         },
@@ -79,9 +80,8 @@ test "oe contracts require typed state priors and bound spectral measurements" {
     var observed_product = testObservedProduct();
     var bound_request = request;
     bound_request.measurement_binding = .{
-        .source_name = "truth_radiance",
-        .observable = "radiance",
-        .product = &observed_product,
+        .source = .{ .external_observation = .{ .name = "truth_radiance" } },
+        .borrowed_product = .init(&observed_product),
     };
 
     const bound_problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&bound_request);
@@ -101,7 +101,7 @@ test "retrieval contracts validate masked measurement selection against bound pr
                 .end_nm = 762.0,
                 .sample_count = 4,
             },
-            .observation_model = .{ .instrument = "synthetic" },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-external-binding",
@@ -115,10 +115,10 @@ test "retrieval contracts validate masked measurement selection against bound pr
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 3,
-                .source = .{ .kind = .external_observation, .name = "observed_radiance" },
+                .source = .{ .external_observation = .{ .name = "observed_radiance" } },
                 .mask = .{
                     .exclude = &[_]zdisamar.SpectralWindow{
                         .{ .start_nm = 760.0, .end_nm = 761.0 },
@@ -128,9 +128,8 @@ test "retrieval contracts validate masked measurement selection against bound pr
             },
         },
         .measurement_binding = .{
-            .source_name = "observed_radiance",
-            .observable = "radiance",
-            .product = &observed_product,
+            .source = .{ .external_observation = .{ .name = "observed_radiance" } },
+            .borrowed_product = .init(&observed_product),
         },
         .expected_derivative_mode = .semi_analytical,
         .diagnostics = .{ .jacobians = true },
@@ -153,7 +152,7 @@ test "solver outcomes own oe matrix products independently of caller buffers" {
         .scene = .{
             .id = "scene-owned-outcome",
             .spectral_grid = .{ .start_nm = 759.5, .end_nm = 762.0, .sample_count = 4 },
-            .observation_model = .{ .instrument = "synthetic" },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-owned-outcome",
@@ -164,10 +163,10 @@ test "solver outcomes own oe matrix products independently of caller buffers" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 4,
-                .source = .{ .kind = .external_observation, .name = "truth_radiance" },
+                .source = .{ .external_observation = .{ .name = "truth_radiance" } },
                 .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
             },
         },
@@ -175,10 +174,10 @@ test "solver outcomes own oe matrix products independently of caller buffers" {
         .jacobians_requested = true,
         .observed_measurement = .{
             .source_name = "truth_radiance",
-            .observable = "radiance",
+            .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 4,
-            .product = &observed_product,
+            .product = .init(&observed_product),
         },
     };
 
@@ -193,8 +192,8 @@ test "solver outcomes own oe matrix products independently of caller buffers" {
         1.4,
         0.2,
         0.01,
+        null,
         .{
-            .parameter_names = &[_][]const u8{ "surface_albedo", "aerosol_tau" },
             .values = state_values,
         },
         problem.scene,

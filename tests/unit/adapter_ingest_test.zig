@@ -1,5 +1,6 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
+const internal = @import("zdisamar_internal");
 
 test "spectral ascii ingest bridges vendor-style input into typed measurement and request summaries" {
     var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
@@ -13,10 +14,13 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectEqual(@as(u32, 2), loaded.sampleCount(.radiance));
 
     const measurement = loaded.measurement("radiance");
-    try std.testing.expectEqualStrings("radiance", measurement.product);
+    try std.testing.expectEqualStrings("radiance", measurement.resolvedProductName());
+    try std.testing.expectEqual(zdisamar.MeasurementQuantity.radiance, measurement.observable);
     try std.testing.expectEqual(@as(u32, 2), measurement.sample_count);
 
-    var request = try loaded.toRequest(std.testing.allocator, "demo-scene", &[_][]const u8{"radiance"});
+    var request = try loaded.toRequest(std.testing.allocator, "demo-scene", &[_]zdisamar.RequestedProduct{
+        .fromName("radiance"),
+    });
     defer request.deinitOwned(std.testing.allocator);
     try std.testing.expectEqualStrings("demo-scene", request.scene.id);
     try std.testing.expectEqual(@as(u32, 2), request.scene.spectral_grid.sample_count);
@@ -33,7 +37,7 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectApproxEqAbs(@as(f64, 3.402296e14), request.scene.observation_model.operational_solar_spectrum.irradiance[0], 1.0e8);
 
     var copied_sigma: [2]f64 = undefined;
-    try zdisamar.spectra.noise.copyInputSigma(request.scene.observation_model.ingested_noise_sigma, &copied_sigma);
+    try internal.kernels.spectra.noise.copyInputSigma(request.scene.observation_model.ingested_noise_sigma, &copied_sigma);
     try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[0], copied_sigma[0], 1.0e-12);
     try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[1], copied_sigma[1], 1.0e-12);
 }

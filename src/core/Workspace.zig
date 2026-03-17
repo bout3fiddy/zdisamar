@@ -1,5 +1,5 @@
 const errors = @import("errors.zig");
-const PreparedPlanCache = @import("../runtime/cache/PreparedPlanCache.zig").PreparedPlanCache;
+const PreparedLayout = @import("../runtime/cache/PreparedLayout.zig").PreparedLayout;
 const ScratchArena = @import("../runtime/scheduler/ScratchArena.zig").ScratchArena;
 
 pub const Workspace = struct {
@@ -25,8 +25,8 @@ pub const Workspace = struct {
         self.execution_count += 1;
     }
 
-    pub fn prepareScratch(self: *Workspace, prepared: *const PreparedPlanCache) void {
-        self.scratch.reserveFromPrepared(prepared);
+    pub fn prepareScratch(self: *Workspace, prepared_layout: *const PreparedLayout) void {
+        self.scratch.reserveFromLayout(prepared_layout);
     }
 
     pub fn reset(self: *Workspace) void {

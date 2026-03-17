@@ -1,6 +1,10 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const retrieval = @import("retrieval");
+const internal = @import("zdisamar_internal");
+const retrieval = @import("zdisamar_internal").retrieval;
+const ReferenceData = internal.reference_data;
+const OpticsPrepare = internal.kernels.optics.prepare;
+const MeasurementSpace = internal.kernels.transport.measurement_space;
 
 const RuntimeProfile = struct {
     observation_regime: []const u8,
@@ -130,7 +134,7 @@ fn parseObservationRegime(value: []const u8) !zdisamar.ObservationRegime {
 fn parseSolverMode(value: []const u8) !zdisamar.SolverMode {
     if (std.mem.eql(u8, value, "scalar")) return .scalar;
     if (std.mem.eql(u8, value, "polarized")) return .polarized;
-    if (std.mem.eql(u8, value, "derivative_enabled")) return .derivative_enabled;
+    if (std.mem.eql(u8, value, "derivative_enabled")) return .scalar;
     return error.InvalidSolverMode;
 }
 
@@ -175,11 +179,7 @@ fn makeRetrievalRequest(
     derivative_mode: zdisamar.DerivativeMode,
 ) !zdisamar.Request {
     const method = try parseRetrievalMethod(case.retrieval_method orelse return error.MissingRetrievalMethod);
-    const measurement_product = switch (method) {
-        .oe => "radiance",
-        .doas => "slant_column",
-        .dismas => "multi_band_signal",
-    };
+    const measurement_product = "radiance";
 
     var scene = makeSceneForCase(case, regime);
     if (method == .oe) {
@@ -196,11 +196,6 @@ fn makeRetrievalRequest(
         .inverse_problem = .{
             .id = case.id,
             .state_vector = .{
-                .parameter_names = switch (method) {
-                    .oe => &[_][]const u8{ "albedo", "aerosol" },
-                    .doas => &[_][]const u8{"slant_column"},
-                    .dismas => &[_][]const u8{ "state_a", "state_b", "state_c" },
-                },
                 .parameters = switch (method) {
                     .oe => &[_]zdisamar.StateParameter{
                         .{
@@ -220,24 +215,25 @@ fn makeRetrievalRequest(
                     },
                     .doas => &[_]zdisamar.StateParameter{
                         .{
-                            .name = "slant_column",
-                            .target = .surface_albedo,
-                            .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.05 },
+                            .name = "wavelength_shift",
+                            .target = .wavelength_shift_nm,
+                            .prior = .{ .enabled = true, .mean = 0.0, .sigma = 0.03 },
+                            .bounds = .{ .enabled = true, .min = -0.1, .max = 0.1 },
                         },
                     },
                     .dismas => &[_]zdisamar.StateParameter{
                         .{
-                            .name = "state_a",
+                            .name = "surface_albedo",
                             .target = .surface_albedo,
                             .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.05 },
                         },
                         .{
-                            .name = "state_b",
+                            .name = "aerosol_tau",
                             .target = .aerosol_optical_depth_550_nm,
                             .prior = .{ .enabled = true, .mean = 0.12, .sigma = 0.05 },
                         },
                         .{
-                            .name = "state_c",
+                            .name = "wavelength_shift",
                             .target = .wavelength_shift_nm,
                             .prior = .{ .enabled = true, .mean = 0.0, .sigma = 0.05 },
                             .bounds = .{ .enabled = true, .min = -0.2, .max = 0.2 },
@@ -246,14 +242,14 @@ fn makeRetrievalRequest(
                 },
             },
             .measurements = .{
-                .product = measurement_product,
-                .observable = "radiance",
+                .product_name = measurement_product,
+                .observable = .radiance,
                 .sample_count = case.runtime_profile.spectral_samples,
-                .source = if (method == .oe)
-                    .{ .kind = .external_observation, .name = "truth_radiance" }
+                .source = if (method == .oe or method == .doas or method == .dismas)
+                    .{ .external_observation = .{ .name = "truth_radiance" } }
                 else
-                    .{},
-                .error_model = if (method == .oe)
+                    .none,
+                .error_model = if (method == .oe or method == .doas or method == .dismas)
                     .{ .from_source_noise = true, .floor = 1.0e-4 }
                 else
                     .{},
@@ -273,7 +269,7 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
             .sample_count = case.runtime_profile.spectral_samples,
         },
         .observation_model = .{
-            .instrument = "compatibility-harness",
+            .instrument = .{ .custom = "compatibility-harness" },
             .regime = regime,
             .sampling = .synthetic,
             .noise_model = .shot_noise,
@@ -323,7 +319,7 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
             .kind = .lambertian,
             .albedo = 0.20,
         };
-        scene.observation_model.instrument = "compatibility-harness-o2a";
+        scene.observation_model.instrument = .{ .custom = "compatibility-harness-o2a" };
         scene.observation_model.sampling = .native;
         scene.observation_model.noise_model = .shot_noise;
         scene.observation_model.instrument_line_fwhm_nm = 0.38;
@@ -348,10 +344,10 @@ fn buildZeroContinuumTable(
     allocator: std.mem.Allocator,
     start_nm: f64,
     end_nm: f64,
-) !zdisamar.reference_data.CrossSectionTable {
+) !ReferenceData.CrossSectionTable {
     const midpoint_nm = (start_nm + end_nm) * 0.5;
     return .{
-        .points = try allocator.dupe(zdisamar.reference_data.CrossSectionPoint, &.{
+        .points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
             .{ .wavelength_nm = start_nm, .sigma_cm2_per_molecule = 0.0 },
             .{ .wavelength_nm = midpoint_nm, .sigma_cm2_per_molecule = 0.0 },
             .{ .wavelength_nm = end_nm, .sigma_cm2_per_molecule = 0.0 },
@@ -363,7 +359,7 @@ fn prepareOpticalStateForCase(
     allocator: std.mem.Allocator,
     case: ParityCase,
     scene: zdisamar.Scene,
-) !zdisamar.optics.prepare.PreparedOpticalState {
+) !OpticsPrepare.PreparedOpticalState {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         allocator,
         .climatology_profile,
@@ -403,12 +399,12 @@ fn prepareOpticalStateForCase(
     var lut = try lut_asset.toAirmassFactorLut(allocator);
     defer lut.deinit(allocator);
 
-    var line_list: ?zdisamar.reference_data.SpectroscopyLineList = null;
+    var line_list: ?ReferenceData.SpectroscopyLineList = null;
     defer if (line_list) |owned_line_list| {
         var owned = owned_line_list;
         owned.deinit(allocator);
     };
-    var collision_induced_absorption: ?zdisamar.reference_data.CollisionInducedAbsorptionTable = null;
+    var collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null;
     defer if (collision_induced_absorption) |owned_table| {
         var owned = owned_table;
         owned.deinit(allocator);
@@ -455,7 +451,7 @@ fn prepareOpticalStateForCase(
         collision_induced_absorption = try cia_asset.toCollisionInducedAbsorptionTable(allocator);
     }
 
-    var mie_table: ?zdisamar.reference_data.MiePhaseTable = null;
+    var mie_table: ?ReferenceData.MiePhaseTable = null;
     defer if (mie_table) |owned_table| {
         var owned = owned_table;
         owned.deinit(allocator);
@@ -472,7 +468,7 @@ fn prepareOpticalStateForCase(
         mie_table = try mie_asset.toMiePhaseTable(allocator);
     }
 
-    return zdisamar.optics.prepare.prepareWithParticleTables(
+    return OpticsPrepare.prepareWithParticleTables(
         allocator,
         &scene,
         &profile,
@@ -491,17 +487,17 @@ fn makeOeTruthScene(scene: zdisamar.Scene) zdisamar.Scene {
 
 fn buildObservedMeasurementProduct(
     allocator: std.mem.Allocator,
-    plan: zdisamar.Plan,
+    plan: zdisamar.PreparedPlan,
     request: zdisamar.Request,
-) !?zdisamar.transport.measurement_space.MeasurementSpaceProduct {
+) !?MeasurementSpace.MeasurementSpaceProduct {
     const inverse_problem = request.inverse_problem orelse return null;
-    if (inverse_problem.measurements.source.kind != .external_observation) return null;
+    if (inverse_problem.measurements.source.kind() != .external_observation) return null;
 
     const truth_scene = makeOeTruthScene(request.scene);
     var prepared = try plan.providers.optics.prepareForScene(allocator, &truth_scene);
     defer prepared.deinit(allocator);
 
-    const product = try zdisamar.transport.measurement_space.simulateProduct(
+    const product = try MeasurementSpace.simulateProduct(
         allocator,
         &truth_scene,
         plan.transport_route,
@@ -511,7 +507,7 @@ fn buildObservedMeasurementProduct(
     return product;
 }
 
-fn measurementProviders(plan: zdisamar.Plan) zdisamar.transport.measurement_space.ProviderBindings {
+fn measurementProviders(plan: zdisamar.PreparedPlan) MeasurementSpace.ProviderBindings {
     return .{
         .transport = plan.providers.transport,
         .surface = plan.providers.surface,
@@ -689,9 +685,8 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
         defer if (observed_measurement_product) |*product| product.deinit(std.testing.allocator);
         if (observed_measurement_product) |*product| {
             request.measurement_binding = .{
-                .source_name = request.inverse_problem.?.measurements.source.name,
-                .observable = request.inverse_problem.?.measurements.observable,
-                .product = product,
+                .source = request.inverse_problem.?.measurements.source,
+                .borrowed_product = .init(product),
             };
         }
         var result = try engine.execute(&plan, &workspace, &request);
@@ -765,7 +760,7 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
             var prepared = try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);
             defer prepared.deinit(std.testing.allocator);
 
-            var product = try zdisamar.transport.measurement_space.simulateProduct(
+            var product = try MeasurementSpace.simulateProduct(
                 std.testing.allocator,
                 &case_scene,
                 plan.transport_route,

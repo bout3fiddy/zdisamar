@@ -23,7 +23,7 @@ fn pathExists(path: []const u8) bool {
 fn scenarioTemplate(name: []const u8) !zdisamar.PlanTemplate {
     if (std.mem.eql(u8, name, "default_scalar")) return .{};
     if (std.mem.eql(u8, name, "derivative_enabled")) return .{
-        .solver_mode = .derivative_enabled,
+        .solver_mode = .scalar,
         .scene_blueprint = .{
             .derivative_mode = .semi_analytical,
             .spectral_grid = .{
@@ -115,7 +115,7 @@ fn scenarioTemplate(name: []const u8) !zdisamar.PlanTemplate {
         },
     };
     if (std.mem.eql(u8, name, "transport_derivative_contract")) return .{
-        .solver_mode = .derivative_enabled,
+        .solver_mode = .scalar,
         .scene_blueprint = .{
             .observation_regime = .nadir,
             .derivative_mode = .numerical,

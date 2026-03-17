@@ -15,6 +15,40 @@ pub const InstrumentLineShape = @import("instrument/line_shape.zig").InstrumentL
 pub const InstrumentLineShapeTable = @import("instrument/line_shape.zig").InstrumentLineShapeTable;
 pub const BuiltinLineShapeKind = @import("instrument/line_shape.zig").BuiltinLineShapeKind;
 
+pub const Id = union(enum) {
+    unset,
+    generic,
+    tropomi,
+    synthetic,
+    custom: []const u8,
+
+    pub fn parse(value: []const u8) Id {
+        if (value.len == 0) return .unset;
+        if (std.mem.eql(u8, value, "generic")) return .generic;
+        if (std.mem.eql(u8, value, "tropomi")) return .tropomi;
+        if (std.mem.eql(u8, value, "synthetic")) return .synthetic;
+        return .{ .custom = value };
+    }
+
+    pub fn label(self: Id) []const u8 {
+        return switch (self) {
+            .unset => "",
+            .generic => "generic",
+            .tropomi => "tropomi",
+            .synthetic => "synthetic",
+            .custom => |value| value,
+        };
+    }
+
+    pub fn validate(self: Id) errors.Error!void {
+        switch (self) {
+            .unset => return errors.Error.MissingObservationInstrument,
+            .custom => |value| if (value.len == 0) return errors.Error.MissingObservationInstrument,
+            .generic, .tropomi, .synthetic => {},
+        }
+    }
+};
+
 pub const Instrument = struct {
     pub const SamplingMode = enum {
         native,
@@ -54,7 +88,7 @@ pub const Instrument = struct {
         }
     };
 
-    name: []const u8 = "generic",
+    id: Id = .generic,
     sampling: SamplingMode = .native,
     noise_model: NoiseModelKind = .none,
     wavelength_shift_nm: f64 = 0.0,
@@ -70,9 +104,7 @@ pub const Instrument = struct {
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
 
     pub fn validate(self: *const Instrument) errors.Error!void {
-        if (self.name.len == 0) {
-            return errors.Error.MissingObservationInstrument;
-        }
+        try self.id.validate();
         if (self.instrument_line_fwhm_nm < 0.0) {
             return errors.Error.InvalidRequest;
         }
@@ -128,7 +160,7 @@ test "operational cross-section lut evaluates vendor-style scaled log legendre e
 
 test "instrument resolves typed sampling and noise selectors" {
     const instrument: Instrument = .{
-        .name = "synthetic",
+        .id = .synthetic,
         .sampling = .measured_channels,
         .noise_model = .snr_from_input,
         .high_resolution_step_nm = 0.08,
@@ -146,7 +178,7 @@ test "instrument resolves typed sampling and noise selectors" {
 
 test "instrument validation rejects malformed operational lut surfaces" {
     const invalid: Instrument = .{
-        .name = "test",
+        .id = .{ .custom = "test" },
         .sampling = .operational,
         .noise_model = .s5p_operational,
         .o2_operational_lut = .{
@@ -166,7 +198,7 @@ test "instrument validation rejects malformed operational lut surfaces" {
 
 test "operational reference grid and solar spectrum validate typed external inputs" {
     const instrument: Instrument = .{
-        .name = "tropomi",
+        .id = .tropomi,
         .sampling = .operational,
         .noise_model = .s5p_operational,
         .operational_refspec_grid = .{
@@ -189,7 +221,7 @@ test "operational reference grid and solar spectrum validate typed external inpu
 
 test "operational typed carriers reject duplicate wavelengths" {
     const invalid_grid: Instrument = .{
-        .name = "tropomi",
+        .id = .tropomi,
         .sampling = .operational,
         .noise_model = .s5p_operational,
         .operational_refspec_grid = .{
@@ -200,7 +232,7 @@ test "operational typed carriers reject duplicate wavelengths" {
     try std.testing.expectError(errors.Error.InvalidRequest, invalid_grid.validate());
 
     const invalid_solar: Instrument = .{
-        .name = "tropomi",
+        .id = .tropomi,
         .sampling = .operational,
         .noise_model = .s5p_operational,
         .operational_solar_spectrum = .{
@@ -211,7 +243,7 @@ test "operational typed carriers reject duplicate wavelengths" {
     try std.testing.expectError(errors.Error.InvalidRequest, invalid_solar.validate());
 
     const invalid_lut: Instrument = .{
-        .name = "tropomi",
+        .id = .tropomi,
         .sampling = .operational,
         .noise_model = .s5p_operational,
         .o2_operational_lut = .{

@@ -3,7 +3,7 @@ const PluginRegistry = @import("../plugins/registry/CapabilityRegistry.zig");
 const PluginRuntime = @import("../plugins/loader/runtime.zig");
 const PluginProviders = @import("../plugins/providers/root.zig");
 const PluginSelection = @import("../plugins/selection.zig");
-const PreparedPlanCache = @import("../runtime/cache/PreparedPlanCache.zig").PreparedPlanCache;
+const PreparedLayout = @import("../runtime/cache/PreparedLayout.zig").PreparedLayout;
 const TransportRoute = @import("../kernels/transport/common.zig").Route;
 const std = @import("std");
 const errors = @import("errors.zig");
@@ -30,12 +30,12 @@ pub const Template = struct {
     }
 };
 
-pub const Plan = struct {
+pub const PreparedPlan = struct {
     allocator: std.mem.Allocator,
     id: u64,
     template: Template,
     transport_route: TransportRoute,
-    prepared_cache: PreparedPlanCache = .{},
+    prepared_layout: PreparedLayout = .{},
     plugin_snapshot: PluginRegistry.PluginSnapshot = .{},
     plugin_runtime: PluginRuntime.PreparedPluginRuntime = PluginRuntime.PreparedPluginRuntime.init(),
     providers: PluginProviders.PreparedProviders = .{},
@@ -45,32 +45,29 @@ pub const Plan = struct {
         id: u64,
         template: Template,
         transport_route: TransportRoute,
-        prepared_cache: PreparedPlanCache,
+        prepared_layout: PreparedLayout,
         plugin_snapshot: PluginRegistry.PluginSnapshot,
         plugin_runtime: PluginRuntime.PreparedPluginRuntime,
         providers: PluginProviders.PreparedProviders,
-    ) Plan {
+    ) PreparedPlan {
         return .{
             .allocator = allocator,
             .id = id,
             .template = template,
             .transport_route = transport_route,
-            .prepared_cache = prepared_cache,
+            .prepared_layout = prepared_layout,
             .plugin_snapshot = plugin_snapshot,
             .plugin_runtime = plugin_runtime,
             .providers = providers,
         };
     }
 
-    pub fn deinit(self: *Plan) void {
+    pub fn deinit(self: *PreparedPlan) void {
         self.plugin_runtime.deinit(self.allocator);
         self.plugin_snapshot.deinit(self.allocator);
         self.* = undefined;
     }
 };
-
-// Keep the public lifecycle name explicit even though the concrete type stays `Plan`.
-pub const PreparedPlan = Plan;
 
 test "plan template validates existing provider selection" {
     try (Template{

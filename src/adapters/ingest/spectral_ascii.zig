@@ -61,7 +61,7 @@ pub const LoadedSpectra = struct {
         self: LoadedSpectra,
         allocator: std.mem.Allocator,
         scene_id: []const u8,
-        requested_products: []const []const u8,
+        requested_products: []const Request.RequestedProduct,
     ) !Request {
         return runtime_helpers.toRequest(
             allocator,
@@ -247,16 +247,18 @@ test "spectral ascii loader parses channelized irradiance and radiance input" {
     try std.testing.expectEqual(@as(f64, 405.0), loaded.channels[0].samples[0].wavelength_nm);
 
     const measurement = loaded.measurement("radiance");
-    try std.testing.expectEqualStrings("radiance", measurement.product);
+    try std.testing.expectEqualStrings("radiance", measurement.resolvedProductName());
     try std.testing.expectEqual(@as(u32, 2), measurement.sample_count);
 
     const grid = loaded.spectralGrid().?;
     try std.testing.expectEqual(@as(u32, 2), grid.sample_count);
 
-    var request = try loaded.toRequest(std.testing.allocator, "spectral-scene", &[_][]const u8{"radiance"});
+    var request = try loaded.toRequest(std.testing.allocator, "spectral-scene", &[_]Request.RequestedProduct{
+        .fromName("radiance"),
+    });
     defer request.deinitOwned(std.testing.allocator);
     try std.testing.expectEqualStrings("spectral-scene", request.scene.id);
-    try std.testing.expectEqualStrings("radiance", request.requested_products[0]);
+    try std.testing.expectEqualStrings("radiance", request.requested_products[0].name);
     try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.ingested_noise_sigma.len);
 }
 

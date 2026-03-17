@@ -1,11 +1,13 @@
 const std = @import("std");
-const Plan = @import("Plan.zig").Plan;
+const PreparedPlan = @import("Plan.zig").PreparedPlan;
 
 pub const Provenance = struct {
     engine_version: []const u8 = "0.1.0-dev",
     model_family: []const u8 = "disamar_standard",
     solver_route: []const u8 = "builtin.dispatcher",
     transport_family: []const u8 = "surrogate_adding",
+    transport_maturity: []const u8 = "surrogate",
+    retrieval_maturity: []const u8 = "not_requested",
     derivative_mode: []const u8 = "none",
     derivative_semantics: []const u8 = "none",
     numerical_mode: []const u8 = "scalar",
@@ -23,7 +25,7 @@ pub const Provenance = struct {
     pub fn fromPlanOwned(
         self: *Provenance,
         allocator: std.mem.Allocator,
-        plan: *const Plan,
+        plan: *const PreparedPlan,
         workspace_label: []const u8,
         scene_id: []const u8,
         numerical_mode: []const u8,
@@ -48,6 +50,16 @@ pub const Provenance = struct {
             plan.providers.transport.provenanceLabelForRoute(plan.transport_route),
         );
         errdefer allocator.free(transport_family);
+        const transport_maturity = try allocator.dupe(
+            u8,
+            if (std.mem.indexOf(u8, transport_family, "surrogate") != null) "surrogate" else "method_faithful",
+        );
+        errdefer allocator.free(transport_maturity);
+        const retrieval_maturity = try allocator.dupe(
+            u8,
+            retrievalMaturityLabel(plan),
+        );
+        errdefer allocator.free(retrieval_maturity);
         const derivative_mode = try allocator.dupe(u8, @tagName(plan.transport_route.derivative_mode));
         errdefer allocator.free(derivative_mode);
         const derivative_semantics = try allocator.dupe(
@@ -66,6 +78,8 @@ pub const Provenance = struct {
             .model_family = model_family,
             .solver_route = solver_route,
             .transport_family = transport_family,
+            .transport_maturity = transport_maturity,
+            .retrieval_maturity = retrieval_maturity,
             .derivative_mode = derivative_mode,
             .derivative_semantics = derivative_semantics,
             .numerical_mode = owned_numerical_mode,
@@ -84,7 +98,7 @@ pub const Provenance = struct {
 
     pub fn fromPlan(
         allocator: std.mem.Allocator,
-        plan: *const Plan,
+        plan: *const PreparedPlan,
         workspace_label: []const u8,
         scene_id: []const u8,
         numerical_mode: []const u8,
@@ -107,6 +121,8 @@ pub const Provenance = struct {
         allocator.free(self.model_family);
         allocator.free(self.solver_route);
         allocator.free(self.transport_family);
+        allocator.free(self.transport_maturity);
+        allocator.free(self.retrieval_maturity);
         allocator.free(self.derivative_mode);
         allocator.free(self.derivative_semantics);
         allocator.free(self.numerical_mode);
@@ -170,4 +186,12 @@ fn freeStringSlice(allocator: std.mem.Allocator, values: []const []const u8) voi
     if (values.len == 0) return;
     for (values) |value| allocator.free(value);
     allocator.free(values);
+}
+
+fn retrievalMaturityLabel(plan: *const PreparedPlan) []const u8 {
+    const provider = plan.providers.retrieval orelse return "not_requested";
+    if (std.mem.eql(u8, provider.id, "builtin.oe_solver")) return "real_spectral_fit";
+    if (std.mem.eql(u8, provider.id, "builtin.doas_solver")) return "real_spectral_fit";
+    if (std.mem.eql(u8, provider.id, "builtin.dismas_solver")) return "real_spectral_fit";
+    return "surrogate";
 }

@@ -1,6 +1,8 @@
 const std = @import("std");
 const common = @import("contracts.zig");
+const Request = @import("../../core/Request.zig").Request;
 const Measurement = @import("../../model/Measurement.zig").Measurement;
+const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const Scene = @import("../../model/Scene.zig").Scene;
 const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
 const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
@@ -13,17 +15,38 @@ pub const Evaluator = struct {
     evaluateProduct: *const fn (allocator: Allocator, context: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceProduct,
 };
 
+pub const MeasurementMetadata = struct {
+    effective_air_mass_factor: f64 = 0.0,
+    effective_single_scatter_albedo: f64 = 0.0,
+    effective_temperature_k: f64 = 0.0,
+    effective_pressure_hpa: f64 = 0.0,
+    gas_optical_depth: f64 = 0.0,
+    cia_optical_depth: f64 = 0.0,
+    aerosol_optical_depth: f64 = 0.0,
+    cloud_optical_depth: f64 = 0.0,
+    total_optical_depth: f64 = 0.0,
+    depolarization_factor: f64 = 0.0,
+    d_optical_depth_d_temperature: f64 = 0.0,
+};
+
 pub const SpectralMeasurement = struct {
     wavelengths_nm: []f64 = &[_]f64{},
     values: []f64 = &[_]f64{},
     sigma: []f64 = &[_]f64{},
+    radiance: []f64 = &[_]f64{},
+    irradiance: []f64 = &[_]f64{},
+    reflectance: []f64 = &[_]f64{},
     jacobian: ?[]f64 = null,
     summary: MeasurementSpaceSummary,
+    metadata: MeasurementMetadata = .{},
 
     pub fn deinit(self: *SpectralMeasurement, allocator: Allocator) void {
         if (self.wavelengths_nm.len != 0) allocator.free(self.wavelengths_nm);
         if (self.values.len != 0) allocator.free(self.values);
         if (self.sigma.len != 0) allocator.free(self.sigma);
+        if (self.radiance.len != 0) allocator.free(self.radiance);
+        if (self.irradiance.len != 0) allocator.free(self.irradiance);
+        if (self.reflectance.len != 0) allocator.free(self.reflectance);
         if (self.jacobian) |values| allocator.free(values);
         self.* = .{
             .jacobian = null,
@@ -53,6 +76,19 @@ pub fn observedMeasurement(
     );
 }
 
+pub fn measurementFromProduct(
+    allocator: Allocator,
+    problem: common.RetrievalProblem,
+    product: *const MeasurementSpaceProduct,
+) common.Error!SpectralMeasurement {
+    return selectMeasurement(
+        allocator,
+        problem.inverse_problem.measurements,
+        measurementObservable(problem),
+        .init(product),
+    );
+}
+
 pub fn evaluateMeasurement(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -69,24 +105,22 @@ pub fn evaluateMeasurement(
         allocator,
         problem.inverse_problem.measurements,
         measurementObservable(problem),
-        &product,
+        .init(&product),
     );
 }
 
-pub fn measurementObservable(problem: common.RetrievalProblem) []const u8 {
-    if (problem.inverse_problem.measurements.observable.len != 0) {
-        return problem.inverse_problem.measurements.observable;
-    }
-    return problem.inverse_problem.measurements.product;
+pub fn measurementObservable(problem: common.RetrievalProblem) MeasurementQuantity {
+    return problem.inverse_problem.measurements.observable;
 }
 
 fn selectMeasurement(
     allocator: Allocator,
     measurement: Measurement,
-    observable: []const u8,
-    product: *const MeasurementSpaceProduct,
+    observable: MeasurementQuantity,
+    product: Request.BorrowedMeasurementProduct,
 ) common.Error!SpectralMeasurement {
-    const selected_count = measurement.selectedSampleCount(product.wavelengths);
+    const raw_product = product.product;
+    const selected_count = measurement.selectedSampleCount(product.wavelengths());
     if (selected_count != measurement.sample_count) return common.Error.ShapeMismatch;
 
     const wavelengths = try allocator.alloc(f64, selected_count);
@@ -95,9 +129,15 @@ fn selectMeasurement(
     errdefer allocator.free(values);
     const sigma = try allocator.alloc(f64, selected_count);
     errdefer allocator.free(sigma);
+    const radiance = try allocator.alloc(f64, selected_count);
+    errdefer allocator.free(radiance);
+    const irradiance = try allocator.alloc(f64, selected_count);
+    errdefer allocator.free(irradiance);
+    const reflectance = try allocator.alloc(f64, selected_count);
+    errdefer allocator.free(reflectance);
 
-    const source_values = measurementValues(product, observable) catch return common.Error.InvalidRequest;
-    const source_jacobian = measurementJacobian(product, observable);
+    const source_values = measurementValues(raw_product, observable) catch return common.Error.InvalidRequest;
+    const source_jacobian = measurementJacobian(raw_product, observable);
     const selected_jacobian = if (source_jacobian != null)
         try allocator.alloc(f64, selected_count)
     else
@@ -105,12 +145,15 @@ fn selectMeasurement(
     errdefer if (selected_jacobian) |values_buffer| allocator.free(values_buffer);
 
     var output_index: usize = 0;
-    for (product.wavelengths, 0..) |wavelength_nm, index| {
+    for (raw_product.wavelengths, 0..) |wavelength_nm, index| {
         if (!measurement.includesWavelength(wavelength_nm)) continue;
 
         wavelengths[output_index] = wavelength_nm;
         values[output_index] = source_values[index];
-        sigma[output_index] = sampleSigma(measurement, product, index) catch return common.Error.InvalidRequest;
+        sigma[output_index] = sampleSigma(measurement, raw_product, index) catch return common.Error.InvalidRequest;
+        radiance[output_index] = raw_product.radiance[index];
+        irradiance[output_index] = raw_product.irradiance[index];
+        reflectance[output_index] = raw_product.reflectance[index];
         if (selected_jacobian) |jacobian| {
             jacobian[output_index] = source_jacobian.?[index];
         }
@@ -121,8 +164,28 @@ fn selectMeasurement(
         .wavelengths_nm = wavelengths,
         .values = values,
         .sigma = sigma,
+        .radiance = radiance,
+        .irradiance = irradiance,
+        .reflectance = reflectance,
         .jacobian = selected_jacobian,
-        .summary = product.summary,
+        .summary = raw_product.summary,
+        .metadata = metadataForProduct(raw_product),
+    };
+}
+
+fn metadataForProduct(product: *const MeasurementSpaceProduct) MeasurementMetadata {
+    return .{
+        .effective_air_mass_factor = product.effective_air_mass_factor,
+        .effective_single_scatter_albedo = product.effective_single_scatter_albedo,
+        .effective_temperature_k = product.effective_temperature_k,
+        .effective_pressure_hpa = product.effective_pressure_hpa,
+        .gas_optical_depth = product.gas_optical_depth,
+        .cia_optical_depth = product.cia_optical_depth,
+        .aerosol_optical_depth = product.aerosol_optical_depth,
+        .cloud_optical_depth = product.cloud_optical_depth,
+        .total_optical_depth = product.total_optical_depth,
+        .depolarization_factor = product.depolarization_factor,
+        .d_optical_depth_d_temperature = product.d_optical_depth_d_temperature,
     };
 }
 
@@ -147,16 +210,17 @@ fn sampleSigma(
     return std.math.sqrt(variance);
 }
 
-fn measurementValues(product: *const MeasurementSpaceProduct, observable: []const u8) ![]const f64 {
-    if (std.mem.eql(u8, observable, "radiance")) return product.radiance;
-    if (std.mem.eql(u8, observable, "irradiance")) return product.irradiance;
-    if (std.mem.eql(u8, observable, MeasurementSpace.reflectance_export_name)) return product.reflectance;
-    return error.InvalidRequest;
+fn measurementValues(product: *const MeasurementSpaceProduct, observable: MeasurementQuantity) ![]const f64 {
+    return switch (observable) {
+        .radiance => product.radiance,
+        .irradiance => product.irradiance,
+        .reflectance => product.reflectance,
+        .slant_column => error.InvalidRequest,
+    };
 }
 
-fn measurementJacobian(product: *const MeasurementSpaceProduct, observable: []const u8) ?[]const f64 {
-    if (!std.mem.eql(u8, observable, "radiance")) return null;
-    return product.jacobian;
+fn measurementJacobian(product: *const MeasurementSpaceProduct, observable: MeasurementQuantity) ?[]const f64 {
+    return if (observable == .radiance) product.jacobian else null;
 }
 
 test "spectral evaluator selects masked observable vectors with sigma" {
@@ -192,7 +256,7 @@ test "spectral evaluator selects masked observable vectors with sigma" {
         .scene = .{
             .id = "scene-forward-model",
             .spectral_grid = .{ .start_nm = 759.5, .end_nm = 762.0, .sample_count = 4 },
-            .observation_model = .{ .instrument = "synthetic" },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-forward-model",
@@ -206,8 +270,8 @@ test "spectral evaluator selects masked observable vectors with sigma" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 3,
                 .mask = .{
                     .exclude = &[_]@import("../../model/Scene.zig").SpectralWindow{
@@ -221,10 +285,10 @@ test "spectral evaluator selects masked observable vectors with sigma" {
         .jacobians_requested = true,
         .observed_measurement = .{
             .source_name = "synthetic-observed",
-            .observable = "radiance",
+            .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 3,
-            .product = &product,
+            .product = .init(&product),
         },
     };
 
@@ -236,6 +300,9 @@ test "spectral evaluator selects masked observable vectors with sigma" {
 
     try std.testing.expectEqual(@as(usize, 3), selected.values.len);
     try std.testing.expect(selected.sigma[0] > 0.0);
+    try std.testing.expectEqual(@as(usize, 3), selected.radiance.len);
+    try std.testing.expectEqual(@as(f64, 1.0), selected.metadata.effective_air_mass_factor);
+    try std.testing.expectEqual(@as(f64, 0.1), selected.metadata.total_optical_depth);
     try std.testing.expect(selected.jacobian == null);
 }
 
@@ -275,7 +342,7 @@ test "spectral evaluator carries routed radiance jacobian when available" {
         .scene = .{
             .id = "scene-forward-model-jacobian",
             .spectral_grid = .{ .start_nm = 759.5, .end_nm = 762.0, .sample_count = 4 },
-            .observation_model = .{ .instrument = "synthetic" },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-forward-model-jacobian",
@@ -289,8 +356,8 @@ test "spectral evaluator carries routed radiance jacobian when available" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 3,
                 .mask = .{
                     .exclude = &[_]@import("../../model/Scene.zig").SpectralWindow{
@@ -304,10 +371,10 @@ test "spectral evaluator carries routed radiance jacobian when available" {
         .jacobians_requested = true,
         .observed_measurement = .{
             .source_name = "synthetic-observed",
-            .observable = "radiance",
+            .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 3,
-            .product = &product,
+            .product = .init(&product),
         },
     };
 

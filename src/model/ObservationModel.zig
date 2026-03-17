@@ -2,6 +2,7 @@ const std = @import("std");
 const errors = @import("../core/errors.zig");
 const Binding = @import("Binding.zig").Binding;
 const Instrument = @import("Instrument.zig").Instrument;
+const InstrumentId = @import("Instrument.zig").Id;
 const BuiltinLineShapeKind = @import("Instrument.zig").BuiltinLineShapeKind;
 const InstrumentLineShape = @import("Instrument.zig").InstrumentLineShape;
 const InstrumentLineShapeTable = @import("Instrument.zig").InstrumentLineShapeTable;
@@ -17,8 +18,7 @@ pub const ObservationRegime = enum {
 };
 
 pub const ObservationModel = struct {
-    instrument: []const u8 = "generic",
-    response_provider: []const u8 = "",
+    instrument: InstrumentId = .generic,
     regime: ObservationRegime = .nadir,
     sampling: Instrument.SamplingMode = .native,
     noise_model: Instrument.NoiseModelKind = .none,
@@ -29,8 +29,8 @@ pub const ObservationModel = struct {
     builtin_line_shape: BuiltinLineShapeKind = .gaussian,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
-    solar_spectrum_source: Binding = .{},
-    weighted_reference_grid_source: Binding = .{},
+    solar_spectrum_source: Binding = .none,
+    weighted_reference_grid_source: Binding = .none,
     instrument_line_shape: InstrumentLineShape = .{},
     instrument_line_shape_table: InstrumentLineShapeTable = .{},
     operational_refspec_grid: OperationalReferenceGrid = .{},
@@ -46,9 +46,7 @@ pub const ObservationModel = struct {
     pub fn validate(self: *const ObservationModel) errors.Error!void {
         try self.solar_spectrum_source.validate();
         try self.weighted_reference_grid_source.validate();
-        if (self.instrument.len == 0) {
-            return errors.Error.MissingObservationInstrument;
-        }
+        try self.instrument.validate();
         if (!std.math.isFinite(self.multiplicative_offset) or self.multiplicative_offset <= 0.0) {
             return errors.Error.InvalidRequest;
         }
@@ -124,10 +122,13 @@ pub const ObservationModel = struct {
 
 test "observation model carries calibration and supporting-data bindings" {
     const model: ObservationModel = .{
-        .instrument = "tropomi",
-        .response_provider = "builtin.generic_response",
-        .solar_spectrum_source = .{ .kind = .bundle_default },
-        .weighted_reference_grid_source = .{ .kind = .ingest, .name = "refspec_demo.grid" },
+        .instrument = .tropomi,
+        .solar_spectrum_source = .bundle_default,
+        .weighted_reference_grid_source = .{ .ingest = .{
+            .full_name = "refspec_demo.grid",
+            .ingest_name = "refspec_demo",
+            .output_name = "grid",
+        } },
         .sampling = .operational,
         .noise_model = .shot_noise,
         .multiplicative_offset = 1.002,
@@ -142,7 +143,7 @@ test "observation model carries calibration and supporting-data bindings" {
 test "observation model carries explicit measured-channel wavelengths" {
     const measured_wavelengths = [_]f64{ 760.8, 761.02, 761.31 };
     const model: ObservationModel = .{
-        .instrument = "tropomi",
+        .instrument = .tropomi,
         .sampling = .measured_channels,
         .noise_model = .snr_from_input,
         .measured_wavelengths_nm = &measured_wavelengths,

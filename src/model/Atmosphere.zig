@@ -7,7 +7,7 @@ pub const Atmosphere = struct {
     sublayer_divisions: u8 = 3,
     has_clouds: bool = false,
     has_aerosols: bool = false,
-    profile_source: Binding = .{},
+    profile_source: Binding = .none,
     surface_pressure_hpa: f64 = 0.0,
 
     pub fn validate(self: Atmosphere) errors.Error!void {
@@ -33,7 +33,7 @@ pub const Atmosphere = struct {
 test "atmosphere validates profile source and positive surface pressure" {
     try (Atmosphere{
         .layer_count = 48,
-        .profile_source = .{ .kind = .asset, .name = "us_standard_profile" },
+        .profile_source = .{ .asset = .{ .name = "us_standard_profile" } },
         .surface_pressure_hpa = 1013.0,
     }).validate();
 

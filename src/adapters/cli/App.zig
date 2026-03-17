@@ -141,8 +141,8 @@ fn resolveCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout
             try stdout.writeAll("    products:\n");
             for (stage.products) |product| {
                 try stdout.print("      - name: {s}\n        kind: {s}\n", .{ product.name, @tagName(product.kind) });
-                if (product.observable.len != 0) {
-                    try stdout.print("        observable: {s}\n", .{product.observable});
+                if (product.observable) |observable| {
+                    try stdout.print("        observable: {s}\n", .{observable.label()});
                 }
             }
         }
@@ -168,8 +168,8 @@ fn resolveCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout
             try stdout.writeAll("    products:\n");
             for (stage.products) |product| {
                 try stdout.print("      - name: {s}\n        kind: {s}\n", .{ product.name, @tagName(product.kind) });
-                if (product.observable.len != 0) {
-                    try stdout.print("        observable: {s}\n", .{product.observable});
+                if (product.observable) |observable| {
+                    try stdout.print("        observable: {s}\n", .{observable.label()});
                 }
             }
         }

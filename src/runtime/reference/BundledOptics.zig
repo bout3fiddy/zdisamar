@@ -207,9 +207,9 @@ fn resolvedCollisionInducedAbsorptionTable(scene: *const Scene) ?*const Referenc
 
 fn hasExplicitSpectroscopyBindings(scene: *const Scene) bool {
     for (scene.absorbers.items) |absorber| {
-        if (absorber.spectroscopy.line_list.kind == .asset or
-            absorber.spectroscopy.strong_lines.kind == .asset or
-            absorber.spectroscopy.line_mixing.kind == .asset)
+        if (absorber.spectroscopy.line_list.kind() == .asset or
+            absorber.spectroscopy.strong_lines.kind() == .asset or
+            absorber.spectroscopy.line_mixing.kind() == .asset)
         {
             return true;
         }
@@ -219,7 +219,7 @@ fn hasExplicitSpectroscopyBindings(scene: *const Scene) bool {
 
 fn hasExplicitCiaBindings(scene: *const Scene) bool {
     for (scene.absorbers.items) |absorber| {
-        if (absorber.spectroscopy.cia_table.kind == .asset) return true;
+        if (absorber.spectroscopy.cia_table.kind() == .asset) return true;
     }
     return false;
 }
@@ -233,7 +233,7 @@ test "runtime bundled optics uses NO2 assets in the visible band" {
             .sample_count = 48,
         },
         .observation_model = .{
-            .instrument = "unit-test",
+            .instrument = .{ .custom = "unit-test" },
             .sampling = .native,
             .noise_model = .shot_noise,
         },
@@ -259,7 +259,7 @@ test "runtime bundled optics uses O2A sidecars and aerosol Mie tables when reque
             .sample_count = 96,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .sampling = .measured_channels,
             .noise_model = .shot_noise,
         },
@@ -332,20 +332,20 @@ test "runtime bundled optics honors resolved scene spectroscopy assets before ra
                 .{
                     .id = "o2",
                     .species = "o2",
-                    .profile_source = .{ .kind = .atmosphere },
+                    .profile_source = .atmosphere,
                     .spectroscopy = .{
                         .mode = .line_by_line,
-                        .line_list = .{ .kind = .asset, .name = "explicit_line_list" },
+                        .line_list = .{ .asset = .{ .name = "explicit_line_list" } },
                         .resolved_line_list = .{ .lines = lines },
                     },
                 },
                 .{
                     .id = "o2o2",
                     .species = "o2o2",
-                    .profile_source = .{ .kind = .atmosphere },
+                    .profile_source = .atmosphere,
                     .spectroscopy = .{
                         .mode = .cia,
-                        .cia_table = .{ .kind = .asset, .name = "explicit_cia" },
+                        .cia_table = .{ .asset = .{ .name = "explicit_cia" } },
                         .resolved_cia_table = .{
                             .scale_factor_cm5_per_molecule2 = 1.0,
                             .points = cia_points,
@@ -355,7 +355,7 @@ test "runtime bundled optics honors resolved scene spectroscopy assets before ra
             },
         },
         .observation_model = .{
-            .instrument = "unit-test",
+            .instrument = .{ .custom = "unit-test" },
             .sampling = .native,
             .noise_model = .none,
         },

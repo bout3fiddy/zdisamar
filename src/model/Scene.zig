@@ -113,7 +113,7 @@ test "scene validation rejects missing instrument and accepts valid scene" {
     var scene: Scene = .{ .id = "scene-ok", .spectral_grid = .{ .sample_count = 16 } };
     try scene.validate();
 
-    scene.observation_model.instrument = "";
+    scene.observation_model.instrument = .unset;
     try std.testing.expectError(errors.Error.MissingObservationInstrument, scene.validate());
 }
 
@@ -142,8 +142,8 @@ test "blueprint and inverse problem expose canonical layout and validation contr
             },
         },
         .measurements = .{
-            .product = "slant_column",
-            .observable = "slant_column",
+            .product_name = "slant_column",
+            .observable = .slant_column,
             .sample_count = 121,
         },
     }).validate();
@@ -154,7 +154,7 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
         .id = "scene-o2a",
         .atmosphere = .{
             .layer_count = 48,
-            .profile_source = .{ .kind = .asset, .name = "us_standard_profile" },
+            .profile_source = .{ .asset = .{ .name = "us_standard_profile" } },
             .surface_pressure_hpa = 1013.0,
         },
         .geometry = .{
@@ -179,10 +179,10 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
                 .{
                     .id = "o2",
                     .species = "o2",
-                    .profile_source = .{ .kind = .atmosphere },
+                    .profile_source = .atmosphere,
                     .spectroscopy = .{
                         .mode = .line_by_line,
-                        .line_list = .{ .kind = .asset, .name = "o2_hitran" },
+                        .line_list = .{ .asset = .{ .name = "o2_hitran" } },
                     },
                 },
             },
@@ -192,9 +192,13 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
             .albedo = 0.028,
         },
         .observation_model = .{
-            .instrument = "tropomi",
-            .solar_spectrum_source = .{ .kind = .bundle_default },
-            .weighted_reference_grid_source = .{ .kind = .ingest, .name = "refspec_demo.operational_refspec_grid" },
+            .instrument = .tropomi,
+            .solar_spectrum_source = .bundle_default,
+            .weighted_reference_grid_source = .{ .ingest = .{
+                .full_name = "refspec_demo.operational_refspec_grid",
+                .ingest_name = "refspec_demo",
+                .output_name = "operational_refspec_grid",
+            } },
         },
     }).validate();
 }

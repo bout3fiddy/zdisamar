@@ -129,7 +129,7 @@ fn averageSpacingNm(wavelengths_nm: []const f64) f64 {
 test "s5p operational noise reuses ingested sigma semantics instead of a toy scale factor" {
     const scene: Scene = .{
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .noise_model = .s5p_operational,
             .measured_wavelengths_nm = &.{ 760.8, 761.0 },
             .reference_radiance = &.{ 10.0, 20.0 },
@@ -151,7 +151,7 @@ test "s5p operational noise uses the operational reference grid as the reference
             .sample_count = 5,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .noise_model = .s5p_operational,
             .reference_radiance = &.{ 10.0, 10.0, 10.0, 10.0, 10.0 },
             .ingested_noise_sigma = &.{ 0.02, 0.02, 0.02, 0.02, 0.02 },

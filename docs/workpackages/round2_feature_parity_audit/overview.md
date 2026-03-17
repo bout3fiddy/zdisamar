@@ -87,7 +87,7 @@ The source audit already established that the current Zig tree is strongest in t
 | [WP-03](./wp-03-observation-instrument-noise-ingest.md) | Done | 2026-03-16 | `wp-03-observation-instrument-noise-ingest.md` Proof / validation | Start `WP-04` and replace the surrogate OE lane with a real spectral-fit optimal-estimation implementation |
 | [WP-04](./wp-04-optimal-estimation-parity.md) | Done | 2026-03-16 | `wp-04-optimal-estimation-parity.md` Proof / validation | Start `WP-05` and replace surrogate DOAS and DISMAS fitting with real spectral-fit implementations on the shared OE-ready stack |
 | [WP-05](./wp-05-doas-dismas-parity.md) | Todo | 2026-03-16 | Planned validation in WP doc | Implement real DOAS and DISMAS spectral fitting after OE is stable |
-| [WP-06](./wp-06-core-runtime-type-hardening.md) | Todo | 2026-03-16 | Planned validation in WP doc | Split lifecycle types, tighten ownership, and trim unstable public/core surfaces |
+| [WP-06](./wp-06-core-runtime-type-hardening.md) | Completed | 2026-03-17 | `zig build test-unit --summary all`, `zig build test-integration --summary all`, `zig build test-validation --summary all` | Completed after request-side measurement binding hardening, typed requested-product descriptors, typed retrieval observables, and structured binding refs all passed subagent acceptance |
 | [WP-07](./wp-07-plugin-adapter-and-hygiene.md) | Todo | 2026-03-16 | Planned validation in WP doc | Reduce plugin/runtime overreach, split oversized adapters, and clean runtime-facing style hazards |
 
 ## Priority Ladder

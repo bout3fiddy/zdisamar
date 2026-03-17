@@ -505,7 +505,7 @@ fn irradianceAtWavelength(
 ) f64 {
     const source_irradiance = if (scene.observation_model.operational_solar_spectrum.enabled())
         scene.observation_model.operational_solar_spectrum.interpolateIrradiance(wavelength_nm)
-    else if (scene.observation_model.solar_spectrum_source.kind == .bundle_default)
+    else if (scene.observation_model.solar_spectrum_source.kind() == .bundle_default)
         bundledSolarIrradiance(wavelength_nm) orelse defaultSolarContinuumIrradiance(wavelength_nm)
     else
         defaultSolarContinuumIrradiance(wavelength_nm);
@@ -736,7 +736,7 @@ test "measurement-space simulation composes transport, calibration, convolution,
             .sample_count = 16,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
             .sampling = .operational,
             .noise_model = .shot_noise,
@@ -772,7 +772,7 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
             .sample_count = 16,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
             .sampling = .operational,
             .noise_model = .shot_noise,
@@ -839,7 +839,7 @@ test "measurement-space summary workspace supports routes without jacobians or n
             .sample_count = 10,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
             .sampling = .operational,
             .noise_model = .none,
@@ -905,7 +905,7 @@ test "measurement-space product materializes spectral vectors and physical field
             .sample_count = 12,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
             .sampling = .operational,
             .noise_model = .shot_noise,
@@ -927,6 +927,7 @@ test "measurement-space product materializes spectral vectors and physical field
 
     try std.testing.expectEqual(@as(u32, 12), product.summary.sample_count);
     try std.testing.expectEqual(@as(usize, 12), product.wavelengths.len);
+    try std.testing.expectEqual(product.wavelengths.len, product.radiance.len);
     try std.testing.expect(product.radiance[0] > 0.0);
     try std.testing.expect(product.irradiance[0] > 0.0);
     try std.testing.expect(product.reflectance[0] > 0.0);
@@ -935,6 +936,8 @@ test "measurement-space product materializes spectral vectors and physical field
     try std.testing.expectEqual(prepared.total_optical_depth, product.total_optical_depth);
     try std.testing.expectEqual(prepared.effective_air_mass_factor, product.effective_air_mass_factor);
     try std.testing.expectEqual(prepared.cia_optical_depth, product.cia_optical_depth);
+    try std.testing.expect(product.effective_temperature_k > 0.0);
+    try std.testing.expect(product.effective_pressure_hpa > 0.0);
 }
 
 test "measurement-space uses external high-resolution solar spectra when operational metadata provides one" {
@@ -947,7 +950,7 @@ test "measurement-space uses external high-resolution solar spectra when operati
             .sample_count = 3,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .operational,
             .noise_model = .s5p_operational,
@@ -988,11 +991,11 @@ test "measurement-space uses bundled O2A solar spectra when bundle_default is re
             .sample_count = 11,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .native,
             .noise_model = .shot_noise,
-            .solar_spectrum_source = .{ .kind = .bundle_default },
+            .solar_spectrum_source = .bundle_default,
         },
         .atmosphere = .{
             .layer_count = 12,
@@ -1025,7 +1028,7 @@ test "measurement-space operational integration uses high-resolution instrument 
             .sample_count = 12,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
             .sampling = .native,
             .noise_model = .shot_noise,
@@ -1038,7 +1041,7 @@ test "measurement-space operational integration uses high-resolution instrument 
         .id = "measurement-operational",
         .spectral_grid = plain_scene.spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .measured_channels,
             .noise_model = .snr_from_input,
@@ -1079,7 +1082,7 @@ test "measurement-space honors explicit measured-channel wavelengths from ingest
             .sample_count = 3,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .measured_channels,
             .noise_model = .snr_from_input,
@@ -1117,7 +1120,7 @@ test "measurement-space applies radiance calibration after instrument integratio
             .sample_count = 12,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .native,
             .noise_model = .shot_noise,
@@ -1133,7 +1136,7 @@ test "measurement-space applies radiance calibration after instrument integratio
         .id = "measurement-calibration-adjusted",
         .spectral_grid = base_scene.spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .native,
             .noise_model = .shot_noise,
@@ -1174,7 +1177,7 @@ test "measurement-space operational integration honors explicit isrf table weigh
             .sample_count = 12,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .measured_channels,
             .noise_model = .snr_from_input,
@@ -1192,7 +1195,7 @@ test "measurement-space operational integration honors explicit isrf table weigh
         .id = "measurement-operational-table",
         .spectral_grid = gaussian_scene.spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .measured_channels,
             .noise_model = .snr_from_input,
@@ -1238,7 +1241,7 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
             .sample_count = 3,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .measured_channels,
             .noise_model = .snr_from_input,
@@ -1275,7 +1278,7 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
         .id = "measurement-operational-indexed-table",
         .spectral_grid = global_shape_scene.spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
             .sampling = .measured_channels,
             .noise_model = .snr_from_input,

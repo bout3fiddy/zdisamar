@@ -96,3 +96,21 @@ pub fn computeWeightedOperationalBandMean(
     }
     return sigma_sum / @max(weight_sum, 1e-12);
 }
+
+pub fn computeWeightedWindowMean(values: []const f64, weights: []const f64) f64 {
+    if (values.len == 0 or values.len != weights.len) return 0.0;
+
+    var numerator: f64 = 0.0;
+    var denominator: f64 = 0.0;
+    for (values, weights) |value, weight| {
+        numerator += value * weight;
+        denominator += weight;
+    }
+    return numerator / @max(denominator, 1.0e-12);
+}
+
+test "band means support generic weighted fit windows" {
+    const values = [_]f64{ 1.0, 3.0, 5.0 };
+    const weights = [_]f64{ 1.0, 2.0, 1.0 };
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), computeWeightedWindowMean(&values, &weights), 1.0e-12);
+}

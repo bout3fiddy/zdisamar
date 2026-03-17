@@ -28,7 +28,6 @@ pub const Surface = struct {
     };
 
     kind: Kind = .lambertian,
-    provider: []const u8 = "",
     albedo: f64 = 0.0,
     parameters: []const Parameter = &[_]Parameter{},
 

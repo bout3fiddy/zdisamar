@@ -107,7 +107,6 @@ pub const Parameter = struct {
 };
 
 pub const StateVector = struct {
-    parameter_names: []const []const u8 = &[_][]const u8{},
     value_count: u32 = 0,
     parameters: []const Parameter = &[_]Parameter{},
 
@@ -117,11 +116,6 @@ pub const StateVector = struct {
     }
 
     pub fn parameterIndex(self: StateVector, name: []const u8) ?usize {
-        if (self.parameter_names.len != 0) {
-            for (self.parameter_names, 0..) |parameter_name, index| {
-                if (std.mem.eql(u8, parameter_name, name)) return index;
-            }
-        }
         for (self.parameters, 0..) |parameter, index| {
             if (std.mem.eql(u8, parameter.name, name)) return index;
         }
@@ -131,23 +125,11 @@ pub const StateVector = struct {
     pub fn validate(self: StateVector) errors.Error!void {
         if (self.parameters.len == 0) {
             if (self.value_count == 0) return errors.Error.InvalidRequest;
-            if (self.parameter_names.len != 0 and self.parameter_names.len != self.value_count) {
-                return errors.Error.InvalidRequest;
-            }
             return;
         }
 
-        if (self.parameter_names.len != 0 and self.parameter_names.len != self.parameters.len) {
-            return errors.Error.InvalidRequest;
-        }
-
-        for (self.parameters, 0..) |parameter, index| {
+        for (self.parameters) |parameter| {
             try parameter.validate();
-            if (self.parameter_names.len != 0 and
-                (!std.mem.eql(u8, self.parameter_names[index], parameter.name)))
-            {
-                return errors.Error.InvalidRequest;
-            }
         }
 
         if (self.value_count != 0 and self.value_count != self.parameters.len) {
@@ -163,7 +145,6 @@ pub const StateVector = struct {
 
 test "state vector accepts canonical parameter descriptors" {
     const vector: StateVector = .{
-        .parameter_names = &[_][]const u8{ "surface_albedo", "aerosol_tau" },
         .parameters = &[_]Parameter{
             .{
                 .name = "surface_albedo",

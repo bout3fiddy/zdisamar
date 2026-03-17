@@ -2,7 +2,7 @@ const std = @import("std");
 const SceneModel = @import("../../model/Scene.zig");
 const layout = @import("../../model/layout/root.zig");
 
-pub const PreparedPlanCache = struct {
+pub const PreparedLayout = struct {
     layout_requirements: SceneModel.LayoutRequirements = .{},
     spectral_axis: ?layout.Axes.SpectralAxis = null,
     layer_axis: ?layout.Axes.LayerAxis = null,
@@ -13,7 +13,7 @@ pub const PreparedPlanCache = struct {
     pub fn initFromBlueprint(
         blueprint: SceneModel.Blueprint,
         dataset_hash_count: u32,
-    ) !PreparedPlanCache {
+    ) !PreparedLayout {
         const layout_requirements = blueprint.layoutRequirements();
 
         return .{
@@ -40,8 +40,8 @@ pub const PreparedPlanCache = struct {
     }
 };
 
-test "prepared cache derives reusable layout hints from the scene blueprint" {
-    const cache = try PreparedPlanCache.initFromBlueprint(.{
+test "prepared layout derives reusable layout hints from the scene blueprint" {
+    const cache = try PreparedLayout.initFromBlueprint(.{
         .spectral_grid = .{
             .start_nm = 405.0,
             .end_nm = 465.0,
@@ -61,7 +61,7 @@ test "prepared cache derives reusable layout hints from the scene blueprint" {
     try std.testing.expect(cache.state_axis != null);
 }
 
-test "cache package includes dataset, lut, and plan cache implementations" {
+test "runtime cache package includes layout and cache implementations" {
     _ = @import("DatasetCache.zig");
     _ = @import("LUTCache.zig");
     _ = @import("PlanCache.zig");

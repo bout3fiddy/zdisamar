@@ -226,7 +226,7 @@ test "high-resolution integration retains the full symmetric sampling span" {
             .sample_count = 1301,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .sampling = .native,
             .noise_model = .shot_noise,
             .instrument_line_fwhm_nm = 0.54,
@@ -253,7 +253,7 @@ test "flat-top line shape spreads weight more broadly than gaussian for the same
             .sample_count = 1301,
         },
         .observation_model = .{
-            .instrument = "compare",
+            .instrument = .{ .custom = "compare" },
             .sampling = .native,
             .noise_model = .none,
             .instrument_line_fwhm_nm = 0.38,
@@ -265,7 +265,7 @@ test "flat-top line shape spreads weight more broadly than gaussian for the same
     const flat_top_scene: Scene = .{
         .spectral_grid = gaussian_scene.spectral_grid,
         .observation_model = .{
-            .instrument = "compare",
+            .instrument = .{ .custom = "compare" },
             .sampling = .native,
             .noise_model = .none,
             .instrument_line_fwhm_nm = 0.38,
@@ -293,7 +293,7 @@ test "measured-channel sampling bypasses legacy post-convolution even without ex
             .sample_count = 3,
         },
         .observation_model = .{
-            .instrument = "measured",
+            .instrument = .{ .custom = "measured" },
             .sampling = .measured_channels,
             .noise_model = .snr_from_input,
             .measured_wavelengths_nm = &.{ 760.81, 761.03, 761.19 },

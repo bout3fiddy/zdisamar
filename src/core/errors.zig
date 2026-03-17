@@ -11,6 +11,10 @@ pub const PreparationError = TemplateError || error{
     UnsupportedDerivativeMode,
     UnsupportedExecutionMode,
     UnsupportedCapability,
+    MissingNativeSource,
+    MissingPrepareHook,
+    PluginEntryIncompatibleAbi,
+    PluginPrepareRejected,
     PluginPrepareFailed,
 };
 
@@ -21,6 +25,8 @@ pub const ExecutionError = error{
     MissingObservationInstrument,
     WorkspacePlanMismatch,
     DerivativeModeMismatch,
+    MissingExecuteHook,
+    PluginEntryIncompatibleAbi,
     PluginExecutionFailed,
 };
 

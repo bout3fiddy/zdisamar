@@ -3,6 +3,7 @@ const SolverMode = @import("../../core/Plan.zig").SolverMode;
 const GeometryModel = @import("../../model/Geometry.zig").Model;
 const SpectroscopyMode = @import("../../model/Absorber.zig").SpectroscopyMode;
 const Instrument = @import("../../model/Instrument.zig").Instrument;
+const InstrumentId = @import("../../model/Instrument.zig").Id;
 const ObservationRegime = @import("../../model/ObservationModel.zig").ObservationRegime;
 const SurfaceKind = @import("../../model/Surface.zig").Surface.Kind;
 const DerivativeMode = @import("../../model/InverseProblem.zig").DerivativeMode;
@@ -145,8 +146,8 @@ pub fn normalizeSurfaceProvider(explicit_provider: []const u8, model: SurfaceKin
     };
 }
 
-pub fn normalizeInstrumentProvider(explicit_provider: []const u8, instrument_name: []const u8) []const u8 {
+pub fn normalizeInstrumentProvider(explicit_provider: []const u8, instrument_id: InstrumentId) []const u8 {
     if (explicit_provider.len != 0) return explicit_provider;
-    _ = instrument_name;
+    _ = instrument_id;
     return "builtin.generic_response";
 }

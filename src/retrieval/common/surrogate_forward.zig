@@ -12,11 +12,19 @@ const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
 const MeasurementSpaceSummary = MeasurementSpace.MeasurementSpaceSummary;
 const Allocator = std.mem.Allocator;
 
+pub const UsageClass = enum {
+    test_only,
+};
+
+pub const usage_class: UsageClass = .test_only;
+
 pub const FeatureVector = struct {
     values: [3]f64 = .{ 0.0, 0.0, 0.0 },
     len: usize,
 };
 
+/// Test-only evaluator used by unit and lightweight integration coverage.
+/// Engine/provider execution uses the real evaluator supplied via `solveWithEvaluator`.
 pub fn testEvaluator() forward_model.Evaluator {
     return .{
         .context = undefined,
@@ -366,7 +374,7 @@ test "surrogate forward module supports canonical multi-parameter state applicat
             .id = "surrogate-forward",
             .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 32 },
             .surface = .{ .albedo = 0.08 },
-            .observation_model = .{ .instrument = "synthetic", .regime = .nadir },
+            .observation_model = .{ .instrument = .synthetic, .regime = .nadir },
         },
         .inverse_problem = .{
             .id = "surrogate-forward",
@@ -378,17 +386,17 @@ test "surrogate forward module supports canonical multi-parameter state applicat
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 32,
-                .source = .{ .kind = .stage_product, .name = "truth_radiance" },
+                .source = .{ .stage_product = .{ .name = "truth_radiance" } },
             },
         },
         .derivative_mode = .semi_analytical,
         .jacobians_requested = true,
         .observed_measurement = .{
             .source_name = "truth_radiance",
-            .observable = "radiance",
+            .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 32,
             .summary = .{
@@ -411,4 +419,8 @@ test "surrogate forward module supports canonical multi-parameter state applicat
     const scene = try state_access.sceneForStateWithLayout(problem, anchored, layout);
     try std.testing.expect(scene.aerosol.enabled);
     try std.testing.expect(scene.observation_model.wavelength_shift_nm != 0.0);
+}
+
+test "surrogate forward evaluator is explicitly quarantined to test-only usage" {
+    try std.testing.expectEqual(UsageClass.test_only, usage_class);
 }

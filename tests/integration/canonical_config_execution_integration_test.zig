@@ -1,5 +1,6 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
+const internal = @import("zdisamar_internal");
 
 fn makeOutputRoot(prefix: []const u8, buffer: []u8) ![]const u8 {
     return std.fmt.bufPrint(
@@ -56,12 +57,12 @@ fn executeResolvedSource(
 
 fn simulateSceneProduct(
     allocator: std.mem.Allocator,
-    plan: *const zdisamar.Plan,
+    plan: *const zdisamar.PreparedPlan,
     scene: zdisamar.Scene,
-) !zdisamar.transport.measurement_space.MeasurementSpaceProduct {
+) !internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
     var prepared_optics = try plan.providers.optics.prepareForScene(allocator, &scene);
     defer prepared_optics.deinit(allocator);
-    return zdisamar.transport.measurement_space.simulateProduct(
+    return internal.kernels.transport.measurement_space.simulateProduct(
         allocator,
         &scene,
         plan.transport_route,
@@ -517,7 +518,7 @@ test "canonical execution binds ingest-backed radiance observations into measure
     }
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, execution.outcome.stage_outcomes[0].result.status);
-    try std.testing.expectEqual(zdisamar.DataBindingKind.ingest, execution.program.stages[0].stage.inverse.?.measurements.source.kind);
+    try std.testing.expectEqual(zdisamar.DataBindingKind.ingest, execution.program.stages[0].stage.inverse.?.measurements.source.kind());
     try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval != null);
     try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval.?.jacobian != null);
     try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval.?.averaging_kernel != null);

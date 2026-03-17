@@ -1,5 +1,9 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
+const internal = @import("zdisamar_internal");
+const ReferenceData = internal.reference_data;
+const OpticsPrepare = internal.kernels.optics.prepare;
+const MeasurementSpace = internal.kernels.transport.measurement_space;
 
 const ReferenceSample = struct {
     wavelength_nm: f64,
@@ -7,10 +11,10 @@ const ReferenceSample = struct {
     reflectance: f64,
 };
 
-fn zeroContinuumTable(allocator: std.mem.Allocator, start_nm: f64, end_nm: f64) !zdisamar.reference_data.CrossSectionTable {
+fn zeroContinuumTable(allocator: std.mem.Allocator, start_nm: f64, end_nm: f64) !ReferenceData.CrossSectionTable {
     const midpoint_nm = (start_nm + end_nm) * 0.5;
     return .{
-        .points = try allocator.dupe(zdisamar.reference_data.CrossSectionPoint, &.{
+        .points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
             .{ .wavelength_nm = start_nm, .sigma_cm2_per_molecule = 0.0 },
             .{ .wavelength_nm = midpoint_nm, .sigma_cm2_per_molecule = 0.0 },
             .{ .wavelength_nm = end_nm, .sigma_cm2_per_molecule = 0.0 },
@@ -19,7 +23,7 @@ fn zeroContinuumTable(allocator: std.mem.Allocator, start_nm: f64, end_nm: f64) 
 }
 
 fn meanOpticalDepthInRange(
-    prepared: *const zdisamar.optics.prepare.PreparedOpticalState,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
     start_nm: f64,
     end_nm: f64,
     step_nm: f64,
@@ -260,7 +264,6 @@ test "o2a forward reflectance tracks vendor reference morphology" {
     var scene: zdisamar.Scene = .{
         .id = "o2a-forward-validation",
         .surface = .{
-            .provider = "builtin.lambertian_surface",
             .albedo = 0.20,
         },
         .aerosol = .{
@@ -290,7 +293,7 @@ test "o2a forward reflectance tracks vendor reference morphology" {
             .sample_count = 701,
         },
         .observation_model = .{
-            .instrument = "disamar-o2a-compare",
+            .instrument = .{ .custom = "disamar-o2a-compare" },
             .regime = .nadir,
             .sampling = .native,
             .noise_model = .none,
@@ -305,7 +308,7 @@ test "o2a forward reflectance tracks vendor reference morphology" {
         .irradiance = reference_irradiance,
     };
 
-    var prepared = try zdisamar.optics.prepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
+    var prepared = try OpticsPrepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
         std.testing.allocator,
         &scene,
         &profile,
@@ -342,7 +345,7 @@ test "o2a forward reflectance tracks vendor reference morphology" {
     });
     defer plan.deinit();
 
-    var product = try zdisamar.transport.measurement_space.simulateProduct(
+    var product = try MeasurementSpace.simulateProduct(
         std.testing.allocator,
         &scene,
         plan.transport_route,

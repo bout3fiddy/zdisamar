@@ -14,11 +14,11 @@ pub const SpectroscopyMode = enum {
 pub const Spectroscopy = struct {
     mode: SpectroscopyMode = .none,
     provider: []const u8 = "",
-    line_list: Binding = .{},
-    line_mixing: Binding = .{},
-    strong_lines: Binding = .{},
-    cia_table: Binding = .{},
-    operational_lut: Binding = .{},
+    line_list: Binding = .none,
+    line_mixing: Binding = .none,
+    strong_lines: Binding = .none,
+    cia_table: Binding = .none,
+    operational_lut: Binding = .none,
     resolved_line_list: ?ReferenceData.SpectroscopyLineList = null,
     resolved_cia_table: ?ReferenceData.CollisionInducedAbsorptionTable = null,
 
@@ -49,16 +49,31 @@ pub const Spectroscopy = struct {
         const provider = if (self.provider.len != 0) try allocator.dupe(u8, self.provider) else "";
         errdefer if (provider.len != 0) allocator.free(provider);
 
-        const line_list = try cloneBinding(allocator, self.line_list);
-        errdefer freeBindingName(allocator, line_list);
-        const line_mixing = try cloneBinding(allocator, self.line_mixing);
-        errdefer freeBindingName(allocator, line_mixing);
-        const strong_lines = try cloneBinding(allocator, self.strong_lines);
-        errdefer freeBindingName(allocator, strong_lines);
-        const cia_table = try cloneBinding(allocator, self.cia_table);
-        errdefer freeBindingName(allocator, cia_table);
-        const operational_lut = try cloneBinding(allocator, self.operational_lut);
-        errdefer freeBindingName(allocator, operational_lut);
+        const line_list = try self.line_list.clone(allocator);
+        errdefer {
+            var owned = line_list;
+            owned.deinitOwned(allocator);
+        }
+        const line_mixing = try self.line_mixing.clone(allocator);
+        errdefer {
+            var owned = line_mixing;
+            owned.deinitOwned(allocator);
+        }
+        const strong_lines = try self.strong_lines.clone(allocator);
+        errdefer {
+            var owned = strong_lines;
+            owned.deinitOwned(allocator);
+        }
+        const cia_table = try self.cia_table.clone(allocator);
+        errdefer {
+            var owned = cia_table;
+            owned.deinitOwned(allocator);
+        }
+        const operational_lut = try self.operational_lut.clone(allocator);
+        errdefer {
+            var owned = operational_lut;
+            owned.deinitOwned(allocator);
+        }
 
         const resolved_line_list = if (self.resolved_line_list) |line_list_data|
             try line_list_data.clone(allocator)
@@ -93,11 +108,11 @@ pub const Spectroscopy = struct {
 
     pub fn deinitOwned(self: *Spectroscopy, allocator: Allocator) void {
         if (self.provider.len != 0) allocator.free(self.provider);
-        freeBindingName(allocator, self.line_list);
-        freeBindingName(allocator, self.line_mixing);
-        freeBindingName(allocator, self.strong_lines);
-        freeBindingName(allocator, self.cia_table);
-        freeBindingName(allocator, self.operational_lut);
+        self.line_list.deinitOwned(allocator);
+        self.line_mixing.deinitOwned(allocator);
+        self.strong_lines.deinitOwned(allocator);
+        self.cia_table.deinitOwned(allocator);
+        self.operational_lut.deinitOwned(allocator);
         if (self.resolved_line_list) |*line_list_data| {
             var owned = line_list_data.*;
             owned.deinit(allocator);
@@ -113,7 +128,7 @@ pub const Spectroscopy = struct {
 pub const Absorber = struct {
     id: []const u8 = "",
     species: []const u8 = "",
-    profile_source: Binding = .{},
+    profile_source: Binding = .none,
     spectroscopy: Spectroscopy = .{},
 
     pub fn validate(self: Absorber) errors.Error!void {
@@ -128,7 +143,7 @@ pub const Absorber = struct {
         return .{
             .id = try allocator.dupe(u8, self.id),
             .species = try allocator.dupe(u8, self.species),
-            .profile_source = try cloneBinding(allocator, self.profile_source),
+            .profile_source = try self.profile_source.clone(allocator),
             .spectroscopy = try self.spectroscopy.clone(allocator),
         };
     }
@@ -136,7 +151,7 @@ pub const Absorber = struct {
     pub fn deinitOwned(self: *Absorber, allocator: Allocator) void {
         allocator.free(self.id);
         allocator.free(self.species);
-        freeBindingName(allocator, self.profile_source);
+        self.profile_source.deinitOwned(allocator);
         self.spectroscopy.deinitOwned(allocator);
         self.* = undefined;
     }
@@ -177,37 +192,26 @@ pub const AbsorberSet = struct {
     }
 };
 
-fn cloneBinding(allocator: Allocator, binding: Binding) !Binding {
-    return .{
-        .kind = binding.kind,
-        .name = if (binding.name.len != 0) try allocator.dupe(u8, binding.name) else "",
-    };
-}
-
-fn freeBindingName(allocator: Allocator, binding: Binding) void {
-    if (binding.name.len != 0) allocator.free(binding.name);
-}
-
 test "absorber set validates explicit spectroscopy bindings" {
     const valid: AbsorberSet = .{
         .items = &[_]Absorber{
             .{
                 .id = "o2",
                 .species = "o2",
-                .profile_source = .{ .kind = .atmosphere },
+                .profile_source = .atmosphere,
                 .spectroscopy = .{
                     .mode = .line_by_line,
                     .provider = "builtin.cross_sections",
-                    .line_list = .{ .kind = .asset, .name = "o2_hitran" },
+                    .line_list = .{ .asset = .{ .name = "o2_hitran" } },
                 },
             },
             .{
                 .id = "o2o2",
                 .species = "o2o2",
-                .profile_source = .{ .kind = .atmosphere },
+                .profile_source = .atmosphere,
                 .spectroscopy = .{
                     .mode = .cia,
-                    .cia_table = .{ .kind = .asset, .name = "o2o2_cia" },
+                    .cia_table = .{ .asset = .{ .name = "o2o2_cia" } },
                 },
             },
         },
@@ -223,7 +227,7 @@ test "absorber set validates explicit spectroscopy bindings" {
                     .species = "o2",
                     .spectroscopy = .{
                         .mode = .none,
-                        .line_list = .{ .kind = .asset, .name = "unexpected" },
+                        .line_list = .{ .asset = .{ .name = "unexpected" } },
                     },
                 },
             },

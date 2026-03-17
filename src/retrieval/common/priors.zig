@@ -74,7 +74,7 @@ test "prior assembly builds correlated covariance and inverse" {
         .scene = .{
             .id = "scene-priors",
             .spectral_grid = .{ .sample_count = 4 },
-            .observation_model = .{ .instrument = "synthetic" },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-priors",
@@ -94,8 +94,8 @@ test "prior assembly builds correlated covariance and inverse" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 4,
             },
             .covariance_blocks = &[_]@import("../../model/Scene.zig").CovarianceBlock{

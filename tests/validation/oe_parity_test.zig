@@ -1,13 +1,14 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const retrieval = @import("retrieval");
+const internal = @import("zdisamar_internal");
+const retrieval = @import("zdisamar_internal").retrieval;
 
-const MeasurementSpace = zdisamar.transport.measurement_space;
+const MeasurementSpace = internal.kernels.transport.measurement_space;
 const StateParameter = zdisamar.StateParameter;
 
 const RealEvaluatorContext = struct {
     allocator: std.mem.Allocator,
-    plan: *const zdisamar.Plan,
+    plan: *const zdisamar.PreparedPlan,
 };
 
 const OeReferenceAnchor = struct {
@@ -112,7 +113,7 @@ fn realEvaluateProduct(
 
 fn simulateSceneProduct(
     allocator: std.mem.Allocator,
-    plan: *const zdisamar.Plan,
+    plan: *const zdisamar.PreparedPlan,
     scene: zdisamar.Scene,
 ) !MeasurementSpace.MeasurementSpaceProduct {
     var prepared_optics = try plan.providers.optics.prepareForScene(allocator, &scene);
@@ -286,7 +287,7 @@ test "oe reference scenario matches the golden spectral-fit anchor" {
         .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 48 },
         .surface = .{ .albedo = 0.16 },
         .aerosol = .{ .enabled = true, .optical_depth = 0.10, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-        .observation_model = .{ .instrument = "synthetic", .noise_model = .shot_noise, .wavelength_shift_nm = 0.012 },
+        .observation_model = .{ .instrument = .synthetic, .noise_model = .shot_noise, .wavelength_shift_nm = 0.012 },
     });
     defer observed_product.deinit(std.testing.allocator);
 
@@ -296,7 +297,7 @@ test "oe reference scenario matches the golden spectral-fit anchor" {
             .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 48 },
             .surface = .{ .albedo = 0.08 },
             .aerosol = .{ .enabled = true, .optical_depth = 0.05, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-            .observation_model = .{ .instrument = "synthetic", .noise_model = .shot_noise },
+            .observation_model = .{ .instrument = .synthetic, .noise_model = .shot_noise },
         },
         .inverse_problem = .{
             .id = "inverse-retrieval-oe-anchor",
@@ -308,10 +309,10 @@ test "oe reference scenario matches the golden spectral-fit anchor" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 48,
-                .source = .{ .kind = .external_observation, .name = "truth_radiance" },
+                .source = .{ .external_observation = .{ .name = "truth_radiance" } },
                 .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
             },
         },
@@ -319,10 +320,10 @@ test "oe reference scenario matches the golden spectral-fit anchor" {
         .jacobians_requested = true,
         .observed_measurement = .{
             .source_name = "truth_radiance",
-            .observable = "radiance",
+            .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 48,
-            .product = &observed_product,
+            .product = .init(&observed_product),
         },
     };
 

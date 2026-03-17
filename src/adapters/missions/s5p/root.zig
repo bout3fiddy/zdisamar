@@ -5,6 +5,7 @@ const Scene = @import("../../../model/Scene.zig").Scene;
 const SpectralGrid = @import("../../../model/Scene.zig").SpectralGrid;
 const DerivativeMode = @import("../../../model/Scene.zig").DerivativeMode;
 const Instrument = @import("../../../model/Instrument.zig").Instrument;
+const InstrumentId = @import("../../../model/Instrument.zig").Id;
 const Measurement = @import("../../../model/Measurement.zig").Measurement;
 const MeasurementSpaceProduct = @import("../../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
 const ExportFormat = @import("../../exporters/format.zig").ExportFormat;
@@ -97,7 +98,7 @@ pub fn build(options: BuildOptions) MissionRun {
         },
         .spectral_grid = spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .sampling = .native,
             .noise_model = .shot_noise,
         },
@@ -105,7 +106,9 @@ pub fn build(options: BuildOptions) MissionRun {
 
     var request = Request.init(scene);
     request.expected_derivative_mode = options.derivative_mode;
-    request.requested_products = &[_][]const u8{requested_product};
+    request.requested_products = &[_]Request.RequestedProduct{
+        .named(requested_product, .result, .slant_column),
+    };
 
     return .{
         .plan_template = .{
@@ -192,7 +195,7 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
         else
             .{},
         .observation_model = .{
-            .instrument = options.instrument,
+            .instrument = InstrumentId.parse(options.instrument),
             .sampling = options.sampling,
             .noise_model = options.noise_model,
             .wavelength_shift_nm = metadata.wavelength_shift_nm orelse 0.0,
@@ -220,7 +223,9 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
 
     var request = Request.init(scene);
     request.expected_derivative_mode = options.derivative_mode;
-    request.requested_products = &[_][]const u8{requested_product};
+    request.requested_products = &[_]Request.RequestedProduct{
+        .named(requested_product, .result, .slant_column),
+    };
 
     const observed_measurement_product = try buildObservedMeasurementProduct(
         allocator,
@@ -255,9 +260,8 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
 
     if (mission_run.observed_measurement_product) |product| {
         mission_run.request.measurement_binding = .{
-            .source_name = "s5p_operational_observation",
-            .observable = "radiance",
-            .product = product,
+            .source = .{ .external_observation = .{ .name = "s5p_operational_observation" } },
+            .borrowed_product = .init(product),
         };
     }
 
@@ -363,8 +367,8 @@ test "s5p mission adapter builds typed plan, request, and export inputs" {
 
     try std.testing.expectEqualStrings("s5p-no2", mission_run.plan_template.scene_blueprint.id);
     try std.testing.expectEqual(DerivativeMode.semi_analytical, mission_run.plan_template.scene_blueprint.derivative_mode);
-    try std.testing.expectEqualStrings("tropomi", mission_run.request.scene.observation_model.instrument);
-    try std.testing.expectEqualStrings("slant_column.no2", mission_run.request.requested_products[0]);
+    try std.testing.expectEqual(InstrumentId.tropomi, mission_run.request.scene.observation_model.instrument);
+    try std.testing.expectEqualStrings("slant_column.no2", mission_run.request.requested_products[0].name);
     try std.testing.expectEqual(ExportFormat.netcdf_cf, mission_run.export_request.format);
 }
 

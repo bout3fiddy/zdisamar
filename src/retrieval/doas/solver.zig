@@ -1,11 +1,20 @@
 const std = @import("std");
 const common = @import("../common/contracts.zig");
 const forward_model = @import("../common/forward_model.zig");
-const state_access = @import("../common/state_access.zig");
+const spectral_fit = @import("../common/spectral_fit.zig");
 const surrogate_forward = @import("../common/surrogate_forward.zig");
 const Allocator = std.mem.Allocator;
 
 pub fn solve(allocator: Allocator, problem: common.RetrievalProblem) common.Error!common.SolverOutcome {
+    _ = allocator;
+    _ = problem;
+    return common.Error.InvalidRequest;
+}
+
+pub fn solveWithTestEvaluator(
+    allocator: Allocator,
+    problem: common.RetrievalProblem,
+) common.Error!common.SolverOutcome {
     return solveWithEvaluator(allocator, problem, surrogate_forward.testEvaluator());
 }
 
@@ -14,99 +23,60 @@ pub fn solveWithEvaluator(
     problem: common.RetrievalProblem,
     evaluator: forward_model.Evaluator,
 ) common.Error!common.SolverOutcome {
-    try problem.validateForMethod(.doas);
-    const layout = try state_access.resolveStateLayout(problem);
-
-    const observed = try surrogate_forward.observedSummary(problem, evaluator);
-    const target = surrogate_forward.featureVector(observed, .doas);
-    const anchor = try surrogate_forward.anchorStateWithLayout(allocator, problem, .doas, observed, layout);
-    defer allocator.free(anchor);
-
-    const state = try state_access.seedStateWithLayout(allocator, problem, layout);
-    errdefer allocator.free(state);
-
-    const max_iterations: u32 = if (problem.inverse_problem.fit_controls.max_iterations != 0)
-        @min(problem.inverse_problem.fit_controls.max_iterations, 12)
-    else
-        8;
-
-    var iterations: u32 = 0;
-    var reduced_cost: f64 = std.math.inf(f64);
-    var residual_norm: f64 = std.math.inf(f64);
-    var step_norm: f64 = std.math.inf(f64);
-    var converged = false;
-
-    while (iterations < max_iterations) : (iterations += 1) {
-        const predicted = surrogate_forward.featureVector(
-            try surrogate_forward.summarizeStateWithLayout(problem, .doas, state, evaluator, layout),
-            .doas,
-        );
-        residual_norm = surrogate_forward.residualNorm(predicted, target);
-
-        var step_sq: f64 = 0.0;
-        for (state, 0..) |*value, index| {
-            const step = 0.75 * (anchor[index] - value.*);
-            value.* += step;
-            step_sq += step * step;
-        }
-        step_norm = std.math.sqrt(step_sq);
-        reduced_cost = residual_norm / @as(f64, @floatFromInt(target.len));
-        converged = step_norm < 1.0e-5 or residual_norm < 1.0e-5;
-        if (converged) {
-            iterations += 1;
-            break;
-        }
-    }
-
-    const fitted_scene = try state_access.sceneForStateWithLayout(problem, state, layout);
-    const fitted_summary = try surrogate_forward.summarizeStateWithLayout(problem, .doas, state, evaluator, layout);
-    const jacobians_used = problem.derivative_mode != .none and problem.jacobians_requested;
-    const dfs = std.math.clamp(0.75 + 0.10 * @exp(-step_norm), 0.0, @as(f64, @floatFromInt(state.len)));
-    return try common.outcome(
-        allocator,
-        problem,
-        .doas,
-        iterations,
-        reduced_cost,
-        converged,
-        jacobians_used,
-        dfs,
-        residual_norm,
-        step_norm,
-        .{
-            .parameter_names = problem.inverse_problem.state_vector.parameter_names,
-            .values = state,
-        },
-        fitted_scene,
-        fitted_summary,
-        null,
-        null,
-        null,
-    );
+    return spectral_fit.solveMethod(allocator, problem, evaluator, .doas);
 }
 
-test "doas retrieval can run without derivative mode" {
+test "doas retrieval requires an observed spectrum and reports differential fit metadata" {
+    const product = try surrogate_forward.testEvaluator().evaluateProduct(
+        std.testing.allocator,
+        surrogate_forward.testEvaluator().context,
+        .{
+            .id = "scene-doas-truth",
+            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 32 },
+            .surface = .{ .albedo = 0.13 },
+            .aerosol = .{ .enabled = true, .optical_depth = 0.08, .layer_center_km = 2.8, .layer_width_km = 1.0 },
+            .observation_model = .{ .instrument = .synthetic, .wavelength_shift_nm = 0.008 },
+        },
+    );
+    defer {
+        var owned = product;
+        owned.deinit(std.testing.allocator);
+    }
+
     const problem: common.RetrievalProblem = .{
         .scene = .{
             .id = "scene-doas",
-            .spectral_grid = .{ .sample_count = 24 },
-            .observation_model = .{ .instrument = "synthetic" },
+            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 32 },
+            .surface = .{ .albedo = 0.08 },
+            .aerosol = .{ .enabled = true, .optical_depth = 0.05, .layer_center_km = 2.8, .layer_width_km = 1.0 },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-doas",
             .state_vector = .{
                 .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
-                    .{ .name = "slant_column", .target = .surface_albedo, .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.05 } },
+                    .{ .name = "surface_albedo", .target = .surface_albedo, .transform = .logit, .prior = .{ .enabled = true, .mean = 0.1, .sigma = 0.05 }, .bounds = .{ .enabled = true, .min = 0.0, .max = 1.0 } },
+                    .{ .name = "aerosol_tau", .target = .aerosol_optical_depth_550_nm, .transform = .log, .prior = .{ .enabled = true, .mean = 0.07, .sigma = 0.03 }, .bounds = .{ .enabled = true, .min = 1.0e-4, .max = 1.0 } },
+                    .{ .name = "wavelength_shift", .target = .wavelength_shift_nm, .prior = .{ .enabled = true, .mean = 0.0, .sigma = 0.03 }, .bounds = .{ .enabled = true, .min = -0.1, .max = 0.1 } },
                 },
             },
             .measurements = .{
-                .product = "slant_column",
-                .observable = "radiance",
-                .sample_count = 24,
+                .product_name = "radiance",
+                .observable = .radiance,
+                .sample_count = 32,
+                .source = .{ .external_observation = .{ .name = "truth" } },
+                .error_model = .{ .from_source_noise = true, .floor = 1.0e-5 },
             },
         },
-        .derivative_mode = .none,
-        .jacobians_requested = false,
+        .derivative_mode = .numerical,
+        .jacobians_requested = true,
+        .observed_measurement = .{
+            .source_name = "truth",
+            .observable = .radiance,
+            .product_name = "radiance",
+            .sample_count = 32,
+            .product = .init(&product),
+        },
     };
 
     const result = try solveWithEvaluator(std.testing.allocator, problem, surrogate_forward.testEvaluator());
@@ -116,7 +86,9 @@ test "doas retrieval can run without derivative mode" {
     }
 
     try std.testing.expectEqual(common.Method.doas, result.method);
-    try std.testing.expect(!result.jacobians_used);
-    try std.testing.expect(result.converged);
-    try std.testing.expect(result.dfs > 0.0);
+    try std.testing.expect(result.jacobians_used);
+    try std.testing.expect(result.jacobian != null);
+    try std.testing.expect(result.fit_diagnostics != null);
+    try std.testing.expectEqual(common.FitSpace.differential_optical_depth, result.fit_diagnostics.?.fit_space);
+    try std.testing.expect(result.fit_diagnostics.?.polynomial_order > 0);
 }

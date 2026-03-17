@@ -5,6 +5,7 @@ const Request = @import("../../core/Request.zig").Request;
 const Result = @import("../../core/Result.zig").Result;
 const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
 const SceneModel = @import("../../model/Scene.zig");
+const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const export_spec = @import("../exporters/spec.zig");
 const exporters = @import("../exporters/writer.zig");
 const DocumentModule = @import("Document.zig");
@@ -36,7 +37,7 @@ pub const Error =
 pub const StageExecution = struct {
     kind: StageKind,
     stage: Stage,
-    product_names: []const []const u8,
+    product_requests: []const Request.RequestedProduct,
     diagnostics: @import("../../core/diagnostics.zig").DiagnosticsSpec,
 };
 
@@ -44,7 +45,7 @@ pub const ProductRef = struct {
     name: []const u8,
     kind: ProductKind,
     stage_index: usize,
-    observable: []const u8 = "",
+    observable: ?MeasurementQuantity = null,
     apply_noise: bool = false,
 };
 
@@ -115,17 +116,17 @@ pub const ExecutionProgram = struct {
         var product_index: usize = 0;
         errdefer {
             for (stages[0..initialized_stage_count]) |stage_execution| {
-                if (stage_execution.product_names.len != 0) allocator.free(stage_execution.product_names);
+                if (stage_execution.product_requests.len != 0) allocator.free(stage_execution.product_requests);
             }
         }
 
         if (experiment.simulation) |stage| {
             try validateStageProducts(stage.products);
-            const product_names = try collectProductNames(allocator, stage.products);
+            const product_requests = try collectRequestedProducts(allocator, stage.products);
             stages[stage_index] = .{
                 .kind = .simulation,
                 .stage = stage.*,
-                .product_names = product_names,
+                .product_requests = product_requests,
                 .diagnostics = stage.diagnostics,
             };
             initialized_stage_count += 1;
@@ -147,11 +148,11 @@ pub const ExecutionProgram = struct {
             try validateStageProducts(stage.products);
             var diagnostics = stage.diagnostics;
             if (hasJacobianProduct(stage.products)) diagnostics.jacobians = true;
-            const product_names = try collectProductNames(allocator, stage.products);
+            const product_requests = try collectRequestedProducts(allocator, stage.products);
             stages[stage_index] = .{
                 .kind = .retrieval,
                 .stage = stage.*,
-                .product_names = product_names,
+                .product_requests = product_requests,
                 .diagnostics = diagnostics,
             };
             initialized_stage_count += 1;
@@ -189,7 +190,7 @@ pub const ExecutionProgram = struct {
 
     pub fn deinit(self: *ExecutionProgram) void {
         for (self.stages) |stage| {
-            if (stage.product_names.len != 0) self.allocator.free(stage.product_names);
+            if (stage.product_requests.len != 0) self.allocator.free(stage.product_requests);
         }
         if (self.stages.len != 0) self.allocator.free(self.stages);
         if (self.products.len != 0) self.allocator.free(self.products);
@@ -228,45 +229,42 @@ pub const ExecutionProgram = struct {
                 allocator.destroy(product);
             };
             request.inverse_problem = stage_execution.stage.inverse;
-            request.requested_products = stage_execution.product_names;
+            request.requested_products = stage_execution.product_requests;
             request.expected_derivative_mode = stage_execution.stage.plan.scene_blueprint.derivative_mode;
             request.diagnostics = stage_execution.diagnostics;
 
             if (stage_execution.kind == .retrieval and stage_execution.stage.inverse != null) {
                 const source = stage_execution.stage.inverse.?.measurements.source;
-                switch (source.kind) {
+                switch (source.kind()) {
                     .none => {},
                     .external_observation => return error.MissingMeasurementBinding,
                     .stage_product => {
-                        const source_ref = findProduct(self.products, source.name) orelse return error.MissingMeasurementBinding;
+                        const source_name = source.name();
+                        const source_ref = findProduct(self.products, source_name) orelse return error.MissingMeasurementBinding;
                         if (source_ref.kind != .measurement_space) return error.UnsupportedMeasurementBinding;
                         if (source_ref.stage_index >= executed_stage_count) return error.MissingMeasurementBinding;
                         const source_result = &stage_outcomes[source_ref.stage_index].result;
                         if (source_result.measurement_space_product) |*source_product| {
                             request.measurement_binding = .{
-                                .source_name = source_ref.name,
-                                .observable = if (source_ref.observable.len != 0) source_ref.observable else stage_execution.stage.inverse.?.measurements.observable,
-                                .product = source_product,
+                                .source = .{ .stage_product = .{ .name = source_ref.name } },
+                                .borrowed_product = .init(source_product),
                             };
                         } else {
                             return error.MissingMeasurementBinding;
                         }
                     },
                     .ingest => {
+                        const source_name = source.name();
                         const product = try buildIngestMeasurementProduct(
                             allocator,
                             self.experiment,
                             &request,
-                            source.name,
+                            source_name,
                         );
                         owned_ingest_product = product;
                         request.measurement_binding = .{
-                            .source_name = source.name,
-                            .observable = if (stage_execution.stage.inverse.?.measurements.observable.len != 0)
-                                stage_execution.stage.inverse.?.measurements.observable
-                            else
-                                "radiance",
-                            .product = product,
+                            .source = .{ .ingest = @import("../../model/Binding.zig").IngestRef.fromFullName(source_name) },
+                            .borrowed_product = .init(product),
                         };
                     },
                     .asset, .bundle_default, .atmosphere => return error.UnsupportedMeasurementBinding,
@@ -344,11 +342,30 @@ pub fn resolveCompileAndExecute(
     };
 }
 
-fn collectProductNames(allocator: Allocator, products: []const Product) ![]const []const u8 {
-    if (products.len == 0) return &[_][]const u8{};
-    const names = try allocator.alloc([]const u8, products.len);
-    for (products, 0..) |product, index| names[index] = product.name;
-    return names;
+fn collectRequestedProducts(allocator: Allocator, products: []const Product) ![]const Request.RequestedProduct {
+    if (products.len == 0) return &[_]Request.RequestedProduct{};
+    const requests = try allocator.alloc(Request.RequestedProduct, products.len);
+    for (products, 0..) |product, index| {
+        requests[index] = .named(
+            product.name,
+            requestProductKind(product.kind),
+            product.observable,
+        );
+    }
+    return requests;
+}
+
+fn requestProductKind(kind: ProductKind) Request.RequestedProductKind {
+    return switch (kind) {
+        .measurement_space => .measurement_space,
+        .state_vector => .state_vector,
+        .fitted_measurement => .fitted_measurement,
+        .averaging_kernel => .averaging_kernel,
+        .jacobian => .jacobian,
+        .posterior_covariance => .posterior_covariance,
+        .result => .result,
+        .diagnostics => .diagnostics,
+    };
 }
 
 fn validateStageProducts(products: []const Product) !void {

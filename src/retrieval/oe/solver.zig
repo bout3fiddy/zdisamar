@@ -40,7 +40,7 @@ pub fn solveWithEvaluator(
         problem.inverse_problem.fit_controls.max_iterations
     else
         8;
-    const damping: f64 = if (problem.inverse_problem.fit_controls.trust_region.len != 0) 1.0e-3 else 0.0;
+    const damping: f64 = if (problem.inverse_problem.fit_controls.trust_region.enabled()) 1.0e-3 else 0.0;
 
     var previous_total_cost: ?f64 = null;
     var iterations: u32 = 0;
@@ -177,6 +177,7 @@ pub fn solveWithEvaluator(
         dfs,
         vector_ops.normL2(final_context.residual),
         last_step_norm,
+        null,
         .{
             .parameter_names = parameter_names,
             .values = final_physical_values,
@@ -637,10 +638,6 @@ fn seedSolverState(
 }
 
 fn parameterNames(allocator: Allocator, problem: common.RetrievalProblem) ![]const []const u8 {
-    if (problem.inverse_problem.state_vector.parameter_names.len != 0) {
-        return allocator.dupe([]const u8, problem.inverse_problem.state_vector.parameter_names);
-    }
-
     const parameters = problem.inverse_problem.state_vector.parameters;
     const names = try allocator.alloc([]const u8, parameters.len);
     for (parameters, 0..) |parameter, index| {
@@ -745,7 +742,7 @@ test "oe retrieval converges on a real spectral residual with posterior products
         .surface = .{ .albedo = 0.18 },
         .aerosol = .{ .enabled = true, .optical_depth = 0.12, .layer_center_km = 3.0, .layer_width_km = 1.0 },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .wavelength_shift_nm = 0.015,
         },
     });
@@ -757,7 +754,7 @@ test "oe retrieval converges on a real spectral residual with posterior products
             .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 48 },
             .surface = .{ .albedo = 0.08 },
             .aerosol = .{ .enabled = true, .optical_depth = 0.05, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-            .observation_model = .{ .instrument = "synthetic" },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-oe",
@@ -769,10 +766,10 @@ test "oe retrieval converges on a real spectral residual with posterior products
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 48,
-                .source = .{ .kind = .external_observation, .name = "truth_radiance" },
+                .source = .{ .external_observation = .{ .name = "truth_radiance" } },
                 .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
             },
         },
@@ -780,10 +777,10 @@ test "oe retrieval converges on a real spectral residual with posterior products
         .jacobians_requested = true,
         .observed_measurement = .{
             .source_name = "truth_radiance",
-            .observable = "radiance",
+            .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 48,
-            .product = &observed_product,
+            .product = .init(&observed_product),
         },
     };
 
@@ -811,7 +808,7 @@ test "oe retrieval reports non-convergence when iteration budget is exhausted" {
         .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 40 },
         .surface = .{ .albedo = 0.25 },
         .aerosol = .{ .enabled = true, .optical_depth = 0.20, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-        .observation_model = .{ .instrument = "synthetic", .wavelength_shift_nm = 0.02 },
+        .observation_model = .{ .instrument = .synthetic, .wavelength_shift_nm = 0.02 },
     });
     defer observed_product.deinit(std.testing.allocator);
 
@@ -821,7 +818,7 @@ test "oe retrieval reports non-convergence when iteration budget is exhausted" {
             .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 40 },
             .surface = .{ .albedo = 0.02 },
             .aerosol = .{ .enabled = true, .optical_depth = 0.02, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-            .observation_model = .{ .instrument = "synthetic" },
+            .observation_model = .{ .instrument = .synthetic },
         },
         .inverse_problem = .{
             .id = "inverse-oe-limited",
@@ -831,10 +828,10 @@ test "oe retrieval reports non-convergence when iteration budget is exhausted" {
                 },
             },
             .measurements = .{
-                .product = "radiance",
-                .observable = "radiance",
+                .product_name = "radiance",
+                .observable = .radiance,
                 .sample_count = 40,
-                .source = .{ .kind = .external_observation, .name = "truth_radiance" },
+                .source = .{ .external_observation = .{ .name = "truth_radiance" } },
                 .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
             },
             .fit_controls = .{
@@ -845,10 +842,10 @@ test "oe retrieval reports non-convergence when iteration budget is exhausted" {
         .jacobians_requested = true,
         .observed_measurement = .{
             .source_name = "truth_radiance",
-            .observable = "radiance",
+            .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 40,
-            .product = &observed_product,
+            .product = .init(&observed_product),
         },
     };
 

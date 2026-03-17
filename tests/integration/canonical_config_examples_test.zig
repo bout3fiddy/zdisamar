@@ -13,8 +13,8 @@ test "canonical config resolves revised common and expert examples" {
     try std.testing.expect(common.retrieval != null);
     try std.testing.expectEqual(@as(usize, 0), common.ingests.len);
     try std.testing.expectEqual(@as(usize, 2), common.outputs.len);
-    try std.testing.expectEqualStrings("truth_radiance", common.retrieval.?.inverse.?.measurements.source.name);
-    try std.testing.expectEqual(zdisamar.DataBindingKind.stage_product, common.retrieval.?.inverse.?.measurements.source.kind);
+    try std.testing.expectEqualStrings("truth_radiance", common.retrieval.?.inverse.?.measurements.source.name());
+    try std.testing.expectEqual(zdisamar.DataBindingKind.stage_product, common.retrieval.?.inverse.?.measurements.source.kind());
     try std.testing.expectEqual(@as(u32, 1301), common.simulation.?.scene.spectral_grid.sample_count);
     try std.testing.expect(common.warnings.len == 0);
 
@@ -33,7 +33,7 @@ test "canonical config resolves revised common and expert examples" {
     try std.testing.expectEqualStrings("table", expert.retrieval.?.spectral_response_shape);
     try std.testing.expectEqualStrings(
         "isrf_demo.instrument_line_shape_table",
-        expert.retrieval.?.spectral_response_table_source.name,
+        expert.retrieval.?.spectral_response_table_source.name(),
     );
     try std.testing.expect(expert.retrieval.?.scene.observation_model.operational_refspec_grid.enabled());
     try std.testing.expect(expert.retrieval.?.scene.observation_model.operational_solar_spectrum.enabled());
