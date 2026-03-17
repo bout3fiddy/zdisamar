@@ -23,6 +23,7 @@ pub const ProductKind = enum {
     fitted_measurement,
     averaging_kernel,
     jacobian,
+    posterior_covariance,
     result,
     diagnostics,
 };
@@ -103,6 +104,7 @@ pub fn parseProductKind(value: []const u8) Error!ProductKind {
     if (std.mem.eql(u8, value, "fitted_measurement")) return .fitted_measurement;
     if (std.mem.eql(u8, value, "averaging_kernel")) return .averaging_kernel;
     if (std.mem.eql(u8, value, "jacobian")) return .jacobian;
+    if (std.mem.eql(u8, value, "posterior_covariance")) return .posterior_covariance;
     if (std.mem.eql(u8, value, "result")) return .result;
     if (std.mem.eql(u8, value, "diagnostics")) return .diagnostics;
     return error.InvalidValue;

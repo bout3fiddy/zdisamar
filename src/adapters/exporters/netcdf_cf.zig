@@ -318,6 +318,30 @@ fn renderNetcdfClassicPayload(
         );
     }
 
+    if (view.retrieval_posterior_covariance) |product| {
+        try addStringListVariable(
+            allocator,
+            &owned_buffers,
+            &dimensions,
+            &variables,
+            "posterior_covariance_parameter_count",
+            "posterior_covariance_name_strlen",
+            "posterior_covariance_parameter_names",
+            product.parameter_names,
+        );
+        try addDoubleMatrixVariable(
+            allocator,
+            &dimensions,
+            &variables,
+            "posterior_covariance_row_count",
+            "posterior_covariance_column_count",
+            "posterior_covariance",
+            product.row_count,
+            product.column_count,
+            product.values,
+        );
+    }
+
     const header_size = try computeHeaderSize(dimensions.items, global_attributes.items, variables.items);
     var begins = try allocator.alloc(u32, variables.items.len);
     defer allocator.free(begins);

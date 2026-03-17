@@ -24,6 +24,7 @@ pub const ObservationModel = @import("ObservationModel.zig").ObservationModel;
 pub const ObservationRegime = @import("ObservationModel.zig").ObservationRegime;
 pub const StateVector = @import("StateVector.zig").StateVector;
 pub const StateParameter = @import("StateVector.zig").Parameter;
+pub const StateTarget = @import("StateVector.zig").Target;
 pub const StateBounds = @import("StateVector.zig").Bounds;
 pub const StatePrior = @import("StateVector.zig").Prior;
 pub const StateTransform = @import("StateVector.zig").Transform;
@@ -136,8 +137,8 @@ test "blueprint and inverse problem expose canonical layout and validation contr
         .id = "retrieval-1",
         .state_vector = .{
             .parameters = &[_]StateParameter{
-                .{ .name = "albedo", .target = "scene.surface.albedo" },
-                .{ .name = "ozone", .target = "scene.absorbers.o3.scale" },
+                .{ .name = "albedo", .target = .surface_albedo },
+                .{ .name = "aerosol_tau", .target = .aerosol_optical_depth_550_nm },
             },
         },
         .measurements = .{

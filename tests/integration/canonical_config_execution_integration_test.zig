@@ -54,6 +54,27 @@ fn executeResolvedSource(
     return .{ .program = program, .outcome = outcome };
 }
 
+fn simulateSceneProduct(
+    allocator: std.mem.Allocator,
+    plan: *const zdisamar.Plan,
+    scene: zdisamar.Scene,
+) !zdisamar.transport.measurement_space.MeasurementSpaceProduct {
+    var prepared_optics = try plan.providers.optics.prepareForScene(allocator, &scene);
+    defer prepared_optics.deinit(allocator);
+    return zdisamar.transport.measurement_space.simulateProduct(
+        allocator,
+        &scene,
+        plan.transport_route,
+        &prepared_optics,
+        .{
+            .transport = plan.providers.transport,
+            .surface = plan.providers.surface,
+            .instrument = plan.providers.instrument,
+            .noise = plan.providers.noise,
+        },
+    );
+}
+
 test "canonical execution runs a forward-only program and writes outputs" {
     var root_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const root = try makeOutputRoot("forward", &root_buffer);
@@ -146,6 +167,128 @@ test "canonical execution runs a forward-only program and writes outputs" {
     const truth_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/truth.nc", .{root});
     defer std.testing.allocator.free(truth_path);
     try std.fs.cwd().access(truth_path, .{});
+}
+
+test "canonical execution applies deterministic stage noise when requested" {
+    const base_yaml =
+        \\schema_version: 1
+        \\
+        \\metadata:
+        \\  id: stage-noise
+        \\  workspace: exec-stage-noise
+        \\
+        \\templates:
+        \\  base:
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 16
+        \\      bands:
+        \\        band_1:
+        \\          start_nm: 405.0
+        \\          end_nm: 465.0
+        \\          step_nm: 2.5
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: cross_sections
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.07
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\        noise:
+        \\          model: shot_noise
+        \\          seed: 12345
+        \\
+        \\experiment:
+        \\  simulation:
+        \\    from: base
+        \\    scene:
+        \\      id: truth_scene
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\        apply_noise: false
+        \\
+        \\outputs: []
+        \\
+        \\validation:
+        \\  strict_unknown_fields: true
+        \\  require_resolved_stage_references: true
+    ;
+
+    const noisy_yaml = try replaceAllAlloc(
+        std.testing.allocator,
+        base_yaml,
+        "apply_noise: false",
+        "apply_noise: true",
+    );
+    defer std.testing.allocator.free(noisy_yaml);
+
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const clean_execution = try executeResolvedSource("clean.yaml", ".", base_yaml, &engine);
+    defer {
+        var outcome = clean_execution.outcome;
+        outcome.deinit();
+        var program = clean_execution.program;
+        program.deinit();
+    }
+
+    const noisy_execution_a = try executeResolvedSource("noisy-a.yaml", ".", noisy_yaml, &engine);
+    defer {
+        var outcome = noisy_execution_a.outcome;
+        outcome.deinit();
+        var program = noisy_execution_a.program;
+        program.deinit();
+    }
+
+    const noisy_execution_b = try executeResolvedSource("noisy-b.yaml", ".", noisy_yaml, &engine);
+    defer {
+        var outcome = noisy_execution_b.outcome;
+        outcome.deinit();
+        var program = noisy_execution_b.program;
+        program.deinit();
+    }
+
+    const clean = clean_execution.outcome.stage_outcomes[0].result.measurement_space_product.?;
+    const noisy_a = noisy_execution_a.outcome.stage_outcomes[0].result.measurement_space_product.?;
+    const noisy_b = noisy_execution_b.outcome.stage_outcomes[0].result.measurement_space_product.?;
+
+    try std.testing.expectEqual(clean.radiance.len, noisy_a.radiance.len);
+    try std.testing.expectEqualSlices(f64, noisy_a.radiance, noisy_b.radiance);
+    try std.testing.expectEqualSlices(f64, noisy_a.reflectance, noisy_b.reflectance);
+    try std.testing.expectEqualSlices(f64, clean.noise_sigma, noisy_a.noise_sigma);
+
+    var found_delta = false;
+    for (clean.radiance, noisy_a.radiance) |clean_value, noisy_value| {
+        if (!std.math.approxEqAbs(f64, clean_value, noisy_value, 1.0e-12)) {
+            found_delta = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_delta);
 }
 
 test "canonical execution resolves measured-channel observation config from ingest support data" {
@@ -350,6 +493,10 @@ test "canonical execution binds ingest-backed radiance observations into measure
         \\    products:
         \\      fitted_radiance:
         \\        kind: fitted_measurement
+        \\      jacobian:
+        \\        kind: jacobian
+        \\      averaging_kernel:
+        \\        kind: averaging_kernel
         \\
         \\outputs: []
         \\
@@ -372,6 +519,12 @@ test "canonical execution binds ingest-backed radiance observations into measure
     try std.testing.expectEqual(zdisamar.Result.Status.success, execution.outcome.stage_outcomes[0].result.status);
     try std.testing.expectEqual(zdisamar.DataBindingKind.ingest, execution.program.stages[0].stage.inverse.?.measurements.source.kind);
     try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval != null);
+    try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval.?.jacobian != null);
+    try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval.?.averaging_kernel != null);
+    try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval.?.posterior_covariance != null);
+    try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval_products.jacobian != null);
+    try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval_products.averaging_kernel != null);
+    try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval_products.posterior_covariance != null);
 }
 
 test "canonical execution rejects retrieval-only external observations without an explicit measurement binding" {
@@ -498,45 +651,136 @@ test "canonical execution runs revised twin examples with routed outputs" {
     const expert_yaml = try replaceAllAlloc(std.testing.allocator, expert_bytes, "file://out/", expert_replacement);
     defer std.testing.allocator.free(expert_yaml);
 
+    var common_document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "zdisamar_common_use.yaml",
+        "data/examples",
+        common_yaml,
+    );
+    defer common_document.deinit();
+
+    var common_resolved: ?*zdisamar.canonical_config.ResolvedExperiment = try common_document.resolve(std.testing.allocator);
+    defer if (common_resolved) |owned| owned.deinit();
+
+    var common_program = try zdisamar.canonical_config.compileResolved(std.testing.allocator, common_resolved.?);
+    common_resolved = null;
+    defer common_program.deinit();
+
     var engine = zdisamar.Engine.init(std.testing.allocator, .{});
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
-    const common_execution = try executeResolvedSource(
-        "zdisamar_common_use.yaml",
-        "data/examples",
-        common_yaml,
-        &engine,
-    );
+    try std.testing.expectEqual(@as(usize, 2), common_program.stages.len);
+    try std.testing.expectEqual(@as(usize, 2), common_program.outputs.len);
+    try std.testing.expectEqualStrings("retrieval", @tagName(common_program.stages[1].kind));
+    const common_execution = try common_program.execute(std.testing.allocator, &engine);
     defer {
-        var outcome = common_execution.outcome;
+        var outcome = common_execution;
         outcome.deinit();
-        var program = common_execution.program;
-        program.deinit();
     }
+    try std.testing.expectEqual(@as(usize, 2), common_execution.stage_outcomes.len);
+    try std.testing.expectEqual(zdisamar.Result.Status.success, common_execution.stage_outcomes[1].result.status);
 
-    try std.testing.expectEqual(@as(usize, 2), common_execution.outcome.stage_outcomes.len);
-    try std.testing.expectEqual(@as(usize, 2), common_execution.outcome.outputs.len);
-    try std.testing.expect(common_execution.outcome.stage_outcomes[1].result.retrieval_products.state_vector != null);
-
-    const expert_execution = try executeResolvedSource(
+    var expert_document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
         "zdisamar_expert_o2a.yaml",
         "data/examples",
         expert_yaml,
-        &engine,
     );
+    defer expert_document.deinit();
+
+    var expert_resolved: ?*zdisamar.canonical_config.ResolvedExperiment = try expert_document.resolve(std.testing.allocator);
+    defer if (expert_resolved) |owned| owned.deinit();
+
+    var expert_program = try zdisamar.canonical_config.compileResolved(std.testing.allocator, expert_resolved.?);
+    expert_resolved = null;
+    defer expert_program.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), expert_program.stages.len);
+    try std.testing.expectEqual(@as(usize, 3), expert_program.outputs.len);
+    try std.testing.expectEqualStrings("retrieval", @tagName(expert_program.stages[1].kind));
+    const expert_inverse = expert_program.stages[1].stage.inverse.?;
+    try std.testing.expectEqual(@as(usize, 6), expert_inverse.state_vector.parameters.len);
+    try std.testing.expectEqual(@as(@TypeOf(expert_inverse.state_vector.parameters[1].target), .aerosol_layer_center_km), expert_inverse.state_vector.parameters[1].target);
+    try std.testing.expectEqual(@as(@TypeOf(expert_inverse.state_vector.parameters[3].target), .wavelength_shift_nm), expert_inverse.state_vector.parameters[3].target);
+    try std.testing.expectEqual(@as(@TypeOf(expert_inverse.state_vector.parameters[4].target), .multiplicative_offset), expert_inverse.state_vector.parameters[4].target);
+    try std.testing.expectEqual(@as(@TypeOf(expert_inverse.state_vector.parameters[5].target), .stray_light), expert_inverse.state_vector.parameters[5].target);
+    try std.testing.expectEqual(@as(usize, 1), expert_inverse.covariance_blocks.len);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 1 }, expert_inverse.covariance_blocks[0].parameter_indices);
+
+    var found_jacobian = false;
+    var found_averaging_kernel = false;
+    var found_posterior_covariance = false;
+    for (expert_program.products) |product| {
+        if (std.mem.eql(u8, product.name, "jacobian")) {
+            found_jacobian = true;
+        } else if (std.mem.eql(u8, product.name, "averaging_kernel")) {
+            found_averaging_kernel = true;
+        } else if (std.mem.eql(u8, product.name, "posterior_covariance")) {
+            found_posterior_covariance = true;
+        }
+    }
+    try std.testing.expect(found_jacobian);
+    try std.testing.expect(found_averaging_kernel);
+    try std.testing.expect(found_posterior_covariance);
+
+    const expert_execution = try expert_program.execute(std.testing.allocator, &engine);
     defer {
-        var outcome = expert_execution.outcome;
+        var outcome = expert_execution;
         outcome.deinit();
-        var program = expert_execution.program;
-        program.deinit();
     }
 
-    try std.testing.expectEqual(@as(usize, 2), expert_execution.outcome.stage_outcomes.len);
-    try std.testing.expectEqual(@as(usize, 3), expert_execution.outcome.outputs.len);
-    const expert_result = expert_execution.outcome.stage_outcomes[1].result;
-    try std.testing.expect(expert_result.retrieval_products.state_vector != null);
-    try std.testing.expect(expert_result.retrieval_products.fitted_measurement != null);
-    try std.testing.expectEqual(@as(?zdisamar.Result.RetrievalMatrixProduct, null), expert_result.retrieval_products.averaging_kernel);
-    try std.testing.expect(expert_result.retrieval_products.jacobian != null);
+    try std.testing.expectEqual(@as(usize, 2), expert_execution.stage_outcomes.len);
+    try std.testing.expectEqual(zdisamar.Result.Status.success, expert_execution.stage_outcomes[0].result.status);
+    try std.testing.expectEqual(zdisamar.Result.Status.success, expert_execution.stage_outcomes[1].result.status);
+    try std.testing.expect(expert_execution.stage_outcomes[0].result.measurement_space_product != null);
+    try std.testing.expect(expert_execution.stage_outcomes[1].result.retrieval != null);
+    try std.testing.expectEqual(@as(usize, 6), expert_execution.stage_outcomes[1].result.retrieval.?.state_estimate.values.len);
+    try std.testing.expect(expert_execution.stage_outcomes[1].result.retrieval.?.jacobian != null);
+    try std.testing.expect(expert_execution.stage_outcomes[1].result.retrieval.?.averaging_kernel != null);
+    try std.testing.expect(expert_execution.stage_outcomes[1].result.retrieval.?.posterior_covariance != null);
+    try std.testing.expect(expert_execution.stage_outcomes[1].result.retrieval_products.jacobian != null);
+    try std.testing.expect(expert_execution.stage_outcomes[1].result.retrieval_products.averaging_kernel != null);
+    try std.testing.expect(expert_execution.stage_outcomes[1].result.retrieval_products.posterior_covariance != null);
+
+    const truth_stage = expert_program.stages[0].stage;
+    var truth_plan = try engine.preparePlan(truth_stage.plan);
+    defer truth_plan.deinit();
+    var clean_truth_product = try simulateSceneProduct(std.testing.allocator, &truth_plan, truth_stage.scene);
+    defer clean_truth_product.deinit(std.testing.allocator);
+
+    const truth_product = expert_execution.stage_outcomes[0].result.measurement_space_product.?;
+    try std.testing.expectEqual(clean_truth_product.radiance.len, truth_product.radiance.len);
+    try std.testing.expectEqual(clean_truth_product.wavelengths.len, truth_product.wavelengths.len);
+    try std.testing.expect(truth_product.noise_sigma.len > 0);
+    try std.testing.expect(truth_product.noise_sigma[0] > 0.0);
+
+    var saw_noise_applied = false;
+    for (clean_truth_product.radiance, truth_product.radiance) |clean_radiance, noisy_radiance| {
+        if (@abs(clean_radiance - noisy_radiance) > 1.0e-12) {
+            saw_noise_applied = true;
+            break;
+        }
+    }
+    try std.testing.expect(saw_noise_applied);
+
+    const fitted_product = expert_execution.stage_outcomes[1].result.retrieval_products.fitted_measurement.?;
+    try std.testing.expectEqual(truth_product.wavelengths.len, fitted_product.wavelengths.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 758.0), truth_product.wavelengths[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 771.0), truth_product.wavelengths[truth_product.wavelengths.len - 1], 1.0e-12);
+    for (truth_product.wavelengths, fitted_product.wavelengths) |expected_wavelength, actual_wavelength| {
+        try std.testing.expectApproxEqAbs(expected_wavelength, actual_wavelength, 1.0e-12);
+    }
+
+    const expert_truth_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/s5p_o2a_truth_radiance.nc", .{expert_root});
+    defer std.testing.allocator.free(expert_truth_path);
+    try std.fs.cwd().access(expert_truth_path, .{});
+
+    const expert_retrieval_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/s5p_o2a_retrieval.nc", .{expert_root});
+    defer std.testing.allocator.free(expert_retrieval_path);
+    try std.fs.cwd().access(expert_retrieval_path, .{});
+
+    const expert_fitted_store = try std.fmt.allocPrint(std.testing.allocator, "{s}/s5p_o2a_fitted_radiance.zarr", .{expert_root});
+    defer std.testing.allocator.free(expert_fitted_store);
+    try std.fs.cwd().access(expert_fitted_store, .{});
 }

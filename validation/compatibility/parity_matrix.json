@@ -82,9 +82,8 @@
         "absolute": 1.0,
         "relative": 0.2
       },
-      "upstream_numeric_anchor": "test/disamar.asciiHDF",
       "expected_jacobians_used": true,
-      "status": "retrieval_numeric_anchor"
+      "status": "retrieval_executed_contract"
     },
     {
       "id": "retrieval_doas_slant_column",

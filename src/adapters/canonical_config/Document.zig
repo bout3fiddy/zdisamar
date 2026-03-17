@@ -36,6 +36,7 @@ const MeasurementMask = @import("../../model/Measurement.zig").SpectralMask;
 const MeasurementErrorModel = @import("../../model/Measurement.zig").ErrorModel;
 const StateVector = @import("../../model/StateVector.zig").StateVector;
 const StateParameter = @import("../../model/StateVector.zig").Parameter;
+const StateTarget = @import("../../model/StateVector.zig").Target;
 const StateTransform = @import("../../model/StateVector.zig").Transform;
 const StatePrior = @import("../../model/StateVector.zig").Prior;
 const StateBounds = @import("../../model/StateVector.zig").Bounds;
@@ -43,6 +44,7 @@ const ReferenceData = @import("../../model/ReferenceData.zig");
 const reference_assets = @import("../ingest/reference_assets.zig");
 const spectral_ascii = @import("../ingest/spectral_ascii.zig");
 const spectral_ascii_runtime = @import("../ingest/spectral_ascii_runtime.zig");
+const spectra_grid = @import("../../kernels/spectra/grid.zig");
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
 const Allocator = std.mem.Allocator;
 const parseAssetKind = fields.parseAssetKind;
@@ -507,6 +509,9 @@ const ResolveContext = struct {
             stage.inverse = inverse_result.inverse;
             stage.algorithm_name = inverse_result.algorithm_name;
             stage.algorithm_damping = inverse_result.algorithm_damping;
+            if (stage.inverse) |*inverse| {
+                try applyAlgorithmParameters(inverse, stage.algorithm_damping);
+            }
             try hydrateSceneFromIngestMeasurement(self.allocator, self.ingests, &stage.scene, inverse_result.inverse.measurements.source);
             stage.plan.providers.retrieval_algorithm = stage.plan.providers.retrieval_algorithm orelse normalizeRetrievalProvider(
                 inverse_result.algorithm_name,
@@ -521,6 +526,25 @@ const ResolveContext = struct {
         try stage.plan.validate();
         try stage.scene.validate();
         if (stage.inverse) |inverse| try inverse.validate();
+    }
+
+    fn applyAlgorithmParameters(inverse: *InverseProblem, algorithm_damping: []const u8) !void {
+        if (algorithm_damping.len == 0) return;
+
+        const normalized = if (std.mem.eql(u8, algorithm_damping, "levenberg_marquardt"))
+            "lm"
+        else if (std.mem.eql(u8, algorithm_damping, "lm"))
+            "lm"
+        else
+            return Error.InvalidValue;
+
+        if (inverse.fit_controls.trust_region.len == 0) {
+            inverse.fit_controls.trust_region = normalized;
+            return;
+        }
+        if (!std.mem.eql(u8, inverse.fit_controls.trust_region, normalized)) {
+            return Error.InvalidValue;
+        }
     }
 
     fn populateScene(
@@ -774,7 +798,7 @@ const ResolveContext = struct {
         const algorithm = try decodeAlgorithm(self.allocator, mapGet(inverse_map, "algorithm"), self.strict_unknown_fields);
         const measurement_result = try self.decodeMeasurement(mapGet(inverse_map, "measurement"), scene, simulation_stage);
         const state_vector = try decodeStateVector(self.allocator, mapGet(inverse_map, "state"), self.strict_unknown_fields);
-        const covariance_blocks = try decodeCovariance(self.allocator, mapGet(inverse_map, "covariance"), self.strict_unknown_fields);
+        const covariance_blocks = try decodeCovariance(self.allocator, state_vector, mapGet(inverse_map, "covariance"), self.strict_unknown_fields);
         const fit_controls = try decodeFitControls(mapGet(inverse_map, "fit_controls"), self.strict_unknown_fields);
         const convergence = try decodeConvergence(mapGet(inverse_map, "convergence"), self.strict_unknown_fields);
 
@@ -803,13 +827,17 @@ const ResolveContext = struct {
 
         const source_name = try self.allocator.dupe(u8, try expectString(requiredField(measurement_map, "source")));
         const binding = try resolveMeasurementSource(source_name, simulation_stage, self.validation, self.ingests);
+        const source_scene = if (binding.kind == .stage_product and simulation_stage != null)
+            simulation_stage.?.scene
+        else
+            scene;
         var measurement: Measurement = .{
             .product = source_name,
             .observable = if (mapGet(measurement_map, "observable")) |observable|
                 try self.allocator.dupe(u8, try expectString(observable))
             else
                 source_name,
-            .sample_count = scene.spectral_grid.sample_count,
+            .sample_count = source_scene.spectral_grid.sample_count,
             .source = binding,
         };
         if (binding.kind == .ingest) {
@@ -818,6 +846,7 @@ const ResolveContext = struct {
 
         if (mapGet(measurement_map, "mask")) |mask_value| {
             measurement.mask = try decodeMeasurementMask(self.allocator, mask_value, self.strict_unknown_fields);
+            measurement.sample_count = try maskedMeasurementSampleCount(source_scene, measurement.mask);
         }
         if (mapGet(measurement_map, "error_model")) |error_model| {
             measurement.error_model = try decodeMeasurementErrorModel(error_model, self.strict_unknown_fields);
@@ -827,6 +856,32 @@ const ResolveContext = struct {
             .measurement = measurement,
             .source_name = source_name,
         };
+    }
+
+    fn maskedMeasurementSampleCount(scene: Scene, mask: MeasurementMask) !u32 {
+        if (mask.exclude.len == 0) return scene.spectral_grid.sample_count;
+
+        const axis: spectra_grid.ResolvedAxis = .{
+            .base = .{
+                .start_nm = scene.spectral_grid.start_nm,
+                .end_nm = scene.spectral_grid.end_nm,
+                .sample_count = scene.spectral_grid.sample_count,
+            },
+            .explicit_wavelengths_nm = scene.observation_model.measured_wavelengths_nm,
+        };
+        try axis.validate();
+
+        var count: u32 = 0;
+        const measurement: Measurement = .{
+            .product = "radiance",
+            .sample_count = scene.spectral_grid.sample_count,
+            .mask = mask,
+        };
+        for (0..scene.spectral_grid.sample_count) |index| {
+            const wavelength_nm = try axis.sampleAt(@intCast(index));
+            if (measurement.includesWavelength(wavelength_nm)) count += 1;
+        }
+        return count;
     }
 
     fn decodeAssetBinding(self: *const ResolveContext, value: yaml.Value) !Binding {
@@ -1256,7 +1311,7 @@ fn decodeStateVector(allocator: Allocator, value: ?yaml.Value, strict: bool) !St
         names[index] = try allocator.dupe(u8, entry.key);
         parameters[index] = .{
             .name = names[index],
-            .target = try allocator.dupe(u8, try expectString(requiredField(parameter_map, "target"))),
+            .target = try StateTarget.parse(try expectString(requiredField(parameter_map, "target"))),
             .transform = if (mapGet(parameter_map, "transform")) |transform| try parseStateTransform(try expectString(transform)) else .none,
             .prior = try decodePrior(mapGet(parameter_map, "prior"), strict),
             .bounds = try decodeBounds(mapGet(parameter_map, "bounds")),
@@ -1292,7 +1347,7 @@ fn decodeBounds(value: ?yaml.Value) !StateBounds {
     };
 }
 
-fn decodeCovariance(allocator: Allocator, value: ?yaml.Value, strict: bool) ![]const CovarianceBlock {
+fn decodeCovariance(allocator: Allocator, state_vector: StateVector, value: ?yaml.Value, strict: bool) ![]const CovarianceBlock {
     const covariance_value = value orelse return &[_]CovarianceBlock{};
     const covariance_map = try expectMap(covariance_value);
     try ensureKnownFields(covariance_map, &.{"blocks"}, strict);
@@ -1304,12 +1359,14 @@ fn decodeCovariance(allocator: Allocator, value: ?yaml.Value, strict: bool) ![]c
         const block_map = try expectMap(block_value);
         try ensureKnownFields(block_map, &.{ "members", "correlation" }, strict);
         const members = try expectSeq(requiredField(block_map, "members"));
-        const member_names = try allocator.alloc([]const u8, members.len);
+        const parameter_indices = try allocator.alloc(u32, members.len);
         for (members, 0..) |member, member_index| {
-            member_names[member_index] = try allocator.dupe(u8, try expectString(member));
+            const member_name = try expectString(member);
+            const parameter_index = state_vector.parameterIndex(member_name) orelse return Error.InvalidValue;
+            parameter_indices[member_index] = @intCast(parameter_index);
         }
         decoded[index] = .{
-            .member_names = member_names,
+            .parameter_indices = parameter_indices,
             .correlation = try expectF64(requiredField(block_map, "correlation")),
         };
     }

@@ -212,3 +212,65 @@ test "canonical config emits inverse-crime warning for identical synthetic stage
         resolved.warnings[0].message,
     );
 }
+
+test "canonical execution rejects multiple measurement-space products in one stage" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: duplicate-measurement-space
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: truth_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        o2a:
+        \\          start_nm: 758.0
+        \\          end_nm: 759.0
+        \\          step_nm: 0.5
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: cross_sections
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: tropomi
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\      truth_reflectance:
+        \\        kind: measurement_space
+        \\        observable: reflectance
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.execution.Error.MultipleMeasurementSpaceProducts,
+        zdisamar.canonical_config.compileResolved(std.testing.allocator, resolved),
+    );
+}

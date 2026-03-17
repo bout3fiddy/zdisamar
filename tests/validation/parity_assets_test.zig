@@ -17,10 +17,12 @@ const ParityCase = struct {
     component: []const u8,
     upstream_case: []const u8,
     upstream_reference_output: ?[]const u8 = null,
+    upstream_numeric_anchor: ?[]const u8 = null,
     runtime_profile: RuntimeProfile,
     expected_route_family: []const u8,
     expected_derivative_mode: []const u8,
     expected_derivative_semantics: ?[]const u8 = null,
+    expected_jacobians_used: ?bool = null,
     metrics: []const []const u8,
     tolerances: ParityTolerances,
     status: []const u8,
@@ -84,6 +86,21 @@ const ProvenanceGolden = struct {
     required_dataset_hash: []const u8,
     required_native_capability_slot: []const u8,
     required_native_entry_symbol: []const u8,
+};
+
+const OeReferenceAnchor = struct {
+    version: u32,
+    scenario: []const u8,
+    iterations: u32,
+    converged: bool,
+    cost: f64,
+    dfs: f64,
+    state_estimate: []const f64,
+    tolerances: struct {
+        cost_relative: f64,
+        dfs_absolute: f64,
+        state_absolute: f64,
+    },
 };
 
 const BundleAsset = struct {
@@ -167,6 +184,8 @@ test "parity matrix defines executable upstream contract and retrieval-check cas
         try std.testing.expect(case.id.len > 0);
         try std.testing.expect(case.component.len > 0);
         try std.testing.expect(case.upstream_case.len > 0);
+        if (case.upstream_reference_output) |reference_output| try std.testing.expect(reference_output.len > 0);
+        if (case.upstream_numeric_anchor) |numeric_anchor| try std.testing.expect(numeric_anchor.len > 0);
         try std.testing.expect(case.runtime_profile.observation_regime.len > 0);
         try std.testing.expect(case.runtime_profile.solver_mode.len > 0);
         try std.testing.expect(case.runtime_profile.derivative_mode.len > 0);
@@ -338,6 +357,30 @@ test "golden provenance fixture defines default release evidence keys" {
     try std.testing.expect(parsed.value.required_dataset_hash.len > 0);
     try std.testing.expectEqual(@as(usize, 0), parsed.value.required_native_capability_slot.len);
     try std.testing.expectEqual(@as(usize, 0), parsed.value.required_native_entry_symbol.len);
+}
+
+test "oe reference anchor defines stable retrieval diagnostics" {
+    const raw = try readValidationFile("validation/golden/oe_reference_anchor.json");
+    defer std.testing.allocator.free(raw);
+
+    const parsed = try std.json.parseFromSlice(
+        OeReferenceAnchor,
+        std.testing.allocator,
+        raw,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(u32, 1), parsed.value.version);
+    try std.testing.expect(parsed.value.scenario.len > 0);
+    try std.testing.expect(parsed.value.iterations > 0);
+    try std.testing.expect(parsed.value.converged);
+    try std.testing.expect(parsed.value.cost >= 0.0);
+    try std.testing.expect(parsed.value.dfs > 0.0);
+    try std.testing.expect(parsed.value.state_estimate.len > 0);
+    try std.testing.expect(parsed.value.tolerances.cost_relative > 0.0);
+    try std.testing.expect(parsed.value.tolerances.dfs_absolute > 0.0);
+    try std.testing.expect(parsed.value.tolerances.state_absolute > 0.0);
 }
 
 test "release readiness matrix ties commands packages and evidence together" {

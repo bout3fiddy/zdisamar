@@ -94,8 +94,8 @@ test "s5p operational mission adapter applies geometry and auxiliary metadata re
     try std.testing.expectEqual(@as(f64, 0.018), mission_run.request.scene.observation_model.wavelength_shift_nm);
     try std.testing.expectEqual(@as(f64, 0.54), mission_run.request.scene.observation_model.instrument_line_fwhm_nm);
     try std.testing.expectEqual(@as(u32, 3), mission_run.measurement_summary.?.sample_count);
-    try std.testing.expect(result.measurement_space_product.?.wavelengths[0] > 405.0);
     try std.testing.expect(result.measurement_space_product != null);
+    try std.testing.expectApproxEqAbs(@as(f64, 405.0), result.measurement_space_product.?.wavelengths[0], 1.0e-12);
 }
 
 test "s5p operational mission adapter executes explicit isrf table metadata" {

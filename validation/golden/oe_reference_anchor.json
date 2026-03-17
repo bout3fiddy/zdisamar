@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "scenario": "oe_reference_spectral_fit",
+  "iterations": 6,
+  "converged": true,
+  "cost": 5226011182133.986,
+  "dfs": 1.999999999999,
+  "state_estimate": [
+    0.18084653914284604,
+    0.07999988619720287,
+    0.014319611023159132
+  ],
+  "tolerances": {
+    "cost_relative": 1.0e-6,
+    "dfs_absolute": 1.0e-9,
+    "state_absolute": 1.0e-8
+  }
+}

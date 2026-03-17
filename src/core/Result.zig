@@ -43,6 +43,7 @@ pub const Result = struct {
         fitted_measurement: ?MeasurementSpaceProduct = null,
         averaging_kernel: ?RetrievalMatrixProduct = null,
         jacobian: ?RetrievalMatrixProduct = null,
+        posterior_covariance: ?RetrievalMatrixProduct = null,
 
         pub fn deinit(self: *RetrievalProducts, allocator: Allocator) void {
             if (self.state_vector) |*state_vector| {
@@ -60,6 +61,10 @@ pub const Result = struct {
             if (self.jacobian) |*jacobian| {
                 jacobian.deinit(allocator);
                 self.jacobian = null;
+            }
+            if (self.posterior_covariance) |*posterior_covariance| {
+                posterior_covariance.deinit(allocator);
+                self.posterior_covariance = null;
             }
         }
     };
@@ -99,7 +104,7 @@ pub const Result = struct {
             .workspace_label = owned_workspace_label,
             .scene_id = owned_scene_id,
             .provenance = provenance,
-            .diagnostics = Diagnostics.fromSpec(.{ .provenance = true }, "Prepared transport routing and provenance are wired; full transport and retrieval numerics remain scaffold-only."),
+            .diagnostics = Diagnostics.fromSpec(.{ .provenance = true }, "Prepared transport routing and provenance are wired; see validation docs for the currently verified scientific coverage."),
         };
     }
 

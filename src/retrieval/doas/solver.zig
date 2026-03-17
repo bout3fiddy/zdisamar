@@ -1,27 +1,28 @@
 const std = @import("std");
 const common = @import("../common/contracts.zig");
 const forward_model = @import("../common/forward_model.zig");
-const surrogate_forward = @import("../common/synthetic_forward.zig");
+const state_access = @import("../common/state_access.zig");
+const surrogate_forward = @import("../common/surrogate_forward.zig");
 const Allocator = std.mem.Allocator;
 
 pub fn solve(allocator: Allocator, problem: common.RetrievalProblem) common.Error!common.SolverOutcome {
-    return solveWithEvaluator(allocator, problem, forward_model.defaultEvaluator());
+    return solveWithEvaluator(allocator, problem, surrogate_forward.testEvaluator());
 }
 
 pub fn solveWithEvaluator(
     allocator: Allocator,
     problem: common.RetrievalProblem,
-    evaluator: forward_model.SummaryEvaluator,
+    evaluator: forward_model.Evaluator,
 ) common.Error!common.SolverOutcome {
     try problem.validateForMethod(.doas);
-    const layout = try surrogate_forward.resolveStateLayout(problem);
+    const layout = try state_access.resolveStateLayout(problem);
 
     const observed = try surrogate_forward.observedSummary(problem, evaluator);
     const target = surrogate_forward.featureVector(observed, .doas);
     const anchor = try surrogate_forward.anchorStateWithLayout(allocator, problem, .doas, observed, layout);
     defer allocator.free(anchor);
 
-    const state = try surrogate_forward.seedStateWithLayout(allocator, problem, layout);
+    const state = try state_access.seedStateWithLayout(allocator, problem, layout);
     errdefer allocator.free(state);
 
     const max_iterations: u32 = if (problem.inverse_problem.fit_controls.max_iterations != 0)
@@ -57,7 +58,7 @@ pub fn solveWithEvaluator(
         }
     }
 
-    const fitted_scene = try surrogate_forward.sceneForStateWithLayout(problem, state, layout);
+    const fitted_scene = try state_access.sceneForStateWithLayout(problem, state, layout);
     const fitted_summary = try surrogate_forward.summarizeStateWithLayout(problem, .doas, state, evaluator, layout);
     const jacobians_used = problem.derivative_mode != .none and problem.jacobians_requested;
     const dfs = std.math.clamp(0.75 + 0.10 * @exp(-step_norm), 0.0, @as(f64, @floatFromInt(state.len)));
@@ -78,6 +79,9 @@ pub fn solveWithEvaluator(
         },
         fitted_scene,
         fitted_summary,
+        null,
+        null,
+        null,
     );
 }
 
@@ -92,7 +96,7 @@ test "doas retrieval can run without derivative mode" {
             .id = "inverse-doas",
             .state_vector = .{
                 .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
-                    .{ .name = "slant_column", .target = "scene.surface.albedo", .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.05 } },
+                    .{ .name = "slant_column", .target = .surface_albedo, .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.05 } },
                 },
             },
             .measurements = .{
@@ -105,7 +109,7 @@ test "doas retrieval can run without derivative mode" {
         .jacobians_requested = false,
     };
 
-    const result = try solveWithEvaluator(std.testing.allocator, problem, forward_model.defaultEvaluator());
+    const result = try solveWithEvaluator(std.testing.allocator, problem, surrogate_forward.testEvaluator());
     defer {
         var owned = result;
         owned.deinit(std.testing.allocator);

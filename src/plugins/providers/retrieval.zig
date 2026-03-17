@@ -8,7 +8,7 @@ const Allocator = @import("std").mem.Allocator;
 
 pub const Provider = struct {
     id: []const u8,
-    solve: *const fn (allocator: Allocator, problem: common.RetrievalProblem, evaluator: forward_model.SummaryEvaluator) anyerror!SolverOutcome,
+    solve: *const fn (allocator: Allocator, problem: common.RetrievalProblem, evaluator: forward_model.Evaluator) anyerror!SolverOutcome,
 };
 
 pub fn resolve(provider_id: []const u8) ?Provider {

@@ -394,6 +394,27 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         );
     }
 
+    if (view.retrieval_posterior_covariance) |product| {
+        bytes_written += try writeStringArray(
+            allocator,
+            store_path,
+            "retrieval/posterior_covariance/parameter_names",
+            "retrieval/posterior_covariance",
+            product.parameter_names,
+            &files_written,
+        );
+        bytes_written += try writeFloat64Matrix(
+            allocator,
+            store_path,
+            "retrieval/posterior_covariance/values",
+            "retrieval/posterior_covariance",
+            product.row_count,
+            product.column_count,
+            product.values,
+            &files_written,
+        );
+    }
+
     return .{
         .artifact = artifact,
         .files_written = files_written,

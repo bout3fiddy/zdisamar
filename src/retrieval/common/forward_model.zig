@@ -1,53 +1,324 @@
 const std = @import("std");
-const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
+const common = @import("contracts.zig");
+const Measurement = @import("../../model/Measurement.zig").Measurement;
 const Scene = @import("../../model/Scene.zig").Scene;
+const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
+const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
+const MeasurementSpaceSummary = MeasurementSpace.MeasurementSpaceSummary;
+const Allocator = std.mem.Allocator;
 
-pub const SummaryEvaluator = struct {
+pub const Evaluator = struct {
     context: *const anyopaque,
-    evaluate: *const fn (context: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary,
+    evaluateSummary: *const fn (context: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary,
+    evaluateProduct: *const fn (allocator: Allocator, context: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceProduct,
 };
 
-pub fn defaultEvaluator() SummaryEvaluator {
+pub const SpectralMeasurement = struct {
+    wavelengths_nm: []f64 = &[_]f64{},
+    values: []f64 = &[_]f64{},
+    sigma: []f64 = &[_]f64{},
+    jacobian: ?[]f64 = null,
+    summary: MeasurementSpaceSummary,
+
+    pub fn deinit(self: *SpectralMeasurement, allocator: Allocator) void {
+        if (self.wavelengths_nm.len != 0) allocator.free(self.wavelengths_nm);
+        if (self.values.len != 0) allocator.free(self.values);
+        if (self.sigma.len != 0) allocator.free(self.sigma);
+        if (self.jacobian) |values| allocator.free(values);
+        self.* = .{
+            .jacobian = null,
+            .summary = .{
+                .sample_count = 0,
+                .wavelength_start_nm = 0.0,
+                .wavelength_end_nm = 0.0,
+                .mean_radiance = 0.0,
+                .mean_irradiance = 0.0,
+                .mean_reflectance = 0.0,
+                .mean_noise_sigma = 0.0,
+            },
+        };
+    }
+};
+
+pub fn observedMeasurement(
+    allocator: Allocator,
+    problem: common.RetrievalProblem,
+) common.Error!SpectralMeasurement {
+    const observed = problem.observed_measurement orelse return common.Error.MissingMeasurementProduct;
+    return selectMeasurement(
+        allocator,
+        problem.inverse_problem.measurements,
+        measurementObservable(problem),
+        observed.product,
+    );
+}
+
+pub fn evaluateMeasurement(
+    allocator: Allocator,
+    problem: common.RetrievalProblem,
+    evaluator: Evaluator,
+    scene: Scene,
+) common.Error!SpectralMeasurement {
+    var product = evaluator.evaluateProduct(allocator, evaluator.context, scene) catch |err| switch (err) {
+        error.OutOfMemory => return common.Error.OutOfMemory,
+        else => return common.Error.InvalidRequest,
+    };
+    defer product.deinit(allocator);
+
+    return selectMeasurement(
+        allocator,
+        problem.inverse_problem.measurements,
+        measurementObservable(problem),
+        &product,
+    );
+}
+
+pub fn measurementObservable(problem: common.RetrievalProblem) []const u8 {
+    if (problem.inverse_problem.measurements.observable.len != 0) {
+        return problem.inverse_problem.measurements.observable;
+    }
+    return problem.inverse_problem.measurements.product;
+}
+
+fn selectMeasurement(
+    allocator: Allocator,
+    measurement: Measurement,
+    observable: []const u8,
+    product: *const MeasurementSpaceProduct,
+) common.Error!SpectralMeasurement {
+    const selected_count = measurement.selectedSampleCount(product.wavelengths);
+    if (selected_count != measurement.sample_count) return common.Error.ShapeMismatch;
+
+    const wavelengths = try allocator.alloc(f64, selected_count);
+    errdefer allocator.free(wavelengths);
+    const values = try allocator.alloc(f64, selected_count);
+    errdefer allocator.free(values);
+    const sigma = try allocator.alloc(f64, selected_count);
+    errdefer allocator.free(sigma);
+
+    const source_values = measurementValues(product, observable) catch return common.Error.InvalidRequest;
+    const source_jacobian = measurementJacobian(product, observable);
+    const selected_jacobian = if (source_jacobian != null)
+        try allocator.alloc(f64, selected_count)
+    else
+        null;
+    errdefer if (selected_jacobian) |values_buffer| allocator.free(values_buffer);
+
+    var output_index: usize = 0;
+    for (product.wavelengths, 0..) |wavelength_nm, index| {
+        if (!measurement.includesWavelength(wavelength_nm)) continue;
+
+        wavelengths[output_index] = wavelength_nm;
+        values[output_index] = source_values[index];
+        sigma[output_index] = sampleSigma(measurement, product, index) catch return common.Error.InvalidRequest;
+        if (selected_jacobian) |jacobian| {
+            jacobian[output_index] = source_jacobian.?[index];
+        }
+        output_index += 1;
+    }
+
     return .{
-        .context = undefined,
-        .evaluate = evaluateSurrogateSummary,
+        .wavelengths_nm = wavelengths,
+        .values = values,
+        .sigma = sigma,
+        .jacobian = selected_jacobian,
+        .summary = product.summary,
     };
 }
 
-fn evaluateSurrogateSummary(_: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceSummary {
-    const sample_count = @max(scene.spectral_grid.sample_count, 8);
-    const wavelength_start_nm = if (scene.spectral_grid.start_nm != 0.0) scene.spectral_grid.start_nm else 405.0;
-    const wavelength_end_nm = if (scene.spectral_grid.end_nm > wavelength_start_nm)
-        scene.spectral_grid.end_nm
-    else
-        wavelength_start_nm + 60.0;
-    const albedo = std.math.clamp(scene.surface.albedo, 0.01, 0.95);
-    const aerosol_depth = if (scene.aerosol.enabled) scene.aerosol.optical_depth else 0.0;
-    const cloud_depth = if (scene.cloud.enabled) scene.cloud.optical_thickness else 0.0;
-    const mu0 = @max(@cos(std.math.degreesToRadians(scene.geometry.solar_zenith_deg)), 0.15);
-    const muv = @max(@cos(std.math.degreesToRadians(scene.geometry.viewing_zenith_deg)), 0.15);
-    const geometry_scale = @as(f64, 0.85) + @as(f64, 0.25) * (mu0 + muv);
-    const regime_scale = switch (scene.observation_model.regime) {
-        .nadir => @as(f64, 1.0),
-        .limb => @as(f64, 0.93),
-        .occultation => @as(f64, 0.89),
+fn sampleSigma(
+    measurement: Measurement,
+    product: *const MeasurementSpaceProduct,
+    index: usize,
+) !f64 {
+    var variance: f64 = 0.0;
+    if (measurement.error_model.from_source_noise) {
+        if (index >= product.noise_sigma.len or product.noise_sigma.len == 0) {
+            return error.InvalidRequest;
+        }
+        const source_sigma = product.noise_sigma[index];
+        if (!std.math.isFinite(source_sigma) or source_sigma < 0.0) return error.InvalidRequest;
+        variance += source_sigma * source_sigma;
+    }
+    if (measurement.error_model.floor > 0.0) {
+        variance += measurement.error_model.floor * measurement.error_model.floor;
+    }
+    if (variance <= 0.0) return error.InvalidRequest;
+    return std.math.sqrt(variance);
+}
+
+fn measurementValues(product: *const MeasurementSpaceProduct, observable: []const u8) ![]const f64 {
+    if (std.mem.eql(u8, observable, "radiance")) return product.radiance;
+    if (std.mem.eql(u8, observable, "irradiance")) return product.irradiance;
+    if (std.mem.eql(u8, observable, MeasurementSpace.reflectance_export_name)) return product.reflectance;
+    return error.InvalidRequest;
+}
+
+fn measurementJacobian(product: *const MeasurementSpaceProduct, observable: []const u8) ?[]const f64 {
+    if (!std.mem.eql(u8, observable, "radiance")) return null;
+    return product.jacobian;
+}
+
+test "spectral evaluator selects masked observable vectors with sigma" {
+    const product = MeasurementSpaceProduct{
+        .summary = .{
+            .sample_count = 4,
+            .wavelength_start_nm = 759.5,
+            .wavelength_end_nm = 762.0,
+            .mean_radiance = 1.525,
+            .mean_irradiance = 2.0,
+            .mean_reflectance = 0.7625,
+            .mean_noise_sigma = 0.0225,
+        },
+        .wavelengths = &[_]f64{ 759.5, 760.0, 761.0, 762.0 },
+        .radiance = &[_]f64{ 1.6, 1.5, 1.4, 1.6 },
+        .irradiance = &[_]f64{ 2.0, 2.0, 2.0, 2.0 },
+        .reflectance = &[_]f64{ 0.8, 0.75, 0.70, 0.8 },
+        .noise_sigma = &[_]f64{ 0.02, 0.02, 0.03, 0.02 },
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 1.0,
+        .effective_temperature_k = 270.0,
+        .effective_pressure_hpa = 700.0,
+        .gas_optical_depth = 0.1,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .total_optical_depth = 0.1,
+        .depolarization_factor = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
     };
 
-    const irradiance = @as(f64, 1.55) + @as(f64, 0.35) * mu0;
-    const attenuation = @as(f64, 1.0) + @as(f64, 0.45) * aerosol_depth + @as(f64, 0.08) * cloud_depth;
-    const mean_radiance = (@as(f64, 0.55) + @as(f64, 1.35) * albedo + @as(f64, 0.08) * geometry_scale) * regime_scale / attenuation;
-    const mean_reflectance = std.math.clamp(mean_radiance / @max(irradiance, @as(f64, 1e-6)), @as(f64, 0.02), @as(f64, 0.98));
-    const mean_noise_sigma = @as(f64, 0.02) + @as(f64, 0.03) * (@as(f64, 1.0) - albedo) + @as(f64, 0.01) * aerosol_depth + @as(f64, 0.004) * cloud_depth;
-    const mean_jacobian = @as(f64, 0.04) + @as(f64, 0.015) * geometry_scale + @as(f64, 0.005) * @min(aerosol_depth + cloud_depth, @as(f64, 4.0));
-
-    return .{
-        .sample_count = sample_count,
-        .wavelength_start_nm = wavelength_start_nm,
-        .wavelength_end_nm = wavelength_end_nm,
-        .mean_radiance = mean_radiance,
-        .mean_irradiance = irradiance,
-        .mean_reflectance = mean_reflectance,
-        .mean_noise_sigma = mean_noise_sigma,
-        .mean_jacobian = mean_jacobian,
+    const problem: common.RetrievalProblem = .{
+        .scene = .{
+            .id = "scene-forward-model",
+            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 762.0, .sample_count = 4 },
+            .observation_model = .{ .instrument = "synthetic" },
+        },
+        .inverse_problem = .{
+            .id = "inverse-forward-model",
+            .state_vector = .{
+                .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
+                    .{
+                        .name = "surface_albedo",
+                        .target = .surface_albedo,
+                        .prior = .{ .enabled = true, .mean = 0.08, .sigma = 0.02 },
+                    },
+                },
+            },
+            .measurements = .{
+                .product = "radiance",
+                .observable = "radiance",
+                .sample_count = 3,
+                .mask = .{
+                    .exclude = &[_]@import("../../model/Scene.zig").SpectralWindow{
+                        .{ .start_nm = 760.0, .end_nm = 761.0 },
+                    },
+                },
+                .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
+            },
+        },
+        .derivative_mode = .semi_analytical,
+        .jacobians_requested = true,
+        .observed_measurement = .{
+            .source_name = "synthetic-observed",
+            .observable = "radiance",
+            .product_name = "radiance",
+            .sample_count = 3,
+            .product = &product,
+        },
     };
+
+    const selected = try observedMeasurement(std.testing.allocator, problem);
+    defer {
+        var owned = selected;
+        owned.deinit(std.testing.allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), selected.values.len);
+    try std.testing.expect(selected.sigma[0] > 0.0);
+    try std.testing.expect(selected.jacobian == null);
+}
+
+test "spectral evaluator carries routed radiance jacobian when available" {
+    const jacobian = [_]f64{ -0.3, -0.2, -0.1, -0.05 };
+    const product = MeasurementSpaceProduct{
+        .summary = .{
+            .sample_count = 4,
+            .wavelength_start_nm = 759.5,
+            .wavelength_end_nm = 762.0,
+            .mean_radiance = 1.525,
+            .mean_irradiance = 2.0,
+            .mean_reflectance = 0.7625,
+            .mean_noise_sigma = 0.0225,
+            .mean_jacobian = -0.1625,
+        },
+        .wavelengths = &[_]f64{ 759.5, 760.0, 761.0, 762.0 },
+        .radiance = &[_]f64{ 1.6, 1.5, 1.4, 1.6 },
+        .irradiance = &[_]f64{ 2.0, 2.0, 2.0, 2.0 },
+        .reflectance = &[_]f64{ 0.8, 0.75, 0.70, 0.8 },
+        .noise_sigma = &[_]f64{ 0.02, 0.02, 0.03, 0.02 },
+        .jacobian = &jacobian,
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 1.0,
+        .effective_temperature_k = 270.0,
+        .effective_pressure_hpa = 700.0,
+        .gas_optical_depth = 0.1,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .total_optical_depth = 0.1,
+        .depolarization_factor = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+    };
+
+    const problem: common.RetrievalProblem = .{
+        .scene = .{
+            .id = "scene-forward-model-jacobian",
+            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 762.0, .sample_count = 4 },
+            .observation_model = .{ .instrument = "synthetic" },
+        },
+        .inverse_problem = .{
+            .id = "inverse-forward-model-jacobian",
+            .state_vector = .{
+                .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
+                    .{
+                        .name = "aerosol_tau",
+                        .target = .aerosol_optical_depth_550_nm,
+                        .prior = .{ .enabled = true, .mean = 0.08, .sigma = 0.02 },
+                    },
+                },
+            },
+            .measurements = .{
+                .product = "radiance",
+                .observable = "radiance",
+                .sample_count = 3,
+                .mask = .{
+                    .exclude = &[_]@import("../../model/Scene.zig").SpectralWindow{
+                        .{ .start_nm = 760.0, .end_nm = 761.0 },
+                    },
+                },
+                .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
+            },
+        },
+        .derivative_mode = .semi_analytical,
+        .jacobians_requested = true,
+        .observed_measurement = .{
+            .source_name = "synthetic-observed",
+            .observable = "radiance",
+            .product_name = "radiance",
+            .sample_count = 3,
+            .product = &product,
+        },
+    };
+
+    const selected = try observedMeasurement(std.testing.allocator, problem);
+    defer {
+        var owned = selected;
+        owned.deinit(std.testing.allocator);
+    }
+
+    try std.testing.expect(selected.jacobian != null);
+    try std.testing.expectApproxEqAbs(@as(f64, -0.3), selected.jacobian.?[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, -0.1), selected.jacobian.?[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, -0.05), selected.jacobian.?[2], 1.0e-12);
 }

@@ -8,4 +8,5 @@ comptime {
     _ = @import("optics_preparation_test.zig");
     _ = @import("plan_plugin_snapshot_test.zig");
     _ = @import("plugin_native_resolution_test.zig");
+    _ = @import("retrieval_contracts_test.zig");
 }

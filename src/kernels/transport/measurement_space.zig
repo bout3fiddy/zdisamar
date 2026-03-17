@@ -231,11 +231,11 @@ pub fn simulate(
 
     for (0..sample_count) |index| {
         const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
-        const wavelength_nm = calibration.shiftedWavelength(
+        const evaluation_wavelength_nm = calibration.shiftedWavelength(
             calibration_config,
             nominal_wavelength_nm,
         );
-        buffers.wavelengths[index] = wavelength_nm;
+        buffers.wavelengths[index] = nominal_wavelength_nm;
 
         var integration: OperationalInstrumentIntegration = undefined;
         providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
@@ -244,7 +244,7 @@ pub fn simulate(
             scene,
             route,
             prepared,
-            wavelength_nm,
+            evaluation_wavelength_nm,
             safe_span,
             providers,
             buffers.layer_inputs[0..prepared.layers.len],
@@ -262,14 +262,17 @@ pub fn simulate(
     try calibration.applySignal(calibration_config, buffers.radiance, buffers.radiance);
 
     for (0..sample_count) |index| {
-        const wavelength_nm = buffers.wavelengths[index];
         const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
+        const evaluation_wavelength_nm = calibration.shiftedWavelength(
+            calibration_config,
+            nominal_wavelength_nm,
+        );
         var integration: OperationalInstrumentIntegration = undefined;
         providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
         buffers.scratch[index] = integrateIrradianceAtNominal(
             scene,
             prepared,
-            wavelength_nm,
+            evaluation_wavelength_nm,
             safe_span,
             &evaluation_cache,
             &integration,
@@ -1059,7 +1062,7 @@ test "measurement-space operational integration uses high-resolution instrument 
     var operational_product = try simulateProduct(std.testing.allocator, &operational_scene, route, &prepared, testProviders());
     defer operational_product.deinit(std.testing.allocator);
 
-    try std.testing.expect(operational_product.wavelengths[0] > plain_product.wavelengths[0]);
+    try std.testing.expectApproxEqAbs(plain_product.wavelengths[0], operational_product.wavelengths[0], 1.0e-12);
     try std.testing.expect(operational_product.radiance[0] != plain_product.radiance[0]);
     try std.testing.expect(operational_product.irradiance[0] != plain_product.irradiance[0]);
     try std.testing.expect(operational_product.jacobian != null);
@@ -1100,9 +1103,9 @@ test "measurement-space honors explicit measured-channel wavelengths from ingest
     var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
-    try std.testing.expectApproxEqAbs(@as(f64, 405.16), product.wavelengths[0], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 434.86), product.wavelengths[1], 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 464.76), product.wavelengths[2], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 405.15), product.wavelengths[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 434.85), product.wavelengths[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 464.75), product.wavelengths[2], 1.0e-12);
 }
 
 test "measurement-space applies radiance calibration after instrument integration without rescaling irradiance" {

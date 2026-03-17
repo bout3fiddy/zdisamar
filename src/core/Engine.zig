@@ -26,7 +26,7 @@ const MeasurementSpace = @import("../kernels/transport/measurement_space.zig");
 const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
 const RetrievalContracts = @import("../retrieval/common/contracts.zig");
 const RetrievalForwardModel = @import("../retrieval/common/forward_model.zig");
-const RetrievalSurrogateForward = @import("../retrieval/common/synthetic_forward.zig");
+const RetrievalStateAccess = @import("../retrieval/common/state_access.zig");
 const Logging = @import("logging.zig");
 
 pub const EngineOptions = struct {
@@ -319,7 +319,8 @@ fn executeRetrievalIfRequested(
     };
     var retrieval_outcome = retrieval_provider.solve(self.allocator, retrieval_problem, .{
         .context = @ptrCast(&retrieval_context),
-        .evaluate = evaluateRetrievalScene,
+        .evaluateSummary = evaluateRetrievalSceneSummary,
+        .evaluateProduct = evaluateRetrievalSceneProduct,
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return errors.ExecutionError.InvalidRequest,
@@ -360,7 +361,7 @@ const RetrievalExecutionContext = struct {
     summary_workspace: *MeasurementSpace.SummaryWorkspace,
 };
 
-fn evaluateRetrievalScene(context: *const anyopaque, scene: Scene) anyerror!MeasurementSpace.MeasurementSpaceSummary {
+fn evaluateRetrievalSceneSummary(context: *const anyopaque, scene: Scene) anyerror!MeasurementSpace.MeasurementSpaceSummary {
     const typed_context: *const RetrievalExecutionContext = @ptrCast(@alignCast(context));
 
     var prepared_optics = try typed_context.plan.providers.optics.prepareForScene(typed_context.allocator, &scene);
@@ -369,6 +370,25 @@ fn evaluateRetrievalScene(context: *const anyopaque, scene: Scene) anyerror!Meas
     return MeasurementSpace.simulateSummaryWithWorkspace(
         typed_context.allocator,
         typed_context.summary_workspace,
+        &scene,
+        typed_context.plan.transport_route,
+        &prepared_optics,
+        measurementProviders(typed_context.plan),
+    );
+}
+
+fn evaluateRetrievalSceneProduct(
+    allocator: std.mem.Allocator,
+    context: *const anyopaque,
+    scene: Scene,
+) anyerror!MeasurementSpaceProduct {
+    const typed_context: *const RetrievalExecutionContext = @ptrCast(@alignCast(context));
+
+    var prepared_optics = try typed_context.plan.providers.optics.prepareForScene(allocator, &scene);
+    defer prepared_optics.deinit(allocator);
+
+    return MeasurementSpace.simulateProduct(
+        allocator,
         &scene,
         typed_context.plan.transport_route,
         &prepared_optics,
@@ -402,13 +422,10 @@ fn materializeRetrievalProducts(
         owned.deinit(allocator);
     }
 
-    const observable = measurementObservable(problem);
-    const supports_measurement_observable = std.mem.eql(u8, observable, "radiance") or
-        std.mem.eql(u8, observable, "irradiance") or
-        std.mem.eql(u8, observable, MeasurementSpace.reflectance_export_name);
-
-    const jacobian = if (supports_measurement_observable)
-        try materializeJacobianProduct(
+    const jacobian = if (outcome.jacobian) |matrix|
+        try materializeMatrixProduct(allocator, problem, matrix)
+    else if (outcome.method.classification() == .surrogate and outcome.jacobians_used)
+        try materializeSurrogateJacobianProduct(
             allocator,
             plan,
             problem,
@@ -422,25 +439,36 @@ fn materializeRetrievalProducts(
         owned.deinit(allocator);
     };
 
-    const averaging_kernel = if (outcome.method.classification() == .surrogate)
-        null
+    const averaging_kernel = if (outcome.averaging_kernel) |matrix|
+        try materializeMatrixProduct(allocator, problem, matrix)
     else
-        try materializeAveragingKernelProduct(
-            allocator,
-            problem,
-            outcome,
-            jacobian orelse return error.InvalidRequest,
-        );
+        null;
     errdefer if (averaging_kernel) |kernel| {
         var owned = kernel;
         owned.deinit(allocator);
     };
+
+    const posterior_covariance = if (outcome.posterior_covariance) |matrix|
+        try materializeMatrixProduct(allocator, problem, matrix)
+    else
+        null;
+    errdefer if (posterior_covariance) |matrix| {
+        var owned = matrix;
+        owned.deinit(allocator);
+    };
+
+    if (outcome.method == .oe and
+        (jacobian == null or averaging_kernel == null or posterior_covariance == null))
+    {
+        return error.InvalidRequest;
+    }
 
     return .{
         .state_vector = state_vector,
         .fitted_measurement = fitted_measurement,
         .averaging_kernel = averaging_kernel,
         .jacobian = jacobian,
+        .posterior_covariance = posterior_covariance,
     };
 }
 
@@ -461,7 +489,26 @@ fn materializeStateVectorProduct(
     };
 }
 
-fn materializeJacobianProduct(
+fn materializeMatrixProduct(
+    allocator: std.mem.Allocator,
+    problem: RetrievalContracts.RetrievalProblem,
+    matrix: RetrievalContracts.SolverOutcome.Matrix,
+) !Result.RetrievalMatrixProduct {
+    const parameter_names = try duplicateParameterNames(allocator, problem);
+    errdefer freeStringSlice(allocator, parameter_names);
+
+    const values = try allocator.dupe(f64, matrix.values);
+    errdefer allocator.free(values);
+
+    return .{
+        .row_count = matrix.row_count,
+        .column_count = matrix.column_count,
+        .parameter_names = parameter_names,
+        .values = values,
+    };
+}
+
+fn materializeSurrogateJacobianProduct(
     allocator: std.mem.Allocator,
     plan: *const Plan,
     problem: RetrievalContracts.RetrievalProblem,
@@ -484,7 +531,7 @@ fn materializeJacobianProduct(
         const delta = jacobianStep(perturbed_values[state_index]);
         perturbed_values[state_index] += delta;
 
-        const perturbed_scene = try RetrievalSurrogateForward.sceneForState(problem, perturbed_values);
+        const perturbed_scene = try RetrievalStateAccess.sceneForState(problem, perturbed_values);
         var prepared_optics = try plan.providers.optics.prepareForScene(allocator, &perturbed_scene);
         defer prepared_optics.deinit(allocator);
 
@@ -506,56 +553,6 @@ fn materializeJacobianProduct(
 
     return .{
         .row_count = @intCast(sample_count),
-        .column_count = @intCast(state_count),
-        .parameter_names = parameter_names,
-        .values = values,
-    };
-}
-
-fn materializeAveragingKernelProduct(
-    allocator: std.mem.Allocator,
-    problem: RetrievalContracts.RetrievalProblem,
-    outcome: RetrievalContracts.SolverOutcome,
-    jacobian: Result.RetrievalMatrixProduct,
-) !Result.RetrievalMatrixProduct {
-    const parameter_names = try duplicateParameterNames(allocator, problem);
-    errdefer freeStringSlice(allocator, parameter_names);
-
-    const state_count = outcome.state_estimate.values.len;
-    const values = try allocator.alloc(f64, state_count * state_count);
-    errdefer allocator.free(values);
-    @memset(values, 0.0);
-
-    if (state_count != 0) {
-        const dfs_per_state = outcome.dfs / @as(f64, @floatFromInt(state_count));
-        for (0..state_count) |diag_index| {
-            var column_energy: f64 = 0.0;
-            for (0..jacobian.row_count) |row_index| {
-                const derivative = jacobian.values[row_index * state_count + diag_index];
-                column_energy += derivative * derivative;
-            }
-            values[diag_index * state_count + diag_index] = std.math.clamp(
-                dfs_per_state + 0.02 * std.math.sqrt(column_energy),
-                0.0,
-                1.0,
-            );
-        }
-
-        for (problem.inverse_problem.covariance_blocks) |block| {
-            for (block.member_names, 0..) |lhs_name, lhs_index| {
-                const lhs = parameterIndex(problem, lhs_name) orelse continue;
-                for (block.member_names[lhs_index + 1 ..]) |rhs_name| {
-                    const rhs = parameterIndex(problem, rhs_name) orelse continue;
-                    const coupled = 0.1 * block.correlation;
-                    values[lhs * state_count + rhs] = coupled;
-                    values[rhs * state_count + lhs] = coupled;
-                }
-            }
-        }
-    }
-
-    return .{
-        .row_count = @intCast(state_count),
         .column_count = @intCast(state_count),
         .parameter_names = parameter_names,
         .values = values,
@@ -605,19 +602,6 @@ fn freeStringSlice(allocator: std.mem.Allocator, values: []const []const u8) voi
     if (values.len == 0) return;
     for (values) |value| allocator.free(value);
     allocator.free(values);
-}
-
-fn parameterIndex(problem: RetrievalContracts.RetrievalProblem, name: []const u8) ?usize {
-    const state_vector = problem.inverse_problem.state_vector;
-    if (state_vector.parameter_names.len != 0) {
-        for (state_vector.parameter_names, 0..) |parameter_name, index| {
-            if (std.mem.eql(u8, parameter_name, name)) return index;
-        }
-    }
-    for (state_vector.parameters, 0..) |parameter, index| {
-        if (std.mem.eql(u8, parameter.name, name)) return index;
-    }
-    return null;
 }
 
 fn measurementObservable(problem: RetrievalContracts.RetrievalProblem) []const u8 {
@@ -784,7 +768,7 @@ test "execute rejects retrieval stage-product requests without a bound measureme
         .id = "inverse-missing-binding",
         .state_vector = .{
             .parameters = &[_]@import("../model/Scene.zig").StateParameter{
-                .{ .name = "surface_albedo", .target = "scene.surface.albedo" },
+                .{ .name = "surface_albedo", .target = .surface_albedo },
             },
         },
         .measurements = .{
@@ -914,7 +898,7 @@ test "prepared plans own reusable cache hints and workspaces own reusable scratc
     try std.testing.expectEqual(@as(u64, 1), workspace.scratch.reset_count);
 }
 
-test "engine retrieval execution uses summary evaluation and still materializes retrieval products separately" {
+test "engine retrieval execution preserves solver-owned oe products" {
     var engine = Engine.init(std.testing.allocator, .{});
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
@@ -960,16 +944,41 @@ test "engine retrieval execution uses summary evaluation and still materializes 
         .id = "inverse-summary-suite",
         .state_vector = .{
             .parameters = &[_]@import("../model/Scene.zig").StateParameter{
-                .{ .name = "surface_albedo", .target = "scene.surface.albedo", .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.02 } },
-                .{ .name = "aerosol_tau", .target = "scene.aerosols.plume.optical_depth_550_nm", .prior = .{ .enabled = true, .mean = 0.05, .sigma = 0.03 } },
+                .{ .name = "surface_albedo", .target = .surface_albedo, .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.02 } },
+                .{ .name = "aerosol_tau", .target = .aerosol_optical_depth_550_nm, .prior = .{ .enabled = true, .mean = 0.05, .sigma = 0.03 } },
             },
         },
         .measurements = .{
             .product = "radiance",
             .observable = "radiance",
             .sample_count = 24,
-            .source = .{},
+            .source = .{ .kind = .external_observation, .name = "truth-radiance" },
+            .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
         },
+    };
+
+    var truth_scene = request.scene;
+    truth_scene.surface.albedo = 0.14;
+    truth_scene.aerosol = .{
+        .enabled = true,
+        .optical_depth = 0.08,
+        .layer_center_km = 3.0,
+        .layer_width_km = 1.0,
+    };
+    var prepared_optics = try plan.providers.optics.prepareForScene(std.testing.allocator, &truth_scene);
+    defer prepared_optics.deinit(std.testing.allocator);
+    var observed_product = try MeasurementSpace.simulateProduct(
+        std.testing.allocator,
+        &truth_scene,
+        plan.transport_route,
+        &prepared_optics,
+        measurementProviders(&plan),
+    );
+    defer observed_product.deinit(std.testing.allocator);
+    request.measurement_binding = .{
+        .source_name = "truth-radiance",
+        .observable = "radiance",
+        .product = &observed_product,
     };
 
     var result = try engine.execute(&plan, &workspace, &request);
@@ -982,13 +991,26 @@ test "engine retrieval execution uses summary evaluation and still materializes 
     try std.testing.expect(result.retrieval_products.fitted_measurement != null);
     try std.testing.expect(result.retrieval_products.state_vector != null);
     try std.testing.expect(result.retrieval_products.jacobian != null);
+    try std.testing.expect(result.retrieval_products.averaging_kernel != null);
+    try std.testing.expect(result.retrieval_products.posterior_covariance != null);
+    try std.testing.expect(result.retrieval.?.jacobian != null);
+    try std.testing.expect(result.retrieval.?.averaging_kernel != null);
+    try std.testing.expect(result.retrieval.?.posterior_covariance != null);
     try std.testing.expectEqual(
         result.retrieval.?.fitted_measurement.?.sample_count,
         @as(u32, @intCast(result.retrieval_products.fitted_measurement.?.wavelengths.len)),
     );
+    try std.testing.expectEqual(
+        result.retrieval.?.jacobian.?.row_count,
+        result.retrieval_products.jacobian.?.row_count,
+    );
+    try std.testing.expectEqual(
+        result.retrieval.?.posterior_covariance.?.row_count,
+        result.retrieval_products.posterior_covariance.?.row_count,
+    );
 }
 
-test "engine translates retrieval-local invalid state targets into invalid requests" {
+test "engine rejects retrieval requests with unset typed state targets" {
     var engine = Engine.init(std.testing.allocator, .{});
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
@@ -1030,7 +1052,7 @@ test "engine translates retrieval-local invalid state targets into invalid reque
         .id = "inverse-invalid-target-suite",
         .state_vector = .{
             .parameters = &[_]@import("../model/Scene.zig").StateParameter{
-                .{ .name = "bad_target", .target = "scene.unknown.target" },
+                .{ .name = "bad_target", .target = .unset },
             },
         },
         .measurements = .{
@@ -1038,7 +1060,23 @@ test "engine translates retrieval-local invalid state targets into invalid reque
             .observable = "radiance",
             .sample_count = 24,
             .source = .{ .kind = .external_observation, .name = "forward-measurement" },
+            .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
         },
+    };
+    var prepared_optics = try plan.providers.optics.prepareForScene(std.testing.allocator, &request.scene);
+    defer prepared_optics.deinit(std.testing.allocator);
+    var observed_product = try MeasurementSpace.simulateProduct(
+        std.testing.allocator,
+        &request.scene,
+        plan.transport_route,
+        &prepared_optics,
+        measurementProviders(&plan),
+    );
+    defer observed_product.deinit(std.testing.allocator);
+    request.measurement_binding = .{
+        .source_name = "forward-measurement",
+        .observable = "radiance",
+        .product = &observed_product,
     };
 
     try std.testing.expectError(errors.Error.InvalidRequest, engine.execute(&plan, &workspace, &request));

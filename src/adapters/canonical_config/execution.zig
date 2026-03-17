@@ -4,6 +4,7 @@ const Engine = @import("../../core/Engine.zig").Engine;
 const Request = @import("../../core/Request.zig").Request;
 const Result = @import("../../core/Result.zig").Result;
 const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
+const SceneModel = @import("../../model/Scene.zig");
 const export_spec = @import("../exporters/spec.zig");
 const exporters = @import("../exporters/writer.zig");
 const DocumentModule = @import("Document.zig");
@@ -26,6 +27,8 @@ pub const Error =
         DuplicateProduct,
         MissingOutputProduct,
         MissingMeasurementBinding,
+        MissingNoiseSigma,
+        MultipleMeasurementSpaceProducts,
         UnsupportedMeasurementBinding,
         UnsupportedOutputTarget,
     };
@@ -117,6 +120,7 @@ pub const ExecutionProgram = struct {
         }
 
         if (experiment.simulation) |stage| {
+            try validateStageProducts(stage.products);
             const product_names = try collectProductNames(allocator, stage.products);
             stages[stage_index] = .{
                 .kind = .simulation,
@@ -140,6 +144,7 @@ pub const ExecutionProgram = struct {
         }
 
         if (experiment.retrieval) |stage| {
+            try validateStageProducts(stage.products);
             var diagnostics = stage.diagnostics;
             if (hasJacobianProduct(stage.products)) diagnostics.jacobians = true;
             const product_names = try collectProductNames(allocator, stage.products);
@@ -274,6 +279,13 @@ pub const ExecutionProgram = struct {
                 .kind = stage_execution.kind,
                 .result = try engine.execute(&plan, &workspace, &request),
             };
+            if (stageRequestsAppliedNoise(self.products, index)) {
+                try applyNoiseToStageMeasurementProduct(
+                    &stage_outcomes[index].result,
+                    &stage_execution.stage.scene,
+                    stageNoiseSeed(stage_execution),
+                );
+            }
             executed_stage_count += 1;
         }
 
@@ -339,6 +351,19 @@ fn collectProductNames(allocator: Allocator, products: []const Product) ![]const
     return names;
 }
 
+fn validateStageProducts(products: []const Product) !void {
+    var measurement_space_count: usize = 0;
+    for (products) |product| {
+        if (product.apply_noise and product.kind != .measurement_space) {
+            return error.UnsupportedOutputTarget;
+        }
+        if (product.kind == .measurement_space) {
+            measurement_space_count += 1;
+            if (measurement_space_count > 1) return error.MultipleMeasurementSpaceProducts;
+        }
+    }
+}
+
 fn hasJacobianProduct(products: []const Product) bool {
     for (products) |product| {
         if (product.kind == .jacobian) return true;
@@ -357,6 +382,71 @@ fn findProduct(products: []const ProductRef, name: []const u8) ?ProductRef {
         if (std.mem.eql(u8, product.name, name)) return product;
     }
     return null;
+}
+
+fn stageRequestsAppliedNoise(products: []const ProductRef, stage_index: usize) bool {
+    for (products) |product| {
+        if (product.stage_index == stage_index and product.kind == .measurement_space and product.apply_noise) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn stageNoiseSeed(stage_execution: StageExecution) u64 {
+    if (stage_execution.stage.noise_seed) |seed| return seed;
+
+    var hasher = std.hash.Wyhash.init(@intFromEnum(stage_execution.kind));
+    hasher.update(stage_execution.stage.scene.id);
+    return hasher.final();
+}
+
+fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel.Scene, seed: u64) !void {
+    if (result.measurement_space_product) |*product| {
+        if (product.noise_sigma.len == 0 or product.noise_sigma.len != product.radiance.len) {
+            return error.MissingNoiseSigma;
+        }
+
+        var prng = std.Random.DefaultPrng.init(seed);
+        const random = prng.random();
+        for (product.radiance, product.noise_sigma, 0..) |*radiance, sigma, index| {
+            const perturbed = radiance.* + random.floatNorm(f64) * sigma;
+            radiance.* = @max(perturbed, 0.0);
+            product.reflectance[index] = reflectanceForSample(scene, radiance.*, product.irradiance[index]);
+        }
+        recomputeMeasurementSummary(product);
+        return;
+    }
+    return error.UnsupportedOutputTarget;
+}
+
+fn reflectanceForSample(scene: *const SceneModel.Scene, radiance: f64, irradiance: f64) f64 {
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+    return (radiance * std.math.pi) / @max(irradiance * solar_cosine, 1.0e-9);
+}
+
+fn recomputeMeasurementSummary(product: *MeasurementSpaceProduct) void {
+    if (product.radiance.len == 0) return;
+
+    var radiance_sum: f64 = 0.0;
+    var irradiance_sum: f64 = 0.0;
+    var reflectance_sum: f64 = 0.0;
+    var noise_sum: f64 = 0.0;
+    for (0..product.radiance.len) |index| {
+        radiance_sum += product.radiance[index];
+        irradiance_sum += product.irradiance[index];
+        reflectance_sum += product.reflectance[index];
+        if (index < product.noise_sigma.len) noise_sum += product.noise_sigma[index];
+    }
+
+    const sample_count = @as(f64, @floatFromInt(product.radiance.len));
+    product.summary.sample_count = @intCast(product.radiance.len);
+    product.summary.wavelength_start_nm = product.wavelengths[0];
+    product.summary.wavelength_end_nm = product.wavelengths[product.wavelengths.len - 1];
+    product.summary.mean_radiance = radiance_sum / sample_count;
+    product.summary.mean_irradiance = irradiance_sum / sample_count;
+    product.summary.mean_reflectance = reflectance_sum / sample_count;
+    product.summary.mean_noise_sigma = noise_sum / sample_count;
 }
 
 const IngestReference = struct {
@@ -528,6 +618,7 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_fitted_measurement = null;
             view.retrieval_averaging_kernel = null;
             view.retrieval_jacobian = null;
+            view.retrieval_posterior_covariance = null;
         },
         .state_vector => {
             if (view.retrieval_state_vector == null) return error.UnsupportedOutputTarget;
@@ -535,6 +626,7 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_fitted_measurement = null;
             view.retrieval_averaging_kernel = null;
             view.retrieval_jacobian = null;
+            view.retrieval_posterior_covariance = null;
         },
         .fitted_measurement => {
             if (view.retrieval_fitted_measurement == null) return error.UnsupportedOutputTarget;
@@ -542,6 +634,7 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_state_vector = null;
             view.retrieval_averaging_kernel = null;
             view.retrieval_jacobian = null;
+            view.retrieval_posterior_covariance = null;
         },
         .averaging_kernel => {
             if (view.retrieval_averaging_kernel == null) return error.UnsupportedOutputTarget;
@@ -549,6 +642,7 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_state_vector = null;
             view.retrieval_fitted_measurement = null;
             view.retrieval_jacobian = null;
+            view.retrieval_posterior_covariance = null;
         },
         .jacobian => {
             if (view.retrieval_jacobian == null) return error.UnsupportedOutputTarget;
@@ -556,6 +650,15 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_state_vector = null;
             view.retrieval_fitted_measurement = null;
             view.retrieval_averaging_kernel = null;
+            view.retrieval_posterior_covariance = null;
+        },
+        .posterior_covariance => {
+            if (view.retrieval_posterior_covariance == null) return error.UnsupportedOutputTarget;
+            view.measurement_space_product = null;
+            view.retrieval_state_vector = null;
+            view.retrieval_fitted_measurement = null;
+            view.retrieval_averaging_kernel = null;
+            view.retrieval_jacobian = null;
         },
         .result => {},
         .diagnostics => return error.UnsupportedOutputTarget,

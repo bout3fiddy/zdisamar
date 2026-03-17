@@ -42,6 +42,18 @@ const ParityMatrix = struct {
     cases: []const ParityCase,
 };
 
+fn matrixIndex(row: usize, column: usize, column_count: usize) usize {
+    return row * column_count + column;
+}
+
+fn matrixTrace(values: []const f64, dimension: usize) f64 {
+    var total: f64 = 0.0;
+    for (0..dimension) |index| {
+        total += values[matrixIndex(index, index, dimension)];
+    }
+    return total;
+}
+
 fn meanVectorInRange(
     wavelengths_nm: []const f64,
     values: []const f64,
@@ -163,31 +175,88 @@ fn makeRetrievalRequest(
     derivative_mode: zdisamar.DerivativeMode,
 ) !zdisamar.Request {
     const method = try parseRetrievalMethod(case.retrieval_method orelse return error.MissingRetrievalMethod);
-    const state_parameter_names: []const []const u8 = switch (method) {
-        .oe => &[_][]const u8{ "albedo", "aerosol" },
-        .doas => &[_][]const u8{"slant_column"},
-        .dismas => &[_][]const u8{ "state_a", "state_b", "state_c" },
-    };
     const measurement_product = switch (method) {
         .oe => "radiance",
         .doas => "slant_column",
         .dismas => "multi_band_signal",
     };
 
-    const scene = makeSceneForCase(case, regime);
+    var scene = makeSceneForCase(case, regime);
+    if (method == .oe) {
+        scene.surface.albedo = 0.10;
+        scene.aerosol.enabled = true;
+        scene.atmosphere.has_aerosols = true;
+        scene.aerosol.optical_depth = 0.08;
+        scene.aerosol.layer_center_km = 2.0;
+        scene.aerosol.layer_width_km = 2.0;
+    }
 
     return .{
         .scene = scene,
         .inverse_problem = .{
             .id = case.id,
             .state_vector = .{
-                .parameter_names = state_parameter_names,
-                .value_count = @intCast(state_parameter_names.len),
+                .parameter_names = switch (method) {
+                    .oe => &[_][]const u8{ "albedo", "aerosol" },
+                    .doas => &[_][]const u8{"slant_column"},
+                    .dismas => &[_][]const u8{ "state_a", "state_b", "state_c" },
+                },
+                .parameters = switch (method) {
+                    .oe => &[_]zdisamar.StateParameter{
+                        .{
+                            .name = "albedo",
+                            .target = .surface_albedo,
+                            .transform = .logit,
+                            .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.03 },
+                            .bounds = .{ .enabled = true, .min = 0.0, .max = 1.0 },
+                        },
+                        .{
+                            .name = "aerosol",
+                            .target = .aerosol_optical_depth_550_nm,
+                            .transform = .log,
+                            .prior = .{ .enabled = true, .mean = 0.08, .sigma = 0.04 },
+                            .bounds = .{ .enabled = true, .min = 1.0e-4, .max = 3.0 },
+                        },
+                    },
+                    .doas => &[_]zdisamar.StateParameter{
+                        .{
+                            .name = "slant_column",
+                            .target = .surface_albedo,
+                            .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.05 },
+                        },
+                    },
+                    .dismas => &[_]zdisamar.StateParameter{
+                        .{
+                            .name = "state_a",
+                            .target = .surface_albedo,
+                            .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.05 },
+                        },
+                        .{
+                            .name = "state_b",
+                            .target = .aerosol_optical_depth_550_nm,
+                            .prior = .{ .enabled = true, .mean = 0.12, .sigma = 0.05 },
+                        },
+                        .{
+                            .name = "state_c",
+                            .target = .wavelength_shift_nm,
+                            .prior = .{ .enabled = true, .mean = 0.0, .sigma = 0.05 },
+                            .bounds = .{ .enabled = true, .min = -0.2, .max = 0.2 },
+                        },
+                    },
+                },
             },
             .measurements = .{
                 .product = measurement_product,
                 .observable = "radiance",
                 .sample_count = case.runtime_profile.spectral_samples,
+                .source = if (method == .oe)
+                    .{ .kind = .external_observation, .name = "truth_radiance" }
+                else
+                    .{},
+                .error_model = if (method == .oe)
+                    .{ .from_source_noise = true, .floor = 1.0e-4 }
+                else
+                    .{},
             },
         },
         .expected_derivative_mode = derivative_mode,
@@ -416,14 +485,30 @@ fn prepareOpticalStateForCase(
     );
 }
 
-fn executeRetrievalCase(case: ParityCase, request: zdisamar.Request) !retrieval.common.contracts.SolverOutcome {
-    const problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&request);
-    const method = try parseRetrievalMethod(case.retrieval_method orelse return error.MissingRetrievalMethod);
-    return switch (method) {
-        .oe => retrieval.oe.solver.solve(std.testing.allocator, problem),
-        .doas => retrieval.doas.solver.solve(std.testing.allocator, problem),
-        .dismas => retrieval.dismas.solver.solve(std.testing.allocator, problem),
-    };
+fn makeOeTruthScene(scene: zdisamar.Scene) zdisamar.Scene {
+    return scene;
+}
+
+fn buildObservedMeasurementProduct(
+    allocator: std.mem.Allocator,
+    plan: zdisamar.Plan,
+    request: zdisamar.Request,
+) !?zdisamar.transport.measurement_space.MeasurementSpaceProduct {
+    const inverse_problem = request.inverse_problem orelse return null;
+    if (inverse_problem.measurements.source.kind != .external_observation) return null;
+
+    const truth_scene = makeOeTruthScene(request.scene);
+    var prepared = try plan.providers.optics.prepareForScene(allocator, &truth_scene);
+    defer prepared.deinit(allocator);
+
+    const product = try zdisamar.transport.measurement_space.simulateProduct(
+        allocator,
+        &truth_scene,
+        plan.transport_route,
+        &prepared,
+        measurementProviders(plan),
+    );
+    return product;
 }
 
 fn measurementProviders(plan: zdisamar.Plan) zdisamar.transport.measurement_space.ProviderBindings {
@@ -596,10 +681,19 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
 
         workspace.reset();
         const case_scene = makeSceneForCase(case, regime);
-        const request = if (std.mem.eql(u8, case.component, "retrieval"))
+        var request = if (std.mem.eql(u8, case.component, "retrieval"))
             try makeRetrievalRequest(case, regime, derivative_mode)
         else
             zdisamar.Request.init(case_scene);
+        var observed_measurement_product = try buildObservedMeasurementProduct(std.testing.allocator, plan, request);
+        defer if (observed_measurement_product) |*product| product.deinit(std.testing.allocator);
+        if (observed_measurement_product) |*product| {
+            request.measurement_binding = .{
+                .source_name = request.inverse_problem.?.measurements.source.name,
+                .observable = request.inverse_problem.?.measurements.observable,
+                .product = product,
+            };
+        }
         var result = try engine.execute(&plan, &workspace, &request);
         defer result.deinit(std.testing.allocator);
 
@@ -611,11 +705,7 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
         }
 
         if (std.mem.eql(u8, case.component, "retrieval")) {
-            const outcome = try executeRetrievalCase(case, request);
-            defer {
-                var owned = outcome;
-                owned.deinit(std.testing.allocator);
-            }
+            const outcome = result.retrieval orelse return error.MissingRetrievalOutcome;
             try std.testing.expectEqualStrings(case.retrieval_method.?, @tagName(outcome.method));
             try std.testing.expectEqualStrings(case.id, outcome.scene_id);
             try std.testing.expect(outcome.iterations > 0);
@@ -637,6 +727,25 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
                 try std.testing.expectEqual(anchor.solution_has_converged, outcome.converged);
                 try expectNear(outcome.cost, anchor.chi2, case.tolerances.absolute, case.tolerances.relative);
                 try expectNear(outcome.dfs, anchor.dfs, case.tolerances.absolute, case.tolerances.relative);
+            }
+
+            if (outcome.method == .oe) {
+                try std.testing.expect(outcome.jacobian != null);
+                try std.testing.expect(outcome.averaging_kernel != null);
+                try std.testing.expect(outcome.posterior_covariance != null);
+
+                const jacobian = outcome.jacobian.?;
+                const averaging_kernel = outcome.averaging_kernel.?;
+                const posterior_covariance = outcome.posterior_covariance.?;
+                try std.testing.expectEqual(case.runtime_profile.spectral_samples, jacobian.row_count);
+                try std.testing.expectEqual(averaging_kernel.row_count, averaging_kernel.column_count);
+                try std.testing.expectEqual(posterior_covariance.row_count, posterior_covariance.column_count);
+                try expectNear(
+                    outcome.dfs,
+                    matrixTrace(averaging_kernel.values, @as(usize, @intCast(averaging_kernel.row_count))),
+                    case.tolerances.absolute,
+                    case.tolerances.relative,
+                );
             }
         } else if (std.mem.eql(u8, case.component, "optics")) {
             var prepared = try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);

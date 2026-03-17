@@ -57,7 +57,9 @@ pub const Request = struct {
                     {
                         return errors.Error.InvalidRequest;
                     }
-                    if (binding.product.summary.sample_count != inverse_problem.measurements.sample_count) {
+                    if (inverse_problem.measurements.selectedSampleCount(binding.product.wavelengths) !=
+                        inverse_problem.measurements.sample_count)
+                    {
                         return errors.Error.InvalidRequest;
                     }
                 },

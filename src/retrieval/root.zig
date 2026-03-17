@@ -7,6 +7,7 @@ pub const common = struct {
     pub const diagnostics = zdisamar.retrieval_modules.common.diagnostics;
     pub const forward_model = zdisamar.retrieval_modules.common.forward_model;
     pub const priors = zdisamar.retrieval_modules.common.priors;
+    pub const state_access = zdisamar.retrieval_modules.common.state_access;
     pub const surrogate_forward = zdisamar.retrieval_modules.common.surrogate_forward;
 };
 
