@@ -2,7 +2,9 @@ const std = @import("std");
 const SolverMode = @import("../../core/Plan.zig").SolverMode;
 const GeometryModel = @import("../../model/Geometry.zig").Model;
 const SpectroscopyMode = @import("../../model/Absorber.zig").SpectroscopyMode;
+const Instrument = @import("../../model/Instrument.zig").Instrument;
 const ObservationRegime = @import("../../model/ObservationModel.zig").ObservationRegime;
+const SurfaceKind = @import("../../model/Surface.zig").Surface.Kind;
 const DerivativeMode = @import("../../model/InverseProblem.zig").DerivativeMode;
 const StateTransform = @import("../../model/StateVector.zig").Transform;
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
@@ -69,6 +71,18 @@ pub fn parseObservationRegime(value: []const u8) Error!ObservationRegime {
     return error.InvalidValue;
 }
 
+pub fn parseSamplingMode(value: []const u8) Error!Instrument.SamplingMode {
+    return Instrument.SamplingMode.parse(value) catch error.InvalidValue;
+}
+
+pub fn parseNoiseModelKind(value: []const u8) Error!Instrument.NoiseModelKind {
+    return Instrument.NoiseModelKind.parse(value) catch error.InvalidValue;
+}
+
+pub fn parseSurfaceKind(value: []const u8) Error!SurfaceKind {
+    return SurfaceKind.parse(value) catch error.InvalidValue;
+}
+
 pub fn parseSpectroscopyMode(value: []const u8) Error!SpectroscopyMode {
     if (std.mem.eql(u8, value, "line_by_line")) return .line_by_line;
     if (std.mem.eql(u8, value, "cia")) return .cia;
@@ -122,10 +136,11 @@ pub fn normalizeRetrievalProvider(name: []const u8, explicit_provider: ?[]const 
     return name;
 }
 
-pub fn normalizeSurfaceProvider(explicit_provider: []const u8, model: []const u8) []const u8 {
+pub fn normalizeSurfaceProvider(explicit_provider: []const u8, model: SurfaceKind) []const u8 {
     if (explicit_provider.len != 0) return explicit_provider;
-    if (std.mem.eql(u8, model, "lambertian")) return "builtin.lambertian_surface";
-    return explicit_provider;
+    return switch (model) {
+        .lambertian => "builtin.lambertian_surface",
+    };
 }
 
 pub fn normalizeInstrumentProvider(explicit_provider: []const u8, instrument_name: []const u8) []const u8 {

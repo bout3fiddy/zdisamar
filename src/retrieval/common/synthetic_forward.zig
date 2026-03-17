@@ -348,14 +348,23 @@ fn applyAccessor(scene: *Scene, accessor: StateAccessor, value: f64) void {
 fn sceneWithDefaults(base: Scene) Scene {
     var scene = base;
     if (scene.id.len == 0) scene.id = "retrieval-synthetic";
-    if (scene.spectral_grid.sample_count < 8) scene.spectral_grid.sample_count = 8;
+    if (scene.spectral_grid.sample_count < 8 and scene.observation_model.measured_wavelengths_nm.len == 0) {
+        scene.spectral_grid.sample_count = 8;
+    }
     if (scene.spectral_grid.end_nm <= scene.spectral_grid.start_nm) {
         scene.spectral_grid.start_nm = 405.0;
         scene.spectral_grid.end_nm = 465.0;
     }
     if (scene.atmosphere.layer_count == 0) scene.atmosphere.layer_count = 24;
     if (scene.observation_model.instrument.len == 0) scene.observation_model.instrument = "retrieval-synthetic";
-    if (scene.observation_model.sampling.len == 0) scene.observation_model.sampling = "operational";
+    if (scene.observation_model.sampling == .native and
+        scene.observation_model.instrument_line_fwhm_nm == 0.0 and
+        scene.observation_model.high_resolution_step_nm == 0.0 and
+        scene.observation_model.high_resolution_half_span_nm == 0.0 and
+        scene.observation_model.measured_wavelengths_nm.len == 0)
+    {
+        scene.observation_model.sampling = .operational;
+    }
     if (scene.observation_model.multiplicative_offset <= 0.0) scene.observation_model.multiplicative_offset = 1.0;
     return scene;
 }
@@ -410,6 +419,27 @@ fn executionMode(problem: common.RetrievalProblem, method: common.Method) Execut
             .limb, .occultation => .polarized,
         },
     };
+}
+
+test "scene defaults preserve explicit measured-channel axes" {
+    const measured_wavelengths = [_]f64{ 405.0, 406.0 };
+    const scene = sceneWithDefaults(.{
+        .id = "",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 406.0,
+            .sample_count = 2,
+        },
+        .observation_model = .{
+            .instrument = "tropomi",
+            .sampling = .measured_channels,
+            .measured_wavelengths_nm = &measured_wavelengths,
+        },
+    });
+
+    try std.testing.expectEqual(@as(u32, 2), scene.spectral_grid.sample_count);
+    try std.testing.expectEqual(@as(usize, 2), scene.observation_model.measured_wavelengths_nm.len);
+    try scene.validate();
 }
 
 test "surrogate forward supports canonical multi-parameter state application" {

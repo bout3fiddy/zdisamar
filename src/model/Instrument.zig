@@ -21,6 +21,18 @@ pub const Instrument = struct {
         operational,
         measured_channels,
         synthetic,
+
+        pub fn parse(value: []const u8) errors.Error!SamplingMode {
+            if (std.mem.eql(u8, value, "native")) return .native;
+            if (std.mem.eql(u8, value, "operational")) return .operational;
+            if (std.mem.eql(u8, value, "measured_channels")) return .measured_channels;
+            if (std.mem.eql(u8, value, "synthetic")) return .synthetic;
+            return errors.Error.InvalidRequest;
+        }
+
+        pub fn label(self: SamplingMode) []const u8 {
+            return @tagName(self);
+        }
     };
 
     pub const NoiseModelKind = enum {
@@ -28,11 +40,23 @@ pub const Instrument = struct {
         shot_noise,
         s5p_operational,
         snr_from_input,
+
+        pub fn parse(value: []const u8) errors.Error!NoiseModelKind {
+            if (std.mem.eql(u8, value, "none")) return .none;
+            if (std.mem.eql(u8, value, "shot_noise")) return .shot_noise;
+            if (std.mem.eql(u8, value, "s5p_operational")) return .s5p_operational;
+            if (std.mem.eql(u8, value, "snr_from_input")) return .snr_from_input;
+            return errors.Error.InvalidRequest;
+        }
+
+        pub fn label(self: NoiseModelKind) []const u8 {
+            return @tagName(self);
+        }
     };
 
     name: []const u8 = "generic",
-    sampling: []const u8 = "native",
-    noise_model: []const u8 = "none",
+    sampling: SamplingMode = .native,
+    noise_model: NoiseModelKind = .none,
     wavelength_shift_nm: f64 = 0.0,
     instrument_line_fwhm_nm: f64 = 0.0,
     builtin_line_shape: BuiltinLineShapeKind = .gaussian,
@@ -45,31 +69,10 @@ pub const Instrument = struct {
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
 
-    pub fn resolvedSampling(self: *const Instrument) errors.Error!SamplingMode {
-        if (std.mem.eql(u8, self.sampling, "native")) return .native;
-        if (std.mem.eql(u8, self.sampling, "operational")) return .operational;
-        if (std.mem.eql(u8, self.sampling, "measured_channels")) return .measured_channels;
-        if (std.mem.eql(u8, self.sampling, "synthetic")) return .synthetic;
-        return errors.Error.InvalidRequest;
-    }
-
-    pub fn resolvedNoiseModel(self: *const Instrument) errors.Error!NoiseModelKind {
-        if (std.mem.eql(u8, self.noise_model, "none")) return .none;
-        if (std.mem.eql(u8, self.noise_model, "shot_noise")) return .shot_noise;
-        if (std.mem.eql(u8, self.noise_model, "s5p_operational")) return .s5p_operational;
-        if (std.mem.eql(u8, self.noise_model, "snr_from_input")) return .snr_from_input;
-        return errors.Error.InvalidRequest;
-    }
-
     pub fn validate(self: *const Instrument) errors.Error!void {
         if (self.name.len == 0) {
             return errors.Error.MissingObservationInstrument;
         }
-        if (self.sampling.len == 0 or self.noise_model.len == 0) {
-            return errors.Error.InvalidRequest;
-        }
-        _ = try self.resolvedSampling();
-        _ = try self.resolvedNoiseModel();
         if (self.instrument_line_fwhm_nm < 0.0) {
             return errors.Error.InvalidRequest;
         }
@@ -126,28 +129,26 @@ test "operational cross-section lut evaluates vendor-style scaled log legendre e
 test "instrument resolves typed sampling and noise selectors" {
     const instrument: Instrument = .{
         .name = "synthetic",
-        .sampling = "measured_channels",
-        .noise_model = "snr_from_input",
+        .sampling = .measured_channels,
+        .noise_model = .snr_from_input,
         .high_resolution_step_nm = 0.08,
         .high_resolution_half_span_nm = 0.32,
     };
 
-    try std.testing.expectEqual(Instrument.SamplingMode.measured_channels, try instrument.resolvedSampling());
-    try std.testing.expectEqual(Instrument.NoiseModelKind.snr_from_input, try instrument.resolvedNoiseModel());
+    try std.testing.expectEqual(Instrument.SamplingMode.measured_channels, instrument.sampling);
+    try std.testing.expectEqual(Instrument.NoiseModelKind.snr_from_input, instrument.noise_model);
     try instrument.validate();
 
-    try std.testing.expectError(errors.Error.InvalidRequest, (Instrument{
-        .name = "synthetic",
-        .sampling = "mystery_mode",
-        .noise_model = "none",
-    }).validate());
+    try std.testing.expectEqual(Instrument.SamplingMode.synthetic, try Instrument.SamplingMode.parse("synthetic"));
+    try std.testing.expectEqual(Instrument.NoiseModelKind.none, try Instrument.NoiseModelKind.parse("none"));
+    try std.testing.expectError(errors.Error.InvalidRequest, Instrument.SamplingMode.parse("mystery_mode"));
 }
 
 test "instrument validation rejects malformed operational lut surfaces" {
     const invalid: Instrument = .{
         .name = "test",
-        .sampling = "operational",
-        .noise_model = "s5p_operational",
+        .sampling = .operational,
+        .noise_model = .s5p_operational,
         .o2_operational_lut = .{
             .wavelengths_nm = &[_]f64{760.8},
             .coefficients = &[_]f64{},
@@ -166,8 +167,8 @@ test "instrument validation rejects malformed operational lut surfaces" {
 test "operational reference grid and solar spectrum validate typed external inputs" {
     const instrument: Instrument = .{
         .name = "tropomi",
-        .sampling = "operational",
-        .noise_model = "s5p_operational",
+        .sampling = .operational,
+        .noise_model = .s5p_operational,
         .operational_refspec_grid = .{
             .wavelengths_nm = &[_]f64{ 760.8, 761.0, 761.2 },
             .weights = &[_]f64{ 0.25, 0.5, 0.25 },
@@ -189,8 +190,8 @@ test "operational reference grid and solar spectrum validate typed external inpu
 test "operational typed carriers reject duplicate wavelengths" {
     const invalid_grid: Instrument = .{
         .name = "tropomi",
-        .sampling = "operational",
-        .noise_model = "s5p_operational",
+        .sampling = .operational,
+        .noise_model = .s5p_operational,
         .operational_refspec_grid = .{
             .wavelengths_nm = &[_]f64{ 760.8, 760.8 },
             .weights = &[_]f64{ 0.5, 0.5 },
@@ -200,8 +201,8 @@ test "operational typed carriers reject duplicate wavelengths" {
 
     const invalid_solar: Instrument = .{
         .name = "tropomi",
-        .sampling = "operational",
-        .noise_model = "s5p_operational",
+        .sampling = .operational,
+        .noise_model = .s5p_operational,
         .operational_solar_spectrum = .{
             .wavelengths_nm = &[_]f64{ 760.8, 760.8 },
             .irradiance = &[_]f64{ 2.7e14, 2.8e14 },
@@ -211,8 +212,8 @@ test "operational typed carriers reject duplicate wavelengths" {
 
     const invalid_lut: Instrument = .{
         .name = "tropomi",
-        .sampling = "operational",
-        .noise_model = "s5p_operational",
+        .sampling = .operational,
+        .noise_model = .s5p_operational,
         .o2_operational_lut = .{
             .wavelengths_nm = &[_]f64{ 760.8, 760.8 },
             .coefficients = &[_]f64{ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0 },

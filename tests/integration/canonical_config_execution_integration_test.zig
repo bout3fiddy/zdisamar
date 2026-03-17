@@ -148,6 +148,232 @@ test "canonical execution runs a forward-only program and writes outputs" {
     try std.fs.cwd().access(truth_path, .{});
 }
 
+test "canonical execution resolves measured-channel observation config from ingest support data" {
+    const yaml =
+        \\schema_version: 1
+        \\
+        \\metadata:
+        \\  id: measured-support-data
+        \\  workspace: exec-measured
+        \\
+        \\inputs:
+        \\  assets:
+        \\    isrf_metadata:
+        \\      kind: file
+        \\      path: data/examples/irr_rad_channels_operational_isrf_table_demo.txt
+        \\      format: spectral_ascii
+        \\    refspec_metadata:
+        \\      kind: file
+        \\      path: data/examples/irr_rad_channels_operational_refspec_demo.txt
+        \\      format: spectral_ascii
+        \\  ingests:
+        \\    isrf_demo:
+        \\      adapter: spectral_ascii
+        \\      asset: isrf_metadata
+        \\    refspec_demo:
+        \\      adapter: spectral_ascii
+        \\      asset: refspec_metadata
+        \\
+        \\templates:
+        \\  base:
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 16
+        \\      bands:
+        \\        o2a:
+        \\          start_nm: 760.8
+        \\          end_nm: 761.2
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: cross_sections
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.06
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: tropomi
+        \\        sampling:
+        \\          mode: measured_channels
+        \\          high_resolution_step_nm: 0.08
+        \\          high_resolution_half_span_nm: 0.32
+        \\        spectral_response:
+        \\          shape: table
+        \\          table:
+        \\            from_ingest: isrf_demo.instrument_line_shape_table
+        \\        illumination:
+        \\          solar_spectrum:
+        \\            from_ingest: refspec_demo.operational_solar_spectrum
+        \\        supporting_data:
+        \\          weighted_reference_grid:
+        \\            from_ingest: refspec_demo.operational_refspec_grid
+        \\        calibration:
+        \\          wavelength_shift_nm: 0.0
+        \\          multiplicative_offset: 1.0
+        \\          stray_light: 0.0
+        \\        noise:
+        \\          model: shot_noise
+        \\
+        \\experiment:
+        \\  simulation:
+        \\    from: base
+        \\    scene:
+        \\      id: measured_scene
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\
+        \\outputs: []
+        \\
+        \\validation:
+        \\  strict_unknown_fields: true
+        \\  require_resolved_stage_references: true
+    ;
+
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const execution = try executeResolvedSource("measured-support.yaml", ".", yaml, &engine);
+    defer {
+        var outcome = execution.outcome;
+        outcome.deinit();
+        var program = execution.program;
+        program.deinit();
+    }
+
+    const scene = execution.program.stages[0].stage.scene;
+    try std.testing.expectEqual(zdisamar.Instrument.SamplingMode.measured_channels, scene.observation_model.sampling);
+    try std.testing.expect(scene.observation_model.instrument_line_shape_table.nominal_count > 0);
+    try std.testing.expect(scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expect(scene.observation_model.operational_refspec_grid.enabled());
+    try std.testing.expectEqual(@as(usize, 1), execution.outcome.stage_outcomes.len);
+    const product = execution.outcome.stage_outcomes[0].result.measurement_space_product.?;
+    try std.testing.expectEqual(@as(usize, 3), product.wavelengths.len);
+}
+
+test "canonical execution binds ingest-backed radiance observations into measured-channel retrievals" {
+    const yaml =
+        \\schema_version: 1
+        \\
+        \\metadata:
+        \\  id: ingest-retrieval
+        \\  workspace: exec-ingest-retrieval
+        \\
+        \\inputs:
+        \\  assets:
+        \\    observed_input:
+        \\      kind: file
+        \\      path: data/examples/irr_rad_channels_demo.txt
+        \\      format: spectral_ascii
+        \\  ingests:
+        \\    observed:
+        \\      adapter: spectral_ascii
+        \\      asset: observed_input
+        \\
+        \\templates:
+        \\  base:
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: semi_analytical
+        \\    scene:
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 16
+        \\      bands:
+        \\        band_1:
+        \\          start_nm: 405.0
+        \\          end_nm: 406.0
+        \\          step_nm: 0.25
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: cross_sections
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: tropomi
+        \\        sampling:
+        \\          mode: measured_channels
+        \\        noise:
+        \\          model: snr_from_input
+        \\
+        \\experiment:
+        \\  retrieval:
+        \\    from: base
+        \\    scene:
+        \\      id: ingest_retrieval_scene
+        \\    inverse:
+        \\      algorithm:
+        \\        name: oe
+        \\      measurement:
+        \\        source: observed.radiance
+        \\        observable: radiance
+        \\        error_model:
+        \\          from_source_noise: true
+        \\      state:
+        \\        surface_albedo:
+        \\          target: scene.surface.albedo
+        \\          prior:
+        \\            mean: 0.05
+        \\            sigma: 0.02
+        \\    products:
+        \\      fitted_radiance:
+        \\        kind: fitted_measurement
+        \\
+        \\outputs: []
+        \\
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const execution = try executeResolvedSource("ingest-retrieval.yaml", ".", yaml, &engine);
+    defer {
+        var outcome = execution.outcome;
+        outcome.deinit();
+        var program = execution.program;
+        program.deinit();
+    }
+
+    try std.testing.expectEqual(zdisamar.Result.Status.success, execution.outcome.stage_outcomes[0].result.status);
+    try std.testing.expectEqual(zdisamar.DataBindingKind.ingest, execution.program.stages[0].stage.inverse.?.measurements.source.kind);
+    try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval != null);
+}
+
 test "canonical execution rejects retrieval-only external observations without an explicit measurement binding" {
     const yaml =
         \\schema_version: 1

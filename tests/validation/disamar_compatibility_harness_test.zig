@@ -206,8 +206,8 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
         .observation_model = .{
             .instrument = "compatibility-harness",
             .regime = regime,
-            .sampling = "synthetic",
-            .noise_model = "shot_noise",
+            .sampling = .synthetic,
+            .noise_model = .shot_noise,
         },
         .atmosphere = .{
             .layer_count = 24,
@@ -251,12 +251,12 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
             .relative_azimuth_deg = 120.0,
         };
         scene.surface = .{
-            .kind = "lambertian",
+            .kind = .lambertian,
             .albedo = 0.20,
         };
         scene.observation_model.instrument = "compatibility-harness-o2a";
-        scene.observation_model.sampling = "native";
-        scene.observation_model.noise_model = "shot_noise";
+        scene.observation_model.sampling = .native;
+        scene.observation_model.noise_model = .shot_noise;
         scene.observation_model.instrument_line_fwhm_nm = 0.38;
         scene.observation_model.builtin_line_shape = .flat_top_n4;
         scene.observation_model.high_resolution_step_nm = 0.01;

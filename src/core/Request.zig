@@ -44,7 +44,7 @@ pub const Request = struct {
 
         if (self.inverse_problem) |inverse_problem| {
             switch (inverse_problem.measurements.source.kind) {
-                .stage_product, .external_observation => {
+                .stage_product, .external_observation, .ingest => {
                     const binding = self.measurement_binding orelse return errors.Error.InvalidRequest;
                     if (inverse_problem.measurements.source.name.len != 0 and
                         !std.mem.eql(u8, inverse_problem.measurements.source.name, binding.source_name))

@@ -93,6 +93,25 @@ pub const InstrumentLineShape = struct {
         }
         self.* = .{};
     }
+
+    pub fn writeNormalizedKernel(
+        self: *const InstrumentLineShape,
+        offsets_out: []f64,
+        weights_out: []f64,
+    ) usize {
+        const sample_count = @min(@as(usize, self.sample_count), @min(offsets_out.len, weights_out.len));
+        if (sample_count == 0) return 0;
+
+        var weight_sum: f64 = 0.0;
+        for (0..sample_count) |index| {
+            offsets_out[index] = self.offsets_nm[index];
+            weights_out[index] = self.weights[index];
+            weight_sum += weights_out[index];
+        }
+        if (!std.math.isFinite(weight_sum) or weight_sum <= 0.0) return 0;
+        for (0..sample_count) |index| weights_out[index] /= weight_sum;
+        return sample_count;
+    }
 };
 
 pub const InstrumentLineShapeTable = struct {
@@ -203,6 +222,27 @@ pub const InstrumentLineShapeTable = struct {
         return best_index;
     }
 
+    pub fn writeNormalizedKernelForNominal(
+        self: *const InstrumentLineShapeTable,
+        nominal_wavelength_nm: f64,
+        offsets_out: []f64,
+        weights_out: []f64,
+    ) usize {
+        const nominal_index = self.nearestNominalIndex(nominal_wavelength_nm) orelse return 0;
+        const sample_count = @min(@as(usize, self.sample_count), @min(offsets_out.len, weights_out.len));
+        if (sample_count == 0) return 0;
+
+        var weight_sum: f64 = 0.0;
+        for (0..sample_count) |index| {
+            offsets_out[index] = self.offsets_nm[index];
+            weights_out[index] = self.weightAt(nominal_index, index);
+            weight_sum += weights_out[index];
+        }
+        if (!std.math.isFinite(weight_sum) or weight_sum <= 0.0) return 0;
+        for (0..sample_count) |index| weights_out[index] /= weight_sum;
+        return sample_count;
+    }
+
     pub fn deinitOwned(self: *InstrumentLineShapeTable, allocator: std.mem.Allocator) void {
         if (self.owns_memory) {
             if (self.nominal_wavelengths_nm.len != 0) allocator.free(@constCast(self.nominal_wavelengths_nm));
@@ -212,3 +252,27 @@ pub const InstrumentLineShapeTable = struct {
         self.* = .{};
     }
 };
+
+test "line-shape carriers normalize direct and table-driven kernels" {
+    const direct: InstrumentLineShape = .{
+        .sample_count = 3,
+        .offsets_nm = &.{ -0.1, 0.0, 0.1 },
+        .weights = &.{ 1.0, 2.0, 1.0 },
+    };
+    var offsets: [3]f64 = undefined;
+    var weights: [3]f64 = undefined;
+    const direct_count = direct.writeNormalizedKernel(&offsets, &weights);
+    try std.testing.expectEqual(@as(usize, 3), direct_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), weights[1], 1.0e-12);
+
+    const table: InstrumentLineShapeTable = .{
+        .nominal_count = 2,
+        .sample_count = 3,
+        .nominal_wavelengths_nm = &.{ 760.8, 761.0 },
+        .offsets_nm = &.{ -0.1, 0.0, 0.1 },
+        .weights = &.{ 1.0, 2.0, 1.0, 0.5, 1.0, 0.5 },
+    };
+    const table_count = table.writeNormalizedKernelForNominal(761.0, &offsets, &weights);
+    try std.testing.expectEqual(@as(usize, 3), table_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), weights[1], 1.0e-12);
+}

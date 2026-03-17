@@ -20,8 +20,8 @@ pub const ObservationModel = struct {
     instrument: []const u8 = "generic",
     response_provider: []const u8 = "",
     regime: ObservationRegime = .nadir,
-    sampling: []const u8 = "native",
-    noise_model: []const u8 = "none",
+    sampling: Instrument.SamplingMode = .native,
+    noise_model: Instrument.NoiseModelKind = .none,
     wavelength_shift_nm: f64 = 0.0,
     multiplicative_offset: f64 = 1.0,
     stray_light: f64 = 0.0,
@@ -37,32 +37,17 @@ pub const ObservationModel = struct {
     operational_solar_spectrum: OperationalSolarSpectrum = .{},
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
+    measured_wavelengths_nm: []const f64 = &.{},
+    owns_measured_wavelengths: bool = false,
+    reference_radiance: []const f64 = &.{},
+    owns_reference_radiance: bool = false,
     ingested_noise_sigma: []const f64 = &.{},
-
-    pub fn resolvedSampling(self: *const ObservationModel) errors.Error!Instrument.SamplingMode {
-        if (std.mem.eql(u8, self.sampling, "native")) return .native;
-        if (std.mem.eql(u8, self.sampling, "operational")) return .operational;
-        if (std.mem.eql(u8, self.sampling, "measured_channels")) return .measured_channels;
-        if (std.mem.eql(u8, self.sampling, "synthetic")) return .synthetic;
-        return errors.Error.InvalidRequest;
-    }
-
-    pub fn resolvedNoiseModel(self: *const ObservationModel) errors.Error!Instrument.NoiseModelKind {
-        if (std.mem.eql(u8, self.noise_model, "none")) return .none;
-        if (std.mem.eql(u8, self.noise_model, "shot_noise")) return .shot_noise;
-        if (std.mem.eql(u8, self.noise_model, "s5p_operational")) return .s5p_operational;
-        if (std.mem.eql(u8, self.noise_model, "snr_from_input")) return .snr_from_input;
-        return errors.Error.InvalidRequest;
-    }
 
     pub fn validate(self: *const ObservationModel) errors.Error!void {
         try self.solar_spectrum_source.validate();
         try self.weighted_reference_grid_source.validate();
         if (self.instrument.len == 0) {
             return errors.Error.MissingObservationInstrument;
-        }
-        if (self.sampling.len == 0 or self.noise_model.len == 0) {
-            return errors.Error.InvalidRequest;
         }
         if (!std.math.isFinite(self.multiplicative_offset) or self.multiplicative_offset <= 0.0) {
             return errors.Error.InvalidRequest;
@@ -75,8 +60,33 @@ pub const ObservationModel = struct {
                 return errors.Error.InvalidRequest;
             }
         }
-        _ = try self.resolvedSampling();
-        _ = try self.resolvedNoiseModel();
+        for (self.reference_radiance) |value| {
+            if (!std.math.isFinite(value) or value < 0.0) {
+                return errors.Error.InvalidRequest;
+            }
+        }
+        switch (self.noise_model) {
+            .snr_from_input, .s5p_operational => {
+                if (self.ingested_noise_sigma.len == 0) return errors.Error.InvalidRequest;
+            },
+            .none, .shot_noise => {},
+        }
+        if (self.noise_model == .s5p_operational and self.reference_radiance.len != self.ingested_noise_sigma.len) {
+            return errors.Error.InvalidRequest;
+        }
+        if (self.measured_wavelengths_nm.len != 0) {
+            var previous_wavelength: ?f64 = null;
+            for (self.measured_wavelengths_nm) |wavelength_nm| {
+                if (!std.math.isFinite(wavelength_nm)) return errors.Error.InvalidRequest;
+                if (previous_wavelength) |previous| {
+                    if (wavelength_nm <= previous) return errors.Error.InvalidRequest;
+                }
+                previous_wavelength = wavelength_nm;
+            }
+            if (self.ingested_noise_sigma.len != 0 and self.ingested_noise_sigma.len != self.measured_wavelengths_nm.len) {
+                return errors.Error.InvalidRequest;
+            }
+        }
         if (self.instrument_line_fwhm_nm < 0.0) {
             return errors.Error.InvalidRequest;
         }
@@ -101,6 +111,12 @@ pub const ObservationModel = struct {
         self.operational_solar_spectrum.deinitOwned(allocator);
         self.o2_operational_lut.deinitOwned(allocator);
         self.o2o2_operational_lut.deinitOwned(allocator);
+        if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) allocator.free(self.measured_wavelengths_nm);
+        self.measured_wavelengths_nm = &.{};
+        self.owns_measured_wavelengths = false;
+        if (self.owns_reference_radiance and self.reference_radiance.len != 0) allocator.free(self.reference_radiance);
+        self.reference_radiance = &.{};
+        self.owns_reference_radiance = false;
         if (self.ingested_noise_sigma.len != 0) allocator.free(self.ingested_noise_sigma);
         self.ingested_noise_sigma = &.{};
     }
@@ -112,19 +128,28 @@ test "observation model carries calibration and supporting-data bindings" {
         .response_provider = "builtin.generic_response",
         .solar_spectrum_source = .{ .kind = .bundle_default },
         .weighted_reference_grid_source = .{ .kind = .ingest, .name = "refspec_demo.grid" },
-        .sampling = "operational",
-        .noise_model = "shot_noise",
+        .sampling = .operational,
+        .noise_model = .shot_noise,
         .multiplicative_offset = 1.002,
         .stray_light = 0.0007,
     };
 
-    try std.testing.expectEqual(Instrument.SamplingMode.operational, try model.resolvedSampling());
-    try std.testing.expectEqual(Instrument.NoiseModelKind.shot_noise, try model.resolvedNoiseModel());
+    try std.testing.expectEqual(Instrument.SamplingMode.operational, model.sampling);
+    try std.testing.expectEqual(Instrument.NoiseModelKind.shot_noise, model.noise_model);
     try model.validate();
+}
 
-    try std.testing.expectError(errors.Error.InvalidRequest, (ObservationModel{
+test "observation model carries explicit measured-channel wavelengths" {
+    const measured_wavelengths = [_]f64{ 760.8, 761.02, 761.31 };
+    const model: ObservationModel = .{
         .instrument = "tropomi",
-        .sampling = "unexpected_sampling",
-        .noise_model = "none",
-    }).validate());
+        .sampling = .measured_channels,
+        .noise_model = .snr_from_input,
+        .measured_wavelengths_nm = &measured_wavelengths,
+        .reference_radiance = &.{ 1.2, 1.1, 1.0 },
+        .ingested_noise_sigma = &.{ 0.02, 0.03, 0.025 },
+    };
+
+    try model.validate();
+    try std.testing.expectEqual(@as(f64, 761.02), model.measured_wavelengths_nm[1]);
 }

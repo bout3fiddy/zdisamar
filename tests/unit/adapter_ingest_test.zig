@@ -20,9 +20,17 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     defer request.deinitOwned(std.testing.allocator);
     try std.testing.expectEqualStrings("demo-scene", request.scene.id);
     try std.testing.expectEqual(@as(u32, 2), request.scene.spectral_grid.sample_count);
+    try std.testing.expectEqual(zdisamar.Instrument.SamplingMode.measured_channels, request.scene.observation_model.sampling);
+    try std.testing.expectEqual(zdisamar.Instrument.NoiseModelKind.snr_from_input, request.scene.observation_model.noise_model);
+    try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.measured_wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 405.0), request.scene.observation_model.measured_wavelengths_nm[0], 1.0e-12);
+    try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.reference_radiance.len);
+    try std.testing.expectApproxEqRel(@as(f64, 1.116153e13), request.scene.observation_model.reference_radiance[0], 1.0e-12);
     try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.ingested_noise_sigma.len);
     try std.testing.expectApproxEqRel(@as(f64, 1.116153e13 / 1485.0), request.scene.observation_model.ingested_noise_sigma[0], 1.0e-12);
     try std.testing.expectApproxEqRel(@as(f64, 1.096153e13 / 1445.0), request.scene.observation_model.ingested_noise_sigma[1], 1.0e-12);
+    try std.testing.expect(request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expectApproxEqAbs(@as(f64, 3.402296e14), request.scene.observation_model.operational_solar_spectrum.irradiance[0], 1.0e8);
 
     var copied_sigma: [2]f64 = undefined;
     try zdisamar.spectra.noise.copyInputSigma(request.scene.observation_model.ingested_noise_sigma, &copied_sigma);

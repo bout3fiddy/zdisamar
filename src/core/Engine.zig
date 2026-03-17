@@ -947,8 +947,8 @@ test "engine retrieval execution uses summary evaluation and still materializes 
         .observation_model = .{
             .instrument = "synthetic",
             .regime = .nadir,
-            .sampling = "operational",
-            .noise_model = "shot_noise",
+            .sampling = .operational,
+            .noise_model = .shot_noise,
         },
     });
     request.expected_derivative_mode = .semi_analytical;
@@ -1017,8 +1017,8 @@ test "engine translates retrieval-local invalid state targets into invalid reque
         .observation_model = .{
             .instrument = "synthetic",
             .regime = .nadir,
-            .sampling = "operational",
-            .noise_model = "shot_noise",
+            .sampling = .operational,
+            .noise_model = .shot_noise,
         },
     });
     request.expected_derivative_mode = .semi_analytical;

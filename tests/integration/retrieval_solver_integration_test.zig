@@ -63,8 +63,8 @@ test "retrieval solvers share canonical problem model with method-specific polic
             .observation_model = .{
                 .instrument = "compatibility-harness",
                 .regime = .limb,
-                .sampling = "synthetic",
-                .noise_model = "shot_noise",
+                .sampling = .synthetic,
+                .noise_model = .shot_noise,
             },
             .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 40 },
         },

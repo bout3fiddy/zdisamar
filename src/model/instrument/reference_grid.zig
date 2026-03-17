@@ -39,9 +39,33 @@ pub const OperationalReferenceGrid = struct {
         };
     }
 
+    pub fn effectiveSpacingNm(self: *const OperationalReferenceGrid) f64 {
+        if (self.wavelengths_nm.len < 2) return 1.0;
+
+        var weighted_spacing_sum: f64 = 0.0;
+        var pair_weight_sum: f64 = 0.0;
+        for (self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1], self.wavelengths_nm[1..], self.weights[0 .. self.weights.len - 1], self.weights[1..]) |left_nm, right_nm, left_weight, right_weight| {
+            const pair_weight = 0.5 * (left_weight + right_weight);
+            weighted_spacing_sum += pair_weight * (right_nm - left_nm);
+            pair_weight_sum += pair_weight;
+        }
+
+        if (pair_weight_sum <= 0.0 or !std.math.isFinite(pair_weight_sum)) return 1.0;
+        return weighted_spacing_sum / pair_weight_sum;
+    }
+
     pub fn deinitOwned(self: *OperationalReferenceGrid, allocator: Allocator) void {
         allocator.free(self.wavelengths_nm);
         allocator.free(self.weights);
         self.* = .{};
     }
 };
+
+test "operational reference grid reports a weighted effective spacing" {
+    const grid: OperationalReferenceGrid = .{
+        .wavelengths_nm = &.{ 760.8, 761.0, 761.3 },
+        .weights = &.{ 0.2, 0.6, 0.2 },
+    };
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.25), grid.effectiveSpacingNm(), 1.0e-12);
+}

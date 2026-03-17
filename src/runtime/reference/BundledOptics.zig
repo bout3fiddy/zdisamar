@@ -234,8 +234,8 @@ test "runtime bundled optics uses NO2 assets in the visible band" {
         },
         .observation_model = .{
             .instrument = "unit-test",
-            .sampling = "native",
-            .noise_model = "shot_noise",
+            .sampling = .native,
+            .noise_model = .shot_noise,
         },
         .atmosphere = .{
             .layer_count = 24,
@@ -260,8 +260,8 @@ test "runtime bundled optics uses O2A sidecars and aerosol Mie tables when reque
         },
         .observation_model = .{
             .instrument = "tropomi",
-            .sampling = "measured_channels",
-            .noise_model = "snr_from_input",
+            .sampling = .measured_channels,
+            .noise_model = .shot_noise,
         },
         .atmosphere = .{
             .layer_count = 24,
@@ -356,8 +356,8 @@ test "runtime bundled optics honors resolved scene spectroscopy assets before ra
         },
         .observation_model = .{
             .instrument = "unit-test",
-            .sampling = "native",
-            .noise_model = "none",
+            .sampling = .native,
+            .noise_model = .none,
         },
         .atmosphere = .{
             .layer_count = 4,

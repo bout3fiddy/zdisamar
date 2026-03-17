@@ -292,8 +292,8 @@ test "o2a forward reflectance tracks vendor reference morphology" {
         .observation_model = .{
             .instrument = "disamar-o2a-compare",
             .regime = .nadir,
-            .sampling = "native",
-            .noise_model = "none",
+            .sampling = .native,
+            .noise_model = .none,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
             .high_resolution_step_nm = 0.01,

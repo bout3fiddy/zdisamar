@@ -3,16 +3,19 @@ const core_errors = @import("../../core/errors.zig");
 const Engine = @import("../../core/Engine.zig").Engine;
 const Request = @import("../../core/Request.zig").Request;
 const Result = @import("../../core/Result.zig").Result;
+const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
 const export_spec = @import("../exporters/spec.zig");
 const exporters = @import("../exporters/writer.zig");
 const DocumentModule = @import("Document.zig");
 const ResolvedExperiment = DocumentModule.ResolvedExperiment;
+const Ingest = DocumentModule.Ingest;
 const Stage = DocumentModule.Stage;
 const StageKind = DocumentModule.StageKind;
 const Product = DocumentModule.Product;
 const ProductKind = DocumentModule.ProductKind;
 const OutputSpec = DocumentModule.OutputSpec;
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
+const spectral_runtime = @import("../ingest/spectral_ascii_runtime.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Error =
@@ -214,6 +217,11 @@ pub const ExecutionProgram = struct {
             defer plan.deinit();
 
             var request = Request.init(stage_execution.stage.scene);
+            var owned_ingest_product: ?*MeasurementSpaceProduct = null;
+            defer if (owned_ingest_product) |product| {
+                product.deinit(allocator);
+                allocator.destroy(product);
+            };
             request.inverse_problem = stage_execution.stage.inverse;
             request.requested_products = stage_execution.product_names;
             request.expected_derivative_mode = stage_execution.stage.plan.scene_blueprint.derivative_mode;
@@ -239,7 +247,24 @@ pub const ExecutionProgram = struct {
                             return error.MissingMeasurementBinding;
                         }
                     },
-                    .asset, .ingest, .bundle_default, .atmosphere => return error.UnsupportedMeasurementBinding,
+                    .ingest => {
+                        const product = try buildIngestMeasurementProduct(
+                            allocator,
+                            self.experiment,
+                            &request,
+                            source.name,
+                        );
+                        owned_ingest_product = product;
+                        request.measurement_binding = .{
+                            .source_name = source.name,
+                            .observable = if (stage_execution.stage.inverse.?.measurements.observable.len != 0)
+                                stage_execution.stage.inverse.?.measurements.observable
+                            else
+                                "radiance",
+                            .product = product,
+                        };
+                    },
+                    .asset, .bundle_default, .atmosphere => return error.UnsupportedMeasurementBinding,
                 }
             }
 
@@ -332,6 +357,164 @@ fn findProduct(products: []const ProductRef, name: []const u8) ?ProductRef {
         if (std.mem.eql(u8, product.name, name)) return product;
     }
     return null;
+}
+
+const IngestReference = struct {
+    ingest_name: []const u8,
+    output_name: []const u8,
+};
+
+fn buildIngestMeasurementProduct(
+    allocator: Allocator,
+    experiment: *ResolvedExperiment,
+    request: *Request,
+    reference: []const u8,
+) !*MeasurementSpaceProduct {
+    const ingest_reference = try parseIngestReference(reference);
+    const ingest = experiment.findIngest(ingest_reference.ingest_name) orelse return error.MissingMeasurementBinding;
+    if (!std.mem.eql(u8, ingest_reference.output_name, "radiance")) return error.UnsupportedMeasurementBinding;
+
+    const product = try buildRadianceObservationProduct(allocator, &request.scene, ingest);
+    if (request.scene.observation_model.sampling == .measured_channels) {
+        request.scene.spectral_grid.start_nm = product.wavelengths[0];
+        request.scene.spectral_grid.end_nm = product.wavelengths[product.wavelengths.len - 1];
+        request.scene.spectral_grid.sample_count = @intCast(product.wavelengths.len);
+        request.scene.observation_model.measured_wavelengths_nm = product.wavelengths;
+        request.scene.observation_model.owns_measured_wavelengths = false;
+    }
+    if (request.scene.observation_model.reference_radiance.len == 0 or
+        request.scene.observation_model.reference_radiance.len != product.radiance.len)
+    {
+        request.scene.observation_model.reference_radiance = product.radiance;
+        request.scene.observation_model.owns_reference_radiance = false;
+    }
+    switch (request.scene.observation_model.noise_model) {
+        .snr_from_input, .s5p_operational => request.scene.observation_model.ingested_noise_sigma = product.noise_sigma,
+        .none, .shot_noise => {},
+    }
+    if (!request.scene.observation_model.operational_solar_spectrum.enabled() and
+        ingest.loaded_spectra.channelCount(.irradiance) > 0)
+    {
+        request.scene.observation_model.operational_solar_spectrum = .{
+            .wavelengths_nm = product.wavelengths,
+            .irradiance = product.irradiance,
+        };
+    }
+    return product;
+}
+
+fn buildRadianceObservationProduct(
+    allocator: Allocator,
+    scene: *const @import("../../model/Scene.zig").Scene,
+    ingest: Ingest,
+) !*MeasurementSpaceProduct {
+    const wavelengths = try ingest.loaded_spectra.wavelengthsForKind(allocator, .radiance);
+    errdefer if (wavelengths.len != 0) allocator.free(wavelengths);
+    if (wavelengths.len == 0) return error.MissingMeasurementBinding;
+
+    const radiance = try spectral_runtime.channelValuesForKind(allocator, ingest.loaded_spectra, .radiance);
+    errdefer if (radiance.len != 0) allocator.free(radiance);
+    const noise_sigma = try ingest.loaded_spectra.noiseSigmaForKind(allocator, .radiance);
+    errdefer if (noise_sigma.len != 0) allocator.free(noise_sigma);
+    const irradiance = try alignedIrradianceForObservation(allocator, scene, ingest, wavelengths);
+    errdefer if (irradiance.len != 0) allocator.free(irradiance);
+    const reflectance = try allocator.alloc(f64, wavelengths.len);
+    errdefer if (reflectance.len != 0) allocator.free(reflectance);
+
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+    var radiance_sum: f64 = 0.0;
+    var irradiance_sum: f64 = 0.0;
+    var reflectance_sum: f64 = 0.0;
+    var sigma_sum: f64 = 0.0;
+    for (0..wavelengths.len) |index| {
+        reflectance[index] = if (irradiance[index] > 0.0)
+            (radiance[index] * std.math.pi) / @max(irradiance[index] * solar_cosine, 1.0e-9)
+        else
+            0.0;
+        radiance_sum += radiance[index];
+        irradiance_sum += irradiance[index];
+        reflectance_sum += reflectance[index];
+        sigma_sum += noise_sigma[index];
+    }
+
+    const product = try allocator.create(MeasurementSpaceProduct);
+    errdefer allocator.destroy(product);
+    product.* = .{
+        .summary = .{
+            .sample_count = @intCast(wavelengths.len),
+            .wavelength_start_nm = wavelengths[0],
+            .wavelength_end_nm = wavelengths[wavelengths.len - 1],
+            .mean_radiance = radiance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_irradiance = irradiance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_noise_sigma = sigma_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_jacobian = null,
+        },
+        .wavelengths = @constCast(wavelengths),
+        .radiance = radiance,
+        .irradiance = irradiance,
+        .reflectance = reflectance,
+        .noise_sigma = @constCast(noise_sigma),
+        .jacobian = null,
+        .effective_air_mass_factor = 0.0,
+        .effective_single_scatter_albedo = 0.0,
+        .effective_temperature_k = 0.0,
+        .effective_pressure_hpa = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .total_optical_depth = 0.0,
+        .depolarization_factor = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+    };
+    return product;
+}
+
+fn alignedIrradianceForObservation(
+    allocator: Allocator,
+    scene: *const @import("../../model/Scene.zig").Scene,
+    ingest: Ingest,
+    wavelengths: []const f64,
+) ![]f64 {
+    if (scene.observation_model.operational_solar_spectrum.enabled()) {
+        return spectral_runtime.correctedIrradianceOnWavelengthGrid(
+            allocator,
+            ingest.loaded_spectra,
+            .irradiance,
+            &scene.observation_model.operational_solar_spectrum,
+            wavelengths,
+        ) catch |err| switch (err) {
+            spectral_runtime.ParseError.InvalidLine => core_errors.Error.InvalidRequest,
+            else => err,
+        };
+    }
+    if (ingest.loaded_spectra.channelCount(.irradiance) > 0) {
+        var solar = try ingest.loaded_spectra.solarSpectrumForKind(allocator, .irradiance);
+        defer solar.deinitOwned(allocator);
+        return spectral_runtime.correctedIrradianceOnWavelengthGrid(
+            allocator,
+            ingest.loaded_spectra,
+            .irradiance,
+            &solar,
+            wavelengths,
+        ) catch |err| switch (err) {
+            spectral_runtime.ParseError.InvalidLine => core_errors.Error.InvalidRequest,
+            else => err,
+        };
+    }
+
+    const zeros = try allocator.alloc(f64, wavelengths.len);
+    @memset(zeros, 0.0);
+    return zeros;
+}
+
+fn parseIngestReference(reference: []const u8) !IngestReference {
+    const dot_index = std.mem.indexOfScalar(u8, reference, '.') orelse return error.MissingMeasurementBinding;
+    return .{
+        .ingest_name = reference[0..dot_index],
+        .output_name = reference[dot_index + 1 ..],
+    };
 }
 
 fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.ExportView {

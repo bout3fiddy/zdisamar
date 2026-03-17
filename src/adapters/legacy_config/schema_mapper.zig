@@ -129,12 +129,12 @@ pub fn applyValue(
     }
 
     if (std.mem.eql(u8, key, "sampling")) {
-        prepared.scene.observation_model.sampling = value;
+        prepared.scene.observation_model.sampling = try zdisamar.Instrument.SamplingMode.parse(value);
         return;
     }
 
     if (std.mem.eql(u8, key, "noise_model")) {
-        prepared.scene.observation_model.noise_model = value;
+        prepared.scene.observation_model.noise_model = try zdisamar.Instrument.NoiseModelKind.parse(value);
         return;
     }
 

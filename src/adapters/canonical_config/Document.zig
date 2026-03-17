@@ -42,6 +42,7 @@ const StateBounds = @import("../../model/StateVector.zig").Bounds;
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const reference_assets = @import("../ingest/reference_assets.zig");
 const spectral_ascii = @import("../ingest/spectral_ascii.zig");
+const spectral_ascii_runtime = @import("../ingest/spectral_ascii_runtime.zig");
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
 const Allocator = std.mem.Allocator;
 const parseAssetKind = fields.parseAssetKind;
@@ -50,7 +51,10 @@ const parseSolverMode = fields.parseSolverMode;
 const parseDerivativeMode = fields.parseDerivativeMode;
 const parseGeometryModel = fields.parseGeometryModel;
 const parseObservationRegime = fields.parseObservationRegime;
+const parseSamplingMode = fields.parseSamplingMode;
+const parseNoiseModelKind = fields.parseNoiseModelKind;
 const parseSpectroscopyMode = fields.parseSpectroscopyMode;
+const parseSurfaceKind = fields.parseSurfaceKind;
 const parseStateTransform = fields.parseStateTransform;
 const parseProductKind = fields.parseProductKind;
 const parseExportFormat = fields.parseExportFormat;
@@ -503,10 +507,12 @@ const ResolveContext = struct {
             stage.inverse = inverse_result.inverse;
             stage.algorithm_name = inverse_result.algorithm_name;
             stage.algorithm_damping = inverse_result.algorithm_damping;
+            try hydrateSceneFromIngestMeasurement(self.allocator, self.ingests, &stage.scene, inverse_result.inverse.measurements.source);
             stage.plan.providers.retrieval_algorithm = stage.plan.providers.retrieval_algorithm orelse normalizeRetrievalProvider(
                 inverse_result.algorithm_name,
                 stage.plan.providers.retrieval_algorithm,
             );
+            stage.plan.scene_blueprint.spectral_grid = stage.scene.spectral_grid;
             stage.plan.scene_blueprint.state_parameter_count_hint = inverse_result.inverse.state_vector.count();
             stage.plan.scene_blueprint.measurement_count_hint = inverse_result.inverse.measurements.sample_count;
         }
@@ -608,7 +614,7 @@ const ResolveContext = struct {
         if (mapGet(model_map, "sampling")) |sampling_value| {
             const sampling_map = try expectMap(sampling_value);
             try ensureKnownFields(sampling_map, &.{ "mode", "high_resolution_step_nm", "high_resolution_half_span_nm" }, self.strict_unknown_fields);
-            if (mapGet(sampling_map, "mode")) |mode| model.sampling = try self.allocator.dupe(u8, try expectString(mode));
+            if (mapGet(sampling_map, "mode")) |mode| model.sampling = try parseSamplingMode(try expectString(mode));
             if (mapGet(sampling_map, "high_resolution_step_nm")) |step| model.high_resolution_step_nm = try expectF64(step);
             if (mapGet(sampling_map, "high_resolution_half_span_nm")) |span| model.high_resolution_half_span_nm = try expectF64(span);
         }
@@ -662,7 +668,7 @@ const ResolveContext = struct {
         if (mapGet(model_map, "noise")) |noise_value| {
             const noise_map = try expectMap(noise_value);
             try ensureKnownFields(noise_map, &.{ "model", "seed" }, self.strict_unknown_fields);
-            if (mapGet(noise_map, "model")) |noise_model| model.noise_model = try self.allocator.dupe(u8, try expectString(noise_model));
+            if (mapGet(noise_map, "model")) |noise_model| model.noise_model = try parseNoiseModelKind(try expectString(noise_model));
             if (mapGet(noise_map, "seed")) |seed| result.noise_seed = @intCast(try expectU64(seed));
         }
 
@@ -796,7 +802,7 @@ const ResolveContext = struct {
         try ensureKnownFields(measurement_map, &.{ "source", "observable", "mask", "error_model" }, self.strict_unknown_fields);
 
         const source_name = try self.allocator.dupe(u8, try expectString(requiredField(measurement_map, "source")));
-        const binding = try resolveMeasurementSource(source_name, simulation_stage, self.validation);
+        const binding = try resolveMeasurementSource(source_name, simulation_stage, self.validation, self.ingests);
         var measurement: Measurement = .{
             .product = source_name,
             .observable = if (mapGet(measurement_map, "observable")) |observable|
@@ -806,6 +812,9 @@ const ResolveContext = struct {
             .sample_count = scene.spectral_grid.sample_count,
             .source = binding,
         };
+        if (binding.kind == .ingest) {
+            measurement.sample_count = ingestMeasurementSampleCount(self.ingests, binding);
+        }
 
         if (mapGet(measurement_map, "mask")) |mask_value| {
             measurement.mask = try decodeMeasurementMask(self.allocator, mask_value, self.strict_unknown_fields);
@@ -1094,7 +1103,7 @@ fn decodeSurface(allocator: Allocator, value: ?yaml.Value, strict: bool) !Surfac
     try ensureKnownFields(surface_map, &.{ "model", "provider", "albedo", "parameters", "label", "description" }, strict);
 
     var surface: Surface = .{
-        .kind = try allocator.dupe(u8, try expectString(requiredField(surface_map, "model"))),
+        .kind = try parseSurfaceKind(try expectString(requiredField(surface_map, "model"))),
     };
     if (mapGet(surface_map, "provider")) |provider| surface.provider = try allocator.dupe(u8, try expectString(provider));
     if (mapGet(surface_map, "albedo")) |albedo| surface.albedo = try expectF64(albedo);
@@ -1430,11 +1439,25 @@ fn decodeProfileBinding(allocator: Allocator, value: yaml.Value) !Binding {
     };
 }
 
-fn resolveMeasurementSource(source_name: []const u8, simulation_stage: ?*const Stage, validation: Validation) !Binding {
+fn resolveMeasurementSource(
+    source_name: []const u8,
+    simulation_stage: ?*const Stage,
+    validation: Validation,
+    ingests: []const Ingest,
+) !Binding {
     if (simulation_stage) |stage| {
         if (findStageProduct(stage.*, source_name) != null) {
             return .{
                 .kind = .stage_product,
+                .name = source_name,
+            };
+        }
+    }
+
+    if (std.mem.indexOfScalar(u8, source_name, '.')) |dot_index| {
+        if (hasIngest(ingests, source_name[0..dot_index])) {
+            return .{
+                .kind = .ingest,
                 .name = source_name,
             };
         }
@@ -1450,11 +1473,49 @@ fn resolveMeasurementSource(source_name: []const u8, simulation_stage: ?*const S
     };
 }
 
+fn ingestMeasurementSampleCount(ingests: []const Ingest, binding: Binding) u32 {
+    const ingest = getReferencedIngest(ingests, binding.name);
+    const output_name = binding.name[std.mem.indexOfScalar(u8, binding.name, '.').? + 1 ..];
+    if (std.mem.eql(u8, output_name, "radiance")) return ingest.loaded_spectra.sampleCount(.radiance);
+    if (std.mem.eql(u8, output_name, "irradiance")) return ingest.loaded_spectra.sampleCount(.irradiance);
+    return 0;
+}
+
 fn resolveInstrumentLineShapeTable(ingests: []const Ingest, binding: Binding) !@import("../../model/Instrument.zig").InstrumentLineShapeTable {
     const ingest = findIngest(ingests, binding.name[0..std.mem.indexOfScalar(u8, binding.name, '.').?]) orelse return Error.MissingIngest;
     const output_name = binding.name[std.mem.indexOfScalar(u8, binding.name, '.').? + 1 ..];
     if (!std.mem.eql(u8, output_name, "instrument_line_shape_table")) return Error.MissingIngestOutput;
     return ingest.loaded_spectra.metadata.instrument_line_shape_table;
+}
+
+fn hydrateSceneFromIngestMeasurement(
+    allocator: Allocator,
+    ingests: []const Ingest,
+    scene: *Scene,
+    binding: Binding,
+) !void {
+    if (binding.kind != .ingest) return;
+
+    const ingest = getReferencedIngest(ingests, binding.name);
+    const output_name = binding.name[std.mem.indexOfScalar(u8, binding.name, '.').? + 1 ..];
+    if (!std.mem.eql(u8, output_name, "radiance")) return;
+
+    scene.observation_model.measured_wavelengths_nm = try ingest.loaded_spectra.wavelengthsForKind(allocator, .radiance);
+    scene.observation_model.owns_measured_wavelengths = scene.observation_model.measured_wavelengths_nm.len != 0;
+    scene.observation_model.reference_radiance = try spectral_ascii_runtime.channelValuesForKind(allocator, ingest.loaded_spectra, .radiance);
+    scene.observation_model.owns_reference_radiance = scene.observation_model.reference_radiance.len != 0;
+    scene.observation_model.ingested_noise_sigma = try ingest.loaded_spectra.noiseSigmaForKind(allocator, .radiance);
+    if (!scene.observation_model.operational_solar_spectrum.enabled()) {
+        scene.observation_model.operational_solar_spectrum = if (ingest.loaded_spectra.metadata.operational_solar_spectrum.enabled())
+            try ingest.loaded_spectra.metadata.operational_solar_spectrum.clone(allocator)
+        else
+            try ingest.loaded_spectra.solarSpectrumForKind(allocator, .irradiance);
+    }
+    if (scene.observation_model.measured_wavelengths_nm.len != 0) {
+        scene.spectral_grid.start_nm = scene.observation_model.measured_wavelengths_nm[0];
+        scene.spectral_grid.end_nm = scene.observation_model.measured_wavelengths_nm[scene.observation_model.measured_wavelengths_nm.len - 1];
+        scene.spectral_grid.sample_count = @intCast(scene.observation_model.measured_wavelengths_nm.len);
+    }
 }
 
 fn resolveOperationalSolarSpectrum(allocator: Allocator, ingests: []const Ingest, binding: Binding) !@import("../../model/Instrument.zig").OperationalSolarSpectrum {

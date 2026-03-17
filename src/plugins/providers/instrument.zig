@@ -49,7 +49,12 @@ fn calibrationForScene(scene: *const Scene) calibration.Calibration {
 }
 
 fn usesIntegratedInstrumentSampling(scene: *const Scene) bool {
-    return scene.observation_model.instrument_line_fwhm_nm > 0.0 or
+    const mode_requires_native_integration = switch (scene.observation_model.sampling) {
+        .operational, .measured_channels => true,
+        .native, .synthetic => false,
+    };
+    return mode_requires_native_integration or
+        scene.observation_model.instrument_line_fwhm_nm > 0.0 or
         scene.observation_model.instrument_line_shape.sample_count > 0 or
         scene.observation_model.instrument_line_shape_table.nominal_count > 0;
 }
@@ -61,51 +66,36 @@ fn integrationForWavelength(scene: *const Scene, nominal_wavelength_nm: f64, ker
         return;
     }
 
-    if (scene.observation_model.instrument_line_shape_table.nearestNominalIndex(nominal_wavelength_nm)) |nominal_index| {
-        const table = scene.observation_model.instrument_line_shape_table;
-        const sample_count = @min(@as(usize, table.sample_count), max_line_shape_samples);
-        var weight_sum: f64 = 0.0;
-        kernel.enabled = true;
-        kernel.sample_count = sample_count;
-        for (0..sample_count) |index| {
-            kernel.offsets_nm[index] = table.offsets_nm[index];
-            kernel.weights[index] = table.weightAt(nominal_index, index);
-            weight_sum += kernel.weights[index];
-        }
-        if (weight_sum > 0.0) {
-            for (0..sample_count) |index| kernel.weights[index] /= weight_sum;
-        } else {
+    if (scene.observation_model.instrument_line_shape_table.nominal_count > 0) {
+        kernel.sample_count = scene.observation_model.instrument_line_shape_table.writeNormalizedKernelForNominal(
+            nominal_wavelength_nm,
+            kernel.offsets_nm[0..],
+            kernel.weights[0..],
+        );
+        if (kernel.sample_count == 0) {
             resetKernel(kernel);
             kernel.enabled = true;
             kernel.sample_count = 1;
             kernel.weights[0] = 1.0;
             return;
         }
+        kernel.enabled = true;
         return;
     }
 
     if (scene.observation_model.instrument_line_shape.sample_count > 0) {
-        const sample_count = @min(
-            @as(usize, scene.observation_model.instrument_line_shape.sample_count),
-            max_line_shape_samples,
+        kernel.sample_count = scene.observation_model.instrument_line_shape.writeNormalizedKernel(
+            kernel.offsets_nm[0..],
+            kernel.weights[0..],
         );
-        var weight_sum: f64 = 0.0;
-        kernel.enabled = true;
-        kernel.sample_count = sample_count;
-        for (0..sample_count) |index| {
-            kernel.offsets_nm[index] = scene.observation_model.instrument_line_shape.offsets_nm[index];
-            kernel.weights[index] = scene.observation_model.instrument_line_shape.weights[index];
-            weight_sum += kernel.weights[index];
-        }
-        if (weight_sum > 0.0) {
-            for (0..sample_count) |index| kernel.weights[index] /= weight_sum;
-        } else {
+        if (kernel.sample_count == 0) {
             resetKernel(kernel);
             kernel.enabled = true;
             kernel.sample_count = 1;
             kernel.weights[0] = 1.0;
             return;
         }
+        kernel.enabled = true;
         return;
     }
 
@@ -138,6 +128,14 @@ fn integrationForWavelength(scene: *const Scene, nominal_wavelength_nm: f64, ker
         kernel.enabled = true;
         kernel.sample_count = sample_count;
         return;
+    }
+
+    switch (scene.observation_model.sampling) {
+        .operational, .measured_channels => {
+            kernel.sample_count = 1;
+            return;
+        },
+        .native, .synthetic => {},
     }
 
     const default_half_span_nm = defaultKernelHalfSpanNm(scene.observation_model.instrument_line_fwhm_nm);
@@ -229,8 +227,8 @@ test "high-resolution integration retains the full symmetric sampling span" {
         },
         .observation_model = .{
             .instrument = "tropomi",
-            .sampling = "native",
-            .noise_model = "shot_noise",
+            .sampling = .native,
+            .noise_model = .shot_noise,
             .instrument_line_fwhm_nm = 0.54,
             .high_resolution_step_nm = 0.01,
             .high_resolution_half_span_nm = 0.40,
@@ -256,8 +254,8 @@ test "flat-top line shape spreads weight more broadly than gaussian for the same
         },
         .observation_model = .{
             .instrument = "compare",
-            .sampling = "native",
-            .noise_model = "none",
+            .sampling = .native,
+            .noise_model = .none,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .gaussian,
             .high_resolution_step_nm = 0.19,
@@ -268,8 +266,8 @@ test "flat-top line shape spreads weight more broadly than gaussian for the same
         .spectral_grid = gaussian_scene.spectral_grid,
         .observation_model = .{
             .instrument = "compare",
-            .sampling = "native",
-            .noise_model = "none",
+            .sampling = .native,
+            .noise_model = .none,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
             .high_resolution_step_nm = 0.19,
@@ -285,4 +283,28 @@ test "flat-top line shape spreads weight more broadly than gaussian for the same
     try std.testing.expectEqual(gaussian_kernel.sample_count, flat_top_kernel.sample_count);
     try std.testing.expect(flat_top_kernel.weights[flat_top_kernel.sample_count / 2] < gaussian_kernel.weights[gaussian_kernel.sample_count / 2]);
     try std.testing.expect(flat_top_kernel.weights[0] > gaussian_kernel.weights[0]);
+}
+
+test "measured-channel sampling bypasses legacy post-convolution even without explicit slit metadata" {
+    const scene: Scene = .{
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 761.2,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = "measured",
+            .sampling = .measured_channels,
+            .noise_model = .snr_from_input,
+            .measured_wavelengths_nm = &.{ 760.81, 761.03, 761.19 },
+            .ingested_noise_sigma = &.{ 0.02, 0.02, 0.02 },
+        },
+    };
+
+    try std.testing.expect(usesIntegratedInstrumentSampling(&scene));
+
+    var kernel: IntegrationKernel = undefined;
+    integrationForWavelength(&scene, 761.03, &kernel);
+    try std.testing.expectEqual(@as(usize, 1), kernel.sample_count);
+    try std.testing.expect(!kernel.enabled);
 }

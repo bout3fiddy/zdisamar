@@ -129,16 +129,16 @@ fn renderPrepared(allocator: Allocator, source_path: []const u8, prepared: Prepa
     try appendFloatField(writer, 5, "step_nm", spectralStep(prepared));
     try writer.writeAll("      absorbers: {}\n");
     try writer.writeAll("      surface:\n");
-    try appendStringField(writer, 4, "model", prepared.scene.surface.kind);
+    try appendStringField(writer, 4, "model", prepared.scene.surface.kind.label());
     try appendFloatField(writer, 4, "albedo", prepared.scene.surface.albedo);
     try writer.writeAll("      measurement_model:\n");
     try appendStringField(writer, 4, "regime", @tagName(prepared.scene.observation_model.regime));
     try writer.writeAll("        instrument:\n");
     try appendStringField(writer, 5, "name", prepared.scene.observation_model.instrument);
     try writer.writeAll("        sampling:\n");
-    try appendStringField(writer, 5, "mode", prepared.scene.observation_model.sampling);
+    try appendStringField(writer, 5, "mode", prepared.scene.observation_model.sampling.label());
     try writer.writeAll("        noise:\n");
-    try appendStringField(writer, 5, "model", prepared.scene.observation_model.noise_model);
+    try appendStringField(writer, 5, "model", prepared.scene.observation_model.noise_model.label());
 
     if (prepared.scene.atmosphere.has_clouds) {
         try writer.writeAll("      clouds:\n");

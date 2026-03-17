@@ -84,6 +84,11 @@ pub const Scene = struct {
         try self.cloud.validate();
         try self.aerosol.validate();
         try self.observation_model.validate();
+        if (self.observation_model.measured_wavelengths_nm.len != 0 and
+            self.observation_model.measured_wavelengths_nm.len != @as(usize, self.spectral_grid.sample_count))
+        {
+            return errors.Error.InvalidRequest;
+        }
     }
 
     pub fn layoutRequirements(self: *const Scene) LayoutRequirements {
@@ -182,7 +187,7 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
             },
         },
         .surface = .{
-            .kind = "lambertian",
+            .kind = .lambertian,
             .albedo = 0.028,
         },
         .observation_model = .{

@@ -361,8 +361,10 @@ test "optical preparation applies operational O2 and O2-O2 LUT replacements for 
         },
         .observation_model = .{
             .instrument = "tropomi",
-            .sampling = "operational",
-            .noise_model = "s5p_operational",
+            .sampling = .operational,
+            .noise_model = .s5p_operational,
+            .reference_radiance = &[_]f64{1.0} ** 9,
+            .ingested_noise_sigma = &[_]f64{0.02} ** 9,
             .operational_refspec_grid = .{
                 .wavelengths_nm = &[_]f64{ 760.8, 761.0, 761.2 },
                 .weights = &[_]f64{ 0.15, 0.70, 0.15 },

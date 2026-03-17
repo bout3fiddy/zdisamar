@@ -14,25 +14,53 @@ pub const EvaluationContext = struct {
 
 pub const Provider = struct {
     id: []const u8,
-    responseGain: *const fn (context: EvaluationContext) f64,
+    brdfFactor: *const fn (context: EvaluationContext) f64,
 };
 
 pub fn resolve(provider_id: []const u8) ?Provider {
     if (std.mem.eql(u8, provider_id, "builtin.lambertian_surface")) {
         return .{
             .id = provider_id,
-            .responseGain = lambertianResponseGain,
+            .brdfFactor = lambertianBrdfFactor,
         };
     }
     return null;
 }
 
-fn lambertianResponseGain(context: EvaluationContext) f64 {
+fn lambertianBrdfFactor(context: EvaluationContext) f64 {
     _ = context.prepared;
     _ = context.wavelength_nm;
     _ = context.safe_span;
     _ = context.phase;
     _ = context.forward;
-    _ = context.scene;
-    return 1.0;
+    return switch (context.scene.surface.kind) {
+        // Lambertian BRDF is isotropic, so the directional factor stays unity here.
+        // Scene albedo already enters the transport kernel through ForwardInput.surface_albedo.
+        .lambertian => 1.0,
+    };
+}
+
+test "lambertian surface provider exposes a unit BRDF factor" {
+    const provider = resolve("builtin.lambertian_surface").?;
+    const factor = provider.brdfFactor(.{
+        .scene = &.{
+            .surface = .{
+                .kind = .lambertian,
+                .albedo = 0.07,
+            },
+        },
+        .prepared = undefined,
+        .wavelength_nm = 760.0,
+        .safe_span = 1.0,
+        .phase = 0.0,
+        .forward = .{
+            .family = .adding,
+            .regime = .nadir,
+            .execution_mode = .scalar,
+            .derivative_mode = .none,
+            .toa_reflectance_factor = 0.05,
+            .jacobian_column = null,
+        },
+    });
+    try std.testing.expectEqual(@as(f64, 1.0), factor);
 }

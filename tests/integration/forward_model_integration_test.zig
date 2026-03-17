@@ -104,8 +104,8 @@ test "engine execute materializes measurement-space summaries through the typed 
         .observation_model = .{
             .instrument = "integration-synthetic",
             .regime = .limb,
-            .sampling = "operational",
-            .noise_model = "shot_noise",
+            .sampling = .operational,
+            .noise_model = .shot_noise,
         },
         .spectral_grid = .{
             .start_nm = 405.0,
@@ -196,8 +196,8 @@ test "engine execute produces bounded O2A morphology through the typed forward p
         .observation_model = .{
             .instrument = "integration-o2a",
             .regime = .nadir,
-            .sampling = "native",
-            .noise_model = "shot_noise",
+            .sampling = .native,
+            .noise_model = .shot_noise,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
             .high_resolution_step_nm = 0.01,
