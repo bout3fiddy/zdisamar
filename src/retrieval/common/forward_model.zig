@@ -234,11 +234,11 @@ test "spectral evaluator selects masked observable vectors with sigma" {
             .mean_reflectance = 0.7625,
             .mean_noise_sigma = 0.0225,
         },
-        .wavelengths = &[_]f64{ 759.5, 760.0, 761.0, 762.0 },
-        .radiance = &[_]f64{ 1.6, 1.5, 1.4, 1.6 },
-        .irradiance = &[_]f64{ 2.0, 2.0, 2.0, 2.0 },
-        .reflectance = &[_]f64{ 0.8, 0.75, 0.70, 0.8 },
-        .noise_sigma = &[_]f64{ 0.02, 0.02, 0.03, 0.02 },
+        .wavelengths = @constCast(@as([]const f64, &[_]f64{ 759.5, 760.0, 761.0, 762.0 })),
+        .radiance = @constCast(@as([]const f64, &[_]f64{ 1.6, 1.5, 1.4, 1.6 })),
+        .irradiance = @constCast(@as([]const f64, &[_]f64{ 2.0, 2.0, 2.0, 2.0 })),
+        .reflectance = @constCast(@as([]const f64, &[_]f64{ 0.8, 0.75, 0.70, 0.8 })),
+        .noise_sigma = @constCast(@as([]const f64, &[_]f64{ 0.02, 0.02, 0.03, 0.02 })),
         .effective_air_mass_factor = 1.0,
         .effective_single_scatter_albedo = 1.0,
         .effective_temperature_k = 270.0,
@@ -307,7 +307,7 @@ test "spectral evaluator selects masked observable vectors with sigma" {
 }
 
 test "spectral evaluator carries routed radiance jacobian when available" {
-    const jacobian = [_]f64{ -0.3, -0.2, -0.1, -0.05 };
+    var jacobian = [_]f64{ -0.3, -0.2, -0.1, -0.05 };
     const product = MeasurementSpaceProduct{
         .summary = .{
             .sample_count = 4,
@@ -319,11 +319,11 @@ test "spectral evaluator carries routed radiance jacobian when available" {
             .mean_noise_sigma = 0.0225,
             .mean_jacobian = -0.1625,
         },
-        .wavelengths = &[_]f64{ 759.5, 760.0, 761.0, 762.0 },
-        .radiance = &[_]f64{ 1.6, 1.5, 1.4, 1.6 },
-        .irradiance = &[_]f64{ 2.0, 2.0, 2.0, 2.0 },
-        .reflectance = &[_]f64{ 0.8, 0.75, 0.70, 0.8 },
-        .noise_sigma = &[_]f64{ 0.02, 0.02, 0.03, 0.02 },
+        .wavelengths = @constCast(@as([]const f64, &[_]f64{ 759.5, 760.0, 761.0, 762.0 })),
+        .radiance = @constCast(@as([]const f64, &[_]f64{ 1.6, 1.5, 1.4, 1.6 })),
+        .irradiance = @constCast(@as([]const f64, &[_]f64{ 2.0, 2.0, 2.0, 2.0 })),
+        .reflectance = @constCast(@as([]const f64, &[_]f64{ 0.8, 0.75, 0.70, 0.8 })),
+        .noise_sigma = @constCast(@as([]const f64, &[_]f64{ 0.02, 0.02, 0.03, 0.02 })),
         .jacobian = &jacobian,
         .effective_air_mass_factor = 1.0,
         .effective_single_scatter_albedo = 1.0,

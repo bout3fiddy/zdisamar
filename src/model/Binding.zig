@@ -126,9 +126,9 @@ pub const Binding = union(BindingKind) {
 };
 
 test "binding validates kind-specific naming rules" {
-    try Binding.none.validate();
-    try Binding.atmosphere.validate();
-    try Binding.bundle_default.validate();
+    try (@as(Binding, .none)).validate();
+    try (@as(Binding, .atmosphere)).validate();
+    try (@as(Binding, .bundle_default)).validate();
     try (Binding{ .asset = .{ .name = "solar_spectrum" } }).validate();
 
     try @import("std").testing.expectError(

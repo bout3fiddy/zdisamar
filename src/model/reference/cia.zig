@@ -11,7 +11,7 @@ pub const CollisionInducedAbsorptionPoint = struct {
 
 pub const CollisionInducedAbsorptionTable = struct {
     scale_factor_cm5_per_molecule2: f64,
-    points: []CollisionInducedAbsorptionPoint,
+    points: []const CollisionInducedAbsorptionPoint,
 
     pub fn deinit(self: *CollisionInducedAbsorptionTable, allocator: Allocator) void {
         allocator.free(self.points);

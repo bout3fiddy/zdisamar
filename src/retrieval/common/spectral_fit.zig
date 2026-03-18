@@ -996,11 +996,11 @@ test "dismas selection prefers differential optical-depth zero crossings" {
     }
 
     const measurement: forward_model.SpectralMeasurement = .{
-        .wavelengths_nm = &[_]f64{ 405.0, 411.0, 417.0, 423.0, 429.0, 435.0, 441.0, 447.0, 453.0, 459.0 },
-        .values = &[_]f64{ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 },
-        .sigma = &[_]f64{ 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01 },
-        .radiance = &[_]f64{ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 },
-        .irradiance = &[_]f64{ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 },
+        .wavelengths_nm = @constCast(@as([]const f64, &[_]f64{ 405.0, 411.0, 417.0, 423.0, 429.0, 435.0, 441.0, 447.0, 453.0, 459.0 })),
+        .values = @constCast(@as([]const f64, &[_]f64{ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 })),
+        .sigma = @constCast(@as([]const f64, &[_]f64{ 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01 })),
+        .radiance = @constCast(@as([]const f64, &[_]f64{ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 })),
+        .irradiance = @constCast(@as([]const f64, &[_]f64{ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 })),
         .reflectance = &reflectance,
         .summary = .{
             .sample_count = optical_depth.len,

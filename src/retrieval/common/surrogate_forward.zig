@@ -369,6 +369,21 @@ fn gaussian(x: f64, center: f64, sigma: f64) f64 {
 }
 
 test "surrogate forward module supports canonical multi-parameter state application" {
+    const observed_product = try testEvaluator().evaluateProduct(
+        std.testing.allocator,
+        testEvaluator().context,
+        .{
+            .id = "surrogate-forward-truth",
+            .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 32 },
+            .surface = .{ .albedo = 0.08 },
+            .observation_model = .{ .instrument = .synthetic, .regime = .nadir },
+        },
+    );
+    defer {
+        var owned = observed_product;
+        owned.deinit(std.testing.allocator);
+    }
+
     const problem: common.RetrievalProblem = .{
         .scene = .{
             .id = "surrogate-forward",
@@ -399,21 +414,12 @@ test "surrogate forward module supports canonical multi-parameter state applicat
             .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 32,
-            .summary = .{
-                .sample_count = 32,
-                .wavelength_start_nm = 405.0,
-                .wavelength_end_nm = 465.0,
-                .mean_radiance = 1.1,
-                .mean_irradiance = 2.0,
-                .mean_reflectance = 0.55,
-                .mean_noise_sigma = 0.08,
-                .mean_jacobian = 0.06,
-            },
+            .product = .{ .product = &observed_product },
         },
     };
 
     const layout = try state_access.resolveStateLayout(problem);
-    const anchored = try anchorStateWithLayout(std.testing.allocator, problem, .oe, problem.observed_measurement.?.summary, layout);
+    const anchored = try anchorStateWithLayout(std.testing.allocator, problem, .oe, problem.observed_measurement.?.summary(), layout);
     defer std.testing.allocator.free(anchored);
 
     const scene = try state_access.sceneForStateWithLayout(problem, anchored, layout);

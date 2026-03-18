@@ -867,7 +867,7 @@ test "strong-line sidecars choose one anchor line per strong feature" {
 
     try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
 
-    const anchors = lines.selectStrongLineAnchors(lines.lines);
+    const anchors = lines.selectStrongLineAnchors(lines.lines, 0);
     try std.testing.expectEqual(@as(?usize, 2), anchors[0]);
     try std.testing.expect(!lineIndexIsStrongAnchor(anchors[0..1], 1));
     try std.testing.expect(!lineIndexIsStrongAnchor(anchors[0..1], 3));
