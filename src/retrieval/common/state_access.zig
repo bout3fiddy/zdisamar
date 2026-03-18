@@ -126,6 +126,11 @@ fn currentValue(scene: Scene, accessor: StateAccessor) f64 {
         .wavelength_shift_nm => scene.observation_model.wavelength_shift_nm,
         .multiplicative_offset => scene.observation_model.multiplicative_offset,
         .stray_light => scene.observation_model.stray_light,
+        // Forward-declared vendor targets; full scene field wiring deferred to
+        // the retrieval-parity work package.
+        .cloud_top_pressure => scene.cloud.top_altitude_km,
+        .absorber_column_amount => 0.0,
+        .temperature_shift => 0.0,
     };
 }
 
@@ -164,6 +169,15 @@ fn applyAccessor(scene: *Scene, accessor: StateAccessor, value: f64) void {
         .stray_light => {
             scene.observation_model.stray_light = std.math.clamp(value, -0.05, 0.05);
         },
+        // Forward-declared vendor targets; scene field wiring deferred to
+        // the retrieval-parity work package.
+        .cloud_top_pressure => {
+            scene.cloud.enabled = true;
+            scene.atmosphere.has_clouds = true;
+            scene.cloud.top_altitude_km = @max(value, 0.0);
+        },
+        .absorber_column_amount => {},
+        .temperature_shift => {},
     }
 }
 

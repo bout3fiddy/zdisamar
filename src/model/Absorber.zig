@@ -3,6 +3,10 @@ const Allocator = std.mem.Allocator;
 const errors = @import("../core/errors.zig");
 const Binding = @import("Binding.zig").Binding;
 const ReferenceData = @import("ReferenceData.zig");
+const document_fields = @import("../adapters/canonical_config/document_fields.zig");
+
+pub const AbsorberSpecies = document_fields.AbsorberSpecies;
+
 
 pub const SpectroscopyMode = enum {
     none,
@@ -128,6 +132,10 @@ pub const Spectroscopy = struct {
 pub const Absorber = struct {
     id: []const u8 = "",
     species: []const u8 = "",
+    /// Typed species identity resolved from the string `species` field.
+    /// Null when the species string has not been resolved against the
+    /// vendor species catalogue.
+    resolved_species: ?AbsorberSpecies = null,
     profile_source: Binding = .none,
     spectroscopy: Spectroscopy = .{},
 
@@ -143,6 +151,7 @@ pub const Absorber = struct {
         return .{
             .id = try allocator.dupe(u8, self.id),
             .species = try allocator.dupe(u8, self.species),
+            .resolved_species = self.resolved_species,
             .profile_source = try self.profile_source.clone(allocator),
             .spectroscopy = try self.spectroscopy.clone(allocator),
         };

@@ -16,9 +16,11 @@ pub const Parameter = struct {
 pub const Surface = struct {
     pub const Kind = enum {
         lambertian,
+        wavel_dependent,
 
         pub fn parse(value: []const u8) errors.Error!Kind {
             if (std.mem.eql(u8, value, "lambertian")) return .lambertian;
+            if (std.mem.eql(u8, value, "wavel_dependent")) return .wavel_dependent;
             return errors.Error.InvalidRequest;
         }
 
@@ -57,5 +59,6 @@ test "surface accepts named parameters" {
     try std.testing.expectEqual(Surface.Kind.lambertian, surface.kind);
     try surface.validate();
     try std.testing.expectEqual(Surface.Kind.lambertian, try Surface.Kind.parse("lambertian"));
+    try std.testing.expectEqual(Surface.Kind.wavel_dependent, try Surface.Kind.parse("wavel_dependent"));
     try std.testing.expectError(errors.Error.InvalidRequest, Surface.Kind.parse("unknown_surface"));
 }

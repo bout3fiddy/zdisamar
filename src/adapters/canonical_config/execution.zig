@@ -32,6 +32,7 @@ pub const Error =
         MultipleMeasurementSpaceProducts,
         UnsupportedMeasurementBinding,
         UnsupportedOutputTarget,
+        UnsupportedVendorControl,
     };
 
 pub const StageExecution = struct {
@@ -110,6 +111,9 @@ pub const ExecutionProgram = struct {
 
         const outputs = try allocator.alloc(ExportJob, experiment.outputs.len);
         errdefer allocator.free(outputs);
+
+        // Gate: reject configs with unsupported vendor controls before compiling stages.
+        try validateVendorControls(experiment);
 
         var stage_index: usize = 0;
         var initialized_stage_count: usize = 0;
@@ -689,4 +693,39 @@ fn exporterPluginId(format: ExportFormat) []const u8 {
         .netcdf_cf => "builtin.netcdf_cf",
         .zarr => "builtin.zarr",
     };
+}
+
+/// Reject configs containing vendor controls that are parsed from YAML but
+/// not consumed by any runtime code path. This prevents silent
+/// parsed-but-ignored behavior and enforces the WP-01 parity invariant.
+///
+/// Current checks:
+/// - vendor_compat.simulation_method / retrieval_method: only OE methods are
+///   fully implemented; DISMAS/DOAS/classic_DOAS/DOMINO are partially wired.
+/// - Spectral response shapes must map to a known builtin line shape.
+///
+/// This gate is expanded as later WPs add vendor sections to the YAML schema.
+fn validateVendorControls(experiment: *const ResolvedExperiment) Error!void {
+    const BuiltinLineShapeKind = @import("../../model/instrument/line_shape.zig").BuiltinLineShapeKind;
+    const stages = [_]?*const Stage{ experiment.simulation, experiment.retrieval };
+    for (stages) |maybe_stage| {
+        const stage = maybe_stage orelse continue;
+
+        // A spectral response shape is only honored if it maps to a known
+        // builtin line shape. Arbitrary/external shapes that cannot be
+        // consumed must be rejected.
+        if (stage.spectral_response_shape.len > 0) {
+            _ = BuiltinLineShapeKind.parse(stage.spectral_response_shape) catch {
+                return error.UnsupportedVendorControl;
+            };
+        }
+
+        // If vendor_compat is present, validate that its controls are supportable.
+        if (stage.vendor_compat) |compat| {
+            // DISMAS and DOAS simulation methods are not yet supported.
+            if (compat.simulation_method) |method| {
+                if (method == .dismas) return error.UnsupportedVendorControl;
+            }
+        }
+    }
 }

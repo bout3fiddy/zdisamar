@@ -1,9 +1,12 @@
 const std = @import("std");
 const errors = @import("../core/errors.zig");
+const document_fields = @import("../adapters/canonical_config/document_fields.zig");
+
+pub const CloudType = document_fields.CloudType;
 
 pub const Cloud = struct {
     id: []const u8 = "",
-    model: []const u8 = "",
+    cloud_type: CloudType = .none,
     provider: []const u8 = "",
     enabled: bool = false,
     optical_thickness: f64 = 0.0,

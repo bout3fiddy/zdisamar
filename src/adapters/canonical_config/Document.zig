@@ -166,6 +166,96 @@ pub const StageKind = enum {
     retrieval,
 };
 
+/// Vendor-compat records which vendor (DISAMAR) method controls are active.
+/// Carried per-stage so simulation and retrieval can differ.
+pub const VendorCompat = struct {
+    /// Vendor simulation method (0=OE_LBL, 1=DISMAS)
+    simulation_method: ?fields.SimulationMethod = null,
+    /// Vendor retrieval method (0=OE, 1=DISMAS, 2=DOAS, 3=classic_DOAS, 4=DOMINO)
+    retrieval_method: ?fields.RetrievalMethod = null,
+    /// Whether this is simulation-only (no retrieval)
+    simulation_only: bool = false,
+    /// Whether to use adding method vs LABOS
+    use_adding_sim: ?bool = null,
+    use_adding_retr: ?bool = null,
+};
+
+/// Typed representation of the vendor RADIATIVE_TRANSFER section.
+/// Captures spectral sampling, scattering transport, and RTM threshold controls.
+pub const RadiativeTransferConfig = struct {
+    // Spectral sampling (FWHM subdivision)
+    num_div_points_fwhm_sim: ?u32 = null,
+    num_div_points_fwhm_retr: ?u32 = null,
+    // Line-absorbing sampling limits
+    num_div_points_max_sim: ?u32 = null,
+    num_div_points_min_sim: ?u32 = null,
+    num_div_points_max_retr: ?u32 = null,
+    num_div_points_min_retr: ?u32 = null,
+    // Transport configuration
+    scattering_mode_sim: fields.ScatteringMode = .multiple,
+    scattering_mode_retr: fields.ScatteringMode = .multiple,
+    stokes_dimension_sim: u8 = 1,
+    stokes_dimension_retr: u8 = 1,
+    nstreams_sim: u32 = 16,
+    nstreams_retr: u32 = 16,
+    use_adding_sim: bool = false,
+    use_adding_retr: bool = false,
+    fourier_floor_scalar_sim: ?f64 = null,
+    fourier_floor_scalar_retr: ?f64 = null,
+    num_orders_max_sim: ?u32 = null,
+    num_orders_max_retr: ?u32 = null,
+    threshold_trunc_phase_sim: ?f64 = null,
+    threshold_trunc_phase_retr: ?f64 = null,
+    use_polarization_correction: bool = false,
+    // RTM convergence thresholds
+    use_correction_spherical_atm: bool = false,
+    threshold_cloud_fraction: ?f64 = null,
+    threshold_conv_first: ?f64 = null,
+    threshold_conv_mult: ?f64 = null,
+    threshold_doubling: ?f64 = null,
+    threshold_multiplier: ?f64 = null,
+    // Per-interval altitude division points (one entry per spectral interval)
+    num_div_points_alt_sim: ?[]const u32 = null,
+    num_div_points_alt_retr: ?[]const u32 = null,
+};
+
+/// Per-band rotational Raman scattering / Ring-effect settings.
+pub const RrsRingConfig = struct {
+    pub const PerBand = struct {
+        use_rrs: bool = false,
+        approximate_rrs: bool = false,
+        fraction_raman_lines: f64 = 1.0,
+        use_cabannes: bool = false,
+        degree_poly: u32 = 0,
+        include_absorption: bool = false,
+    };
+
+    sim: ?[]const PerBand = null,
+    retr: ?[]const PerBand = null,
+};
+
+/// Flags for optional diagnostic / supplementary output channels.
+pub const AdditionalOutputConfig = struct {
+    refl_hr_grid_sim: bool = false,
+    refl_instr_grid_sim: bool = false,
+    refl_deriv_hr_grid_sim: bool = false,
+    refl_deriv_hr_grid_retr: bool = false,
+    refl_deriv_instr_grid_sim: bool = false,
+    refl_deriv_instr_grid_retr: bool = false,
+    signal_to_noise_ratio: bool = false,
+    contrib_refl_sim: bool = false,
+    contrib_refl_retr: bool = false,
+    alt_resolved_amf_sim: bool = false,
+    alt_resolved_amf_retr: bool = false,
+    absorption_xsec_sim: bool = false,
+    absorption_xsec_retr: bool = false,
+    ring_spectra: bool = false,
+    diff_ring_spectra: bool = false,
+    filling_in_spectra: bool = false,
+    test_derivatives: bool = false,
+    pol_correction_file: bool = false,
+};
+
 pub const Stage = struct {
     kind: StageKind,
     plan: PlanTemplate,
@@ -178,6 +268,11 @@ pub const Stage = struct {
     spectral_response_shape: []const u8 = "",
     spectral_response_table_source: Binding = .none,
     noise_seed: ?u64 = null,
+    // Typed vendor-section configs (optional; absent when canonical YAML omits them)
+    vendor_compat: ?VendorCompat = null,
+    radiative_transfer: ?RadiativeTransferConfig = null,
+    rrs_ring: ?RrsRingConfig = null,
+    additional_output: ?AdditionalOutputConfig = null,
 };
 
 pub const Document = struct {
@@ -482,9 +577,9 @@ const ResolveContext = struct {
     ) !void {
         const stage_map = try expectMap(merged);
         try ensureKnownFields(stage_map, if (kind == .simulation)
-            &.{ "plan", "scene", "products", "diagnostics", "label", "description" }
+            &.{ "plan", "scene", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output" }
         else
-            &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description" }, self.strict_unknown_fields);
+            &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output" }, self.strict_unknown_fields);
 
         stage.* = .{
             .kind = kind,
@@ -532,6 +627,12 @@ const ResolveContext = struct {
             stage.plan.scene_blueprint.state_parameter_count_hint = inverse_result.inverse.state_vector.count();
             stage.plan.scene_blueprint.measurement_count_hint = inverse_result.inverse.measurements.sample_count;
         }
+
+        // Decode optional typed vendor sections
+        stage.vendor_compat = try decodeVendorCompat(mapGet(stage_map, "vendor_compat"), self.strict_unknown_fields);
+        stage.radiative_transfer = try decodeRadiativeTransferConfig(self.allocator, mapGet(stage_map, "radiative_transfer"), self.strict_unknown_fields);
+        stage.rrs_ring = try decodeRrsRingConfig(self.allocator, mapGet(stage_map, "rrs_ring"), self.strict_unknown_fields);
+        stage.additional_output = try decodeAdditionalOutputConfig(mapGet(stage_map, "additional_output"), self.strict_unknown_fields);
 
         try ensureDistinctProducts(stage.products);
         try stage.plan.validate();
@@ -1210,7 +1311,7 @@ fn decodeCloud(value: ?yaml.Value, strict: bool) !Cloud {
     return .{
         .id = entry.key,
         .enabled = true,
-        .model = try expectString(requiredField(cloud_map, "model")),
+        .cloud_type = try fields.parseCloudType(try expectString(requiredField(cloud_map, "model"))),
         .provider = if (mapGet(cloud_map, "provider")) |provider| try expectString(provider) else "",
         .optical_thickness = try expectF64(requiredField(cloud_map, "optical_thickness")),
         .single_scatter_albedo = if (mapGet(cloud_map, "single_scatter_albedo")) |ssa| try expectF64(ssa) else 0.999,
@@ -1244,7 +1345,7 @@ fn decodeAerosol(value: ?yaml.Value, strict: bool) !Aerosol {
     return .{
         .id = entry.key,
         .enabled = true,
-        .model = try expectString(requiredField(aerosol_map, "model")),
+        .aerosol_type = try fields.parseAerosolType(try expectString(requiredField(aerosol_map, "model"))),
         .provider = if (mapGet(aerosol_map, "provider")) |provider| try expectString(provider) else "",
         .optical_depth = try expectF64(requiredField(aerosol_map, "optical_depth_550_nm")),
         .single_scatter_albedo = if (mapGet(aerosol_map, "single_scatter_albedo")) |ssa| try expectF64(ssa) else 0.93,
@@ -1403,6 +1504,188 @@ fn decodeConvergence(value: ?yaml.Value, strict: bool) !Convergence {
         .cost_relative = if (mapGet(convergence_map, "cost_relative")) |cost_relative| try expectF64(cost_relative) else 0.0,
         .state_relative = if (mapGet(convergence_map, "state_relative")) |state_relative| try expectF64(state_relative) else 0.0,
     };
+}
+
+// --- Vendor-section decoders ---
+
+fn decodeVendorCompat(value: ?yaml.Value, strict: bool) !?VendorCompat {
+    const vc_value = value orelse return null;
+    const vc_map = try expectMap(vc_value);
+    try ensureKnownFields(vc_map, &.{
+        "simulation_method",
+        "retrieval_method",
+        "simulation_only",
+        "use_adding_sim",
+        "use_adding_retr",
+    }, strict);
+
+    var vc: VendorCompat = .{};
+    if (mapGet(vc_map, "simulation_method")) |v| vc.simulation_method = try fields.parseSimulationMethod(try expectString(v));
+    if (mapGet(vc_map, "retrieval_method")) |v| vc.retrieval_method = try fields.parseRetrievalMethod(try expectString(v));
+    if (mapGet(vc_map, "simulation_only")) |v| vc.simulation_only = try expectBool(v);
+    if (mapGet(vc_map, "use_adding_sim")) |v| vc.use_adding_sim = try expectBool(v);
+    if (mapGet(vc_map, "use_adding_retr")) |v| vc.use_adding_retr = try expectBool(v);
+    return vc;
+}
+
+fn decodeRadiativeTransferConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?RadiativeTransferConfig {
+    const rt_value = value orelse return null;
+    const rt_map = try expectMap(rt_value);
+    try ensureKnownFields(rt_map, &.{
+        "num_div_points_fwhm_sim",
+        "num_div_points_fwhm_retr",
+        "num_div_points_max_sim",
+        "num_div_points_min_sim",
+        "num_div_points_max_retr",
+        "num_div_points_min_retr",
+        "scattering_mode_sim",
+        "scattering_mode_retr",
+        "stokes_dimension_sim",
+        "stokes_dimension_retr",
+        "nstreams_sim",
+        "nstreams_retr",
+        "use_adding_sim",
+        "use_adding_retr",
+        "fourier_floor_scalar_sim",
+        "fourier_floor_scalar_retr",
+        "num_orders_max_sim",
+        "num_orders_max_retr",
+        "threshold_trunc_phase_sim",
+        "threshold_trunc_phase_retr",
+        "use_polarization_correction",
+        "use_correction_spherical_atm",
+        "threshold_cloud_fraction",
+        "threshold_conv_first",
+        "threshold_conv_mult",
+        "threshold_doubling",
+        "threshold_multiplier",
+        "num_div_points_alt_sim",
+        "num_div_points_alt_retr",
+    }, strict);
+
+    var rt: RadiativeTransferConfig = .{};
+    if (mapGet(rt_map, "num_div_points_fwhm_sim")) |v| rt.num_div_points_fwhm_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_fwhm_retr")) |v| rt.num_div_points_fwhm_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_max_sim")) |v| rt.num_div_points_max_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_min_sim")) |v| rt.num_div_points_min_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_max_retr")) |v| rt.num_div_points_max_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_min_retr")) |v| rt.num_div_points_min_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "scattering_mode_sim")) |v| rt.scattering_mode_sim = try fields.parseScatteringMode(try expectString(v));
+    if (mapGet(rt_map, "scattering_mode_retr")) |v| rt.scattering_mode_retr = try fields.parseScatteringMode(try expectString(v));
+    if (mapGet(rt_map, "stokes_dimension_sim")) |v| rt.stokes_dimension_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "stokes_dimension_retr")) |v| rt.stokes_dimension_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "nstreams_sim")) |v| rt.nstreams_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "nstreams_retr")) |v| rt.nstreams_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "use_adding_sim")) |v| rt.use_adding_sim = try expectBool(v);
+    if (mapGet(rt_map, "use_adding_retr")) |v| rt.use_adding_retr = try expectBool(v);
+    if (mapGet(rt_map, "fourier_floor_scalar_sim")) |v| rt.fourier_floor_scalar_sim = try expectF64(v);
+    if (mapGet(rt_map, "fourier_floor_scalar_retr")) |v| rt.fourier_floor_scalar_retr = try expectF64(v);
+    if (mapGet(rt_map, "num_orders_max_sim")) |v| rt.num_orders_max_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_orders_max_retr")) |v| rt.num_orders_max_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "threshold_trunc_phase_sim")) |v| rt.threshold_trunc_phase_sim = try expectF64(v);
+    if (mapGet(rt_map, "threshold_trunc_phase_retr")) |v| rt.threshold_trunc_phase_retr = try expectF64(v);
+    if (mapGet(rt_map, "use_polarization_correction")) |v| rt.use_polarization_correction = try expectBool(v);
+    if (mapGet(rt_map, "use_correction_spherical_atm")) |v| rt.use_correction_spherical_atm = try expectBool(v);
+    if (mapGet(rt_map, "threshold_cloud_fraction")) |v| rt.threshold_cloud_fraction = try expectF64(v);
+    if (mapGet(rt_map, "threshold_conv_first")) |v| rt.threshold_conv_first = try expectF64(v);
+    if (mapGet(rt_map, "threshold_conv_mult")) |v| rt.threshold_conv_mult = try expectF64(v);
+    if (mapGet(rt_map, "threshold_doubling")) |v| rt.threshold_doubling = try expectF64(v);
+    if (mapGet(rt_map, "threshold_multiplier")) |v| rt.threshold_multiplier = try expectF64(v);
+    if (mapGet(rt_map, "num_div_points_alt_sim")) |v| rt.num_div_points_alt_sim = try decodeU32Sequence(allocator, v);
+    if (mapGet(rt_map, "num_div_points_alt_retr")) |v| rt.num_div_points_alt_retr = try decodeU32Sequence(allocator, v);
+    return rt;
+}
+
+fn decodeRrsRingConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?RrsRingConfig {
+    const rrs_value = value orelse return null;
+    const rrs_map = try expectMap(rrs_value);
+    try ensureKnownFields(rrs_map, &.{ "sim", "retr" }, strict);
+
+    var rrs: RrsRingConfig = .{};
+    if (mapGet(rrs_map, "sim")) |v| rrs.sim = try decodeRrsPerBandSeq(allocator, v, strict);
+    if (mapGet(rrs_map, "retr")) |v| rrs.retr = try decodeRrsPerBandSeq(allocator, v, strict);
+    return rrs;
+}
+
+fn decodeRrsPerBandSeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const RrsRingConfig.PerBand {
+    const seq = try expectSeq(value);
+    const bands = try allocator.alloc(RrsRingConfig.PerBand, seq.len);
+    for (seq, 0..) |entry, index| {
+        const band_map = try expectMap(entry);
+        try ensureKnownFields(band_map, &.{
+            "use_rrs",
+            "approximate_rrs",
+            "fraction_raman_lines",
+            "use_cabannes",
+            "degree_poly",
+            "include_absorption",
+        }, strict);
+
+        var band: RrsRingConfig.PerBand = .{};
+        if (mapGet(band_map, "use_rrs")) |v| band.use_rrs = try expectBool(v);
+        if (mapGet(band_map, "approximate_rrs")) |v| band.approximate_rrs = try expectBool(v);
+        if (mapGet(band_map, "fraction_raman_lines")) |v| band.fraction_raman_lines = try expectF64(v);
+        if (mapGet(band_map, "use_cabannes")) |v| band.use_cabannes = try expectBool(v);
+        if (mapGet(band_map, "degree_poly")) |v| band.degree_poly = @intCast(try expectU64(v));
+        if (mapGet(band_map, "include_absorption")) |v| band.include_absorption = try expectBool(v);
+        bands[index] = band;
+    }
+    return bands;
+}
+
+fn decodeAdditionalOutputConfig(value: ?yaml.Value, strict: bool) !?AdditionalOutputConfig {
+    const ao_value = value orelse return null;
+    const ao_map = try expectMap(ao_value);
+    try ensureKnownFields(ao_map, &.{
+        "refl_hr_grid_sim",
+        "refl_instr_grid_sim",
+        "refl_deriv_hr_grid_sim",
+        "refl_deriv_hr_grid_retr",
+        "refl_deriv_instr_grid_sim",
+        "refl_deriv_instr_grid_retr",
+        "signal_to_noise_ratio",
+        "contrib_refl_sim",
+        "contrib_refl_retr",
+        "alt_resolved_amf_sim",
+        "alt_resolved_amf_retr",
+        "absorption_xsec_sim",
+        "absorption_xsec_retr",
+        "ring_spectra",
+        "diff_ring_spectra",
+        "filling_in_spectra",
+        "test_derivatives",
+        "pol_correction_file",
+    }, strict);
+
+    var ao: AdditionalOutputConfig = .{};
+    if (mapGet(ao_map, "refl_hr_grid_sim")) |v| ao.refl_hr_grid_sim = try expectBool(v);
+    if (mapGet(ao_map, "refl_instr_grid_sim")) |v| ao.refl_instr_grid_sim = try expectBool(v);
+    if (mapGet(ao_map, "refl_deriv_hr_grid_sim")) |v| ao.refl_deriv_hr_grid_sim = try expectBool(v);
+    if (mapGet(ao_map, "refl_deriv_hr_grid_retr")) |v| ao.refl_deriv_hr_grid_retr = try expectBool(v);
+    if (mapGet(ao_map, "refl_deriv_instr_grid_sim")) |v| ao.refl_deriv_instr_grid_sim = try expectBool(v);
+    if (mapGet(ao_map, "refl_deriv_instr_grid_retr")) |v| ao.refl_deriv_instr_grid_retr = try expectBool(v);
+    if (mapGet(ao_map, "signal_to_noise_ratio")) |v| ao.signal_to_noise_ratio = try expectBool(v);
+    if (mapGet(ao_map, "contrib_refl_sim")) |v| ao.contrib_refl_sim = try expectBool(v);
+    if (mapGet(ao_map, "contrib_refl_retr")) |v| ao.contrib_refl_retr = try expectBool(v);
+    if (mapGet(ao_map, "alt_resolved_amf_sim")) |v| ao.alt_resolved_amf_sim = try expectBool(v);
+    if (mapGet(ao_map, "alt_resolved_amf_retr")) |v| ao.alt_resolved_amf_retr = try expectBool(v);
+    if (mapGet(ao_map, "absorption_xsec_sim")) |v| ao.absorption_xsec_sim = try expectBool(v);
+    if (mapGet(ao_map, "absorption_xsec_retr")) |v| ao.absorption_xsec_retr = try expectBool(v);
+    if (mapGet(ao_map, "ring_spectra")) |v| ao.ring_spectra = try expectBool(v);
+    if (mapGet(ao_map, "diff_ring_spectra")) |v| ao.diff_ring_spectra = try expectBool(v);
+    if (mapGet(ao_map, "filling_in_spectra")) |v| ao.filling_in_spectra = try expectBool(v);
+    if (mapGet(ao_map, "test_derivatives")) |v| ao.test_derivatives = try expectBool(v);
+    if (mapGet(ao_map, "pol_correction_file")) |v| ao.pol_correction_file = try expectBool(v);
+    return ao;
+}
+
+fn decodeU32Sequence(allocator: Allocator, value: yaml.Value) ![]const u32 {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc(u32, seq.len);
+    for (seq, 0..) |entry, index| {
+        result[index] = @intCast(try expectU64(entry));
+    }
+    return result;
 }
 
 fn decodeMeasurementMask(allocator: Allocator, value: yaml.Value, strict: bool) !MeasurementMask {

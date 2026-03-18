@@ -22,7 +22,7 @@ pub fn buildAerosolSublayerDistribution(
     layer_count: u32,
     sublayer_divisions: u32,
 ) ![]f64 {
-    if (std.mem.eql(u8, scene.aerosol.model, "hg_layer")) {
+    if (scene.aerosol.aerosol_type == .hg_scattering) {
         return buildFiniteLayerSublayerDistribution(
             allocator,
             profile,

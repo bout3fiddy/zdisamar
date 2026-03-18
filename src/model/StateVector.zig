@@ -18,6 +18,12 @@ pub const Target = enum {
     wavelength_shift_nm,
     multiplicative_offset,
     stray_light,
+    /// Vendor retrieval target: total or partial column amount of an absorber.
+    absorber_column_amount,
+    /// Vendor retrieval target: temperature profile shift (K).
+    temperature_shift,
+    /// Vendor retrieval target: cloud top pressure or altitude.
+    cloud_top_pressure,
 
     pub fn parse(text: []const u8) errors.Error!Target {
         if (std.mem.eql(u8, text, "scene.surface.albedo")) return .surface_albedo;
@@ -28,6 +34,9 @@ pub const Target = enum {
         if (std.mem.eql(u8, text, "scene.measurement_model.calibration.wavelength_shift_nm")) return .wavelength_shift_nm;
         if (std.mem.eql(u8, text, "scene.measurement_model.calibration.multiplicative_offset")) return .multiplicative_offset;
         if (std.mem.eql(u8, text, "scene.measurement_model.calibration.stray_light")) return .stray_light;
+        if (std.mem.eql(u8, text, "scene.absorbers.column_amount")) return .absorber_column_amount;
+        if (std.mem.eql(u8, text, "scene.atmosphere.temperature_shift")) return .temperature_shift;
+        if (std.mem.eql(u8, text, "scene.cloud.top_pressure")) return .cloud_top_pressure;
         return errors.Error.InvalidRequest;
     }
 
@@ -42,6 +51,9 @@ pub const Target = enum {
             .wavelength_shift_nm => "scene.measurement_model.calibration.wavelength_shift_nm",
             .multiplicative_offset => "scene.measurement_model.calibration.multiplicative_offset",
             .stray_light => "scene.measurement_model.calibration.stray_light",
+            .absorber_column_amount => "scene.absorbers.column_amount",
+            .temperature_shift => "scene.atmosphere.temperature_shift",
+            .cloud_top_pressure => "scene.cloud.top_pressure",
         };
     }
 };

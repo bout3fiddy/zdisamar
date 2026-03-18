@@ -120,7 +120,7 @@ templates:
 
       aerosols:
         plume:
-          model: hg_layer
+          model: hg_scattering
           optical_depth_550_nm: 0.12
           single_scatter_albedo: 0.93
           asymmetry_factor: 0.68
@@ -170,7 +170,7 @@ experiment:
 
       aerosols:
         plume:
-          model: hg_layer
+          model: hg_scattering
           optical_depth_550_nm: 0.22
           single_scatter_albedo: 0.93
           asymmetry_factor: 0.68
@@ -225,7 +225,7 @@ experiment:
 
       aerosols:
         plume:
-          model: hg_layer
+          model: hg_scattering
           optical_depth_550_nm: 0.10
           single_scatter_albedo: 0.93
           asymmetry_factor: 0.68

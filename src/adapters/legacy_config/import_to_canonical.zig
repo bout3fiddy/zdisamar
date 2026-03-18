@@ -144,14 +144,14 @@ fn renderPrepared(allocator: Allocator, source_path: []const u8, prepared: Prepa
         try writer.writeAll("      clouds:\n");
         try appendQuotedKey(writer, 4, "legacy_cloud");
         try writer.writeAll(":\n");
-        try appendStringField(writer, 5, "model", "legacy_binary_cloud");
+        try appendStringField(writer, 5, "model", "hg_scattering");
         try appendFloatField(writer, 5, "optical_thickness", 0.0);
     }
     if (prepared.scene.atmosphere.has_aerosols) {
         try writer.writeAll("      aerosols:\n");
         try appendQuotedKey(writer, 4, "legacy_aerosol");
         try writer.writeAll(":\n");
-        try appendStringField(writer, 5, "model", "legacy_binary_aerosol");
+        try appendStringField(writer, 5, "model", "hg_scattering");
         try appendFloatField(writer, 5, "optical_depth_550_nm", 0.0);
     }
 

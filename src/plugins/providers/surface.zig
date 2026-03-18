@@ -37,6 +37,9 @@ fn lambertianBrdfFactor(context: EvaluationContext) f64 {
         // Lambertian BRDF is isotropic, so the directional factor stays unity here.
         // Scene albedo already enters the transport kernel through ForwardInput.surface_albedo.
         .lambertian => 1.0,
+        // Wavelength-dependent surfaces use the same isotropic directional factor;
+        // spectral dependence is handled through the albedo schedule.
+        .wavel_dependent => 1.0,
     };
 }
 

@@ -194,6 +194,10 @@ fn anchorForAccessor(
         .wavelength_shift_nm => std.math.clamp(seed * 0.5 + 0.08 * jacobian, -0.2, 0.2),
         .multiplicative_offset => std.math.clamp(1.0 + 0.03 * (radiance - 1.0), 0.9, 1.1),
         .stray_light => std.math.clamp(0.002 * observed.mean_noise_sigma, -0.01, 0.01),
+        // Forward-declared vendor targets; surrogate heuristics deferred.
+        .absorber_column_amount => seed,
+        .temperature_shift => seed * 0.5,
+        .cloud_top_pressure => @max(0.0, seed * 0.8 + method_scale * 5.0),
     };
 }
 
