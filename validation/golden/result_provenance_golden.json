@@ -2,7 +2,7 @@
   "engine_version": "0.1.0-dev",
   "model_family_default": "disamar_standard",
   "solver_route_default": "builtin.dispatcher",
-  "transport_family_default": "surrogate_adding",
+  "transport_family_default": "baseline_labos",
   "derivative_mode_default": "none",
   "derivative_semantics_default": "none",
   "numerical_mode_default": "scalar",

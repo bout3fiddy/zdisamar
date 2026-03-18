@@ -667,7 +667,7 @@ test "preparePlan resolves typed transport routes from plan-time observation and
         },
     });
     defer scalar_plan.deinit();
-    try std.testing.expectEqual(TransportCommon.TransportFamily.adding, scalar_plan.transport_route.family);
+    try std.testing.expectEqual(TransportCommon.TransportFamily.labos, scalar_plan.transport_route.family);
     try std.testing.expectEqual(TransportCommon.DerivativeMode.semi_analytical, scalar_plan.transport_route.derivative_mode);
 
     var polarized_plan = try engine.preparePlan(.{

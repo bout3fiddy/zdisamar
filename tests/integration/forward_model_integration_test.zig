@@ -220,7 +220,7 @@ test "engine execute produces bounded O2A morphology through the typed forward p
     const product = result.measurement_space_product orelse return error.MissingMeasurementProduct;
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
-    try std.testing.expectEqualStrings("surrogate_adding", result.provenance.transport_family);
+    try std.testing.expectEqualStrings("baseline_labos", result.provenance.transport_family);
     try std.testing.expect(product.jacobian != null);
     try expectBoundedO2AMorphology(product.wavelengths, product.reflectance);
 }

@@ -3,17 +3,17 @@
   "routes": [
     {
       "scenario": "nadir_scalar_none",
-      "family": "surrogate_adding",
+      "family": "baseline_labos",
       "derivative_mode": "none"
     },
     {
       "scenario": "limb_polarized_analytical_plugin",
-      "family": "surrogate_labos",
+      "family": "baseline_labos",
       "derivative_mode": "analytical_plugin"
     },
     {
       "scenario": "nadir_scalar_numerical",
-      "family": "surrogate_adding",
+      "family": "baseline_labos",
       "derivative_mode": "numerical"
     }
   ]

@@ -19,11 +19,12 @@ pub fn execute(request: common.DispatchRequest, input: common.ForwardInput) comm
     return executePrepared(route, input);
 }
 
-test "dispatcher picks adding lane for nadir without analytical plugin" {
+test "dispatcher picks adding lane when use_adding is set" {
     const route = try prepare(.{
         .regime = .nadir,
         .execution_mode = .scalar,
         .derivative_mode = .semi_analytical,
+        .rtm_controls = .{ .use_adding = true },
     });
     try std.testing.expectEqual(common.TransportFamily.adding, route.family);
 

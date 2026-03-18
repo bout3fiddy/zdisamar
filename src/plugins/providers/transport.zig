@@ -45,7 +45,7 @@ test "transport provider exposes route fidelity and provenance helpers" {
         .execution_mode = .scalar,
         .derivative_mode = .none,
     });
-    try std.testing.expectEqual(common.ImplementationClass.surrogate, provider.classificationForRoute(route));
-    try std.testing.expectEqualStrings("surrogate_adding", provider.provenanceLabelForRoute(route));
+    try std.testing.expectEqual(common.ImplementationClass.baseline, provider.classificationForRoute(route));
+    try std.testing.expectEqualStrings("baseline_labos", provider.provenanceLabelForRoute(route));
     try std.testing.expectEqual(common.DerivativeSemantics.none, provider.derivativeSemanticsForRoute(route));
 }

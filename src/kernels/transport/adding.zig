@@ -115,6 +115,7 @@ test "adding execution returns deterministic scalar output" {
         .regime = .nadir,
         .execution_mode = .scalar,
         .derivative_mode = .none,
+        .rtm_controls = .{ .use_adding = true },
     });
     const result = try execute(route, .{
         .spectral_weight = 1.2,
