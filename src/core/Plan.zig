@@ -15,6 +15,9 @@ pub const SolverMode = enum {
 };
 
 pub const Template = struct {
+    // TODO(WP-01): model_family should be an enum (e.g. ModelFamily { disamar_standard })
+    // instead of []const u8, but it has >15 call sites across core, adapters, api, plugins,
+    // and exporters. Typed replacement deferred to avoid shotgun surgery.
     model_family: []const u8 = "disamar_standard",
     providers: PluginSelection.ProviderSelection = .{},
     solver_mode: SolverMode = .scalar,

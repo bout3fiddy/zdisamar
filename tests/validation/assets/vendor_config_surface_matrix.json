@@ -17,9 +17,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Must match DISAMAR_version_number constant"
+    "notes": "Vendor version constant; Zig uses schema_version in YAML root"
   },
   {
     "section": "GENERAL",
@@ -83,9 +83,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Number of subcolumn cases"
+    "notes": "Derived from subcolumn config; subcolumns unsupported until WP-06/WP-14"
   },
   {
     "section": "GENERAL",
@@ -105,9 +105,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Max Fourier terms for LUT creation"
+    "notes": "LUT creation control; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -127,9 +127,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Cannot be true simultaneously with simulationOnly"
+    "notes": "Measured reflectance from file; operational workflow unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -192,10 +192,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Aerosol layer height retrieval flag"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.target",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Aerosol layer height retrieval mapped to state_vector target aerosol_layer_center_km"
   },
   {
     "section": "GENERAL",
@@ -259,9 +259,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Reference radiance file path"
+    "notes": "Reference radiance file for operational workflows; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -276,7 +276,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "OMI-specific ASCII input; instrument-specific"
+    "notes": "OMI-specific ASCII input file; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -289,9 +289,9 @@
     "per_gas": false,
     "example_configs": [],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "External reflectance data file"
+    "notes": "External reflectance file; operational workflow unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -304,9 +304,9 @@
     "per_gas": false,
     "example_configs": [],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Polarization correction file"
+    "notes": "Polarization correction file; unsupported until WP-06/WP-14"
   },
   {
     "section": "GENERAL",
@@ -328,7 +328,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fortran output file; Zig uses structured output"
+    "notes": "Fortran output file path; Zig uses structured output system; unsupported (vendor-specific)"
   },
   {
     "section": "GENERAL",
@@ -431,9 +431,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Skip slit function convolution in simulation"
+    "notes": "Slit function bypass; unsupported until WP-06"
   },
   {
     "section": "GENERAL",
@@ -453,9 +453,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Skip slit function convolution in retrieval"
+    "notes": "Slit function bypass; unsupported until WP-06"
   },
   {
     "section": "GENERAL",
@@ -472,9 +472,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use effective cross sections in OE simulation"
+    "notes": "Effective cross-section OE mode; unsupported until WP-04"
   },
   {
     "section": "GENERAL",
@@ -491,9 +491,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use effective cross sections in OE retrieval"
+    "notes": "Effective cross-section OE mode; unsupported until WP-04"
   },
   {
     "section": "GENERAL",
@@ -508,9 +508,9 @@
       "Config_O2A_XsecLUT.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use polynomial expansion for cross sections sim"
+    "notes": "Polynomial expansion for cross sections; unsupported until WP-04/WP-08"
   },
   {
     "section": "GENERAL",
@@ -525,9 +525,9 @@
       "Config_O2A_XsecLUT.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use polynomial expansion for cross sections retr"
+    "notes": "Polynomial expansion for cross sections; unsupported until WP-04/WP-08"
   },
   {
     "section": "GENERAL",
@@ -544,9 +544,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Integrate source function in RT sim"
+    "notes": "Source function integration in RT; unsupported until WP-02"
   },
   {
     "section": "GENERAL",
@@ -563,9 +563,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Integrate source function in RT retr"
+    "notes": "Source function integration in RT; unsupported until WP-02"
   },
   {
     "section": "GENERAL",
@@ -582,9 +582,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Renormalize phase function sim"
+    "notes": "Phase function renormalization; unsupported until WP-02"
   },
   {
     "section": "GENERAL",
@@ -601,9 +601,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Renormalize phase function retr"
+    "notes": "Phase function renormalization; unsupported until WP-02"
   },
   {
     "section": "GENERAL",
@@ -618,7 +618,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Create reflectance LUT; optional subsection"
+    "notes": "Create reflectance LUT; optional subsection; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -633,7 +633,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Create correction LUT"
+    "notes": "Create correction LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -648,7 +648,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use Chandrasekhar formula for LUT"
+    "notes": "Use Chandrasekhar formula for LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -663,7 +663,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Surface albedo values for LUT creation"
+    "notes": "Surface albedo values for LUT creation; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -680,7 +680,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Create polynomial xsec LUT"
+    "notes": "Create polynomial xsec LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -697,7 +697,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Max T for LUT"
+    "notes": "Max T for LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -714,7 +714,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Min T for LUT"
+    "notes": "Min T for LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -731,7 +731,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Max p for LUT"
+    "notes": "Max p for LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -748,7 +748,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Min p for LUT"
+    "notes": "Min p for LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -765,7 +765,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Num pressure levels LUT"
+    "notes": "Num pressure levels LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -782,7 +782,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Num temp levels LUT"
+    "notes": "Num temp levels LUT; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -799,7 +799,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Num ln(p) coefficients"
+    "notes": "Num ln(p) coefficients; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -816,7 +816,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Num ln(T) coefficients"
+    "notes": "Num ln(T) coefficients; unsupported until WP-08"
   },
   {
     "section": "GENERAL",
@@ -831,9 +831,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "DOAS/DISMAS: XsecStrongAbsSim"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -848,9 +848,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "DOAS/DISMAS: XsecStrongAbsRetr"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -865,9 +865,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "DOAS/DISMAS: degreePolySim"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -882,9 +882,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "DOAS/DISMAS: degreePolyRetr"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -899,9 +899,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "DOAS/DISMAS: useAbsOptThcknForAMFSim"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -916,9 +916,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "DOAS/DISMAS: copyNO2profileRetrToSim"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -933,9 +933,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "DOAS/DISMAS: useAbsOptThcknForAMFRetr"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -950,9 +950,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "DOAS/DISMAS: calculateAMFRetr"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -967,9 +967,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelength for AMF calculation"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -984,9 +984,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use reference temperature in retr"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -1001,9 +1001,9 @@
       "Config_NO2_DOMINO.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Reference temperature value"
+    "notes": "DOAS/DISMAS-specific control; unsupported until WP-13"
   },
   {
     "section": "GENERAL",
@@ -1045,9 +1045,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitIntervalDP"
+    "notes": "Interval fit flag for atmospheric pressure division; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1067,9 +1067,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitIntervalTop"
+    "notes": "Interval fit flag for top pressure; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1089,9 +1089,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitIntervalBot"
+    "notes": "Interval fit flag for bottom pressure; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1110,10 +1110,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fit flag: fitSurfaceAlbedo"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.target",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Mapped to state_vector parameter with target scene.surface.albedo"
   },
   {
     "section": "GENERAL",
@@ -1133,9 +1133,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitSurfaceEmission"
+    "notes": "Surface emission retrieval; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1155,9 +1155,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitSurfacePressure"
+    "notes": "Surface pressure retrieval; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1177,9 +1177,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitAerosolAlbedo"
+    "notes": "Aerosol albedo fit flag (Lambertian aerosol specific); unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1198,10 +1198,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fit flag: fitAerosolTau"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.target",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Mapped to state_vector parameter with target aerosol_optical_depth_550_nm"
   },
   {
     "section": "GENERAL",
@@ -1221,9 +1221,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitAerosolSSA"
+    "notes": "Aerosol SSA retrieval; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1243,9 +1243,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitAerosolAC"
+    "notes": "Aerosol angstrom coefficient retrieval; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1265,9 +1265,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitCloudAlbedo"
+    "notes": "Cloud albedo fit flag (Lambertian cloud specific); unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1286,10 +1286,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fit flag: fitCloudTau"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.target",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Mapped to state_vector parameter with target cloud_optical_thickness"
   },
   {
     "section": "GENERAL",
@@ -1309,9 +1309,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitCloudAC"
+    "notes": "Cloud angstrom coefficient retrieval; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1331,9 +1331,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitCldAerFraction"
+    "notes": "Cloud/aerosol fraction retrieval; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1352,10 +1352,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fit flag: fitMulOffset"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.target",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Mapped to state_vector parameter with target multiplicative_offset"
   },
   {
     "section": "GENERAL",
@@ -1374,10 +1374,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fit flag: fitStrayLight"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.target",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Mapped to state_vector parameter with target stray_light"
   },
   {
     "section": "GENERAL",
@@ -1397,9 +1397,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit flag: fitTemperatureProfile"
+    "notes": "Temperature profile retrieval; unsupported until WP-14"
   },
   {
     "section": "GENERAL",
@@ -1418,10 +1418,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fit flag: fitTemperatureOffset"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.target",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Mapped to state_vector parameter with target temperature_shift"
   },
   {
     "section": "GENERAL",
@@ -1440,10 +1440,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fit flag: fitLnCldTau"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.transform",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Mapped to state_vector parameter with target cloud_optical_thickness and transform log"
   },
   {
     "section": "GENERAL",
@@ -1458,7 +1458,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: latitude"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1473,7 +1473,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: longitude"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1488,7 +1488,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: useSurfAlbedoDataBase"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1503,7 +1503,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: year"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1518,7 +1518,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: month"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1533,7 +1533,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: day"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1548,7 +1548,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: hour"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1563,7 +1563,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: minute"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1578,7 +1578,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: second"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1593,7 +1593,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: XtrackNumber"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1608,7 +1608,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: AtrackNumber"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1623,7 +1623,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: orbitNumber"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1638,7 +1638,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: originalIrradianceFileName"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1653,7 +1653,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: originalRadianceUVFileName"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "GENERAL",
@@ -1668,7 +1668,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode: originalRadianceVISFileName"
+    "notes": "Operational mode external data; unsupported until WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -1753,10 +1753,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Pairs of start/end wavelengths to exclude"
+    "zig_yaml_path": "stages.*.plan.bands.*.exclude",
+    "status": "exact",
+    "runtime_consumer": "model/Bands.zig",
+    "notes": "Exclusion windows parsed as band exclude regions"
   },
   {
     "section": "INSTRUMENT",
@@ -1776,9 +1776,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit function index for irradiance sim (1-5)"
+    "notes": "Vendor slit function shape index (1-5: Gauss, super-Gauss, etc.); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1798,9 +1798,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit function index for irradiance retr (1-5)"
+    "notes": "Vendor slit function shape index (1-5: Gauss, super-Gauss, etc.); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1820,9 +1820,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit function index for radiance sim (1-5)"
+    "notes": "Vendor slit function shape index (1-5: Gauss, super-Gauss, etc.); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1842,9 +1842,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit function index for radiance retr (1-5)"
+    "notes": "Vendor slit function shape index (1-5: Gauss, super-Gauss, etc.); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1863,10 +1863,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Slit FWHM for irradiance sim"
+    "zig_yaml_path": "stages.*.scene.measurement_model.spectral_response.fwhm_nm",
+    "status": "approximate",
+    "runtime_consumer": "model/ObservationModel.zig",
+    "notes": "Zig uses single FWHM per stage; vendor splits irr/rad per band; approximate until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1885,10 +1885,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Slit FWHM for irradiance retr"
+    "zig_yaml_path": "stages.*.scene.measurement_model.spectral_response.fwhm_nm",
+    "status": "approximate",
+    "runtime_consumer": "model/ObservationModel.zig",
+    "notes": "Zig uses single FWHM per stage; vendor splits irr/rad per band; approximate until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1907,10 +1907,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Slit FWHM for radiance sim"
+    "zig_yaml_path": "stages.*.scene.measurement_model.spectral_response.fwhm_nm",
+    "status": "approximate",
+    "runtime_consumer": "model/ObservationModel.zig",
+    "notes": "Zig uses single FWHM per stage; vendor splits irr/rad per band; approximate until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1929,10 +1929,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Slit FWHM for radiance retr"
+    "zig_yaml_path": "stages.*.scene.measurement_model.spectral_response.fwhm_nm",
+    "status": "approximate",
+    "runtime_consumer": "model/ObservationModel.zig",
+    "notes": "Zig uses single FWHM per stage; vendor splits irr/rad per band; approximate until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1952,9 +1952,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit amplitude for irradiance sim"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1974,9 +1974,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit amplitude for irradiance retr"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -1996,9 +1996,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit amplitude for radiance sim"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2018,9 +2018,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit amplitude for radiance retr"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2040,9 +2040,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit scale for irradiance sim"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2062,9 +2062,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit scale for irradiance retr"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2084,9 +2084,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit scale for radiance sim"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2106,9 +2106,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit scale for radiance retr"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2128,9 +2128,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit phase for irradiance sim"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2150,9 +2150,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit phase for irradiance retr"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2172,9 +2172,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit phase for radiance sim"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2194,9 +2194,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Slit phase for radiance retr"
+    "notes": "Extended slit function parameters (amplitude/scale/phase); unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2216,9 +2216,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Enable polarization scrambler"
+    "notes": "Polarization scrambler; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2238,9 +2238,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths for pol scrambler"
+    "notes": "Polarization scrambler wavelengths; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2260,9 +2260,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Scale factors for pol scrambler"
+    "notes": "Polarization scrambler scale factors; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2282,9 +2282,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Enable wavelength calibration"
+    "notes": "Wavelength calibration toggle; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2304,9 +2304,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Instrument velocity for Doppler shift"
+    "notes": "Instrument velocity for Doppler shift; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2326,9 +2326,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelength nodes for irr shift sim"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2348,9 +2348,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Shift values at irr nodes sim"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2370,9 +2370,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelength nodes for irr shift retr"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2392,9 +2392,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "A priori shift at irr nodes retr"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2414,9 +2414,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "A priori variance of shift at irr nodes retr"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2436,9 +2436,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelength nodes for rad shift sim"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2458,9 +2458,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Shift values at rad nodes sim"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2480,9 +2480,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelength nodes for rad shift retr"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2502,9 +2502,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "A priori shift at rad nodes retr"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2524,9 +2524,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "A priori variance of shift at rad nodes retr"
+    "notes": "Multi-node wavelength shift control; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -2545,10 +2545,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Add Gaussian noise to irradiance"
+    "zig_yaml_path": "stages.simulation.scene.measurement_model.noise",
+    "status": "approximate",
+    "runtime_consumer": "model/ObservationModel.zig",
+    "notes": "Zig uses noise model kind; vendor splits irr/rad noise flags"
   },
   {
     "section": "INSTRUMENT",
@@ -2567,10 +2567,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Add Gaussian noise to radiance"
+    "zig_yaml_path": "stages.simulation.scene.measurement_model.noise",
+    "status": "approximate",
+    "runtime_consumer": "model/ObservationModel.zig",
+    "notes": "Zig uses noise model kind; vendor splits irr/rad noise flags"
   },
   {
     "section": "INSTRUMENT",
@@ -2590,9 +2590,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Irradiance SNR: useS5_SNR"
+    "notes": "Irradiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2612,9 +2612,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Irradiance SNR: specifySpectralBinSize"
+    "notes": "Irradiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2634,9 +2634,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Irradiance SNR: spectralBinSize"
+    "notes": "Irradiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2656,9 +2656,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Irradiance SNR: wavelSNR"
+    "notes": "Irradiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2678,9 +2678,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Irradiance SNR: SNR"
+    "notes": "Irradiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2700,9 +2700,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Irradiance SNR: SNRmax"
+    "notes": "Irradiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2722,9 +2722,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Irradiance SNR: assume_shot_noise"
+    "notes": "Irradiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2744,9 +2744,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: useLAB_SNR"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2766,9 +2766,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: A"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2788,9 +2788,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: B"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2810,9 +2810,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: useS5_SNR"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2832,9 +2832,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: refSpecType"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2854,9 +2854,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: specifySpectralBinSize"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2876,9 +2876,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: spectralBinSize"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2898,9 +2898,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: wavelSNR"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2920,9 +2920,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: SNR"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2942,9 +2942,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: SNRmax"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2964,9 +2964,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance SNR: assume_shot_noise"
+    "notes": "Radiance SNR model detail; unsupported until WP-06/WP-07"
   },
   {
     "section": "INSTRUMENT",
@@ -2986,9 +2986,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths for calibration error"
+    "notes": "Calibration error on reflectance; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3008,9 +3008,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Multiplicative calibration error"
+    "notes": "Calibration error on reflectance; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3030,9 +3030,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additive calibration error"
+    "notes": "Calibration error on reflectance; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3052,9 +3052,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Correlation length multiplicative"
+    "notes": "Calibration error on reflectance; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3074,9 +3074,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Correlation length additive"
+    "notes": "Calibration error on reflectance; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3096,9 +3096,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Simple offset: offsetIrradianceAdd"
+    "notes": "Simple additive irradiance offset; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3118,9 +3118,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Simple offset: offsetIrradianceMul"
+    "notes": "Simple multiplicative irradiance offset; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3140,9 +3140,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Simple offset: offsetRadianceAdd"
+    "notes": "Simple additive radiance offset; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3162,9 +3162,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Simple offset: offsetRadianceMul"
+    "notes": "Simple multiplicative radiance offset; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3184,9 +3184,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal amplitude irradiance add"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3206,9 +3206,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal period irradiance add"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3228,9 +3228,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal phase irradiance add"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3250,9 +3250,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal amplitude irradiance mul"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3272,9 +3272,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal period irradiance mul"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3294,9 +3294,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal phase irradiance mul"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3316,9 +3316,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal amplitude radiance add"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3338,9 +3338,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal period radiance add"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3360,9 +3360,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal phase radiance add"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3382,9 +3382,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal amplitude radiance mul"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3404,9 +3404,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal period radiance mul"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3426,9 +3426,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Sinusoidal phase radiance mul"
+    "notes": "Sinusoidal spectral features; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3448,9 +3448,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Irradiance smear factor"
+    "notes": "Irradiance smear factor; unsupported until WP-06"
   },
   {
     "section": "INSTRUMENT",
@@ -3470,9 +3470,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Radiance smear factor"
+    "notes": "Radiance smear factor; unsupported until WP-06"
   },
   {
     "section": "MUL_OFFSET",
@@ -3492,9 +3492,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Linear interpolation for mul offset sim"
+    "notes": "Multiplicative offset interpolation mode; unsupported until WP-06"
   },
   {
     "section": "MUL_OFFSET",
@@ -3514,9 +3514,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths for mul offset sim"
+    "notes": "Multiplicative offset wavelength nodes sim; unsupported until WP-06"
   },
   {
     "section": "MUL_OFFSET",
@@ -3536,9 +3536,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Multiplicative offset values sim"
+    "notes": "Multiplicative offset values sim; unsupported until WP-06"
   },
   {
     "section": "MUL_OFFSET",
@@ -3558,9 +3558,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Linear interpolation for mul offset retr"
+    "notes": "Multiplicative offset interpolation mode retr; unsupported until WP-06"
   },
   {
     "section": "MUL_OFFSET",
@@ -3580,9 +3580,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths for mul offset retr"
+    "notes": "Multiplicative offset wavelength nodes retr; unsupported until WP-06"
   },
   {
     "section": "MUL_OFFSET",
@@ -3602,9 +3602,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "A priori mul offset retr"
+    "notes": "A priori multiplicative offset retr; unsupported until WP-06"
   },
   {
     "section": "MUL_OFFSET",
@@ -3624,9 +3624,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Variance of a priori mul offset retr"
+    "notes": "Variance of a priori multiplicative offset retr; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3646,9 +3646,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Linear interp stray light sim"
+    "notes": "Stray light simulation control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3668,9 +3668,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use ref spectrum stray light sim"
+    "notes": "Stray light simulation control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3690,9 +3690,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths stray light sim"
+    "notes": "Stray light simulation control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3712,9 +3712,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additive stray light sim"
+    "notes": "Stray light simulation control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3734,9 +3734,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Characteristic bias spectrum sim"
+    "notes": "Stray light simulation control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3756,9 +3756,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Characteristic bias file sim"
+    "notes": "Stray light simulation control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3778,9 +3778,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Linear interp stray light retr"
+    "notes": "Stray light retrieval control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3800,9 +3800,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use ref spectrum stray light retr"
+    "notes": "Stray light retrieval control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3822,9 +3822,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths stray light retr"
+    "notes": "Stray light retrieval control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3844,9 +3844,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "A priori stray light retr"
+    "notes": "Stray light retrieval control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3866,9 +3866,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Variance a priori stray light retr"
+    "notes": "Stray light retrieval control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3888,9 +3888,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Characteristic bias spectrum retr"
+    "notes": "Stray light retrieval control; unsupported until WP-06"
   },
   {
     "section": "STRAY_LIGHT",
@@ -3910,9 +3910,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Characteristic bias file retr"
+    "notes": "Stray light retrieval control; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -3931,10 +3931,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Use rotational Raman scattering sim"
+    "zig_yaml_path": "stages.simulation.rrs_ring.sim[*].userrs",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.userrs; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -3953,10 +3953,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Approximate RRS sim"
+    "zig_yaml_path": "stages.simulation.rrs_ring.sim[*].approximaterrs",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.approximaterrs; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -3975,10 +3975,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fraction Raman lines sim"
+    "zig_yaml_path": "stages.simulation.rrs_ring.sim[*].fractionramanlines",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.fractionramanlines; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -3997,10 +3997,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Use Cabannes scattering sim"
+    "zig_yaml_path": "stages.simulation.rrs_ring.sim[*].usecabannes",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.usecabannes; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4019,10 +4019,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Degree polynomial RRS sim"
+    "zig_yaml_path": "stages.simulation.rrs_ring.sim[*].degreepoly",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.degreepoly; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4041,10 +4041,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Include absorption in RRS sim"
+    "zig_yaml_path": "stages.simulation.rrs_ring.sim[*].includeabsorption",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.includeabsorption; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4063,10 +4063,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Use rotational Raman scattering retr"
+    "zig_yaml_path": "stages.retrieval.rrs_ring.retr[*].userrs",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.userrs; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4085,10 +4085,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Approximate RRS retr"
+    "zig_yaml_path": "stages.retrieval.rrs_ring.retr[*].approximaterrs",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.approximaterrs; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4107,10 +4107,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fraction Raman lines retr"
+    "zig_yaml_path": "stages.retrieval.rrs_ring.retr[*].fractionramanlines",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.fractionramanlines; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4129,10 +4129,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Use Cabannes scattering retr"
+    "zig_yaml_path": "stages.retrieval.rrs_ring.retr[*].usecabannes",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.usecabannes; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4151,10 +4151,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Degree polynomial RRS retr"
+    "zig_yaml_path": "stages.retrieval.rrs_ring.retr[*].degreepoly",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.degreepoly; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4173,10 +4173,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Include absorption in RRS retr"
+    "zig_yaml_path": "stages.retrieval.rrs_ring.retr[*].includeabsorption",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RrsRingConfig)",
+    "notes": "Parsed into RrsRingConfig.PerBand.includeabsorption; runtime consumer in WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4196,9 +4196,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Add diff Ring spectrum sim"
+    "notes": "Add differential Ring spectrum sim; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4218,9 +4218,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Add Ring spectrum sim"
+    "notes": "Add Ring spectrum sim; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4240,9 +4240,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Ring coefficients sim"
+    "notes": "Ring coefficients sim; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4262,9 +4262,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit diff Ring spectrum retr"
+    "notes": "Fit differential Ring spectrum retr; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4284,9 +4284,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit Ring spectrum retr"
+    "notes": "Fit Ring spectrum retr; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4306,9 +4306,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP diff Ring spectrum retr"
+    "notes": "AP differential Ring spectrum retr; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4328,9 +4328,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP Ring spectrum retr"
+    "notes": "AP Ring spectrum retr; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4350,9 +4350,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP Ring coefficients retr"
+    "notes": "AP Ring coefficients retr; unsupported until WP-06"
   },
   {
     "section": "RRS_RING",
@@ -4372,9 +4372,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Variance AP Ring coefficients retr"
+    "notes": "Variance of AP Ring coefficients retr; unsupported until WP-06"
   },
   {
     "section": "REFERENCE_DATA",
@@ -4394,9 +4394,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelength shift solar irradiance sim"
+    "notes": "Wavelength shift for solar irradiance sim; unsupported until WP-06"
   },
   {
     "section": "REFERENCE_DATA",
@@ -4416,9 +4416,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelength shift solar irradiance retr"
+    "notes": "Wavelength shift for solar irradiance retr; unsupported until WP-06"
   },
   {
     "section": "GEOMETRY",
@@ -4614,9 +4614,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use O3 temp climatology sim"
+    "notes": "O3-dependent temperature climatology; unsupported until WP-04"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4636,9 +4636,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use O3 temp climatology retr"
+    "notes": "O3-dependent temperature climatology; unsupported until WP-04"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4658,9 +4658,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Latitude for climatology"
+    "notes": "Latitude for PT climatology lookup; unsupported until WP-07"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4680,9 +4680,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Month for climatology"
+    "notes": "Month for PT climatology lookup; unsupported until WP-07"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4702,9 +4702,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Day for climatology"
+    "notes": "Day for PT climatology lookup; unsupported until WP-07"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4724,9 +4724,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Temperature variance"
+    "notes": "Temperature variance for a priori covariance; unsupported until WP-14"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4745,10 +4745,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Pressure(hPa)-Temperature(K) node pairs for sim"
+    "zig_yaml_path": "stages.simulation.scene.atmosphere.thermodynamics.profile",
+    "status": "approximate",
+    "runtime_consumer": "model/Atmosphere.zig",
+    "notes": "Pressure-temperature profile sim; Zig uses profile source binding (asset or climatology)"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4767,10 +4767,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Pressure(hPa)-Temperature(K) node pairs for retr"
+    "zig_yaml_path": "stages.retrieval.scene.atmosphere.thermodynamics.profile",
+    "status": "approximate",
+    "runtime_consumer": "model/Atmosphere.zig",
+    "notes": "Pressure-temperature profile retr; Zig uses profile source binding (asset or climatology)"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4790,9 +4790,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Temperature offset sim"
+    "notes": "Temperature offset sim; unsupported until WP-14"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4812,9 +4812,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Variance AP temperature offset"
+    "notes": "Variance of AP temperature offset; unsupported until WP-14"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4834,9 +4834,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Linear interp temperature sim"
+    "notes": "Temperature linear interpolation sim; unsupported until WP-14"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4856,9 +4856,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Linear interp temperature retr"
+    "notes": "Temperature linear interpolation retr; unsupported until WP-14"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4878,9 +4878,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use AP correlation length temperature"
+    "notes": "Temperature AP correlation length toggle; unsupported until WP-14"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4900,9 +4900,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP correlation length temperature"
+    "notes": "Temperature AP correlation length value; unsupported until WP-14"
   },
   {
     "section": "ABSORBING_GAS",
@@ -4921,10 +4921,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Cross section file sim"
+    "zig_yaml_path": "stages.simulation.scene.absorbers.*.spectroscopy",
+    "status": "approximate",
+    "runtime_consumer": "model/Absorber.zig",
+    "notes": "Cross-section file mapped to absorber spectroscopy source/asset binding"
   },
   {
     "section": "ABSORBING_GAS",
@@ -4943,10 +4943,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Cross section file retr"
+    "zig_yaml_path": "stages.retrieval.scene.absorbers.*.spectroscopy",
+    "status": "approximate",
+    "runtime_consumer": "model/Absorber.zig",
+    "notes": "Cross-section file mapped to absorber spectroscopy source/asset binding"
   },
   {
     "section": "ABSORBING_GAS",
@@ -4966,9 +4966,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fit gas profile; not for O2/O2-O2"
+    "notes": "Gas profile retrieval flag; unsupported until WP-04/WP-14"
   },
   {
     "section": "ABSORBING_GAS",
@@ -4987,10 +4987,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fit gas column; not for O2/O2-O2"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.target",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Gas column retrieval flag mapped to state_vector target absorber_column_amount"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5010,9 +5010,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use O3 climatology sim; O3 only"
+    "notes": "O3 climatology sim; unsupported until WP-04/WP-07"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5032,9 +5032,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use O3 climatology retr; O3 only"
+    "notes": "O3 climatology retr; unsupported until WP-04/WP-07"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5054,9 +5054,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Latitude for gas climatology"
+    "notes": "Latitude for gas climatology lookup; unsupported until WP-07"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5076,9 +5076,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Month for gas climatology"
+    "notes": "Month for gas climatology lookup; unsupported until WP-07"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5098,9 +5098,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Day for gas climatology"
+    "notes": "Day for gas climatology lookup; unsupported until WP-07"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5120,9 +5120,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Relative error on VMR"
+    "notes": "Relative error on VMR for gas climatology; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5141,10 +5141,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Pressure-VMR(ppmv) pairs sim"
+    "zig_yaml_path": "stages.simulation.scene.absorbers.*.profile.source",
+    "status": "approximate",
+    "runtime_consumer": "model/Absorber.zig",
+    "notes": "Gas profile nodes sim; Zig uses profile source binding (asset or atmosphere reference)"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5164,9 +5164,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Pressure-VMR-error(%) triplets retr"
+    "notes": "Gas profile with error triplets retr; unsupported until WP-04/WP-14"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5186,9 +5186,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Linear interp gas profile sim"
+    "notes": "Linear interpolation for gas profile sim; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5208,9 +5208,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Linear interp gas profile retr"
+    "notes": "Linear interpolation for gas profile retr; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5230,9 +5230,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Column amount: columnSim_DU"
+    "notes": "Gas column in DU for simulation; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5252,9 +5252,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Column amount: columnRetr_DU"
+    "notes": "Gas column in DU for retrieval; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5274,9 +5274,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Column amount: columnSim_molcm2"
+    "notes": "Gas column in molec/cm2 for simulation; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5296,9 +5296,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Column amount: columnRetr_molcm2"
+    "notes": "Gas column in molec/cm2 for retrieval; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5318,9 +5318,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP error on column %"
+    "notes": "AP error on gas column %; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5340,9 +5340,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Scale profile to column sim"
+    "notes": "Scale gas profile to column sim; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5362,9 +5362,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Scale profile to column retr"
+    "notes": "Scale gas profile to column retr; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5384,9 +5384,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Scale factor xsec sim"
+    "notes": "Cross-section scale factor sim; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5406,9 +5406,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Scale factor xsec retr"
+    "notes": "Cross-section scale factor retr; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5428,9 +5428,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use AP correlation length"
+    "notes": "AP correlation length toggle for gas; unsupported until WP-04/WP-14"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5450,9 +5450,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP correlation length value"
+    "notes": "AP correlation length value for gas; unsupported until WP-04/WP-14"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5472,9 +5472,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Remove AP corr trop/strat"
+    "notes": "Remove AP trop/strat correlation; unsupported until WP-04"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5494,9 +5494,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Read Sa from file"
+    "notes": "Read Sa from file; unsupported until WP-04/WP-14"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5516,9 +5516,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Read Sa diagonal from file"
+    "notes": "Read Sa diagonal from file; unsupported until WP-04/WP-14"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5538,9 +5538,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP covariance file path"
+    "notes": "AP covariance file path; unsupported until WP-04/WP-14"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5557,9 +5557,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Line mixing factor; only O2"
+    "notes": "HITRAN line mixing factor sim; unsupported until WP-03"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5576,9 +5576,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Line mixing factor; only O2"
+    "notes": "HITRAN line mixing factor retr; unsupported until WP-03"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5595,9 +5595,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Isotopologue indices"
+    "notes": "HITRAN isotopologue indices sim; unsupported until WP-03"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5614,9 +5614,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Isotopologue indices"
+    "notes": "HITRAN isotopologue indices retr; unsupported until WP-03"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5635,9 +5635,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HITRAN: thresholdLineSim"
+    "notes": "HITRAN line intensity threshold sim; unsupported until WP-03"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5656,9 +5656,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HITRAN: thresholdLineRetr"
+    "notes": "HITRAN line intensity threshold retr; unsupported until WP-03"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5677,9 +5677,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HITRAN: cutoffSim"
+    "notes": "HITRAN line cutoff distance sim; unsupported until WP-03"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5698,9 +5698,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HITRAN: cutoffRetr"
+    "notes": "HITRAN line cutoff distance retr; unsupported until WP-03"
   },
   {
     "section": "SURFACE",
@@ -5764,9 +5764,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Variance surface pressure retr"
+    "notes": "Variance of surface pressure for retrieval; unsupported until WP-14"
   },
   {
     "section": "SURFACE",
@@ -5785,10 +5785,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "wavelIndependent or wavelDependent sim"
+    "zig_yaml_path": "stages.simulation.scene.surface.model",
+    "status": "approximate",
+    "runtime_consumer": "model/Surface.zig",
+    "notes": "Surface type sim mapped to Surface.Kind (lambertian/wavel_dependent)"
   },
   {
     "section": "SURFACE",
@@ -5807,10 +5807,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "wavelIndependent or wavelDependent retr"
+    "zig_yaml_path": "stages.retrieval.scene.surface.model",
+    "status": "approximate",
+    "runtime_consumer": "model/Surface.zig",
+    "notes": "Surface type retr mapped to Surface.Kind (lambertian/wavel_dependent)"
   },
   {
     "section": "SURFACE",
@@ -5851,10 +5851,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Wavel-indep surface albedo retr"
+    "zig_yaml_path": "stages.retrieval.scene.surface.albedo",
+    "status": "approximate",
+    "runtime_consumer": "model/Surface.zig",
+    "notes": "Wavel-indep surface albedo retr; mapped to surface albedo field"
   },
   {
     "section": "SURFACE",
@@ -5873,10 +5873,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Variance surface albedo retr"
+    "zig_yaml_path": "stages.retrieval.inverse.state.*.prior.sigma",
+    "status": "approximate",
+    "runtime_consumer": "model/StateVector.zig",
+    "notes": "Variance of surface albedo retr mapped to state_vector prior sigma"
   },
   {
     "section": "SURFACE",
@@ -5895,10 +5895,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Wavelengths surface albedo sim"
+    "zig_yaml_path": "stages.simulation.scene.surface.parameters",
+    "status": "approximate",
+    "runtime_consumer": "model/Surface.zig",
+    "notes": "Wavel-dependent surface albedo wavelengths sim; approximate via surface parameters"
   },
   {
     "section": "SURFACE",
@@ -5917,10 +5917,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Surface albedo values sim"
+    "zig_yaml_path": "stages.simulation.scene.surface.parameters",
+    "status": "approximate",
+    "runtime_consumer": "model/Surface.zig",
+    "notes": "Wavel-dependent surface albedo values sim; approximate via surface parameters"
   },
   {
     "section": "SURFACE",
@@ -5940,9 +5940,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths surface emission sim"
+    "notes": "Wavel-dependent surface emission wavelengths sim; unsupported until WP-14"
   },
   {
     "section": "SURFACE",
@@ -5962,9 +5962,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Surface emission values sim"
+    "notes": "Wavel-dependent surface emission values sim; unsupported until WP-14"
   },
   {
     "section": "SURFACE",
@@ -5983,10 +5983,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Wavelengths surface albedo retr"
+    "zig_yaml_path": "stages.retrieval.scene.surface.parameters",
+    "status": "approximate",
+    "runtime_consumer": "model/Surface.zig",
+    "notes": "Wavel-dependent surface albedo wavelengths retr; approximate via surface parameters"
   },
   {
     "section": "SURFACE",
@@ -6005,10 +6005,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Surface albedo values retr"
+    "zig_yaml_path": "stages.retrieval.scene.surface.parameters",
+    "status": "approximate",
+    "runtime_consumer": "model/Surface.zig",
+    "notes": "Wavel-dependent surface albedo values retr; approximate via surface parameters"
   },
   {
     "section": "SURFACE",
@@ -6028,9 +6028,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths surface emission retr"
+    "notes": "Wavel-dependent surface emission wavelengths retr; unsupported until WP-14"
   },
   {
     "section": "SURFACE",
@@ -6050,9 +6050,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Surface emission values retr"
+    "notes": "Wavel-dependent surface emission values retr; unsupported until WP-14"
   },
   {
     "section": "SURFACE",
@@ -6072,9 +6072,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Variance surface albedo retr"
+    "notes": "Variance of wavel-dependent surface albedo retr; unsupported until WP-14"
   },
   {
     "section": "SURFACE",
@@ -6094,9 +6094,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Variance surface emission retr"
+    "notes": "Variance of wavel-dependent surface emission retr; unsupported until WP-14"
   },
   {
     "section": "SURFACE",
@@ -6116,9 +6116,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP correlation surface parameters"
+    "notes": "AP correlation for surface parameters; unsupported until WP-14"
   },
   {
     "section": "ATMOSPHERIC_INTERVALS",
@@ -6138,9 +6138,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Top pressures intervals sim hPa"
+    "notes": "Interval top pressures sim; unsupported until WP-14"
   },
   {
     "section": "ATMOSPHERIC_INTERVALS",
@@ -6160,9 +6160,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Top pressures intervals retr hPa"
+    "notes": "Interval top pressures retr; unsupported until WP-14"
   },
   {
     "section": "ATMOSPHERIC_INTERVALS",
@@ -6182,9 +6182,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP variance interval top pressures retr"
+    "notes": "AP variance of interval top pressures retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6204,9 +6204,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Cloud/aerosol fraction sim"
+    "notes": "Cloud/aerosol fraction sim; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6226,9 +6226,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Cloud/aerosol fraction retr"
+    "notes": "Cloud/aerosol fraction retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6248,9 +6248,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Use threshold for cld fraction variance"
+    "notes": "Threshold control for cloud fraction variance; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6270,9 +6270,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Threshold cld fraction value"
+    "notes": "Threshold cloud fraction value; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6292,9 +6292,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fraction type sim"
+    "notes": "Fraction type sim (wavel-indep/dependent); unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6314,9 +6314,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fraction type retr"
+    "notes": "Fraction type retr (wavel-indep/dependent); unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6336,9 +6336,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavel-indep fraction sim"
+    "notes": "Wavel-indep fraction sim; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6358,9 +6358,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP wavel-indep fraction retr"
+    "notes": "AP wavel-indep fraction retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6380,9 +6380,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP variance fraction retr"
+    "notes": "AP variance wavel-indep fraction retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6402,9 +6402,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths fraction sim"
+    "notes": "Wavelengths wavel-dep fraction sim; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6424,9 +6424,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Fraction values sim"
+    "notes": "Wavel-dep fraction values sim; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6446,9 +6446,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths fraction retr"
+    "notes": "Wavelengths wavel-dep fraction retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6468,9 +6468,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP fraction values retr"
+    "notes": "AP wavel-dep fraction values retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD_AEROSOL_FRACTION",
@@ -6490,9 +6490,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP variance fraction retr"
+    "notes": "AP variance wavel-dep fraction retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6511,10 +6511,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "none/LambWavelIndep/Lambertian/MieScattering/HGscattering"
+    "zig_yaml_path": "stages.simulation.scene.clouds.*.model",
+    "status": "exact",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "Cloud type sim mapped to Cloud.cloud_type via parseCloudType"
   },
   {
     "section": "CLOUD",
@@ -6533,10 +6533,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "none/LambWavelIndep/Lambertian/MieScattering/HGscattering"
+    "zig_yaml_path": "stages.retrieval.scene.clouds.*.model",
+    "status": "exact",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "Cloud type retr mapped to Cloud.cloud_type via parseCloudType"
   },
   {
     "section": "CLOUD",
@@ -6556,9 +6556,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Cloud albedo wavel-indep sim"
+    "notes": "Wavel-indep Lambertian cloud albedo sim; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6578,9 +6578,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP cloud albedo wavel-indep retr"
+    "notes": "AP wavel-indep Lambertian cloud albedo retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6600,9 +6600,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP variance cloud albedo retr"
+    "notes": "AP variance wavel-indep cloud albedo retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6622,9 +6622,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths Lambertian cloud sim"
+    "notes": "Wavelengths Lambertian cloud sim; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6644,9 +6644,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Cloud albedo Lambertian sim"
+    "notes": "Lambertian cloud albedo sim; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6666,9 +6666,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths Lambertian cloud retr"
+    "notes": "Wavelengths Lambertian cloud retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6688,9 +6688,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP cloud albedo Lambertian retr"
+    "notes": "AP Lambertian cloud albedo retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6710,9 +6710,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP variance cloud albedo retr"
+    "notes": "AP variance Lambertian cloud albedo retr; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6731,10 +6731,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG cloud opticalThickness sim"
+    "zig_yaml_path": "stages.simulation.scene.clouds.*.optical_thickness",
+    "status": "exact",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "HG cloud optical thickness sim mapped to Cloud.optical_thickness"
   },
   {
     "section": "CLOUD",
@@ -6753,10 +6753,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG cloud opticalThickness retr with AP/variance"
+    "zig_yaml_path": "stages.retrieval.scene.clouds.*.optical_thickness",
+    "status": "approximate",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "HG cloud optical thickness retr; Zig carries value but AP/variance handled via state_vector"
   },
   {
     "section": "CLOUD",
@@ -6775,10 +6775,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG cloud angstromCoefficient sim"
+    "zig_yaml_path": "stages.simulation.scene.clouds.*.angstrom_exponent",
+    "status": "exact",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "HG cloud angstrom coefficient sim mapped to Cloud.angstrom_exponent"
   },
   {
     "section": "CLOUD",
@@ -6798,9 +6798,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HG cloud angstromCoefficient retr with AP/variance"
+    "notes": "HG cloud angstrom coefficient retr with AP/variance; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6819,10 +6819,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG cloud singleScatteringAlbedo sim"
+    "zig_yaml_path": "stages.simulation.scene.clouds.*.single_scatter_albedo",
+    "status": "exact",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "HG cloud SSA sim mapped to Cloud.single_scatter_albedo"
   },
   {
     "section": "CLOUD",
@@ -6842,9 +6842,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HG cloud singleScatteringAlbedo retr with AP/variance"
+    "notes": "HG cloud SSA retr with AP/variance; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6863,10 +6863,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG cloud HGparameter_g sim"
+    "zig_yaml_path": "stages.simulation.scene.clouds.*.asymmetry_factor",
+    "status": "exact",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "HG cloud g-parameter sim mapped to Cloud.asymmetry_factor"
   },
   {
     "section": "CLOUD",
@@ -6886,9 +6886,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HG cloud HGparameter_g retr with AP/variance"
+    "notes": "HG cloud g-parameter retr with AP/variance; unsupported until WP-14"
   },
   {
     "section": "CLOUD",
@@ -6907,10 +6907,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Mie cloud optical thickness sim"
+    "zig_yaml_path": "stages.simulation.scene.clouds.*.optical_thickness",
+    "status": "exact",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "Mie cloud optical thickness sim mapped to Cloud.optical_thickness"
   },
   {
     "section": "CLOUD",
@@ -6929,10 +6929,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Mie cloud optical thickness retr with AP/variance"
+    "zig_yaml_path": "stages.retrieval.scene.clouds.*.optical_thickness",
+    "status": "approximate",
+    "runtime_consumer": "model/Cloud.zig",
+    "notes": "Mie cloud optical thickness retr; AP/variance handled via state_vector"
   },
   {
     "section": "AEROSOL",
@@ -6951,10 +6951,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "none/LambWavelIndep/Lambertian/MieScattering/HGscattering"
+    "zig_yaml_path": "stages.simulation.scene.aerosols.*.model",
+    "status": "exact",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "Aerosol type sim mapped to Aerosol.aerosol_type via parseAerosolType"
   },
   {
     "section": "AEROSOL",
@@ -6973,10 +6973,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "none/LambWavelIndep/Lambertian/MieScattering/HGscattering"
+    "zig_yaml_path": "stages.retrieval.scene.aerosols.*.model",
+    "status": "exact",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "Aerosol type retr mapped to Aerosol.aerosol_type via parseAerosolType"
   },
   {
     "section": "AEROSOL",
@@ -6996,9 +6996,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Aerosol albedo wavel-indep sim"
+    "notes": "Wavel-indep Lambertian aerosol albedo sim; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7018,9 +7018,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP aerosol albedo wavel-indep retr"
+    "notes": "AP wavel-indep Lambertian aerosol albedo retr; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7040,9 +7040,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP variance aerosol albedo retr"
+    "notes": "AP variance wavel-indep aerosol albedo retr; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7062,9 +7062,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths Lambertian aerosol sim"
+    "notes": "Wavelengths Lambertian aerosol sim; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7084,9 +7084,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Aerosol albedo Lambertian sim"
+    "notes": "Lambertian aerosol albedo sim; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7106,9 +7106,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Wavelengths Lambertian aerosol retr"
+    "notes": "Wavelengths Lambertian aerosol retr; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7128,9 +7128,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Aerosol albedo Lambertian retr"
+    "notes": "Lambertian aerosol albedo retr; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7150,9 +7150,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "AP variance aerosol albedo retr"
+    "notes": "AP variance Lambertian aerosol albedo retr; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7171,10 +7171,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG aerosol opticalThickness sim"
+    "zig_yaml_path": "stages.simulation.scene.aerosols.*.optical_depth_550_nm",
+    "status": "exact",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "HG aerosol optical thickness sim mapped to Aerosol.optical_depth"
   },
   {
     "section": "AEROSOL",
@@ -7193,10 +7193,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG aerosol opticalThickness retr with AP/variance"
+    "zig_yaml_path": "stages.retrieval.scene.aerosols.*.optical_depth_550_nm",
+    "status": "approximate",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "HG aerosol optical thickness retr; AP/variance handled via state_vector"
   },
   {
     "section": "AEROSOL",
@@ -7215,10 +7215,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG aerosol angstromCoefficient sim"
+    "zig_yaml_path": "stages.simulation.scene.aerosols.*.angstrom_exponent",
+    "status": "exact",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "HG aerosol angstrom coefficient sim mapped to Aerosol.angstrom_exponent"
   },
   {
     "section": "AEROSOL",
@@ -7238,9 +7238,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HG aerosol angstromCoefficient retr with AP/variance"
+    "notes": "HG aerosol angstrom coefficient retr with AP/variance; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7259,10 +7259,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG aerosol singleScatteringAlbedo sim"
+    "zig_yaml_path": "stages.simulation.scene.aerosols.*.single_scatter_albedo",
+    "status": "exact",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "HG aerosol SSA sim mapped to Aerosol.single_scatter_albedo"
   },
   {
     "section": "AEROSOL",
@@ -7282,9 +7282,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HG aerosol singleScatteringAlbedo retr with AP/variance"
+    "notes": "HG aerosol SSA retr with AP/variance; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7303,10 +7303,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "HG aerosol HGparameter_g sim"
+    "zig_yaml_path": "stages.simulation.scene.aerosols.*.asymmetry_factor",
+    "status": "exact",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "HG aerosol g-parameter sim mapped to Aerosol.asymmetry_factor"
   },
   {
     "section": "AEROSOL",
@@ -7326,9 +7326,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "HG aerosol HGparameter_g retr with AP/variance"
+    "notes": "HG aerosol g-parameter retr with AP/variance; unsupported until WP-14"
   },
   {
     "section": "AEROSOL",
@@ -7347,10 +7347,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Mie aerosol optical thickness sim"
+    "zig_yaml_path": "stages.simulation.scene.aerosols.*.optical_depth_550_nm",
+    "status": "exact",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "Mie aerosol optical thickness sim mapped to Aerosol.optical_depth"
   },
   {
     "section": "AEROSOL",
@@ -7369,10 +7369,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Mie aerosol optical thickness retr with AP/variance"
+    "zig_yaml_path": "stages.retrieval.scene.aerosols.*.optical_depth_550_nm",
+    "status": "approximate",
+    "runtime_consumer": "model/Aerosol.zig",
+    "notes": "Mie aerosol optical thickness retr; AP/variance handled via state_vector"
   },
   {
     "section": "SUBCOLUMNS",
@@ -7392,9 +7392,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Initial Gauss division points (3 values)"
+    "notes": "Subcolumn Gauss division points; unsupported until WP-14"
   },
   {
     "section": "SUBCOLUMNS",
@@ -7414,9 +7414,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Subcolumn boundaries: tropopause/toa/pressure"
+    "notes": "Subcolumn boundary type; unsupported until WP-14"
   },
   {
     "section": "SUBCOLUMNS",
@@ -7436,9 +7436,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Altitude boundaries for subcolumns km"
+    "notes": "Subcolumn altitude boundaries; unsupported until WP-14"
   },
   {
     "section": "RETRIEVAL",
@@ -7480,9 +7480,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Max change in transformed state per iteration"
+    "notes": "Max change in transformed state per iteration; unsupported until WP-14"
   },
   {
     "section": "RETRIEVAL",
@@ -7524,9 +7524,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Scale delta_x when adjusting state vector"
+    "notes": "Scale delta_x when adjusting state vector; unsupported until WP-14"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7545,10 +7545,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Division points per FWHM sim"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.num_div_points_fwhm_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Division points per FWHM sim; parsed into RadiativeTransferConfig"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7567,10 +7567,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Division points per FWHM retr"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.num_div_points_fwhm_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Division points per FWHM retr; parsed into RadiativeTransferConfig"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7589,10 +7589,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Line absorption: numDivPointsMaxSim"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.num_div_points_max_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Line absorption max division points sim; parsed into RadiativeTransferConfig"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7611,10 +7611,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Line absorption: numDivPointsMinSim"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.num_div_points_min_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Line absorption min division points sim; parsed into RadiativeTransferConfig"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7633,10 +7633,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Line absorption: numDivPointsMaxRetr"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.num_div_points_max_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Line absorption max division points retr; parsed into RadiativeTransferConfig"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7655,10 +7655,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Line absorption: numDivPointsMinRetr"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.num_div_points_min_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Line absorption min division points retr; parsed into RadiativeTransferConfig"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7677,10 +7677,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Altitude division points sim"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.num_div_points_alt_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Altitude division points sim; parsed into RadiativeTransferConfig array"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7699,10 +7699,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Altitude division points retr"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.num_div_points_alt_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Altitude division points retr; parsed into RadiativeTransferConfig array"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7722,9 +7722,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Altitude division points per layer sim"
+    "notes": "Per-layer altitude division points sim; unsupported until WP-02"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7744,9 +7744,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "unmapped",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Altitude division points per layer retr"
+    "notes": "Per-layer altitude division points retr; unsupported until WP-02"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7765,10 +7765,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Scattering mode (0=no,1=Rayleigh,2=Rayleigh+Mie)"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.scattering_mode_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Scattering mode sim mapped to ScatteringMode enum"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7787,10 +7787,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Scattering mode (0=no,1=Rayleigh,2=Rayleigh+Mie)"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.scattering_mode_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Scattering mode retr mapped to ScatteringMode enum"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7809,10 +7809,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Stokes vector dimension (1=scalar,3=vector)"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.stokes_dimension_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Stokes vector dimension sim (1=scalar, 3=vector)"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7831,10 +7831,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Stokes vector dimension (1=scalar,3=vector)"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.stokes_dimension_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Stokes vector dimension retr (1=scalar, 3=vector)"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7853,10 +7853,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fourier floor scalar mode"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.fourier_floor_scalar_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Fourier floor scalar mode sim"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7875,10 +7875,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Fourier floor scalar mode"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.fourier_floor_scalar_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Fourier floor scalar mode retr"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7897,10 +7897,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Number of RT streams"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.nstreams_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Number of RT streams sim"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7919,10 +7919,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Number of RT streams"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.nstreams_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Number of RT streams retr"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7941,10 +7941,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Use adding method"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.use_adding_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Use adding method sim; parsed into RadiativeTransferConfig"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7963,10 +7963,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Use adding method"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.use_adding_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Use adding method retr; parsed into RadiativeTransferConfig"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -7985,10 +7985,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Max scattering orders"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.num_orders_max_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Max scattering orders sim"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -8007,10 +8007,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Max scattering orders"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.num_orders_max_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Max scattering orders retr"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -8029,10 +8029,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Phase function truncation threshold"
+    "zig_yaml_path": "stages.simulation.radiative_transfer.threshold_trunc_phase_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Phase function truncation threshold sim"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -8051,10 +8051,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Phase function truncation threshold"
+    "zig_yaml_path": "stages.retrieval.radiative_transfer.threshold_trunc_phase_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Phase function truncation threshold retr"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -8073,10 +8073,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Use polarization correction"
+    "zig_yaml_path": "stages.*.radiative_transfer.use_polarization_correction",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Polarization correction flag"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -8095,9 +8095,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
+    "zig_yaml_path": "stages.*.radiative_transfer.use_correction_spherical_atm",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
     "notes": "Correction for spherical atmosphere"
   },
   {
@@ -8117,9 +8117,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
+    "zig_yaml_path": "stages.*.radiative_transfer.threshold_cloud_fraction",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
     "notes": "Cloud fraction threshold"
   },
   {
@@ -8139,10 +8139,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "First convergence threshold"
+    "zig_yaml_path": "stages.*.radiative_transfer.threshold_conv_first",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "First convergence threshold for RT"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -8161,10 +8161,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
-    "notes": "Multiplicative convergence threshold"
+    "zig_yaml_path": "stages.*.radiative_transfer.threshold_conv_mult",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
+    "notes": "Multiplicative convergence threshold for RT"
   },
   {
     "section": "RADIATIVE_TRANSFER",
@@ -8183,9 +8183,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
+    "zig_yaml_path": "stages.*.radiative_transfer.threshold_doubling",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
     "notes": "Doubling threshold"
   },
   {
@@ -8205,9 +8205,9 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "unmapped",
-    "runtime_consumer": null,
+    "zig_yaml_path": "stages.*.radiative_transfer.threshold_multiplier",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (RadiativeTransferConfig)",
     "notes": "Multiplicative threshold"
   },
   {
@@ -8227,10 +8227,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: refl_HR_gridSim"
+    "zig_yaml_path": "stages.simulation.additional_output.refl_hr_grid_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8249,10 +8249,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: refl_Instr_gridSim"
+    "zig_yaml_path": "stages.simulation.additional_output.refl_instr_grid_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8271,10 +8271,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: refl_deriv_HR_gridSim"
+    "zig_yaml_path": "stages.simulation.additional_output.refl_deriv_hr_grid_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8293,10 +8293,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: refl_deriv_HR_gridRetr"
+    "zig_yaml_path": "stages.retrieval.additional_output.refl_deriv_hr_grid_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8315,10 +8315,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: refl_deriv_Instr_gridSim"
+    "zig_yaml_path": "stages.simulation.additional_output.refl_deriv_instr_grid_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8337,10 +8337,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: refl_deriv_Instr_gridRetr"
+    "zig_yaml_path": "stages.retrieval.additional_output.refl_deriv_instr_grid_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8359,10 +8359,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: signalToNoiseRatio"
+    "zig_yaml_path": "stages.*.additional_output.signal_to_noise_ratio",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8381,10 +8381,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: contribReflSim"
+    "zig_yaml_path": "stages.simulation.additional_output.contrib_refl_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8403,10 +8403,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: contribReflRetr"
+    "zig_yaml_path": "stages.retrieval.additional_output.contrib_refl_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8426,9 +8426,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: internalFieldUpHR"
+    "notes": "Internal radiation field (upwelling, HR grid); no Zig config or runtime path; unsupported until WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8448,9 +8448,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: internalFieldUp"
+    "notes": "Internal radiation field (upwelling, instr grid); no Zig config or runtime path; unsupported until WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8470,9 +8470,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: internalFieldDownHR"
+    "notes": "Internal radiation field (downwelling, HR grid); no Zig config or runtime path; unsupported until WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8492,9 +8492,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: internalFieldDown"
+    "notes": "Internal radiation field (downwelling, instr grid); no Zig config or runtime path; unsupported until WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8513,10 +8513,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: altResolvedAMFSim"
+    "zig_yaml_path": "stages.simulation.additional_output.alt_resolved_amf_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8535,10 +8535,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: altResolvedAMFRetr"
+    "zig_yaml_path": "stages.retrieval.additional_output.alt_resolved_amf_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8557,10 +8557,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: absorptionXSecSim"
+    "zig_yaml_path": "stages.simulation.additional_output.absorption_xsec_sim",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8579,10 +8579,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: absorptionXSecRetr"
+    "zig_yaml_path": "stages.retrieval.additional_output.absorption_xsec_retr",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8601,10 +8601,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: Ring_spectra"
+    "zig_yaml_path": "stages.*.additional_output.ring_spectra",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8623,10 +8623,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: diffRing_spectra"
+    "zig_yaml_path": "stages.*.additional_output.diff_ring_spectra",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8645,10 +8645,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: filling_in_spectra"
+    "zig_yaml_path": "stages.*.additional_output.filling_in_spectra",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8668,9 +8668,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: testUseAveragingKernel"
+    "notes": "Test-only averaging kernel diagnostic; no Zig config path; unsupported"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8690,9 +8690,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: specFeaturesIrrError"
+    "notes": "Spectral features irradiance error diagnostic; unsupported until WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8712,9 +8712,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: specFeaturesRadError"
+    "notes": "Spectral features radiance error diagnostic; unsupported until WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8734,9 +8734,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: specFeaturesReflError"
+    "notes": "Spectral features reflectance error diagnostic; unsupported until WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8755,10 +8755,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: polCorrectionFile"
+    "zig_yaml_path": "stages.*.additional_output.pol_correction_file",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8778,9 +8778,9 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: testChandrasekhar"
+    "notes": "Test-only Chandrasekhar comparison; no Zig config path; unsupported"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8799,10 +8799,10 @@
       "Config_ESA_project_O2+CO2+H2O_3bands.in",
       "Config_H2O_NH3.in"
     ],
-    "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
-    "runtime_consumer": null,
-    "notes": "Additional output: testDerivatives"
+    "zig_yaml_path": "stages.*.additional_output.test_derivatives",
+    "status": "exact",
+    "runtime_consumer": "adapters/canonical_config/Document.zig (AdditionalOutputConfig)",
+    "notes": "Parsed into AdditionalOutputConfig; runtime output consumer in WP-14"
   },
   {
     "section": "ADDITIONAL_OUTPUT",
@@ -8822,8 +8822,8 @@
       "Config_H2O_NH3.in"
     ],
     "zig_yaml_path": null,
-    "status": "parsed_but_ignored",
+    "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Additional output: relChange"
+    "notes": "Relative change for derivative testing; no Zig config path; unsupported until WP-14"
   }
 ]

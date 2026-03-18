@@ -75,6 +75,189 @@ pub const VendorCompatStatus = enum {
     parsed_but_not_honored,
 };
 
+/// Every vendor config subsection. These appear as the second level within a
+/// vendor section (e.g. GENERAL/overall, INSTRUMENT/wavelength_range). The
+/// canonical set is derived from the vendor config surface matrix.
+pub const VendorSubsection = enum {
+    // GENERAL subsections
+    overall,
+    fileNames,
+    method,
+    createLUT,
+    createXsecLUT,
+    specifications_DOAS_DISMAS,
+    specifyFitting,
+    external_data,
+
+    // INSTRUMENT subsections
+    wavelength_range,
+    slit_index,
+    slit_parameters,
+    polScrambler,
+    wavelShift,
+    addGaussianNoise,
+    SNR_irradiance,
+    SNR_radiance,
+    calibrationErrorRefl,
+    simpleOffsets,
+    sinusoidal_features,
+    smear,
+
+    // Sim/Retr split subsections (shared across multiple sections)
+    simulation,
+    retrieval,
+
+    // REFERENCE_DATA subsections
+    solarIrradiance,
+
+    // GEOMETRY subsections
+    geometry,
+
+    // PRESSURE_TEMPERATURE subsections
+    climatology,
+    PT_sim,
+    PT_retr,
+    temperature_offset,
+    specificationsT,
+    filenames,
+
+    // ABSORBING_GAS subsections
+    profile,
+    column,
+    scaling,
+    errorCovariancesSpecs,
+    HITRAN,
+
+    // SURFACE subsections
+    surfaceType,
+    wavelIndepSim,
+    wavelIndepRetr,
+    wavelDependentSim,
+    wavelDependentRetr,
+    pressure,
+
+    // ATMOSPHERIC_INTERVALS subsections
+    interval_top_pressures,
+
+    // CLOUD_AEROSOL_FRACTION subsections
+    fraction,
+    thresholdVarSurfCldAlbedo,
+    fractionType,
+    wavelIndependentSim,
+    wavelIndependentRetr,
+
+    // CLOUD / AEROSOL subsections
+    cloudType,
+    aerosolType,
+    LambWavelIndepSim,
+    LambWavelIndepRetr,
+    LambertianSim,
+    LambertianRetr,
+    HGscatteringSim,
+    HGscatteringRetr,
+    MieScatteringSim,
+    MieScatteringRetr,
+
+    // SUBCOLUMNS subsections
+    subcolumns,
+
+    // RETRIEVAL subsections
+    retrieval_specs,
+
+    // RADIATIVE_TRANSFER subsections
+    numDivPointsWavel,
+    numDivPointsWavelLineAbs,
+    numDivPointsAlt,
+    RTM_Sim_Retr,
+    RTM,
+
+    // ADDITIONAL_OUTPUT subsections
+    additional,
+};
+
+/// Composite identifier for a vendor config control: section + subsection + key.
+/// Used in coverage assertions and the support-status matrix so that tests can
+/// enumerate the full vendor surface without scattering raw strings.
+pub const VendorKeyId = struct {
+    section: VendorSection,
+    subsection: VendorSubsection,
+    key: []const u8,
+};
+
+/// Section-level default fidelity classification derived from the vendor config
+/// surface matrix. Individual keys may override this with a finer status, but
+/// this gives the dominant picture per section.
+pub fn sectionDefaultStatus(section: VendorSection) VendorCompatStatus {
+    return switch (section) {
+        // Sections with majority exact support
+        .geometry => .exact,
+        .radiative_transfer => .exact,
+        .additional_output => .exact,
+        .rrs_ring => .exact,
+        // Sections with majority approximate support
+        .surface => .approximate,
+        .retrieval => .approximate,
+        // Sections that are mostly or entirely unsupported
+        .general => .unsupported,
+        .instrument => .unsupported,
+        .mul_offset => .unsupported,
+        .stray_light => .unsupported,
+        .reference_data => .unsupported,
+        .pressure_temperature => .unsupported,
+        .absorbing_gas => .unsupported,
+        .atmospheric_intervals => .unsupported,
+        .cloud_aerosol_fraction => .unsupported,
+        .cloud => .unsupported,
+        .aerosol => .unsupported,
+        .subcolumns => .unsupported,
+    };
+}
+
+/// Parse a vendor section name string (case-sensitive, underscore-delimited)
+/// into the typed enum. Accepts both the Zig enum field name and the vendor
+/// UPPER_CASE form used in the matrix JSON.
+pub fn parseVendorSection(value: []const u8) Error!VendorSection {
+    // Zig-style lowercase names
+    const fields = @typeInfo(VendorSection).@"enum".fields;
+    inline for (fields) |f| {
+        if (std.mem.eql(u8, value, f.name)) return @enumFromInt(f.value);
+    }
+    // Vendor UPPER_CASE aliases from the matrix JSON
+    const aliases = .{
+        .{ "GENERAL", VendorSection.general },
+        .{ "INSTRUMENT", VendorSection.instrument },
+        .{ "MUL_OFFSET", VendorSection.mul_offset },
+        .{ "STRAY_LIGHT", VendorSection.stray_light },
+        .{ "RRS_RING", VendorSection.rrs_ring },
+        .{ "REFERENCE_DATA", VendorSection.reference_data },
+        .{ "GEOMETRY", VendorSection.geometry },
+        .{ "PRESSURE_TEMPERATURE", VendorSection.pressure_temperature },
+        .{ "ABSORBING_GAS", VendorSection.absorbing_gas },
+        .{ "SURFACE", VendorSection.surface },
+        .{ "ATMOSPHERIC_INTERVALS", VendorSection.atmospheric_intervals },
+        .{ "CLOUD_AEROSOL_FRACTION", VendorSection.cloud_aerosol_fraction },
+        .{ "CLOUD", VendorSection.cloud },
+        .{ "AEROSOL", VendorSection.aerosol },
+        .{ "SUBCOLUMNS", VendorSection.subcolumns },
+        .{ "RETRIEVAL", VendorSection.retrieval },
+        .{ "RADIATIVE_TRANSFER", VendorSection.radiative_transfer },
+        .{ "ADDITIONAL_OUTPUT", VendorSection.additional_output },
+    };
+    inline for (aliases) |entry| {
+        if (std.mem.eql(u8, value, entry[0])) return entry[1];
+    }
+    return error.InvalidValue;
+}
+
+/// Parse a vendor subsection name string into the typed enum.
+pub fn parseVendorSubsection(value: []const u8) Error!VendorSubsection {
+    const fields = @typeInfo(VendorSubsection).@"enum".fields;
+    inline for (fields) |f| {
+        if (std.mem.eql(u8, value, f.name)) return @enumFromInt(f.value);
+    }
+    return error.InvalidValue;
+}
+
 /// Vendor retrieval-method codes (maps to integer method IDs in the vendor file).
 pub const RetrievalMethod = enum {
     oe, // 0 -- optimal estimation
@@ -330,7 +513,9 @@ pub fn normalizeRetrievalProvider(name: []const u8, explicit_provider: ?[]const 
     if (explicit_provider) |provider| return provider;
     if (std.mem.eql(u8, name, "oe")) return "builtin.oe_solver";
     if (std.mem.eql(u8, name, "doas")) return "builtin.doas_solver";
+    if (std.mem.eql(u8, name, "classic_doas")) return "builtin.doas_solver";
     if (std.mem.eql(u8, name, "dismas")) return "builtin.dismas_solver";
+    if (std.mem.eql(u8, name, "domino_no2") or std.mem.eql(u8, name, "domino")) return "builtin.domino_solver";
     if (name.len == 0) return null;
     return name;
 }
@@ -502,4 +687,104 @@ test "AbsorberSpecies.hitranIndex returns non-null for line-absorbing species" {
     for (line_species) |species| {
         try std.testing.expect(species.hitranIndex() != null);
     }
+}
+
+// --- Vendor identity layer tests ---
+
+test "parseVendorSection accepts Zig field names" {
+    try std.testing.expectEqual(VendorSection.general, try parseVendorSection("general"));
+    try std.testing.expectEqual(VendorSection.instrument, try parseVendorSection("instrument"));
+    try std.testing.expectEqual(VendorSection.radiative_transfer, try parseVendorSection("radiative_transfer"));
+    try std.testing.expectEqual(VendorSection.additional_output, try parseVendorSection("additional_output"));
+}
+
+test "parseVendorSection accepts vendor UPPER_CASE names" {
+    try std.testing.expectEqual(VendorSection.general, try parseVendorSection("GENERAL"));
+    try std.testing.expectEqual(VendorSection.rrs_ring, try parseVendorSection("RRS_RING"));
+    try std.testing.expectEqual(VendorSection.cloud_aerosol_fraction, try parseVendorSection("CLOUD_AEROSOL_FRACTION"));
+    try std.testing.expectEqual(VendorSection.additional_output, try parseVendorSection("ADDITIONAL_OUTPUT"));
+}
+
+test "parseVendorSection rejects unknown section" {
+    try std.testing.expectError(error.InvalidValue, parseVendorSection("NONEXISTENT"));
+}
+
+test "parseVendorSubsection covers representative subsections" {
+    try std.testing.expectEqual(VendorSubsection.overall, try parseVendorSubsection("overall"));
+    try std.testing.expectEqual(VendorSubsection.fileNames, try parseVendorSubsection("fileNames"));
+    try std.testing.expectEqual(VendorSubsection.method, try parseVendorSubsection("method"));
+    try std.testing.expectEqual(VendorSubsection.wavelength_range, try parseVendorSubsection("wavelength_range"));
+    try std.testing.expectEqual(VendorSubsection.slit_parameters, try parseVendorSubsection("slit_parameters"));
+    try std.testing.expectEqual(VendorSubsection.RTM_Sim_Retr, try parseVendorSubsection("RTM_Sim_Retr"));
+    try std.testing.expectEqual(VendorSubsection.additional, try parseVendorSubsection("additional"));
+    try std.testing.expectEqual(VendorSubsection.simulation, try parseVendorSubsection("simulation"));
+    try std.testing.expectEqual(VendorSubsection.retrieval, try parseVendorSubsection("retrieval"));
+    try std.testing.expectEqual(VendorSubsection.cloudType, try parseVendorSubsection("cloudType"));
+    try std.testing.expectEqual(VendorSubsection.aerosolType, try parseVendorSubsection("aerosolType"));
+}
+
+test "parseVendorSubsection rejects unknown subsection" {
+    try std.testing.expectError(error.InvalidValue, parseVendorSubsection("bogus_subsection"));
+}
+
+test "sectionDefaultStatus returns exact for geometry" {
+    try std.testing.expectEqual(VendorCompatStatus.exact, sectionDefaultStatus(.geometry));
+    try std.testing.expectEqual(VendorCompatStatus.exact, sectionDefaultStatus(.radiative_transfer));
+    try std.testing.expectEqual(VendorCompatStatus.exact, sectionDefaultStatus(.additional_output));
+    try std.testing.expectEqual(VendorCompatStatus.exact, sectionDefaultStatus(.rrs_ring));
+}
+
+test "sectionDefaultStatus returns approximate for surface and retrieval" {
+    try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.surface));
+    try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.retrieval));
+}
+
+test "sectionDefaultStatus returns unsupported for non-parity sections" {
+    const unsupported_sections = [_]VendorSection{
+        .general,       .instrument,            .mul_offset,
+        .stray_light,   .reference_data,        .pressure_temperature,
+        .absorbing_gas, .atmospheric_intervals,  .cloud_aerosol_fraction,
+        .cloud,         .aerosol,               .subcolumns,
+    };
+    for (unsupported_sections) |section| {
+        try std.testing.expectEqual(VendorCompatStatus.unsupported, sectionDefaultStatus(section));
+    }
+}
+
+test "sectionDefaultStatus is exhaustive over VendorSection" {
+    // Ensures every VendorSection variant is handled (compile-time guarantee
+    // from the switch, but this test documents the intent for coverage).
+    const all = std.enums.values(VendorSection);
+    for (all) |section| {
+        const status = sectionDefaultStatus(section);
+        try std.testing.expect(status == .exact or status == .approximate or status == .unsupported);
+    }
+}
+
+test "VendorKeyId can represent a section/subsection/key triple" {
+    const key_id = VendorKeyId{
+        .section = .geometry,
+        .subsection = .geometry,
+        .key = "SolarZenithAngle_Sim",
+    };
+    try std.testing.expectEqual(VendorSection.geometry, key_id.section);
+    try std.testing.expectEqual(VendorSubsection.geometry, key_id.subsection);
+    try std.testing.expect(std.mem.eql(u8, "SolarZenithAngle_Sim", key_id.key));
+}
+
+test "normalizeRetrievalProvider handles classic_doas and domino" {
+    // classic_doas maps to the DOAS solver
+    const classic = normalizeRetrievalProvider("classic_doas", null);
+    try std.testing.expect(classic != null);
+    try std.testing.expect(std.mem.eql(u8, "builtin.doas_solver", classic.?));
+
+    // domino_no2 maps to the DOMINO solver
+    const domino = normalizeRetrievalProvider("domino_no2", null);
+    try std.testing.expect(domino != null);
+    try std.testing.expect(std.mem.eql(u8, "builtin.domino_solver", domino.?));
+
+    // Short alias "domino" also maps to DOMINO solver
+    const domino_short = normalizeRetrievalProvider("domino", null);
+    try std.testing.expect(domino_short != null);
+    try std.testing.expect(std.mem.eql(u8, "builtin.domino_solver", domino_short.?));
 }

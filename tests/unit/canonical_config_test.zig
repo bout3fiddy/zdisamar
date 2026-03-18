@@ -213,6 +213,121 @@ test "canonical config emits inverse-crime warning for identical synthetic stage
     );
 }
 
+test "canonical config parses typed vendor sections into resolved stage" {
+    // WP-01: vendor_compat, radiative_transfer, rrs_ring, and additional_output
+    // must parse from canonical YAML into typed config objects on the resolved stage.
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: typed-vendor-sections
+        \\experiment:
+        \\  simulation:
+        \\    vendor_compat:
+        \\      simulation_method: oe_lbl
+        \\      simulation_only: true
+        \\    radiative_transfer:
+        \\      nstreams_sim: 8
+        \\      nstreams_retr: 16
+        \\      scattering_mode_sim: multiple
+        \\      use_adding_sim: true
+        \\      use_polarization_correction: false
+        \\    rrs_ring:
+        \\      sim:
+        \\        - use_rrs: true
+        \\          approximate_rrs: false
+        \\          fraction_raman_lines: 0.5
+        \\          use_cabannes: true
+        \\          degree_poly: 3
+        \\          include_absorption: true
+        \\    additional_output:
+        \\      refl_hr_grid_sim: true
+        \\      signal_to_noise_ratio: true
+        \\      ring_spectra: true
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      id: typed_sections_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 16
+        \\      bands:
+        \\        band_1:
+        \\          start_nm: 758.0
+        \\          end_nm: 771.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\    products:
+        \\      sim_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\validation:
+        \\  strict_unknown_fields: true
+        \\  require_resolved_stage_references: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    // Verify the typed vendor sections are populated on the simulation stage.
+    const sim_stage = resolved.simulation orelse return error.TestUnexpectedResult;
+
+    // vendor_compat
+    const vc = sim_stage.vendor_compat orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(vc.simulation_method.?, .oe_lbl);
+    try std.testing.expect(vc.simulation_only);
+
+    // radiative_transfer
+    const rt = sim_stage.radiative_transfer orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 8), rt.nstreams_sim);
+    try std.testing.expectEqual(@as(u32, 16), rt.nstreams_retr);
+    try std.testing.expect(rt.use_adding_sim);
+    try std.testing.expect(!rt.use_polarization_correction);
+
+    // rrs_ring
+    const rrs = sim_stage.rrs_ring orelse return error.TestUnexpectedResult;
+    const sim_rrs = rrs.sim orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), sim_rrs.len);
+    try std.testing.expect(sim_rrs[0].use_rrs);
+    try std.testing.expect(!sim_rrs[0].approximate_rrs);
+    try std.testing.expect(sim_rrs[0].use_cabannes);
+    try std.testing.expectEqual(@as(u32, 3), sim_rrs[0].degree_poly);
+    try std.testing.expect(sim_rrs[0].include_absorption);
+
+    // additional_output
+    const ao = sim_stage.additional_output orelse return error.TestUnexpectedResult;
+    try std.testing.expect(ao.refl_hr_grid_sim);
+    try std.testing.expect(ao.signal_to_noise_ratio);
+    try std.testing.expect(ao.ring_spectra);
+    try std.testing.expect(!ao.contrib_refl_sim);
+}
+
 test "canonical execution rejects multiple measurement-space products in one stage" {
     const source =
         \\schema_version: 1

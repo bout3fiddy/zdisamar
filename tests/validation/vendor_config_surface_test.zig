@@ -44,8 +44,6 @@ const valid_statuses = [_][]const u8{
     "exact",
     "approximate",
     "unsupported",
-    "parsed_but_ignored",
-    "unmapped",
 };
 
 const valid_data_types = [_][]const u8{
@@ -287,13 +285,11 @@ test "no parsed_but_ignored entries remain (parity gate)" {
         }
     }
 
-    // WP-01 gate: parsed_but_ignored should eventually be zero.
-    // For now, track the count so it can only decrease.
-    // The ADDITIONAL_OUTPUT section starts as parsed_but_ignored; this
-    // is acceptable until WP-14 implements those diagnostics.
-    if (ignored_count > 30) {
+    // WP-01 gate: parsed_but_ignored is forbidden.
+    // Every vendor key must be classified as exact, approximate, or unsupported.
+    if (ignored_count > 0) {
         std.debug.print(
-            "parsed_but_ignored count ({d}) exceeds threshold (30)\n",
+            "parsed_but_ignored count ({d}) must be zero\n",
             .{ignored_count},
         );
         return error.TestUnexpectedResult;

@@ -700,12 +700,14 @@ fn exporterPluginId(format: ExportFormat) []const u8 {
 /// parsed-but-ignored behavior and enforces the WP-01 parity invariant.
 ///
 /// Current checks:
-/// - vendor_compat.simulation_method / retrieval_method: only OE methods are
-///   fully implemented; DISMAS/DOAS/classic_DOAS/DOMINO are partially wired.
+/// - vendor_compat.simulation_method: DISMAS is not supported.
+/// - vendor_compat.retrieval_method: DOAS, classic_DOAS, and DOMINO_NO2
+///   are not yet supported; only OE is fully implemented.
 /// - Spectral response shapes must map to a known builtin line shape.
 ///
 /// This gate is expanded as later WPs add vendor sections to the YAML schema.
 fn validateVendorControls(experiment: *const ResolvedExperiment) Error!void {
+    const log = std.log.scoped(.execution);
     const BuiltinLineShapeKind = @import("../../model/instrument/line_shape.zig").BuiltinLineShapeKind;
     const stages = [_]?*const Stage{ experiment.simulation, experiment.retrieval };
     for (stages) |maybe_stage| {
@@ -716,15 +718,34 @@ fn validateVendorControls(experiment: *const ResolvedExperiment) Error!void {
         // consumed must be rejected.
         if (stage.spectral_response_shape.len > 0) {
             _ = BuiltinLineShapeKind.parse(stage.spectral_response_shape) catch {
+                log.err("UnsupportedVendorControl: spectral_response_shape '{s}' does not map to a known builtin line shape", .{stage.spectral_response_shape});
                 return error.UnsupportedVendorControl;
             };
         }
 
         // If vendor_compat is present, validate that its controls are supportable.
         if (stage.vendor_compat) |compat| {
-            // DISMAS and DOAS simulation methods are not yet supported.
+            // DISMAS simulation method is not supported.
             if (compat.simulation_method) |method| {
-                if (method == .dismas) return error.UnsupportedVendorControl;
+                if (method == .dismas) {
+                    log.err("UnsupportedVendorControl: vendor_compat.simulation_method = dismas is not supported", .{});
+                    return error.UnsupportedVendorControl;
+                }
+            }
+
+            // DOAS-family and DOMINO retrieval methods are not yet supported;
+            // only OE is fully implemented. The vendor verifier
+            // (verifyConfigFileModule.f90) validates method legality
+            // per-section; this gate rejects methods the Zig runtime cannot
+            // honor to prevent silent parsed-but-ignored behavior.
+            if (compat.retrieval_method) |method| {
+                switch (method) {
+                    .doas, .classic_doas, .domino_no2 => {
+                        log.err("UnsupportedVendorControl: vendor_compat.retrieval_method = {s} is not yet supported", .{@tagName(method)});
+                        return error.UnsupportedVendorControl;
+                    },
+                    .oe, .dismas => {},
+                }
             }
         }
     }

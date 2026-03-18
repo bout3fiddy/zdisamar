@@ -256,6 +256,139 @@ pub const AdditionalOutputConfig = struct {
     pol_correction_file: bool = false,
 };
 
+/// Typed representation of the vendor GENERAL section.
+/// Only fields with exact/approximate parity status are included.
+pub const GeneralConfig = struct {
+    // Counts (approximate -- derived from list lengths in Zig)
+    number_spectral_bands: ?u32 = null,
+    number_trace_gases: ?u32 = null,
+    // Mode
+    simulation_only: bool = false,
+    // Retrieval fitting toggles
+    aerosol_layer_height: bool = false,
+    fit_surface_albedo: bool = false,
+    fit_aerosol_tau: bool = false,
+    fit_cloud_tau: bool = false,
+    fit_mul_offset: bool = false,
+    fit_stray_light: bool = false,
+    fit_temperature_offset: bool = false,
+    fit_ln_cld_tau: bool = false,
+    num_interval_fit: ?u32 = null,
+    // Method codes
+    simulation_method: ?fields.SimulationMethod = null,
+    retrieval_method: ?fields.RetrievalMethod = null,
+    // Reference file paths
+    solar_irr_file_sim: ?[]const u8 = null,
+    solar_irr_file_retr: ?[]const u8 = null,
+    temperature_climatology: ?[]const u8 = null,
+    ozone_climatology: ?[]const u8 = null,
+};
+
+/// Typed representation of the vendor INSTRUMENT section.
+/// Wavelength range fields are per-band; slit/noise fields are scalar.
+pub const InstrumentConfig = struct {
+    pub const PerBand = struct {
+        wavelength_start: ?f64 = null,
+        wavelength_end: ?f64 = null,
+        wavelength_step: ?f64 = null,
+        exclude: ?[]const [2]f64 = null,
+        fwhm_irradiance_sim: ?f64 = null,
+        fwhm_irradiance_retr: ?f64 = null,
+        fwhm_radiance_sim: ?f64 = null,
+        fwhm_radiance_retr: ?f64 = null,
+    };
+    bands: ?[]const PerBand = null,
+    add_noise_irr_sim: bool = false,
+    add_noise_rad_sim: bool = false,
+};
+
+/// Typed representation of the vendor GEOMETRY section.
+/// All eight angle fields have exact parity status.
+pub const GeometryConfig = struct {
+    solar_zenith_angle_sim: ?f64 = null,
+    solar_zenith_angle_retr: ?f64 = null,
+    solar_azimuth_angle_sim: ?f64 = null,
+    solar_azimuth_angle_retr: ?f64 = null,
+    instrument_nadir_angle_sim: ?f64 = null,
+    instrument_nadir_angle_retr: ?f64 = null,
+    instrument_azimuth_angle_sim: ?f64 = null,
+    instrument_azimuth_angle_retr: ?f64 = null,
+};
+
+/// Typed representation of the vendor PRESSURE_TEMPERATURE section.
+/// P/T profiles are pressure-value pairs, one set for sim and one for retr.
+pub const PressureTemperatureConfig = struct {
+    pt_sim: ?[]const [2]f64 = null,
+    pt_retr: ?[]const [2]f64 = null,
+};
+
+/// Typed representation of the vendor SURFACE section.
+pub const SurfaceConfig = struct {
+    surf_pressure_sim: ?f64 = null,
+    surf_pressure_retr: ?f64 = null,
+    surface_type_sim: ?fields.SurfaceType = null,
+    surface_type_retr: ?fields.SurfaceType = null,
+    // Wavelength-independent albedo
+    surf_albedo_sim: ?f64 = null,
+    surf_albedo_retr: ?f64 = null,
+    var_surf_albedo_retr: ?f64 = null,
+    // Wavelength-dependent albedo (per-band arrays)
+    wavel_surf_albedo_sim: ?[]const f64 = null,
+    surf_albedo_array_sim: ?[]const f64 = null,
+    wavel_surf_albedo_retr: ?[]const f64 = null,
+    surf_albedo_array_retr: ?[]const f64 = null,
+};
+
+/// Typed representation of the vendor CLOUD section.
+pub const CloudConfig = struct {
+    cloud_type_sim: ?fields.CloudType = null,
+    cloud_type_retr: ?fields.CloudType = null,
+    // HG scattering (sim)
+    hg_optical_thickness_sim: ?f64 = null,
+    hg_angstrom_coefficient_sim: ?f64 = null,
+    hg_single_scattering_albedo_sim: ?f64 = null,
+    hg_parameter_g_sim: ?f64 = null,
+    // HG scattering (retr -- approximate)
+    hg_optical_thickness_retr: ?f64 = null,
+    // Mie scattering
+    mie_optical_thickness_sim: ?f64 = null,
+    mie_optical_thickness_retr: ?f64 = null,
+};
+
+/// Typed representation of the vendor AEROSOL section.
+pub const AerosolConfig = struct {
+    aerosol_type_sim: ?fields.AerosolType = null,
+    aerosol_type_retr: ?fields.AerosolType = null,
+    // HG scattering (sim)
+    hg_optical_thickness_sim: ?f64 = null,
+    hg_angstrom_coefficient_sim: ?f64 = null,
+    hg_single_scattering_albedo_sim: ?f64 = null,
+    hg_parameter_g_sim: ?f64 = null,
+    // HG scattering (retr -- approximate)
+    hg_optical_thickness_retr: ?f64 = null,
+    // Mie scattering
+    mie_optical_thickness_sim: ?f64 = null,
+    mie_optical_thickness_retr: ?f64 = null,
+};
+
+/// Typed representation of the vendor RETRIEVAL section.
+pub const RetrievalConfig = struct {
+    max_num_iterations: ?u32 = null,
+    state_vector_conv_threshold: ?f64 = null,
+};
+
+/// Typed representation of per-gas controls from the vendor ABSORBING_GAS section.
+pub const AbsorbingGasConfig = struct {
+    pub const GasEntry = struct {
+        species: ?fields.AbsorberSpecies = null,
+        xsection_file_sim: ?[]const u8 = null,
+        xsection_file_retr: ?[]const u8 = null,
+        fit_column: bool = false,
+        profile_sim: ?[]const [2]f64 = null,
+    };
+    gases: ?[]const GasEntry = null,
+};
+
 pub const Stage = struct {
     kind: StageKind,
     plan: PlanTemplate,
@@ -263,8 +396,17 @@ pub const Stage = struct {
     inverse: ?InverseProblem = null,
     products: []const Product = &[_]Product{},
     diagnostics: DiagnosticsSpec = .{},
+    // TODO(WP-01): algorithm_name should be ?fields.RetrievalMethod (maps to
+    // normalizeRetrievalProvider); 5 call sites in Document.zig. Deferred to
+    // avoid disrupting the resolve pipeline mid-WP.
     algorithm_name: []const u8 = "",
+    // TODO(WP-01): algorithm_damping should be ?FitControls.TrustRegion
+    // (already resolved in applyAlgorithmParameters); 7+ call sites in
+    // Document.zig. Deferred to avoid shotgun surgery.
     algorithm_damping: []const u8 = "",
+    // TODO(WP-01): spectral_response_shape should be ?BuiltinLineShapeKind
+    // (validated against BuiltinLineShapeKind.parse in execution.zig); 9 call
+    // sites across Document.zig and execution.zig. Deferred.
     spectral_response_shape: []const u8 = "",
     spectral_response_table_source: Binding = .none,
     noise_seed: ?u64 = null,
@@ -273,6 +415,15 @@ pub const Stage = struct {
     radiative_transfer: ?RadiativeTransferConfig = null,
     rrs_ring: ?RrsRingConfig = null,
     additional_output: ?AdditionalOutputConfig = null,
+    general: ?GeneralConfig = null,
+    instrument: ?InstrumentConfig = null,
+    geometry: ?GeometryConfig = null,
+    pressure_temperature: ?PressureTemperatureConfig = null,
+    surface_config: ?SurfaceConfig = null,
+    cloud_config: ?CloudConfig = null,
+    aerosol_config: ?AerosolConfig = null,
+    retrieval_config: ?RetrievalConfig = null,
+    absorbing_gas: ?AbsorbingGasConfig = null,
 };
 
 pub const Document = struct {
@@ -577,9 +728,9 @@ const ResolveContext = struct {
     ) !void {
         const stage_map = try expectMap(merged);
         try ensureKnownFields(stage_map, if (kind == .simulation)
-            &.{ "plan", "scene", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output" }
+            &.{ "plan", "scene", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output", "general", "instrument", "geometry", "pressure_temperature", "surface_config", "cloud_config", "aerosol_config", "retrieval_config", "absorbing_gas" }
         else
-            &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output" }, self.strict_unknown_fields);
+            &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output", "general", "instrument", "geometry", "pressure_temperature", "surface_config", "cloud_config", "aerosol_config", "retrieval_config", "absorbing_gas" }, self.strict_unknown_fields);
 
         stage.* = .{
             .kind = kind,
@@ -633,6 +784,15 @@ const ResolveContext = struct {
         stage.radiative_transfer = try decodeRadiativeTransferConfig(self.allocator, mapGet(stage_map, "radiative_transfer"), self.strict_unknown_fields);
         stage.rrs_ring = try decodeRrsRingConfig(self.allocator, mapGet(stage_map, "rrs_ring"), self.strict_unknown_fields);
         stage.additional_output = try decodeAdditionalOutputConfig(mapGet(stage_map, "additional_output"), self.strict_unknown_fields);
+        stage.general = try decodeGeneralConfig(self.allocator, mapGet(stage_map, "general"), self.strict_unknown_fields);
+        stage.instrument = try decodeInstrumentConfig(self.allocator, mapGet(stage_map, "instrument"), self.strict_unknown_fields);
+        stage.geometry = try decodeGeometryConfig(mapGet(stage_map, "geometry"), self.strict_unknown_fields);
+        stage.pressure_temperature = try decodePressureTemperatureConfig(self.allocator, mapGet(stage_map, "pressure_temperature"), self.strict_unknown_fields);
+        stage.surface_config = try decodeSurfaceConfig(self.allocator, mapGet(stage_map, "surface_config"), self.strict_unknown_fields);
+        stage.cloud_config = try decodeCloudConfig(mapGet(stage_map, "cloud_config"), self.strict_unknown_fields);
+        stage.aerosol_config = try decodeAerosolConfig(mapGet(stage_map, "aerosol_config"), self.strict_unknown_fields);
+        stage.retrieval_config = try decodeRetrievalConfig(mapGet(stage_map, "retrieval_config"), self.strict_unknown_fields);
+        stage.absorbing_gas = try decodeAbsorbingGasConfig(self.allocator, mapGet(stage_map, "absorbing_gas"), self.strict_unknown_fields);
 
         try ensureDistinctProducts(stage.products);
         try stage.plan.validate();
@@ -1677,6 +1837,294 @@ fn decodeAdditionalOutputConfig(value: ?yaml.Value, strict: bool) !?AdditionalOu
     if (mapGet(ao_map, "test_derivatives")) |v| ao.test_derivatives = try expectBool(v);
     if (mapGet(ao_map, "pol_correction_file")) |v| ao.pol_correction_file = try expectBool(v);
     return ao;
+}
+
+fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?GeneralConfig {
+    _ = allocator;
+    const gc_value = value orelse return null;
+    const gc_map = try expectMap(gc_value);
+    try ensureKnownFields(gc_map, &.{
+        "number_spectral_bands",
+        "number_trace_gases",
+        "simulation_only",
+        "aerosol_layer_height",
+        "fit_surface_albedo",
+        "fit_aerosol_tau",
+        "fit_cloud_tau",
+        "fit_mul_offset",
+        "fit_stray_light",
+        "fit_temperature_offset",
+        "fit_ln_cld_tau",
+        "num_interval_fit",
+        "simulation_method",
+        "retrieval_method",
+        "solar_irr_file_sim",
+        "solar_irr_file_retr",
+        "temperature_climatology",
+        "ozone_climatology",
+    }, strict);
+
+    var gc: GeneralConfig = .{};
+    if (mapGet(gc_map, "number_spectral_bands")) |v| gc.number_spectral_bands = @intCast(try expectU64(v));
+    if (mapGet(gc_map, "number_trace_gases")) |v| gc.number_trace_gases = @intCast(try expectU64(v));
+    if (mapGet(gc_map, "simulation_only")) |v| gc.simulation_only = try expectBool(v);
+    if (mapGet(gc_map, "aerosol_layer_height")) |v| gc.aerosol_layer_height = try expectBool(v);
+    if (mapGet(gc_map, "fit_surface_albedo")) |v| gc.fit_surface_albedo = try expectBool(v);
+    if (mapGet(gc_map, "fit_aerosol_tau")) |v| gc.fit_aerosol_tau = try expectBool(v);
+    if (mapGet(gc_map, "fit_cloud_tau")) |v| gc.fit_cloud_tau = try expectBool(v);
+    if (mapGet(gc_map, "fit_mul_offset")) |v| gc.fit_mul_offset = try expectBool(v);
+    if (mapGet(gc_map, "fit_stray_light")) |v| gc.fit_stray_light = try expectBool(v);
+    if (mapGet(gc_map, "fit_temperature_offset")) |v| gc.fit_temperature_offset = try expectBool(v);
+    if (mapGet(gc_map, "fit_ln_cld_tau")) |v| gc.fit_ln_cld_tau = try expectBool(v);
+    if (mapGet(gc_map, "num_interval_fit")) |v| gc.num_interval_fit = @intCast(try expectU64(v));
+    if (mapGet(gc_map, "simulation_method")) |v| gc.simulation_method = try fields.parseSimulationMethod(try expectString(v));
+    if (mapGet(gc_map, "retrieval_method")) |v| gc.retrieval_method = try fields.parseRetrievalMethod(try expectString(v));
+    if (mapGet(gc_map, "solar_irr_file_sim")) |v| gc.solar_irr_file_sim = try expectString(v);
+    if (mapGet(gc_map, "solar_irr_file_retr")) |v| gc.solar_irr_file_retr = try expectString(v);
+    if (mapGet(gc_map, "temperature_climatology")) |v| gc.temperature_climatology = try expectString(v);
+    if (mapGet(gc_map, "ozone_climatology")) |v| gc.ozone_climatology = try expectString(v);
+    return gc;
+}
+
+fn decodeInstrumentConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?InstrumentConfig {
+    const ic_value = value orelse return null;
+    const ic_map = try expectMap(ic_value);
+    try ensureKnownFields(ic_map, &.{
+        "bands",
+        "add_noise_irr_sim",
+        "add_noise_rad_sim",
+    }, strict);
+
+    var ic: InstrumentConfig = .{};
+    if (mapGet(ic_map, "add_noise_irr_sim")) |v| ic.add_noise_irr_sim = try expectBool(v);
+    if (mapGet(ic_map, "add_noise_rad_sim")) |v| ic.add_noise_rad_sim = try expectBool(v);
+    if (mapGet(ic_map, "bands")) |v| ic.bands = try decodeInstrumentPerBandSeq(allocator, v, strict);
+    return ic;
+}
+
+fn decodeInstrumentPerBandSeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const InstrumentConfig.PerBand {
+    const seq = try expectSeq(value);
+    const bands = try allocator.alloc(InstrumentConfig.PerBand, seq.len);
+    for (seq, 0..) |entry, index| {
+        const band_map = try expectMap(entry);
+        try ensureKnownFields(band_map, &.{
+            "wavelength_start",
+            "wavelength_end",
+            "wavelength_step",
+            "exclude",
+            "fwhm_irradiance_sim",
+            "fwhm_irradiance_retr",
+            "fwhm_radiance_sim",
+            "fwhm_radiance_retr",
+        }, strict);
+
+        var band: InstrumentConfig.PerBand = .{};
+        if (mapGet(band_map, "wavelength_start")) |v| band.wavelength_start = try expectF64(v);
+        if (mapGet(band_map, "wavelength_end")) |v| band.wavelength_end = try expectF64(v);
+        if (mapGet(band_map, "wavelength_step")) |v| band.wavelength_step = try expectF64(v);
+        if (mapGet(band_map, "exclude")) |v| band.exclude = try decodeF64PairSequence(allocator, v);
+        if (mapGet(band_map, "fwhm_irradiance_sim")) |v| band.fwhm_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "fwhm_irradiance_retr")) |v| band.fwhm_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "fwhm_radiance_sim")) |v| band.fwhm_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "fwhm_radiance_retr")) |v| band.fwhm_radiance_retr = try expectF64(v);
+        bands[index] = band;
+    }
+    return bands;
+}
+
+fn decodeGeometryConfig(value: ?yaml.Value, strict: bool) !?GeometryConfig {
+    const geo_value = value orelse return null;
+    const geo_map = try expectMap(geo_value);
+    try ensureKnownFields(geo_map, &.{
+        "solar_zenith_angle_sim",
+        "solar_zenith_angle_retr",
+        "solar_azimuth_angle_sim",
+        "solar_azimuth_angle_retr",
+        "instrument_nadir_angle_sim",
+        "instrument_nadir_angle_retr",
+        "instrument_azimuth_angle_sim",
+        "instrument_azimuth_angle_retr",
+    }, strict);
+
+    var geo: GeometryConfig = .{};
+    if (mapGet(geo_map, "solar_zenith_angle_sim")) |v| geo.solar_zenith_angle_sim = try expectF64(v);
+    if (mapGet(geo_map, "solar_zenith_angle_retr")) |v| geo.solar_zenith_angle_retr = try expectF64(v);
+    if (mapGet(geo_map, "solar_azimuth_angle_sim")) |v| geo.solar_azimuth_angle_sim = try expectF64(v);
+    if (mapGet(geo_map, "solar_azimuth_angle_retr")) |v| geo.solar_azimuth_angle_retr = try expectF64(v);
+    if (mapGet(geo_map, "instrument_nadir_angle_sim")) |v| geo.instrument_nadir_angle_sim = try expectF64(v);
+    if (mapGet(geo_map, "instrument_nadir_angle_retr")) |v| geo.instrument_nadir_angle_retr = try expectF64(v);
+    if (mapGet(geo_map, "instrument_azimuth_angle_sim")) |v| geo.instrument_azimuth_angle_sim = try expectF64(v);
+    if (mapGet(geo_map, "instrument_azimuth_angle_retr")) |v| geo.instrument_azimuth_angle_retr = try expectF64(v);
+    return geo;
+}
+
+fn decodePressureTemperatureConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?PressureTemperatureConfig {
+    const pt_value = value orelse return null;
+    const pt_map = try expectMap(pt_value);
+    try ensureKnownFields(pt_map, &.{ "pt_sim", "pt_retr" }, strict);
+
+    var pt: PressureTemperatureConfig = .{};
+    if (mapGet(pt_map, "pt_sim")) |v| pt.pt_sim = try decodeF64PairSequence(allocator, v);
+    if (mapGet(pt_map, "pt_retr")) |v| pt.pt_retr = try decodeF64PairSequence(allocator, v);
+    return pt;
+}
+
+fn decodeSurfaceConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?SurfaceConfig {
+    const sc_value = value orelse return null;
+    const sc_map = try expectMap(sc_value);
+    try ensureKnownFields(sc_map, &.{
+        "surf_pressure_sim",
+        "surf_pressure_retr",
+        "surface_type_sim",
+        "surface_type_retr",
+        "surf_albedo_sim",
+        "surf_albedo_retr",
+        "var_surf_albedo_retr",
+        "wavel_surf_albedo_sim",
+        "surf_albedo_array_sim",
+        "wavel_surf_albedo_retr",
+        "surf_albedo_array_retr",
+    }, strict);
+
+    var sc: SurfaceConfig = .{};
+    if (mapGet(sc_map, "surf_pressure_sim")) |v| sc.surf_pressure_sim = try expectF64(v);
+    if (mapGet(sc_map, "surf_pressure_retr")) |v| sc.surf_pressure_retr = try expectF64(v);
+    if (mapGet(sc_map, "surface_type_sim")) |v| sc.surface_type_sim = try fields.parseSurfaceType(try expectString(v));
+    if (mapGet(sc_map, "surface_type_retr")) |v| sc.surface_type_retr = try fields.parseSurfaceType(try expectString(v));
+    if (mapGet(sc_map, "surf_albedo_sim")) |v| sc.surf_albedo_sim = try expectF64(v);
+    if (mapGet(sc_map, "surf_albedo_retr")) |v| sc.surf_albedo_retr = try expectF64(v);
+    if (mapGet(sc_map, "var_surf_albedo_retr")) |v| sc.var_surf_albedo_retr = try expectF64(v);
+    if (mapGet(sc_map, "wavel_surf_albedo_sim")) |v| sc.wavel_surf_albedo_sim = try decodeF64Sequence(allocator, v);
+    if (mapGet(sc_map, "surf_albedo_array_sim")) |v| sc.surf_albedo_array_sim = try decodeF64Sequence(allocator, v);
+    if (mapGet(sc_map, "wavel_surf_albedo_retr")) |v| sc.wavel_surf_albedo_retr = try decodeF64Sequence(allocator, v);
+    if (mapGet(sc_map, "surf_albedo_array_retr")) |v| sc.surf_albedo_array_retr = try decodeF64Sequence(allocator, v);
+    return sc;
+}
+
+fn decodeCloudConfig(value: ?yaml.Value, strict: bool) !?CloudConfig {
+    const cc_value = value orelse return null;
+    const cc_map = try expectMap(cc_value);
+    try ensureKnownFields(cc_map, &.{
+        "cloud_type_sim",
+        "cloud_type_retr",
+        "hg_optical_thickness_sim",
+        "hg_angstrom_coefficient_sim",
+        "hg_single_scattering_albedo_sim",
+        "hg_parameter_g_sim",
+        "hg_optical_thickness_retr",
+        "mie_optical_thickness_sim",
+        "mie_optical_thickness_retr",
+    }, strict);
+
+    var cc: CloudConfig = .{};
+    if (mapGet(cc_map, "cloud_type_sim")) |v| cc.cloud_type_sim = try fields.parseCloudType(try expectString(v));
+    if (mapGet(cc_map, "cloud_type_retr")) |v| cc.cloud_type_retr = try fields.parseCloudType(try expectString(v));
+    if (mapGet(cc_map, "hg_optical_thickness_sim")) |v| cc.hg_optical_thickness_sim = try expectF64(v);
+    if (mapGet(cc_map, "hg_angstrom_coefficient_sim")) |v| cc.hg_angstrom_coefficient_sim = try expectF64(v);
+    if (mapGet(cc_map, "hg_single_scattering_albedo_sim")) |v| cc.hg_single_scattering_albedo_sim = try expectF64(v);
+    if (mapGet(cc_map, "hg_parameter_g_sim")) |v| cc.hg_parameter_g_sim = try expectF64(v);
+    if (mapGet(cc_map, "hg_optical_thickness_retr")) |v| cc.hg_optical_thickness_retr = try expectF64(v);
+    if (mapGet(cc_map, "mie_optical_thickness_sim")) |v| cc.mie_optical_thickness_sim = try expectF64(v);
+    if (mapGet(cc_map, "mie_optical_thickness_retr")) |v| cc.mie_optical_thickness_retr = try expectF64(v);
+    return cc;
+}
+
+fn decodeAerosolConfig(value: ?yaml.Value, strict: bool) !?AerosolConfig {
+    const ac_value = value orelse return null;
+    const ac_map = try expectMap(ac_value);
+    try ensureKnownFields(ac_map, &.{
+        "aerosol_type_sim",
+        "aerosol_type_retr",
+        "hg_optical_thickness_sim",
+        "hg_angstrom_coefficient_sim",
+        "hg_single_scattering_albedo_sim",
+        "hg_parameter_g_sim",
+        "hg_optical_thickness_retr",
+        "mie_optical_thickness_sim",
+        "mie_optical_thickness_retr",
+    }, strict);
+
+    var ac: AerosolConfig = .{};
+    if (mapGet(ac_map, "aerosol_type_sim")) |v| ac.aerosol_type_sim = try fields.parseAerosolType(try expectString(v));
+    if (mapGet(ac_map, "aerosol_type_retr")) |v| ac.aerosol_type_retr = try fields.parseAerosolType(try expectString(v));
+    if (mapGet(ac_map, "hg_optical_thickness_sim")) |v| ac.hg_optical_thickness_sim = try expectF64(v);
+    if (mapGet(ac_map, "hg_angstrom_coefficient_sim")) |v| ac.hg_angstrom_coefficient_sim = try expectF64(v);
+    if (mapGet(ac_map, "hg_single_scattering_albedo_sim")) |v| ac.hg_single_scattering_albedo_sim = try expectF64(v);
+    if (mapGet(ac_map, "hg_parameter_g_sim")) |v| ac.hg_parameter_g_sim = try expectF64(v);
+    if (mapGet(ac_map, "hg_optical_thickness_retr")) |v| ac.hg_optical_thickness_retr = try expectF64(v);
+    if (mapGet(ac_map, "mie_optical_thickness_sim")) |v| ac.mie_optical_thickness_sim = try expectF64(v);
+    if (mapGet(ac_map, "mie_optical_thickness_retr")) |v| ac.mie_optical_thickness_retr = try expectF64(v);
+    return ac;
+}
+
+fn decodeRetrievalConfig(value: ?yaml.Value, strict: bool) !?RetrievalConfig {
+    const rc_value = value orelse return null;
+    const rc_map = try expectMap(rc_value);
+    try ensureKnownFields(rc_map, &.{
+        "max_num_iterations",
+        "state_vector_conv_threshold",
+    }, strict);
+
+    var rc: RetrievalConfig = .{};
+    if (mapGet(rc_map, "max_num_iterations")) |v| rc.max_num_iterations = @intCast(try expectU64(v));
+    if (mapGet(rc_map, "state_vector_conv_threshold")) |v| rc.state_vector_conv_threshold = try expectF64(v);
+    return rc;
+}
+
+fn decodeAbsorbingGasConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?AbsorbingGasConfig {
+    const ag_value = value orelse return null;
+    const ag_map = try expectMap(ag_value);
+    try ensureKnownFields(ag_map, &.{"gases"}, strict);
+
+    var ag: AbsorbingGasConfig = .{};
+    if (mapGet(ag_map, "gases")) |v| ag.gases = try decodeGasEntrySeq(allocator, v, strict);
+    return ag;
+}
+
+fn decodeGasEntrySeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const AbsorbingGasConfig.GasEntry {
+    const seq = try expectSeq(value);
+    const entries = try allocator.alloc(AbsorbingGasConfig.GasEntry, seq.len);
+    for (seq, 0..) |entry, index| {
+        const gas_map = try expectMap(entry);
+        try ensureKnownFields(gas_map, &.{
+            "species",
+            "xsection_file_sim",
+            "xsection_file_retr",
+            "fit_column",
+            "profile_sim",
+        }, strict);
+
+        var ge: AbsorbingGasConfig.GasEntry = .{};
+        if (mapGet(gas_map, "species")) |v| ge.species = try fields.parseAbsorberSpecies(try expectString(v));
+        if (mapGet(gas_map, "xsection_file_sim")) |v| ge.xsection_file_sim = try expectString(v);
+        if (mapGet(gas_map, "xsection_file_retr")) |v| ge.xsection_file_retr = try expectString(v);
+        if (mapGet(gas_map, "fit_column")) |v| ge.fit_column = try expectBool(v);
+        if (mapGet(gas_map, "profile_sim")) |v| ge.profile_sim = try decodeF64PairSequence(allocator, v);
+        entries[index] = ge;
+    }
+    return entries;
+}
+
+/// Decode a YAML sequence of 2-element sub-sequences into a slice of f64 pairs.
+fn decodeF64PairSequence(allocator: Allocator, value: yaml.Value) ![]const [2]f64 {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc([2]f64, seq.len);
+    for (seq, 0..) |entry, index| {
+        const pair = try expectSeq(entry);
+        if (pair.len != 2) return Error.InvalidValue;
+        result[index] = .{ try expectF64(pair[0]), try expectF64(pair[1]) };
+    }
+    return result;
+}
+
+/// Decode a YAML sequence of scalars into a slice of f64.
+fn decodeF64Sequence(allocator: Allocator, value: yaml.Value) ![]const f64 {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc(f64, seq.len);
+    for (seq, 0..) |entry, index| {
+        result[index] = try expectF64(entry);
+    }
+    return result;
 }
 
 fn decodeU32Sequence(allocator: Allocator, value: yaml.Value) ![]const u32 {

@@ -2,6 +2,21 @@ const std = @import("std");
 const zdisamar = @import("zdisamar");
 const legacy_config = @import("legacy_config");
 
+// WP-01: legacy config import coverage note.
+// The legacy flat-config format predates the vendor config surface matrix and does
+// not map 1:1 to vendor section/subsection/key triples. Its role is to import a
+// limited subset of controls (model_family, transport, solver_mode, spectral range,
+// atmosphere toggles, instrument, sampling, noise, derivative_mode) into canonical
+// YAML, which then goes through the same typed parsing and execution pipeline.
+// No changes to this test are needed for WP-01 because:
+// (1) the import path's canonical YAML output is already validated end-to-end
+//     against the direct legacy execution path (semantic parity, not config-surface
+//     parity),
+// (2) the imported YAML does not claim to cover vendor-specific controls like
+//     RRS_RING, ADDITIONAL_OUTPUT, or per-gas ABSORBING_GAS subsections, and
+// (3) extending legacy import to the full vendor surface is explicitly not a
+//     WP-01 goal -- the canonical YAML is the target representation.
+
 test "legacy import preserves flat adapter semantics through canonical execution" {
     const source =
         \\workspace = import-smoke

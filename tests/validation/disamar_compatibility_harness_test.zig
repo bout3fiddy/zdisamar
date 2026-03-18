@@ -587,6 +587,15 @@ fn expectNear(actual: f64, expected: f64, absolute_tolerance: f64, relative_tole
     try std.testing.expect(delta <= scale * relative_tolerance);
 }
 
+// WP-01: vendor config entry reference verification.
+// The parity matrix cases implicitly reference vendor config entries through their
+// upstream_case paths (e.g. "test/disamar_NO2_nadir"). Each case exercises a subset
+// of the vendor config surface and its runtime consumer pipeline. Full vendor-config
+// entry cross-referencing requires the vendor_config_surface_matrix.json to link
+// individual keys to parity matrix case IDs; this is tracked as a WP-01 completion
+// gate in vendor_config_surface_test.zig and parity_assets_test.zig. The harness
+// here focuses on runtime execution parity, not config-level inventory.
+
 test "compatibility harness executes bounded parity matrix cases against vendor anchors" {
     const raw = try std.fs.cwd().readFileAlloc(
         std.testing.allocator,
