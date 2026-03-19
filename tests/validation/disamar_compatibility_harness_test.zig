@@ -550,21 +550,21 @@ fn prepareOpticalStateForCase(
             allocator,
             .spectroscopy_line_list,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_hitran_subset_07_hit08_tropomi",
+            "o2a_hitran_07_hit08_tropomi",
         );
         defer line_asset.deinit(allocator);
         var strong_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
             allocator,
             .spectroscopy_strong_line_set,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_lisa_sdf_subset",
+            "o2a_lisa_sdf",
         );
         defer strong_asset.deinit(allocator);
         var rmf_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
             allocator,
             .spectroscopy_relaxation_matrix,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_lisa_rmf_subset",
+            "o2a_lisa_rmf",
         );
         defer rmf_asset.deinit(allocator);
 
@@ -580,7 +580,7 @@ fn prepareOpticalStateForCase(
             allocator,
             .collision_induced_absorption_table,
             "data/cross_sections/bundle_manifest.json",
-            "o2o2_bira_o2a_subset",
+            "o2o2_bira_o2a",
         );
         defer cia_asset.deinit(allocator);
         collision_induced_absorption = try cia_asset.toCollisionInducedAbsorptionTable(allocator);

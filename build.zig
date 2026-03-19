@@ -311,7 +311,7 @@ pub fn build(b: *std.Build) void {
         "Run fast DISAMAR compatibility smoke tests",
         "tests/validation/disamar_compatibility_smoke_test.zig",
     );
-    _ = addSuiteRunStepWithArgs(
+    const run_validation_compatibility_transport_measurement = addSuiteRunStepWithArgs(
         b,
         target,
         optimize,
@@ -429,13 +429,9 @@ pub fn build(b: *std.Build) void {
         "tests/validation/o2a_vendor_reflectance_assessment_test.zig",
     );
 
-    const fmt_check_cmd = b.addSystemCommand(&.{
-        "zig",
-        "fmt",
-        "--check",
-        "build.zig",
-        "src",
-        "tests",
+    const fmt_check_cmd = b.addFmt(.{
+        .check = true,
+        .paths = &.{ "build.zig", "src", "tests" },
     });
     const fmt_check_step = b.step("fmt-check", "Verify Zig formatting without rewriting files");
     fmt_check_step.dependOn(&fmt_check_cmd.step);
@@ -475,7 +471,7 @@ pub fn build(b: *std.Build) void {
     const transport_step = b.step("test-transport", "Run focused transport parity verification");
     transport_step.dependOn(run_unit_suite.run_step);
     transport_step.dependOn(run_integration_forward_model.run_step);
-    transport_step.dependOn(run_validation_compatibility.run_step);
+    transport_step.dependOn(run_validation_compatibility_transport_measurement.run_step);
     transport_step.dependOn(run_validation_o2a.run_step);
 
     const test_suites_step = b.step("test-suites", "Run all verification suites");

@@ -81,7 +81,7 @@ pub fn measureMatrix(allocator: std.mem.Allocator, matrix: PerfMatrix) !BenchRep
             false;
 
         const template = try scenarioTemplate(scenario.plan_template);
-        const iterations: u32 = @min(scenario.iterations, 64);
+        const iterations: u32 = scenario.iterations;
         const budget_ms: u64 = @as(u64, scenario.max_runtime_ms) * 25 + 100;
 
         const start_ns = std.time.nanoTimestamp();
