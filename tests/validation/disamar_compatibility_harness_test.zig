@@ -46,6 +46,31 @@ const ParityMatrix = struct {
     cases: []const ParityCase,
 };
 
+const ParityComponent = enum {
+    transport,
+    retrieval,
+    optics,
+    measurement_space,
+};
+
+fn parseParityComponent(value: []const u8) !ParityComponent {
+    if (std.mem.eql(u8, value, "transport")) return .transport;
+    if (std.mem.eql(u8, value, "retrieval")) return .retrieval;
+    if (std.mem.eql(u8, value, "optics")) return .optics;
+    if (std.mem.eql(u8, value, "measurement_space")) return .measurement_space;
+    return error.InvalidParityComponent;
+}
+
+fn includesParityComponent(
+    components: []const ParityComponent,
+    component: ParityComponent,
+) bool {
+    for (components) |allowed| {
+        if (allowed == component) return true;
+    }
+    return false;
+}
+
 fn matrixIndex(row: usize, column: usize, column_count: usize) usize {
     return row * column_count + column;
 }
@@ -677,7 +702,9 @@ fn expectNear(actual: f64, expected: f64, absolute_tolerance: f64, relative_tole
 // gate in vendor_config_surface_test.zig and parity_assets_test.zig. The harness
 // here focuses on runtime execution parity, not config-level inventory.
 
-test "compatibility harness executes bounded parity matrix cases against vendor anchors" {
+fn runParityCases(
+    components: []const ParityComponent,
+) !usize {
     const raw = try std.fs.cwd().readFileAlloc(
         std.testing.allocator,
         "validation/compatibility/parity_matrix.json",
@@ -707,14 +734,17 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
     var executed_cases: usize = 0;
 
     for (matrix.value.cases) |case| {
-        if (std.mem.eql(u8, case.component, "retrieval")) {
+        const component = try parseParityComponent(case.component);
+        if (!includesParityComponent(components, component)) continue;
+
+        if (component == .retrieval) {
             const supported_status =
                 std.mem.eql(u8, case.status, "retrieval_executed_contract") or
                 std.mem.eql(u8, case.status, "retrieval_numeric_anchor");
             try std.testing.expect(supported_status);
-        } else if (std.mem.eql(u8, case.component, "optics")) {
+        } else if (component == .optics) {
             try std.testing.expectEqualStrings("optics_prepared_contract", case.status);
-        } else if (std.mem.eql(u8, case.component, "measurement_space")) {
+        } else if (component == .measurement_space) {
             try std.testing.expectEqualStrings("measurement_space_contract", case.status);
         } else {
             try std.testing.expectEqualStrings("scaffold_executable", case.status);
@@ -882,7 +912,19 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
         executed_cases += 1;
     }
 
-    try std.testing.expect(executed_cases > 0);
+    return executed_cases;
+}
+
+test "compatibility harness executes transport and measurement-space parity cases against vendor anchors" {
+    try std.testing.expect(try runParityCases(&.{ .transport, .measurement_space }) > 0);
+}
+
+test "compatibility harness executes retrieval parity cases against vendor anchors" {
+    try std.testing.expect(try runParityCases(&.{.retrieval}) > 0);
+}
+
+test "compatibility harness executes optics parity cases against vendor anchors" {
+    try std.testing.expect(try runParityCases(&.{.optics}) > 0);
 }
 
 test "compatibility harness parses bounded vendor retrieval diagnostics from asciiHDF" {

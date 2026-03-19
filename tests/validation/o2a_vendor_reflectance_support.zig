@@ -35,6 +35,38 @@ pub const ComparisonMetrics = struct {
     red_wing_mean_difference: f64,
 };
 
+pub const TrendTolerances = struct {
+    mean_abs_difference_abs: f64,
+    root_mean_square_difference_abs: f64,
+    max_abs_difference_abs: f64,
+    correlation_abs: f64,
+};
+
+pub const TrendState = enum {
+    improved,
+    flat,
+    regressed,
+};
+
+pub const AssessmentVerdict = enum {
+    exact_zero_pass,
+    baseline_pass,
+    regression_fail,
+    nonzero_fail,
+};
+
+pub const AssessmentTrend = struct {
+    mean_abs_difference: TrendState,
+    root_mean_square_difference: TrendState,
+    max_abs_difference: TrendState,
+    correlation: TrendState,
+};
+
+pub const AssessmentOutcome = struct {
+    verdict: AssessmentVerdict,
+    trend: AssessmentTrend,
+};
+
 pub const VendorO2AReflectanceCase = struct {
     reference: []ReferenceSample,
     prepared: OpticsPrepare.PreparedOpticalState,
@@ -231,6 +263,78 @@ pub fn meanAbsoluteDifference(values_a: []const f64, values_b: []const f64) f64 
         sum += @abs(value_a - value_b);
     }
     return sum / @as(f64, @floatFromInt(values_a.len));
+}
+
+pub fn compareLowerIsBetter(current: f64, baseline: f64, tolerance: f64) TrendState {
+    if (current < baseline - tolerance) return .improved;
+    if (current > baseline + tolerance) return .regressed;
+    return .flat;
+}
+
+pub fn compareHigherIsBetter(current: f64, baseline: f64, tolerance: f64) TrendState {
+    if (current > baseline + tolerance) return .improved;
+    if (current < baseline - tolerance) return .regressed;
+    return .flat;
+}
+
+pub fn assessAgainstBaseline(
+    current: ComparisonMetrics,
+    baseline: ComparisonMetrics,
+    tolerances: TrendTolerances,
+    allowed_to_fail: bool,
+) AssessmentOutcome {
+    const trend: AssessmentTrend = .{
+        .mean_abs_difference = compareLowerIsBetter(
+            current.mean_abs_difference,
+            baseline.mean_abs_difference,
+            tolerances.mean_abs_difference_abs,
+        ),
+        .root_mean_square_difference = compareLowerIsBetter(
+            current.root_mean_square_difference,
+            baseline.root_mean_square_difference,
+            tolerances.root_mean_square_difference_abs,
+        ),
+        .max_abs_difference = compareLowerIsBetter(
+            current.max_abs_difference,
+            baseline.max_abs_difference,
+            tolerances.max_abs_difference_abs,
+        ),
+        .correlation = compareHigherIsBetter(
+            current.correlation,
+            baseline.correlation,
+            tolerances.correlation_abs,
+        ),
+    };
+
+    if (current.exact_match_within_zero_tolerance) {
+        return .{
+            .verdict = .exact_zero_pass,
+            .trend = trend,
+        };
+    }
+
+    if (!allowed_to_fail) {
+        return .{
+            .verdict = .nonzero_fail,
+            .trend = trend,
+        };
+    }
+
+    if (trend.mean_abs_difference == .regressed or
+        trend.root_mean_square_difference == .regressed or
+        trend.max_abs_difference == .regressed or
+        trend.correlation == .regressed)
+    {
+        return .{
+            .verdict = .regression_fail,
+            .trend = trend,
+        };
+    }
+
+    return .{
+        .verdict = .baseline_pass,
+        .trend = trend,
+    };
 }
 
 pub fn expectBoundedO2AMorphology(

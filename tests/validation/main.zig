@@ -7,4 +7,5 @@ comptime {
     _ = @import("doas_parity_test.zig");
     _ = @import("dismas_parity_test.zig");
     _ = @import("o2a_forward_shape_test.zig");
+    _ = @import("o2a_vendor_reflectance_assessment_test.zig");
 }

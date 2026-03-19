@@ -12,6 +12,34 @@ fn addSuiteRunStep(
     step_description: []const u8,
     root_source_file: []const u8,
 ) *std.Build.Step {
+    return addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        step_name,
+        step_description,
+        root_source_file,
+        &.{},
+    );
+}
+
+fn addSuiteRunStepWithArgs(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    test_lib_module: *std.Build.Module,
+    internal_module: *std.Build.Module,
+    test_legacy_config_module: *std.Build.Module,
+    test_cli_app_module: *std.Build.Module,
+    step_name: []const u8,
+    step_description: []const u8,
+    root_source_file: []const u8,
+    filters: []const []const u8,
+) *std.Build.Step {
     const suite_module = b.createModule(.{
         .root_source_file = b.path(root_source_file),
         .target = target,
@@ -38,6 +66,7 @@ fn addSuiteRunStep(
 
     const suite_tests = b.addTest(.{
         .root_module = suite_module,
+        .filters = filters,
     });
     const run_suite_tests = b.addRunArtifact(suite_tests);
 
@@ -258,7 +287,7 @@ pub fn build(b: *std.Build) void {
         "Run fast DISAMAR compatibility smoke tests",
         "tests/validation/disamar_compatibility_smoke_test.zig",
     );
-    const run_validation_compatibility_full = addSuiteRunStep(
+    const run_validation_compatibility_transport_measurement = addSuiteRunStepWithArgs(
         b,
         target,
         optimize,
@@ -266,11 +295,54 @@ pub fn build(b: *std.Build) void {
         internal_module,
         test_legacy_config_module,
         test_cli_app_module,
+        "test-validation-compatibility-transport-measurement",
+        "Run DISAMAR compatibility transport and measurement-space shards",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "--test-filter",
+            "compatibility harness executes transport and measurement-space parity cases against vendor anchors",
+        },
+    );
+    const run_validation_compatibility_retrieval = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-compatibility-retrieval",
+        "Run DISAMAR compatibility retrieval shard",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "--test-filter",
+            "compatibility harness executes retrieval parity cases against vendor anchors",
+        },
+    );
+    const run_validation_compatibility_optics = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-compatibility-optics",
+        "Run DISAMAR compatibility optics shard",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "--test-filter",
+            "compatibility harness executes optics parity cases against vendor anchors",
+        },
+    );
+    const validation_compatibility_full_step = b.step(
         "test-validation-compatibility-full",
         "Run full DISAMAR compatibility harness validation",
-        "tests/validation/disamar_compatibility_harness_test.zig",
     );
-    _ = run_validation_compatibility_full;
+    validation_compatibility_full_step.dependOn(run_validation_compatibility);
+    validation_compatibility_full_step.dependOn(run_validation_compatibility_transport_measurement);
+    validation_compatibility_full_step.dependOn(run_validation_compatibility_retrieval);
+    validation_compatibility_full_step.dependOn(run_validation_compatibility_optics);
     const run_validation_o2a = addSuiteRunStep(
         b,
         target,
@@ -295,7 +367,6 @@ pub fn build(b: *std.Build) void {
         "Run O2A vendor reflectance assessment lane",
         "tests/validation/o2a_vendor_reflectance_assessment_test.zig",
     );
-    _ = run_validation_o2a_vendor;
 
     const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(run_unit_suite);
@@ -305,6 +376,7 @@ pub fn build(b: *std.Build) void {
     transport_step.dependOn(run_integration_forward_model);
     transport_step.dependOn(run_validation_compatibility);
     transport_step.dependOn(run_validation_o2a);
+    transport_step.dependOn(run_validation_o2a_vendor);
 
     const test_suites_step = b.step("test-suites", "Run all verification suites");
     test_suites_step.dependOn(run_unit_suite);

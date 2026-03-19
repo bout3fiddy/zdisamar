@@ -12,6 +12,7 @@ development.
 Use `zig build check` for the fast local loop.
 Use `zig build test-transport` for the focused transport/parity loop.
 Use `zig build test-validation-compatibility` for fast compatibility smoke checks.
+Use `zig build test-validation-o2a-vendor` for the O2A vendor trend assessment lane.
 
 Run all suites with `zig build test`, or targeted suites with:
 
@@ -22,5 +23,9 @@ Run all suites with `zig build test`, or targeted suites with:
 - `zig build test-perf`
 - `zig build test-validation`
 - `zig build test-validation-compatibility`
+- `zig build test-validation-compatibility-transport-measurement`
+- `zig build test-validation-compatibility-retrieval`
+- `zig build test-validation-compatibility-optics`
 - `zig build test-validation-compatibility-full`
 - `zig build test-validation-o2a`
+- `zig build test-validation-o2a-vendor`
