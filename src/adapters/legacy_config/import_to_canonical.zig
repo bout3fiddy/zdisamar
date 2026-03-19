@@ -129,29 +129,29 @@ fn renderPrepared(allocator: Allocator, source_path: []const u8, prepared: Prepa
     try appendFloatField(writer, 5, "step_nm", spectralStep(prepared));
     try writer.writeAll("      absorbers: {}\n");
     try writer.writeAll("      surface:\n");
-    try appendStringField(writer, 4, "model", prepared.scene.surface.kind);
+    try appendStringField(writer, 4, "model", prepared.scene.surface.kind.label());
     try appendFloatField(writer, 4, "albedo", prepared.scene.surface.albedo);
     try writer.writeAll("      measurement_model:\n");
     try appendStringField(writer, 4, "regime", @tagName(prepared.scene.observation_model.regime));
     try writer.writeAll("        instrument:\n");
-    try appendStringField(writer, 5, "name", prepared.scene.observation_model.instrument);
+    try appendStringField(writer, 5, "name", prepared.scene.observation_model.instrument.label());
     try writer.writeAll("        sampling:\n");
-    try appendStringField(writer, 5, "mode", prepared.scene.observation_model.sampling);
+    try appendStringField(writer, 5, "mode", prepared.scene.observation_model.sampling.label());
     try writer.writeAll("        noise:\n");
-    try appendStringField(writer, 5, "model", prepared.scene.observation_model.noise_model);
+    try appendStringField(writer, 5, "model", prepared.scene.observation_model.noise_model.label());
 
     if (prepared.scene.atmosphere.has_clouds) {
         try writer.writeAll("      clouds:\n");
         try appendQuotedKey(writer, 4, "legacy_cloud");
         try writer.writeAll(":\n");
-        try appendStringField(writer, 5, "model", "legacy_binary_cloud");
+        try appendStringField(writer, 5, "model", "hg_scattering");
         try appendFloatField(writer, 5, "optical_thickness", 0.0);
     }
     if (prepared.scene.atmosphere.has_aerosols) {
         try writer.writeAll("      aerosols:\n");
         try appendQuotedKey(writer, 4, "legacy_aerosol");
         try writer.writeAll(":\n");
-        try appendStringField(writer, 5, "model", "legacy_binary_aerosol");
+        try appendStringField(writer, 5, "model", "hg_scattering");
         try appendFloatField(writer, 5, "optical_depth_550_nm", 0.0);
     }
 
@@ -187,7 +187,8 @@ fn appendProducts(
     defer seen.deinit();
 
     var duplicate_warned = false;
-    for (prepared.requested_products.items) |name| {
+    for (prepared.requested_products.items) |request| {
+        const name = request.name;
         const gop = try seen.getOrPut(name);
         if (gop.found_existing) {
             if (!duplicate_warned) {
@@ -203,10 +204,10 @@ fn appendProducts(
 
         try appendQuotedKey(writer, 3, name);
         try writer.writeAll(":\n");
-        switch (legacyProductKind(name)) {
+        switch (legacyProductKind(request)) {
             .measurement_space => {
                 try appendStringField(writer, 4, "kind", "measurement_space");
-                try appendStringField(writer, 4, "observable", name);
+                try appendStringField(writer, 4, "observable", request.observable.?.label());
             },
             .result => {
                 if (!isGenericResultName(name)) {
@@ -309,15 +310,18 @@ const ImportedProductKind = enum {
     result,
 };
 
-fn legacyProductKind(name: []const u8) ImportedProductKind {
-    if (std.mem.eql(u8, name, "radiance") or
-        std.mem.eql(u8, name, "reflectance") or
-        std.mem.eql(u8, name, "irradiance") or
-        std.mem.eql(u8, name, "transmittance"))
-    {
-        return .measurement_space;
-    }
-    return .result;
+fn legacyProductKind(request: @import("zdisamar").Request.RequestedProduct) ImportedProductKind {
+    return switch (request.kind) {
+        .measurement_space => .measurement_space,
+        .state_vector,
+        .fitted_measurement,
+        .averaging_kernel,
+        .jacobian,
+        .posterior_covariance,
+        .result,
+        .diagnostics,
+        => .result,
+    };
 }
 
 fn isGenericResultName(name: []const u8) bool {

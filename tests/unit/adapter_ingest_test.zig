@@ -1,5 +1,6 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
+const internal = @import("zdisamar_internal");
 
 test "spectral ascii ingest bridges vendor-style input into typed measurement and request summaries" {
     var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
@@ -13,12 +14,32 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectEqual(@as(u32, 2), loaded.sampleCount(.radiance));
 
     const measurement = loaded.measurement("radiance");
-    try std.testing.expectEqualStrings("radiance", measurement.product);
+    try std.testing.expectEqualStrings("radiance", measurement.resolvedProductName());
+    try std.testing.expectEqual(zdisamar.MeasurementQuantity.radiance, measurement.observable);
     try std.testing.expectEqual(@as(u32, 2), measurement.sample_count);
 
-    const request = loaded.toRequest("demo-scene", &[_][]const u8{"radiance"});
+    var request = try loaded.toRequest(std.testing.allocator, "demo-scene", &[_]zdisamar.RequestedProduct{
+        .fromName("radiance"),
+    });
+    defer request.deinitOwned(std.testing.allocator);
     try std.testing.expectEqualStrings("demo-scene", request.scene.id);
     try std.testing.expectEqual(@as(u32, 2), request.scene.spectral_grid.sample_count);
+    try std.testing.expectEqual(zdisamar.Instrument.SamplingMode.measured_channels, request.scene.observation_model.sampling);
+    try std.testing.expectEqual(zdisamar.Instrument.NoiseModelKind.snr_from_input, request.scene.observation_model.noise_model);
+    try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.measured_wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 405.0), request.scene.observation_model.measured_wavelengths_nm[0], 1.0e-12);
+    try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.reference_radiance.len);
+    try std.testing.expectApproxEqRel(@as(f64, 1.116153e13), request.scene.observation_model.reference_radiance[0], 1.0e-12);
+    try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.ingested_noise_sigma.len);
+    try std.testing.expectApproxEqRel(@as(f64, 1.116153e13 / 1485.0), request.scene.observation_model.ingested_noise_sigma[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 1.096153e13 / 1445.0), request.scene.observation_model.ingested_noise_sigma[1], 1.0e-12);
+    try std.testing.expect(request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expectApproxEqAbs(@as(f64, 3.402296e14), request.scene.observation_model.operational_solar_spectrum.irradiance[0], 1.0e8);
+
+    var copied_sigma: [2]f64 = undefined;
+    try internal.kernels.spectra.noise.copyInputSigma(request.scene.observation_model.ingested_noise_sigma, &copied_sigma);
+    try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[0], copied_sigma[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[1], copied_sigma[1], 1.0e-12);
 }
 
 test "spectral ascii ingest preserves explicit high-resolution grid and isrf table metadata" {
@@ -149,6 +170,11 @@ test "reference asset ingest assembles vendor-shaped spectroscopy sidecars into 
     try std.testing.expect(evaluation.weak_line_sigma_cm2_per_molecule > 0.0);
     try std.testing.expect(evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
     try std.testing.expect(@abs(evaluation.line_mixing_sigma_cm2_per_molecule) > 0.0);
+    try std.testing.expectApproxEqAbs(
+        evaluation.weak_line_sigma_cm2_per_molecule + evaluation.strong_line_sigma_cm2_per_molecule,
+        evaluation.line_sigma_cm2_per_molecule,
+        1e-30,
+    );
     try std.testing.expect(evaluation.total_sigma_cm2_per_molecule > 0.0);
 }
 

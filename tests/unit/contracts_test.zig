@@ -19,7 +19,7 @@ test "engine lifecycle increments plan ids and returns successful result" {
         .id = "scene-unit-001",
         .spectral_grid = .{ .sample_count = 16 },
     });
-    var result = try engine.execute(&first_plan, &workspace, request);
+    var result = try engine.execute(&first_plan, &workspace, &request);
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
@@ -37,8 +37,9 @@ test "engine execute rejects missing scene id" {
     defer plan.deinit();
     var workspace = engine.createWorkspace("unit-suite");
 
+    var invalid_request = zdisamar.Request.init(.{ .id = "" });
     try std.testing.expectError(
         error.MissingScene,
-        engine.execute(&plan, &workspace, zdisamar.Request.init(.{ .id = "" })),
+        engine.execute(&plan, &workspace, &invalid_request),
     );
 }

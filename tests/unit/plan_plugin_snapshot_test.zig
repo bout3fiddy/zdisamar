@@ -1,5 +1,6 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
+const internal = @import("zdisamar_internal");
 
 test "result provenance carries frozen plugin versions and dataset hashes from the plan" {
     var engine = zdisamar.Engine.init(std.testing.allocator, .{ .allow_native_plugins = true });
@@ -14,7 +15,7 @@ test "result provenance carries frozen plugin versions and dataset hashes from t
         .package = "disamar_standard",
         .version = "0.2.1",
         .lane = .declarative,
-        .capabilities = &[_]zdisamar.PluginCapabilityDecl{
+        .capabilities = &[_]internal.plugin_internal.manifest.CapabilityDecl{
             .{ .slot = "data.pack", .name = "example.dataset_patch" },
         },
         .provenance = .{
@@ -33,10 +34,10 @@ test "result provenance carries frozen plugin versions and dataset hashes from t
         .spectral_grid = .{ .sample_count = 8 },
     });
 
-    var before_result = try engine.execute(&plan_before, &workspace, request);
+    var before_result = try engine.execute(&plan_before, &workspace, &request);
     defer before_result.deinit(std.testing.allocator);
     workspace.reset();
-    var after_result = try engine.execute(&plan_after, &workspace, request);
+    var after_result = try engine.execute(&plan_after, &workspace, &request);
     defer after_result.deinit(std.testing.allocator);
 
     try std.testing.expect(after_result.provenance.plugin_inventory_generation > before_result.provenance.plugin_inventory_generation);

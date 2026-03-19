@@ -10,7 +10,12 @@ pub const PreparationError = TemplateError || error{
     PreparedPlanLimitExceeded,
     UnsupportedDerivativeMode,
     UnsupportedExecutionMode,
+    UnsupportedRtmControls,
     UnsupportedCapability,
+    MissingNativeSource,
+    MissingPrepareHook,
+    PluginEntryIncompatibleAbi,
+    PluginPrepareRejected,
     PluginPrepareFailed,
 };
 
@@ -21,6 +26,8 @@ pub const ExecutionError = error{
     MissingObservationInstrument,
     WorkspacePlanMismatch,
     DerivativeModeMismatch,
+    MissingExecuteHook,
+    PluginEntryIncompatibleAbi,
     PluginExecutionFailed,
 };
 

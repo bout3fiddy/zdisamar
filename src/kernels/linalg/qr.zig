@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Error = error{
     SingularMatrix,
 };
@@ -38,5 +40,3 @@ test "qr least squares rejects rank-deficient systems" {
         .{ 2.0, 4.0 },
     }, .{ 1.0, 2.0 }));
 }
-
-const std = @import("std");

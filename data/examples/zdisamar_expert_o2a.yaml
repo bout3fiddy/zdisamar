@@ -120,7 +120,7 @@ templates:
 
       aerosols:
         plume:
-          model: hg_layer
+          model: hg_scattering
           optical_depth_550_nm: 0.12
           single_scatter_albedo: 0.93
           asymmetry_factor: 0.68
@@ -170,7 +170,7 @@ experiment:
 
       aerosols:
         plume:
-          model: hg_layer
+          model: hg_scattering
           optical_depth_550_nm: 0.22
           single_scatter_albedo: 0.93
           asymmetry_factor: 0.68
@@ -202,11 +202,6 @@ experiment:
         observable: radiance
         apply_noise: true
 
-      truth_reflectance:
-        kind: measurement_space
-        observable: reflectance
-        apply_noise: false
-
       truth_diagnostics:
         kind: diagnostics
 
@@ -230,7 +225,7 @@ experiment:
 
       aerosols:
         plume:
-          model: hg_layer
+          model: hg_scattering
           optical_depth_550_nm: 0.10
           single_scatter_albedo: 0.93
           asymmetry_factor: 0.68
@@ -357,11 +352,14 @@ experiment:
       fitted_radiance:
         kind: fitted_measurement
 
+      jacobian:
+        kind: jacobian
+
       averaging_kernel:
         kind: averaging_kernel
 
-      jacobian:
-        kind: jacobian
+      posterior_covariance:
+        kind: posterior_covariance
 
       retrieval_result:
         kind: result

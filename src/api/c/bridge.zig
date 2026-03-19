@@ -2,14 +2,14 @@ const std = @import("std");
 const CoreEngine = @import("../../core/Engine.zig").Engine;
 const CoreEngineOptions = @import("../../core/Engine.zig").EngineOptions;
 const PlanModule = @import("../../core/Plan.zig");
+const PreparedPlan = PlanModule.PreparedPlan;
 const Request = @import("../../core/Request.zig").Request;
 const Result = @import("../../core/Result.zig").Result;
 const Workspace = @import("../../core/Workspace.zig").Workspace;
 const errors = @import("../../core/errors.zig");
 
 pub const abi_version: u32 = 1;
-pub const plugin_abi_version: u32 = 1;
-pub const plugin_entry_symbol: [:0]const u8 = "zdisamar_plugin_entry_v1";
+pub const c_abi_enabled = false;
 
 pub const StatusCode = enum(u32) {
     ok = 0,
@@ -20,30 +20,11 @@ pub const StatusCode = enum(u32) {
 pub const SolverMode = enum(u32) {
     scalar = 0,
     polarized = 1,
-    derivative_enabled = 2,
-};
-
-pub const DerivativeMode = enum(u32) {
-    none = 0,
-    semi_analytical = 1,
-    analytical_plugin = 2,
-    numerical = 3,
-};
-
-pub const PluginPolicy = enum(u32) {
-    declarative_only = 0,
-    allow_trusted_native = 1,
-};
-
-pub const PluginLane = enum(u32) {
-    declarative = 0,
-    native = 1,
 };
 
 pub const EngineOptionsDesc = extern struct {
     struct_size: u32,
     abi_version: u32,
-    plugin_policy: PluginPolicy,
     max_prepared_plans: u32,
 };
 
@@ -57,7 +38,6 @@ pub const SceneDesc = extern struct {
 pub const RequestDesc = extern struct {
     scene: SceneDesc,
     diagnostics_flags: u32 = diagnostics_provenance,
-    expected_derivative_mode: DerivativeMode = .none,
 };
 
 pub const PlanDesc = extern struct {
@@ -65,7 +45,6 @@ pub const PlanDesc = extern struct {
     transport_solver: [*:0]const u8,
     retrieval_algorithm: ?[*:0]const u8 = null,
     solver_mode: SolverMode = .scalar,
-    expected_plugin_abi_version: u32 = plugin_abi_version,
 };
 
 pub const ResultDesc = extern struct {
@@ -77,7 +56,6 @@ pub const ResultDesc = extern struct {
 };
 
 pub const diagnostics_provenance: u32 = 1 << 0;
-pub const diagnostics_jacobians: u32 = 1 << 1;
 
 const BridgeError = error{InvalidArgument};
 
@@ -90,7 +68,7 @@ const EngineHandle = struct {
 };
 
 const PlanHandle = struct {
-    plan: PlanModule.Plan,
+    plan: PreparedPlan,
 };
 
 const WorkspaceHandle = struct {
@@ -129,11 +107,10 @@ const WorkspaceHandle = struct {
     }
 };
 
-pub fn defaultEngineOptions(plugin_policy: PluginPolicy, max_prepared_plans: u32) EngineOptionsDesc {
+pub fn defaultEngineOptions(max_prepared_plans: u32) EngineOptionsDesc {
     return .{
         .struct_size = @sizeOf(EngineOptionsDesc),
         .abi_version = abi_version,
-        .plugin_policy = plugin_policy,
         .max_prepared_plans = max_prepared_plans,
     };
 }
@@ -142,7 +119,6 @@ pub fn toSolverMode(mode: PlanModule.SolverMode) SolverMode {
     return switch (mode) {
         .scalar => .scalar,
         .polarized => .polarized,
-        .derivative_enabled => .derivative_enabled,
     };
 }
 
@@ -177,7 +153,6 @@ fn toEngineOptions(desc: ?*const EngineOptionsDesc) BridgeError!CoreEngineOption
 
     return .{
         .abi_version = value.abi_version,
-        .allow_native_plugins = value.plugin_policy == .allow_trusted_native,
         .max_prepared_plans = value.max_prepared_plans,
     };
 }
@@ -196,7 +171,6 @@ fn toPlanTemplate(desc: *const PlanDesc) BridgeError!PlanModule.Template {
         .solver_mode = switch (desc.solver_mode) {
             .scalar => .scalar,
             .polarized => .polarized,
-            .derivative_enabled => .derivative_enabled,
         },
     };
 }
@@ -217,13 +191,6 @@ fn toRequest(desc: *const RequestDesc) BridgeError!Request {
     });
     request.diagnostics = .{
         .provenance = (desc.diagnostics_flags & diagnostics_provenance) != 0,
-        .jacobians = (desc.diagnostics_flags & diagnostics_jacobians) != 0,
-    };
-    request.expected_derivative_mode = switch (desc.expected_derivative_mode) {
-        .none => .none,
-        .semi_analytical => .semi_analytical,
-        .analytical_plugin => .analytical_plugin,
-        .numerical => .numerical,
     };
     return request;
 }
@@ -262,11 +229,11 @@ fn castWorkspace(ptr: *CWorkspace) *WorkspaceHandle {
     return @ptrCast(@alignCast(ptr));
 }
 
-export fn zdisamar_engine_create(out_engine: *?*CEngine) StatusCode {
+pub fn zdisamar_engine_create(out_engine: *?*CEngine) StatusCode {
     return zdisamar_engine_create_with_options(null, out_engine);
 }
 
-export fn zdisamar_engine_create_with_options(
+pub fn zdisamar_engine_create_with_options(
     options: ?*const EngineOptionsDesc,
     out_engine: *?*CEngine,
 ) StatusCode {
@@ -284,14 +251,14 @@ export fn zdisamar_engine_create_with_options(
     return .ok;
 }
 
-export fn zdisamar_engine_destroy(engine: ?*CEngine) void {
+pub fn zdisamar_engine_destroy(engine: ?*CEngine) void {
     const ptr = engine orelse return;
     const handle = castEngine(ptr);
     handle.engine.deinit();
     std.heap.c_allocator.destroy(handle);
 }
 
-export fn zdisamar_plan_prepare(
+pub fn zdisamar_plan_prepare(
     engine: ?*CEngine,
     plan_desc: ?*const PlanDesc,
     out_plan: *?*CPlan,
@@ -311,14 +278,14 @@ export fn zdisamar_plan_prepare(
     return .ok;
 }
 
-export fn zdisamar_plan_destroy(plan: ?*CPlan) void {
+pub fn zdisamar_plan_destroy(plan: ?*CPlan) void {
     const ptr = plan orelse return;
     const handle = castPlan(ptr);
     handle.plan.deinit();
     std.heap.c_allocator.destroy(handle);
 }
 
-export fn zdisamar_workspace_create(
+pub fn zdisamar_workspace_create(
     engine: ?*CEngine,
     out_workspace: *?*CWorkspace,
 ) StatusCode {
@@ -332,14 +299,14 @@ export fn zdisamar_workspace_create(
     return .ok;
 }
 
-export fn zdisamar_workspace_destroy(workspace: ?*CWorkspace) void {
+pub fn zdisamar_workspace_destroy(workspace: ?*CWorkspace) void {
     const ptr = workspace orelse return;
     const handle = castWorkspace(ptr);
     handle.deinit();
     std.heap.c_allocator.destroy(handle);
 }
 
-export fn zdisamar_execute(
+pub fn zdisamar_execute(
     engine: ?*CEngine,
     plan: ?*const CPlan,
     workspace: ?*CWorkspace,
@@ -355,7 +322,7 @@ export fn zdisamar_execute(
     var result = castEngine(engine_ptr).engine.execute(
         &castPlan(@constCast(plan_ptr)).plan,
         &workspace_handle.workspace,
-        request,
+        &request,
     ) catch |err| return mapError(err);
     defer result.deinit(std.heap.c_allocator);
     workspace_handle.captureResultStrings(result) catch |err| return mapError(err);
@@ -367,20 +334,37 @@ export fn zdisamar_execute(
     return .ok;
 }
 
+comptime {
+    if (c_abi_enabled) {
+        @export(&zdisamar_engine_create, .{ .name = "zdisamar_engine_create" });
+        @export(&zdisamar_engine_create_with_options, .{ .name = "zdisamar_engine_create_with_options" });
+        @export(&zdisamar_engine_destroy, .{ .name = "zdisamar_engine_destroy" });
+        @export(&zdisamar_plan_prepare, .{ .name = "zdisamar_plan_prepare" });
+        @export(&zdisamar_plan_destroy, .{ .name = "zdisamar_plan_destroy" });
+        @export(&zdisamar_workspace_create, .{ .name = "zdisamar_workspace_create" });
+        @export(&zdisamar_workspace_destroy, .{ .name = "zdisamar_workspace_destroy" });
+        @export(&zdisamar_execute, .{ .name = "zdisamar_execute" });
+    }
+}
+
 test "default engine options lock C ABI fields" {
-    const options = defaultEngineOptions(.declarative_only, 64);
+    const options = defaultEngineOptions(64);
     try std.testing.expectEqual(@as(u32, @sizeOf(EngineOptionsDesc)), options.struct_size);
     try std.testing.expectEqual(abi_version, options.abi_version);
-    try std.testing.expectEqual(PluginPolicy.declarative_only, options.plugin_policy);
     try std.testing.expectEqual(@as(u32, 64), options.max_prepared_plans);
 }
 
+test "c abi exports stay disabled until the declarative surface is declared stable" {
+    try std.testing.expect(!c_abi_enabled);
+}
+
 test "result description counts plugin provenance entries" {
-    const result = Result.init(7, "workspace-a", "scene-a", .{
+    var result = try Result.init(std.testing.allocator, 7, "workspace-a", "scene-a", .{
         .plan_id = 7,
         .workspace_label = "workspace-a",
         .scene_id = "scene-a",
     });
+    defer result.deinit(std.testing.allocator);
     const described = describeResult(result);
     try std.testing.expectEqual(@as(u64, 7), described.plan_id);
     try std.testing.expectEqual(@as(?[*:0]const u8, null), described.scene_id);
@@ -418,7 +402,6 @@ test "c abi lifecycle prepares and executes a typed request" {
                 .spectral_samples = 16,
             },
             .diagnostics_flags = diagnostics_provenance,
-            .expected_derivative_mode = .none,
         },
         &result,
     ));

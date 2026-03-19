@@ -1,6 +1,28 @@
 pub const Error = error{
     SingularMatrix,
+    ShapeMismatch,
 };
+
+pub fn index(row: usize, column: usize, column_count: usize) usize {
+    return row * column_count + column;
+}
+
+pub fn setIdentity(matrix: []f64, dimension: usize) Error!void {
+    if (matrix.len != dimension * dimension) return Error.ShapeMismatch;
+    @memset(matrix, 0.0);
+    for (0..dimension) |diag_index| {
+        matrix[index(diag_index, diag_index, dimension)] = 1.0;
+    }
+}
+
+pub fn trace(matrix: []const f64, dimension: usize) Error!f64 {
+    if (matrix.len != dimension * dimension) return Error.ShapeMismatch;
+    var total: f64 = 0.0;
+    for (0..dimension) |diag_index| {
+        total += matrix[index(diag_index, diag_index, dimension)];
+    }
+    return total;
+}
 
 pub fn solve2x2(matrix: [2][2]f64, rhs: [2]f64) Error![2]f64 {
     const det = matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
@@ -75,6 +97,13 @@ test "small dense solver solves a 3x3 system" {
     try std.testing.expectApproxEqRel(@as(f64, 2.0), solution[0], 1e-12);
     try std.testing.expectApproxEqRel(@as(f64, -1.0), solution[1], 1e-12);
     try std.testing.expectApproxEqRel(@as(f64, 1.0), solution[2], 1e-12);
+}
+
+test "small dense helpers build identity matrices and traces" {
+    var matrix: [9]f64 = undefined;
+    try setIdentity(&matrix, 3);
+    try std.testing.expectEqual(@as(f64, 3.0), try trace(&matrix, 3));
+    try std.testing.expectEqual(@as(f64, 0.0), matrix[index(0, 1, 3)]);
 }
 
 const std = @import("std");

@@ -66,8 +66,8 @@ test "legacy config parser maps fields onto typed runtime inputs" {
     try std.testing.expect(!prepared.scene.atmosphere.has_aerosols);
     try std.testing.expect(prepared.diagnostics.jacobians);
     try std.testing.expectEqual(@as(usize, 2), prepared.requested_products.items.len);
-    try std.testing.expectEqualStrings("radiance", prepared.requested_products.items[0]);
-    try std.testing.expectEqualStrings("slant_column", prepared.requested_products.items[1]);
+    try std.testing.expectEqualStrings("radiance", prepared.requested_products.items[0].name);
+    try std.testing.expectEqualStrings("slant_column", prepared.requested_products.items[1].name);
     try std.testing.expectEqual(@as(@import("zdisamar").DerivativeMode, .semi_analytical), prepared.plan_template.scene_blueprint.derivative_mode);
 
     const request = prepared.toRequest();
@@ -95,6 +95,6 @@ test "legacy config parse owns backing storage after caller frees source buffer"
     try std.testing.expectEqualStrings("scene-owned", prepared.scene.id);
     try std.testing.expectEqual(@as(u32, 8), prepared.scene.spectral_grid.sample_count);
     try std.testing.expectEqual(@as(usize, 2), prepared.requested_products.items.len);
-    try std.testing.expectEqualStrings("radiance", prepared.requested_products.items[0]);
-    try std.testing.expectEqualStrings("slant_column", prepared.requested_products.items[1]);
+    try std.testing.expectEqualStrings("radiance", prepared.requested_products.items[0].name);
+    try std.testing.expectEqualStrings("slant_column", prepared.requested_products.items[1].name);
 }

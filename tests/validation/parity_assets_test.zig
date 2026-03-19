@@ -17,9 +17,12 @@ const ParityCase = struct {
     component: []const u8,
     upstream_case: []const u8,
     upstream_reference_output: ?[]const u8 = null,
+    upstream_numeric_anchor: ?[]const u8 = null,
     runtime_profile: RuntimeProfile,
     expected_route_family: []const u8,
     expected_derivative_mode: []const u8,
+    expected_derivative_semantics: ?[]const u8 = null,
+    expected_jacobians_used: ?bool = null,
     metrics: []const []const u8,
     tolerances: ParityTolerances,
     status: []const u8,
@@ -83,6 +86,41 @@ const ProvenanceGolden = struct {
     required_dataset_hash: []const u8,
     required_native_capability_slot: []const u8,
     required_native_entry_symbol: []const u8,
+};
+
+const OeReferenceAnchor = struct {
+    version: u32,
+    scenario: []const u8,
+    iterations: u32,
+    converged: bool,
+    cost: f64,
+    dfs: f64,
+    state_estimate: []const f64,
+    tolerances: struct {
+        cost_relative: f64,
+        dfs_absolute: f64,
+        state_absolute: f64,
+    },
+};
+
+const DoasDominoReferenceAnchor = struct {
+    version: u32,
+    scenario: []const u8,
+    source_config: []const u8,
+    iterations: u32,
+    wavelength_amf_nm: f64,
+    total_slant_column_molec_cm2: f64,
+    stratospheric_vertical_column_molec_cm2: f64,
+    stratospheric_slant_column_molec_cm2: f64,
+    retrieved_trop_slant_column_molec_cm2: f64,
+    retrieved_trop_vertical_column_molec_cm2: f64,
+    trop_amf: f64,
+    precision_trop_vertical_column_molec_cm2: f64,
+    tolerances: struct {
+        slant_column_relative: f64,
+        vertical_column_relative: f64,
+        amf_absolute: f64,
+    },
 };
 
 const BundleAsset = struct {
@@ -166,12 +204,17 @@ test "parity matrix defines executable upstream contract and retrieval-check cas
         try std.testing.expect(case.id.len > 0);
         try std.testing.expect(case.component.len > 0);
         try std.testing.expect(case.upstream_case.len > 0);
+        if (case.upstream_reference_output) |reference_output| try std.testing.expect(reference_output.len > 0);
+        if (case.upstream_numeric_anchor) |numeric_anchor| try std.testing.expect(numeric_anchor.len > 0);
         try std.testing.expect(case.runtime_profile.observation_regime.len > 0);
         try std.testing.expect(case.runtime_profile.solver_mode.len > 0);
         try std.testing.expect(case.runtime_profile.derivative_mode.len > 0);
         try std.testing.expect(case.runtime_profile.spectral_samples > 0);
         try std.testing.expect(case.expected_route_family.len > 0);
         try std.testing.expect(case.expected_derivative_mode.len > 0);
+        if (case.expected_derivative_semantics) |expected_derivative_semantics| {
+            try std.testing.expect(expected_derivative_semantics.len > 0);
+        }
         try std.testing.expect(case.metrics.len > 0);
         try std.testing.expect(case.tolerances.absolute >= 0);
         try std.testing.expect(case.tolerances.relative >= 0);
@@ -334,6 +377,308 @@ test "golden provenance fixture defines default release evidence keys" {
     try std.testing.expect(parsed.value.required_dataset_hash.len > 0);
     try std.testing.expectEqual(@as(usize, 0), parsed.value.required_native_capability_slot.len);
     try std.testing.expectEqual(@as(usize, 0), parsed.value.required_native_entry_symbol.len);
+}
+
+test "oe reference anchor defines stable retrieval diagnostics" {
+    const raw = try readValidationFile("validation/golden/oe_reference_anchor.json");
+    defer std.testing.allocator.free(raw);
+
+    const parsed = try std.json.parseFromSlice(
+        OeReferenceAnchor,
+        std.testing.allocator,
+        raw,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(u32, 1), parsed.value.version);
+    try std.testing.expect(parsed.value.scenario.len > 0);
+    try std.testing.expect(parsed.value.iterations > 0);
+    try std.testing.expect(parsed.value.converged);
+    try std.testing.expect(parsed.value.cost >= 0.0);
+    try std.testing.expect(parsed.value.dfs > 0.0);
+    try std.testing.expect(parsed.value.state_estimate.len > 0);
+    try std.testing.expect(parsed.value.tolerances.cost_relative > 0.0);
+    try std.testing.expect(parsed.value.tolerances.dfs_absolute > 0.0);
+    try std.testing.expect(parsed.value.tolerances.state_absolute > 0.0);
+}
+
+test "domino DOAS reference anchor captures vendor classic-DOAS outputs" {
+    const raw = try readValidationFile("validation/golden/doas_domino_reference_anchor.json");
+    defer std.testing.allocator.free(raw);
+
+    const parsed = try std.json.parseFromSlice(
+        DoasDominoReferenceAnchor,
+        std.testing.allocator,
+        raw,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(u32, 1), parsed.value.version);
+    try std.testing.expect(parsed.value.scenario.len > 0);
+    try std.testing.expect(parsed.value.source_config.len > 0);
+    try std.testing.expect(parsed.value.iterations > 0);
+    try std.testing.expect(parsed.value.wavelength_amf_nm > 0.0);
+    try std.testing.expect(parsed.value.total_slant_column_molec_cm2 > 0.0);
+    try std.testing.expect(parsed.value.retrieved_trop_vertical_column_molec_cm2 > 0.0);
+    try std.testing.expect(parsed.value.trop_amf > 0.0);
+    try std.testing.expect(parsed.value.tolerances.slant_column_relative > 0.0);
+    try std.testing.expect(parsed.value.tolerances.vertical_column_relative > 0.0);
+    try std.testing.expect(parsed.value.tolerances.amf_absolute > 0.0);
+}
+
+// ── WP-01 config surface coverage assertions ────────────────────────────────
+// These tests load the vendor config surface matrix and case catalog and assert
+// that the WP-01 parity gate requirements are met: no unmapped or
+// parsed_but_ignored entries, every exact/approximate entry has a zig_yaml_path,
+// and all 18 required vendor sections are covered.
+
+const VendorMatrixEntry = struct {
+    section: []const u8,
+    subsection: []const u8,
+    key: []const u8,
+    data_type: []const u8,
+    sim_retr: []const u8,
+    per_band: bool,
+    per_interval: bool,
+    per_gas: bool,
+    example_configs: []const []const u8,
+    zig_yaml_path: ?[]const u8,
+    status: []const u8,
+    runtime_consumer: ?[]const u8,
+    notes: ?[]const u8,
+};
+
+const VendorCaseEntry = struct {
+    config_file: []const u8,
+    family: []const u8,
+    retrieval_method: []const u8,
+    primary_species: []const []const u8,
+    spectral_region: []const u8,
+    key_features: []const []const u8,
+    validation_wp: []const []const u8,
+    priority: u8,
+    notes: ?[]const u8,
+};
+
+const VendorCaseCatalog = struct {
+    schema_version: u32,
+    description: []const u8,
+    cases: []const VendorCaseEntry,
+};
+
+const required_vendor_sections = [_][]const u8{
+    "GENERAL",
+    "INSTRUMENT",
+    "MUL_OFFSET",
+    "STRAY_LIGHT",
+    "RRS_RING",
+    "REFERENCE_DATA",
+    "GEOMETRY",
+    "PRESSURE_TEMPERATURE",
+    "ABSORBING_GAS",
+    "SURFACE",
+    "ATMOSPHERIC_INTERVALS",
+    "CLOUD_AEROSOL_FRACTION",
+    "CLOUD",
+    "AEROSOL",
+    "SUBCOLUMNS",
+    "RETRIEVAL",
+    "RADIATIVE_TRANSFER",
+    "ADDITIONAL_OUTPUT",
+};
+
+fn readLargeValidationFile(path: []const u8) ![]u8 {
+    return std.fs.cwd().readFileAlloc(std.testing.allocator, path, 16 * 1024 * 1024);
+}
+
+fn isVendorSectionIn(value: []const u8, set: []const []const u8) bool {
+    for (set) |v| {
+        if (std.mem.eql(u8, value, v)) return true;
+    }
+    return false;
+}
+
+test "wp01 vendor matrix has no unmapped or parsed_but_ignored entries" {
+    // WP-01 gate: every vendor key must be classified as exact, approximate,
+    // or unsupported. No unmapped or parsed_but_ignored statuses are allowed.
+    const raw = try readLargeValidationFile("tests/validation/assets/vendor_config_surface_matrix.json");
+    defer std.testing.allocator.free(raw);
+
+    const parsed = try std.json.parseFromSlice(
+        []const VendorMatrixEntry,
+        std.testing.allocator,
+        raw,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    var forbidden_count: usize = 0;
+    for (parsed.value) |entry| {
+        const is_forbidden = std.mem.eql(u8, entry.status, "unmapped") or
+            std.mem.eql(u8, entry.status, "parsed_but_ignored");
+        if (is_forbidden) {
+            std.debug.print(
+                "forbidden status '{s}' for {s}.{s}.{s}\n",
+                .{ entry.status, entry.section, entry.subsection, entry.key },
+            );
+            forbidden_count += 1;
+        }
+    }
+    if (forbidden_count > 0) {
+        std.debug.print("found {d} forbidden entries\n", .{forbidden_count});
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "wp01 vendor matrix exact and approximate entries have zig_yaml_path" {
+    // Every vendor key with exact or approximate status must map to a canonical
+    // YAML path so a typed config object can consume it.
+    const raw = try readLargeValidationFile("tests/validation/assets/vendor_config_surface_matrix.json");
+    defer std.testing.allocator.free(raw);
+
+    const parsed = try std.json.parseFromSlice(
+        []const VendorMatrixEntry,
+        std.testing.allocator,
+        raw,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    var missing_count: usize = 0;
+    for (parsed.value) |entry| {
+        const is_mapped = std.mem.eql(u8, entry.status, "exact") or
+            std.mem.eql(u8, entry.status, "approximate");
+        if (is_mapped and entry.zig_yaml_path == null) {
+            std.debug.print(
+                "exact/approximate entry missing zig_yaml_path: {s}.{s}.{s}\n",
+                .{ entry.section, entry.subsection, entry.key },
+            );
+            missing_count += 1;
+        }
+    }
+    if (missing_count > 0) {
+        std.debug.print("found {d} entries missing zig_yaml_path\n", .{missing_count});
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "wp01 vendor matrix covers all 18 required vendor sections" {
+    const raw = try readLargeValidationFile("tests/validation/assets/vendor_config_surface_matrix.json");
+    defer std.testing.allocator.free(raw);
+
+    const parsed = try std.json.parseFromSlice(
+        []const VendorMatrixEntry,
+        std.testing.allocator,
+        raw,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    for (&required_vendor_sections) |section| {
+        var found = false;
+        for (parsed.value) |entry| {
+            if (std.mem.eql(u8, entry.section, section)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            std.debug.print("required section '{s}' missing from vendor matrix\n", .{section});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "wp01 case catalog covers golden config families referenced by WP-01" {
+    // WP-01 requires one golden config-per-family test: O2A, O2A XsecLUT,
+    // NO2 DOMINO, O3 profile, SWIR greenhouse-gas, and cloud/aerosol mixed.
+    // Verify the case catalog has entries for these families.
+    const raw = try readLargeValidationFile("tests/validation/assets/vendor_case_catalog.json");
+    defer std.testing.allocator.free(raw);
+
+    const parsed = try std.json.parseFromSlice(
+        VendorCaseCatalog,
+        std.testing.allocator,
+        raw,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    // O2A (line_absorbing family, nir region, O2 species)
+    var has_o2a = false;
+    // O2A XsecLUT (lut family)
+    var has_o2a_xseclut = false;
+    // NO2 DOMINO (domino_no2 retrieval method)
+    var has_no2_domino = false;
+    // O3 profile (o3 species, cross_section family)
+    var has_o3_profile = false;
+    // SWIR greenhouse-gas (swir region or multi_band with CO2/CH4/H2O)
+    var has_swir_ghg = false;
+    // Cloud/aerosol mixed (cloud_fraction or similar key_features)
+    var has_cloud_aerosol_mixed = false;
+
+    for (parsed.value.cases) |case| {
+        // O2A: line-absorbing O2 in NIR
+        if (std.mem.eql(u8, case.family, "line_absorbing") and
+            std.mem.eql(u8, case.spectral_region, "nir"))
+        {
+            for (case.primary_species) |species| {
+                if (std.mem.eql(u8, species, "O2")) {
+                    has_o2a = true;
+                    break;
+                }
+            }
+        }
+        // O2A XsecLUT
+        if (std.mem.eql(u8, case.family, "lut")) {
+            has_o2a_xseclut = true;
+        }
+        // NO2 DOMINO
+        if (std.mem.eql(u8, case.retrieval_method, "domino_no2")) {
+            has_no2_domino = true;
+        }
+        // O3 profile
+        for (case.primary_species) |species| {
+            if (std.mem.eql(u8, species, "O3")) {
+                has_o3_profile = true;
+                break;
+            }
+        }
+        // SWIR greenhouse-gas
+        if (std.mem.eql(u8, case.spectral_region, "swir") or
+            std.mem.eql(u8, case.spectral_region, "multi_band"))
+        {
+            for (case.primary_species) |species| {
+                if (std.mem.eql(u8, species, "CO2") or
+                    std.mem.eql(u8, species, "CH4") or
+                    std.mem.eql(u8, species, "H2O") or
+                    std.mem.eql(u8, species, "CO"))
+                {
+                    has_swir_ghg = true;
+                    break;
+                }
+            }
+        }
+        // Cloud/aerosol mixed
+        for (case.key_features) |feature| {
+            if (std.mem.eql(u8, feature, "cloud_fraction_fit") or
+                std.mem.eql(u8, feature, "cloud_pressure_fit") or
+                std.mem.eql(u8, feature, "aerosol_layer_height"))
+            {
+                has_cloud_aerosol_mixed = true;
+                break;
+            }
+        }
+    }
+
+    try std.testing.expect(has_o2a);
+    try std.testing.expect(has_o2a_xseclut);
+    try std.testing.expect(has_no2_domino);
+    try std.testing.expect(has_o3_profile);
+    try std.testing.expect(has_swir_ghg);
+    try std.testing.expect(has_cloud_aerosol_mixed);
 }
 
 test "release readiness matrix ties commands packages and evidence together" {

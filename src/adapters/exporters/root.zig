@@ -21,7 +21,7 @@ fn makeOutputRoot(prefix: []const u8, path_buffer: []u8) ![]const u8 {
     return std.fmt.bufPrint(path_buffer, "zig-cache/exporter-tests/{s}-{d}", .{ prefix, timestamp });
 }
 
-fn makeResult() Result {
+fn makeResult() !Result {
     const dataset_hashes = &[_][]const u8{
         "sha256:test-cross-sections",
         "sha256:test-lut",
@@ -36,7 +36,7 @@ fn makeResult() Result {
         "builtin.netcdf_cf@0.1.0",
         "builtin.zarr@0.1.0",
     });
-    return Result.init(42, "export-suite", "scene-export", provenance);
+    return Result.init(std.testing.allocator, 42, "export-suite", "scene-export", provenance);
 }
 
 test "netcdf/cf exporter writes file payload to destination uri" {
@@ -46,7 +46,8 @@ test "netcdf/cf exporter writes file payload to destination uri" {
 
     const destination_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}/scene.nc", .{root});
     defer std.testing.allocator.free(destination_uri);
-    var result = makeResult();
+    var result = try makeResult();
+    defer result.deinit(std.testing.allocator);
 
     const report = try writer.write(
         std.testing.allocator,
@@ -80,7 +81,8 @@ test "zarr exporter writes structured store files" {
 
     const destination_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}/scene.zarr", .{root});
     defer std.testing.allocator.free(destination_uri);
-    var result = makeResult();
+    var result = try makeResult();
+    defer result.deinit(std.testing.allocator);
 
     const report = try writer.write(
         std.testing.allocator,

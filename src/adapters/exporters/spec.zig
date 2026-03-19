@@ -45,6 +45,7 @@ pub const ExportView = struct {
     retrieval_fitted_measurement: ?*const MeasurementSpaceProduct = null,
     retrieval_averaging_kernel: ?*const Result.RetrievalMatrixProduct = null,
     retrieval_jacobian: ?*const Result.RetrievalMatrixProduct = null,
+    retrieval_posterior_covariance: ?*const Result.RetrievalMatrixProduct = null,
 
     pub fn fromResult(result: *const Result) ExportView {
         return .{
@@ -60,6 +61,7 @@ pub const ExportView = struct {
             .retrieval_fitted_measurement = if (result.retrieval_products.fitted_measurement) |*product| product else null,
             .retrieval_averaging_kernel = if (result.retrieval_products.averaging_kernel) |*product| product else null,
             .retrieval_jacobian = if (result.retrieval_products.jacobian) |*product| product else null,
+            .retrieval_posterior_covariance = if (result.retrieval_products.posterior_covariance) |*product| product else null,
         };
     }
 };

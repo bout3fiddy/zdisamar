@@ -71,11 +71,12 @@ fn renderText(allocator: std.mem.Allocator, view: ExportView) ![]u8 {
 }
 
 test "diagnostic exporter renders csv and text payloads" {
-    const result = @import("../../core/Result.zig").Result.init(3, "diag-ws", "diag-scene", .{
+    var result = try @import("../../core/Result.zig").Result.init(std.testing.allocator, 3, "diag-ws", "diag-scene", .{
         .plan_id = 3,
         .workspace_label = "diag-ws",
         .scene_id = "diag-scene",
     });
+    defer result.deinit(std.testing.allocator);
 
     const csv = try renderCsv(std.testing.allocator, ExportView.fromResult(&result));
     defer std.testing.allocator.free(csv);

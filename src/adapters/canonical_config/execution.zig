@@ -3,16 +3,21 @@ const core_errors = @import("../../core/errors.zig");
 const Engine = @import("../../core/Engine.zig").Engine;
 const Request = @import("../../core/Request.zig").Request;
 const Result = @import("../../core/Result.zig").Result;
+const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
+const SceneModel = @import("../../model/Scene.zig");
+const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const export_spec = @import("../exporters/spec.zig");
 const exporters = @import("../exporters/writer.zig");
 const DocumentModule = @import("Document.zig");
 const ResolvedExperiment = DocumentModule.ResolvedExperiment;
+const Ingest = DocumentModule.Ingest;
 const Stage = DocumentModule.Stage;
 const StageKind = DocumentModule.StageKind;
 const Product = DocumentModule.Product;
 const ProductKind = DocumentModule.ProductKind;
 const OutputSpec = DocumentModule.OutputSpec;
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
+const spectral_runtime = @import("../ingest/spectral_ascii_runtime.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Error =
@@ -23,14 +28,17 @@ pub const Error =
         DuplicateProduct,
         MissingOutputProduct,
         MissingMeasurementBinding,
+        MissingNoiseSigma,
+        MultipleMeasurementSpaceProducts,
         UnsupportedMeasurementBinding,
         UnsupportedOutputTarget,
+        UnsupportedVendorControl,
     };
 
 pub const StageExecution = struct {
     kind: StageKind,
     stage: Stage,
-    product_names: []const []const u8,
+    product_requests: []const Request.RequestedProduct,
     diagnostics: @import("../../core/diagnostics.zig").DiagnosticsSpec,
 };
 
@@ -38,7 +46,7 @@ pub const ProductRef = struct {
     name: []const u8,
     kind: ProductKind,
     stage_index: usize,
-    observable: []const u8 = "",
+    observable: ?MeasurementQuantity = null,
     apply_noise: bool = false,
 };
 
@@ -82,12 +90,12 @@ pub const ExecutionOutcome = struct {
 
 pub const ExecutionProgram = struct {
     allocator: Allocator,
-    experiment: ResolvedExperiment,
+    experiment: *ResolvedExperiment,
     stages: []StageExecution,
     products: []ProductRef,
     outputs: []ExportJob,
 
-    pub fn init(allocator: Allocator, experiment: ResolvedExperiment) !ExecutionProgram {
+    pub fn init(allocator: Allocator, experiment: *ResolvedExperiment) !ExecutionProgram {
         var stage_count: usize = 0;
         if (experiment.simulation != null) stage_count += 1;
         if (experiment.retrieval != null) stage_count += 1;
@@ -104,21 +112,25 @@ pub const ExecutionProgram = struct {
         const outputs = try allocator.alloc(ExportJob, experiment.outputs.len);
         errdefer allocator.free(outputs);
 
+        // Gate: reject configs with unsupported vendor controls before compiling stages.
+        try validateVendorControls(experiment);
+
         var stage_index: usize = 0;
         var initialized_stage_count: usize = 0;
         var product_index: usize = 0;
         errdefer {
             for (stages[0..initialized_stage_count]) |stage_execution| {
-                if (stage_execution.product_names.len != 0) allocator.free(stage_execution.product_names);
+                if (stage_execution.product_requests.len != 0) allocator.free(stage_execution.product_requests);
             }
         }
 
         if (experiment.simulation) |stage| {
-            const product_names = try collectProductNames(allocator, stage.products);
+            try validateStageProducts(stage.products);
+            const product_requests = try collectRequestedProducts(allocator, stage.products);
             stages[stage_index] = .{
                 .kind = .simulation,
-                .stage = stage,
-                .product_names = product_names,
+                .stage = stage.*,
+                .product_requests = product_requests,
                 .diagnostics = stage.diagnostics,
             };
             initialized_stage_count += 1;
@@ -137,13 +149,14 @@ pub const ExecutionProgram = struct {
         }
 
         if (experiment.retrieval) |stage| {
+            try validateStageProducts(stage.products);
             var diagnostics = stage.diagnostics;
             if (hasJacobianProduct(stage.products)) diagnostics.jacobians = true;
-            const product_names = try collectProductNames(allocator, stage.products);
+            const product_requests = try collectRequestedProducts(allocator, stage.products);
             stages[stage_index] = .{
                 .kind = .retrieval,
-                .stage = stage,
-                .product_names = product_names,
+                .stage = stage.*,
+                .product_requests = product_requests,
                 .diagnostics = diagnostics,
             };
             initialized_stage_count += 1;
@@ -181,7 +194,7 @@ pub const ExecutionProgram = struct {
 
     pub fn deinit(self: *ExecutionProgram) void {
         for (self.stages) |stage| {
-            if (stage.product_names.len != 0) self.allocator.free(stage.product_names);
+            if (stage.product_requests.len != 0) self.allocator.free(stage.product_requests);
         }
         if (self.stages.len != 0) self.allocator.free(self.stages);
         if (self.products.len != 0) self.allocator.free(self.products);
@@ -214,31 +227,51 @@ pub const ExecutionProgram = struct {
             defer plan.deinit();
 
             var request = Request.init(stage_execution.stage.scene);
+            var owned_ingest_product: ?*MeasurementSpaceProduct = null;
+            defer if (owned_ingest_product) |product| {
+                product.deinit(allocator);
+                allocator.destroy(product);
+            };
             request.inverse_problem = stage_execution.stage.inverse;
-            request.requested_products = stage_execution.product_names;
+            request.requested_products = stage_execution.product_requests;
             request.expected_derivative_mode = stage_execution.stage.plan.scene_blueprint.derivative_mode;
             request.diagnostics = stage_execution.diagnostics;
 
             if (stage_execution.kind == .retrieval and stage_execution.stage.inverse != null) {
                 const source = stage_execution.stage.inverse.?.measurements.source;
-                switch (source.kind) {
-                    .none, .external_observation => {},
+                switch (source.kind()) {
+                    .none => {},
+                    .external_observation => return error.MissingMeasurementBinding,
                     .stage_product => {
-                        const source_ref = findProduct(self.products, source.name) orelse return error.MissingMeasurementBinding;
+                        const source_name = source.name();
+                        const source_ref = findProduct(self.products, source_name) orelse return error.MissingMeasurementBinding;
                         if (source_ref.kind != .measurement_space) return error.UnsupportedMeasurementBinding;
                         if (source_ref.stage_index >= executed_stage_count) return error.MissingMeasurementBinding;
                         const source_result = &stage_outcomes[source_ref.stage_index].result;
                         if (source_result.measurement_space_product) |*source_product| {
                             request.measurement_binding = .{
-                                .source_name = source_ref.name,
-                                .observable = if (source_ref.observable.len != 0) source_ref.observable else stage_execution.stage.inverse.?.measurements.observable,
-                                .product = source_product,
+                                .source = .{ .stage_product = .{ .name = source_ref.name } },
+                                .borrowed_product = .init(source_product),
                             };
                         } else {
                             return error.MissingMeasurementBinding;
                         }
                     },
-                    .asset, .ingest, .bundle_default, .atmosphere => return error.UnsupportedMeasurementBinding,
+                    .ingest => {
+                        const source_name = source.name();
+                        const product = try buildIngestMeasurementProduct(
+                            allocator,
+                            self.experiment,
+                            &request,
+                            source_name,
+                        );
+                        owned_ingest_product = product;
+                        request.measurement_binding = .{
+                            .source = .{ .ingest = @import("../../model/Binding.zig").IngestRef.fromFullName(source_name) },
+                            .borrowed_product = .init(product),
+                        };
+                    },
+                    .asset, .bundle_default, .atmosphere => return error.UnsupportedMeasurementBinding,
                 }
             }
 
@@ -246,8 +279,15 @@ pub const ExecutionProgram = struct {
 
             stage_outcomes[index] = .{
                 .kind = stage_execution.kind,
-                .result = try engine.execute(&plan, &workspace, request),
+                .result = try engine.execute(&plan, &workspace, &request),
             };
+            if (stageRequestsAppliedNoise(self.products, index)) {
+                try applyNoiseToStageMeasurementProduct(
+                    &stage_outcomes[index].result,
+                    &stage_execution.stage.scene,
+                    stageNoiseSeed(stage_execution),
+                );
+            }
             executed_stage_count += 1;
         }
 
@@ -282,7 +322,7 @@ pub const ExecutionProgram = struct {
     }
 };
 
-pub fn compileResolved(allocator: Allocator, experiment: ResolvedExperiment) !ExecutionProgram {
+pub fn compileResolved(allocator: Allocator, experiment: *ResolvedExperiment) !ExecutionProgram {
     return ExecutionProgram.init(allocator, experiment);
 }
 
@@ -292,10 +332,11 @@ pub fn resolveCompileAndExecute(
     path: []const u8,
 ) !struct { program: ExecutionProgram, outcome: ExecutionOutcome } {
     var experiment = try DocumentModule.resolveFile(allocator, path);
-    errdefer experiment.deinit();
+    var experiment_owned = true;
+    errdefer if (experiment_owned) experiment.deinit();
 
     var program = try compileResolved(allocator, experiment);
-    experiment = undefined;
+    experiment_owned = false;
     errdefer program.deinit();
 
     const outcome = try program.execute(allocator, engine);
@@ -305,11 +346,43 @@ pub fn resolveCompileAndExecute(
     };
 }
 
-fn collectProductNames(allocator: Allocator, products: []const Product) ![]const []const u8 {
-    if (products.len == 0) return &[_][]const u8{};
-    const names = try allocator.alloc([]const u8, products.len);
-    for (products, 0..) |product, index| names[index] = product.name;
-    return names;
+fn collectRequestedProducts(allocator: Allocator, products: []const Product) ![]const Request.RequestedProduct {
+    if (products.len == 0) return &[_]Request.RequestedProduct{};
+    const requests = try allocator.alloc(Request.RequestedProduct, products.len);
+    for (products, 0..) |product, index| {
+        requests[index] = .named(
+            product.name,
+            requestProductKind(product.kind),
+            product.observable,
+        );
+    }
+    return requests;
+}
+
+fn requestProductKind(kind: ProductKind) Request.RequestedProductKind {
+    return switch (kind) {
+        .measurement_space => .measurement_space,
+        .state_vector => .state_vector,
+        .fitted_measurement => .fitted_measurement,
+        .averaging_kernel => .averaging_kernel,
+        .jacobian => .jacobian,
+        .posterior_covariance => .posterior_covariance,
+        .result => .result,
+        .diagnostics => .diagnostics,
+    };
+}
+
+fn validateStageProducts(products: []const Product) !void {
+    var measurement_space_count: usize = 0;
+    for (products) |product| {
+        if (product.apply_noise and product.kind != .measurement_space) {
+            return error.UnsupportedOutputTarget;
+        }
+        if (product.kind == .measurement_space) {
+            measurement_space_count += 1;
+            if (measurement_space_count > 1) return error.MultipleMeasurementSpaceProducts;
+        }
+    }
 }
 
 fn hasJacobianProduct(products: []const Product) bool {
@@ -332,6 +405,233 @@ fn findProduct(products: []const ProductRef, name: []const u8) ?ProductRef {
     return null;
 }
 
+fn stageRequestsAppliedNoise(products: []const ProductRef, stage_index: usize) bool {
+    for (products) |product| {
+        if (product.stage_index == stage_index and product.kind == .measurement_space and product.apply_noise) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn stageNoiseSeed(stage_execution: StageExecution) u64 {
+    if (stage_execution.stage.noise_seed) |seed| return seed;
+
+    var hasher = std.hash.Wyhash.init(@intFromEnum(stage_execution.kind));
+    hasher.update(stage_execution.stage.scene.id);
+    return hasher.final();
+}
+
+fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel.Scene, seed: u64) !void {
+    if (result.measurement_space_product) |*product| {
+        if (product.noise_sigma.len == 0 or product.noise_sigma.len != product.radiance.len) {
+            return error.MissingNoiseSigma;
+        }
+        if (product.irradiance.len != product.radiance.len or product.reflectance.len != product.radiance.len) {
+            return error.InvalidRequest;
+        }
+
+        var prng = std.Random.DefaultPrng.init(seed);
+        const random = prng.random();
+        for (product.radiance, product.noise_sigma, 0..) |*radiance, sigma, index| {
+            const perturbed = radiance.* + random.floatNorm(f64) * sigma;
+            radiance.* = @max(perturbed, 0.0);
+            product.reflectance[index] = reflectanceForSample(scene, radiance.*, product.irradiance[index]);
+        }
+        recomputeMeasurementSummary(product);
+        result.measurement_space = product.summary;
+        return;
+    }
+    return error.UnsupportedOutputTarget;
+}
+
+fn reflectanceForSample(scene: *const SceneModel.Scene, radiance: f64, irradiance: f64) f64 {
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+    return (radiance * std.math.pi) / @max(irradiance * solar_cosine, 1.0e-9);
+}
+
+fn recomputeMeasurementSummary(product: *MeasurementSpaceProduct) void {
+    if (product.radiance.len == 0) return;
+
+    var radiance_sum: f64 = 0.0;
+    var irradiance_sum: f64 = 0.0;
+    var reflectance_sum: f64 = 0.0;
+    var noise_sum: f64 = 0.0;
+    for (0..product.radiance.len) |index| {
+        radiance_sum += product.radiance[index];
+        irradiance_sum += product.irradiance[index];
+        reflectance_sum += product.reflectance[index];
+        if (index < product.noise_sigma.len) noise_sum += product.noise_sigma[index];
+    }
+
+    const sample_count = @as(f64, @floatFromInt(product.radiance.len));
+    product.summary.sample_count = @intCast(product.radiance.len);
+    product.summary.wavelength_start_nm = product.wavelengths[0];
+    product.summary.wavelength_end_nm = product.wavelengths[product.wavelengths.len - 1];
+    product.summary.mean_radiance = radiance_sum / sample_count;
+    product.summary.mean_irradiance = irradiance_sum / sample_count;
+    product.summary.mean_reflectance = reflectance_sum / sample_count;
+    product.summary.mean_noise_sigma = noise_sum / sample_count;
+}
+
+const IngestReference = struct {
+    ingest_name: []const u8,
+    output_name: []const u8,
+};
+
+fn buildIngestMeasurementProduct(
+    allocator: Allocator,
+    experiment: *ResolvedExperiment,
+    request: *Request,
+    reference: []const u8,
+) !*MeasurementSpaceProduct {
+    const ingest_reference = try parseIngestReference(reference);
+    const ingest = experiment.findIngest(ingest_reference.ingest_name) orelse return error.MissingMeasurementBinding;
+    if (!std.mem.eql(u8, ingest_reference.output_name, "radiance")) return error.UnsupportedMeasurementBinding;
+
+    const product = try buildRadianceObservationProduct(allocator, &request.scene, ingest);
+    if (request.scene.observation_model.sampling == .measured_channels) {
+        request.scene.spectral_grid.start_nm = product.wavelengths[0];
+        request.scene.spectral_grid.end_nm = product.wavelengths[product.wavelengths.len - 1];
+        request.scene.spectral_grid.sample_count = @intCast(product.wavelengths.len);
+        request.scene.observation_model.measured_wavelengths_nm = product.wavelengths;
+        request.scene.observation_model.owns_measured_wavelengths = false;
+    }
+    if (request.scene.observation_model.reference_radiance.len == 0 or
+        request.scene.observation_model.reference_radiance.len != product.radiance.len)
+    {
+        request.scene.observation_model.reference_radiance = product.radiance;
+        request.scene.observation_model.owns_reference_radiance = false;
+    }
+    switch (request.scene.observation_model.noise_model) {
+        .snr_from_input, .s5p_operational => request.scene.observation_model.ingested_noise_sigma = product.noise_sigma,
+        .none, .shot_noise => {},
+    }
+    if (!request.scene.observation_model.operational_solar_spectrum.enabled() and
+        ingest.loaded_spectra.channelCount(.irradiance) > 0)
+    {
+        request.scene.observation_model.operational_solar_spectrum = .{
+            .wavelengths_nm = product.wavelengths,
+            .irradiance = product.irradiance,
+        };
+    }
+    return product;
+}
+
+fn buildRadianceObservationProduct(
+    allocator: Allocator,
+    scene: *const @import("../../model/Scene.zig").Scene,
+    ingest: Ingest,
+) !*MeasurementSpaceProduct {
+    const wavelengths = try ingest.loaded_spectra.wavelengthsForKind(allocator, .radiance);
+    errdefer if (wavelengths.len != 0) allocator.free(wavelengths);
+    if (wavelengths.len == 0) return error.MissingMeasurementBinding;
+
+    const radiance = try spectral_runtime.channelValuesForKind(allocator, ingest.loaded_spectra, .radiance);
+    errdefer if (radiance.len != 0) allocator.free(radiance);
+    const noise_sigma = try ingest.loaded_spectra.noiseSigmaForKind(allocator, .radiance);
+    errdefer if (noise_sigma.len != 0) allocator.free(noise_sigma);
+    const irradiance = try alignedIrradianceForObservation(allocator, scene, ingest, wavelengths);
+    errdefer if (irradiance.len != 0) allocator.free(irradiance);
+    const reflectance = try allocator.alloc(f64, wavelengths.len);
+    errdefer if (reflectance.len != 0) allocator.free(reflectance);
+
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+    var radiance_sum: f64 = 0.0;
+    var irradiance_sum: f64 = 0.0;
+    var reflectance_sum: f64 = 0.0;
+    var sigma_sum: f64 = 0.0;
+    for (0..wavelengths.len) |index| {
+        reflectance[index] = if (irradiance[index] > 0.0)
+            (radiance[index] * std.math.pi) / @max(irradiance[index] * solar_cosine, 1.0e-9)
+        else
+            0.0;
+        radiance_sum += radiance[index];
+        irradiance_sum += irradiance[index];
+        reflectance_sum += reflectance[index];
+        if (index < noise_sigma.len) sigma_sum += noise_sigma[index];
+    }
+
+    const product = try allocator.create(MeasurementSpaceProduct);
+    errdefer allocator.destroy(product);
+    product.* = .{
+        .summary = .{
+            .sample_count = @intCast(wavelengths.len),
+            .wavelength_start_nm = wavelengths[0],
+            .wavelength_end_nm = wavelengths[wavelengths.len - 1],
+            .mean_radiance = radiance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_irradiance = irradiance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_noise_sigma = sigma_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_jacobian = null,
+        },
+        .wavelengths = @constCast(wavelengths),
+        .radiance = radiance,
+        .irradiance = irradiance,
+        .reflectance = reflectance,
+        .noise_sigma = @constCast(noise_sigma),
+        .jacobian = null,
+        .effective_air_mass_factor = 0.0,
+        .effective_single_scatter_albedo = 0.0,
+        .effective_temperature_k = 0.0,
+        .effective_pressure_hpa = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .total_optical_depth = 0.0,
+        .depolarization_factor = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+    };
+    return product;
+}
+
+fn alignedIrradianceForObservation(
+    allocator: Allocator,
+    scene: *const @import("../../model/Scene.zig").Scene,
+    ingest: Ingest,
+    wavelengths: []const f64,
+) ![]f64 {
+    if (scene.observation_model.operational_solar_spectrum.enabled()) {
+        return spectral_runtime.correctedIrradianceOnWavelengthGrid(
+            allocator,
+            ingest.loaded_spectra,
+            .irradiance,
+            &scene.observation_model.operational_solar_spectrum,
+            wavelengths,
+        ) catch |err| switch (err) {
+            spectral_runtime.ParseError.InvalidLine => core_errors.Error.InvalidRequest,
+            else => err,
+        };
+    }
+    if (ingest.loaded_spectra.channelCount(.irradiance) > 0) {
+        var solar = try ingest.loaded_spectra.solarSpectrumForKind(allocator, .irradiance);
+        defer solar.deinitOwned(allocator);
+        return spectral_runtime.correctedIrradianceOnWavelengthGrid(
+            allocator,
+            ingest.loaded_spectra,
+            .irradiance,
+            &solar,
+            wavelengths,
+        ) catch |err| switch (err) {
+            spectral_runtime.ParseError.InvalidLine => core_errors.Error.InvalidRequest,
+            else => err,
+        };
+    }
+
+    const zeros = try allocator.alloc(f64, wavelengths.len);
+    @memset(zeros, 0.0);
+    return zeros;
+}
+
+fn parseIngestReference(reference: []const u8) !IngestReference {
+    const dot_index = std.mem.indexOfScalar(u8, reference, '.') orelse return error.MissingMeasurementBinding;
+    return .{
+        .ingest_name = reference[0..dot_index],
+        .output_name = reference[dot_index + 1 ..],
+    };
+}
+
 fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.ExportView {
     var view = export_spec.ExportView.fromResult(result);
 
@@ -343,6 +643,7 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_fitted_measurement = null;
             view.retrieval_averaging_kernel = null;
             view.retrieval_jacobian = null;
+            view.retrieval_posterior_covariance = null;
         },
         .state_vector => {
             if (view.retrieval_state_vector == null) return error.UnsupportedOutputTarget;
@@ -350,6 +651,7 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_fitted_measurement = null;
             view.retrieval_averaging_kernel = null;
             view.retrieval_jacobian = null;
+            view.retrieval_posterior_covariance = null;
         },
         .fitted_measurement => {
             if (view.retrieval_fitted_measurement == null) return error.UnsupportedOutputTarget;
@@ -357,6 +659,7 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_state_vector = null;
             view.retrieval_averaging_kernel = null;
             view.retrieval_jacobian = null;
+            view.retrieval_posterior_covariance = null;
         },
         .averaging_kernel => {
             if (view.retrieval_averaging_kernel == null) return error.UnsupportedOutputTarget;
@@ -364,6 +667,7 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_state_vector = null;
             view.retrieval_fitted_measurement = null;
             view.retrieval_jacobian = null;
+            view.retrieval_posterior_covariance = null;
         },
         .jacobian => {
             if (view.retrieval_jacobian == null) return error.UnsupportedOutputTarget;
@@ -371,6 +675,15 @@ fn exportViewForTarget(result: *const Result, target: ProductRef) !export_spec.E
             view.retrieval_state_vector = null;
             view.retrieval_fitted_measurement = null;
             view.retrieval_averaging_kernel = null;
+            view.retrieval_posterior_covariance = null;
+        },
+        .posterior_covariance => {
+            if (view.retrieval_posterior_covariance == null) return error.UnsupportedOutputTarget;
+            view.measurement_space_product = null;
+            view.retrieval_state_vector = null;
+            view.retrieval_fitted_measurement = null;
+            view.retrieval_averaging_kernel = null;
+            view.retrieval_jacobian = null;
         },
         .result => {},
         .diagnostics => return error.UnsupportedOutputTarget,
@@ -384,4 +697,70 @@ fn exporterPluginId(format: ExportFormat) []const u8 {
         .netcdf_cf => "builtin.netcdf_cf",
         .zarr => "builtin.zarr",
     };
+}
+
+/// Reject configs containing vendor controls that are parsed from YAML but
+/// not consumed by any runtime code path. This prevents silent
+/// parsed-but-ignored behavior and enforces the WP-01 parity invariant.
+///
+/// Current checks:
+/// - vendor_compat.simulation_method: DISMAS is not supported.
+/// - vendor_compat.retrieval_method: DOAS, classic_DOAS, and DOMINO_NO2
+///   are not yet supported; only OE is fully implemented.
+/// - Spectral response shapes must map to a known builtin line shape.
+///
+/// This gate is expanded as later WPs add vendor sections to the YAML schema.
+fn validateVendorControls(experiment: *const ResolvedExperiment) Error!void {
+    const log = std.log.scoped(.execution);
+    const BuiltinLineShapeKind = @import("../../model/instrument/line_shape.zig").BuiltinLineShapeKind;
+    const stages = [_]?*const Stage{ experiment.simulation, experiment.retrieval };
+    for (stages) |maybe_stage| {
+        const stage = maybe_stage orelse continue;
+
+        // A spectral response shape is only honored if it maps to a known
+        // builtin line shape. Arbitrary/external shapes that cannot be
+        // consumed must be rejected.
+        if (stage.spectral_response_shape.len > 0) {
+            _ = BuiltinLineShapeKind.parse(stage.spectral_response_shape) catch {
+                log.err("UnsupportedVendorControl: spectral_response_shape '{s}' does not map to a known builtin line shape", .{stage.spectral_response_shape});
+                return error.UnsupportedVendorControl;
+            };
+        }
+
+        // If vendor_compat is present, validate that its controls are supportable.
+        if (stage.vendor_compat) |compat| {
+            // DISMAS simulation method is not supported.
+            if (compat.simulation_method) |method| {
+                if (method == .dismas) {
+                    log.err("UnsupportedVendorControl: vendor_compat.simulation_method = dismas is not supported", .{});
+                    return error.UnsupportedVendorControl;
+                }
+            }
+            if (compat.simulation_only) {
+                log.err("UnsupportedVendorControl: vendor_compat.simulation_only is parsed but not yet honored", .{});
+                return error.UnsupportedVendorControl;
+            }
+
+            // DOAS-family and DOMINO retrieval methods are not yet supported;
+            // only OE is fully implemented. The vendor verifier
+            // (verifyConfigFileModule.f90) validates method legality
+            // per-section; this gate rejects methods the Zig runtime cannot
+            // honor to prevent silent parsed-but-ignored behavior.
+            if (compat.retrieval_method) |method| {
+                switch (method) {
+                    .doas, .classic_doas, .domino_no2 => {
+                        log.err("UnsupportedVendorControl: vendor_compat.retrieval_method = {s} is not yet supported", .{@tagName(method)});
+                        return error.UnsupportedVendorControl;
+                    },
+                    .oe, .dismas => {},
+                }
+            }
+        }
+        if (stage.general) |general| {
+            if (general.simulation_only) {
+                log.err("UnsupportedVendorControl: general.simulation_only is parsed but not yet honored", .{});
+                return error.UnsupportedVendorControl;
+            }
+        }
+    }
 }

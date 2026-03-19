@@ -141,8 +141,8 @@ fn resolveCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout
             try stdout.writeAll("    products:\n");
             for (stage.products) |product| {
                 try stdout.print("      - name: {s}\n        kind: {s}\n", .{ product.name, @tagName(product.kind) });
-                if (product.observable.len != 0) {
-                    try stdout.print("        observable: {s}\n", .{product.observable});
+                if (product.observable) |observable| {
+                    try stdout.print("        observable: {s}\n", .{observable.label()});
                 }
             }
         }
@@ -168,8 +168,8 @@ fn resolveCanonicalConfig(allocator: std.mem.Allocator, path: []const u8, stdout
             try stdout.writeAll("    products:\n");
             for (stage.products) |product| {
                 try stdout.print("      - name: {s}\n        kind: {s}\n", .{ product.name, @tagName(product.kind) });
-                if (product.observable.len != 0) {
-                    try stdout.print("        observable: {s}\n", .{product.observable});
+                if (product.observable) |observable| {
+                    try stdout.print("        observable: {s}\n", .{observable.label()});
                 }
             }
         }
@@ -213,20 +213,20 @@ fn emitImportWarnings(warnings: []const legacy_config.ImportWarning, stderr: any
     }
 }
 
-fn effectiveWorkspace(experiment: zdisamar.canonical_config.ResolvedExperiment) []const u8 {
+fn effectiveWorkspace(experiment: *const zdisamar.canonical_config.ResolvedExperiment) []const u8 {
     if (experiment.metadata.workspace.len != 0) return experiment.metadata.workspace;
     if (experiment.metadata.id.len != 0) return experiment.metadata.id;
     return "canonical-config";
 }
 
-fn stageCount(experiment: zdisamar.canonical_config.ResolvedExperiment) usize {
+fn stageCount(experiment: *const zdisamar.canonical_config.ResolvedExperiment) usize {
     var count: usize = 0;
     if (experiment.simulation != null) count += 1;
     if (experiment.retrieval != null) count += 1;
     return count;
 }
 
-fn findOutputKind(experiment: zdisamar.canonical_config.ResolvedExperiment, name: []const u8) ?zdisamar.canonical_config.ProductKind {
+fn findOutputKind(experiment: *const zdisamar.canonical_config.ResolvedExperiment, name: []const u8) ?zdisamar.canonical_config.ProductKind {
     return if (experiment.findProduct(name)) |product| product.kind else null;
 }
 

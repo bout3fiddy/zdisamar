@@ -1,6 +1,6 @@
 const std = @import("std");
 const PlanCache = @import("../cache/PlanCache.zig").PlanCache;
-const PreparedPlanCache = @import("../cache/PreparedPlanCache.zig").PreparedPlanCache;
+const PreparedLayout = @import("../cache/PreparedLayout.zig").PreparedLayout;
 const ThreadContext = @import("ThreadContext.zig").ThreadContext;
 
 const Allocator = std.mem.Allocator;
@@ -14,7 +14,7 @@ pub const ExecuteFn = *const fn (
     ctx: ?*anyopaque,
     thread: *ThreadContext,
     job: BatchJob,
-    prepared: *const PreparedPlanCache,
+    prepared_layout: *const PreparedLayout,
 ) anyerror!void;
 
 pub const BatchRunner = struct {
@@ -59,8 +59,9 @@ pub const BatchRunner = struct {
                     thread.reset();
                 }
             }
-            try thread.beginExecution(job.plan_id, &entry.prepared);
-            execute(exec_ctx, thread, job, &entry.prepared) catch |err| {
+            try thread.beginExecution(job.plan_id);
+            thread.prepareScratch(&entry.prepared_layout);
+            execute(exec_ctx, thread, job, &entry.prepared_layout) catch |err| {
                 self.failed_jobs += 1;
                 return err;
             };
@@ -81,11 +82,11 @@ test "batch runner executes queued jobs against prepared plans" {
             ctx_ptr: ?*anyopaque,
             thread: *ThreadContext,
             job: BatchJob,
-            prepared: *const PreparedPlanCache,
+            prepared_layout: *const PreparedLayout,
         ) !void {
             _ = thread;
             _ = job;
-            _ = prepared;
+            _ = prepared_layout;
             const ctx: *Ctx = @ptrCast(@alignCast(ctx_ptr.?));
             ctx.executed += 1;
         }
@@ -96,8 +97,7 @@ test "batch runner executes queued jobs against prepared plans" {
     try plan_cache.put(1, .{ .measurement_capacity = 16 });
     try plan_cache.put(2, .{ .measurement_capacity = 32 });
 
-    var thread = try ThreadContext.init(std.testing.allocator, "batch-thread");
-    defer thread.deinit();
+    var thread = ThreadContext.init("batch-thread");
 
     var runner = BatchRunner.init(std.testing.allocator);
     defer runner.deinit();

@@ -24,6 +24,7 @@ pub const ObservationModel = @import("ObservationModel.zig").ObservationModel;
 pub const ObservationRegime = @import("ObservationModel.zig").ObservationRegime;
 pub const StateVector = @import("StateVector.zig").StateVector;
 pub const StateParameter = @import("StateVector.zig").Parameter;
+pub const StateTarget = @import("StateVector.zig").Target;
 pub const StateBounds = @import("StateVector.zig").Bounds;
 pub const StatePrior = @import("StateVector.zig").Prior;
 pub const StateTransform = @import("StateVector.zig").Transform;
@@ -70,7 +71,7 @@ pub const Scene = struct {
     aerosol: Aerosol = .{},
     observation_model: ObservationModel = .{},
 
-    pub fn validate(self: Scene) errors.Error!void {
+    pub fn validate(self: *const Scene) errors.Error!void {
         if (self.id.len == 0) {
             return errors.Error.MissingScene;
         }
@@ -84,9 +85,14 @@ pub const Scene = struct {
         try self.cloud.validate();
         try self.aerosol.validate();
         try self.observation_model.validate();
+        if (self.observation_model.measured_wavelengths_nm.len != 0 and
+            self.observation_model.measured_wavelengths_nm.len != @as(usize, self.spectral_grid.sample_count))
+        {
+            return errors.Error.InvalidRequest;
+        }
     }
 
-    pub fn layoutRequirements(self: Scene) LayoutRequirements {
+    pub fn layoutRequirements(self: *const Scene) LayoutRequirements {
         return .{
             .spectral_start_nm = self.spectral_grid.start_nm,
             .spectral_end_nm = self.spectral_grid.end_nm,
@@ -107,7 +113,7 @@ test "scene validation rejects missing instrument and accepts valid scene" {
     var scene: Scene = .{ .id = "scene-ok", .spectral_grid = .{ .sample_count = 16 } };
     try scene.validate();
 
-    scene.observation_model.instrument = "";
+    scene.observation_model.instrument = .unset;
     try std.testing.expectError(errors.Error.MissingObservationInstrument, scene.validate());
 }
 
@@ -131,13 +137,13 @@ test "blueprint and inverse problem expose canonical layout and validation contr
         .id = "retrieval-1",
         .state_vector = .{
             .parameters = &[_]StateParameter{
-                .{ .name = "albedo", .target = "scene.surface.albedo" },
-                .{ .name = "ozone", .target = "scene.absorbers.o3.scale" },
+                .{ .name = "albedo", .target = .surface_albedo },
+                .{ .name = "aerosol_tau", .target = .aerosol_optical_depth_550_nm },
             },
         },
         .measurements = .{
-            .product = "slant_column",
-            .observable = "slant_column",
+            .product_name = "slant_column",
+            .observable = .slant_column,
             .sample_count = 121,
         },
     }).validate();
@@ -148,7 +154,7 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
         .id = "scene-o2a",
         .atmosphere = .{
             .layer_count = 48,
-            .profile_source = .{ .kind = .asset, .name = "us_standard_profile" },
+            .profile_source = .{ .asset = .{ .name = "us_standard_profile" } },
             .surface_pressure_hpa = 1013.0,
         },
         .geometry = .{
@@ -173,22 +179,26 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
                 .{
                     .id = "o2",
                     .species = "o2",
-                    .profile_source = .{ .kind = .atmosphere },
+                    .profile_source = .atmosphere,
                     .spectroscopy = .{
                         .mode = .line_by_line,
-                        .line_list = .{ .kind = .asset, .name = "o2_hitran" },
+                        .line_list = .{ .asset = .{ .name = "o2_hitran" } },
                     },
                 },
             },
         },
         .surface = .{
-            .kind = "lambertian",
+            .kind = .lambertian,
             .albedo = 0.028,
         },
         .observation_model = .{
-            .instrument = "tropomi",
-            .solar_spectrum_source = .{ .kind = .bundle_default },
-            .weighted_reference_grid_source = .{ .kind = .ingest, .name = "refspec_demo.operational_refspec_grid" },
+            .instrument = .tropomi,
+            .solar_spectrum_source = .bundle_default,
+            .weighted_reference_grid_source = .{ .ingest = .{
+                .full_name = "refspec_demo.operational_refspec_grid",
+                .ingest_name = "refspec_demo",
+                .output_name = "operational_refspec_grid",
+            } },
         },
     }).validate();
 }

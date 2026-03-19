@@ -55,13 +55,13 @@ This is the stable observation-side surface seen by retrieval code and exporters
 
 ## Method Families
 
-The repository currently exposes OE-, DOAS-, and DISMAS-labeled retrieval lanes under `src/retrieval/`. They share contracts, priors, covariance handling, and surrogate-forward summary code while keeping family-specific policy separate.
+The repository currently exposes OE-, DOAS-, and DISMAS-labeled retrieval lanes under `src/retrieval/`. They share contracts, priors, covariance handling, and typed forward-model interfaces while keeping family-specific policy separate.
 
 Those family names are deliberate, but they should be read carefully: the current solvers preserve the intended retrieval seams and result surfaces without claiming that each lane is already a full method-faithful implementation of the corresponding literature algorithm.
 
 ### Optimal estimation
 
-The OE-labeled path treats the problem as a state-estimation task with priors and derivative information. In practice this means the solver expects Jacobian support and works directly with a physically interpretable forward response surface, but the current implementation remains a surrogate OE lane rather than a full Rodgers solver.
+The OE-labeled path treats the problem as a Rodgers-style state-estimation task with priors, measurement covariance, Jacobians, posterior covariance, DFS, and averaging-kernel products. In `zdisamar` this is now the first retrieval family that runs on the real spectral residual path rather than on summary-only surrogate features.
 
 ### DOAS
 
@@ -123,4 +123,6 @@ For one end-to-end path:
 3. read `src/kernels/transport/measurement_space.zig`,
 4. read `src/core/Result.zig`,
 5. read `src/retrieval/common/contracts.zig`,
-6. inspect `src/retrieval/common/synthetic_forward.zig` as the current surrogate-forward implementation and then the solver modules under `src/retrieval/oe/`, `src/retrieval/doas/`, and `src/retrieval/dismas/`.
+6. inspect `src/retrieval/common/forward_model.zig` for the spectral evaluator path,
+7. inspect `src/retrieval/common/surrogate_forward.zig` for the DOAS/DISMAS surrogate helper still used by those unfinished lanes,
+8. then read the solver modules under `src/retrieval/oe/`, `src/retrieval/doas/`, and `src/retrieval/dismas/`.

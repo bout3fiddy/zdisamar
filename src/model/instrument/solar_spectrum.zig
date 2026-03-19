@@ -6,11 +6,11 @@ pub const OperationalSolarSpectrum = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     irradiance: []const f64 = &[_]f64{},
 
-    pub fn enabled(self: OperationalSolarSpectrum) bool {
+    pub fn enabled(self: *const OperationalSolarSpectrum) bool {
         return self.wavelengths_nm.len > 0;
     }
 
-    pub fn validate(self: OperationalSolarSpectrum) errors.Error!void {
+    pub fn validate(self: *const OperationalSolarSpectrum) errors.Error!void {
         if (!self.enabled()) {
             if (self.irradiance.len != 0) return errors.Error.InvalidRequest;
             return;
@@ -42,7 +42,7 @@ pub const OperationalSolarSpectrum = struct {
         self.* = .{};
     }
 
-    pub fn interpolateIrradiance(self: OperationalSolarSpectrum, wavelength_nm: f64) f64 {
+    pub fn interpolateIrradiance(self: *const OperationalSolarSpectrum, wavelength_nm: f64) f64 {
         if (!self.enabled()) return 0.0;
         if (wavelength_nm <= self.wavelengths_nm[0]) return self.irradiance[0];
         for (self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1], self.wavelengths_nm[1..], self.irradiance[0 .. self.irradiance.len - 1], self.irradiance[1..]) |left_nm, right_nm, left_irradiance, right_irradiance| {
@@ -55,4 +55,76 @@ pub const OperationalSolarSpectrum = struct {
         }
         return self.irradiance[self.irradiance.len - 1];
     }
+
+    pub fn interpolateOnto(
+        self: *const OperationalSolarSpectrum,
+        allocator: Allocator,
+        wavelengths_nm: []const f64,
+    ) ![]f64 {
+        const irradiance = try allocator.alloc(f64, wavelengths_nm.len);
+        errdefer allocator.free(irradiance);
+
+        for (wavelengths_nm, irradiance) |wavelength_nm, *slot| {
+            slot.* = self.interpolateIrradiance(wavelength_nm);
+        }
+        return irradiance;
+    }
+
+    pub fn correctMeasuredSpectrumOnto(
+        self: *const OperationalSolarSpectrum,
+        allocator: Allocator,
+        source_wavelengths_nm: []const f64,
+        measured_values: []const f64,
+        target_wavelengths_nm: []const f64,
+    ) ![]f64 {
+        if (source_wavelengths_nm.len != measured_values.len or measured_values.len != target_wavelengths_nm.len) {
+            return errors.Error.InvalidRequest;
+        }
+
+        const corrected = try allocator.alloc(f64, target_wavelengths_nm.len);
+        errdefer allocator.free(corrected);
+        const source_solar = try self.interpolateOnto(allocator, source_wavelengths_nm);
+        defer allocator.free(source_solar);
+        const target_solar = try self.interpolateOnto(allocator, target_wavelengths_nm);
+        defer allocator.free(target_solar);
+
+        for (measured_values, source_solar, target_solar, corrected) |measured_value, source_irradiance, target_irradiance, *slot| {
+            if (!std.math.isFinite(measured_value)) return errors.Error.InvalidRequest;
+            slot.* = measured_value * target_irradiance / @max(source_irradiance, 1.0e-12);
+        }
+        return corrected;
+    }
 };
+
+test "operational solar spectrum interpolates onto measured wavelengths" {
+    const spectrum: OperationalSolarSpectrum = .{
+        .wavelengths_nm = &.{ 760.8, 761.0, 761.2 },
+        .irradiance = &.{ 2.7e14, 2.8e14, 2.9e14 },
+    };
+
+    const aligned = try spectrum.interpolateOnto(std.testing.allocator, &.{ 760.8, 760.9, 761.15 });
+    defer std.testing.allocator.free(aligned);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.7e14), aligned[0], 1.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.75e14), aligned[1], 1.0e10);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.875e14), aligned[2], 1.0e10);
+}
+
+test "operational solar spectrum corrects measured irradiance onto a shifted radiance grid" {
+    const source_solar: OperationalSolarSpectrum = .{
+        .wavelengths_nm = &.{ 760.8, 761.0, 761.2, 761.4 },
+        .irradiance = &.{ 3.00e14, 2.90e14, 2.80e14, 2.70e14 },
+    };
+
+    const corrected = try source_solar.correctMeasuredSpectrumOnto(
+        std.testing.allocator,
+        &.{ 760.8, 761.0, 761.2 },
+        &.{ 2.70e14, 2.68e14, 2.66e14 },
+        &.{ 760.81, 761.01, 761.21 },
+    );
+    defer std.testing.allocator.free(corrected);
+
+    try std.testing.expect(corrected[0] < 2.70e14);
+    try std.testing.expect(corrected[1] < 2.68e14);
+    try std.testing.expect(corrected[2] < 2.66e14);
+}

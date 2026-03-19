@@ -13,7 +13,7 @@ templates:
       transport:
         solver: "dispatcher"
       execution:
-        solver_mode: "polarized"
+        solver_mode: "scalar"
         derivative_mode: "semi_analytical"
     scene:
       geometry:
@@ -43,7 +43,7 @@ templates:
           model: "shot_noise"
       clouds:
         legacy_cloud:
-          model: "legacy_binary_cloud"
+          model: "hg_scattering"
           optical_thickness: 0.000000
 
 experiment:

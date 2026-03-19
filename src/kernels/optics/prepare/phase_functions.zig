@@ -3,7 +3,11 @@ const Scene = @import("../../../model/Scene.zig").Scene;
 
 pub const phase_coefficient_count: usize = 4;
 
-pub fn computeSingleScatterAlbedo(scene: Scene) f64 {
+pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
+    return .{ 1.0, 0.0, 0.05, 0.0 };
+}
+
+pub fn computeSingleScatterAlbedo(scene: *const Scene) f64 {
     const gas_ssa: f64 = 0.92;
     const aerosol_ssa = if (scene.atmosphere.has_aerosols) scene.aerosol.single_scatter_albedo else gas_ssa;
     const cloud_ssa = if (scene.atmosphere.has_clouds) scene.cloud.single_scatter_albedo else gas_ssa;
@@ -29,7 +33,7 @@ pub fn combinePhaseCoefficients(
     aerosol_phase_coefficients: [phase_coefficient_count]f64,
     cloud_phase_coefficients: [phase_coefficient_count]f64,
 ) [phase_coefficient_count]f64 {
-    const gas_phase_coefficients = [_]f64{ 1.0, 0.0, 0.05, 0.0 };
+    const gas_phase_coefficients = gasPhaseCoefficients();
     const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
     if (total_scattering == 0.0) return gas_phase_coefficients;
 
@@ -44,8 +48,17 @@ pub fn combinePhaseCoefficients(
     return combined;
 }
 
+pub fn backscatterFraction(phase_coefficients: [phase_coefficient_count]f64) f64 {
+    return backscatterFractionFromAsymmetry(phase_coefficients[1]);
+}
+
+pub fn backscatterFractionFromAsymmetry(asymmetry_factor: f64) f64 {
+    const clamped_asymmetry = std.math.clamp(asymmetry_factor, -0.95, 0.95);
+    return std.math.clamp(0.5 * (1.0 - clamped_asymmetry), 0.02, 0.95);
+}
+
 pub fn computeLayerDepolarization(
-    scene: Scene,
+    scene: *const Scene,
     gas_scattering_tau: f64,
     aerosol_scattering_tau: f64,
     cloud_scattering_tau: f64,

@@ -1,11 +1,18 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
+const internal = @import("zdisamar_internal");
+const DatasetCache = internal.runtime.cache.DatasetCache;
+const LUTCache = internal.runtime.cache.LUTCache;
+const PlanCache = internal.runtime.cache.PlanCache;
+const PreparedLayout = internal.runtime.cache.PreparedLayout;
+const BatchRunner = internal.runtime.scheduler.BatchRunner;
+const BatchJob = internal.runtime.scheduler.BatchJob;
 
 test "dataset and lut caches track owned entries with explicit updates" {
-    var datasets = zdisamar.runtime.cache.DatasetCache.init(std.testing.allocator);
+    var datasets = DatasetCache.init(std.testing.allocator);
     defer datasets.deinit();
 
-    var luts = zdisamar.runtime.cache.LUTCache.init(std.testing.allocator);
+    var luts = LUTCache.init(std.testing.allocator);
     defer luts.deinit();
 
     try datasets.upsert("climatology.base", "sha256:dataset-a");
@@ -29,9 +36,9 @@ test "plan cache and batch runner execute against thread-bound prepared plans" {
     const callbacks = struct {
         fn execute(
             ctx_ptr: ?*anyopaque,
-            thread: *zdisamar.runtime.scheduler.ThreadContext,
-            job: zdisamar.runtime.scheduler.BatchJob,
-            prepared: *const zdisamar.runtime.cache.PreparedPlanCache,
+            thread: *zdisamar.Workspace,
+            job: BatchJob,
+            prepared: *const PreparedLayout,
         ) !void {
             _ = thread;
             _ = job;
@@ -41,14 +48,13 @@ test "plan cache and batch runner execute against thread-bound prepared plans" {
         }
     };
 
-    var plans = zdisamar.runtime.cache.PlanCache.init(std.testing.allocator, .{ .max_entries = 8 });
+    var plans = PlanCache.init(std.testing.allocator, .{ .max_entries = 8 });
     defer plans.deinit();
     try plans.put(11, .{ .measurement_capacity = 48 });
 
-    var thread = try zdisamar.runtime.scheduler.ThreadContext.init(std.testing.allocator, "thread-a");
-    defer thread.deinit();
+    var thread = zdisamar.Workspace.init("thread-a");
 
-    var runner = zdisamar.runtime.scheduler.BatchRunner.init(std.testing.allocator);
+    var runner = BatchRunner.init(std.testing.allocator);
     defer runner.deinit();
     try runner.enqueue(.{ .plan_id = 11, .scene_id = "scene-1" });
     try runner.enqueue(.{ .plan_id = 11, .scene_id = "scene-2" });
@@ -59,4 +65,22 @@ test "plan cache and batch runner execute against thread-bound prepared plans" {
     try std.testing.expectEqual(@as(usize, 2), counters.executed);
     try std.testing.expectEqual(@as(u64, 2), runner.completed_jobs);
     try std.testing.expectEqual(@as(u64, 2), plans.get(11).?.run_count);
+}
+
+test "engine can repeatedly prepare and dispose plans without exhausting cache capacity" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{ .max_prepared_plans = 1 });
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    var last_plan_id: u64 = 0;
+    var iteration: usize = 0;
+    while (iteration < 4) : (iteration += 1) {
+        var plan = try engine.preparePlan(.{});
+        try std.testing.expect(plan.id > last_plan_id);
+        try std.testing.expectEqual(@as(usize, 1), engine.plan_cache.count());
+        last_plan_id = plan.id;
+        plan.deinit();
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), engine.plan_cache.count());
 }

@@ -77,6 +77,24 @@ zig build
 
 This produces the CLI at `./zig-out/bin/zdisamar`.
 
+Run the fast local verification loop:
+
+```bash
+zig build check
+```
+
+Run the focused transport/parity verification loop:
+
+```bash
+zig build test-transport
+```
+
+Run the fast compatibility smoke loop:
+
+```bash
+zig build test-validation-compatibility
+```
+
 Run the full verification baseline:
 
 ```bash
@@ -554,6 +572,9 @@ If you only need the essentials:
 
 ```bash
 zig build
+zig build check
+zig build test-transport
+zig build test-validation-compatibility
 ./zig-out/bin/zdisamar config validate data/examples/zdisamar_common_use.yaml
 ./zig-out/bin/zdisamar config resolve data/examples/zdisamar_common_use.yaml
 ./zig-out/bin/zdisamar run data/examples/zdisamar_common_use.yaml

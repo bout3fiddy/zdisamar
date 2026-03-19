@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "scenario": "vendor_domino_no2_classic_doas",
+  "source_config": "vendor/disamar-fortran/InputFiles/Config_NO2_DOMINO.in",
+  "iterations": 3,
+  "wavelength_amf_nm": 439.0,
+  "total_slant_column_molec_cm2": 1.9040e16,
+  "stratospheric_vertical_column_molec_cm2": 4.0000e15,
+  "stratospheric_slant_column_molec_cm2": 1.1752e16,
+  "retrieved_trop_slant_column_molec_cm2": 7.2877e15,
+  "retrieved_trop_vertical_column_molec_cm2": 9.1265e15,
+  "trop_amf": 0.79852979,
+  "precision_trop_vertical_column_molec_cm2": 1.9872e15,
+  "tolerances": {
+    "slant_column_relative": 0.02,
+    "vertical_column_relative": 0.05,
+    "amf_absolute": 1.0e-3
+  }
+}

@@ -1,11 +1,14 @@
 const std = @import("std");
 const core_errors = @import("../../core/errors.zig");
+const ReferenceData = @import("../../model/ReferenceData.zig");
 const Scene = @import("../../model/Scene.zig").Scene;
 const PreparedOpticalState = @import("../optics/prepare.zig").PreparedOpticalState;
+const gauss_legendre = @import("../quadrature/gauss_legendre.zig");
 const grid = @import("../spectra/grid.zig");
 const calibration = @import("../spectra/calibration.zig");
 const convolution = @import("../spectra/convolution.zig");
 const common = @import("common.zig");
+const labos = @import("labos.zig");
 const InstrumentProviders = @import("../../plugins/providers/instrument.zig");
 const NoiseProviders = @import("../../plugins/providers/noise.zig");
 const PluginProviders = @import("../../plugins/providers/root.zig");
@@ -13,6 +16,22 @@ const SurfaceProviders = @import("../../plugins/providers/surface.zig");
 const TransportProviders = @import("../../plugins/providers/transport.zig");
 
 const Allocator = std.mem.Allocator;
+const phase_coefficient_count = @import("../optics/prepare/phase_functions.zig").phase_coefficient_count;
+const centimeters_per_kilometer = 1.0e5;
+const max_summary_samples: u32 = 128;
+const bundled_o2a_solar_wavelengths_nm = [_]f64{ 755.0, 758.0, 760.01, 761.99, 764.99, 770.0, 776.0 };
+const bundled_o2a_solar_irradiance = [_]f64{
+    4.805854615e14,
+    4.879049767e14,
+    4.858697784e14,
+    4.615924814e14,
+    4.832478218e14,
+    4.60914094e14,
+    4.759839792e14,
+};
+
+pub const reflectance_export_name = "reflectance";
+pub const fitted_reflectance_export_name = "fitted_reflectance";
 
 pub const ProviderBindings = struct {
     transport: TransportProviders.Provider,
@@ -69,6 +88,12 @@ pub const Buffers = struct {
     irradiance: []f64,
     reflectance: []f64,
     scratch: []f64,
+    layer_inputs: []common.LayerInput,
+    pseudo_spherical_layers: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
     jacobian: ?[]f64 = null,
     noise_sigma: ?[]f64 = null,
 };
@@ -79,6 +104,12 @@ pub const SummaryWorkspace = struct {
     irradiance: []f64 = &.{},
     reflectance: []f64 = &.{},
     scratch: []f64 = &.{},
+    layer_inputs: []common.LayerInput = &.{},
+    pseudo_spherical_layers: []common.LayerInput = &.{},
+    source_interfaces: []common.SourceInterfaceInput = &.{},
+    rtm_quadrature_levels: []common.RtmQuadratureLevel = &.{},
+    pseudo_spherical_samples: []common.PseudoSphericalSample = &.{},
+    pseudo_spherical_level_starts: []usize = &.{},
     jacobian: []f64 = &.{},
     noise_sigma: []f64 = &.{},
 
@@ -88,6 +119,12 @@ pub const SummaryWorkspace = struct {
         freeBuffer(allocator, self.irradiance);
         freeBuffer(allocator, self.reflectance);
         freeBuffer(allocator, self.scratch);
+        freeLayerBuffer(allocator, self.layer_inputs);
+        freeLayerBuffer(allocator, self.pseudo_spherical_layers);
+        freeSourceInterfaceBuffer(allocator, self.source_interfaces);
+        freeRtmQuadratureBuffer(allocator, self.rtm_quadrature_levels);
+        freePseudoSphericalSampleBuffer(allocator, self.pseudo_spherical_samples);
+        freeIndexBuffer(allocator, self.pseudo_spherical_level_starts);
         freeBuffer(allocator, self.jacobian);
         freeBuffer(allocator, self.noise_sigma);
         self.* = .{};
@@ -96,11 +133,13 @@ pub const SummaryWorkspace = struct {
     fn buffers(
         self: *SummaryWorkspace,
         allocator: Allocator,
-        scene: Scene,
+        scene: *const Scene,
         route: common.Route,
         providers: ProviderBindings,
     ) Error!Buffers {
         const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
+        const layer_count = transportLayerCountHint(scene, route);
+        const pseudo_spherical_sample_count = pseudoSphericalSampleCountHint(scene);
         const wants_jacobian = route.derivative_mode != .none;
         const wants_noise = providers.noise.materializesSigma(scene);
 
@@ -109,6 +148,12 @@ pub const SummaryWorkspace = struct {
         try ensureBufferCapacity(allocator, &self.irradiance, sample_count);
         try ensureBufferCapacity(allocator, &self.reflectance, sample_count);
         try ensureBufferCapacity(allocator, &self.scratch, sample_count);
+        try ensureLayerBufferCapacity(allocator, &self.layer_inputs, layer_count);
+        try ensureLayerBufferCapacity(allocator, &self.pseudo_spherical_layers, pseudo_spherical_sample_count);
+        try ensureSourceInterfaceBufferCapacity(allocator, &self.source_interfaces, layer_count + 1);
+        try ensureRtmQuadratureBufferCapacity(allocator, &self.rtm_quadrature_levels, layer_count + 1);
+        try ensurePseudoSphericalSampleBufferCapacity(allocator, &self.pseudo_spherical_samples, pseudo_spherical_sample_count);
+        try ensureIndexBufferCapacity(allocator, &self.pseudo_spherical_level_starts, layer_count + 1);
         if (wants_jacobian) {
             try ensureBufferCapacity(allocator, &self.jacobian, sample_count);
         }
@@ -122,6 +167,12 @@ pub const SummaryWorkspace = struct {
             .irradiance = self.irradiance[0..sample_count],
             .reflectance = self.reflectance[0..sample_count],
             .scratch = self.scratch[0..sample_count],
+            .layer_inputs = self.layer_inputs[0..layer_count],
+            .pseudo_spherical_layers = self.pseudo_spherical_layers[0..pseudo_spherical_sample_count],
+            .source_interfaces = self.source_interfaces[0 .. layer_count + 1],
+            .rtm_quadrature_levels = self.rtm_quadrature_levels[0 .. layer_count + 1],
+            .pseudo_spherical_samples = self.pseudo_spherical_samples[0..pseudo_spherical_sample_count],
+            .pseudo_spherical_level_starts = self.pseudo_spherical_level_starts[0 .. layer_count + 1],
             .jacobian = if (wants_jacobian) self.jacobian[0..sample_count] else null,
             .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
         };
@@ -133,6 +184,32 @@ const OperationalInstrumentIntegration = InstrumentProviders.IntegrationKernel;
 const ForwardIntegratedSample = struct {
     radiance: f64,
     jacobian: f64 = 0.0,
+};
+
+const spectral_cache_quantization_nm = 1.0e-6;
+
+const SpectralEvaluationCache = struct {
+    allocator: Allocator,
+    forward: std.AutoHashMap(i64, ForwardIntegratedSample),
+    irradiance: std.AutoHashMap(i64, f64),
+
+    fn init(allocator: Allocator) SpectralEvaluationCache {
+        return .{
+            .allocator = allocator,
+            .forward = std.AutoHashMap(i64, ForwardIntegratedSample).init(allocator),
+            .irradiance = std.AutoHashMap(i64, f64).init(allocator),
+        };
+    }
+
+    fn deinit(self: *SpectralEvaluationCache) void {
+        self.forward.deinit();
+        self.irradiance.deinit();
+        self.* = undefined;
+    }
+
+    fn keyFor(wavelength_nm: f64) i64 {
+        return @as(i64, @intFromFloat(std.math.round(wavelength_nm / spectral_cache_quantization_nm)));
+    }
 };
 
 pub const Error =
@@ -147,22 +224,29 @@ pub const Error =
     };
 
 pub fn simulate(
-    scene: Scene,
+    allocator: Allocator,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
     buffers: Buffers,
 ) Error!MeasurementSpaceSummary {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try validateBuffers(sample_count, buffers);
+    var evaluation_cache = SpectralEvaluationCache.init(allocator);
+    defer evaluation_cache.deinit();
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
         .end_nm = scene.spectral_grid.end_nm,
         .sample_count = scene.spectral_grid.sample_count,
     };
-    try spectral_grid.validate();
+    const resolved_axis: grid.ResolvedAxis = .{
+        .base = spectral_grid,
+        .explicit_wavelengths_nm = scene.observation_model.measured_wavelengths_nm,
+    };
+    try resolved_axis.validate();
 
     const calibration_config = providers.instrument.calibrationForScene(scene);
     const slit_kernel = providers.instrument.slitKernelForScene(scene);
@@ -175,34 +259,45 @@ pub fn simulate(
     var reflectance_sum: f64 = 0.0;
     var noise_sum: f64 = 0.0;
     var jacobian_sum: f64 = 0.0;
+    const transport_layer_count = resolvedTransportLayerCount(route, prepared);
+    if (buffers.layer_inputs.len < transport_layer_count or
+        buffers.source_interfaces.len < transport_layer_count + 1 or
+        buffers.rtm_quadrature_levels.len < transport_layer_count + 1 or
+        buffers.pseudo_spherical_level_starts.len < transport_layer_count + 1)
+    {
+        return error.ShapeMismatch;
+    }
 
     for (0..sample_count) |index| {
-        const nominal_wavelength_nm = try spectral_grid.sampleAt(@intCast(index));
-        const wavelength_nm = calibration.shiftedWavelength(
+        const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
+        const evaluation_wavelength_nm = calibration.shiftedWavelength(
             calibration_config,
             nominal_wavelength_nm,
         );
-        buffers.wavelengths[index] = wavelength_nm;
+        buffers.wavelengths[index] = nominal_wavelength_nm;
 
-        const phase = if (sample_count <= 1)
-            0.0
-        else
-            @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(sample_count - 1));
+        var integration: OperationalInstrumentIntegration = undefined;
+        providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
 
         const integrated = try integrateForwardAtNominal(
+            allocator,
             scene,
             route,
             prepared,
-            wavelength_nm,
-            phase,
+            evaluation_wavelength_nm,
             safe_span,
             providers,
-            providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm),
+            buffers.layer_inputs[0..transport_layer_count],
+            buffers.pseudo_spherical_layers,
+            buffers.source_interfaces[0 .. transport_layer_count + 1],
+            buffers.rtm_quadrature_levels[0 .. transport_layer_count + 1],
+            buffers.pseudo_spherical_samples,
+            buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1],
+            &evaluation_cache,
+            &integration,
         );
         buffers.scratch[index] = integrated.radiance;
-        if (uses_integrated_sampling) {
-            if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
-        }
+        if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
     }
     if (uses_integrated_sampling) {
         @memcpy(buffers.radiance, buffers.scratch);
@@ -212,14 +307,20 @@ pub fn simulate(
     try calibration.applySignal(calibration_config, buffers.radiance, buffers.radiance);
 
     for (0..sample_count) |index| {
-        const wavelength_nm = buffers.wavelengths[index];
-        const nominal_wavelength_nm = try spectral_grid.sampleAt(@intCast(index));
+        const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
+        const evaluation_wavelength_nm = calibration.shiftedWavelength(
+            calibration_config,
+            nominal_wavelength_nm,
+        );
+        var integration: OperationalInstrumentIntegration = undefined;
+        providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
         buffers.scratch[index] = integrateIrradianceAtNominal(
             scene,
             prepared,
-            wavelength_nm,
+            evaluation_wavelength_nm,
             safe_span,
-            providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm),
+            &evaluation_cache,
+            &integration,
         );
     }
     if (uses_integrated_sampling) {
@@ -227,10 +328,11 @@ pub fn simulate(
     } else {
         try convolution.apply(buffers.scratch, slit_kernel[0..], buffers.irradiance);
     }
-    try calibration.applySignal(calibration_config, buffers.irradiance, buffers.irradiance);
 
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
-        buffers.reflectance[index] = buffers.radiance[index] / @max(buffers.irradiance[index], 1e-9);
+        buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
+            @max(buffers.irradiance[index] * solar_cosine, 1e-9);
         radiance_sum += buffers.radiance[index];
         irradiance_sum += buffers.irradiance[index];
         reflectance_sum += buffers.reflectance[index];
@@ -246,19 +348,8 @@ pub fn simulate(
         if (uses_integrated_sampling) {
             for (jacobian) |value| jacobian_sum += value;
         } else {
-            for (0..sample_count) |index| {
-                const phase = if (sample_count <= 1)
-                    0.0
-                else
-                    @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(sample_count - 1));
-                const input = configuredForwardInput(scene, prepared, buffers.wavelengths[index], phase);
-                const forward = try providers.transport.executePrepared(route, input);
-                buffers.scratch[index] = if (forward.jacobian_column) |value|
-                    value * (1.0 + 0.05 * phase)
-                else
-                    0.0;
-            }
-            try convolution.apply(buffers.scratch, slit_kernel[0..], jacobian);
+            try convolution.apply(jacobian, slit_kernel[0..], buffers.scratch);
+            @memcpy(jacobian, buffers.scratch);
             for (jacobian) |value| jacobian_sum += value;
         }
         mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
@@ -281,9 +372,9 @@ pub fn simulate(
 
 pub fn simulateSummary(
     allocator: Allocator,
-    scene: Scene,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
 ) Error!MeasurementSpaceSummary {
     var workspace: SummaryWorkspace = .{};
@@ -294,28 +385,35 @@ pub fn simulateSummary(
 pub fn simulateSummaryWithWorkspace(
     allocator: Allocator,
     workspace: *SummaryWorkspace,
-    scene: Scene,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
 ) Error!MeasurementSpaceSummary {
+    var summary_scene = scene.*;
+    if (summary_scene.spectral_grid.sample_count > max_summary_samples) {
+        summary_scene.spectral_grid.sample_count = max_summary_samples;
+    }
     return simulate(
-        scene,
+        allocator,
+        &summary_scene,
         route,
         prepared,
         providers,
-        try workspace.buffers(allocator, scene, route, providers),
+        try workspace.buffers(allocator, &summary_scene, route, providers),
     );
 }
 
 pub fn simulateProduct(
     allocator: Allocator,
-    scene: Scene,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
 ) Error!MeasurementSpaceProduct {
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
+    const transport_layer_count = resolvedTransportLayerCount(route, prepared);
+    const pseudo_spherical_sample_count = prepared.transportLayerCount();
 
     const wavelengths = try allocator.alloc(f64, sample_count);
     errdefer allocator.free(wavelengths);
@@ -338,13 +436,31 @@ pub fn simulateProduct(
     else
         try allocator.alloc(f64, sample_count);
     errdefer if (jacobian) |values| allocator.free(values);
+    const layer_inputs = try allocator.alloc(common.LayerInput, transport_layer_count);
+    defer allocator.free(layer_inputs);
+    const pseudo_spherical_layers = try allocator.alloc(common.LayerInput, pseudo_spherical_sample_count);
+    defer allocator.free(pseudo_spherical_layers);
+    const source_interfaces = try allocator.alloc(common.SourceInterfaceInput, transport_layer_count + 1);
+    defer allocator.free(source_interfaces);
+    const rtm_quadrature_levels = try allocator.alloc(common.RtmQuadratureLevel, transport_layer_count + 1);
+    defer allocator.free(rtm_quadrature_levels);
+    const pseudo_spherical_samples = try allocator.alloc(common.PseudoSphericalSample, pseudo_spherical_sample_count);
+    defer allocator.free(pseudo_spherical_samples);
+    const pseudo_spherical_level_starts = try allocator.alloc(usize, transport_layer_count + 1);
+    defer allocator.free(pseudo_spherical_level_starts);
 
-    const summary = try simulate(scene, route, prepared, providers, .{
+    const summary = try simulate(allocator, scene, route, prepared, providers, .{
         .wavelengths = wavelengths,
         .radiance = radiance,
         .irradiance = irradiance,
         .reflectance = reflectance,
         .scratch = scratch,
+        .layer_inputs = layer_inputs,
+        .pseudo_spherical_layers = pseudo_spherical_layers,
+        .source_interfaces = source_interfaces,
+        .rtm_quadrature_levels = rtm_quadrature_levels,
+        .pseudo_spherical_samples = pseudo_spherical_samples,
+        .pseudo_spherical_level_starts = pseudo_spherical_level_starts,
         .jacobian = jacobian,
         .noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
     });
@@ -371,13 +487,37 @@ pub fn simulateProduct(
     };
 }
 
+fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
+    const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
+    if (route.family != .adding) return layer_count;
+    return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
+}
+
+fn pseudoSphericalSampleCountHint(scene: *const Scene) usize {
+    const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
+    return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
+}
+
+fn resolvedTransportLayerCount(route: common.Route, prepared: *const PreparedOpticalState) usize {
+    return if (route.family == .adding) prepared.transportLayerCount() else prepared.layers.len;
+}
+
 fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
     if (sample_count == 0 or
         buffers.wavelengths.len != sample_count or
         buffers.radiance.len != sample_count or
         buffers.irradiance.len != sample_count or
         buffers.reflectance.len != sample_count or
-        buffers.scratch.len != sample_count)
+        buffers.scratch.len != sample_count or
+        buffers.layer_inputs.len == 0 or
+        buffers.pseudo_spherical_layers.len == 0 or
+        buffers.source_interfaces.len != buffers.layer_inputs.len + 1 or
+        buffers.rtm_quadrature_levels.len != buffers.layer_inputs.len + 1)
+    {
+        return error.ShapeMismatch;
+    }
+    if (buffers.pseudo_spherical_samples.len != buffers.pseudo_spherical_layers.len or
+        buffers.pseudo_spherical_level_starts.len != buffers.layer_inputs.len + 1)
     {
         return error.ShapeMismatch;
     }
@@ -396,40 +536,138 @@ fn ensureBufferCapacity(allocator: Allocator, buffer: *[]f64, capacity: usize) E
     buffer.* = replacement;
 }
 
+fn ensureLayerBufferCapacity(allocator: Allocator, buffer: *[]common.LayerInput, capacity: usize) Error!void {
+    if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(common.LayerInput, capacity);
+    freeLayerBuffer(allocator, buffer.*);
+    buffer.* = replacement;
+}
+
+fn ensureSourceInterfaceBufferCapacity(
+    allocator: Allocator,
+    buffer: *[]common.SourceInterfaceInput,
+    capacity: usize,
+) Error!void {
+    if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(common.SourceInterfaceInput, capacity);
+    freeSourceInterfaceBuffer(allocator, buffer.*);
+    buffer.* = replacement;
+}
+
+fn ensureRtmQuadratureBufferCapacity(
+    allocator: Allocator,
+    buffer: *[]common.RtmQuadratureLevel,
+    capacity: usize,
+) Error!void {
+    if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(common.RtmQuadratureLevel, capacity);
+    freeRtmQuadratureBuffer(allocator, buffer.*);
+    buffer.* = replacement;
+}
+
+fn ensurePseudoSphericalSampleBufferCapacity(
+    allocator: Allocator,
+    buffer: *[]common.PseudoSphericalSample,
+    capacity: usize,
+) Error!void {
+    if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(common.PseudoSphericalSample, capacity);
+    freePseudoSphericalSampleBuffer(allocator, buffer.*);
+    buffer.* = replacement;
+}
+
+fn ensureIndexBufferCapacity(allocator: Allocator, buffer: *[]usize, capacity: usize) Error!void {
+    if (buffer.*.len >= capacity) return;
+    const replacement = try allocator.alloc(usize, capacity);
+    freeIndexBuffer(allocator, buffer.*);
+    buffer.* = replacement;
+}
+
 fn freeBuffer(allocator: Allocator, buffer: []f64) void {
     if (buffer.len != 0) allocator.free(buffer);
 }
 
+fn freeLayerBuffer(allocator: Allocator, buffer: []common.LayerInput) void {
+    if (buffer.len != 0) allocator.free(buffer);
+}
+
+fn freeSourceInterfaceBuffer(allocator: Allocator, buffer: []common.SourceInterfaceInput) void {
+    if (buffer.len != 0) allocator.free(buffer);
+}
+
+fn freeRtmQuadratureBuffer(allocator: Allocator, buffer: []common.RtmQuadratureLevel) void {
+    if (buffer.len != 0) allocator.free(buffer);
+}
+
+fn freePseudoSphericalSampleBuffer(allocator: Allocator, buffer: []common.PseudoSphericalSample) void {
+    if (buffer.len != 0) allocator.free(buffer);
+}
+
+fn freeIndexBuffer(allocator: Allocator, buffer: []usize) void {
+    if (buffer.len != 0) allocator.free(buffer);
+}
+
 fn configuredForwardInput(
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const PreparedOpticalState,
     wavelength_nm: f64,
-    phase: f64,
+    layer_inputs: []common.LayerInput,
+    pseudo_spherical_layers: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
 ) common.ForwardInput {
-    var input = prepared.toForwardInputAtWavelength(scene, wavelength_nm);
-    input.spectral_weight = 1.0 + 0.08 * @cos(2.0 * std.math.pi * phase);
-    input.air_mass_factor = prepared.effective_air_mass_factor * (0.98 + 0.04 * @sin(std.math.pi * phase));
-    input.optical_depth *= 0.85 + 0.30 * phase;
-    input.single_scatter_albedo = std.math.clamp(
-        prepared.effective_single_scatter_albedo - 0.03 * phase,
-        0.4,
-        0.999,
+    var input = prepared.toForwardInputAtWavelengthWithLayers(scene, wavelength_nm, layer_inputs);
+    prepared.fillSourceInterfacesAtWavelengthWithLayers(
+        wavelength_nm,
+        input.layers,
+        source_interfaces[0 .. input.layers.len + 1],
     );
+    input.source_interfaces = source_interfaces[0 .. input.layers.len + 1];
+    if (route.family == .adding and route.rtm_controls.integrate_source_function) {
+        if (prepared.fillRtmQuadratureAtWavelengthWithLayers(
+            wavelength_nm,
+            input.layers,
+            rtm_quadrature_levels[0 .. input.layers.len + 1],
+        )) {
+            input.rtm_quadrature = .{
+                .levels = rtm_quadrature_levels[0 .. input.layers.len + 1],
+            };
+        }
+    }
+    if (route.rtm_controls.use_spherical_correction) {
+        if (prepared.fillPseudoSphericalGridAtWavelength(
+            scene,
+            wavelength_nm,
+            input.layers.len,
+            pseudo_spherical_layers,
+            pseudo_spherical_samples,
+            pseudo_spherical_level_starts,
+        )) {
+            input.pseudo_spherical_grid = .{
+                .samples = pseudo_spherical_samples[0..prepared.transportLayerCount()],
+                .level_sample_starts = pseudo_spherical_level_starts[0 .. input.layers.len + 1],
+            };
+        }
+    }
+    input.rtm_controls = route.rtm_controls;
     return input;
 }
 
 fn radianceFromForward(
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
     providers: ProviderBindings,
     wavelength_nm: f64,
     safe_span: f64,
     phase: f64,
     forward: common.ForwardResult,
 ) f64 {
-    const solar_term = 1.0 + 0.18 * @cos(2.0 * std.math.pi * ((wavelength_nm - scene.spectral_grid.start_nm) / safe_span));
-    const ring_term = 0.01 * @sin(4.0 * std.math.pi * phase);
-    const surface_gain = providers.surface.responseGain(.{
+    const solar_irradiance = irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+    const surface_gain = providers.surface.brdfFactor(.{
         .scene = scene,
         .prepared = prepared,
         .wavelength_nm = wavelength_nm,
@@ -437,52 +675,102 @@ fn radianceFromForward(
         .phase = phase,
         .forward = forward,
     });
-    const aerosol_optical_depth = prepared.aerosolOpticalDepthAtWavelength(wavelength_nm);
-    const cloud_optical_depth = prepared.cloudOpticalDepthAtWavelength(wavelength_nm);
-    const aerosol_attenuation = 1.0 + 0.35 * aerosol_optical_depth;
-    const cloud_attenuation = 1.0 + 0.20 * cloud_optical_depth;
-    const depolarization_scale = 1.0 - 0.15 * prepared.depolarization_factor;
-
-    return (forward.toa_radiance * surface_gain * depolarization_scale * (0.92 + 0.08 * solar_term)) /
-        (aerosol_attenuation * cloud_attenuation) +
-        ring_term;
+    return solar_irradiance * solar_cosine * forward.toa_reflectance_factor * surface_gain / std.math.pi;
 }
 
 fn irradianceAtWavelength(
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
     wavelength_nm: f64,
     safe_span: f64,
 ) f64 {
     const source_irradiance = if (scene.observation_model.operational_solar_spectrum.enabled())
         scene.observation_model.operational_solar_spectrum.interpolateIrradiance(wavelength_nm)
+    else if (scene.observation_model.solar_spectrum_source.kind() == .bundle_default)
+        bundledSolarIrradiance(wavelength_nm) orelse defaultSolarContinuumIrradiance(wavelength_nm)
     else
-        1.2 + 0.25 * @cos(std.math.pi * ((wavelength_nm - scene.spectral_grid.start_nm) / safe_span));
-    const aerosol_attenuation = 1.0 + 0.15 * prepared.aerosolOpticalDepthAtWavelength(wavelength_nm);
-    const cloud_attenuation = 1.0 + 0.10 * prepared.cloudOpticalDepthAtWavelength(wavelength_nm);
-    return @max(
-        (source_irradiance * @exp(-0.15 * prepared.totalOpticalDepthAtWavelength(wavelength_nm))) / (aerosol_attenuation * cloud_attenuation),
-        1e-6,
-    );
+        defaultSolarContinuumIrradiance(wavelength_nm);
+    _ = prepared;
+    _ = safe_span;
+    return @max(source_irradiance, 1e-6);
+}
+
+fn bundledSolarIrradiance(wavelength_nm: f64) ?f64 {
+    if (wavelength_nm < bundled_o2a_solar_wavelengths_nm[0] or wavelength_nm > bundled_o2a_solar_wavelengths_nm[bundled_o2a_solar_wavelengths_nm.len - 1]) {
+        return null;
+    }
+
+    if (wavelength_nm <= bundled_o2a_solar_wavelengths_nm[0]) return bundled_o2a_solar_irradiance[0];
+    for (
+        bundled_o2a_solar_wavelengths_nm[0 .. bundled_o2a_solar_wavelengths_nm.len - 1],
+        bundled_o2a_solar_wavelengths_nm[1..],
+        bundled_o2a_solar_irradiance[0 .. bundled_o2a_solar_irradiance.len - 1],
+        bundled_o2a_solar_irradiance[1..],
+    ) |left_nm, right_nm, left_irradiance, right_irradiance| {
+        if (wavelength_nm <= right_nm) {
+            const span = right_nm - left_nm;
+            if (span == 0.0) return right_irradiance;
+            const blend = (wavelength_nm - left_nm) / span;
+            return left_irradiance + blend * (right_irradiance - left_irradiance);
+        }
+    }
+    return bundled_o2a_solar_irradiance[bundled_o2a_solar_irradiance.len - 1];
+}
+
+fn defaultSolarContinuumIrradiance(wavelength_nm: f64) f64 {
+    const reference_wavelength_nm = 760.0;
+    const reference_irradiance = 4.87401e14;
+    return reference_irradiance *
+        planckContinuumShape(wavelength_nm, 5778.0) /
+        planckContinuumShape(reference_wavelength_nm, 5778.0);
+}
+
+fn planckContinuumShape(wavelength_nm: f64, temperature_k: f64) f64 {
+    const h = 6.62607015e-34;
+    const c = 2.99792458e8;
+    const k = 1.380649e-23;
+    const wavelength_m = @max(wavelength_nm, 1.0) * 1.0e-9;
+    const exponent = h * c / (wavelength_m * k * @max(temperature_k, 1.0));
+    const denominator = @max(std.math.expm1(exponent), 1.0e-12);
+    return (2.0 * h * c * c) /
+        std.math.pow(f64, wavelength_m, 5.0) /
+        denominator;
 }
 
 fn integrateForwardAtNominal(
-    scene: Scene,
+    allocator: Allocator,
+    scene: *const Scene,
     route: common.Route,
-    prepared: PreparedOpticalState,
+    prepared: *const PreparedOpticalState,
     nominal_wavelength_nm: f64,
-    phase: f64,
     safe_span: f64,
     providers: ProviderBindings,
-    integration: OperationalInstrumentIntegration,
+    layer_inputs: []common.LayerInput,
+    pseudo_spherical_layers: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
+    cache: *SpectralEvaluationCache,
+    integration: *const OperationalInstrumentIntegration,
 ) Error!ForwardIntegratedSample {
     if (!integration.enabled) {
-        const input = configuredForwardInput(scene, prepared, nominal_wavelength_nm, phase);
-        const forward = try providers.transport.executePrepared(route, input);
-        return .{
-            .radiance = radianceFromForward(scene, prepared, providers, nominal_wavelength_nm, safe_span, phase, forward),
-            .jacobian = if (forward.jacobian_column) |value| value * (1.0 + 0.05 * phase) else 0.0,
-        };
+        return cachedForwardAtWavelength(
+            allocator,
+            scene,
+            route,
+            prepared,
+            nominal_wavelength_nm,
+            safe_span,
+            providers,
+            layer_inputs,
+            pseudo_spherical_layers,
+            source_interfaces,
+            rtm_quadrature_levels,
+            pseudo_spherical_samples,
+            pseudo_spherical_level_starts,
+            cache,
+        );
     }
 
     var radiance_sum: f64 = 0.0;
@@ -491,12 +779,24 @@ fn integrateForwardAtNominal(
         const offset_nm = integration.offsets_nm[index];
         const weight = integration.weights[index];
         const wavelength_nm = nominal_wavelength_nm + offset_nm;
-        const input = configuredForwardInput(scene, prepared, wavelength_nm, phase);
-        const forward = try providers.transport.executePrepared(route, input);
-        radiance_sum += weight * radianceFromForward(scene, prepared, providers, wavelength_nm, safe_span, phase, forward);
-        if (forward.jacobian_column) |value| {
-            jacobian_sum += weight * value * (1.0 + 0.05 * phase);
-        }
+        const sample = try cachedForwardAtWavelength(
+            allocator,
+            scene,
+            route,
+            prepared,
+            wavelength_nm,
+            safe_span,
+            providers,
+            layer_inputs,
+            pseudo_spherical_layers,
+            source_interfaces,
+            rtm_quadrature_levels,
+            pseudo_spherical_samples,
+            pseudo_spherical_level_starts,
+            cache,
+        );
+        radiance_sum += weight * sample.radiance;
+        jacobian_sum += weight * sample.jacobian;
     }
 
     return .{
@@ -506,35 +806,208 @@ fn integrateForwardAtNominal(
 }
 
 fn integrateIrradianceAtNominal(
-    scene: Scene,
-    prepared: PreparedOpticalState,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
     nominal_wavelength_nm: f64,
     safe_span: f64,
-    integration: OperationalInstrumentIntegration,
+    cache: *SpectralEvaluationCache,
+    integration: *const OperationalInstrumentIntegration,
 ) f64 {
     if (!integration.enabled) {
-        return irradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span);
+        return cachedIrradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span, cache);
     }
 
     var irradiance_sum: f64 = 0.0;
     for (0..integration.sample_count) |index| {
         const offset_nm = integration.offsets_nm[index];
         const weight = integration.weights[index];
-        irradiance_sum += weight * irradianceAtWavelength(
+        irradiance_sum += weight * cachedIrradianceAtWavelength(
             scene,
             prepared,
             nominal_wavelength_nm + offset_nm,
             safe_span,
+            cache,
         );
     }
     return irradiance_sum;
 }
 
+fn cachedForwardAtWavelength(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    safe_span: f64,
+    providers: ProviderBindings,
+    layer_inputs: []common.LayerInput,
+    pseudo_spherical_layers: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
+    cache: *SpectralEvaluationCache,
+) Error!ForwardIntegratedSample {
+    const key = SpectralEvaluationCache.keyFor(wavelength_nm);
+    if (cache.forward.get(key)) |cached| return cached;
+
+    const input = configuredForwardInput(
+        scene,
+        route,
+        prepared,
+        wavelength_nm,
+        layer_inputs,
+        pseudo_spherical_layers,
+        source_interfaces,
+        rtm_quadrature_levels,
+        pseudo_spherical_samples,
+        pseudo_spherical_level_starts,
+    );
+    var effective_route = route;
+    effective_route.rtm_controls = input.rtm_controls;
+    const forward = try providers.transport.executePrepared(allocator, effective_route, input);
+    const sample = ForwardIntegratedSample{
+        .radiance = radianceFromForward(scene, prepared, providers, wavelength_nm, safe_span, 0.0, forward),
+        .jacobian = if (forward.jacobian_column) |value| value else 0.0,
+    };
+    try cache.forward.put(key, sample);
+    return sample;
+}
+
+fn cachedIrradianceAtWavelength(
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    safe_span: f64,
+    cache: *SpectralEvaluationCache,
+) f64 {
+    const key = SpectralEvaluationCache.keyFor(wavelength_nm);
+    if (cache.irradiance.get(key)) |cached| return cached;
+
+    const value = irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
+    cache.irradiance.put(key, value) catch return value;
+    return value;
+}
+
 fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
     return .{
         .layers = try allocator.dupe(@import("../optics/prepare.zig").PreparedLayer, &.{
-            .{ .layer_index = 0, .altitude_km = 2.0, .pressure_hpa = 820.0, .temperature_k = 280.0, .number_density_cm3 = 2.0e19, .continuum_cross_section_cm2_per_molecule = 5.0e-19, .line_cross_section_cm2_per_molecule = 1.0e-20, .line_mixing_cross_section_cm2_per_molecule = 2.0e-21, .cia_optical_depth = 0.03, .d_cross_section_d_temperature_cm2_per_molecule_per_k = -1.0e-23, .gas_optical_depth = 0.12, .aerosol_optical_depth = 0.05, .cloud_optical_depth = 0.03, .layer_single_scatter_albedo = 0.94, .depolarization_factor = 0.03, .optical_depth = 0.2 },
-            .{ .layer_index = 1, .altitude_km = 10.0, .pressure_hpa = 280.0, .temperature_k = 240.0, .number_density_cm3 = 6.0e18, .continuum_cross_section_cm2_per_molecule = 5.0e-19, .line_cross_section_cm2_per_molecule = 5.0e-21, .line_mixing_cross_section_cm2_per_molecule = 1.0e-21, .d_cross_section_d_temperature_cm2_per_molecule_per_k = -5.0e-24, .cia_optical_depth = 0.0, .gas_optical_depth = 0.07, .aerosol_optical_depth = 0.02, .cloud_optical_depth = 0.01, .layer_single_scatter_albedo = 0.96, .depolarization_factor = 0.02, .optical_depth = 0.1 },
+            .{ .layer_index = 0, .sublayer_start_index = 0, .sublayer_count = 2, .altitude_km = 2.0, .pressure_hpa = 820.0, .temperature_k = 280.0, .number_density_cm3 = 2.0e19, .continuum_cross_section_cm2_per_molecule = 5.0e-19, .line_cross_section_cm2_per_molecule = 1.0e-20, .line_mixing_cross_section_cm2_per_molecule = 2.0e-21, .cia_optical_depth = 0.03, .d_cross_section_d_temperature_cm2_per_molecule_per_k = -1.0e-23, .gas_optical_depth = 0.12, .aerosol_optical_depth = 0.05, .cloud_optical_depth = 0.03, .layer_single_scatter_albedo = 0.94, .depolarization_factor = 0.03, .optical_depth = 0.2 },
+            .{ .layer_index = 1, .sublayer_start_index = 2, .sublayer_count = 2, .altitude_km = 10.0, .pressure_hpa = 280.0, .temperature_k = 240.0, .number_density_cm3 = 6.0e18, .continuum_cross_section_cm2_per_molecule = 5.0e-19, .line_cross_section_cm2_per_molecule = 5.0e-21, .line_mixing_cross_section_cm2_per_molecule = 1.0e-21, .d_cross_section_d_temperature_cm2_per_molecule_per_k = -5.0e-24, .cia_optical_depth = 0.0, .gas_optical_depth = 0.07, .aerosol_optical_depth = 0.02, .cloud_optical_depth = 0.01, .layer_single_scatter_albedo = 0.96, .depolarization_factor = 0.02, .optical_depth = 0.1 },
+        }),
+        .sublayers = try allocator.dupe(@import("../optics/prepare.zig").PreparedSublayer, &.{
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 0,
+                .altitude_km = 1.0,
+                .pressure_hpa = 880.0,
+                .temperature_k = 284.0,
+                .number_density_cm3 = 2.1e19,
+                .oxygen_number_density_cm3 = 4.4e18,
+                .path_length_cm = 5.0e4,
+                .continuum_cross_section_cm2_per_molecule = 5.0e-19,
+                .line_cross_section_cm2_per_molecule = 9.0e-21,
+                .line_mixing_cross_section_cm2_per_molecule = 1.8e-21,
+                .cia_sigma_cm5_per_molecule2 = 1.0e-46,
+                .cia_optical_depth = 0.015,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = -1.0e-23,
+                .gas_absorption_optical_depth = 0.06,
+                .gas_scattering_optical_depth = 0.02,
+                .gas_extinction_optical_depth = 0.08,
+                .d_gas_optical_depth_d_temperature = -7.5e-5,
+                .d_cia_optical_depth_d_temperature = -1.5e-5,
+                .aerosol_optical_depth = 0.028,
+                .cloud_optical_depth = 0.018,
+                .aerosol_single_scatter_albedo = 0.94,
+                .cloud_single_scatter_albedo = 0.96,
+                .aerosol_phase_coefficients = .{ 1.0, 0.20, 0.04, 0.0 },
+                .cloud_phase_coefficients = .{ 1.0, 0.10, 0.02, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.17, 0.035, 0.0 },
+            },
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 1,
+                .altitude_km = 3.0,
+                .pressure_hpa = 760.0,
+                .temperature_k = 276.0,
+                .number_density_cm3 = 1.9e19,
+                .oxygen_number_density_cm3 = 4.0e18,
+                .path_length_cm = 5.0e4,
+                .continuum_cross_section_cm2_per_molecule = 5.0e-19,
+                .line_cross_section_cm2_per_molecule = 1.1e-20,
+                .line_mixing_cross_section_cm2_per_molecule = 2.2e-21,
+                .cia_sigma_cm5_per_molecule2 = 1.0e-46,
+                .cia_optical_depth = 0.015,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = -1.0e-23,
+                .gas_absorption_optical_depth = 0.06,
+                .gas_scattering_optical_depth = 0.02,
+                .gas_extinction_optical_depth = 0.08,
+                .d_gas_optical_depth_d_temperature = -7.5e-5,
+                .d_cia_optical_depth_d_temperature = -1.5e-5,
+                .aerosol_optical_depth = 0.022,
+                .cloud_optical_depth = 0.012,
+                .aerosol_single_scatter_albedo = 0.94,
+                .cloud_single_scatter_albedo = 0.96,
+                .aerosol_phase_coefficients = .{ 1.0, 0.18, 0.03, 0.0 },
+                .cloud_phase_coefficients = .{ 1.0, 0.08, 0.02, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.15, 0.028, 0.0 },
+            },
+            .{
+                .parent_layer_index = 1,
+                .sublayer_index = 0,
+                .altitude_km = 8.0,
+                .pressure_hpa = 360.0,
+                .temperature_k = 248.0,
+                .number_density_cm3 = 7.0e18,
+                .oxygen_number_density_cm3 = 1.47e18,
+                .path_length_cm = 5.0e4,
+                .continuum_cross_section_cm2_per_molecule = 5.0e-19,
+                .line_cross_section_cm2_per_molecule = 5.2e-21,
+                .line_mixing_cross_section_cm2_per_molecule = 1.0e-21,
+                .cia_sigma_cm5_per_molecule2 = 1.0e-46,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = -5.0e-24,
+                .gas_absorption_optical_depth = 0.035,
+                .gas_scattering_optical_depth = 0.012,
+                .gas_extinction_optical_depth = 0.047,
+                .d_gas_optical_depth_d_temperature = -3.0e-5,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.011,
+                .cloud_optical_depth = 0.006,
+                .aerosol_single_scatter_albedo = 0.96,
+                .cloud_single_scatter_albedo = 0.98,
+                .aerosol_phase_coefficients = .{ 1.0, 0.14, 0.02, 0.0 },
+                .cloud_phase_coefficients = .{ 1.0, 0.05, 0.01, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.11, 0.018, 0.0 },
+            },
+            .{
+                .parent_layer_index = 1,
+                .sublayer_index = 1,
+                .altitude_km = 12.0,
+                .pressure_hpa = 220.0,
+                .temperature_k = 232.0,
+                .number_density_cm3 = 5.0e18,
+                .oxygen_number_density_cm3 = 1.05e18,
+                .path_length_cm = 5.0e4,
+                .continuum_cross_section_cm2_per_molecule = 5.0e-19,
+                .line_cross_section_cm2_per_molecule = 4.8e-21,
+                .line_mixing_cross_section_cm2_per_molecule = 1.0e-21,
+                .cia_sigma_cm5_per_molecule2 = 1.0e-46,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = -5.0e-24,
+                .gas_absorption_optical_depth = 0.035,
+                .gas_scattering_optical_depth = 0.012,
+                .gas_extinction_optical_depth = 0.047,
+                .d_gas_optical_depth_d_temperature = -3.0e-5,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.009,
+                .cloud_optical_depth = 0.004,
+                .aerosol_single_scatter_albedo = 0.96,
+                .cloud_single_scatter_albedo = 0.98,
+                .aerosol_phase_coefficients = .{ 1.0, 0.12, 0.02, 0.0 },
+                .cloud_phase_coefficients = .{ 1.0, 0.05, 0.01, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.10, 0.016, 0.0 },
+            },
         }),
         .continuum_points = try allocator.dupe(@import("../../model/ReferenceData.zig").CrossSectionPoint, &.{
             .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 6.0e-19 },
@@ -576,6 +1049,491 @@ fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
     };
 }
 
+fn buildQuadratureSensitivePreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
+    return .{
+        .layers = try allocator.dupe(@import("../optics/prepare.zig").PreparedLayer, &.{
+            .{
+                .layer_index = 0,
+                .sublayer_start_index = 0,
+                .sublayer_count = 2,
+                .altitude_km = 2.0,
+                .pressure_hpa = 820.0,
+                .temperature_k = 280.0,
+                .number_density_cm3 = 0.0,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_optical_depth = 0.0,
+                .aerosol_optical_depth = 0.22,
+                .cloud_optical_depth = 0.0,
+                .layer_single_scatter_albedo = 1.0,
+                .depolarization_factor = 0.0,
+                .optical_depth = 0.22,
+            },
+            .{
+                .layer_index = 1,
+                .sublayer_start_index = 2,
+                .sublayer_count = 2,
+                .altitude_km = 8.0,
+                .pressure_hpa = 380.0,
+                .temperature_k = 245.0,
+                .number_density_cm3 = 0.0,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_optical_depth = 0.0,
+                .aerosol_optical_depth = 0.13,
+                .cloud_optical_depth = 0.0,
+                .layer_single_scatter_albedo = 1.0,
+                .depolarization_factor = 0.0,
+                .optical_depth = 0.13,
+            },
+        }),
+        .sublayers = try allocator.dupe(@import("../optics/prepare.zig").PreparedSublayer, &.{
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 0,
+                .altitude_km = 1.0,
+                .pressure_hpa = 860.0,
+                .temperature_k = 283.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 5.0e4,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.11,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+            },
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 1,
+                .altitude_km = 3.0,
+                .pressure_hpa = 780.0,
+                .temperature_k = 277.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 5.0e4,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.11,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.32, 0.10, 0.02 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.32, 0.10, 0.02 },
+            },
+            .{
+                .parent_layer_index = 1,
+                .sublayer_index = 2,
+                .altitude_km = 7.0,
+                .pressure_hpa = 420.0,
+                .temperature_k = 250.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 5.0e4,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.065,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+            },
+            .{
+                .parent_layer_index = 1,
+                .sublayer_index = 3,
+                .altitude_km = 9.0,
+                .pressure_hpa = 340.0,
+                .temperature_k = 240.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 5.0e4,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.065,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.21, 0.08, 0.02 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.21, 0.08, 0.02 },
+            },
+        }),
+        .continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 440.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+        .mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
+        .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 1.0,
+        .effective_temperature_k = 262.0,
+        .effective_pressure_hpa = 560.0,
+        .column_density_factor = 0.0,
+        .cia_pair_path_factor_cm5 = 0.0,
+        .aerosol_reference_wavelength_nm = 435.0,
+        .aerosol_angstrom_exponent = 0.0,
+        .cloud_reference_wavelength_nm = 435.0,
+        .cloud_angstrom_exponent = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.35,
+        .cloud_optical_depth = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+        .depolarization_factor = 0.0,
+        .total_optical_depth = 0.35,
+    };
+}
+
+fn buildNonuniformQuadraturePreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
+    return .{
+        .layers = try allocator.dupe(@import("../optics/prepare.zig").PreparedLayer, &.{
+            .{
+                .layer_index = 0,
+                .sublayer_start_index = 0,
+                .sublayer_count = 4,
+                .altitude_km = 5.0,
+                .pressure_hpa = 650.0,
+                .temperature_k = 268.0,
+                .number_density_cm3 = 0.0,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_optical_depth = 0.0,
+                .aerosol_optical_depth = 0.50,
+                .cloud_optical_depth = 0.0,
+                .layer_single_scatter_albedo = 1.0,
+                .depolarization_factor = 0.0,
+                .optical_depth = 0.50,
+            },
+        }),
+        .sublayers = try allocator.dupe(@import("../optics/prepare.zig").PreparedSublayer, &.{
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 0,
+                .altitude_km = 0.5,
+                .pressure_hpa = 900.0,
+                .temperature_k = 282.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 1.0e5,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.05,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.18, 0.04, 0.0 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.18, 0.04, 0.0 },
+            },
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 1,
+                .altitude_km = 2.0,
+                .pressure_hpa = 790.0,
+                .temperature_k = 276.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 2.0e5,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.09,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.24, 0.05, 0.0 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.24, 0.05, 0.0 },
+            },
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 2,
+                .altitude_km = 4.5,
+                .pressure_hpa = 610.0,
+                .temperature_k = 266.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 3.0e5,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.14,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.31, 0.07, 0.01 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.31, 0.07, 0.01 },
+            },
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 3,
+                .altitude_km = 8.0,
+                .pressure_hpa = 430.0,
+                .temperature_k = 255.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 4.0e5,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.22,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.38, 0.09, 0.02 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.38, 0.09, 0.02 },
+            },
+        }),
+        .continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 440.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+        .mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
+        .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 1.0,
+        .effective_temperature_k = 268.0,
+        .effective_pressure_hpa = 650.0,
+        .column_density_factor = 0.0,
+        .cia_pair_path_factor_cm5 = 0.0,
+        .aerosol_reference_wavelength_nm = 435.0,
+        .aerosol_angstrom_exponent = 0.0,
+        .cloud_reference_wavelength_nm = 435.0,
+        .cloud_angstrom_exponent = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.50,
+        .cloud_optical_depth = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+        .depolarization_factor = 0.0,
+        .total_optical_depth = 0.50,
+    };
+}
+
+fn buildSingleSubdivisionPreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
+    return .{
+        .layers = try allocator.dupe(@import("../optics/prepare.zig").PreparedLayer, &.{
+            .{
+                .layer_index = 0,
+                .sublayer_start_index = 0,
+                .sublayer_count = 1,
+                .altitude_km = 1.5,
+                .pressure_hpa = 820.0,
+                .temperature_k = 279.0,
+                .number_density_cm3 = 0.0,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_optical_depth = 0.0,
+                .aerosol_optical_depth = 0.16,
+                .cloud_optical_depth = 0.0,
+                .layer_single_scatter_albedo = 1.0,
+                .depolarization_factor = 0.0,
+                .optical_depth = 0.16,
+            },
+            .{
+                .layer_index = 1,
+                .sublayer_start_index = 1,
+                .sublayer_count = 1,
+                .altitude_km = 6.0,
+                .pressure_hpa = 470.0,
+                .temperature_k = 252.0,
+                .number_density_cm3 = 0.0,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_optical_depth = 0.0,
+                .aerosol_optical_depth = 0.11,
+                .cloud_optical_depth = 0.0,
+                .layer_single_scatter_albedo = 1.0,
+                .depolarization_factor = 0.0,
+                .optical_depth = 0.11,
+            },
+        }),
+        .sublayers = try allocator.dupe(@import("../optics/prepare.zig").PreparedSublayer, &.{
+            .{
+                .parent_layer_index = 0,
+                .sublayer_index = 0,
+                .altitude_km = 1.5,
+                .pressure_hpa = 820.0,
+                .temperature_k = 279.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 3.0e5,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.16,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.22, 0.05, 0.0 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.22, 0.05, 0.0 },
+            },
+            .{
+                .parent_layer_index = 1,
+                .sublayer_index = 1,
+                .altitude_km = 6.0,
+                .pressure_hpa = 470.0,
+                .temperature_k = 252.0,
+                .number_density_cm3 = 0.0,
+                .oxygen_number_density_cm3 = 0.0,
+                .path_length_cm = 6.0e5,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_sigma_cm5_per_molecule2 = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_absorption_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .gas_extinction_optical_depth = 0.0,
+                .d_gas_optical_depth_d_temperature = 0.0,
+                .d_cia_optical_depth_d_temperature = 0.0,
+                .aerosol_optical_depth = 0.11,
+                .cloud_optical_depth = 0.0,
+                .aerosol_single_scatter_albedo = 1.0,
+                .cloud_single_scatter_albedo = 0.0,
+                .aerosol_phase_coefficients = .{ 1.0, 0.31, 0.08, 0.01 },
+                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .combined_phase_coefficients = .{ 1.0, 0.31, 0.08, 0.01 },
+            },
+        }),
+        .continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 440.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+        .mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
+        .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 1.0,
+        .effective_temperature_k = 266.0,
+        .effective_pressure_hpa = 640.0,
+        .column_density_factor = 0.0,
+        .cia_pair_path_factor_cm5 = 0.0,
+        .aerosol_reference_wavelength_nm = 435.0,
+        .aerosol_angstrom_exponent = 0.0,
+        .cloud_reference_wavelength_nm = 435.0,
+        .cloud_angstrom_exponent = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.27,
+        .cloud_optical_depth = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+        .depolarization_factor = 0.0,
+        .total_optical_depth = 0.27,
+    };
+}
+
 fn testProviders() ProviderBindings {
     const resolved = PluginProviders.PreparedProviders.resolve(.{}) catch unreachable;
     return .{
@@ -584,6 +1542,1121 @@ fn testProviders() ProviderBindings {
         .instrument = resolved.instrument,
         .noise = resolved.noise,
     };
+}
+
+fn fillSyntheticIntegratedSourceField(
+    geo: *const labos.Geometry,
+    ud: []labos.UDField,
+) void {
+    const solar_col: usize = 1;
+    const view_idx = geo.viewIdx();
+    const solar_idx = geo.n_gauss + 1;
+
+    for (ud, 0..) |*field, ilevel| {
+        field.* = .{
+            .E = labos.Vec.zero(geo.nmutot),
+            .U = labos.Vec2.zero(geo.nmutot),
+            .D = labos.Vec2.zero(geo.nmutot),
+        };
+
+        const level_scale = @as(f64, @floatFromInt(ilevel + 1));
+        field.E.set(view_idx, 0.40 + 0.08 * level_scale);
+        field.E.set(solar_idx, 0.22 + 0.05 * level_scale);
+        for (0..geo.n_gauss) |imu| {
+            const mu_scale = @as(f64, @floatFromInt(imu + 1));
+            field.D.col[solar_col].set(imu, 0.12 + 0.02 * level_scale + 0.01 * mu_scale);
+            field.U.col[solar_col].set(imu, 0.08 + 0.015 * level_scale + 0.008 * mu_scale);
+        }
+    }
+
+    // Zero the direct surface addend so changes come only from RTM quadrature nodes.
+    ud[0].U.col[solar_col].set(view_idx, 0.0);
+}
+
+fn inputWithQuadrature(
+    base_input: common.ForwardInput,
+    levels: []const common.RtmQuadratureLevel,
+) common.ForwardInput {
+    var input = base_input;
+    input.rtm_quadrature = .{ .levels = levels };
+    return input;
+}
+
+fn blendLegacyPhaseCoefficients(
+    left: [phase_coefficient_count]f64,
+    left_weight: f64,
+    right: [phase_coefficient_count]f64,
+    right_weight: f64,
+) [phase_coefficient_count]f64 {
+    var blended = [_]f64{0.0} ** phase_coefficient_count;
+    blended[0] = 1.0;
+    const total_weight = @max(left_weight, 0.0) + @max(right_weight, 0.0);
+    if (total_weight <= 0.0) return blended;
+    for (0..phase_coefficient_count) |index| {
+        blended[index] = (left[index] * @max(left_weight, 0.0) +
+            right[index] * @max(right_weight, 0.0)) / total_weight;
+    }
+    return blended;
+}
+
+fn fillLegacyMidpointQuadratureLevels(
+    prepared: *const PreparedOpticalState,
+    layer_inputs: []const common.LayerInput,
+    levels: []common.RtmQuadratureLevel,
+) void {
+    const sublayers = prepared.sublayers orelse unreachable;
+    for (levels) |*level| {
+        level.weight = 0.0;
+        level.ksca = 0.0;
+        level.phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 };
+    }
+
+    for (prepared.layers) |layer| {
+        const start: usize = @intCast(layer.sublayer_start_index);
+        const count: usize = @intCast(layer.sublayer_count);
+        if (count <= 1) continue;
+        const stop = start + count;
+
+        var parent_scattering: f64 = 0.0;
+        for (layer_inputs[start..stop]) |layer_input| {
+            parent_scattering += @max(layer_input.scattering_optical_depth, 0.0);
+        }
+
+        var raw_scattering_sum: f64 = 0.0;
+        for (start + 1..stop) |ilevel| {
+            const left_sublayer = sublayers[ilevel - 1];
+            const right_sublayer = sublayers[ilevel];
+            const left_input = layer_inputs[ilevel - 1];
+            const right_input = layer_inputs[ilevel];
+            const left_span = @max(left_sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+            const right_span = @max(right_sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+            const node_span = 0.5 * (left_span + right_span);
+            const left_scattering = @max(left_input.scattering_optical_depth, 0.0);
+            const right_scattering = @max(right_input.scattering_optical_depth, 0.0);
+            const node_ksca = if ((left_span + right_span) > 0.0)
+                (left_scattering + right_scattering) / (left_span + right_span)
+            else
+                0.0;
+
+            levels[ilevel].weight = node_span;
+            levels[ilevel].ksca = node_ksca;
+            levels[ilevel].phase_coefficients = blendLegacyPhaseCoefficients(
+                left_input.phase_coefficients,
+                left_scattering,
+                right_input.phase_coefficients,
+                right_scattering,
+            );
+            raw_scattering_sum += levels[ilevel].weightedScattering();
+        }
+
+        if (raw_scattering_sum > 0.0 and parent_scattering > 0.0) {
+            const scale = parent_scattering / raw_scattering_sum;
+            for (start + 1..stop) |ilevel| {
+                levels[ilevel].weight *= scale;
+            }
+        } else {
+            for (start + 1..stop) |ilevel| {
+                levels[ilevel].weight = 0.0;
+                levels[ilevel].ksca = 0.0;
+            }
+        }
+    }
+}
+
+test "configured forward input preserves prepared source-function boundary weights" {
+    const scene: Scene = .{
+        .id = "measurement-source-interfaces",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .integrate_source_function = true,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [2]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [3]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [3]usize = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+
+    try std.testing.expectEqual(@as(usize, 2), input.layers.len);
+    try std.testing.expectEqual(@as(usize, 3), input.source_interfaces.len);
+    try std.testing.expectApproxEqRel(
+        input.layers[0].scattering_optical_depth,
+        input.source_interfaces[0].source_weight,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[0].rtm_weight, 1.0e-12);
+    try std.testing.expectApproxEqRel(
+        0.5 * input.layers[1].scattering_optical_depth,
+        input.source_interfaces[2].source_weight,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[2].rtm_weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[1].source_weight, 1.0e-12);
+    try std.testing.expect(input.source_interfaces[1].rtm_weight > 0.0);
+    try std.testing.expect(input.source_interfaces[1].ksca_above >= 0.0);
+    try std.testing.expectApproxEqRel(
+        input.layers[1].scattering_optical_depth,
+        input.source_interfaces[1].rtm_weight * input.source_interfaces[1].ksca_above,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqRel(
+        input.layers[1].phase_coefficients[1],
+        input.source_interfaces[1].phase_coefficients_above[1],
+        1.0e-12,
+    );
+}
+
+test "configured forward input wires pseudo-spherical attenuation samples from prepared sublayers" {
+    const scene: Scene = .{
+        .id = "measurement-pseudo-spherical-grid",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .limb,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_spherical_correction = true,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [2]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [3]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [3]usize = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+
+    try std.testing.expect(input.pseudo_spherical_grid.isValidFor(input.layers.len));
+    try std.testing.expectEqualSlices(usize, &.{ 0, 2, 4 }, input.pseudo_spherical_grid.level_sample_starts);
+    try std.testing.expectApproxEqRel(@as(f64, 1.0), input.pseudo_spherical_grid.samples[0].altitude_km, 1.0e-12);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[0].optical_depth > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[3].optical_depth > 0.0);
+}
+
+test "configured forward input leaves pseudo-spherical attenuation grid empty when prepared sublayers are unavailable" {
+    const scene: Scene = .{
+        .id = "measurement-pseudo-spherical-grid-fallback",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .limb,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_spherical_correction = true,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    const owned_sublayers = prepared.sublayers.?;
+    prepared.sublayers = null;
+    defer {
+        std.testing.allocator.free(owned_sublayers);
+        prepared.deinit(std.testing.allocator);
+    }
+
+    var layer_inputs: [2]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [3]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [3]usize = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+
+    try std.testing.expectEqual(@as(usize, 0), input.pseudo_spherical_grid.samples.len);
+    try std.testing.expectEqual(@as(usize, 0), input.pseudo_spherical_grid.level_sample_starts.len);
+}
+
+test "configured forward input builds prepared adding RTM quadrature on sublayer grids" {
+    const scene: Scene = .{
+        .id = "measurement-adding-direct-grid",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .integrate_source_function = true,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+
+    try std.testing.expectEqual(@as(usize, 4), input.layers.len);
+    try std.testing.expectEqual(@as(usize, 5), input.source_interfaces.len);
+    try std.testing.expect(input.rtm_controls.integrate_source_function);
+    try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[0].weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[2].weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[4].weight, 1.0e-12);
+    try std.testing.expect(input.rtm_quadrature.levels[1].weight > 0.0);
+    try std.testing.expect(input.rtm_quadrature.levels[3].weight > 0.0);
+    try std.testing.expect(input.rtm_quadrature.levels[1].ksca > 0.0);
+    try std.testing.expect(input.rtm_quadrature.levels[3].ksca > 0.0);
+
+    var lower_interval_scattering: f64 = 0.0;
+    for (input.layers[0..2]) |layer| lower_interval_scattering += @max(layer.scattering_optical_depth, 0.0);
+    var upper_interval_scattering: f64 = 0.0;
+    for (input.layers[2..4]) |layer| upper_interval_scattering += @max(layer.scattering_optical_depth, 0.0);
+    try std.testing.expectApproxEqRel(
+        lower_interval_scattering,
+        input.rtm_quadrature.levels[1].weightedScattering(),
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqRel(
+        upper_interval_scattering,
+        input.rtm_quadrature.levels[3].weightedScattering(),
+        1.0e-12,
+    );
+}
+
+test "configured forward input builds prepared adding RTM quadrature from nonuniform sublayer intervals" {
+    const scene: Scene = .{
+        .id = "measurement-adding-nonuniform-grid",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 4,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .integrate_source_function = true,
+        },
+    });
+    var prepared = try buildNonuniformQuadraturePreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+
+    try std.testing.expectEqual(@as(usize, 4), input.layers.len);
+    try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[0].weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[4].weight, 1.0e-12);
+    const three_point = try gauss_legendre.rule(3);
+    const expected_total_span_km = 10.0;
+    for (0..3) |index| {
+        try std.testing.expectApproxEqRel(
+            0.5 * three_point.weights[index] * expected_total_span_km,
+            input.rtm_quadrature.levels[index + 1].weight,
+            1.0e-12,
+        );
+        try std.testing.expectApproxEqRel(
+            0.5 * (three_point.nodes[index] + 1.0) * expected_total_span_km,
+            input.rtm_quadrature.levels[index + 1].altitude_km,
+            1.0e-12,
+        );
+    }
+    try std.testing.expectApproxEqRel(@as(f64, 0.24), input.rtm_quadrature.levels[1].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.38), input.rtm_quadrature.levels[2].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.38), input.rtm_quadrature.levels[3].phase_coefficients[1], 1.0e-12);
+
+    const legacy_middle_weight = 2.5 * (10.0 / 7.5);
+    try std.testing.expect(@abs(input.rtm_quadrature.levels[2].weight - legacy_middle_weight) > 1.0e-3);
+
+    var total_scattering: f64 = 0.0;
+    for (input.layers) |layer| total_scattering += @max(layer.scattering_optical_depth, 0.0);
+
+    var quadrature_scattering: f64 = 0.0;
+    for (input.rtm_quadrature.levels[1..4]) |level| {
+        quadrature_scattering += level.weightedScattering();
+    }
+    try std.testing.expectApproxEqRel(total_scattering, quadrature_scattering, 1.0e-12);
+}
+
+test "prepared adding live route uses nonuniform quadrature weights instead of the legacy midpoint surrogate" {
+    const scene: Scene = .{
+        .id = "measurement-adding-nonuniform-live",
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .surface = .{
+            .albedo = 0.03,
+        },
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 54.0,
+            .viewing_zenith_deg = 46.0,
+            .relative_azimuth_deg = 78.0,
+        },
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 4,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+        },
+    });
+
+    var prepared = try buildNonuniformQuadraturePreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+
+    var legacy_levels: [5]common.RtmQuadratureLevel = undefined;
+    for (input.rtm_quadrature.levels, 0..) |level, index| {
+        legacy_levels[index] = level;
+    }
+    fillLegacyMidpointQuadratureLevels(&prepared, input.layers, &legacy_levels);
+
+    const providers = testProviders();
+    const forward_new = try providers.transport.executePrepared(
+        std.testing.allocator,
+        route,
+        input,
+    );
+    const forward_legacy = try providers.transport.executePrepared(
+        std.testing.allocator,
+        route,
+        inputWithQuadrature(input, &legacy_levels),
+    );
+
+    try std.testing.expect(std.math.isFinite(forward_new.toa_reflectance_factor));
+    try std.testing.expect(std.math.isFinite(forward_legacy.toa_reflectance_factor));
+    try std.testing.expect(forward_new.toa_reflectance_factor > 0.0);
+    try std.testing.expect(forward_legacy.toa_reflectance_factor > 0.0);
+    try std.testing.expect(@abs(
+        forward_new.toa_reflectance_factor - forward_legacy.toa_reflectance_factor,
+    ) > 1.0e-8);
+}
+
+test "prepared adding live route falls back when no explicit RTM quadrature nodes exist" {
+    const scene: Scene = .{
+        .id = "measurement-adding-single-subdivision",
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .surface = .{
+            .albedo = 0.04,
+        },
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 52.0,
+            .viewing_zenith_deg = 44.0,
+            .relative_azimuth_deg = 70.0,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 1,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+        },
+    });
+
+    var prepared = try buildSingleSubdivisionPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [2]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [2]common.LayerInput = undefined;
+    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [3]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [2]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [3]usize = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+
+    try std.testing.expectEqual(@as(usize, 2), input.layers.len);
+    try std.testing.expectEqual(@as(usize, 0), input.rtm_quadrature.levels.len);
+    try std.testing.expect(input.source_interfaces[1].rtm_weight > 0.0);
+
+    const providers = testProviders();
+    const forward_fallback = try providers.transport.executePrepared(
+        std.testing.allocator,
+        route,
+        input,
+    );
+    const zero_quadrature = [_]common.RtmQuadratureLevel{
+        .{},
+        .{},
+        .{},
+    };
+    const forward_bad = try providers.transport.executePrepared(
+        std.testing.allocator,
+        route,
+        inputWithQuadrature(input, &zero_quadrature),
+    );
+
+    try std.testing.expect(std.math.isFinite(forward_fallback.toa_reflectance_factor));
+    try std.testing.expect(forward_fallback.toa_reflectance_factor > 0.0);
+    try std.testing.expect(@abs(
+        forward_fallback.toa_reflectance_factor - forward_bad.toa_reflectance_factor,
+    ) > 1.0e-8);
+}
+
+test "cached forward execution preserves prepared adding RTM quadrature and its reflectance semantics" {
+    const scene: Scene = .{
+        .id = "measurement-adding-direct-execution",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+    };
+    const route_integrated = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
+        .rtm_controls = .{
+            .use_adding = true,
+            .integrate_source_function = true,
+        },
+    });
+    const route_direct = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
+        .rtm_controls = .{
+            .use_adding = true,
+            .integrate_source_function = false,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+    var integrated_cache = SpectralEvaluationCache.init(std.testing.allocator);
+    defer integrated_cache.deinit();
+    var direct_cache = SpectralEvaluationCache.init(std.testing.allocator);
+    defer direct_cache.deinit();
+    var integrated_layers: [4]common.LayerInput = undefined;
+    var integrated_pseudo_layers: [4]common.LayerInput = undefined;
+    var integrated_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var integrated_rtm_quadrature: [5]common.RtmQuadratureLevel = undefined;
+    var integrated_pseudo_samples: [4]common.PseudoSphericalSample = undefined;
+    var integrated_pseudo_level_starts: [5]usize = undefined;
+    var direct_layers: [4]common.LayerInput = undefined;
+    var direct_pseudo_layers: [4]common.LayerInput = undefined;
+    var direct_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var direct_rtm_quadrature: [5]common.RtmQuadratureLevel = undefined;
+    var direct_pseudo_samples: [4]common.PseudoSphericalSample = undefined;
+    var direct_pseudo_level_starts: [5]usize = undefined;
+    const providers = testProviders();
+
+    const integrated_sample = try cachedForwardAtWavelength(
+        std.testing.allocator,
+        &scene,
+        route_integrated,
+        &prepared,
+        435.0,
+        10.0,
+        providers,
+        &integrated_layers,
+        &integrated_pseudo_layers,
+        &integrated_interfaces,
+        &integrated_rtm_quadrature,
+        &integrated_pseudo_samples,
+        &integrated_pseudo_level_starts,
+        &integrated_cache,
+    );
+    const direct_sample = try cachedForwardAtWavelength(
+        std.testing.allocator,
+        &scene,
+        route_direct,
+        &prepared,
+        435.0,
+        10.0,
+        providers,
+        &direct_layers,
+        &direct_pseudo_layers,
+        &direct_interfaces,
+        &direct_rtm_quadrature,
+        &direct_pseudo_samples,
+        &direct_pseudo_level_starts,
+        &direct_cache,
+    );
+
+    const explicit_input = configuredForwardInput(
+        &scene,
+        route_integrated,
+        &prepared,
+        435.0,
+        &integrated_layers,
+        &integrated_pseudo_layers,
+        &integrated_interfaces,
+        &integrated_rtm_quadrature,
+        &integrated_pseudo_samples,
+        &integrated_pseudo_level_starts,
+    );
+    var fallback_interfaces: [5]common.SourceInterfaceInput = undefined;
+    common.fillSourceInterfacesFromLayers(explicit_input.layers, &fallback_interfaces);
+    const explicit_forward = try providers.transport.executePrepared(
+        std.testing.allocator,
+        route_integrated,
+        explicit_input,
+    );
+    const geo = labos.Geometry.init(route_integrated.rtm_controls.nGauss(), explicit_input.mu0, explicit_input.muv);
+    var synthetic_ud: [5]labos.UDField = undefined;
+    fillSyntheticIntegratedSourceField(&geo, &synthetic_ud);
+    const explicit_reflectance = labos.calcIntegratedReflectance(
+        explicit_input.layers,
+        explicit_input.source_interfaces,
+        explicit_input.rtm_quadrature,
+        &synthetic_ud,
+        explicit_input.layers.len,
+        0,
+        &geo,
+    );
+    const fallback_reflectance = labos.calcIntegratedReflectance(
+        explicit_input.layers,
+        &fallback_interfaces,
+        .{},
+        &synthetic_ud,
+        explicit_input.layers.len,
+        0,
+        &geo,
+    );
+
+    const cached_radiance = radianceFromForward(
+        &scene,
+        &prepared,
+        providers,
+        435.0,
+        10.0,
+        0.0,
+        explicit_forward,
+    );
+    try std.testing.expect(explicit_input.rtm_quadrature.isValidFor(explicit_input.layers.len));
+    try std.testing.expectApproxEqRel(
+        cached_radiance,
+        integrated_sample.radiance,
+        1.0e-12,
+    );
+    try std.testing.expect(explicit_reflectance > 0.0);
+    try std.testing.expect(@abs(fallback_reflectance - explicit_reflectance) > 1.0e-6);
+
+    try std.testing.expect(@abs(
+        direct_sample.radiance - integrated_sample.radiance,
+    ) > 1.0e-8);
+    try std.testing.expect(@abs(
+        direct_sample.jacobian - integrated_sample.jacobian,
+    ) > 1.0e-10);
+}
+
+test "prepared adding RTM quadrature keeps boundaries inert and interior samples active" {
+    const scene: Scene = .{
+        .id = "measurement-adding-boundary-weights",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+    };
+    const route_integrated = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .integrate_source_function = true,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    const baseline_input = configuredForwardInput(
+        &scene,
+        route_integrated,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+    const geo = labos.Geometry.init(route_integrated.rtm_controls.nGauss(), baseline_input.mu0, baseline_input.muv);
+    var synthetic_ud: [5]labos.UDField = undefined;
+    fillSyntheticIntegratedSourceField(&geo, &synthetic_ud);
+    const baseline_integrated = labos.calcIntegratedReflectance(
+        baseline_input.layers,
+        baseline_input.source_interfaces,
+        baseline_input.rtm_quadrature,
+        &synthetic_ud,
+        baseline_input.layers.len,
+        0,
+        &geo,
+    );
+    var boundary_quadrature = rtm_quadrature_levels;
+    boundary_quadrature[2].ksca = 9.0;
+    boundary_quadrature[2].phase_coefficients[1] = 0.95;
+    const boundary_integrated = labos.calcIntegratedReflectance(
+        baseline_input.layers,
+        baseline_input.source_interfaces,
+        .{ .levels = &boundary_quadrature },
+        &synthetic_ud,
+        baseline_input.layers.len,
+        0,
+        &geo,
+    );
+    var interior_quadrature = rtm_quadrature_levels;
+    interior_quadrature[1].ksca *= 1.5;
+    interior_quadrature[1].phase_coefficients[1] = 0.60;
+    const interior_integrated = labos.calcIntegratedReflectance(
+        baseline_input.layers,
+        baseline_input.source_interfaces,
+        .{ .levels = &interior_quadrature },
+        &synthetic_ud,
+        baseline_input.layers.len,
+        0,
+        &geo,
+    );
+
+    try std.testing.expect(baseline_input.rtm_quadrature.isValidFor(baseline_input.layers.len));
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), rtm_quadrature_levels[0].weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), rtm_quadrature_levels[2].weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), rtm_quadrature_levels[4].weight, 1.0e-12);
+    try std.testing.expect(rtm_quadrature_levels[1].weight > 0.0);
+    try std.testing.expectApproxEqRel(
+        baseline_integrated,
+        boundary_integrated,
+        1.0e-12,
+    );
+    try std.testing.expect(@abs(
+        baseline_integrated - interior_integrated,
+    ) > 1.0e-8);
+}
+
+test "prepared adding live route consumes RTM quadrature while boundary nodes stay inert" {
+    const scene: Scene = .{
+        .id = "measurement-adding-live-quadrature",
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .surface = .{
+            .albedo = 0.05,
+        },
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 53.13,
+            .viewing_zenith_deg = 48.19,
+            .relative_azimuth_deg = 75.0,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+    };
+    const route_integrated = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+        },
+    });
+
+    var prepared = try buildQuadratureSensitivePreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route_integrated,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+    );
+    const providers = testProviders();
+    const baseline = try providers.transport.executePrepared(
+        std.testing.allocator,
+        route_integrated,
+        input,
+    );
+
+    var boundary_index: usize = 0;
+    var interior_index: usize = 0;
+    for (1..input.rtm_quadrature.levels.len - 1) |ilevel| {
+        if (boundary_index == 0 and @abs(input.rtm_quadrature.levels[ilevel].weight) <= 1.0e-12) {
+            boundary_index = ilevel;
+        }
+        if (interior_index == 0 and input.rtm_quadrature.levels[ilevel].weight > 0.0) {
+            interior_index = ilevel;
+        }
+    }
+
+    try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
+    try std.testing.expect(boundary_index != 0);
+    try std.testing.expect(interior_index != 0);
+    try std.testing.expect(baseline.toa_reflectance_factor > 0.0);
+
+    var boundary_quadrature = rtm_quadrature_levels;
+    boundary_quadrature[boundary_index].ksca = 25.0;
+    boundary_quadrature[boundary_index].phase_coefficients[1] = 0.95;
+    const boundary_forward = try providers.transport.executePrepared(
+        std.testing.allocator,
+        route_integrated,
+        inputWithQuadrature(input, &boundary_quadrature),
+    );
+
+    var interior_quadrature = rtm_quadrature_levels;
+    interior_quadrature[interior_index].ksca *= 4.0;
+    interior_quadrature[interior_index].phase_coefficients[1] = 0.95;
+    const interior_forward = try providers.transport.executePrepared(
+        std.testing.allocator,
+        route_integrated,
+        inputWithQuadrature(input, &interior_quadrature),
+    );
+
+    try std.testing.expectApproxEqRel(
+        baseline.toa_reflectance_factor,
+        boundary_forward.toa_reflectance_factor,
+        1.0e-10,
+    );
+    try std.testing.expect(@abs(
+        baseline.toa_reflectance_factor - interior_forward.toa_reflectance_factor,
+    ) > 1.0e-6);
+}
+
+test "summary workspace sizes adding transport buffers from sublayer hints" {
+    const scene: Scene = .{
+        .id = "measurement-adding-grid-hint",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+    };
+    const route_labos = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    });
+    const route_adding = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+        },
+    });
+
+    var workspace: SummaryWorkspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+
+    const labos_buffers = try workspace.buffers(
+        std.testing.allocator,
+        &scene,
+        route_labos,
+        testProviders(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), labos_buffers.layer_inputs.len);
+    try std.testing.expectEqual(@as(usize, 3), labos_buffers.source_interfaces.len);
+
+    const adding_buffers = try workspace.buffers(
+        std.testing.allocator,
+        &scene,
+        route_adding,
+        testProviders(),
+    );
+    try std.testing.expectEqual(@as(usize, 4), adding_buffers.layer_inputs.len);
+    try std.testing.expectEqual(@as(usize, 5), adding_buffers.source_interfaces.len);
+}
+
+test "measurement-space simulation supports adding routes on prepared sublayer grids" {
+    const scene: Scene = .{
+        .id = "measurement-space-adding-sublayers",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 16,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .n_streams = 8,
+            .num_orders_max = 4,
+            .integrate_source_function = false,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    const summary = try simulateSummary(std.testing.allocator, &scene, route, &prepared, testProviders());
+    try std.testing.expect(summary.mean_radiance > 0.0);
+    try std.testing.expect(summary.mean_irradiance > 0.0);
+    try std.testing.expect(summary.mean_reflectance > 0.0);
 }
 
 test "measurement-space simulation composes transport, calibration, convolution, and noise" {
@@ -595,13 +2668,13 @@ test "measurement-space simulation composes transport, calibration, convolution,
             .sample_count = 16,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
-            .sampling = "operational",
-            .noise_model = "shot_noise",
+            .sampling = .operational,
+            .noise_model = .shot_noise,
         },
         .atmosphere = .{
-            .layer_count = 12,
+            .layer_count = 2,
         },
     };
     const route = try common.prepareRoute(.{
@@ -612,7 +2685,7 @@ test "measurement-space simulation composes transport, calibration, convolution,
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    const summary = try simulateSummary(std.testing.allocator, scene, route, prepared, testProviders());
+    const summary = try simulateSummary(std.testing.allocator, &scene, route, &prepared, testProviders());
     try std.testing.expectEqual(@as(u32, 16), summary.sample_count);
     try std.testing.expect(summary.mean_radiance > 0.0);
     try std.testing.expect(summary.mean_irradiance > 0.0);
@@ -631,13 +2704,13 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
             .sample_count = 16,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
-            .sampling = "operational",
-            .noise_model = "shot_noise",
+            .sampling = .operational,
+            .noise_model = .shot_noise,
         },
         .atmosphere = .{
-            .layer_count = 12,
+            .layer_count = 2,
         },
     };
     const route = try common.prepareRoute(.{
@@ -654,9 +2727,9 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
     const first_summary = try simulateSummaryWithWorkspace(
         std.testing.allocator,
         &workspace,
-        scene,
+        &scene,
         route,
-        prepared,
+        &prepared,
         testProviders(),
     );
     const wavelengths_ptr = @intFromPtr(workspace.wavelengths.ptr);
@@ -667,9 +2740,9 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
     const second_summary = try simulateSummaryWithWorkspace(
         std.testing.allocator,
         &workspace,
-        scene,
+        &scene,
         route,
-        prepared,
+        &prepared,
         testProviders(),
     );
     try std.testing.expectEqual(wavelengths_ptr, @intFromPtr(workspace.wavelengths.ptr));
@@ -677,7 +2750,7 @@ test "measurement-space summary workspace reuses caller-owned buffers and matche
     try std.testing.expectEqual(jacobian_ptr, @intFromPtr(workspace.jacobian.ptr));
     try std.testing.expectEqual(noise_ptr, @intFromPtr(workspace.noise_sigma.ptr));
 
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(first_summary.sample_count, second_summary.sample_count);
@@ -698,13 +2771,13 @@ test "measurement-space summary workspace supports routes without jacobians or n
             .sample_count = 10,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
-            .sampling = "operational",
-            .noise_model = "none",
+            .sampling = .operational,
+            .noise_model = .none,
         },
         .atmosphere = .{
-            .layer_count = 12,
+            .layer_count = 2,
         },
     };
     const route = try common.prepareRoute(.{
@@ -721,12 +2794,12 @@ test "measurement-space summary workspace supports routes without jacobians or n
     const summary = try simulateSummaryWithWorkspace(
         std.testing.allocator,
         &workspace,
-        scene,
+        &scene,
         route,
-        prepared,
+        &prepared,
         testProviders(),
     );
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expect(summary.mean_radiance > 0.0);
@@ -764,13 +2837,13 @@ test "measurement-space product materializes spectral vectors and physical field
             .sample_count = 12,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
-            .sampling = "operational",
-            .noise_model = "shot_noise",
+            .sampling = .operational,
+            .noise_model = .shot_noise,
         },
         .atmosphere = .{
-            .layer_count = 12,
+            .layer_count = 2,
         },
     };
     const route = try common.prepareRoute(.{
@@ -781,11 +2854,12 @@ test "measurement-space product materializes spectral vectors and physical field
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 12), product.summary.sample_count);
     try std.testing.expectEqual(@as(usize, 12), product.wavelengths.len);
+    try std.testing.expectEqual(product.wavelengths.len, product.radiance.len);
     try std.testing.expect(product.radiance[0] > 0.0);
     try std.testing.expect(product.irradiance[0] > 0.0);
     try std.testing.expect(product.reflectance[0] > 0.0);
@@ -794,9 +2868,12 @@ test "measurement-space product materializes spectral vectors and physical field
     try std.testing.expectEqual(prepared.total_optical_depth, product.total_optical_depth);
     try std.testing.expectEqual(prepared.effective_air_mass_factor, product.effective_air_mass_factor);
     try std.testing.expectEqual(prepared.cia_optical_depth, product.cia_optical_depth);
+    try std.testing.expect(product.effective_temperature_k > 0.0);
+    try std.testing.expect(product.effective_pressure_hpa > 0.0);
 }
 
 test "measurement-space uses external high-resolution solar spectra when operational metadata provides one" {
+    const operational_sigma = [_]f64{ 0.02, 0.02, 0.02 };
     const scene: Scene = .{
         .id = "measurement-operational-solar",
         .spectral_grid = .{
@@ -805,17 +2882,19 @@ test "measurement-space uses external high-resolution solar spectra when operati
             .sample_count = 3,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
-            .sampling = "operational",
-            .noise_model = "s5p_operational",
+            .sampling = .operational,
+            .noise_model = .s5p_operational,
+            .ingested_noise_sigma = &operational_sigma,
+            .reference_radiance = &.{ 1.0, 1.0, 1.0 },
             .operational_solar_spectrum = .{
                 .wavelengths_nm = &[_]f64{ 405.0, 435.0, 465.0 },
                 .irradiance = &[_]f64{ 1.0e14, 2.0e14, 3.0e14 },
             },
         },
         .atmosphere = .{
-            .layer_count = 12,
+            .layer_count = 2,
         },
     };
     const route = try common.prepareRoute(.{
@@ -827,7 +2906,7 @@ test "measurement-space uses external high-resolution solar spectra when operati
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var product = try simulateProduct(std.testing.allocator, scene, route, prepared, testProviders());
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
     defer product.deinit(std.testing.allocator);
 
     try std.testing.expect(product.irradiance[0] < product.irradiance[1]);
@@ -835,7 +2914,44 @@ test "measurement-space uses external high-resolution solar spectra when operati
     try std.testing.expect(product.reflectance[0] > product.reflectance[2]);
 }
 
+test "measurement-space uses bundled O2A solar spectra when bundle_default is requested" {
+    const scene: Scene = .{
+        .id = "measurement-bundled-o2a-solar",
+        .spectral_grid = .{
+            .start_nm = 760.0,
+            .end_nm = 770.0,
+            .sample_count = 11,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .solar_spectrum_source = .bundle_default,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
+    });
+
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
+    defer product.deinit(std.testing.allocator);
+
+    try std.testing.expect(product.irradiance[0] > product.irradiance[2]);
+    try std.testing.expect(product.irradiance[2] < product.irradiance[5]);
+    try std.testing.expect(product.irradiance[5] > product.irradiance[10]);
+}
+
 test "measurement-space operational integration uses high-resolution instrument sampling" {
+    const operational_sigma = [_]f64{0.02} ** 12;
     const plain_scene: Scene = .{
         .id = "measurement-plain",
         .spectral_grid = .{
@@ -844,25 +2960,26 @@ test "measurement-space operational integration uses high-resolution instrument 
             .sample_count = 12,
         },
         .observation_model = .{
-            .instrument = "synthetic",
+            .instrument = .synthetic,
             .regime = .nadir,
-            .sampling = "native",
-            .noise_model = "shot_noise",
+            .sampling = .native,
+            .noise_model = .shot_noise,
         },
         .atmosphere = .{
-            .layer_count = 12,
+            .layer_count = 2,
         },
     };
     const operational_scene: Scene = .{
         .id = "measurement-operational",
         .spectral_grid = plain_scene.spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
-            .sampling = "measured_channels",
-            .noise_model = "snr_from_input",
+            .sampling = .measured_channels,
+            .noise_model = .snr_from_input,
             .wavelength_shift_nm = 0.018,
             .instrument_line_fwhm_nm = 0.54,
+            .ingested_noise_sigma = &operational_sigma,
         },
         .atmosphere = plain_scene.atmosphere,
     };
@@ -875,18 +2992,115 @@ test "measurement-space operational integration uses high-resolution instrument 
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var plain_product = try simulateProduct(std.testing.allocator, plain_scene, route, prepared, testProviders());
+    var plain_product = try simulateProduct(std.testing.allocator, &plain_scene, route, &prepared, testProviders());
     defer plain_product.deinit(std.testing.allocator);
-    var operational_product = try simulateProduct(std.testing.allocator, operational_scene, route, prepared, testProviders());
+    var operational_product = try simulateProduct(std.testing.allocator, &operational_scene, route, &prepared, testProviders());
     defer operational_product.deinit(std.testing.allocator);
 
-    try std.testing.expect(operational_product.wavelengths[0] > plain_product.wavelengths[0]);
+    try std.testing.expectApproxEqAbs(plain_product.wavelengths[0], operational_product.wavelengths[0], 1.0e-12);
     try std.testing.expect(operational_product.radiance[0] != plain_product.radiance[0]);
     try std.testing.expect(operational_product.irradiance[0] != plain_product.irradiance[0]);
     try std.testing.expect(operational_product.jacobian != null);
 }
 
+test "measurement-space honors explicit measured-channel wavelengths from ingest" {
+    const sigma = [_]f64{ 0.02, 0.02, 0.02 };
+    const measured_wavelengths = [_]f64{ 405.15, 434.85, 464.75 };
+    const scene: Scene = .{
+        .id = "measurement-measured-wavelength-axis",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .regime = .nadir,
+            .sampling = .measured_channels,
+            .noise_model = .snr_from_input,
+            .wavelength_shift_nm = 0.01,
+            .measured_wavelengths_nm = &measured_wavelengths,
+            .ingested_noise_sigma = &sigma,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    });
+
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
+    defer product.deinit(std.testing.allocator);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 405.15), product.wavelengths[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 434.85), product.wavelengths[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 464.75), product.wavelengths[2], 1.0e-12);
+}
+
+test "measurement-space applies radiance calibration after instrument integration without rescaling irradiance" {
+    const base_scene: Scene = .{
+        .id = "measurement-calibration-base",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 12,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .instrument_line_fwhm_nm = 0.54,
+            .high_resolution_step_nm = 0.08,
+            .high_resolution_half_span_nm = 0.32,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const calibrated_scene: Scene = .{
+        .id = "measurement-calibration-adjusted",
+        .spectral_grid = base_scene.spectral_grid,
+        .observation_model = .{
+            .instrument = .tropomi,
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .instrument_line_fwhm_nm = 0.54,
+            .high_resolution_step_nm = 0.08,
+            .high_resolution_half_span_nm = 0.32,
+            .multiplicative_offset = 1.08,
+            .stray_light = 0.03,
+        },
+        .atmosphere = base_scene.atmosphere,
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
+    });
+
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var base_product = try simulateProduct(std.testing.allocator, &base_scene, route, &prepared, testProviders());
+    defer base_product.deinit(std.testing.allocator);
+    var calibrated_product = try simulateProduct(std.testing.allocator, &calibrated_scene, route, &prepared, testProviders());
+    defer calibrated_product.deinit(std.testing.allocator);
+
+    try std.testing.expect(calibrated_product.radiance[0] > base_product.radiance[0]);
+    try std.testing.expectApproxEqAbs(base_product.irradiance[0], calibrated_product.irradiance[0], 1.0e-12);
+    try std.testing.expect(calibrated_product.reflectance[0] > base_product.reflectance[0]);
+}
+
 test "measurement-space operational integration honors explicit isrf table weights" {
+    const gaussian_sigma = [_]f64{0.02} ** 12;
     const gaussian_scene: Scene = .{
         .id = "measurement-operational-gaussian",
         .spectral_grid = .{
@@ -895,36 +3109,38 @@ test "measurement-space operational integration honors explicit isrf table weigh
             .sample_count = 12,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
-            .sampling = "measured_channels",
-            .noise_model = "snr_from_input",
+            .sampling = .measured_channels,
+            .noise_model = .snr_from_input,
             .wavelength_shift_nm = 0.018,
             .instrument_line_fwhm_nm = 0.54,
             .high_resolution_step_nm = 0.08,
             .high_resolution_half_span_nm = 0.32,
+            .ingested_noise_sigma = &gaussian_sigma,
         },
         .atmosphere = .{
-            .layer_count = 12,
+            .layer_count = 2,
         },
     };
     const table_scene: Scene = .{
         .id = "measurement-operational-table",
         .spectral_grid = gaussian_scene.spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
-            .sampling = "measured_channels",
-            .noise_model = "snr_from_input",
+            .sampling = .measured_channels,
+            .noise_model = .snr_from_input,
             .wavelength_shift_nm = 0.018,
             .instrument_line_fwhm_nm = 0.54,
             .high_resolution_step_nm = 0.08,
             .high_resolution_half_span_nm = 0.32,
             .instrument_line_shape = .{
                 .sample_count = 5,
-                .offsets_nm = .{ -0.32, -0.16, 0.0, 0.16, 0.32, 0.0, 0.0, 0.0, 0.0 },
-                .weights = .{ 0.08, 0.24, 0.36, 0.22, 0.10, 0.0, 0.0, 0.0, 0.0 },
+                .offsets_nm = &[_]f64{ -0.32, -0.16, 0.0, 0.16, 0.32 },
+                .weights = &[_]f64{ 0.08, 0.24, 0.36, 0.22, 0.10 },
             },
+            .ingested_noise_sigma = &gaussian_sigma,
         },
         .atmosphere = gaussian_scene.atmosphere,
     };
@@ -937,9 +3153,9 @@ test "measurement-space operational integration honors explicit isrf table weigh
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var gaussian_product = try simulateProduct(std.testing.allocator, gaussian_scene, route, prepared, testProviders());
+    var gaussian_product = try simulateProduct(std.testing.allocator, &gaussian_scene, route, &prepared, testProviders());
     defer gaussian_product.deinit(std.testing.allocator);
-    var table_product = try simulateProduct(std.testing.allocator, table_scene, route, prepared, testProviders());
+    var table_product = try simulateProduct(std.testing.allocator, &table_scene, route, &prepared, testProviders());
     defer table_product.deinit(std.testing.allocator);
 
     try std.testing.expect(table_product.radiance[0] != gaussian_product.radiance[0]);
@@ -948,6 +3164,7 @@ test "measurement-space operational integration honors explicit isrf table weigh
 }
 
 test "measurement-space operational integration selects wavelength-indexed isrf rows" {
+    const indexed_sigma = [_]f64{0.02} ** 3;
     const global_shape_scene: Scene = .{
         .id = "measurement-operational-global-shape",
         .spectral_grid = .{
@@ -956,48 +3173,54 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
             .sample_count = 3,
         },
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
-            .sampling = "measured_channels",
-            .noise_model = "snr_from_input",
+            .sampling = .measured_channels,
+            .noise_model = .snr_from_input,
             .wavelength_shift_nm = 0.018,
             .instrument_line_fwhm_nm = 0.54,
             .high_resolution_step_nm = 0.08,
             .high_resolution_half_span_nm = 0.32,
             .instrument_line_shape = .{
                 .sample_count = 5,
-                .offsets_nm = .{ -0.32, -0.16, 0.0, 0.16, 0.32, 0.0, 0.0, 0.0, 0.0 },
-                .weights = .{ 0.08, 0.24, 0.36, 0.22, 0.10, 0.0, 0.0, 0.0, 0.0 },
+                .offsets_nm = &[_]f64{ -0.32, -0.16, 0.0, 0.16, 0.32 },
+                .weights = &[_]f64{ 0.08, 0.24, 0.36, 0.22, 0.10 },
             },
+            .ingested_noise_sigma = &indexed_sigma,
         },
         .atmosphere = .{
-            .layer_count = 12,
+            .layer_count = 2,
         },
     };
-    var indexed_table = @import("../../model/Instrument.zig").InstrumentLineShapeTable{};
-    indexed_table.nominal_count = 3;
-    indexed_table.sample_count = 5;
-    indexed_table.nominal_wavelengths_nm[0] = 405.0;
-    indexed_table.nominal_wavelengths_nm[1] = 406.0;
-    indexed_table.nominal_wavelengths_nm[2] = 407.0;
-    indexed_table.offsets_nm = .{ -0.32, -0.16, 0.0, 0.16, 0.32, 0.0, 0.0, 0.0, 0.0 };
-    for ([5]f64{ 0.08, 0.24, 0.36, 0.22, 0.10 }, 0..) |value, index| indexed_table.setWeight(0, index, value);
-    for ([5]f64{ 0.18, 0.30, 0.30, 0.15, 0.07 }, 0..) |value, index| indexed_table.setWeight(1, index, value);
-    for ([5]f64{ 0.05, 0.18, 0.34, 0.26, 0.17 }, 0..) |value, index| indexed_table.setWeight(2, index, value);
+    var indexed_table_nominals = [_]f64{ 405.0, 406.0, 407.0 };
+    var indexed_table_offsets = [_]f64{ -0.32, -0.16, 0.0, 0.16, 0.32 };
+    var indexed_table_weights = [_]f64{
+        0.08, 0.24, 0.36, 0.22, 0.10,
+        0.18, 0.30, 0.30, 0.15, 0.07,
+        0.05, 0.18, 0.34, 0.26, 0.17,
+    };
+    const indexed_table: @import("../../model/Instrument.zig").InstrumentLineShapeTable = .{
+        .nominal_count = 3,
+        .sample_count = 5,
+        .nominal_wavelengths_nm = indexed_table_nominals[0..],
+        .offsets_nm = indexed_table_offsets[0..],
+        .weights = indexed_table_weights[0..],
+    };
     const indexed_table_scene: Scene = .{
         .id = "measurement-operational-indexed-table",
         .spectral_grid = global_shape_scene.spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
+            .instrument = .tropomi,
             .regime = .nadir,
-            .sampling = "measured_channels",
-            .noise_model = "snr_from_input",
+            .sampling = .measured_channels,
+            .noise_model = .snr_from_input,
             .wavelength_shift_nm = 0.018,
             .instrument_line_fwhm_nm = 0.54,
             .high_resolution_step_nm = 0.08,
             .high_resolution_half_span_nm = 0.32,
             .instrument_line_shape = global_shape_scene.observation_model.instrument_line_shape,
             .instrument_line_shape_table = indexed_table,
+            .ingested_noise_sigma = &indexed_sigma,
         },
         .atmosphere = global_shape_scene.atmosphere,
     };
@@ -1010,9 +3233,9 @@ test "measurement-space operational integration selects wavelength-indexed isrf 
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var global_shape_product = try simulateProduct(std.testing.allocator, global_shape_scene, route, prepared, testProviders());
+    var global_shape_product = try simulateProduct(std.testing.allocator, &global_shape_scene, route, &prepared, testProviders());
     defer global_shape_product.deinit(std.testing.allocator);
-    var indexed_table_product = try simulateProduct(std.testing.allocator, indexed_table_scene, route, prepared, testProviders());
+    var indexed_table_product = try simulateProduct(std.testing.allocator, &indexed_table_scene, route, &prepared, testProviders());
     defer indexed_table_product.deinit(std.testing.allocator);
 
     try std.testing.expectApproxEqAbs(global_shape_product.radiance[0], indexed_table_product.radiance[0], 1e-12);

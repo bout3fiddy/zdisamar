@@ -24,6 +24,8 @@ const Cloud = @import("../../model/Cloud.zig").Cloud;
 const Aerosol = @import("../../model/Aerosol.zig").Aerosol;
 const ObservationModel = @import("../../model/ObservationModel.zig").ObservationModel;
 const ObservationRegime = @import("../../model/ObservationModel.zig").ObservationRegime;
+const InstrumentId = @import("../../model/Instrument.zig").Id;
+const BuiltinLineShapeKind = @import("../../model/Instrument.zig").BuiltinLineShapeKind;
 const Scene = @import("../../model/Scene.zig").Scene;
 const InverseProblem = @import("../../model/InverseProblem.zig").InverseProblem;
 const DerivativeMode = @import("../../model/InverseProblem.zig").DerivativeMode;
@@ -31,14 +33,21 @@ const CovarianceBlock = @import("../../model/InverseProblem.zig").CovarianceBloc
 const FitControls = @import("../../model/InverseProblem.zig").FitControls;
 const Convergence = @import("../../model/InverseProblem.zig").Convergence;
 const Measurement = @import("../../model/Measurement.zig").Measurement;
+const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const MeasurementMask = @import("../../model/Measurement.zig").SpectralMask;
 const MeasurementErrorModel = @import("../../model/Measurement.zig").ErrorModel;
 const StateVector = @import("../../model/StateVector.zig").StateVector;
 const StateParameter = @import("../../model/StateVector.zig").Parameter;
+const StateTarget = @import("../../model/StateVector.zig").Target;
 const StateTransform = @import("../../model/StateVector.zig").Transform;
 const StatePrior = @import("../../model/StateVector.zig").Prior;
 const StateBounds = @import("../../model/StateVector.zig").Bounds;
+const ReferenceData = @import("../../model/ReferenceData.zig");
+const reference_assets = @import("../ingest/reference_assets.zig");
 const spectral_ascii = @import("../ingest/spectral_ascii.zig");
+const spectral_ascii_runtime = @import("../ingest/spectral_ascii_runtime.zig");
+const spectra_grid = @import("../../kernels/spectra/grid.zig");
+const transport_common = @import("../../kernels/transport/common.zig");
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
 const Allocator = std.mem.Allocator;
 const parseAssetKind = fields.parseAssetKind;
@@ -47,7 +56,10 @@ const parseSolverMode = fields.parseSolverMode;
 const parseDerivativeMode = fields.parseDerivativeMode;
 const parseGeometryModel = fields.parseGeometryModel;
 const parseObservationRegime = fields.parseObservationRegime;
+const parseSamplingMode = fields.parseSamplingMode;
+const parseNoiseModelKind = fields.parseNoiseModelKind;
 const parseSpectroscopyMode = fields.parseSpectroscopyMode;
+const parseSurfaceKind = fields.parseSurfaceKind;
 const parseStateTransform = fields.parseStateTransform;
 const parseProductKind = fields.parseProductKind;
 const parseExportFormat = fields.parseExportFormat;
@@ -118,7 +130,7 @@ pub const ProductKind = fields.ProductKind;
 pub const Product = struct {
     name: []const u8,
     kind: ProductKind,
-    observable: []const u8 = "",
+    observable: ?MeasurementQuantity = null,
     apply_noise: bool = false,
 };
 
@@ -155,6 +167,229 @@ pub const StageKind = enum {
     retrieval,
 };
 
+/// Vendor-compat records which vendor (DISAMAR) method controls are active.
+/// Carried per-stage so simulation and retrieval can differ.
+pub const VendorCompat = struct {
+    /// Vendor simulation method (0=OE_LBL, 1=DISMAS)
+    simulation_method: ?fields.SimulationMethod = null,
+    /// Vendor retrieval method (0=OE, 1=DISMAS, 2=DOAS, 3=classic_DOAS, 4=DOMINO)
+    retrieval_method: ?fields.RetrievalMethod = null,
+    /// Whether this is simulation-only (no retrieval)
+    simulation_only: bool = false,
+    /// Whether to use adding method vs LABOS
+    use_adding_sim: ?bool = null,
+    use_adding_retr: ?bool = null,
+};
+
+/// Typed representation of the vendor RADIATIVE_TRANSFER section.
+/// Captures spectral sampling, scattering transport, and RTM threshold controls.
+pub const RadiativeTransferConfig = struct {
+    // Spectral sampling (FWHM subdivision)
+    num_div_points_fwhm_sim: ?u32 = null,
+    num_div_points_fwhm_retr: ?u32 = null,
+    // Line-absorbing sampling limits
+    num_div_points_max_sim: ?u32 = null,
+    num_div_points_min_sim: ?u32 = null,
+    num_div_points_max_retr: ?u32 = null,
+    num_div_points_min_retr: ?u32 = null,
+    // Transport configuration
+    scattering_mode_sim: fields.ScatteringMode = .multiple,
+    scattering_mode_retr: fields.ScatteringMode = .multiple,
+    stokes_dimension_sim: u8 = 1,
+    stokes_dimension_retr: u8 = 1,
+    nstreams_sim: u32 = 16,
+    nstreams_retr: u32 = 16,
+    use_adding_sim: bool = false,
+    use_adding_retr: bool = false,
+    fourier_floor_scalar_sim: ?f64 = null,
+    fourier_floor_scalar_retr: ?f64 = null,
+    num_orders_max_sim: ?u32 = null,
+    num_orders_max_retr: ?u32 = null,
+    threshold_trunc_phase_sim: ?f64 = null,
+    threshold_trunc_phase_retr: ?f64 = null,
+    use_polarization_correction: bool = false,
+    // RTM convergence thresholds
+    use_correction_spherical_atm: bool = false,
+    threshold_cloud_fraction: ?f64 = null,
+    threshold_conv_first: ?f64 = null,
+    threshold_conv_mult: ?f64 = null,
+    threshold_doubling: ?f64 = null,
+    threshold_multiplier: ?f64 = null,
+    // Per-interval altitude division points (one entry per spectral interval)
+    num_div_points_alt_sim: ?[]const u32 = null,
+    num_div_points_alt_retr: ?[]const u32 = null,
+};
+
+/// Per-band rotational Raman scattering / Ring-effect settings.
+pub const RrsRingConfig = struct {
+    pub const PerBand = struct {
+        use_rrs: bool = false,
+        approximate_rrs: bool = false,
+        fraction_raman_lines: f64 = 1.0,
+        use_cabannes: bool = false,
+        degree_poly: u32 = 0,
+        include_absorption: bool = false,
+    };
+
+    sim: ?[]const PerBand = null,
+    retr: ?[]const PerBand = null,
+};
+
+/// Flags for optional diagnostic / supplementary output channels.
+pub const AdditionalOutputConfig = struct {
+    refl_hr_grid_sim: bool = false,
+    refl_instr_grid_sim: bool = false,
+    refl_deriv_hr_grid_sim: bool = false,
+    refl_deriv_hr_grid_retr: bool = false,
+    refl_deriv_instr_grid_sim: bool = false,
+    refl_deriv_instr_grid_retr: bool = false,
+    signal_to_noise_ratio: bool = false,
+    contrib_refl_sim: bool = false,
+    contrib_refl_retr: bool = false,
+    alt_resolved_amf_sim: bool = false,
+    alt_resolved_amf_retr: bool = false,
+    absorption_xsec_sim: bool = false,
+    absorption_xsec_retr: bool = false,
+    ring_spectra: bool = false,
+    diff_ring_spectra: bool = false,
+    filling_in_spectra: bool = false,
+    test_derivatives: bool = false,
+    pol_correction_file: bool = false,
+};
+
+/// Typed representation of the vendor GENERAL section.
+/// Only fields with exact/approximate parity status are included.
+pub const GeneralConfig = struct {
+    // Counts (approximate -- derived from list lengths in Zig)
+    number_spectral_bands: ?u32 = null,
+    number_trace_gases: ?u32 = null,
+    // Mode
+    simulation_only: bool = false,
+    // Retrieval fitting toggles
+    aerosol_layer_height: bool = false,
+    fit_surface_albedo: bool = false,
+    fit_aerosol_tau: bool = false,
+    fit_cloud_tau: bool = false,
+    fit_mul_offset: bool = false,
+    fit_stray_light: bool = false,
+    fit_temperature_offset: bool = false,
+    fit_ln_cld_tau: bool = false,
+    num_interval_fit: ?u32 = null,
+    // Method codes
+    simulation_method: ?fields.SimulationMethod = null,
+    retrieval_method: ?fields.RetrievalMethod = null,
+    // Reference file paths
+    solar_irr_file_sim: ?[]const u8 = null,
+    solar_irr_file_retr: ?[]const u8 = null,
+    temperature_climatology: ?[]const u8 = null,
+    ozone_climatology: ?[]const u8 = null,
+};
+
+/// Typed representation of the vendor INSTRUMENT section.
+/// Wavelength range fields are per-band; slit/noise fields are scalar.
+pub const InstrumentConfig = struct {
+    pub const PerBand = struct {
+        wavelength_start: ?f64 = null,
+        wavelength_end: ?f64 = null,
+        wavelength_step: ?f64 = null,
+        exclude: ?[]const [2]f64 = null,
+        fwhm_irradiance_sim: ?f64 = null,
+        fwhm_irradiance_retr: ?f64 = null,
+        fwhm_radiance_sim: ?f64 = null,
+        fwhm_radiance_retr: ?f64 = null,
+    };
+    bands: ?[]const PerBand = null,
+    add_noise_irr_sim: bool = false,
+    add_noise_rad_sim: bool = false,
+};
+
+/// Typed representation of the vendor GEOMETRY section.
+/// All eight angle fields have exact parity status.
+pub const GeometryConfig = struct {
+    solar_zenith_angle_sim: ?f64 = null,
+    solar_zenith_angle_retr: ?f64 = null,
+    solar_azimuth_angle_sim: ?f64 = null,
+    solar_azimuth_angle_retr: ?f64 = null,
+    instrument_nadir_angle_sim: ?f64 = null,
+    instrument_nadir_angle_retr: ?f64 = null,
+    instrument_azimuth_angle_sim: ?f64 = null,
+    instrument_azimuth_angle_retr: ?f64 = null,
+};
+
+/// Typed representation of the vendor PRESSURE_TEMPERATURE section.
+/// P/T profiles are pressure-value pairs, one set for sim and one for retr.
+pub const PressureTemperatureConfig = struct {
+    pt_sim: ?[]const [2]f64 = null,
+    pt_retr: ?[]const [2]f64 = null,
+};
+
+/// Typed representation of the vendor SURFACE section.
+pub const SurfaceConfig = struct {
+    surf_pressure_sim: ?f64 = null,
+    surf_pressure_retr: ?f64 = null,
+    surface_type_sim: ?fields.SurfaceType = null,
+    surface_type_retr: ?fields.SurfaceType = null,
+    // Wavelength-independent albedo
+    surf_albedo_sim: ?f64 = null,
+    surf_albedo_retr: ?f64 = null,
+    var_surf_albedo_retr: ?f64 = null,
+    // Wavelength-dependent albedo (per-band arrays)
+    wavel_surf_albedo_sim: ?[]const f64 = null,
+    surf_albedo_array_sim: ?[]const f64 = null,
+    wavel_surf_albedo_retr: ?[]const f64 = null,
+    surf_albedo_array_retr: ?[]const f64 = null,
+};
+
+/// Typed representation of the vendor CLOUD section.
+pub const CloudConfig = struct {
+    cloud_type_sim: ?fields.CloudType = null,
+    cloud_type_retr: ?fields.CloudType = null,
+    // HG scattering (sim)
+    hg_optical_thickness_sim: ?f64 = null,
+    hg_angstrom_coefficient_sim: ?f64 = null,
+    hg_single_scattering_albedo_sim: ?f64 = null,
+    hg_parameter_g_sim: ?f64 = null,
+    // HG scattering (retr -- approximate)
+    hg_optical_thickness_retr: ?f64 = null,
+    // Mie scattering
+    mie_optical_thickness_sim: ?f64 = null,
+    mie_optical_thickness_retr: ?f64 = null,
+};
+
+/// Typed representation of the vendor AEROSOL section.
+pub const AerosolConfig = struct {
+    aerosol_type_sim: ?fields.AerosolType = null,
+    aerosol_type_retr: ?fields.AerosolType = null,
+    // HG scattering (sim)
+    hg_optical_thickness_sim: ?f64 = null,
+    hg_angstrom_coefficient_sim: ?f64 = null,
+    hg_single_scattering_albedo_sim: ?f64 = null,
+    hg_parameter_g_sim: ?f64 = null,
+    // HG scattering (retr -- approximate)
+    hg_optical_thickness_retr: ?f64 = null,
+    // Mie scattering
+    mie_optical_thickness_sim: ?f64 = null,
+    mie_optical_thickness_retr: ?f64 = null,
+};
+
+/// Typed representation of the vendor RETRIEVAL section.
+pub const RetrievalConfig = struct {
+    max_num_iterations: ?u32 = null,
+    state_vector_conv_threshold: ?f64 = null,
+};
+
+/// Typed representation of per-gas controls from the vendor ABSORBING_GAS section.
+pub const AbsorbingGasConfig = struct {
+    pub const GasEntry = struct {
+        species: ?fields.AbsorberSpecies = null,
+        xsection_file_sim: ?[]const u8 = null,
+        xsection_file_retr: ?[]const u8 = null,
+        fit_column: bool = false,
+        profile_sim: ?[]const [2]f64 = null,
+    };
+    gases: ?[]const GasEntry = null,
+};
+
 pub const Stage = struct {
     kind: StageKind,
     plan: PlanTemplate,
@@ -162,11 +397,34 @@ pub const Stage = struct {
     inverse: ?InverseProblem = null,
     products: []const Product = &[_]Product{},
     diagnostics: DiagnosticsSpec = .{},
+    // TODO(WP-01): algorithm_name should be ?fields.RetrievalMethod (maps to
+    // normalizeRetrievalProvider); 5 call sites in Document.zig. Deferred to
+    // avoid disrupting the resolve pipeline mid-WP.
     algorithm_name: []const u8 = "",
+    // TODO(WP-01): algorithm_damping should be ?FitControls.TrustRegion
+    // (already resolved in applyAlgorithmParameters); 7+ call sites in
+    // Document.zig. Deferred to avoid shotgun surgery.
     algorithm_damping: []const u8 = "",
+    // TODO(WP-01): spectral_response_shape should be ?BuiltinLineShapeKind
+    // (validated against BuiltinLineShapeKind.parse in execution.zig); 9 call
+    // sites across Document.zig and execution.zig. Deferred.
     spectral_response_shape: []const u8 = "",
-    spectral_response_table_source: Binding = .{},
+    spectral_response_table_source: Binding = .none,
     noise_seed: ?u64 = null,
+    // Typed vendor-section configs (optional; absent when canonical YAML omits them)
+    vendor_compat: ?VendorCompat = null,
+    radiative_transfer: ?RadiativeTransferConfig = null,
+    rrs_ring: ?RrsRingConfig = null,
+    additional_output: ?AdditionalOutputConfig = null,
+    general: ?GeneralConfig = null,
+    instrument: ?InstrumentConfig = null,
+    geometry: ?GeometryConfig = null,
+    pressure_temperature: ?PressureTemperatureConfig = null,
+    surface_config: ?SurfaceConfig = null,
+    cloud_config: ?CloudConfig = null,
+    aerosol_config: ?AerosolConfig = null,
+    retrieval_config: ?RetrievalConfig = null,
+    absorbing_gas: ?AbsorbingGasConfig = null,
 };
 
 pub const Document = struct {
@@ -227,7 +485,10 @@ pub const Document = struct {
         self.* = undefined;
     }
 
-    pub fn resolve(self: *const Document, allocator: Allocator) !ResolvedExperiment {
+    pub fn resolve(self: *const Document, allocator: Allocator) !*ResolvedExperiment {
+        const resolved = try allocator.create(ResolvedExperiment);
+        errdefer allocator.destroy(resolved);
+
         const arena_state = try allocator.create(std.heap.ArenaAllocator);
         errdefer allocator.destroy(arena_state);
         arena_state.* = std.heap.ArenaAllocator.init(allocator);
@@ -269,7 +530,7 @@ pub const Document = struct {
         };
 
         const simulation = try resolution_context.resolveStage(.simulation, mapGet(experiment_map, "simulation"), null);
-        const retrieval = try resolution_context.resolveStage(.retrieval, mapGet(experiment_map, "retrieval"), if (simulation) |*value| &value.stage else null);
+        const retrieval = try resolution_context.resolveStage(.retrieval, mapGet(experiment_map, "retrieval"), if (simulation) |value| &value.stage else null);
         const outputs = try decodeOutputs(
             arena,
             mapGet(root_map, "outputs"),
@@ -280,19 +541,20 @@ pub const Document = struct {
         );
         const warnings = try buildWarnings(arena, validation, simulation, retrieval);
 
-        return .{
+        resolved.* = .{
             .owner_allocator = allocator,
             .arena_state = arena_state,
             .source_path = try arena.dupe(u8, self.source_path),
             .metadata = metadata,
             .assets = assets,
             .ingests = ingests,
-            .simulation = if (simulation) |value| value.stage else null,
-            .retrieval = if (retrieval) |value| value.stage else null,
+            .simulation = if (simulation) |value| &value.stage else null,
+            .retrieval = if (retrieval) |value| &value.stage else null,
             .outputs = outputs,
             .validation = validation,
             .warnings = warnings,
         };
+        return resolved;
     }
 };
 
@@ -303,16 +565,18 @@ pub const ResolvedExperiment = struct {
     metadata: Metadata = .{},
     assets: []const Asset = &[_]Asset{},
     ingests: []const Ingest = &[_]Ingest{},
-    simulation: ?Stage = null,
-    retrieval: ?Stage = null,
+    simulation: ?*const Stage = null,
+    retrieval: ?*const Stage = null,
     outputs: []const OutputSpec = &[_]OutputSpec{},
     validation: Validation = .{},
     warnings: []const Warning = &[_]Warning{},
 
     pub fn deinit(self: *ResolvedExperiment) void {
+        const owner_allocator = self.owner_allocator;
         self.arena_state.deinit();
-        self.owner_allocator.destroy(self.arena_state);
+        owner_allocator.destroy(self.arena_state);
         self.* = undefined;
+        owner_allocator.destroy(self);
     }
 
     pub fn findAsset(self: ResolvedExperiment, name: []const u8) ?Asset {
@@ -331,16 +595,16 @@ pub const ResolvedExperiment = struct {
 
     pub fn findProduct(self: ResolvedExperiment, name: []const u8) ?Product {
         if (self.simulation) |stage| {
-            if (findStageProduct(stage, name)) |product| return product;
+            if (findStageProduct(stage.*, name)) |product| return product;
         }
         if (self.retrieval) |stage| {
-            if (findStageProduct(stage, name)) |product| return product;
+            if (findStageProduct(stage.*, name)) |product| return product;
         }
         return null;
     }
 };
 
-pub fn resolveFile(allocator: Allocator, path: []const u8) !ResolvedExperiment {
+pub fn resolveFile(allocator: Allocator, path: []const u8) !*ResolvedExperiment {
     var document = try Document.parseFile(allocator, path);
     defer document.deinit();
     return document.resolve(allocator);
@@ -356,11 +620,11 @@ const MeasurementDecode = struct {
     source_name: []const u8,
 };
 
-const ObservationDecode = struct {
-    model: ObservationModel,
+const ObservationMetadata = struct {
     spectral_response_shape: []const u8 = "",
-    spectral_response_table_source: Binding = .{},
+    spectral_response_table_source: Binding = .none,
     noise_seed: ?u64 = null,
+    instrument_response_provider: []const u8 = "",
 };
 
 const InverseDecode = struct {
@@ -369,11 +633,12 @@ const InverseDecode = struct {
     algorithm_damping: []const u8 = "",
 };
 
-const SceneDecode = struct {
-    scene: Scene,
+const SceneMetadata = struct {
     spectral_response_shape: []const u8 = "",
-    spectral_response_table_source: Binding = .{},
+    spectral_response_table_source: Binding = .none,
     noise_seed: ?u64 = null,
+    surface_model_provider: []const u8 = "",
+    instrument_response_provider: []const u8 = "",
 };
 
 const ResolveContext = struct {
@@ -390,19 +655,20 @@ const ResolveContext = struct {
         kind: StageKind,
         raw_stage: ?yaml.Value,
         simulation_stage: ?*const Stage,
-    ) !?StageResolution {
+    ) !?*StageResolution {
         const stage_value = raw_stage orelse return null;
         if (stage_value == .null) return null;
 
         var stack = std.ArrayListUnmanaged([]const u8){};
         defer stack.deinit(self.allocator);
 
-        const merged = try self.resolveComposableNode(stage_value, &stack);
-        const stage = try self.decodeStage(kind, merged, simulation_stage);
-        return .{
-            .merged = merged,
-            .stage = stage,
+        const resolution = try self.allocator.create(StageResolution);
+        resolution.* = .{
+            .merged = try self.resolveComposableNode(stage_value, &stack),
+            .stage = undefined,
         };
+        try self.populateStage(kind, resolution.merged, simulation_stage, &resolution.stage);
+        return resolution;
     }
 
     fn resolveComposableNode(
@@ -454,32 +720,39 @@ const ResolveContext = struct {
         return self.resolveComposableNode(template_value, stack);
     }
 
-    fn decodeStage(
+    fn populateStage(
         self: *const ResolveContext,
         kind: StageKind,
         merged: yaml.Value,
         simulation_stage: ?*const Stage,
-    ) !Stage {
+        stage: *Stage,
+    ) !void {
         const stage_map = try expectMap(merged);
         try ensureKnownFields(stage_map, if (kind == .simulation)
-            &.{ "plan", "scene", "products", "diagnostics", "label", "description" }
+            &.{ "plan", "scene", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output", "general", "instrument", "geometry", "pressure_temperature", "surface_config", "cloud_config", "aerosol_config", "retrieval_config", "absorbing_gas" }
         else
-            &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description" }, self.strict_unknown_fields);
+            &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output", "general", "instrument", "geometry", "pressure_temperature", "surface_config", "cloud_config", "aerosol_config", "retrieval_config", "absorbing_gas" }, self.strict_unknown_fields);
 
-        const scene_decode = try self.decodeScene(kind, mapGet(stage_map, "scene"));
-        var stage: Stage = .{
+        stage.* = .{
             .kind = kind,
             .plan = try decodePlan(self.allocator, mapGet(stage_map, "plan"), self.strict_unknown_fields),
-            .scene = scene_decode.scene,
+            .scene = undefined,
             .products = try decodeProducts(self.allocator, mapGet(stage_map, "products"), self.strict_unknown_fields),
             .diagnostics = try decodeDiagnostics(mapGet(stage_map, "diagnostics"), self.strict_unknown_fields),
-            .spectral_response_shape = scene_decode.spectral_response_shape,
-            .spectral_response_table_source = scene_decode.spectral_response_table_source,
-            .noise_seed = scene_decode.noise_seed,
         };
+        const scene_metadata = try self.populateScene(kind, mapGet(stage_map, "scene"), &stage.scene);
+        stage.spectral_response_shape = scene_metadata.spectral_response_shape;
+        stage.spectral_response_table_source = scene_metadata.spectral_response_table_source;
+        stage.noise_seed = scene_metadata.noise_seed;
 
-        stage.plan.providers.surface_model = normalizeSurfaceProvider(stage.scene.surface.provider, stage.scene.surface.kind);
-        stage.plan.providers.instrument_response = normalizeInstrumentProvider(stage.scene.observation_model.response_provider, stage.scene.observation_model.instrument);
+        stage.plan.providers.surface_model = normalizeSurfaceProvider(
+            scene_metadata.surface_model_provider,
+            stage.scene.surface.kind,
+        );
+        stage.plan.providers.instrument_response = normalizeInstrumentProvider(
+            scene_metadata.instrument_response_provider,
+            stage.scene.observation_model.instrument,
+        );
         stage.plan.scene_blueprint = .{
             .id = stage.scene.id,
             .spectral_grid = stage.scene.spectral_grid,
@@ -494,23 +767,66 @@ const ResolveContext = struct {
             stage.inverse = inverse_result.inverse;
             stage.algorithm_name = inverse_result.algorithm_name;
             stage.algorithm_damping = inverse_result.algorithm_damping;
+            if (stage.inverse) |*inverse| {
+                try applyAlgorithmParameters(inverse, stage.algorithm_damping);
+            }
+            try hydrateSceneFromIngestMeasurement(self.allocator, self.ingests, &stage.scene, inverse_result.inverse.measurements.source);
             stage.plan.providers.retrieval_algorithm = stage.plan.providers.retrieval_algorithm orelse normalizeRetrievalProvider(
                 inverse_result.algorithm_name,
                 stage.plan.providers.retrieval_algorithm,
             );
+            stage.plan.scene_blueprint.spectral_grid = stage.scene.spectral_grid;
             stage.plan.scene_blueprint.state_parameter_count_hint = inverse_result.inverse.state_vector.count();
             stage.plan.scene_blueprint.measurement_count_hint = inverse_result.inverse.measurements.sample_count;
         }
+
+        // Decode optional typed vendor sections
+        stage.vendor_compat = try decodeVendorCompat(mapGet(stage_map, "vendor_compat"), self.strict_unknown_fields);
+        stage.radiative_transfer = try decodeRadiativeTransferConfig(self.allocator, mapGet(stage_map, "radiative_transfer"), self.strict_unknown_fields);
+        stage.plan.rtm_controls = try compileStageRtmControls(kind, stage.vendor_compat, stage.radiative_transfer);
+        stage.rrs_ring = try decodeRrsRingConfig(self.allocator, mapGet(stage_map, "rrs_ring"), self.strict_unknown_fields);
+        stage.additional_output = try decodeAdditionalOutputConfig(mapGet(stage_map, "additional_output"), self.strict_unknown_fields);
+        stage.general = try decodeGeneralConfig(self.allocator, mapGet(stage_map, "general"), self.strict_unknown_fields);
+        stage.instrument = try decodeInstrumentConfig(self.allocator, mapGet(stage_map, "instrument"), self.strict_unknown_fields);
+        stage.geometry = try decodeGeometryConfig(mapGet(stage_map, "geometry"), self.strict_unknown_fields);
+        stage.pressure_temperature = try decodePressureTemperatureConfig(self.allocator, mapGet(stage_map, "pressure_temperature"), self.strict_unknown_fields);
+        stage.surface_config = try decodeSurfaceConfig(self.allocator, mapGet(stage_map, "surface_config"), self.strict_unknown_fields);
+        stage.cloud_config = try decodeCloudConfig(mapGet(stage_map, "cloud_config"), self.strict_unknown_fields);
+        stage.aerosol_config = try decodeAerosolConfig(mapGet(stage_map, "aerosol_config"), self.strict_unknown_fields);
+        stage.retrieval_config = try decodeRetrievalConfig(mapGet(stage_map, "retrieval_config"), self.strict_unknown_fields);
+        stage.absorbing_gas = try decodeAbsorbingGasConfig(self.allocator, mapGet(stage_map, "absorbing_gas"), self.strict_unknown_fields);
 
         try ensureDistinctProducts(stage.products);
         try stage.plan.validate();
         try stage.scene.validate();
         if (stage.inverse) |inverse| try inverse.validate();
-
-        return stage;
     }
 
-    fn decodeScene(self: *const ResolveContext, kind: StageKind, value: ?yaml.Value) !SceneDecode {
+    fn applyAlgorithmParameters(inverse: *InverseProblem, algorithm_damping: []const u8) !void {
+        if (algorithm_damping.len == 0) return;
+
+        const normalized: FitControls.TrustRegion = if (std.mem.eql(u8, algorithm_damping, "levenberg_marquardt"))
+            .lm
+        else if (std.mem.eql(u8, algorithm_damping, "lm"))
+            .lm
+        else
+            return Error.InvalidValue;
+
+        if (inverse.fit_controls.trust_region == .none) {
+            inverse.fit_controls.trust_region = normalized;
+            return;
+        }
+        if (inverse.fit_controls.trust_region != normalized) {
+            return Error.InvalidValue;
+        }
+    }
+
+    fn populateScene(
+        self: *const ResolveContext,
+        kind: StageKind,
+        value: ?yaml.Value,
+        scene: *Scene,
+    ) !SceneMetadata {
         const scene_map = try expectMap(value orelse return Error.MissingField);
         try ensureKnownFields(scene_map, &.{
             "id",
@@ -526,8 +842,13 @@ const ResolveContext = struct {
             "description",
         }, self.strict_unknown_fields);
 
-        const observation = try self.decodeObservationModel(mapGet(scene_map, "measurement_model"));
-        var scene: Scene = .{
+        var observation_model: ObservationModel = .{};
+        const observation_metadata = try self.populateObservationModel(
+            mapGet(scene_map, "measurement_model"),
+            &observation_model,
+        );
+        const surface_result = try decodeSurface(self.allocator, mapGet(scene_map, "surface"), self.strict_unknown_fields);
+        scene.* = .{
             .id = if (mapGet(scene_map, "id")) |scene_id| try self.allocator.dupe(u8, try expectString(scene_id)) else switch (kind) {
                 .simulation => "simulation-stage",
                 .retrieval => "retrieval-stage",
@@ -535,27 +856,32 @@ const ResolveContext = struct {
             .geometry = try decodeGeometry(mapGet(scene_map, "geometry"), self.strict_unknown_fields),
             .atmosphere = try decodeAtmosphere(self.allocator, mapGet(scene_map, "atmosphere"), self.strict_unknown_fields),
             .bands = try decodeBands(self.allocator, mapGet(scene_map, "bands"), self.strict_unknown_fields),
-            .surface = try decodeSurface(self.allocator, mapGet(scene_map, "surface"), self.strict_unknown_fields),
+            .surface = surface_result.surface,
             .cloud = try decodeCloud(mapGet(scene_map, "clouds"), self.strict_unknown_fields),
             .aerosol = try decodeAerosol(mapGet(scene_map, "aerosols"), self.strict_unknown_fields),
-            .observation_model = observation.model,
+            .observation_model = observation_model,
         };
 
         scene.spectral_grid = try inferSpectralGrid(scene.bands);
-        scene.observation_model.regime = observation.model.regime;
+        scene.observation_model.regime = observation_model.regime;
         scene.atmosphere.has_clouds = scene.cloud.enabled;
         scene.atmosphere.has_aerosols = scene.aerosol.enabled;
         scene.absorbers = try self.decodeAbsorbers(mapGet(scene_map, "absorbers"), &scene.observation_model);
 
         return .{
-            .scene = scene,
-            .spectral_response_shape = observation.spectral_response_shape,
-            .spectral_response_table_source = observation.spectral_response_table_source,
-            .noise_seed = observation.noise_seed,
+            .spectral_response_shape = observation_metadata.spectral_response_shape,
+            .spectral_response_table_source = observation_metadata.spectral_response_table_source,
+            .noise_seed = observation_metadata.noise_seed,
+            .surface_model_provider = surface_result.provider,
+            .instrument_response_provider = observation_metadata.instrument_response_provider,
         };
     }
 
-    fn decodeObservationModel(self: *const ResolveContext, value: ?yaml.Value) !ObservationDecode {
+    fn populateObservationModel(
+        self: *const ResolveContext,
+        value: ?yaml.Value,
+        model: *ObservationModel,
+    ) !ObservationMetadata {
         const model_map = try expectMap(value orelse return Error.MissingField);
         try ensureKnownFields(model_map, &.{
             "regime",
@@ -570,42 +896,47 @@ const ResolveContext = struct {
             "description",
         }, self.strict_unknown_fields);
 
-        var result = ObservationDecode{
-            .model = .{},
-        };
+        model.* = .{};
+        var result: ObservationMetadata = .{};
 
         if (mapGet(model_map, "regime")) |regime| {
-            result.model.regime = try parseObservationRegime(try expectString(regime));
+            model.regime = try parseObservationRegime(try expectString(regime));
         }
 
         if (mapGet(model_map, "instrument")) |instrument_value| {
             const instrument_map = try expectMap(instrument_value);
             try ensureKnownFields(instrument_map, &.{ "name", "response_provider" }, self.strict_unknown_fields);
-            result.model.instrument = try self.allocator.dupe(u8, try expectString(requiredField(instrument_map, "name")));
+            model.instrument = InstrumentId.parse(try expectString(requiredField(instrument_map, "name")));
             if (mapGet(instrument_map, "response_provider")) |response_provider| {
-                result.model.response_provider = try self.allocator.dupe(u8, try expectString(response_provider));
+                result.instrument_response_provider = try self.allocator.dupe(u8, try expectString(response_provider));
             }
         }
 
         if (mapGet(model_map, "sampling")) |sampling_value| {
             const sampling_map = try expectMap(sampling_value);
             try ensureKnownFields(sampling_map, &.{ "mode", "high_resolution_step_nm", "high_resolution_half_span_nm" }, self.strict_unknown_fields);
-            if (mapGet(sampling_map, "mode")) |mode| result.model.sampling = try self.allocator.dupe(u8, try expectString(mode));
-            if (mapGet(sampling_map, "high_resolution_step_nm")) |step| result.model.high_resolution_step_nm = try expectF64(step);
-            if (mapGet(sampling_map, "high_resolution_half_span_nm")) |span| result.model.high_resolution_half_span_nm = try expectF64(span);
+            if (mapGet(sampling_map, "mode")) |mode| model.sampling = try parseSamplingMode(try expectString(mode));
+            if (mapGet(sampling_map, "high_resolution_step_nm")) |step| model.high_resolution_step_nm = try expectF64(step);
+            if (mapGet(sampling_map, "high_resolution_half_span_nm")) |span| model.high_resolution_half_span_nm = try expectF64(span);
         }
 
         if (mapGet(model_map, "spectral_response")) |response_value| {
             const response_map = try expectMap(response_value);
             try ensureKnownFields(response_map, &.{ "shape", "fwhm_nm", "table" }, self.strict_unknown_fields);
             if (mapGet(response_map, "shape")) |shape| {
-                result.spectral_response_shape = try self.allocator.dupe(u8, try expectString(shape));
+                const shape_name = try expectString(shape);
+                result.spectral_response_shape = try self.allocator.dupe(u8, shape_name);
+                if (std.mem.eql(u8, shape_name, "table")) {
+                    if (mapGet(response_map, "table") == null) return Error.MissingField;
+                } else {
+                    model.builtin_line_shape = try BuiltinLineShapeKind.parse(shape_name);
+                }
             }
-            if (mapGet(response_map, "fwhm_nm")) |fwhm| result.model.instrument_line_fwhm_nm = try expectF64(fwhm);
+            if (mapGet(response_map, "fwhm_nm")) |fwhm| model.instrument_line_fwhm_nm = try expectF64(fwhm);
             if (mapGet(response_map, "table")) |table_value| {
                 const binding = try self.decodeIngestBinding(table_value);
                 result.spectral_response_table_source = binding;
-                result.model.instrument_line_shape_table = try resolveInstrumentLineShapeTable(self.ingests, binding);
+                model.instrument_line_shape_table = try resolveInstrumentLineShapeTable(self.ingests, binding);
             }
         }
 
@@ -614,9 +945,9 @@ const ResolveContext = struct {
             try ensureKnownFields(illumination_map, &.{"solar_spectrum"}, self.strict_unknown_fields);
             if (mapGet(illumination_map, "solar_spectrum")) |spectrum_value| {
                 const binding = try self.decodeSourceBinding(spectrum_value);
-                result.model.solar_spectrum_source = binding;
-                if (binding.kind == .ingest) {
-                    result.model.operational_solar_spectrum = try resolveOperationalSolarSpectrum(self.allocator, self.ingests, binding);
+                model.solar_spectrum_source = binding;
+                if (binding.kind() == .ingest) {
+                    model.operational_solar_spectrum = try resolveOperationalSolarSpectrum(self.allocator, self.ingests, binding);
                 }
             }
         }
@@ -626,23 +957,23 @@ const ResolveContext = struct {
             try ensureKnownFields(support_map, &.{"weighted_reference_grid"}, self.strict_unknown_fields);
             if (mapGet(support_map, "weighted_reference_grid")) |grid_value| {
                 const binding = try self.decodeIngestBinding(grid_value);
-                result.model.weighted_reference_grid_source = binding;
-                result.model.operational_refspec_grid = try resolveOperationalReferenceGrid(self.allocator, self.ingests, binding);
+                model.weighted_reference_grid_source = binding;
+                model.operational_refspec_grid = try resolveOperationalReferenceGrid(self.allocator, self.ingests, binding);
             }
         }
 
         if (mapGet(model_map, "calibration")) |calibration_value| {
             const calibration_map = try expectMap(calibration_value);
             try ensureKnownFields(calibration_map, &.{ "wavelength_shift_nm", "multiplicative_offset", "stray_light" }, self.strict_unknown_fields);
-            if (mapGet(calibration_map, "wavelength_shift_nm")) |shift| result.model.wavelength_shift_nm = try expectF64(shift);
-            if (mapGet(calibration_map, "multiplicative_offset")) |offset| result.model.multiplicative_offset = try expectF64(offset);
-            if (mapGet(calibration_map, "stray_light")) |stray_light| result.model.stray_light = try expectF64(stray_light);
+            if (mapGet(calibration_map, "wavelength_shift_nm")) |shift| model.wavelength_shift_nm = try expectF64(shift);
+            if (mapGet(calibration_map, "multiplicative_offset")) |offset| model.multiplicative_offset = try expectF64(offset);
+            if (mapGet(calibration_map, "stray_light")) |stray_light| model.stray_light = try expectF64(stray_light);
         }
 
         if (mapGet(model_map, "noise")) |noise_value| {
             const noise_map = try expectMap(noise_value);
             try ensureKnownFields(noise_map, &.{ "model", "seed" }, self.strict_unknown_fields);
-            if (mapGet(noise_map, "model")) |model| result.model.noise_model = try self.allocator.dupe(u8, try expectString(model));
+            if (mapGet(noise_map, "model")) |noise_model| model.noise_model = try parseNoiseModelKind(try expectString(noise_model));
             if (mapGet(noise_map, "seed")) |seed| result.noise_seed = @intCast(try expectU64(seed));
         }
 
@@ -669,7 +1000,7 @@ const ResolveContext = struct {
                     absorber.profile_source = try decodeProfileBinding(self.allocator, source_value);
                 }
             } else {
-                absorber.profile_source = .{ .kind = .atmosphere };
+                absorber.profile_source = .atmosphere;
             }
 
             if (mapGet(item_map, "spectroscopy")) |spectroscopy_value| {
@@ -709,6 +1040,16 @@ const ResolveContext = struct {
                         observation_model.o2o2_operational_lut = try resolveOperationalLut(self.allocator, self.ingests, binding, "o2o2_operational_lut");
                     }
                 }
+                absorber.spectroscopy.resolved_line_list = try resolveSpectroscopyLineList(
+                    self.allocator,
+                    self.assets,
+                    absorber.spectroscopy,
+                );
+                absorber.spectroscopy.resolved_cia_table = try resolveCollisionInducedAbsorptionTable(
+                    self.allocator,
+                    self.assets,
+                    absorber.spectroscopy.cia_table,
+                );
             }
 
             absorbers[index] = absorber;
@@ -738,7 +1079,7 @@ const ResolveContext = struct {
         const algorithm = try decodeAlgorithm(self.allocator, mapGet(inverse_map, "algorithm"), self.strict_unknown_fields);
         const measurement_result = try self.decodeMeasurement(mapGet(inverse_map, "measurement"), scene, simulation_stage);
         const state_vector = try decodeStateVector(self.allocator, mapGet(inverse_map, "state"), self.strict_unknown_fields);
-        const covariance_blocks = try decodeCovariance(self.allocator, mapGet(inverse_map, "covariance"), self.strict_unknown_fields);
+        const covariance_blocks = try decodeCovariance(self.allocator, state_vector, mapGet(inverse_map, "covariance"), self.strict_unknown_fields);
         const fit_controls = try decodeFitControls(mapGet(inverse_map, "fit_controls"), self.strict_unknown_fields);
         const convergence = try decodeConvergence(mapGet(inverse_map, "convergence"), self.strict_unknown_fields);
 
@@ -766,19 +1107,31 @@ const ResolveContext = struct {
         try ensureKnownFields(measurement_map, &.{ "source", "observable", "mask", "error_model" }, self.strict_unknown_fields);
 
         const source_name = try self.allocator.dupe(u8, try expectString(requiredField(measurement_map, "source")));
-        const binding = try resolveMeasurementSource(source_name, simulation_stage, self.validation);
+        const binding = try resolveMeasurementSource(source_name, simulation_stage, self.validation, self.ingests);
+        const observable = if (mapGet(measurement_map, "observable")) |observable_value|
+            try parseMeasurementQuantity(try expectString(observable_value))
+        else
+            try inferMeasurementQuantity(source_name, binding, simulation_stage, self.ingests);
+        const source_scene = if (binding.kind() == .stage_product and simulation_stage != null)
+            simulation_stage.?.scene
+        else
+            scene;
         var measurement: Measurement = .{
-            .product = source_name,
-            .observable = if (mapGet(measurement_map, "observable")) |observable|
-                try self.allocator.dupe(u8, try expectString(observable))
-            else
-                source_name,
-            .sample_count = scene.spectral_grid.sample_count,
+            .product_name = observable.label(),
+            .observable = observable,
+            .sample_count = source_scene.spectral_grid.sample_count,
             .source = binding,
         };
+        if (binding.kind() == .ingest) {
+            measurement.sample_count = ingestMeasurementSampleCount(self.ingests, binding);
+        }
 
         if (mapGet(measurement_map, "mask")) |mask_value| {
             measurement.mask = try decodeMeasurementMask(self.allocator, mask_value, self.strict_unknown_fields);
+            measurement.sample_count = if (binding.kind() == .ingest)
+                try maskedIngestMeasurementSampleCount(self.allocator, self.ingests, binding, measurement.mask)
+            else
+                try maskedMeasurementSampleCount(source_scene, measurement.mask);
         }
         if (mapGet(measurement_map, "error_model")) |error_model| {
             measurement.error_model = try decodeMeasurementErrorModel(error_model, self.strict_unknown_fields);
@@ -790,23 +1143,44 @@ const ResolveContext = struct {
         };
     }
 
+    fn maskedMeasurementSampleCount(scene: Scene, mask: MeasurementMask) !u32 {
+        if (mask.exclude.len == 0) return scene.spectral_grid.sample_count;
+
+        const axis: spectra_grid.ResolvedAxis = .{
+            .base = .{
+                .start_nm = scene.spectral_grid.start_nm,
+                .end_nm = scene.spectral_grid.end_nm,
+                .sample_count = scene.spectral_grid.sample_count,
+            },
+            .explicit_wavelengths_nm = scene.observation_model.measured_wavelengths_nm,
+        };
+        try axis.validate();
+
+        var count: u32 = 0;
+        const measurement: Measurement = .{
+            .product_name = "radiance",
+            .observable = .radiance,
+            .sample_count = scene.spectral_grid.sample_count,
+            .mask = mask,
+        };
+        for (0..scene.spectral_grid.sample_count) |index| {
+            const wavelength_nm = try axis.sampleAt(@intCast(index));
+            if (measurement.includesWavelength(wavelength_nm)) count += 1;
+        }
+        return count;
+    }
+
     fn decodeAssetBinding(self: *const ResolveContext, value: yaml.Value) !Binding {
         const asset_name = try expectString(value);
         if (!hasAsset(self.assets, asset_name)) return Error.MissingAsset;
-        return .{
-            .kind = .asset,
-            .name = try self.allocator.dupe(u8, asset_name),
-        };
+        return .{ .asset = .{ .name = try self.allocator.dupe(u8, asset_name) } };
     }
 
     fn decodeSourceBinding(self: *const ResolveContext, value: yaml.Value) !Binding {
         if (value == .string) {
             const source = value.string;
-            if (std.mem.eql(u8, source, "bundle_default")) return .{ .kind = .bundle_default };
-            return .{
-                .kind = .external_observation,
-                .name = try self.allocator.dupe(u8, source),
-            };
+            if (std.mem.eql(u8, source, "bundle_default")) return .bundle_default;
+            return .{ .external_observation = .{ .name = try self.allocator.dupe(u8, source) } };
         }
 
         const source_map = try expectMap(value);
@@ -816,11 +1190,8 @@ const ResolveContext = struct {
         }
         if (mapGet(source_map, "source")) |source_value| {
             const source = try expectString(source_value);
-            if (std.mem.eql(u8, source, "bundle_default")) return .{ .kind = .bundle_default };
-            return .{
-                .kind = .asset,
-                .name = try self.allocator.dupe(u8, source),
-            };
+            if (std.mem.eql(u8, source, "bundle_default")) return .bundle_default;
+            return .{ .asset = .{ .name = try self.allocator.dupe(u8, source) } };
         }
         return Error.InvalidReference;
     }
@@ -836,10 +1207,7 @@ const ResolveContext = struct {
         const dot_index = std.mem.indexOfScalar(u8, reference, '.') orelse return Error.InvalidReference;
         const ingest_name = reference[0..dot_index];
         if (!hasIngest(self.ingests, ingest_name)) return Error.MissingIngest;
-        return .{
-            .kind = .ingest,
-            .name = try self.allocator.dupe(u8, reference),
-        };
+        return .{ .ingest = @import("../../model/Binding.zig").IngestRef.fromFullName(try self.allocator.dupe(u8, reference)) };
     }
 };
 
@@ -1059,15 +1427,22 @@ fn decodeWindows(allocator: Allocator, value: ?yaml.Value) ![]const SpectralWind
     return decoded;
 }
 
-fn decodeSurface(allocator: Allocator, value: ?yaml.Value, strict: bool) !Surface {
+const SurfaceDecode = struct {
+    surface: Surface,
+    provider: []const u8 = "",
+};
+
+fn decodeSurface(allocator: Allocator, value: ?yaml.Value, strict: bool) !SurfaceDecode {
     const surface_map = try expectMap(value orelse return Error.MissingField);
     try ensureKnownFields(surface_map, &.{ "model", "provider", "albedo", "parameters", "label", "description" }, strict);
 
-    var surface: Surface = .{
-        .kind = try allocator.dupe(u8, try expectString(requiredField(surface_map, "model"))),
+    var result: SurfaceDecode = .{
+        .surface = .{
+            .kind = try parseSurfaceKind(try expectString(requiredField(surface_map, "model"))),
+        },
     };
-    if (mapGet(surface_map, "provider")) |provider| surface.provider = try allocator.dupe(u8, try expectString(provider));
-    if (mapGet(surface_map, "albedo")) |albedo| surface.albedo = try expectF64(albedo);
+    if (mapGet(surface_map, "provider")) |provider| result.provider = try allocator.dupe(u8, try expectString(provider));
+    if (mapGet(surface_map, "albedo")) |albedo| result.surface.albedo = try expectF64(albedo);
     if (mapGet(surface_map, "parameters")) |parameters_value| {
         const parameters_map = try expectMap(parameters_value);
         const parameters = try allocator.alloc(SurfaceParameter, parameters_map.len);
@@ -1077,9 +1452,9 @@ fn decodeSurface(allocator: Allocator, value: ?yaml.Value, strict: bool) !Surfac
                 .value = try expectF64(entry.value),
             };
         }
-        surface.parameters = parameters;
+        result.surface.parameters = parameters;
     }
-    return surface;
+    return result;
 }
 
 fn decodeCloud(value: ?yaml.Value, strict: bool) !Cloud {
@@ -1105,7 +1480,7 @@ fn decodeCloud(value: ?yaml.Value, strict: bool) !Cloud {
     return .{
         .id = entry.key,
         .enabled = true,
-        .model = try expectString(requiredField(cloud_map, "model")),
+        .cloud_type = try fields.parseCloudType(try expectString(requiredField(cloud_map, "model"))),
         .provider = if (mapGet(cloud_map, "provider")) |provider| try expectString(provider) else "",
         .optical_thickness = try expectF64(requiredField(cloud_map, "optical_thickness")),
         .single_scatter_albedo = if (mapGet(cloud_map, "single_scatter_albedo")) |ssa| try expectF64(ssa) else 0.999,
@@ -1139,7 +1514,7 @@ fn decodeAerosol(value: ?yaml.Value, strict: bool) !Aerosol {
     return .{
         .id = entry.key,
         .enabled = true,
-        .model = try expectString(requiredField(aerosol_map, "model")),
+        .aerosol_type = try fields.parseAerosolType(try expectString(requiredField(aerosol_map, "model"))),
         .provider = if (mapGet(aerosol_map, "provider")) |provider| try expectString(provider) else "",
         .optical_depth = try expectF64(requiredField(aerosol_map, "optical_depth_550_nm")),
         .single_scatter_albedo = if (mapGet(aerosol_map, "single_scatter_albedo")) |ssa| try expectF64(ssa) else 0.93,
@@ -1161,9 +1536,9 @@ fn decodeProducts(allocator: Allocator, value: ?yaml.Value, strict: bool) ![]con
             .name = try allocator.dupe(u8, entry.key),
             .kind = try parseProductKind(try expectString(requiredField(product_map, "kind"))),
             .observable = if (mapGet(product_map, "observable")) |observable|
-                try allocator.dupe(u8, try expectString(observable))
+                try parseMeasurementQuantity(try expectString(observable))
             else
-                "",
+                null,
             .apply_noise = if (mapGet(product_map, "apply_noise")) |apply_noise| try expectBool(apply_noise) else false,
         };
     }
@@ -1209,15 +1584,14 @@ fn decodeStateVector(allocator: Allocator, value: ?yaml.Value, strict: bool) !St
     const state_value = value orelse return StateVector{ .value_count = 0 };
     const state_map = try expectMap(state_value);
     const parameters = try allocator.alloc(StateParameter, state_map.len);
-    const names = try allocator.alloc([]const u8, state_map.len);
+    errdefer allocator.free(parameters);
 
     for (state_map, 0..) |entry, index| {
         const parameter_map = try expectMap(entry.value);
         try ensureKnownFields(parameter_map, &.{ "target", "transform", "prior", "bounds", "label", "description" }, strict);
-        names[index] = try allocator.dupe(u8, entry.key);
         parameters[index] = .{
-            .name = names[index],
-            .target = try allocator.dupe(u8, try expectString(requiredField(parameter_map, "target"))),
+            .name = try allocator.dupe(u8, entry.key),
+            .target = try StateTarget.parse(try expectString(requiredField(parameter_map, "target"))),
             .transform = if (mapGet(parameter_map, "transform")) |transform| try parseStateTransform(try expectString(transform)) else .none,
             .prior = try decodePrior(mapGet(parameter_map, "prior"), strict),
             .bounds = try decodeBounds(mapGet(parameter_map, "bounds")),
@@ -1225,7 +1599,6 @@ fn decodeStateVector(allocator: Allocator, value: ?yaml.Value, strict: bool) !St
     }
 
     return .{
-        .parameter_names = names,
         .value_count = @intCast(parameters.len),
         .parameters = parameters,
     };
@@ -1253,7 +1626,7 @@ fn decodeBounds(value: ?yaml.Value) !StateBounds {
     };
 }
 
-fn decodeCovariance(allocator: Allocator, value: ?yaml.Value, strict: bool) ![]const CovarianceBlock {
+fn decodeCovariance(allocator: Allocator, state_vector: StateVector, value: ?yaml.Value, strict: bool) ![]const CovarianceBlock {
     const covariance_value = value orelse return &[_]CovarianceBlock{};
     const covariance_map = try expectMap(covariance_value);
     try ensureKnownFields(covariance_map, &.{"blocks"}, strict);
@@ -1265,12 +1638,14 @@ fn decodeCovariance(allocator: Allocator, value: ?yaml.Value, strict: bool) ![]c
         const block_map = try expectMap(block_value);
         try ensureKnownFields(block_map, &.{ "members", "correlation" }, strict);
         const members = try expectSeq(requiredField(block_map, "members"));
-        const member_names = try allocator.alloc([]const u8, members.len);
+        const parameter_indices = try allocator.alloc(u32, members.len);
         for (members, 0..) |member, member_index| {
-            member_names[member_index] = try allocator.dupe(u8, try expectString(member));
+            const member_name = try expectString(member);
+            const parameter_index = state_vector.parameterIndex(member_name) orelse return Error.InvalidValue;
+            parameter_indices[member_index] = @intCast(parameter_index);
         }
         decoded[index] = .{
-            .member_names = member_names,
+            .parameter_indices = parameter_indices,
             .correlation = try expectF64(requiredField(block_map, "correlation")),
         };
     }
@@ -1284,9 +1659,9 @@ fn decodeFitControls(value: ?yaml.Value, strict: bool) !FitControls {
     return .{
         .max_iterations = if (mapGet(fit_controls_map, "max_iterations")) |max_iterations| @intCast(try expectU64(max_iterations)) else 0,
         .trust_region = if (mapGet(fit_controls_map, "trust_region")) |trust_region|
-            try expectString(trust_region)
+            try parseTrustRegion(try expectString(trust_region))
         else
-            "",
+            .none,
     };
 }
 
@@ -1298,6 +1673,549 @@ fn decodeConvergence(value: ?yaml.Value, strict: bool) !Convergence {
         .cost_relative = if (mapGet(convergence_map, "cost_relative")) |cost_relative| try expectF64(cost_relative) else 0.0,
         .state_relative = if (mapGet(convergence_map, "state_relative")) |state_relative| try expectF64(state_relative) else 0.0,
     };
+}
+
+// --- Vendor-section decoders ---
+
+fn decodeVendorCompat(value: ?yaml.Value, strict: bool) !?VendorCompat {
+    const vc_value = value orelse return null;
+    const vc_map = try expectMap(vc_value);
+    try ensureKnownFields(vc_map, &.{
+        "simulation_method",
+        "retrieval_method",
+        "simulation_only",
+        "use_adding_sim",
+        "use_adding_retr",
+    }, strict);
+
+    var vc: VendorCompat = .{};
+    if (mapGet(vc_map, "simulation_method")) |v| vc.simulation_method = try fields.parseSimulationMethod(try expectString(v));
+    if (mapGet(vc_map, "retrieval_method")) |v| vc.retrieval_method = try fields.parseRetrievalMethod(try expectString(v));
+    if (mapGet(vc_map, "simulation_only")) |v| vc.simulation_only = try expectBool(v);
+    if (mapGet(vc_map, "use_adding_sim")) |v| vc.use_adding_sim = try expectBool(v);
+    if (mapGet(vc_map, "use_adding_retr")) |v| vc.use_adding_retr = try expectBool(v);
+    return vc;
+}
+
+fn decodeRadiativeTransferConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?RadiativeTransferConfig {
+    const rt_value = value orelse return null;
+    const rt_map = try expectMap(rt_value);
+    try ensureKnownFields(rt_map, &.{
+        "num_div_points_fwhm_sim",
+        "num_div_points_fwhm_retr",
+        "num_div_points_max_sim",
+        "num_div_points_min_sim",
+        "num_div_points_max_retr",
+        "num_div_points_min_retr",
+        "scattering_mode_sim",
+        "scattering_mode_retr",
+        "stokes_dimension_sim",
+        "stokes_dimension_retr",
+        "nstreams_sim",
+        "nstreams_retr",
+        "use_adding_sim",
+        "use_adding_retr",
+        "fourier_floor_scalar_sim",
+        "fourier_floor_scalar_retr",
+        "num_orders_max_sim",
+        "num_orders_max_retr",
+        "threshold_trunc_phase_sim",
+        "threshold_trunc_phase_retr",
+        "use_polarization_correction",
+        "use_correction_spherical_atm",
+        "threshold_cloud_fraction",
+        "threshold_conv_first",
+        "threshold_conv_mult",
+        "threshold_doubling",
+        "threshold_multiplier",
+        "num_div_points_alt_sim",
+        "num_div_points_alt_retr",
+    }, strict);
+
+    var rt: RadiativeTransferConfig = .{};
+    if (mapGet(rt_map, "num_div_points_fwhm_sim")) |v| rt.num_div_points_fwhm_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_fwhm_retr")) |v| rt.num_div_points_fwhm_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_max_sim")) |v| rt.num_div_points_max_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_min_sim")) |v| rt.num_div_points_min_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_max_retr")) |v| rt.num_div_points_max_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_div_points_min_retr")) |v| rt.num_div_points_min_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "scattering_mode_sim")) |v| rt.scattering_mode_sim = try fields.parseScatteringMode(try expectString(v));
+    if (mapGet(rt_map, "scattering_mode_retr")) |v| rt.scattering_mode_retr = try fields.parseScatteringMode(try expectString(v));
+    if (mapGet(rt_map, "stokes_dimension_sim")) |v| rt.stokes_dimension_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "stokes_dimension_retr")) |v| rt.stokes_dimension_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "nstreams_sim")) |v| rt.nstreams_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "nstreams_retr")) |v| rt.nstreams_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "use_adding_sim")) |v| rt.use_adding_sim = try expectBool(v);
+    if (mapGet(rt_map, "use_adding_retr")) |v| rt.use_adding_retr = try expectBool(v);
+    if (mapGet(rt_map, "fourier_floor_scalar_sim")) |v| rt.fourier_floor_scalar_sim = try expectF64(v);
+    if (mapGet(rt_map, "fourier_floor_scalar_retr")) |v| rt.fourier_floor_scalar_retr = try expectF64(v);
+    if (mapGet(rt_map, "num_orders_max_sim")) |v| rt.num_orders_max_sim = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "num_orders_max_retr")) |v| rt.num_orders_max_retr = @intCast(try expectU64(v));
+    if (mapGet(rt_map, "threshold_trunc_phase_sim")) |v| rt.threshold_trunc_phase_sim = try expectF64(v);
+    if (mapGet(rt_map, "threshold_trunc_phase_retr")) |v| rt.threshold_trunc_phase_retr = try expectF64(v);
+    if (mapGet(rt_map, "use_polarization_correction")) |v| rt.use_polarization_correction = try expectBool(v);
+    if (mapGet(rt_map, "use_correction_spherical_atm")) |v| rt.use_correction_spherical_atm = try expectBool(v);
+    if (mapGet(rt_map, "threshold_cloud_fraction")) |v| rt.threshold_cloud_fraction = try expectF64(v);
+    if (mapGet(rt_map, "threshold_conv_first")) |v| rt.threshold_conv_first = try expectF64(v);
+    if (mapGet(rt_map, "threshold_conv_mult")) |v| rt.threshold_conv_mult = try expectF64(v);
+    if (mapGet(rt_map, "threshold_doubling")) |v| rt.threshold_doubling = try expectF64(v);
+    if (mapGet(rt_map, "threshold_multiplier")) |v| rt.threshold_multiplier = try expectF64(v);
+    if (mapGet(rt_map, "num_div_points_alt_sim")) |v| rt.num_div_points_alt_sim = try decodeU32Sequence(allocator, v);
+    if (mapGet(rt_map, "num_div_points_alt_retr")) |v| rt.num_div_points_alt_retr = try decodeU32Sequence(allocator, v);
+    return rt;
+}
+
+fn compileStageRtmControls(
+    kind: StageKind,
+    vendor_compat: ?VendorCompat,
+    radiative_transfer: ?RadiativeTransferConfig,
+) !transport_common.RtmControls {
+    var controls = transport_common.RtmControls.default_vendor;
+
+    if (radiative_transfer) |rt| {
+        try rejectUnsupportedRtmControls(kind, rt);
+        const scattering_mode = switch (kind) {
+            .simulation => rt.scattering_mode_sim,
+            .retrieval => rt.scattering_mode_retr,
+        };
+        controls.scattering = switch (scattering_mode) {
+            .none => .none,
+            .single => .single,
+            .multiple => .multiple,
+        };
+        controls.integrate_source_function = scattering_mode != .none;
+        controls.stokes_dimension = switch (kind) {
+            .simulation => rt.stokes_dimension_sim,
+            .retrieval => rt.stokes_dimension_retr,
+        };
+        controls.n_streams = @intCast(switch (kind) {
+            .simulation => rt.nstreams_sim,
+            .retrieval => rt.nstreams_retr,
+        });
+        controls.use_adding = switch (kind) {
+            .simulation => rt.use_adding_sim,
+            .retrieval => rt.use_adding_retr,
+        };
+        controls.fourier_floor_scalar = @intFromFloat(@max(switch (kind) {
+            .simulation => rt.fourier_floor_scalar_sim orelse @as(f64, @floatFromInt(controls.fourier_floor_scalar)),
+            .retrieval => rt.fourier_floor_scalar_retr orelse @as(f64, @floatFromInt(controls.fourier_floor_scalar)),
+        }, 0.0));
+        controls.num_orders_max = @intCast(switch (kind) {
+            .simulation => rt.num_orders_max_sim orelse controls.num_orders_max,
+            .retrieval => rt.num_orders_max_retr orelse controls.num_orders_max,
+        });
+        controls.use_spherical_correction = rt.use_correction_spherical_atm;
+        controls.threshold_conv_first = rt.threshold_conv_first orelse controls.threshold_conv_first;
+        controls.threshold_conv_mult = rt.threshold_conv_mult orelse controls.threshold_conv_mult;
+        controls.threshold_doubl = rt.threshold_doubling orelse controls.threshold_doubl;
+        controls.threshold_mul = rt.threshold_multiplier orelse controls.threshold_mul;
+    }
+
+    if (vendor_compat) |compat| {
+        const compat_use_adding = switch (kind) {
+            .simulation => compat.use_adding_sim,
+            .retrieval => compat.use_adding_retr,
+        };
+        if (compat_use_adding) |value| {
+            if (radiative_transfer != null and controls.use_adding != value) return Error.InvalidValue;
+            controls.use_adding = value;
+        }
+    }
+
+    return controls;
+}
+
+fn rejectUnsupportedRtmControls(
+    kind: StageKind,
+    rt: RadiativeTransferConfig,
+) Error!void {
+    const trunc_threshold = switch (kind) {
+        .simulation => rt.threshold_trunc_phase_sim,
+        .retrieval => rt.threshold_trunc_phase_retr,
+    };
+    if (trunc_threshold != null) return Error.InvalidValue;
+    if (rt.use_polarization_correction) return Error.InvalidValue;
+    if (rt.threshold_cloud_fraction != null) return Error.InvalidValue;
+}
+
+fn decodeRrsRingConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?RrsRingConfig {
+    const rrs_value = value orelse return null;
+    const rrs_map = try expectMap(rrs_value);
+    try ensureKnownFields(rrs_map, &.{ "sim", "retr" }, strict);
+
+    var rrs: RrsRingConfig = .{};
+    if (mapGet(rrs_map, "sim")) |v| rrs.sim = try decodeRrsPerBandSeq(allocator, v, strict);
+    if (mapGet(rrs_map, "retr")) |v| rrs.retr = try decodeRrsPerBandSeq(allocator, v, strict);
+    return rrs;
+}
+
+fn decodeRrsPerBandSeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const RrsRingConfig.PerBand {
+    const seq = try expectSeq(value);
+    const bands = try allocator.alloc(RrsRingConfig.PerBand, seq.len);
+    for (seq, 0..) |entry, index| {
+        const band_map = try expectMap(entry);
+        try ensureKnownFields(band_map, &.{
+            "use_rrs",
+            "approximate_rrs",
+            "fraction_raman_lines",
+            "use_cabannes",
+            "degree_poly",
+            "include_absorption",
+        }, strict);
+
+        var band: RrsRingConfig.PerBand = .{};
+        if (mapGet(band_map, "use_rrs")) |v| band.use_rrs = try expectBool(v);
+        if (mapGet(band_map, "approximate_rrs")) |v| band.approximate_rrs = try expectBool(v);
+        if (mapGet(band_map, "fraction_raman_lines")) |v| band.fraction_raman_lines = try expectF64(v);
+        if (mapGet(band_map, "use_cabannes")) |v| band.use_cabannes = try expectBool(v);
+        if (mapGet(band_map, "degree_poly")) |v| band.degree_poly = @intCast(try expectU64(v));
+        if (mapGet(band_map, "include_absorption")) |v| band.include_absorption = try expectBool(v);
+        bands[index] = band;
+    }
+    return bands;
+}
+
+fn decodeAdditionalOutputConfig(value: ?yaml.Value, strict: bool) !?AdditionalOutputConfig {
+    const ao_value = value orelse return null;
+    const ao_map = try expectMap(ao_value);
+    try ensureKnownFields(ao_map, &.{
+        "refl_hr_grid_sim",
+        "refl_instr_grid_sim",
+        "refl_deriv_hr_grid_sim",
+        "refl_deriv_hr_grid_retr",
+        "refl_deriv_instr_grid_sim",
+        "refl_deriv_instr_grid_retr",
+        "signal_to_noise_ratio",
+        "contrib_refl_sim",
+        "contrib_refl_retr",
+        "alt_resolved_amf_sim",
+        "alt_resolved_amf_retr",
+        "absorption_xsec_sim",
+        "absorption_xsec_retr",
+        "ring_spectra",
+        "diff_ring_spectra",
+        "filling_in_spectra",
+        "test_derivatives",
+        "pol_correction_file",
+    }, strict);
+
+    var ao: AdditionalOutputConfig = .{};
+    if (mapGet(ao_map, "refl_hr_grid_sim")) |v| ao.refl_hr_grid_sim = try expectBool(v);
+    if (mapGet(ao_map, "refl_instr_grid_sim")) |v| ao.refl_instr_grid_sim = try expectBool(v);
+    if (mapGet(ao_map, "refl_deriv_hr_grid_sim")) |v| ao.refl_deriv_hr_grid_sim = try expectBool(v);
+    if (mapGet(ao_map, "refl_deriv_hr_grid_retr")) |v| ao.refl_deriv_hr_grid_retr = try expectBool(v);
+    if (mapGet(ao_map, "refl_deriv_instr_grid_sim")) |v| ao.refl_deriv_instr_grid_sim = try expectBool(v);
+    if (mapGet(ao_map, "refl_deriv_instr_grid_retr")) |v| ao.refl_deriv_instr_grid_retr = try expectBool(v);
+    if (mapGet(ao_map, "signal_to_noise_ratio")) |v| ao.signal_to_noise_ratio = try expectBool(v);
+    if (mapGet(ao_map, "contrib_refl_sim")) |v| ao.contrib_refl_sim = try expectBool(v);
+    if (mapGet(ao_map, "contrib_refl_retr")) |v| ao.contrib_refl_retr = try expectBool(v);
+    if (mapGet(ao_map, "alt_resolved_amf_sim")) |v| ao.alt_resolved_amf_sim = try expectBool(v);
+    if (mapGet(ao_map, "alt_resolved_amf_retr")) |v| ao.alt_resolved_amf_retr = try expectBool(v);
+    if (mapGet(ao_map, "absorption_xsec_sim")) |v| ao.absorption_xsec_sim = try expectBool(v);
+    if (mapGet(ao_map, "absorption_xsec_retr")) |v| ao.absorption_xsec_retr = try expectBool(v);
+    if (mapGet(ao_map, "ring_spectra")) |v| ao.ring_spectra = try expectBool(v);
+    if (mapGet(ao_map, "diff_ring_spectra")) |v| ao.diff_ring_spectra = try expectBool(v);
+    if (mapGet(ao_map, "filling_in_spectra")) |v| ao.filling_in_spectra = try expectBool(v);
+    if (mapGet(ao_map, "test_derivatives")) |v| ao.test_derivatives = try expectBool(v);
+    if (mapGet(ao_map, "pol_correction_file")) |v| ao.pol_correction_file = try expectBool(v);
+    return ao;
+}
+
+fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?GeneralConfig {
+    _ = allocator;
+    const gc_value = value orelse return null;
+    const gc_map = try expectMap(gc_value);
+    try ensureKnownFields(gc_map, &.{
+        "number_spectral_bands",
+        "number_trace_gases",
+        "simulation_only",
+        "aerosol_layer_height",
+        "fit_surface_albedo",
+        "fit_aerosol_tau",
+        "fit_cloud_tau",
+        "fit_mul_offset",
+        "fit_stray_light",
+        "fit_temperature_offset",
+        "fit_ln_cld_tau",
+        "num_interval_fit",
+        "simulation_method",
+        "retrieval_method",
+        "solar_irr_file_sim",
+        "solar_irr_file_retr",
+        "temperature_climatology",
+        "ozone_climatology",
+    }, strict);
+
+    var gc: GeneralConfig = .{};
+    if (mapGet(gc_map, "number_spectral_bands")) |v| gc.number_spectral_bands = @intCast(try expectU64(v));
+    if (mapGet(gc_map, "number_trace_gases")) |v| gc.number_trace_gases = @intCast(try expectU64(v));
+    if (mapGet(gc_map, "simulation_only")) |v| gc.simulation_only = try expectBool(v);
+    if (mapGet(gc_map, "aerosol_layer_height")) |v| gc.aerosol_layer_height = try expectBool(v);
+    if (mapGet(gc_map, "fit_surface_albedo")) |v| gc.fit_surface_albedo = try expectBool(v);
+    if (mapGet(gc_map, "fit_aerosol_tau")) |v| gc.fit_aerosol_tau = try expectBool(v);
+    if (mapGet(gc_map, "fit_cloud_tau")) |v| gc.fit_cloud_tau = try expectBool(v);
+    if (mapGet(gc_map, "fit_mul_offset")) |v| gc.fit_mul_offset = try expectBool(v);
+    if (mapGet(gc_map, "fit_stray_light")) |v| gc.fit_stray_light = try expectBool(v);
+    if (mapGet(gc_map, "fit_temperature_offset")) |v| gc.fit_temperature_offset = try expectBool(v);
+    if (mapGet(gc_map, "fit_ln_cld_tau")) |v| gc.fit_ln_cld_tau = try expectBool(v);
+    if (mapGet(gc_map, "num_interval_fit")) |v| gc.num_interval_fit = @intCast(try expectU64(v));
+    if (mapGet(gc_map, "simulation_method")) |v| gc.simulation_method = try fields.parseSimulationMethod(try expectString(v));
+    if (mapGet(gc_map, "retrieval_method")) |v| gc.retrieval_method = try fields.parseRetrievalMethod(try expectString(v));
+    if (mapGet(gc_map, "solar_irr_file_sim")) |v| gc.solar_irr_file_sim = try expectString(v);
+    if (mapGet(gc_map, "solar_irr_file_retr")) |v| gc.solar_irr_file_retr = try expectString(v);
+    if (mapGet(gc_map, "temperature_climatology")) |v| gc.temperature_climatology = try expectString(v);
+    if (mapGet(gc_map, "ozone_climatology")) |v| gc.ozone_climatology = try expectString(v);
+    return gc;
+}
+
+fn decodeInstrumentConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?InstrumentConfig {
+    const ic_value = value orelse return null;
+    const ic_map = try expectMap(ic_value);
+    try ensureKnownFields(ic_map, &.{
+        "bands",
+        "add_noise_irr_sim",
+        "add_noise_rad_sim",
+    }, strict);
+
+    var ic: InstrumentConfig = .{};
+    if (mapGet(ic_map, "add_noise_irr_sim")) |v| ic.add_noise_irr_sim = try expectBool(v);
+    if (mapGet(ic_map, "add_noise_rad_sim")) |v| ic.add_noise_rad_sim = try expectBool(v);
+    if (mapGet(ic_map, "bands")) |v| ic.bands = try decodeInstrumentPerBandSeq(allocator, v, strict);
+    return ic;
+}
+
+fn decodeInstrumentPerBandSeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const InstrumentConfig.PerBand {
+    const seq = try expectSeq(value);
+    const bands = try allocator.alloc(InstrumentConfig.PerBand, seq.len);
+    for (seq, 0..) |entry, index| {
+        const band_map = try expectMap(entry);
+        try ensureKnownFields(band_map, &.{
+            "wavelength_start",
+            "wavelength_end",
+            "wavelength_step",
+            "exclude",
+            "fwhm_irradiance_sim",
+            "fwhm_irradiance_retr",
+            "fwhm_radiance_sim",
+            "fwhm_radiance_retr",
+        }, strict);
+
+        var band: InstrumentConfig.PerBand = .{};
+        if (mapGet(band_map, "wavelength_start")) |v| band.wavelength_start = try expectF64(v);
+        if (mapGet(band_map, "wavelength_end")) |v| band.wavelength_end = try expectF64(v);
+        if (mapGet(band_map, "wavelength_step")) |v| band.wavelength_step = try expectF64(v);
+        if (mapGet(band_map, "exclude")) |v| band.exclude = try decodeF64PairSequence(allocator, v);
+        if (mapGet(band_map, "fwhm_irradiance_sim")) |v| band.fwhm_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "fwhm_irradiance_retr")) |v| band.fwhm_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "fwhm_radiance_sim")) |v| band.fwhm_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "fwhm_radiance_retr")) |v| band.fwhm_radiance_retr = try expectF64(v);
+        bands[index] = band;
+    }
+    return bands;
+}
+
+fn decodeGeometryConfig(value: ?yaml.Value, strict: bool) !?GeometryConfig {
+    const geo_value = value orelse return null;
+    const geo_map = try expectMap(geo_value);
+    try ensureKnownFields(geo_map, &.{
+        "solar_zenith_angle_sim",
+        "solar_zenith_angle_retr",
+        "solar_azimuth_angle_sim",
+        "solar_azimuth_angle_retr",
+        "instrument_nadir_angle_sim",
+        "instrument_nadir_angle_retr",
+        "instrument_azimuth_angle_sim",
+        "instrument_azimuth_angle_retr",
+    }, strict);
+
+    var geo: GeometryConfig = .{};
+    if (mapGet(geo_map, "solar_zenith_angle_sim")) |v| geo.solar_zenith_angle_sim = try expectF64(v);
+    if (mapGet(geo_map, "solar_zenith_angle_retr")) |v| geo.solar_zenith_angle_retr = try expectF64(v);
+    if (mapGet(geo_map, "solar_azimuth_angle_sim")) |v| geo.solar_azimuth_angle_sim = try expectF64(v);
+    if (mapGet(geo_map, "solar_azimuth_angle_retr")) |v| geo.solar_azimuth_angle_retr = try expectF64(v);
+    if (mapGet(geo_map, "instrument_nadir_angle_sim")) |v| geo.instrument_nadir_angle_sim = try expectF64(v);
+    if (mapGet(geo_map, "instrument_nadir_angle_retr")) |v| geo.instrument_nadir_angle_retr = try expectF64(v);
+    if (mapGet(geo_map, "instrument_azimuth_angle_sim")) |v| geo.instrument_azimuth_angle_sim = try expectF64(v);
+    if (mapGet(geo_map, "instrument_azimuth_angle_retr")) |v| geo.instrument_azimuth_angle_retr = try expectF64(v);
+    return geo;
+}
+
+fn decodePressureTemperatureConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?PressureTemperatureConfig {
+    const pt_value = value orelse return null;
+    const pt_map = try expectMap(pt_value);
+    try ensureKnownFields(pt_map, &.{ "pt_sim", "pt_retr" }, strict);
+
+    var pt: PressureTemperatureConfig = .{};
+    if (mapGet(pt_map, "pt_sim")) |v| pt.pt_sim = try decodeF64PairSequence(allocator, v);
+    if (mapGet(pt_map, "pt_retr")) |v| pt.pt_retr = try decodeF64PairSequence(allocator, v);
+    return pt;
+}
+
+fn decodeSurfaceConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?SurfaceConfig {
+    const sc_value = value orelse return null;
+    const sc_map = try expectMap(sc_value);
+    try ensureKnownFields(sc_map, &.{
+        "surf_pressure_sim",
+        "surf_pressure_retr",
+        "surface_type_sim",
+        "surface_type_retr",
+        "surf_albedo_sim",
+        "surf_albedo_retr",
+        "var_surf_albedo_retr",
+        "wavel_surf_albedo_sim",
+        "surf_albedo_array_sim",
+        "wavel_surf_albedo_retr",
+        "surf_albedo_array_retr",
+    }, strict);
+
+    var sc: SurfaceConfig = .{};
+    if (mapGet(sc_map, "surf_pressure_sim")) |v| sc.surf_pressure_sim = try expectF64(v);
+    if (mapGet(sc_map, "surf_pressure_retr")) |v| sc.surf_pressure_retr = try expectF64(v);
+    if (mapGet(sc_map, "surface_type_sim")) |v| sc.surface_type_sim = try fields.parseSurfaceType(try expectString(v));
+    if (mapGet(sc_map, "surface_type_retr")) |v| sc.surface_type_retr = try fields.parseSurfaceType(try expectString(v));
+    if (mapGet(sc_map, "surf_albedo_sim")) |v| sc.surf_albedo_sim = try expectF64(v);
+    if (mapGet(sc_map, "surf_albedo_retr")) |v| sc.surf_albedo_retr = try expectF64(v);
+    if (mapGet(sc_map, "var_surf_albedo_retr")) |v| sc.var_surf_albedo_retr = try expectF64(v);
+    if (mapGet(sc_map, "wavel_surf_albedo_sim")) |v| sc.wavel_surf_albedo_sim = try decodeF64Sequence(allocator, v);
+    if (mapGet(sc_map, "surf_albedo_array_sim")) |v| sc.surf_albedo_array_sim = try decodeF64Sequence(allocator, v);
+    if (mapGet(sc_map, "wavel_surf_albedo_retr")) |v| sc.wavel_surf_albedo_retr = try decodeF64Sequence(allocator, v);
+    if (mapGet(sc_map, "surf_albedo_array_retr")) |v| sc.surf_albedo_array_retr = try decodeF64Sequence(allocator, v);
+    return sc;
+}
+
+fn decodeCloudConfig(value: ?yaml.Value, strict: bool) !?CloudConfig {
+    const cc_value = value orelse return null;
+    const cc_map = try expectMap(cc_value);
+    try ensureKnownFields(cc_map, &.{
+        "cloud_type_sim",
+        "cloud_type_retr",
+        "hg_optical_thickness_sim",
+        "hg_angstrom_coefficient_sim",
+        "hg_single_scattering_albedo_sim",
+        "hg_parameter_g_sim",
+        "hg_optical_thickness_retr",
+        "mie_optical_thickness_sim",
+        "mie_optical_thickness_retr",
+    }, strict);
+
+    var cc: CloudConfig = .{};
+    if (mapGet(cc_map, "cloud_type_sim")) |v| cc.cloud_type_sim = try fields.parseCloudType(try expectString(v));
+    if (mapGet(cc_map, "cloud_type_retr")) |v| cc.cloud_type_retr = try fields.parseCloudType(try expectString(v));
+    if (mapGet(cc_map, "hg_optical_thickness_sim")) |v| cc.hg_optical_thickness_sim = try expectF64(v);
+    if (mapGet(cc_map, "hg_angstrom_coefficient_sim")) |v| cc.hg_angstrom_coefficient_sim = try expectF64(v);
+    if (mapGet(cc_map, "hg_single_scattering_albedo_sim")) |v| cc.hg_single_scattering_albedo_sim = try expectF64(v);
+    if (mapGet(cc_map, "hg_parameter_g_sim")) |v| cc.hg_parameter_g_sim = try expectF64(v);
+    if (mapGet(cc_map, "hg_optical_thickness_retr")) |v| cc.hg_optical_thickness_retr = try expectF64(v);
+    if (mapGet(cc_map, "mie_optical_thickness_sim")) |v| cc.mie_optical_thickness_sim = try expectF64(v);
+    if (mapGet(cc_map, "mie_optical_thickness_retr")) |v| cc.mie_optical_thickness_retr = try expectF64(v);
+    return cc;
+}
+
+fn decodeAerosolConfig(value: ?yaml.Value, strict: bool) !?AerosolConfig {
+    const ac_value = value orelse return null;
+    const ac_map = try expectMap(ac_value);
+    try ensureKnownFields(ac_map, &.{
+        "aerosol_type_sim",
+        "aerosol_type_retr",
+        "hg_optical_thickness_sim",
+        "hg_angstrom_coefficient_sim",
+        "hg_single_scattering_albedo_sim",
+        "hg_parameter_g_sim",
+        "hg_optical_thickness_retr",
+        "mie_optical_thickness_sim",
+        "mie_optical_thickness_retr",
+    }, strict);
+
+    var ac: AerosolConfig = .{};
+    if (mapGet(ac_map, "aerosol_type_sim")) |v| ac.aerosol_type_sim = try fields.parseAerosolType(try expectString(v));
+    if (mapGet(ac_map, "aerosol_type_retr")) |v| ac.aerosol_type_retr = try fields.parseAerosolType(try expectString(v));
+    if (mapGet(ac_map, "hg_optical_thickness_sim")) |v| ac.hg_optical_thickness_sim = try expectF64(v);
+    if (mapGet(ac_map, "hg_angstrom_coefficient_sim")) |v| ac.hg_angstrom_coefficient_sim = try expectF64(v);
+    if (mapGet(ac_map, "hg_single_scattering_albedo_sim")) |v| ac.hg_single_scattering_albedo_sim = try expectF64(v);
+    if (mapGet(ac_map, "hg_parameter_g_sim")) |v| ac.hg_parameter_g_sim = try expectF64(v);
+    if (mapGet(ac_map, "hg_optical_thickness_retr")) |v| ac.hg_optical_thickness_retr = try expectF64(v);
+    if (mapGet(ac_map, "mie_optical_thickness_sim")) |v| ac.mie_optical_thickness_sim = try expectF64(v);
+    if (mapGet(ac_map, "mie_optical_thickness_retr")) |v| ac.mie_optical_thickness_retr = try expectF64(v);
+    return ac;
+}
+
+fn decodeRetrievalConfig(value: ?yaml.Value, strict: bool) !?RetrievalConfig {
+    const rc_value = value orelse return null;
+    const rc_map = try expectMap(rc_value);
+    try ensureKnownFields(rc_map, &.{
+        "max_num_iterations",
+        "state_vector_conv_threshold",
+    }, strict);
+
+    var rc: RetrievalConfig = .{};
+    if (mapGet(rc_map, "max_num_iterations")) |v| rc.max_num_iterations = @intCast(try expectU64(v));
+    if (mapGet(rc_map, "state_vector_conv_threshold")) |v| rc.state_vector_conv_threshold = try expectF64(v);
+    return rc;
+}
+
+fn decodeAbsorbingGasConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?AbsorbingGasConfig {
+    const ag_value = value orelse return null;
+    const ag_map = try expectMap(ag_value);
+    try ensureKnownFields(ag_map, &.{"gases"}, strict);
+
+    var ag: AbsorbingGasConfig = .{};
+    if (mapGet(ag_map, "gases")) |v| ag.gases = try decodeGasEntrySeq(allocator, v, strict);
+    return ag;
+}
+
+fn decodeGasEntrySeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const AbsorbingGasConfig.GasEntry {
+    const seq = try expectSeq(value);
+    const entries = try allocator.alloc(AbsorbingGasConfig.GasEntry, seq.len);
+    for (seq, 0..) |entry, index| {
+        const gas_map = try expectMap(entry);
+        try ensureKnownFields(gas_map, &.{
+            "species",
+            "xsection_file_sim",
+            "xsection_file_retr",
+            "fit_column",
+            "profile_sim",
+        }, strict);
+
+        var ge: AbsorbingGasConfig.GasEntry = .{};
+        if (mapGet(gas_map, "species")) |v| ge.species = try fields.parseAbsorberSpecies(try expectString(v));
+        if (mapGet(gas_map, "xsection_file_sim")) |v| ge.xsection_file_sim = try expectString(v);
+        if (mapGet(gas_map, "xsection_file_retr")) |v| ge.xsection_file_retr = try expectString(v);
+        if (mapGet(gas_map, "fit_column")) |v| ge.fit_column = try expectBool(v);
+        if (mapGet(gas_map, "profile_sim")) |v| ge.profile_sim = try decodeF64PairSequence(allocator, v);
+        entries[index] = ge;
+    }
+    return entries;
+}
+
+/// Decode a YAML sequence of 2-element sub-sequences into a slice of f64 pairs.
+fn decodeF64PairSequence(allocator: Allocator, value: yaml.Value) ![]const [2]f64 {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc([2]f64, seq.len);
+    for (seq, 0..) |entry, index| {
+        const pair = try expectSeq(entry);
+        if (pair.len != 2) return Error.InvalidValue;
+        result[index] = .{ try expectF64(pair[0]), try expectF64(pair[1]) };
+    }
+    return result;
+}
+
+/// Decode a YAML sequence of scalars into a slice of f64.
+fn decodeF64Sequence(allocator: Allocator, value: yaml.Value) ![]const f64 {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc(f64, seq.len);
+    for (seq, 0..) |entry, index| {
+        result[index] = try expectF64(entry);
+    }
+    return result;
+}
+
+fn decodeU32Sequence(allocator: Allocator, value: yaml.Value) ![]const u32 {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc(u32, seq.len);
+    for (seq, 0..) |entry, index| {
+        result[index] = @intCast(try expectU64(entry));
+    }
+    return result;
 }
 
 fn decodeMeasurementMask(allocator: Allocator, value: yaml.Value, strict: bool) !MeasurementMask {
@@ -1321,8 +2239,8 @@ fn decodeMeasurementErrorModel(value: yaml.Value, strict: bool) !MeasurementErro
 fn decodeOutputs(
     allocator: Allocator,
     value: ?yaml.Value,
-    simulation: ?StageResolution,
-    retrieval: ?StageResolution,
+    simulation: ?*const StageResolution,
+    retrieval: ?*const StageResolution,
     strict: bool,
     validation: Validation,
 ) ![]const OutputSpec {
@@ -1351,15 +2269,15 @@ fn decodeOutputs(
 fn buildWarnings(
     allocator: Allocator,
     validation: Validation,
-    simulation: ?StageResolution,
-    retrieval: ?StageResolution,
+    simulation: ?*const StageResolution,
+    retrieval: ?*const StageResolution,
 ) ![]const Warning {
     if (simulation == null or retrieval == null) return &[_]Warning{};
-    const simulation_stage = simulation.?;
-    const retrieval_stage = retrieval.?;
+    const simulation_stage = simulation.?.*;
+    const retrieval_stage = retrieval.?.*;
 
     if (retrieval_stage.stage.inverse == null) return &[_]Warning{};
-    if (retrieval_stage.stage.inverse.?.measurements.source.kind != .stage_product) return &[_]Warning{};
+    if (retrieval_stage.stage.inverse.?.measurements.source.kind() != .stage_product) return &[_]Warning{};
     if (!validation.synthetic_retrieval.warn_if_models_are_identical) return &[_]Warning{};
 
     const simulation_plan = simulation_stage.merged.get("plan") orelse .null;
@@ -1385,28 +2303,30 @@ fn buildWarnings(
 fn decodeProfileBinding(allocator: Allocator, value: yaml.Value) !Binding {
     if (value == .string) {
         const source = try expectString(value);
-        if (std.mem.eql(u8, source, "atmosphere")) return .{ .kind = .atmosphere };
-        return .{
-            .kind = .asset,
-            .name = try allocator.dupe(u8, source),
-        };
+        if (std.mem.eql(u8, source, "atmosphere")) return .atmosphere;
+        return .{ .asset = .{ .name = try allocator.dupe(u8, source) } };
     }
     const source_map = try expectMap(value);
     try ensureKnownFields(source_map, &.{"asset"}, true);
     const asset_name = try expectString(requiredField(source_map, "asset"));
-    return .{
-        .kind = .asset,
-        .name = try allocator.dupe(u8, asset_name),
-    };
+    return .{ .asset = .{ .name = try allocator.dupe(u8, asset_name) } };
 }
 
-fn resolveMeasurementSource(source_name: []const u8, simulation_stage: ?*const Stage, validation: Validation) !Binding {
+fn resolveMeasurementSource(
+    source_name: []const u8,
+    simulation_stage: ?*const Stage,
+    validation: Validation,
+    ingests: []const Ingest,
+) !Binding {
     if (simulation_stage) |stage| {
         if (findStageProduct(stage.*, source_name) != null) {
-            return .{
-                .kind = .stage_product,
-                .name = source_name,
-            };
+            return .{ .stage_product = .{ .name = source_name } };
+        }
+    }
+
+    if (std.mem.indexOfScalar(u8, source_name, '.')) |dot_index| {
+        if (hasIngest(ingests, source_name[0..dot_index])) {
+            return .{ .ingest = @import("../../model/Binding.zig").IngestRef.fromFullName(source_name) };
         }
     }
 
@@ -1414,31 +2334,198 @@ fn resolveMeasurementSource(source_name: []const u8, simulation_stage: ?*const S
         return Error.MissingStageProduct;
     }
 
-    return .{
-        .kind = .external_observation,
-        .name = source_name,
+    return .{ .external_observation = .{ .name = source_name } };
+}
+
+fn parseMeasurementQuantity(value: []const u8) !MeasurementQuantity {
+    return MeasurementQuantity.parse(value) catch Error.InvalidValue;
+}
+
+fn parseTrustRegion(value: []const u8) !FitControls.TrustRegion {
+    if (std.mem.eql(u8, value, "lm") or std.mem.eql(u8, value, "levenberg_marquardt")) {
+        return .lm;
+    }
+    return Error.InvalidValue;
+}
+
+fn inferMeasurementQuantity(
+    source_name: []const u8,
+    binding: Binding,
+    simulation_stage: ?*const Stage,
+    ingests: []const Ingest,
+) !MeasurementQuantity {
+    switch (binding.kind()) {
+        .stage_product => {
+            const stage = simulation_stage orelse return Error.InvalidReference;
+            const product = findStageProduct(stage.*, source_name) orelse return Error.MissingStageProduct;
+            return product.observable orelse Error.InvalidReference;
+        },
+        .ingest => {
+            _ = ingests;
+            const ingest_ref = binding.ingestReference().?;
+            return parseMeasurementQuantity(ingest_ref.output_name);
+        },
+        .external_observation => return parseMeasurementQuantity(source_name),
+        .none, .asset, .bundle_default, .atmosphere => return Error.InvalidReference,
+    }
+}
+
+fn ingestMeasurementSampleCount(ingests: []const Ingest, binding: Binding) u32 {
+    const ingest_ref = binding.ingestReference().?;
+    const ingest = getReferencedIngest(ingests, ingest_ref);
+    if (std.mem.eql(u8, ingest_ref.output_name, "radiance")) return ingest.loaded_spectra.sampleCount(.radiance);
+    if (std.mem.eql(u8, ingest_ref.output_name, "irradiance")) return ingest.loaded_spectra.sampleCount(.irradiance);
+    return 0;
+}
+
+fn maskedIngestMeasurementSampleCount(
+    allocator: Allocator,
+    ingests: []const Ingest,
+    binding: Binding,
+    mask: MeasurementMask,
+) !u32 {
+    const ingest_ref = binding.ingestReference().?;
+    const ingest = getReferencedIngest(ingests, ingest_ref);
+    const kind = if (std.mem.eql(u8, ingest_ref.output_name, "radiance"))
+        spectral_ascii.ChannelKind.radiance
+    else if (std.mem.eql(u8, ingest_ref.output_name, "irradiance"))
+        spectral_ascii.ChannelKind.irradiance
+    else
+        return Error.MissingIngestOutput;
+    const wavelengths_nm = try ingest.loaded_spectra.wavelengthsForKind(allocator, kind);
+    defer if (wavelengths_nm.len != 0) allocator.free(wavelengths_nm);
+
+    if (mask.exclude.len == 0) return @intCast(wavelengths_nm.len);
+    try spectra_grid.validateExplicitSamples(wavelengths_nm);
+
+    const measurement: Measurement = .{
+        .product_name = "radiance",
+        .observable = .radiance,
+        .sample_count = @intCast(wavelengths_nm.len),
+        .mask = mask,
     };
+    return measurement.selectedSampleCount(wavelengths_nm);
 }
 
 fn resolveInstrumentLineShapeTable(ingests: []const Ingest, binding: Binding) !@import("../../model/Instrument.zig").InstrumentLineShapeTable {
-    const ingest = findIngest(ingests, binding.name[0..std.mem.indexOfScalar(u8, binding.name, '.').?]) orelse return Error.MissingIngest;
-    const output_name = binding.name[std.mem.indexOfScalar(u8, binding.name, '.').? + 1 ..];
-    if (!std.mem.eql(u8, output_name, "instrument_line_shape_table")) return Error.MissingIngestOutput;
+    const ingest_ref = binding.ingestReference().?;
+    const ingest = findIngest(ingests, ingest_ref.ingest_name) orelse return Error.MissingIngest;
+    if (!std.mem.eql(u8, ingest_ref.output_name, "instrument_line_shape_table")) return Error.MissingIngestOutput;
     return ingest.loaded_spectra.metadata.instrument_line_shape_table;
 }
 
+fn hydrateSceneFromIngestMeasurement(
+    allocator: Allocator,
+    ingests: []const Ingest,
+    scene: *Scene,
+    binding: Binding,
+) !void {
+    if (binding.kind() != .ingest) return;
+
+    const ingest_ref = binding.ingestReference().?;
+    const ingest = getReferencedIngest(ingests, ingest_ref);
+    if (!std.mem.eql(u8, ingest_ref.output_name, "radiance")) return;
+
+    scene.observation_model.sampling = .measured_channels;
+    scene.observation_model.measured_wavelengths_nm = try ingest.loaded_spectra.wavelengthsForKind(allocator, .radiance);
+    scene.observation_model.owns_measured_wavelengths = scene.observation_model.measured_wavelengths_nm.len != 0;
+    scene.observation_model.reference_radiance = try spectral_ascii_runtime.channelValuesForKind(allocator, ingest.loaded_spectra, .radiance);
+    scene.observation_model.owns_reference_radiance = scene.observation_model.reference_radiance.len != 0;
+    scene.observation_model.ingested_noise_sigma = try ingest.loaded_spectra.noiseSigmaForKind(allocator, .radiance);
+    if (!scene.observation_model.operational_solar_spectrum.enabled()) {
+        scene.observation_model.operational_solar_spectrum = if (ingest.loaded_spectra.metadata.operational_solar_spectrum.enabled())
+            try ingest.loaded_spectra.metadata.operational_solar_spectrum.clone(allocator)
+        else
+            try ingest.loaded_spectra.solarSpectrumForKind(allocator, .irradiance);
+    }
+    if (scene.observation_model.measured_wavelengths_nm.len != 0) {
+        scene.spectral_grid.start_nm = scene.observation_model.measured_wavelengths_nm[0];
+        scene.spectral_grid.end_nm = scene.observation_model.measured_wavelengths_nm[scene.observation_model.measured_wavelengths_nm.len - 1];
+        scene.spectral_grid.sample_count = @intCast(scene.observation_model.measured_wavelengths_nm.len);
+    }
+}
+
 fn resolveOperationalSolarSpectrum(allocator: Allocator, ingests: []const Ingest, binding: Binding) !@import("../../model/Instrument.zig").OperationalSolarSpectrum {
-    const ingest = getReferencedIngest(ingests, binding.name);
-    const output_name = binding.name[std.mem.indexOfScalar(u8, binding.name, '.').? + 1 ..];
-    if (!std.mem.eql(u8, output_name, "operational_solar_spectrum")) return Error.MissingIngestOutput;
+    const ingest_ref = binding.ingestReference().?;
+    const ingest = getReferencedIngest(ingests, ingest_ref);
+    if (!std.mem.eql(u8, ingest_ref.output_name, "operational_solar_spectrum")) return Error.MissingIngestOutput;
     return ingest.loaded_spectra.metadata.operational_solar_spectrum.clone(allocator);
 }
 
 fn resolveOperationalReferenceGrid(allocator: Allocator, ingests: []const Ingest, binding: Binding) !@import("../../model/Instrument.zig").OperationalReferenceGrid {
-    const ingest = getReferencedIngest(ingests, binding.name);
-    const output_name = binding.name[std.mem.indexOfScalar(u8, binding.name, '.').? + 1 ..];
-    if (!std.mem.eql(u8, output_name, "operational_refspec_grid")) return Error.MissingIngestOutput;
+    const ingest_ref = binding.ingestReference().?;
+    const ingest = getReferencedIngest(ingests, ingest_ref);
+    if (!std.mem.eql(u8, ingest_ref.output_name, "operational_refspec_grid")) return Error.MissingIngestOutput;
     return ingest.loaded_spectra.metadata.operational_refspec_grid.clone(allocator);
+}
+
+fn resolveSpectroscopyLineList(
+    allocator: Allocator,
+    assets: []const Asset,
+    spectroscopy: Spectroscopy,
+) !?ReferenceData.SpectroscopyLineList {
+    if (spectroscopy.line_list.kind() != .asset) return null;
+
+    var line_asset = try loadResolvedAsset(allocator, assets, spectroscopy.line_list, .spectroscopy_line_list);
+    defer line_asset.deinit(allocator);
+
+    var line_list = try line_asset.toSpectroscopyLineList(allocator);
+    errdefer line_list.deinit(allocator);
+
+    const wants_sidecars = spectroscopy.strong_lines.kind() == .asset or spectroscopy.line_mixing.kind() == .asset;
+    if (wants_sidecars) {
+        if (spectroscopy.strong_lines.kind() != .asset or spectroscopy.line_mixing.kind() != .asset) {
+            return Error.InvalidReference;
+        }
+
+        var strong_asset = try loadResolvedAsset(allocator, assets, spectroscopy.strong_lines, .spectroscopy_strong_line_set);
+        defer strong_asset.deinit(allocator);
+        var strong_lines = try strong_asset.toSpectroscopyStrongLineSet(allocator);
+        defer strong_lines.deinit(allocator);
+
+        var relaxation_asset = try loadResolvedAsset(allocator, assets, spectroscopy.line_mixing, .spectroscopy_relaxation_matrix);
+        defer relaxation_asset.deinit(allocator);
+        var relaxation_matrix = try relaxation_asset.toSpectroscopyRelaxationMatrix(allocator);
+        defer relaxation_matrix.deinit(allocator);
+
+        try line_list.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
+    }
+
+    return line_list;
+}
+
+fn resolveCollisionInducedAbsorptionTable(
+    allocator: Allocator,
+    assets: []const Asset,
+    binding: Binding,
+) !?ReferenceData.CollisionInducedAbsorptionTable {
+    if (binding.kind() != .asset) return null;
+
+    var loaded = try loadResolvedAsset(
+        allocator,
+        assets,
+        binding,
+        .collision_induced_absorption_table,
+    );
+    defer loaded.deinit(allocator);
+    const table = try loaded.toCollisionInducedAbsorptionTable(allocator);
+    return table;
+}
+
+fn loadResolvedAsset(
+    allocator: Allocator,
+    assets: []const Asset,
+    binding: Binding,
+    kind: reference_assets.AssetKind,
+) !reference_assets.LoadedAsset {
+    const asset = findAsset(assets, binding.name()) orelse return Error.MissingAsset;
+    return reference_assets.loadExternalAsset(
+        allocator,
+        kind,
+        asset.name,
+        asset.resolved_path,
+        asset.format,
+    );
 }
 
 fn resolveOperationalLut(
@@ -1447,18 +2534,17 @@ fn resolveOperationalLut(
     binding: Binding,
     expected_output: []const u8,
 ) !@import("../../model/Instrument.zig").OperationalCrossSectionLut {
-    const ingest = getReferencedIngest(ingests, binding.name);
-    const output_name = binding.name[std.mem.indexOfScalar(u8, binding.name, '.').? + 1 ..];
-    if (!std.mem.eql(u8, output_name, expected_output)) return Error.MissingIngestOutput;
+    const ingest_ref = binding.ingestReference().?;
+    const ingest = getReferencedIngest(ingests, ingest_ref);
+    if (!std.mem.eql(u8, ingest_ref.output_name, expected_output)) return Error.MissingIngestOutput;
     return if (std.mem.eql(u8, expected_output, "o2_operational_lut"))
         ingest.loaded_spectra.metadata.o2_operational_lut.clone(allocator)
     else
         ingest.loaded_spectra.metadata.o2o2_operational_lut.clone(allocator);
 }
 
-fn getReferencedIngest(ingests: []const Ingest, reference: []const u8) Ingest {
-    const dot_index = std.mem.indexOfScalar(u8, reference, '.') orelse unreachable;
-    return findIngest(ingests, reference[0..dot_index]) orelse unreachable;
+fn getReferencedIngest(ingests: []const Ingest, reference: @import("../../model/Binding.zig").IngestRef) Ingest {
+    return findIngest(ingests, reference.ingest_name) orelse unreachable;
 }
 
 fn findAsset(assets: []const Asset, name: []const u8) ?Asset {
@@ -1498,7 +2584,7 @@ fn findStageProduct(stage: Stage, name: []const u8) ?Product {
     return null;
 }
 
-fn findProductAcrossStages(simulation: ?StageResolution, retrieval: ?StageResolution, name: []const u8) ?Product {
+fn findProductAcrossStages(simulation: ?*const StageResolution, retrieval: ?*const StageResolution, name: []const u8) ?Product {
     if (simulation) |value| {
         if (findStageProduct(value.stage, name)) |product| return product;
     }
@@ -1539,7 +2625,7 @@ test "document resolves revised common example" {
     try std.testing.expect(resolved.simulation != null);
     try std.testing.expect(resolved.retrieval != null);
     try std.testing.expectEqual(@as(usize, 2), resolved.outputs.len);
-    try std.testing.expectEqualStrings("truth_radiance", resolved.retrieval.?.inverse.?.measurements.source.name);
+    try std.testing.expectEqualStrings("truth_radiance", resolved.retrieval.?.inverse.?.measurements.source.name());
     try std.testing.expectEqual(@as(u32, 1301), resolved.simulation.?.scene.spectral_grid.sample_count);
 }
 

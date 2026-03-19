@@ -1,12 +1,17 @@
+const std = @import("std");
 const PlanTemplate = @import("../../../core/Plan.zig").Template;
 const Request = @import("../../../core/Request.zig").Request;
 const Scene = @import("../../../model/Scene.zig").Scene;
 const SpectralGrid = @import("../../../model/Scene.zig").SpectralGrid;
 const DerivativeMode = @import("../../../model/Scene.zig").DerivativeMode;
+const Instrument = @import("../../../model/Instrument.zig").Instrument;
+const InstrumentId = @import("../../../model/Instrument.zig").Id;
 const Measurement = @import("../../../model/Measurement.zig").Measurement;
+const MeasurementSpaceProduct = @import("../../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
 const ExportFormat = @import("../../exporters/format.zig").ExportFormat;
 const ExportSpec = @import("../../exporters/spec.zig");
 const SpectralAscii = @import("../../ingest/spectral_ascii.zig");
+const spectral_runtime = @import("../../ingest/spectral_ascii_runtime.zig");
 
 pub const Product = enum {
     no2_nadir,
@@ -31,8 +36,13 @@ pub const MissionRun = struct {
     request: Request,
     export_request: ExportSpec.ExportRequest,
     measurement_summary: ?Measurement = null,
+    observed_measurement_product: ?*MeasurementSpaceProduct = null,
 
     pub fn deinit(self: *MissionRun, allocator: std.mem.Allocator) void {
+        if (self.observed_measurement_product) |product| {
+            product.deinit(allocator);
+            allocator.destroy(product);
+        }
         self.request.scene.deinitOwned(allocator);
         self.* = undefined;
     }
@@ -51,8 +61,8 @@ pub const OperationalOptions = struct {
     viewing_zenith_deg: f64 = 9.0,
     relative_azimuth_deg: f64 = 145.0,
     instrument: []const u8 = "tropomi",
-    sampling: []const u8 = "measured_channels",
-    noise_model: []const u8 = "snr_from_input",
+    sampling: Instrument.SamplingMode = .measured_channels,
+    noise_model: Instrument.NoiseModelKind = .snr_from_input,
 };
 
 pub fn build(options: BuildOptions) MissionRun {
@@ -88,15 +98,17 @@ pub fn build(options: BuildOptions) MissionRun {
         },
         .spectral_grid = spectral_grid,
         .observation_model = .{
-            .instrument = "tropomi",
-            .sampling = "native",
-            .noise_model = "shot_noise",
+            .instrument = .tropomi,
+            .sampling = .native,
+            .noise_model = .shot_noise,
         },
     };
 
     var request = Request.init(scene);
     request.expected_derivative_mode = options.derivative_mode;
-    request.requested_products = &[_][]const u8{requested_product};
+    request.requested_products = &[_]Request.RequestedProduct{
+        .named(requested_product, .result, .slant_column),
+    };
 
     return .{
         .plan_template = .{
@@ -125,6 +137,8 @@ pub fn build(options: BuildOptions) MissionRun {
 pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOptions) !MissionRun {
     var loaded = try SpectralAscii.parseFile(allocator, options.spectral_input_path);
     defer loaded.deinit(allocator);
+
+    if (loaded.channelCount(.radiance) == 0) return error.InvalidOperationalInput;
 
     const spectral_grid = loaded.spectralGrid() orelse return error.InvalidOperationalInput;
     const measurement_summary = loaded.measurement("radiance");
@@ -181,29 +195,45 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
         else
             .{},
         .observation_model = .{
-            .instrument = options.instrument,
+            .instrument = InstrumentId.parse(options.instrument),
             .sampling = options.sampling,
             .noise_model = options.noise_model,
             .wavelength_shift_nm = metadata.wavelength_shift_nm orelse 0.0,
             .instrument_line_fwhm_nm = metadata.isrf_fwhm_nm orelse 0.0,
             .high_resolution_step_nm = metadata.high_resolution_step_nm orelse 0.0,
             .high_resolution_half_span_nm = metadata.high_resolution_half_span_nm orelse 0.0,
-            .instrument_line_shape = metadata.instrument_line_shape,
-            .instrument_line_shape_table = metadata.instrument_line_shape_table,
         },
     };
     errdefer scene.deinitOwned(allocator);
 
+    scene.observation_model.instrument_line_shape = try metadata.instrument_line_shape.clone(allocator);
+    scene.observation_model.instrument_line_shape_table = try metadata.instrument_line_shape_table.clone(allocator);
     scene.observation_model.operational_refspec_grid = try metadata.operational_refspec_grid.clone(allocator);
-    scene.observation_model.operational_solar_spectrum = try metadata.operational_solar_spectrum.clone(allocator);
+    scene.observation_model.operational_solar_spectrum = if (metadata.operational_solar_spectrum.enabled())
+        try metadata.operational_solar_spectrum.clone(allocator)
+    else
+        try loaded.solarSpectrumForKind(allocator, .irradiance);
     scene.observation_model.o2_operational_lut = try metadata.o2_operational_lut.clone(allocator);
     scene.observation_model.o2o2_operational_lut = try metadata.o2o2_operational_lut.clone(allocator);
+    scene.observation_model.measured_wavelengths_nm = try loaded.wavelengthsForKind(allocator, .radiance);
+    scene.observation_model.owns_measured_wavelengths = scene.observation_model.measured_wavelengths_nm.len != 0;
+    scene.observation_model.reference_radiance = try spectral_runtime.channelValuesForKind(allocator, &loaded, .radiance);
+    scene.observation_model.owns_reference_radiance = scene.observation_model.reference_radiance.len != 0;
+    scene.observation_model.ingested_noise_sigma = try loaded.noiseSigmaForKind(allocator, .radiance);
 
     var request = Request.init(scene);
     request.expected_derivative_mode = options.derivative_mode;
-    request.requested_products = &[_][]const u8{requested_product};
+    request.requested_products = &[_]Request.RequestedProduct{
+        .named(requested_product, .result, .slant_column),
+    };
 
-    return .{
+    const observed_measurement_product = try buildObservedMeasurementProduct(
+        allocator,
+        &request.scene,
+        &loaded,
+    );
+
+    var mission_run = MissionRun{
         .plan_template = .{
             .model_family = "disamar_standard",
             .providers = .{
@@ -225,6 +255,107 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
             .dataset_name = options.scene_id,
         },
         .measurement_summary = measurement_summary,
+        .observed_measurement_product = observed_measurement_product,
+    };
+
+    if (mission_run.observed_measurement_product) |product| {
+        mission_run.request.measurement_binding = .{
+            .source = .{ .external_observation = .{ .name = "s5p_operational_observation" } },
+            .borrowed_product = .init(product),
+        };
+    }
+
+    return mission_run;
+}
+
+fn buildObservedMeasurementProduct(
+    allocator: std.mem.Allocator,
+    scene: *const Scene,
+    loaded: *const SpectralAscii.LoadedSpectra,
+) !?*MeasurementSpaceProduct {
+    const wavelengths = try loaded.wavelengthsForKind(allocator, .radiance);
+    if (wavelengths.len == 0) return null;
+    errdefer if (wavelengths.len != 0) allocator.free(wavelengths);
+    const radiance = try spectral_runtime.channelValuesForKind(allocator, loaded, .radiance);
+    errdefer if (radiance.len != 0) allocator.free(radiance);
+    const sigma = try loaded.noiseSigmaForKind(allocator, .radiance);
+    errdefer if (sigma.len != 0) allocator.free(sigma);
+    const irradiance = try irradianceOnWavelengthGrid(allocator, scene, loaded, wavelengths);
+    errdefer if (irradiance.len != 0) allocator.free(irradiance);
+    const reflectance = try allocator.alloc(f64, wavelengths.len);
+    errdefer if (reflectance.len != 0) allocator.free(reflectance);
+
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+    var radiance_sum: f64 = 0.0;
+    var irradiance_sum: f64 = 0.0;
+    var reflectance_sum: f64 = 0.0;
+    var sigma_sum: f64 = 0.0;
+    for (0..wavelengths.len) |index| {
+        reflectance[index] = (radiance[index] * std.math.pi) /
+            @max(irradiance[index] * solar_cosine, 1.0e-9);
+        radiance_sum += radiance[index];
+        irradiance_sum += irradiance[index];
+        reflectance_sum += reflectance[index];
+        sigma_sum += sigma[index];
+    }
+
+    const product = try allocator.create(MeasurementSpaceProduct);
+    errdefer allocator.destroy(product);
+    product.* = .{
+        .summary = .{
+            .sample_count = @intCast(wavelengths.len),
+            .wavelength_start_nm = wavelengths[0],
+            .wavelength_end_nm = wavelengths[wavelengths.len - 1],
+            .mean_radiance = radiance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_irradiance = irradiance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_noise_sigma = sigma_sum / @as(f64, @floatFromInt(wavelengths.len)),
+            .mean_jacobian = null,
+        },
+        .wavelengths = @constCast(wavelengths),
+        .radiance = radiance,
+        .irradiance = irradiance,
+        .reflectance = reflectance,
+        .noise_sigma = @constCast(sigma),
+        .jacobian = null,
+        .effective_air_mass_factor = 0.0,
+        .effective_single_scatter_albedo = 0.0,
+        .effective_temperature_k = 0.0,
+        .effective_pressure_hpa = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .total_optical_depth = 0.0,
+        .depolarization_factor = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+    };
+    return product;
+}
+
+fn irradianceOnWavelengthGrid(
+    allocator: std.mem.Allocator,
+    scene: *const Scene,
+    loaded: *const SpectralAscii.LoadedSpectra,
+    wavelengths: []const f64,
+) ![]f64 {
+    const spectrum = if (scene.observation_model.operational_solar_spectrum.enabled())
+        scene.observation_model.operational_solar_spectrum
+    else
+        try loaded.solarSpectrumForKind(allocator, .irradiance);
+    defer if (!scene.observation_model.operational_solar_spectrum.enabled()) {
+        var owned = spectrum;
+        owned.deinitOwned(allocator);
+    };
+    return spectral_runtime.correctedIrradianceOnWavelengthGrid(
+        allocator,
+        loaded,
+        .irradiance,
+        &spectrum,
+        wavelengths,
+    ) catch |err| switch (err) {
+        SpectralAscii.ParseError.InvalidLine => error.InvalidOperationalInput,
+        else => err,
     };
 }
 
@@ -236,8 +367,8 @@ test "s5p mission adapter builds typed plan, request, and export inputs" {
 
     try std.testing.expectEqualStrings("s5p-no2", mission_run.plan_template.scene_blueprint.id);
     try std.testing.expectEqual(DerivativeMode.semi_analytical, mission_run.plan_template.scene_blueprint.derivative_mode);
-    try std.testing.expectEqualStrings("tropomi", mission_run.request.scene.observation_model.instrument);
-    try std.testing.expectEqualStrings("slant_column.no2", mission_run.request.requested_products[0]);
+    try std.testing.expectEqual(InstrumentId.tropomi, mission_run.request.scene.observation_model.instrument);
+    try std.testing.expectEqualStrings("slant_column.no2", mission_run.request.requested_products[0].name);
     try std.testing.expectEqual(ExportFormat.netcdf_cf, mission_run.export_request.format);
 }
 
@@ -251,8 +382,8 @@ test "s5p operational adapter derives spectral grid from measured input" {
 
     try std.testing.expectEqualStrings("s5p-op-no2", mission_run.plan_template.scene_blueprint.id);
     try std.testing.expectEqual(@as(u32, 2), mission_run.plan_template.scene_blueprint.measurement_count_hint);
-    try std.testing.expectEqualStrings("measured_channels", mission_run.request.scene.observation_model.sampling);
-    try std.testing.expectEqualStrings("snr_from_input", mission_run.request.scene.observation_model.noise_model);
+    try std.testing.expectEqual(Instrument.SamplingMode.measured_channels, mission_run.request.scene.observation_model.sampling);
+    try std.testing.expectEqual(Instrument.NoiseModelKind.snr_from_input, mission_run.request.scene.observation_model.noise_model);
     try std.testing.expectEqual(@as(u32, 2), mission_run.measurement_summary.?.sample_count);
 }
 
@@ -302,13 +433,13 @@ test "s5p operational adapter maps O2 and O2-O2 refspec LUT metadata" {
         .scene_id = "s5p-op-refspec",
         .spectral_input_path = "data/examples/irr_rad_channels_operational_refspec_demo.txt",
         .destination_uri = "file://out/s5p-op-refspec.nc",
-        .sampling = "operational",
-        .noise_model = "s5p_operational",
+        .sampling = .operational,
+        .noise_model = .s5p_operational,
     });
     defer mission_run.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualStrings("operational", mission_run.request.scene.observation_model.sampling);
-    try std.testing.expectEqualStrings("s5p_operational", mission_run.request.scene.observation_model.noise_model);
+    try std.testing.expectEqual(Instrument.SamplingMode.operational, mission_run.request.scene.observation_model.sampling);
+    try std.testing.expectEqual(Instrument.NoiseModelKind.s5p_operational, mission_run.request.scene.observation_model.noise_model);
     try std.testing.expect(mission_run.request.scene.observation_model.operational_refspec_grid.enabled());
     try std.testing.expect(mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
     try std.testing.expectEqual(@as(usize, 3), mission_run.request.scene.observation_model.operational_refspec_grid.wavelengths_nm.len);
@@ -327,5 +458,3 @@ test "s5p operational adapter maps O2 and O2-O2 refspec LUT metadata" {
             mission_run.request.scene.observation_model.o2o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
     );
 }
-
-const std = @import("std");

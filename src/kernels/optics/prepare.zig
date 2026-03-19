@@ -3,14 +3,17 @@ const Scene = @import("../../model/Scene.zig").Scene;
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const OperationalReferenceGrid = @import("../../model/Instrument.zig").OperationalReferenceGrid;
 const OperationalCrossSectionLut = @import("../../model/Instrument.zig").OperationalCrossSectionLut;
+const Rayleigh = @import("../../model/reference/rayleigh.zig");
 const transport_common = @import("../transport/common.zig");
 const BandMeans = @import("prepare/band_means.zig");
 const ParticleProfiles = @import("prepare/particle_profiles.zig");
 const PhaseFunctions = @import("prepare/phase_functions.zig");
+const gauss_legendre = @import("../quadrature/gauss_legendre.zig");
 
 const Allocator = std.mem.Allocator;
 const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const oxygen_volume_mixing_ratio = 0.2095;
+const centimeters_per_kilometer = 1.0e5;
 
 pub const PreparedLayer = struct {
     layer_index: u32,
@@ -26,6 +29,7 @@ pub const PreparedLayer = struct {
     cia_optical_depth: f64,
     d_cross_section_d_temperature_cm2_per_molecule_per_k: f64,
     gas_optical_depth: f64,
+    gas_scattering_optical_depth: f64 = 0.0,
     aerosol_optical_depth: f64,
     cloud_optical_depth: f64,
     layer_single_scatter_albedo: f64,
@@ -40,6 +44,8 @@ pub const PreparedSublayer = struct {
     pressure_hpa: f64,
     temperature_k: f64,
     number_density_cm3: f64,
+    oxygen_number_density_cm3: f64,
+    path_length_cm: f64,
     continuum_cross_section_cm2_per_molecule: f64,
     line_cross_section_cm2_per_molecule: f64,
     line_mixing_cross_section_cm2_per_molecule: f64,
@@ -60,9 +66,51 @@ pub const PreparedSublayer = struct {
     combined_phase_coefficients: [phase_coefficient_count]f64,
 };
 
+pub const OpticalDepthBreakdown = struct {
+    gas_absorption_optical_depth: f64 = 0.0,
+    gas_scattering_optical_depth: f64 = 0.0,
+    cia_optical_depth: f64 = 0.0,
+    aerosol_optical_depth: f64 = 0.0,
+    aerosol_scattering_optical_depth: f64 = 0.0,
+    cloud_optical_depth: f64 = 0.0,
+    cloud_scattering_optical_depth: f64 = 0.0,
+
+    pub fn totalScatteringOpticalDepth(self: OpticalDepthBreakdown) f64 {
+        return self.gas_scattering_optical_depth +
+            self.aerosol_scattering_optical_depth +
+            self.cloud_scattering_optical_depth;
+    }
+
+    pub fn totalOpticalDepth(self: OpticalDepthBreakdown) f64 {
+        return self.gas_absorption_optical_depth +
+            self.gas_scattering_optical_depth +
+            self.cia_optical_depth +
+            self.aerosol_optical_depth +
+            self.cloud_optical_depth;
+    }
+
+    pub fn singleScatterAlbedo(self: OpticalDepthBreakdown) f64 {
+        const total_optical_depth = self.totalOpticalDepth();
+        if (total_optical_depth <= 0.0) return 0.0;
+        return std.math.clamp(
+            self.totalScatteringOpticalDepth() / total_optical_depth,
+            0.0,
+            1.0,
+        );
+    }
+};
+
+const EvaluatedLayer = struct {
+    breakdown: OpticalDepthBreakdown = .{},
+    phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.gasPhaseCoefficients(),
+    solar_mu: f64 = 1.0,
+    view_mu: f64 = 1.0,
+};
+
 pub const PreparedOpticalState = struct {
     layers: []PreparedLayer,
     sublayers: ?[]PreparedSublayer = null,
+    strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
     continuum_points: []ReferenceData.CrossSectionPoint,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
@@ -93,6 +141,10 @@ pub const PreparedOpticalState = struct {
     pub fn deinit(self: *PreparedOpticalState, allocator: Allocator) void {
         allocator.free(self.layers);
         if (self.sublayers) |sublayers| allocator.free(sublayers);
+        if (self.strong_line_states) |states| {
+            for (states) |*state| state.deinit(allocator);
+            allocator.free(states);
+        }
         allocator.free(self.continuum_points);
         if (self.collision_induced_absorption) |cia| {
             var owned_cia = cia;
@@ -105,30 +157,77 @@ pub const PreparedOpticalState = struct {
         self.* = undefined;
     }
 
-    pub fn toForwardInput(self: PreparedOpticalState, scene: Scene) transport_common.ForwardInput {
-        return self.toForwardInputAtWavelength(
+    pub fn toForwardInput(self: *const PreparedOpticalState, scene: *const Scene) transport_common.ForwardInput {
+        return self.toForwardInputWithLayers(scene, null);
+    }
+
+    pub fn transportLayerCount(self: *const PreparedOpticalState) usize {
+        if (self.sublayers) |sublayers| return sublayers.len;
+        return self.layers.len;
+    }
+
+    pub fn toForwardInputWithLayers(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        layer_inputs: ?[]transport_common.LayerInput,
+    ) transport_common.ForwardInput {
+        return self.toForwardInputAtWavelengthWithLayers(
             scene,
             (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5,
+            layer_inputs,
         );
     }
 
     pub fn toForwardInputAtWavelength(
-        self: PreparedOpticalState,
-        scene: Scene,
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
         wavelength_nm: f64,
     ) transport_common.ForwardInput {
+        return self.toForwardInputAtWavelengthWithLayers(scene, wavelength_nm, null);
+    }
+
+    pub fn toForwardInputAtWavelengthWithLayers(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        wavelength_nm: f64,
+        layer_inputs: ?[]transport_common.LayerInput,
+    ) transport_common.ForwardInput {
+        const optical_depths = if (layer_inputs) |owned_layers|
+            self.fillForwardLayersAtWavelength(scene, wavelength_nm, owned_layers)
+        else
+            self.opticalDepthBreakdownAtWavelength(wavelength_nm);
+        const mu0 = scene.geometry.solarCosineAtAltitude(0.0);
+        const muv = scene.geometry.viewingCosineAtAltitude(0.0);
         const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
-        const spectral_weight = if (scene.spectral_grid.sample_count == 0) 1.0 else span_nm / @as(f64, @floatFromInt(scene.spectral_grid.sample_count));
+        const spectral_weight = if (scene.spectral_grid.sample_count <= 1)
+            @max(span_nm, 1.0e-6)
+        else
+            span_nm / @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
         return .{
             .wavelength_nm = wavelength_nm,
-            .spectral_weight = @max(spectral_weight, 1.0),
+            .spectral_weight = @max(spectral_weight, 1.0e-6),
             .air_mass_factor = self.effective_air_mass_factor,
-            .optical_depth = self.totalOpticalDepthAtWavelength(wavelength_nm),
-            .single_scatter_albedo = self.effective_single_scatter_albedo,
+            .mu0 = mu0,
+            .muv = muv,
+            .relative_azimuth_rad = std.math.degreesToRadians(scene.geometry.relative_azimuth_deg),
+            .surface_albedo = std.math.clamp(scene.surface.albedo, 0.0, 1.0),
+            .gas_absorption_optical_depth = optical_depths.gas_absorption_optical_depth,
+            .gas_scattering_optical_depth = optical_depths.gas_scattering_optical_depth,
+            .cia_optical_depth = optical_depths.cia_optical_depth,
+            .aerosol_optical_depth = optical_depths.aerosol_optical_depth,
+            .aerosol_scattering_optical_depth = optical_depths.aerosol_scattering_optical_depth,
+            .cloud_optical_depth = optical_depths.cloud_optical_depth,
+            .cloud_scattering_optical_depth = optical_depths.cloud_scattering_optical_depth,
+            .optical_depth = optical_depths.totalOpticalDepth(),
+            .single_scatter_albedo = if (optical_depths.totalOpticalDepth() > 0.0)
+                optical_depths.singleScatterAlbedo()
+            else
+                self.effective_single_scatter_albedo,
+            .layers = if (layer_inputs) |owned_layers| owned_layers else &.{},
         };
     }
 
-    pub fn totalCrossSectionAtWavelength(self: PreparedOpticalState, wavelength_nm: f64) f64 {
+    pub fn totalCrossSectionAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
         const continuum = (ReferenceData.CrossSectionTable{
             .points = self.continuum_points,
         }).interpolateSigma(wavelength_nm);
@@ -149,54 +248,648 @@ pub const PreparedOpticalState = struct {
         return continuum + line_sigma;
     }
 
-    pub fn collisionInducedOpticalDepthAtWavelength(self: PreparedOpticalState, wavelength_nm: f64) f64 {
-        if (self.operational_o2o2_lut.enabled()) {
-            return self.operational_o2o2_lut.sigmaAt(
+    pub fn collisionInducedOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
+        return self.opticalDepthBreakdownAtWavelength(wavelength_nm).cia_optical_depth;
+    }
+
+    pub fn gasOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
+        const optical_depths = self.opticalDepthBreakdownAtWavelength(wavelength_nm);
+        return optical_depths.gas_absorption_optical_depth + optical_depths.gas_scattering_optical_depth;
+    }
+
+    pub fn aerosolOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
+        return self.opticalDepthBreakdownAtWavelength(wavelength_nm).aerosol_optical_depth;
+    }
+
+    pub fn cloudOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
+        return self.opticalDepthBreakdownAtWavelength(wavelength_nm).cloud_optical_depth;
+    }
+
+    pub fn totalOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
+        return self.opticalDepthBreakdownAtWavelength(wavelength_nm).totalOpticalDepth();
+    }
+
+    pub fn fillForwardLayersAtWavelength(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        wavelength_nm: f64,
+        layer_inputs: []transport_common.LayerInput,
+    ) OpticalDepthBreakdown {
+        if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
+
+        if (self.sublayers) |sublayers| {
+            if (layer_inputs.len == sublayers.len) {
+                var totals: OpticalDepthBreakdown = .{};
+                for (sublayers, 0..) |sublayer, sublayer_index| {
+                    const evaluated = self.evaluateLayerAtWavelength(
+                        scene,
+                        sublayer.altitude_km,
+                        wavelength_nm,
+                        sublayers[sublayer_index .. sublayer_index + 1],
+                        if (self.strong_line_states) |states| states[sublayer_index .. sublayer_index + 1] else null,
+                    );
+                    layer_inputs[sublayer_index] = .{
+                        .gas_absorption_optical_depth = evaluated.breakdown.gas_absorption_optical_depth,
+                        .gas_scattering_optical_depth = evaluated.breakdown.gas_scattering_optical_depth,
+                        .cia_optical_depth = evaluated.breakdown.cia_optical_depth,
+                        .aerosol_optical_depth = evaluated.breakdown.aerosol_optical_depth,
+                        .aerosol_scattering_optical_depth = evaluated.breakdown.aerosol_scattering_optical_depth,
+                        .cloud_optical_depth = evaluated.breakdown.cloud_optical_depth,
+                        .cloud_scattering_optical_depth = evaluated.breakdown.cloud_scattering_optical_depth,
+                        .optical_depth = evaluated.breakdown.totalOpticalDepth(),
+                        .scattering_optical_depth = evaluated.breakdown.totalScatteringOpticalDepth(),
+                        .single_scatter_albedo = evaluated.breakdown.singleScatterAlbedo(),
+                        .solar_mu = evaluated.solar_mu,
+                        .view_mu = evaluated.view_mu,
+                        .phase_coefficients = evaluated.phase_coefficients,
+                    };
+                    totals.gas_absorption_optical_depth += evaluated.breakdown.gas_absorption_optical_depth;
+                    totals.gas_scattering_optical_depth += evaluated.breakdown.gas_scattering_optical_depth;
+                    totals.cia_optical_depth += evaluated.breakdown.cia_optical_depth;
+                    totals.aerosol_optical_depth += evaluated.breakdown.aerosol_optical_depth;
+                    totals.aerosol_scattering_optical_depth += evaluated.breakdown.aerosol_scattering_optical_depth;
+                    totals.cloud_optical_depth += evaluated.breakdown.cloud_optical_depth;
+                    totals.cloud_scattering_optical_depth += evaluated.breakdown.cloud_scattering_optical_depth;
+                }
+                return totals;
+            }
+
+            var totals: OpticalDepthBreakdown = .{};
+            for (self.layers, layer_inputs) |layer, *layer_input| {
+                const start_index: usize = @intCast(layer.sublayer_start_index);
+                const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
+                const evaluated = self.evaluateLayerAtWavelength(
+                    scene,
+                    layer.altitude_km,
+                    wavelength_nm,
+                    sublayers[start_index..end_index],
+                    if (self.strong_line_states) |states| states[start_index..end_index] else null,
+                );
+                layer_input.* = .{
+                    .gas_absorption_optical_depth = evaluated.breakdown.gas_absorption_optical_depth,
+                    .gas_scattering_optical_depth = evaluated.breakdown.gas_scattering_optical_depth,
+                    .cia_optical_depth = evaluated.breakdown.cia_optical_depth,
+                    .aerosol_optical_depth = evaluated.breakdown.aerosol_optical_depth,
+                    .aerosol_scattering_optical_depth = evaluated.breakdown.aerosol_scattering_optical_depth,
+                    .cloud_optical_depth = evaluated.breakdown.cloud_optical_depth,
+                    .cloud_scattering_optical_depth = evaluated.breakdown.cloud_scattering_optical_depth,
+                    .optical_depth = evaluated.breakdown.totalOpticalDepth(),
+                    .scattering_optical_depth = evaluated.breakdown.totalScatteringOpticalDepth(),
+                    .single_scatter_albedo = evaluated.breakdown.singleScatterAlbedo(),
+                    .solar_mu = evaluated.solar_mu,
+                    .view_mu = evaluated.view_mu,
+                    .phase_coefficients = evaluated.phase_coefficients,
+                };
+                totals.gas_absorption_optical_depth += evaluated.breakdown.gas_absorption_optical_depth;
+                totals.gas_scattering_optical_depth += evaluated.breakdown.gas_scattering_optical_depth;
+                totals.cia_optical_depth += evaluated.breakdown.cia_optical_depth;
+                totals.aerosol_optical_depth += evaluated.breakdown.aerosol_optical_depth;
+                totals.aerosol_scattering_optical_depth += evaluated.breakdown.aerosol_scattering_optical_depth;
+                totals.cloud_optical_depth += evaluated.breakdown.cloud_optical_depth;
+                totals.cloud_scattering_optical_depth += evaluated.breakdown.cloud_scattering_optical_depth;
+            }
+            return totals;
+        }
+
+        var totals: OpticalDepthBreakdown = .{};
+        for (self.layers, layer_inputs) |layer, *layer_input| {
+            const aerosol_optical_depth = ParticleProfiles.scaleOpticalDepth(
+                layer.aerosol_optical_depth,
+                self.aerosol_reference_wavelength_nm,
+                self.aerosol_angstrom_exponent,
+                wavelength_nm,
+            );
+            const cloud_optical_depth = ParticleProfiles.scaleOpticalDepth(
+                layer.cloud_optical_depth,
+                self.cloud_reference_wavelength_nm,
+                self.cloud_angstrom_exponent,
+                wavelength_nm,
+            );
+            const gas_scattering_optical_depth = layer.gas_scattering_optical_depth;
+            const scattering_optical_depth =
+                gas_scattering_optical_depth +
+                aerosol_optical_depth * layer.layer_single_scatter_albedo +
+                cloud_optical_depth * layer.layer_single_scatter_albedo;
+            layer_input.* = .{
+                .gas_absorption_optical_depth = layer.gas_optical_depth,
+                .gas_scattering_optical_depth = gas_scattering_optical_depth,
+                .cia_optical_depth = layer.cia_optical_depth,
+                .aerosol_optical_depth = aerosol_optical_depth,
+                .aerosol_scattering_optical_depth = aerosol_optical_depth * layer.layer_single_scatter_albedo,
+                .cloud_optical_depth = cloud_optical_depth,
+                .cloud_scattering_optical_depth = cloud_optical_depth * layer.layer_single_scatter_albedo,
+                .optical_depth = layer.gas_optical_depth + gas_scattering_optical_depth + layer.cia_optical_depth + aerosol_optical_depth + cloud_optical_depth,
+                .scattering_optical_depth = scattering_optical_depth,
+                .single_scatter_albedo = layer.layer_single_scatter_albedo,
+                .solar_mu = scene.geometry.solarCosineAtAltitude(layer.altitude_km),
+                .view_mu = scene.geometry.viewingCosineAtAltitude(layer.altitude_km),
+                .phase_coefficients = PhaseFunctions.hgPhaseCoefficients(scene.aerosol.asymmetry_factor),
+            };
+            totals.gas_absorption_optical_depth += layer.gas_optical_depth;
+            totals.gas_scattering_optical_depth += gas_scattering_optical_depth;
+            totals.cia_optical_depth += layer.cia_optical_depth;
+            totals.aerosol_optical_depth += aerosol_optical_depth;
+            totals.aerosol_scattering_optical_depth += aerosol_optical_depth * layer.layer_single_scatter_albedo;
+            totals.cloud_optical_depth += cloud_optical_depth;
+            totals.cloud_scattering_optical_depth += cloud_optical_depth * layer.layer_single_scatter_albedo;
+        }
+        return totals;
+    }
+
+    pub fn fillSourceInterfacesAtWavelengthWithLayers(
+        self: *const PreparedOpticalState,
+        _: f64,
+        layer_inputs: []const transport_common.LayerInput,
+        source_interfaces: []transport_common.SourceInterfaceInput,
+    ) void {
+        if (layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1) return;
+
+        transport_common.fillSourceInterfacesFromLayers(layer_inputs, source_interfaces);
+
+        if (self.sublayers) |sublayers| {
+            if (layer_inputs.len == sublayers.len) {
+                for (1..layer_inputs.len) |ilevel| {
+                    const sublayer = sublayers[ilevel];
+                    const scattering_optical_depth = @max(layer_inputs[ilevel].scattering_optical_depth, 0.0);
+                    const rtm_weight = @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+                    source_interfaces[ilevel] = .{
+                        .source_weight = 0.0,
+                        .rtm_weight = rtm_weight,
+                        .ksca_above = if (rtm_weight > 0.0)
+                            scattering_optical_depth / rtm_weight
+                        else
+                            0.0,
+                        .phase_coefficients_above = layer_inputs[ilevel].phase_coefficients,
+                    };
+                }
+                return;
+            }
+
+            if (layer_inputs.len == 1) {
+                return;
+            }
+
+            if (self.layers.len != layer_inputs.len) return;
+            for (1..layer_inputs.len) |ilevel| {
+                const layer = self.layers[ilevel];
+                const start_index: usize = @intCast(layer.sublayer_start_index);
+                const sublayer_count: usize = @intCast(layer.sublayer_count);
+                if (sublayer_count == 0) {
+                    source_interfaces[ilevel] = .{
+                        .source_weight = 0.0,
+                        .phase_coefficients_above = layer_inputs[ilevel].phase_coefficients,
+                    };
+                    continue;
+                }
+                const stop_index = start_index + sublayer_count;
+                var rtm_weight: f64 = 0.0;
+                for (sublayers[start_index..stop_index]) |sublayer| {
+                    rtm_weight += @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+                }
+                const scattering_optical_depth = @max(layer_inputs[ilevel].scattering_optical_depth, 0.0);
+                source_interfaces[ilevel] = .{
+                    .source_weight = 0.0,
+                    .rtm_weight = rtm_weight,
+                    .ksca_above = if (rtm_weight > 0.0)
+                        scattering_optical_depth / rtm_weight
+                    else
+                        0.0,
+                    .phase_coefficients_above = layer_inputs[ilevel].phase_coefficients,
+                };
+            }
+            return;
+        }
+    }
+
+    fn levelAltitudeFromSublayers(
+        sublayers: []const PreparedSublayer,
+        level: usize,
+    ) f64 {
+        if (sublayers.len == 0) return 0.0;
+        if (level == 0) {
+            const first = sublayers[0];
+            return @max(first.altitude_km - 0.5 * first.path_length_cm / centimeters_per_kilometer, 0.0);
+        }
+        if (level >= sublayers.len) {
+            const last = sublayers[sublayers.len - 1];
+            return @max(last.altitude_km + 0.5 * last.path_length_cm / centimeters_per_kilometer, 0.0);
+        }
+        const sample = sublayers[level];
+        return @max(sample.altitude_km - 0.5 * sample.path_length_cm / centimeters_per_kilometer, 0.0);
+    }
+
+    fn interpolatePhaseCoefficients(
+        left: [phase_coefficient_count]f64,
+        right: [phase_coefficient_count]f64,
+        fraction: f64,
+    ) [phase_coefficient_count]f64 {
+        const clamped_fraction = std.math.clamp(fraction, 0.0, 1.0);
+        var interpolated = [_]f64{0.0} ** phase_coefficient_count;
+        for (0..phase_coefficient_count) |index| {
+            interpolated[index] =
+                (1.0 - clamped_fraction) * left[index] +
+                clamped_fraction * right[index];
+        }
+        interpolated[0] = 1.0;
+        return interpolated;
+    }
+
+    const InterpolatedQuadratureCarrier = struct {
+        ksca: f64,
+        phase_coefficients: [phase_coefficient_count]f64,
+    };
+
+    fn interpolatedQuadratureCarrierAtNormalizedPosition(
+        sublayers: []const PreparedSublayer,
+        layer_inputs: []const transport_common.LayerInput,
+        total_span_km: f64,
+        normalized_position: f64,
+    ) InterpolatedQuadratureCarrier {
+        const default: InterpolatedQuadratureCarrier = .{
+            .ksca = 0.0,
+            .phase_coefficients = [_]f64{ 1.0, 0.0, 0.0, 0.0 },
+        };
+        if (sublayers.len == 0 or layer_inputs.len != sublayers.len or total_span_km <= 0.0) return default;
+
+        const target = std.math.clamp(normalized_position, 0.0, 1.0);
+
+        var cumulative_km: f64 = 0.0;
+        var donor = default;
+
+        for (sublayers, layer_inputs) |sublayer, layer_input| {
+            const span_km = @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+            const center = if (total_span_km > 0.0)
+                (cumulative_km + 0.5 * span_km) / total_span_km
+            else
+                0.5;
+            const scattering_optical_depth = @max(layer_input.scattering_optical_depth, 0.0);
+            const ksca = if (span_km > 0.0) scattering_optical_depth / span_km else 0.0;
+            const phase_coefficients = layer_input.phase_coefficients;
+
+            donor = .{
+                .ksca = ksca,
+                .phase_coefficients = phase_coefficients,
+            };
+            if (target <= center) {
+                return .{
+                    .ksca = ksca,
+                    .phase_coefficients = phase_coefficients,
+                };
+            }
+
+            cumulative_km += span_km;
+        }
+
+        return donor;
+    }
+
+    pub fn fillRtmQuadratureAtWavelengthWithLayers(
+        self: *const PreparedOpticalState,
+        _: f64,
+        layer_inputs: []const transport_common.LayerInput,
+        rtm_levels: []transport_common.RtmQuadratureLevel,
+    ) bool {
+        const sublayers = self.sublayers orelse return false;
+        if (layer_inputs.len != sublayers.len or rtm_levels.len != layer_inputs.len + 1) return false;
+
+        for (rtm_levels, 0..) |*rtm_level, level| {
+            rtm_level.* = .{
+                .altitude_km = levelAltitudeFromSublayers(sublayers, level),
+                .weight = 0.0,
+                .ksca = 0.0,
+                .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+            };
+        }
+
+        var has_active_quadrature = false;
+        for (self.layers) |layer| {
+            const start: usize = @intCast(layer.sublayer_start_index);
+            const count: usize = @intCast(layer.sublayer_count);
+            if (count == 0) continue;
+            const stop = start + count;
+            if (stop >= rtm_levels.len) return false;
+
+            const active_count = count - 1;
+            if (active_count == 0) continue;
+            const rule = gauss_legendre.rule(@intCast(active_count)) catch return false;
+            const lower_altitude_km = rtm_levels[start].altitude_km;
+            const upper_altitude_km = rtm_levels[stop].altitude_km;
+            const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+
+            var total_span_km: f64 = 0.0;
+            var total_scattering: f64 = 0.0;
+            for (sublayers[start..stop], layer_inputs[start..stop]) |sublayer, layer_input| {
+                total_span_km += @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+                total_scattering += @max(layer_input.scattering_optical_depth, 0.0);
+            }
+            if (total_span_km <= 0.0) continue;
+
+            var raw_scattering_sum: f64 = 0.0;
+            for (0..active_count) |node_index| {
+                const level = start + 1 + node_index;
+                const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
+                const carrier = interpolatedQuadratureCarrierAtNormalizedPosition(
+                    sublayers[start..stop],
+                    layer_inputs[start..stop],
+                    total_span_km,
+                    normalized_position,
+                );
+                rtm_levels[level].altitude_km = lower_altitude_km + normalized_position * altitude_span_km;
+                rtm_levels[level].weight = 0.5 * rule.weights[node_index] * total_span_km;
+                rtm_levels[level].ksca = carrier.ksca;
+                rtm_levels[level].phase_coefficients = carrier.phase_coefficients;
+                raw_scattering_sum += rtm_levels[level].weightedScattering();
+            }
+
+            if (total_scattering <= 0.0) {
+                for (start + 1..stop) |level| {
+                    rtm_levels[level].ksca = 0.0;
+                }
+                continue;
+            }
+
+            if (raw_scattering_sum > 0.0) {
+                const scale = total_scattering / raw_scattering_sum;
+                for (start + 1..stop) |level| {
+                    rtm_levels[level].ksca *= scale;
+                }
+                has_active_quadrature = true;
+            } else {
+                for (start + 1..stop) |level| {
+                    rtm_levels[level].weight = 0.0;
+                    rtm_levels[level].ksca = 0.0;
+                }
+            }
+        }
+
+        return has_active_quadrature;
+    }
+
+    pub fn fillPseudoSphericalGridAtWavelength(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        wavelength_nm: f64,
+        solver_layer_count: usize,
+        attenuation_layers: []transport_common.LayerInput,
+        attenuation_samples: []transport_common.PseudoSphericalSample,
+        level_sample_starts: []usize,
+    ) bool {
+        const sublayers = self.sublayers orelse return false;
+        if (attenuation_layers.len < sublayers.len or
+            attenuation_samples.len < sublayers.len or
+            level_sample_starts.len != solver_layer_count + 1)
+        {
+            return false;
+        }
+
+        _ = self.fillForwardLayersAtWavelength(scene, wavelength_nm, attenuation_layers[0..sublayers.len]);
+        for (sublayers, attenuation_layers[0..sublayers.len], 0..) |sublayer, attenuation_layer, index| {
+            attenuation_samples[index] = .{
+                .altitude_km = sublayer.altitude_km,
+                .thickness_km = @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0),
+                .optical_depth = @max(attenuation_layer.optical_depth, 0.0),
+            };
+        }
+
+        level_sample_starts[0] = 0;
+        if (solver_layer_count == sublayers.len) {
+            for (1..solver_layer_count) |ilevel| {
+                level_sample_starts[ilevel] = ilevel;
+            }
+        } else if (solver_layer_count == self.layers.len) {
+            for (1..solver_layer_count) |ilevel| {
+                level_sample_starts[ilevel] = @intCast(self.layers[ilevel].sublayer_start_index);
+            }
+        } else {
+            return false;
+        }
+        level_sample_starts[solver_layer_count] = sublayers.len;
+        return true;
+    }
+
+    pub fn opticalDepthBreakdownAtWavelength(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+    ) OpticalDepthBreakdown {
+        if (self.sublayers) |sublayers| {
+            var totals: OpticalDepthBreakdown = .{};
+            for (self.layers) |layer| {
+                const start_index: usize = @intCast(layer.sublayer_start_index);
+                const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
+                const evaluated = self.evaluateLayerAtWavelength(
+                    null,
+                    layer.altitude_km,
+                    wavelength_nm,
+                    sublayers[start_index..end_index],
+                    if (self.strong_line_states) |states| states[start_index..end_index] else null,
+                );
+                totals.gas_absorption_optical_depth += evaluated.breakdown.gas_absorption_optical_depth;
+                totals.gas_scattering_optical_depth += evaluated.breakdown.gas_scattering_optical_depth;
+                totals.cia_optical_depth += evaluated.breakdown.cia_optical_depth;
+                totals.aerosol_optical_depth += evaluated.breakdown.aerosol_optical_depth;
+                totals.aerosol_scattering_optical_depth += evaluated.breakdown.aerosol_scattering_optical_depth;
+                totals.cloud_optical_depth += evaluated.breakdown.cloud_optical_depth;
+                totals.cloud_scattering_optical_depth += evaluated.breakdown.cloud_scattering_optical_depth;
+            }
+            return totals;
+        }
+
+        const gas_absorption_optical_depth =
+            self.totalCrossSectionAtWavelength(wavelength_nm) * self.column_density_factor;
+        const gas_scattering_optical_depth = Rayleigh.crossSectionCm2(wavelength_nm) *
+            (self.column_density_factor / oxygen_volume_mixing_ratio);
+        const cia_optical_depth = if (self.operational_o2o2_lut.enabled())
+            self.operational_o2o2_lut.sigmaAt(
                 wavelength_nm,
                 self.effective_temperature_k,
                 self.effective_pressure_hpa,
-            ) * self.cia_pair_path_factor_cm5;
-        }
-        const cia_table = self.collision_induced_absorption orelse return 0.0;
-        return cia_table.sigmaAt(wavelength_nm, self.effective_temperature_k) * self.cia_pair_path_factor_cm5;
-    }
-
-    pub fn gasOpticalDepthAtWavelength(self: PreparedOpticalState, wavelength_nm: f64) f64 {
-        return self.totalCrossSectionAtWavelength(wavelength_nm) * self.column_density_factor +
-            self.collisionInducedOpticalDepthAtWavelength(wavelength_nm);
-    }
-
-    pub fn aerosolOpticalDepthAtWavelength(self: PreparedOpticalState, wavelength_nm: f64) f64 {
-        return ParticleProfiles.scaleOpticalDepth(
+            ) * self.cia_pair_path_factor_cm5
+        else if (self.collision_induced_absorption) |cia_table|
+            cia_table.sigmaAt(wavelength_nm, self.effective_temperature_k) * self.cia_pair_path_factor_cm5
+        else
+            0.0;
+        const aerosol_optical_depth = ParticleProfiles.scaleOpticalDepth(
             self.aerosol_optical_depth,
             self.aerosol_reference_wavelength_nm,
             self.aerosol_angstrom_exponent,
             wavelength_nm,
         );
-    }
-
-    pub fn cloudOpticalDepthAtWavelength(self: PreparedOpticalState, wavelength_nm: f64) f64 {
-        return ParticleProfiles.scaleOpticalDepth(
+        const cloud_optical_depth = ParticleProfiles.scaleOpticalDepth(
             self.cloud_optical_depth,
             self.cloud_reference_wavelength_nm,
             self.cloud_angstrom_exponent,
             wavelength_nm,
         );
+        return .{
+            .gas_absorption_optical_depth = gas_absorption_optical_depth,
+            .gas_scattering_optical_depth = gas_scattering_optical_depth,
+            .cia_optical_depth = cia_optical_depth,
+            .aerosol_optical_depth = aerosol_optical_depth,
+            .aerosol_scattering_optical_depth = aerosol_optical_depth * self.effective_single_scatter_albedo,
+            .cloud_optical_depth = cloud_optical_depth,
+            .cloud_scattering_optical_depth = cloud_optical_depth * self.effective_single_scatter_albedo,
+        };
     }
 
-    pub fn totalOpticalDepthAtWavelength(self: PreparedOpticalState, wavelength_nm: f64) f64 {
-        return self.gasOpticalDepthAtWavelength(wavelength_nm) +
-            self.aerosolOpticalDepthAtWavelength(wavelength_nm) +
-            self.cloudOpticalDepthAtWavelength(wavelength_nm);
+    fn evaluateLayerAtWavelength(
+        self: *const PreparedOpticalState,
+        scene: ?*const Scene,
+        altitude_km: f64,
+        wavelength_nm: f64,
+        sublayers: []const PreparedSublayer,
+        strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    ) EvaluatedLayer {
+        var breakdown: OpticalDepthBreakdown = .{};
+        var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
+        const gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficients();
+        const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
+
+        for (sublayers, 0..) |sublayer, sublayer_index| {
+            const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
+            const spectroscopy_sigma = self.spectroscopySigmaAtWavelength(
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+                if (strong_line_states) |states| &states[sublayer_index] else null,
+            );
+            const gas_column_density_cm2 = sublayer.oxygen_number_density_cm3 * sublayer.path_length_cm;
+            const gas_absorption_optical_depth =
+                (continuum_sigma + spectroscopy_sigma) *
+                gas_column_density_cm2;
+            const gas_scattering_optical_depth =
+                Rayleigh.crossSectionCm2(wavelength_nm) *
+                sublayer.number_density_cm3 *
+                sublayer.path_length_cm;
+            const cia_sigma_cm5_per_molecule2 = self.ciaSigmaAtWavelength(
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+            );
+            const cia_optical_depth =
+                cia_sigma_cm5_per_molecule2 *
+                sublayer.oxygen_number_density_cm3 *
+                sublayer.oxygen_number_density_cm3 *
+                sublayer.path_length_cm;
+            const aerosol_optical_depth = ParticleProfiles.scaleOpticalDepth(
+                sublayer.aerosol_optical_depth,
+                self.aerosol_reference_wavelength_nm,
+                self.aerosol_angstrom_exponent,
+                wavelength_nm,
+            );
+            const cloud_optical_depth = ParticleProfiles.scaleOpticalDepth(
+                sublayer.cloud_optical_depth,
+                self.cloud_reference_wavelength_nm,
+                self.cloud_angstrom_exponent,
+                wavelength_nm,
+            );
+            const aerosol_scattering_optical_depth = aerosol_optical_depth * sublayer.aerosol_single_scatter_albedo;
+            const cloud_scattering_optical_depth = cloud_optical_depth * sublayer.cloud_single_scatter_albedo;
+
+            breakdown.gas_absorption_optical_depth += gas_absorption_optical_depth;
+            breakdown.gas_scattering_optical_depth += gas_scattering_optical_depth;
+            breakdown.cia_optical_depth += cia_optical_depth;
+            breakdown.aerosol_optical_depth += aerosol_optical_depth;
+            breakdown.aerosol_scattering_optical_depth += aerosol_scattering_optical_depth;
+            breakdown.cloud_optical_depth += cloud_optical_depth;
+            breakdown.cloud_scattering_optical_depth += cloud_scattering_optical_depth;
+
+            for (0..phase_coefficient_count) |index| {
+                phase_numerator[index] +=
+                    gas_scattering_optical_depth * gas_phase_coefficients[index] +
+                    aerosol_scattering_optical_depth * sublayer.aerosol_phase_coefficients[index] +
+                    cloud_scattering_optical_depth * sublayer.cloud_phase_coefficients[index];
+            }
+        }
+
+        const total_scattering = breakdown.totalScatteringOpticalDepth();
+        var phase_coefficients = PhaseFunctions.gasPhaseCoefficients();
+        if (total_scattering > 0.0) {
+            for (0..phase_coefficient_count) |index| {
+                phase_coefficients[index] = phase_numerator[index] / total_scattering;
+            }
+            phase_coefficients[0] = 1.0;
+        }
+
+        return .{
+            .breakdown = breakdown,
+            .phase_coefficients = phase_coefficients,
+            .solar_mu = if (scene) |owned_scene| owned_scene.geometry.solarCosineAtAltitude(altitude_km) else 1.0,
+            .view_mu = if (scene) |owned_scene| owned_scene.geometry.viewingCosineAtAltitude(altitude_km) else 1.0,
+        };
+    }
+
+    fn spectroscopyEvaluationAtWavelength(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) ReferenceData.SpectroscopyEvaluation {
+        if (self.operational_o2_lut.enabled()) {
+            const sigma = self.operational_o2_lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
+            return .{
+                .weak_line_sigma_cm2_per_molecule = sigma,
+                .strong_line_sigma_cm2_per_molecule = 0.0,
+                .line_sigma_cm2_per_molecule = sigma,
+                .line_mixing_sigma_cm2_per_molecule = 0.0,
+                .total_sigma_cm2_per_molecule = sigma,
+                .d_sigma_d_temperature_cm2_per_molecule_per_k = self.operational_o2_lut.dSigmaDTemperatureAt(
+                    wavelength_nm,
+                    temperature_k,
+                    pressure_hpa,
+                ),
+            };
+        }
+        if (self.spectroscopy_lines) |line_list| {
+            return line_list.evaluateAt(wavelength_nm, temperature_k, pressure_hpa);
+        }
+        return .{
+            .weak_line_sigma_cm2_per_molecule = 0.0,
+            .strong_line_sigma_cm2_per_molecule = 0.0,
+            .line_sigma_cm2_per_molecule = 0.0,
+            .line_mixing_sigma_cm2_per_molecule = 0.0,
+            .total_sigma_cm2_per_molecule = 0.0,
+            .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+        };
+    }
+
+    fn spectroscopySigmaAtWavelength(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        prepared_state: ?*const ReferenceData.StrongLinePreparedState,
+    ) f64 {
+        if (self.operational_o2_lut.enabled()) {
+            return self.operational_o2_lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
+        }
+        if (self.spectroscopy_lines) |line_list| {
+            return line_list.sigmaAtPrepared(wavelength_nm, temperature_k, pressure_hpa, prepared_state);
+        }
+        return 0.0;
+    }
+
+    fn ciaSigmaAtWavelength(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) f64 {
+        if (self.operational_o2o2_lut.enabled()) {
+            return self.operational_o2o2_lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
+        }
+        if (self.collision_induced_absorption) |cia_table| {
+            return cia_table.sigmaAt(wavelength_nm, temperature_k);
+        }
+        return 0.0;
     }
 };
 
 pub fn prepare(
     allocator: Allocator,
-    scene: Scene,
-    profile: ReferenceData.ClimatologyProfile,
-    cross_sections: ReferenceData.CrossSectionTable,
-    lut: ReferenceData.AirmassFactorLut,
+    scene: *const Scene,
+    profile: *const ReferenceData.ClimatologyProfile,
+    cross_sections: *const ReferenceData.CrossSectionTable,
+    lut: *const ReferenceData.AirmassFactorLut,
 ) !PreparedOpticalState {
     return prepareWithParticleTables(
         allocator,
@@ -213,11 +906,11 @@ pub fn prepare(
 
 pub fn prepareWithSpectroscopy(
     allocator: Allocator,
-    scene: Scene,
-    profile: ReferenceData.ClimatologyProfile,
-    cross_sections: ReferenceData.CrossSectionTable,
-    spectroscopy_lines: ?ReferenceData.SpectroscopyLineList,
-    lut: ReferenceData.AirmassFactorLut,
+    scene: *const Scene,
+    profile: *const ReferenceData.ClimatologyProfile,
+    cross_sections: *const ReferenceData.CrossSectionTable,
+    spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList,
+    lut: *const ReferenceData.AirmassFactorLut,
 ) !PreparedOpticalState {
     return prepareWithParticleTables(
         allocator,
@@ -234,12 +927,12 @@ pub fn prepareWithSpectroscopy(
 
 pub fn prepareWithSpectroscopyAndCollisionInducedAbsorption(
     allocator: Allocator,
-    scene: Scene,
-    profile: ReferenceData.ClimatologyProfile,
-    cross_sections: ReferenceData.CrossSectionTable,
-    collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable,
-    spectroscopy_lines: ?ReferenceData.SpectroscopyLineList,
-    lut: ReferenceData.AirmassFactorLut,
+    scene: *const Scene,
+    profile: *const ReferenceData.ClimatologyProfile,
+    cross_sections: *const ReferenceData.CrossSectionTable,
+    collision_induced_absorption: ?*const ReferenceData.CollisionInducedAbsorptionTable,
+    spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList,
+    lut: *const ReferenceData.AirmassFactorLut,
 ) !PreparedOpticalState {
     return prepareWithParticleTables(
         allocator,
@@ -256,14 +949,14 @@ pub fn prepareWithSpectroscopyAndCollisionInducedAbsorption(
 
 pub fn prepareWithParticleTables(
     allocator: Allocator,
-    scene: Scene,
-    profile: ReferenceData.ClimatologyProfile,
-    cross_sections: ReferenceData.CrossSectionTable,
-    collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable,
-    spectroscopy_lines: ?ReferenceData.SpectroscopyLineList,
-    lut: ReferenceData.AirmassFactorLut,
-    aerosol_mie: ?ReferenceData.MiePhaseTable,
-    cloud_mie: ?ReferenceData.MiePhaseTable,
+    scene: *const Scene,
+    profile: *const ReferenceData.ClimatologyProfile,
+    cross_sections: *const ReferenceData.CrossSectionTable,
+    collision_induced_absorption: ?*const ReferenceData.CollisionInducedAbsorptionTable,
+    spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList,
+    lut: *const ReferenceData.AirmassFactorLut,
+    aerosol_mie: ?*const ReferenceData.MiePhaseTable,
+    cloud_mie: ?*const ReferenceData.MiePhaseTable,
 ) !PreparedOpticalState {
     try scene.validate();
 
@@ -283,7 +976,7 @@ pub fn prepareWithParticleTables(
         var owned = table;
         owned.deinit(allocator);
     };
-    const owned_lines = if (spectroscopy_lines) |line_list|
+    var owned_lines = if (spectroscopy_lines) |line_list|
         try line_list.clone(allocator)
     else
         null;
@@ -291,14 +984,43 @@ pub fn prepareWithParticleTables(
         var owned = line_list;
         owned.deinit(allocator);
     };
+    const operational_o2_lut = scene.observation_model.o2_operational_lut;
+    const operational_o2o2_lut = scene.observation_model.o2o2_operational_lut;
+    if (owned_lines) |*line_list| {
+        std.sort.pdq(
+            ReferenceData.SpectroscopyLine,
+            line_list.lines,
+            {},
+            struct {
+                fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
+                    return left.center_wavelength_nm < right.center_wavelength_nm;
+                }
+            }.lessThan,
+        );
+        line_list.lines_sorted_ascending = true;
+        if (!operational_o2_lut.enabled()) {
+            try line_list.buildStrongLineMatchIndex(allocator);
+        }
+    }
+    const strong_line_states = if (owned_lines) |line_list|
+        if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars())
+            try allocator.alloc(ReferenceData.StrongLinePreparedState, @as(usize, layer_count) * @as(usize, sublayer_divisions))
+        else
+            null
+    else
+        null;
+    var strong_line_state_count: usize = 0;
+    errdefer if (strong_line_states) |states| {
+        for (states[0..strong_line_state_count]) |*state| state.deinit(allocator);
+        allocator.free(states);
+    };
 
     const midpoint_nm = (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5;
     const mean_sigma = cross_sections.meanSigmaInRange(
         scene.spectral_grid.start_nm,
         scene.spectral_grid.end_nm,
     );
-    const operational_o2_lut = scene.observation_model.o2_operational_lut;
-    const operational_o2o2_lut = scene.observation_model.o2o2_operational_lut;
+    const midpoint_continuum_sigma = cross_sections.interpolateSigma(midpoint_nm);
     const air_mass_factor = lut.nearest(
         scene.geometry.solar_zenith_deg,
         scene.geometry.viewing_zenith_deg,
@@ -381,8 +1103,32 @@ pub fn prepareWithParticleTables(
                     .total_sigma_cm2_per_molecule = operational_o2_lut.sigmaAt(midpoint_nm, temperature, pressure),
                     .d_sigma_d_temperature_cm2_per_molecule_per_k = operational_o2_lut.dSigmaDTemperatureAt(midpoint_nm, temperature, pressure),
                 }
-            else if (spectroscopy_lines) |line_list|
-                line_list.evaluateAt(midpoint_nm, temperature, pressure)
+            else if (owned_lines) |line_list|
+                if (strong_line_states) |states| blk: {
+                    const delta_t = 0.5;
+                    states[sublayer_write_index] = (try line_list.prepareStrongLineState(
+                        allocator,
+                        temperature,
+                        pressure,
+                    )).?;
+                    strong_line_state_count += 1;
+
+                    var evaluation = line_list.evaluateAtPrepared(
+                        midpoint_nm,
+                        temperature,
+                        pressure,
+                        &states[sublayer_write_index],
+                    );
+                    const upper = line_list.evaluateAt(midpoint_nm, temperature + delta_t, pressure);
+                    const lower = line_list.evaluateAt(
+                        midpoint_nm,
+                        @max(temperature - delta_t, 150.0),
+                        pressure,
+                    );
+                    evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k =
+                        (upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule) / (2.0 * delta_t);
+                    break :blk evaluation;
+                } else line_list.evaluateAt(midpoint_nm, temperature, pressure)
             else
                 ReferenceData.SpectroscopyEvaluation{
                     .line_sigma_cm2_per_molecule = 0.0,
@@ -390,9 +1136,12 @@ pub fn prepareWithParticleTables(
                     .total_sigma_cm2_per_molecule = 0.0,
                     .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
                 };
-            const molecular_gas_optical_depth = (mean_sigma + spectroscopy_eval.total_sigma_cm2_per_molecule) * density * air_mass_factor * 1.0e-18 * sublayer_weight;
             const o2_density_cm3 = density * oxygen_volume_mixing_ratio;
-            const sublayer_path_length_cm = layer_span_km * 1.0e5 * air_mass_factor * sublayer_weight;
+            const sublayer_path_length_cm = layer_span_km * centimeters_per_kilometer * sublayer_weight;
+            const gas_column_density_cm2 = o2_density_cm3 * sublayer_path_length_cm;
+            const molecular_gas_optical_depth =
+                (midpoint_continuum_sigma + spectroscopy_eval.total_sigma_cm2_per_molecule) *
+                gas_column_density_cm2;
             const cia_sigma_cm5_per_molecule2 = if (operational_o2o2_lut.enabled())
                 operational_o2o2_lut.sigmaAt(midpoint_nm, temperature, pressure)
             else if (collision_induced_absorption) |cia_table|
@@ -406,13 +1155,13 @@ pub fn prepareWithParticleTables(
             else
                 0.0;
             const cia_optical_depth = cia_sigma_cm5_per_molecule2 * o2_density_cm3 * o2_density_cm3 * sublayer_path_length_cm;
-            const gas_extinction_optical_depth = molecular_gas_optical_depth + cia_optical_depth;
-            const gas_scattering_optical_depth = molecular_gas_optical_depth * 0.08;
-            const gas_absorption_optical_depth = @max(gas_extinction_optical_depth - gas_scattering_optical_depth, 0.0);
+            const gas_scattering_optical_depth =
+                Rayleigh.crossSectionCm2(midpoint_nm) * density * sublayer_path_length_cm;
+            const gas_absorption_optical_depth = molecular_gas_optical_depth;
+            const gas_extinction_optical_depth = gas_absorption_optical_depth + cia_optical_depth + gas_scattering_optical_depth;
             const d_cia_optical_depth_d_temperature = d_cia_sigma_d_temperature * o2_density_cm3 * o2_density_cm3 * sublayer_path_length_cm;
             const d_gas_optical_depth_d_temperature =
-                spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k * density * air_mass_factor * 1.0e-18 * sublayer_weight +
-                d_cia_optical_depth_d_temperature;
+                spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k * gas_column_density_cm2;
             const aerosol_optical_depth = aerosol_sublayer_distribution[sublayer_write_index] * aerosol_extinction_scale;
             const cloud_optical_depth = cloud_sublayer_distribution[sublayer_write_index] * cloud_extinction_scale;
             const aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo;
@@ -432,7 +1181,9 @@ pub fn prepareWithParticleTables(
                 .pressure_hpa = pressure,
                 .temperature_k = temperature,
                 .number_density_cm3 = density,
-                .continuum_cross_section_cm2_per_molecule = mean_sigma,
+                .oxygen_number_density_cm3 = o2_density_cm3,
+                .path_length_cm = sublayer_path_length_cm,
+                .continuum_cross_section_cm2_per_molecule = midpoint_continuum_sigma,
                 .line_cross_section_cm2_per_molecule = spectroscopy_eval.line_sigma_cm2_per_molecule,
                 .line_mixing_cross_section_cm2_per_molecule = spectroscopy_eval.line_mixing_sigma_cm2_per_molecule,
                 .cia_sigma_cm5_per_molecule2 = cia_sigma_cm5_per_molecule2,
@@ -451,7 +1202,6 @@ pub fn prepareWithParticleTables(
                 .cloud_phase_coefficients = cloud_phase_coefficients,
                 .combined_phase_coefficients = combined_phase_coefficients,
             };
-
             layer_density_weight += density * sublayer_weight;
             layer_density_sum += density * sublayer_weight;
             layer_temperature_sum += temperature * density * sublayer_weight;
@@ -459,13 +1209,14 @@ pub fn prepareWithParticleTables(
             layer_line_sigma_sum += spectroscopy_eval.line_sigma_cm2_per_molecule;
             layer_line_mixing_sum += spectroscopy_eval.line_mixing_sigma_cm2_per_molecule;
             layer_d_cross_section_sum += spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k;
-            layer_gas_optical_depth += gas_extinction_optical_depth;
+            layer_gas_optical_depth += gas_absorption_optical_depth + gas_scattering_optical_depth;
             layer_gas_scattering_optical_depth += gas_scattering_optical_depth;
             layer_cia_optical_depth += cia_optical_depth;
             layer_aerosol_optical_depth += aerosol_optical_depth;
             layer_cloud_optical_depth += cloud_optical_depth;
+            column_density_factor += gas_column_density_cm2;
             cia_pair_path_factor_cm5 += o2_density_cm3 * o2_density_cm3 * sublayer_path_length_cm;
-            total_d_optical_depth_d_temperature += d_gas_optical_depth_d_temperature;
+            total_d_optical_depth_d_temperature += d_gas_optical_depth_d_temperature + d_cia_optical_depth_d_temperature;
 
             sublayer_write_index += 1;
         }
@@ -476,7 +1227,7 @@ pub fn prepareWithParticleTables(
         const gas_optical_depth = layer_gas_optical_depth;
         const aerosol_optical_depth = layer_aerosol_optical_depth;
         const cloud_optical_depth = layer_cloud_optical_depth;
-        const optical_depth = gas_optical_depth + aerosol_optical_depth + cloud_optical_depth;
+        const optical_depth = gas_optical_depth + layer_cia_optical_depth + aerosol_optical_depth + cloud_optical_depth;
         const aerosol_scattering = aerosol_optical_depth * aerosol_single_scatter_albedo;
         const cloud_scattering = cloud_optical_depth * cloud_single_scatter_albedo;
         const gas_scattering = layer_gas_scattering_optical_depth;
@@ -488,7 +1239,6 @@ pub fn prepareWithParticleTables(
         total_temperature_weighted += temperature * density;
         total_pressure_weighted += pressure * density;
         total_weight += density;
-        column_density_factor += layer_density_sum * air_mass_factor * 1.0e-18;
         total_gas_optical_depth += gas_optical_depth;
         total_cia_optical_depth += layer_cia_optical_depth;
         total_aerosol_optical_depth += aerosol_optical_depth;
@@ -510,6 +1260,7 @@ pub fn prepareWithParticleTables(
             .cia_optical_depth = layer_cia_optical_depth,
             .d_cross_section_d_temperature_cm2_per_molecule_per_k = layer_d_cross_section_sum / @as(f64, @floatFromInt(sublayer_divisions)),
             .gas_optical_depth = gas_optical_depth,
+            .gas_scattering_optical_depth = gas_scattering,
             .aerosol_optical_depth = aerosol_optical_depth,
             .cloud_optical_depth = cloud_optical_depth,
             .layer_single_scatter_albedo = layer_single_scatter_albedo,
@@ -530,8 +1281,8 @@ pub fn prepareWithParticleTables(
             ),
             .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
         }
-    else if (spectroscopy_lines) |line_list|
-        BandMeans.computeBandLineMeans(scene, line_list, effective_temperature, effective_pressure)
+    else if (owned_lines) |*line_list|
+        try BandMeans.computeBandLineMeans(allocator, scene, line_list, effective_temperature, effective_pressure)
     else
         BandMeans.LineBandMeans{};
     const cia_mean_sigma = if (operational_o2o2_lut.enabled())
@@ -553,6 +1304,7 @@ pub fn prepareWithParticleTables(
     return .{
         .layers = layers,
         .sublayers = sublayers,
+        .strong_line_states = strong_line_states,
         .continuum_points = continuum_points,
         .collision_induced_absorption = owned_cia,
         .spectroscopy_lines = owned_lines,
@@ -633,19 +1385,27 @@ test "optical preparation derives deterministic layer optical depths from typed 
     };
     defer lut.deinit(std.testing.allocator);
 
-    var prepared = try prepareWithSpectroscopy(std.testing.allocator, scene, profile, cross_sections, line_list, lut);
+    var prepared = try prepareWithSpectroscopy(std.testing.allocator, &scene, &profile, &cross_sections, &line_list, &lut);
     defer prepared.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 4), prepared.layers.len);
     try std.testing.expect(prepared.total_optical_depth > 0.0);
     try std.testing.expect(prepared.layers[0].optical_depth > prepared.layers[3].optical_depth);
-    try std.testing.expect(prepared.column_density_factor > 0.0);
+    try std.testing.expect(prepared.column_density_factor > 1.0e24);
     try std.testing.expectEqual(@as(f64, 0.0), prepared.line_mixing_mean_cross_section_cm2_per_molecule);
     try std.testing.expect(prepared.gas_optical_depth > 0.0);
     try std.testing.expect(prepared.d_optical_depth_d_temperature != 0.0);
 
-    const input = prepared.toForwardInput(scene);
+    const input = prepared.toForwardInput(&scene);
     try std.testing.expect(input.optical_depth > 0.0);
     try std.testing.expectApproxEqAbs(@as(f64, 1.241), input.air_mass_factor, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), input.spectral_weight, 1e-9);
     try std.testing.expect(prepared.totalCrossSectionAtWavelength(434.6) > prepared.totalCrossSectionAtWavelength(465.0));
+
+    try std.testing.expect(prepared.sublayers != null);
+    try std.testing.expectEqual(prepared.sublayers.?.len, prepared.transportLayerCount());
+    var transport_layers: [12]transport_common.LayerInput = undefined;
+    _ = prepared.fillForwardLayersAtWavelength(&scene, 434.6, &transport_layers);
+    try std.testing.expect(transport_layers[0].optical_depth > 0.0);
+    try std.testing.expect(transport_layers[11].optical_depth > 0.0);
 }

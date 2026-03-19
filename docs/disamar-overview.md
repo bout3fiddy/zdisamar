@@ -61,9 +61,9 @@ In the current Zig tree, the LABOS-labeled lane is likewise still a surrogate tr
 
 ### Optimal estimation
 
-Optimal estimation, usually in the Rodgers sense, combines a forward model, a prior state, and error statistics to solve an inverse problem. In DISAMAR-class retrievals this means the code must provide Jacobians, state-vector handling, and consistent measurement-error treatment. The current implementation therefore treats derivatives and retrieval contracts as first-class data surfaces rather than optional bookkeeping.
+Optimal estimation, usually in the Rodgers sense, combines a forward model, a prior state, and error statistics to solve an inverse problem. In DISAMAR-class retrievals this means the code must provide Jacobians, state-vector handling, consistent measurement-error treatment, posterior covariance, and averaging-kernel diagnostics.
 
-The current OE-labeled solver in `zdisamar` preserves that contract surface, but it should still be understood as a surrogate solver lane rather than a full Rodgers-style implementation.
+The current OE-labeled solver in `zdisamar` now follows that Rodgers-style spectral-fit path. The remaining surrogate retrieval work is in the DOAS- and DISMAS-labeled lanes, not in OE.
 
 ### DOAS
 

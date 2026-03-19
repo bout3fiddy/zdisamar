@@ -20,7 +20,7 @@ pub const PreparedRun = struct {
         .spectral_grid = .{ .sample_count = 1 },
     },
     diagnostics: zdisamar.DiagnosticsSpec = .{},
-    requested_products: std.ArrayListUnmanaged([]const u8) = .{},
+    requested_products: std.ArrayListUnmanaged(zdisamar.Request.RequestedProduct) = .{},
 
     pub fn deinit(self: *PreparedRun, allocator: std.mem.Allocator) void {
         self.requested_products.deinit(allocator);
@@ -124,17 +124,17 @@ pub fn applyValue(
     }
 
     if (std.mem.eql(u8, key, "instrument")) {
-        prepared.scene.observation_model.instrument = value;
+        prepared.scene.observation_model.instrument = zdisamar.InstrumentId.parse(value);
         return;
     }
 
     if (std.mem.eql(u8, key, "sampling")) {
-        prepared.scene.observation_model.sampling = value;
+        prepared.scene.observation_model.sampling = try zdisamar.Instrument.SamplingMode.parse(value);
         return;
     }
 
     if (std.mem.eql(u8, key, "noise_model")) {
-        prepared.scene.observation_model.noise_model = value;
+        prepared.scene.observation_model.noise_model = try zdisamar.Instrument.NoiseModelKind.parse(value);
         return;
     }
 
@@ -163,14 +163,14 @@ pub fn applyValue(
 
 fn appendRequestedProducts(
     allocator: std.mem.Allocator,
-    products: *std.ArrayListUnmanaged([]const u8),
+    products: *std.ArrayListUnmanaged(zdisamar.Request.RequestedProduct),
     value: []const u8,
 ) !void {
     var items = std.mem.splitScalar(u8, value, ',');
     while (items.next()) |raw_item| {
         const item = trimWhitespace(raw_item);
         if (item.len == 0) continue;
-        try products.append(allocator, item);
+        try products.append(allocator, .fromName(item));
     }
 }
 

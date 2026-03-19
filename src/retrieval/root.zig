@@ -1,18 +1,19 @@
-const zdisamar = @import("zdisamar");
 const std = @import("std");
 
 pub const common = struct {
-    pub const contracts = zdisamar.retrieval_modules.common.contracts;
-    pub const covariance = zdisamar.retrieval_modules.common.covariance;
-    pub const diagnostics = zdisamar.retrieval_modules.common.diagnostics;
-    pub const forward_model = zdisamar.retrieval_modules.common.forward_model;
-    pub const priors = zdisamar.retrieval_modules.common.priors;
-    pub const surrogate_forward = zdisamar.retrieval_modules.common.surrogate_forward;
+    pub const contracts = @import("common/contracts.zig");
+    pub const covariance = @import("common/covariance.zig");
+    pub const diagnostics = @import("common/diagnostics.zig");
+    pub const forward_model = @import("common/forward_model.zig");
+    pub const priors = @import("common/priors.zig");
+    pub const spectral_fit = @import("common/spectral_fit.zig");
+    pub const state_access = @import("common/state_access.zig");
+    pub const surrogate_forward = @import("common/surrogate_forward.zig");
 };
 
-pub const oe = zdisamar.retrieval_modules.oe;
-pub const doas = zdisamar.retrieval_modules.doas;
-pub const dismas = zdisamar.retrieval_modules.dismas;
+pub const oe = @import("oe/root.zig");
+pub const doas = @import("doas/root.zig");
+pub const dismas = @import("dismas/root.zig");
 
 test "retrieval root surfaces surrogate forward naming" {
     try std.testing.expect(@hasDecl(common, "surrogate_forward"));

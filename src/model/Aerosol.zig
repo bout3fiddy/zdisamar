@@ -1,9 +1,12 @@
 const std = @import("std");
 const errors = @import("../core/errors.zig");
+const document_fields = @import("../adapters/canonical_config/document_fields.zig");
+
+pub const AerosolType = document_fields.AerosolType;
 
 pub const Aerosol = struct {
     id: []const u8 = "",
-    model: []const u8 = "",
+    aerosol_type: AerosolType = .none,
     provider: []const u8 = "",
     enabled: bool = false,
     optical_depth: f64 = 0.0,

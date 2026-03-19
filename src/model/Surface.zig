@@ -16,23 +16,24 @@ pub const Parameter = struct {
 pub const Surface = struct {
     pub const Kind = enum {
         lambertian,
+        wavel_dependent,
+
+        pub fn parse(value: []const u8) errors.Error!Kind {
+            if (std.mem.eql(u8, value, "lambertian")) return .lambertian;
+            if (std.mem.eql(u8, value, "wavel_dependent")) return .wavel_dependent;
+            return errors.Error.InvalidRequest;
+        }
+
+        pub fn label(self: Kind) []const u8 {
+            return @tagName(self);
+        }
     };
 
-    kind: []const u8 = "lambertian",
-    provider: []const u8 = "",
+    kind: Kind = .lambertian,
     albedo: f64 = 0.0,
     parameters: []const Parameter = &[_]Parameter{},
 
-    pub fn resolvedKind(self: Surface) errors.Error!Kind {
-        if (std.mem.eql(u8, self.kind, "lambertian")) return .lambertian;
-        return errors.Error.InvalidRequest;
-    }
-
     pub fn validate(self: Surface) errors.Error!void {
-        if (self.kind.len == 0) {
-            return errors.Error.InvalidRequest;
-        }
-        _ = try self.resolvedKind();
         if (self.albedo < 0.0 or self.albedo > 1.0) {
             return errors.Error.InvalidRequest;
         }
@@ -49,16 +50,15 @@ pub const Surface = struct {
 
 test "surface accepts named parameters" {
     const surface: Surface = .{
-        .kind = "lambertian",
+        .kind = .lambertian,
         .parameters = &[_]Parameter{
             .{ .name = "roughness_hint", .value = 0.03 },
             .{ .name = "slope_hint", .value = 0.02 },
         },
     };
-    try std.testing.expectEqual(Surface.Kind.lambertian, try surface.resolvedKind());
+    try std.testing.expectEqual(Surface.Kind.lambertian, surface.kind);
     try surface.validate();
-
-    try std.testing.expectError(errors.Error.InvalidRequest, (Surface{
-        .kind = "unknown_surface",
-    }).validate());
+    try std.testing.expectEqual(Surface.Kind.lambertian, try Surface.Kind.parse("lambertian"));
+    try std.testing.expectEqual(Surface.Kind.wavel_dependent, try Surface.Kind.parse("wavel_dependent"));
+    try std.testing.expectError(errors.Error.InvalidRequest, Surface.Kind.parse("unknown_surface"));
 }

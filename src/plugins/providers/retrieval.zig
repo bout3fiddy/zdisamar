@@ -8,7 +8,7 @@ const Allocator = @import("std").mem.Allocator;
 
 pub const Provider = struct {
     id: []const u8,
-    solve: *const fn (allocator: Allocator, problem: common.RetrievalProblem, evaluator: forward_model.SummaryEvaluator) anyerror!SolverOutcome,
+    solve: *const fn (allocator: Allocator, problem: common.RetrievalProblem, evaluator: forward_model.Evaluator) anyerror!SolverOutcome,
 };
 
 pub fn resolve(provider_id: []const u8) ?Provider {
@@ -34,3 +34,18 @@ pub fn resolve(provider_id: []const u8) ?Provider {
 }
 
 const std = @import("std");
+
+test "retrieval providers resolve real spectral DOAS and DISMAS solvers" {
+    const doas_provider = resolve("builtin.doas_solver") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("builtin.doas_solver", doas_provider.id);
+    try std.testing.expectEqual(@intFromPtr(&doas.solveWithEvaluator), @intFromPtr(doas_provider.solve));
+
+    const dismas_provider = resolve("builtin.dismas_solver") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("builtin.dismas_solver", dismas_provider.id);
+    try std.testing.expectEqual(@intFromPtr(&dismas.solveWithEvaluator), @intFromPtr(dismas_provider.solve));
+}
+
+test "retrieval providers quarantine surrogate-only names" {
+    try std.testing.expect(resolve("builtin.surrogate_doas_solver") == null);
+    try std.testing.expect(resolve("builtin.surrogate_dismas_solver") == null);
+}

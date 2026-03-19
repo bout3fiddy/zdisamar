@@ -1,6 +1,7 @@
 const std = @import("std");
 const Spec = @import("spec.zig");
 const io = @import("io.zig");
+const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
 
 pub const Error = error{
     UnsupportedFormat,
@@ -29,7 +30,7 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
 
     const root_attrs_payload = try std.fmt.allocPrint(
         allocator,
-        "{{\n  \"conventions\": \"CF-1.10\",\n  \"source\": \"zdisamar\",\n  \"dataset_name\": \"{s}\",\n  \"scene_id\": \"{s}\",\n  \"workspace_label\": \"{s}\",\n  \"plan_id\": {d},\n  \"solver_route\": \"{s}\",\n  \"model_family\": \"{s}\",\n  \"transport_family\": \"{s}\",\n  \"derivative_mode\": \"{s}\",\n  \"numerical_mode\": \"{s}\",\n  \"status\": \"{s}\",\n  \"plugin_count\": {d},\n  \"dataset_hash_count\": {d},\n  \"native_capability_count\": {d},\n  \"native_entry_symbol_count\": {d},\n  \"native_library_path_count\": {d}\n}}\n",
+        "{{\n  \"conventions\": \"CF-1.10\",\n  \"source\": \"zdisamar\",\n  \"dataset_name\": \"{s}\",\n  \"scene_id\": \"{s}\",\n  \"workspace_label\": \"{s}\",\n  \"plan_id\": {d},\n  \"solver_route\": \"{s}\",\n  \"model_family\": \"{s}\",\n  \"transport_family\": \"{s}\",\n  \"derivative_mode\": \"{s}\",\n  \"derivative_semantics\": \"{s}\",\n  \"numerical_mode\": \"{s}\",\n  \"status\": \"{s}\",\n  \"plugin_count\": {d},\n  \"dataset_hash_count\": {d},\n  \"native_capability_count\": {d},\n  \"native_entry_symbol_count\": {d},\n  \"native_library_path_count\": {d}\n}}\n",
         .{
             artifact.dataset_name,
             view.scene_id,
@@ -39,6 +40,7 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
             view.provenance.model_family,
             view.provenance.transport_family,
             view.provenance.derivative_mode,
+            view.provenance.derivative_semantics,
             view.provenance.numerical_mode,
             @tagName(view.status),
             view.provenance.pluginVersionCount(),
@@ -133,6 +135,14 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         "provenance/derivative_mode",
         "provenance",
         &[_][]const u8{view.provenance.derivative_mode},
+        &files_written,
+    );
+    bytes_written += try writeStringArray(
+        allocator,
+        store_path,
+        "provenance/derivative_semantics",
+        "provenance",
+        &[_][]const u8{view.provenance.derivative_semantics},
         &files_written,
     );
     bytes_written += try writeStringArray(
@@ -237,7 +247,14 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/wavelength_nm", "measurement_space", product.wavelengths, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/toa_radiance", "measurement_space", product.radiance, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/solar_irradiance", "measurement_space", product.irradiance, &files_written);
-        bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/reflectance", "measurement_space", product.reflectance, &files_written);
+        bytes_written += try writeFloat64Array(
+            allocator,
+            store_path,
+            "measurement_space/" ++ MeasurementSpace.reflectance_export_name,
+            "measurement_space",
+            product.reflectance,
+            &files_written,
+        );
         bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/noise_sigma", "measurement_space", product.noise_sigma, &files_written);
         if (product.jacobian) |jacobian| {
             bytes_written += try writeFloat64Array(allocator, store_path, "measurement_space/jacobian", "measurement_space", jacobian, &files_written);
@@ -324,7 +341,14 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/wavelength_nm", "retrieval/fitted_measurement", product.wavelengths, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/toa_radiance", "retrieval/fitted_measurement", product.radiance, &files_written);
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/solar_irradiance", "retrieval/fitted_measurement", product.irradiance, &files_written);
-        bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/reflectance", "retrieval/fitted_measurement", product.reflectance, &files_written);
+        bytes_written += try writeFloat64Array(
+            allocator,
+            store_path,
+            "retrieval/fitted_measurement/" ++ MeasurementSpace.fitted_reflectance_export_name,
+            "retrieval/fitted_measurement",
+            product.reflectance,
+            &files_written,
+        );
         bytes_written += try writeFloat64Array(allocator, store_path, "retrieval/fitted_measurement/noise_sigma", "retrieval/fitted_measurement", product.noise_sigma, &files_written);
     }
 
@@ -363,6 +387,27 @@ pub fn write(request: Spec.ExportRequest, view: Spec.ExportView, allocator: std.
             store_path,
             "retrieval/jacobian/values",
             "retrieval/jacobian",
+            product.row_count,
+            product.column_count,
+            product.values,
+            &files_written,
+        );
+    }
+
+    if (view.retrieval_posterior_covariance) |product| {
+        bytes_written += try writeStringArray(
+            allocator,
+            store_path,
+            "retrieval/posterior_covariance/parameter_names",
+            "retrieval/posterior_covariance",
+            product.parameter_names,
+            &files_written,
+        );
+        bytes_written += try writeFloat64Matrix(
+            allocator,
+            store_path,
+            "retrieval/posterior_covariance/values",
+            "retrieval/posterior_covariance",
             product.row_count,
             product.column_count,
             product.values,
@@ -637,7 +682,7 @@ test "zarr exporter emits group metadata and array stores" {
         .dataset_hashes = &dataset_hashes,
     };
     provenance.setPluginVersions(&[_][]const u8{"builtin.zarr@0.1.0"});
-    var result = @import("../../core/Result.zig").Result.init(9, "ws-zarr", "scene-zarr", provenance);
+    var result = try @import("../../core/Result.zig").Result.init(std.testing.allocator, 9, "ws-zarr", "scene-zarr", provenance);
     defer result.deinit(std.testing.allocator);
 
     const jacobian = try std.testing.allocator.dupe(f64, &.{ 0.21, 0.18, 0.16 });

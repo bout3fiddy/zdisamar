@@ -1,16 +1,17 @@
 const std = @import("std");
-const PreparedPlanCache = @import("PreparedPlanCache.zig").PreparedPlanCache;
+const PreparedLayout = @import("PreparedLayout.zig").PreparedLayout;
 
 const Allocator = std.mem.Allocator;
 
 pub const Entry = struct {
     plan_id: u64,
-    prepared: PreparedPlanCache,
+    prepared_layout: PreparedLayout,
     run_count: u64 = 0,
     revision: u64 = 0,
 };
 
 pub const Options = struct {
+    // Maximum prepared plans retained for reuse before oldest entries are evicted.
     max_entries: usize = 64,
 };
 
@@ -31,14 +32,14 @@ pub const PlanCache = struct {
         self.entries.deinit(self.allocator);
     }
 
-    pub fn put(self: *PlanCache, plan_id: u64, prepared: PreparedPlanCache) !void {
+    pub fn put(self: *PlanCache, plan_id: u64, prepared_layout: PreparedLayout) !void {
         if (self.options.max_entries == 0) {
             return error.PlanCacheDisabled;
         }
 
         for (self.entries.items) |*entry| {
             if (entry.plan_id == plan_id) {
-                entry.prepared = prepared;
+                entry.prepared_layout = prepared_layout;
                 entry.revision += 1;
                 self.generation += 1;
                 return;
@@ -51,7 +52,7 @@ pub const PlanCache = struct {
 
         try self.entries.append(self.allocator, .{
             .plan_id = plan_id,
-            .prepared = prepared,
+            .prepared_layout = prepared_layout,
         });
         self.generation += 1;
     }
@@ -101,5 +102,5 @@ test "plan cache records run counts and revisions" {
     const entry = cache.get(17).?;
     try std.testing.expectEqual(@as(u64, 1), entry.revision);
     try std.testing.expectEqual(@as(u64, 1), entry.run_count);
-    try std.testing.expectEqual(@as(u32, 12), entry.prepared.measurement_capacity);
+    try std.testing.expectEqual(@as(u32, 12), entry.prepared_layout.measurement_capacity);
 }

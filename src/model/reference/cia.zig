@@ -1,4 +1,5 @@
 const std = @import("std");
+const cross_sections = @import("cross_sections.zig");
 const Allocator = std.mem.Allocator;
 
 pub const CollisionInducedAbsorptionPoint = struct {
@@ -10,7 +11,7 @@ pub const CollisionInducedAbsorptionPoint = struct {
 
 pub const CollisionInducedAbsorptionTable = struct {
     scale_factor_cm5_per_molecule2: f64,
-    points: []CollisionInducedAbsorptionPoint,
+    points: []const CollisionInducedAbsorptionPoint,
 
     pub fn deinit(self: *CollisionInducedAbsorptionTable, allocator: Allocator) void {
         allocator.free(self.points);
@@ -72,20 +73,67 @@ pub const CollisionInducedAbsorptionTable = struct {
             };
         }
         if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0];
+        if (wavelength_nm >= self.points[self.points.len - 1].wavelength_nm) return self.points[self.points.len - 1];
 
-        for (self.points[0 .. self.points.len - 1], self.points[1..]) |left, right| {
-            if (wavelength_nm <= right.wavelength_nm) {
-                const span = right.wavelength_nm - left.wavelength_nm;
-                if (span == 0.0) return right;
-                const weight = (wavelength_nm - left.wavelength_nm) / span;
-                return .{
-                    .wavelength_nm = wavelength_nm,
-                    .a0 = left.a0 + weight * (right.a0 - left.a0),
-                    .a1 = left.a1 + weight * (right.a1 - left.a1),
-                    .a2 = left.a2 + weight * (right.a2 - left.a2),
-                };
-            }
-        }
-        return self.points[self.points.len - 1];
+        const right_index = lowerBoundPointIndex(self.points, wavelength_nm);
+        const left = self.points[right_index - 1];
+        const right = self.points[right_index];
+        const span = right.wavelength_nm - left.wavelength_nm;
+        if (span == 0.0) return right;
+        const weight = (wavelength_nm - left.wavelength_nm) / span;
+        return .{
+            .wavelength_nm = wavelength_nm,
+            .a0 = left.a0 + weight * (right.a0 - left.a0),
+            .a1 = left.a1 + weight * (right.a1 - left.a1),
+            .a2 = left.a2 + weight * (right.a2 - left.a2),
+        };
     }
 };
+
+fn lowerBoundPointIndex(points: []const CollisionInducedAbsorptionPoint, wavelength_nm: f64) usize {
+    var low: usize = 0;
+    var high: usize = points.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (points[middle].wavelength_nm < wavelength_nm) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}
+
+pub fn effectiveSigmaAtSamples(
+    allocator: Allocator,
+    table: CollisionInducedAbsorptionTable,
+    wavelengths_nm: []const f64,
+    temperature_k: f64,
+    weights: []const f64,
+    polynomial_order: u32,
+) ![]f64 {
+    if (wavelengths_nm.len != weights.len) return error.ShapeMismatch;
+
+    const sigma = try allocator.alloc(f64, wavelengths_nm.len);
+    defer allocator.free(sigma);
+    for (sigma, wavelengths_nm) |*slot, wavelength_nm| {
+        slot.* = table.sigmaAt(wavelength_nm, temperature_k);
+    }
+    return cross_sections.differentialVector(allocator, wavelengths_nm, sigma, weights, polynomial_order);
+}
+
+test "cia helpers project sigma onto the same differential fit space" {
+    const table: CollisionInducedAbsorptionTable = .{
+        .scale_factor_cm5_per_molecule2 = 1.0,
+        .points = &[_]CollisionInducedAbsorptionPoint{
+            .{ .wavelength_nm = 759.0, .a0 = 1.0, .a1 = 0.0, .a2 = 0.0 },
+            .{ .wavelength_nm = 762.0, .a0 = 2.0, .a1 = 0.0, .a2 = 0.0 },
+        },
+    };
+    const wavelengths = [_]f64{ 759.0, 760.0, 761.0, 762.0 };
+    const weights = [_]f64{ 1.0, 1.0, 1.0, 1.0 };
+    const sigma = try effectiveSigmaAtSamples(std.testing.allocator, table, &wavelengths, 273.15, &weights, 1);
+    defer std.testing.allocator.free(sigma);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), cross_sections.weightedMeanSamples(sigma, &weights), 1.0e-9);
+}

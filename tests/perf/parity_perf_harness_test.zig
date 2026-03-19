@@ -23,7 +23,7 @@ fn pathExists(path: []const u8) bool {
 fn scenarioTemplate(name: []const u8) !zdisamar.PlanTemplate {
     if (std.mem.eql(u8, name, "default_scalar")) return .{};
     if (std.mem.eql(u8, name, "derivative_enabled")) return .{
-        .solver_mode = .derivative_enabled,
+        .solver_mode = .scalar,
         .scene_blueprint = .{
             .derivative_mode = .semi_analytical,
             .spectral_grid = .{
@@ -105,7 +105,7 @@ fn scenarioTemplate(name: []const u8) !zdisamar.PlanTemplate {
         .solver_mode = .polarized,
         .scene_blueprint = .{
             .observation_regime = .limb,
-            .derivative_mode = .analytical_plugin,
+            .derivative_mode = .semi_analytical,
             .spectral_grid = .{
                 .start_nm = 405.0,
                 .end_nm = 465.0,
@@ -115,7 +115,7 @@ fn scenarioTemplate(name: []const u8) !zdisamar.PlanTemplate {
         },
     };
     if (std.mem.eql(u8, name, "transport_derivative_contract")) return .{
-        .solver_mode = .derivative_enabled,
+        .solver_mode = .scalar,
         .scene_blueprint = .{
             .observation_regime = .nadir,
             .derivative_mode = .numerical,
@@ -200,7 +200,7 @@ test "performance harness executes perf matrix scenarios with bounded runtime" {
                     .regime = plan.template.scene_blueprint.observation_regime,
                 },
             });
-            var result = try engine.execute(&plan, &workspace, request);
+            var result = try engine.execute(&plan, &workspace, &request);
             defer result.deinit(std.testing.allocator);
             try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
             checksum +%= result.plan_id;

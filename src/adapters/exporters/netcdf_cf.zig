@@ -1,6 +1,7 @@
 const std = @import("std");
 const Spec = @import("spec.zig");
 const io = @import("io.zig");
+const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
 
 const NC_DIMENSION: u32 = 10;
 const NC_VARIABLE: u32 = 11;
@@ -117,6 +118,7 @@ fn renderNetcdfClassicPayload(
         .{ .name = "solver_route", .value = .{ .char = view.provenance.solver_route } },
         .{ .name = "transport_family", .value = .{ .char = view.provenance.transport_family } },
         .{ .name = "derivative_mode", .value = .{ .char = view.provenance.derivative_mode } },
+        .{ .name = "derivative_semantics", .value = .{ .char = view.provenance.derivative_semantics } },
         .{ .name = "numerical_mode", .value = .{ .char = view.provenance.numerical_mode } },
         .{ .name = "engine_version", .value = .{ .char = view.provenance.engine_version } },
         .{ .name = "status", .value = .{ .char = @tagName(view.status) } },
@@ -152,6 +154,7 @@ fn renderNetcdfClassicPayload(
     try addStringVariable(allocator, &dimensions, &variables, "solver_route_strlen", "solver_route", view.provenance.solver_route);
     try addStringVariable(allocator, &dimensions, &variables, "transport_family_strlen", "transport_family", view.provenance.transport_family);
     try addStringVariable(allocator, &dimensions, &variables, "derivative_mode_strlen", "derivative_mode", view.provenance.derivative_mode);
+    try addStringVariable(allocator, &dimensions, &variables, "derivative_semantics_strlen", "derivative_semantics", view.provenance.derivative_semantics);
     try addStringVariable(allocator, &dimensions, &variables, "numerical_mode_strlen", "numerical_mode", view.provenance.numerical_mode);
     try addStringVariable(allocator, &dimensions, &variables, "engine_version_strlen", "engine_version", view.provenance.engine_version);
     try addStringVariable(allocator, &dimensions, &variables, "status_strlen", "status", @tagName(view.status));
@@ -212,7 +215,14 @@ fn renderNetcdfClassicPayload(
         try addDoubleVariable(allocator, &dimensions, &variables, "wavelength_sample_count", "wavelength_nm", product.wavelengths);
         try addDoubleVariable(allocator, &dimensions, &variables, "radiance_sample_count", "toa_radiance", product.radiance);
         try addDoubleVariable(allocator, &dimensions, &variables, "irradiance_sample_count", "solar_irradiance", product.irradiance);
-        try addDoubleVariable(allocator, &dimensions, &variables, "reflectance_sample_count", "reflectance", product.reflectance);
+        try addDoubleVariable(
+            allocator,
+            &dimensions,
+            &variables,
+            "reflectance_sample_count",
+            MeasurementSpace.reflectance_export_name,
+            product.reflectance,
+        );
         try addDoubleVariable(allocator, &dimensions, &variables, "noise_sample_count", "noise_sigma", product.noise_sigma);
         if (product.jacobian) |jacobian| {
             try addDoubleVariable(allocator, &dimensions, &variables, "jacobian_sample_count", "jacobian", jacobian);
@@ -249,7 +259,14 @@ fn renderNetcdfClassicPayload(
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_wavelength_sample_count", "fitted_wavelength_nm", product.wavelengths);
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_radiance_sample_count", "fitted_toa_radiance", product.radiance);
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_irradiance_sample_count", "fitted_solar_irradiance", product.irradiance);
-        try addDoubleVariable(allocator, &dimensions, &variables, "fitted_reflectance_sample_count", "fitted_reflectance", product.reflectance);
+        try addDoubleVariable(
+            allocator,
+            &dimensions,
+            &variables,
+            "fitted_reflectance_sample_count",
+            MeasurementSpace.fitted_reflectance_export_name,
+            product.reflectance,
+        );
         try addDoubleVariable(allocator, &dimensions, &variables, "fitted_noise_sample_count", "fitted_noise_sigma", product.noise_sigma);
     }
 
@@ -295,6 +312,30 @@ fn renderNetcdfClassicPayload(
             "retrieval_jacobian_row_count",
             "retrieval_jacobian_column_count",
             "retrieval_jacobian",
+            product.row_count,
+            product.column_count,
+            product.values,
+        );
+    }
+
+    if (view.retrieval_posterior_covariance) |product| {
+        try addStringListVariable(
+            allocator,
+            &owned_buffers,
+            &dimensions,
+            &variables,
+            "posterior_covariance_parameter_count",
+            "posterior_covariance_name_strlen",
+            "posterior_covariance_parameter_names",
+            product.parameter_names,
+        );
+        try addDoubleMatrixVariable(
+            allocator,
+            &dimensions,
+            &variables,
+            "posterior_covariance_row_count",
+            "posterior_covariance_column_count",
+            "posterior_covariance",
             product.row_count,
             product.column_count,
             product.values,
@@ -659,7 +700,7 @@ test "netcdf/cf exporter renders a classic binary payload with named metadata ta
         .native_library_paths = &native_libraries,
     };
     provenance.setPluginVersions(&[_][]const u8{"builtin.netcdf_cf@0.1.0"});
-    var result = @import("../../core/Result.zig").Result.init(21, "ws", "scene-a", provenance);
+    var result = try @import("../../core/Result.zig").Result.init(std.testing.allocator, 21, "ws", "scene-a", provenance);
     defer result.deinit(std.testing.allocator);
 
     const jacobian = try std.testing.allocator.dupe(f64, &.{ 0.21, 0.18, 0.16 });

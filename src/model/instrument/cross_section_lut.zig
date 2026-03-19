@@ -15,11 +15,11 @@ pub const OperationalCrossSectionLut = struct {
     min_pressure_hpa: f64 = 0.0,
     max_pressure_hpa: f64 = 0.0,
 
-    pub fn enabled(self: OperationalCrossSectionLut) bool {
+    pub fn enabled(self: *const OperationalCrossSectionLut) bool {
         return self.wavelengths_nm.len > 0;
     }
 
-    pub fn validate(self: OperationalCrossSectionLut) errors.Error!void {
+    pub fn validate(self: *const OperationalCrossSectionLut) errors.Error!void {
         if (!self.enabled()) {
             if (self.coefficients.len != 0 or
                 self.temperature_coefficient_count != 0 or
@@ -92,7 +92,7 @@ pub const OperationalCrossSectionLut = struct {
     }
 
     pub fn sigmaAt(
-        self: OperationalCrossSectionLut,
+        self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
         temperature_k: f64,
         pressure_hpa: f64,
@@ -101,7 +101,7 @@ pub const OperationalCrossSectionLut = struct {
     }
 
     pub fn dSigmaDTemperatureAt(
-        self: OperationalCrossSectionLut,
+        self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
         temperature_k: f64,
         pressure_hpa: f64,
@@ -110,7 +110,7 @@ pub const OperationalCrossSectionLut = struct {
     }
 
     fn evaluate(
-        self: OperationalCrossSectionLut,
+        self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
         temperature_k: f64,
         pressure_hpa: f64,
