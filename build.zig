@@ -332,6 +332,36 @@ pub fn build(b: *std.Build) void {
             "compatibility harness executes optics parity cases against vendor anchors",
         },
     );
+    const run_validation_compatibility_rtm_controls = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-compatibility-rtm-controls",
+        "Run DISAMAR compatibility RTM-controls harness check",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "compatibility harness execution honors RTM controls in prepared routes",
+        },
+    );
+    const run_validation_compatibility_asciihdf = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-compatibility-asciihdf",
+        "Run DISAMAR compatibility asciiHDF harness check",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "compatibility harness parses bounded vendor retrieval diagnostics from asciiHDF",
+        },
+    );
     const validation_compatibility_full_step = b.step(
         "test-validation-compatibility-full",
         "Run full DISAMAR compatibility harness validation",
@@ -340,6 +370,8 @@ pub fn build(b: *std.Build) void {
     validation_compatibility_full_step.dependOn(run_validation_compatibility_transport_measurement);
     validation_compatibility_full_step.dependOn(run_validation_compatibility_retrieval);
     validation_compatibility_full_step.dependOn(run_validation_compatibility_optics);
+    validation_compatibility_full_step.dependOn(run_validation_compatibility_rtm_controls);
+    validation_compatibility_full_step.dependOn(run_validation_compatibility_asciihdf);
     const run_validation_o2a = addSuiteRunStep(
         b,
         target,
