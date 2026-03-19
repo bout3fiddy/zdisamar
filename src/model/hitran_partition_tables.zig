@@ -465,4 +465,3 @@ test "vendor partition tables interpolate representative isotopologues and prese
         try std.testing.expectApproxEqAbs(@as(f64, 1.0), ratioT0OverT(code, 296.0, 296.0).?, 1e-12);
     }
 }
-

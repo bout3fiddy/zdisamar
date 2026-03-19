@@ -101,7 +101,7 @@ test "damped solve regularizes small singular systems" {
     var out = [_]f64{ 0.0, 0.0 };
     var workspace = [_]f64{0.0} ** 6;
     try dampedSolve(&.{
-        1.0, 0.99,
+        1.0,  0.99,
         0.99, 0.98,
     }, 2, &.{ 1.0, 1.0 }, 0.1, &out, &workspace);
     try std.testing.expect(out[0] != 0.0);

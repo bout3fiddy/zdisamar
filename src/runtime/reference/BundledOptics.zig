@@ -181,7 +181,7 @@ fn loadCollisionInducedAbsorptionForScene(
         allocator,
         .collision_induced_absorption_table,
         cross_section_manifest_path,
-        "o2o2_bira_o2a",
+        "o2o2_bira_o2a_subset",
     );
     defer asset.deinit(allocator);
     return try asset.toCollisionInducedAbsorptionTable(allocator);
