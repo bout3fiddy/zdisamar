@@ -366,7 +366,6 @@ pub fn build(b: *std.Build) void {
         "test-validation-compatibility-full",
         "Run full DISAMAR compatibility harness validation",
     );
-    validation_compatibility_full_step.dependOn(run_validation_compatibility);
     validation_compatibility_full_step.dependOn(run_validation_compatibility_transport_measurement);
     validation_compatibility_full_step.dependOn(run_validation_compatibility_retrieval);
     validation_compatibility_full_step.dependOn(run_validation_compatibility_optics);
