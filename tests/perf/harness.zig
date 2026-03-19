@@ -28,6 +28,7 @@ pub const BenchReport = struct {
     version: u32,
     scenario_count: usize,
     total_elapsed_ms: u64,
+    upstream_root_present: bool,
     scenarios: []ScenarioMeasurement,
 
     pub fn deinit(self: *BenchReport, allocator: std.mem.Allocator) void {
@@ -122,6 +123,7 @@ pub fn measureMatrix(allocator: std.mem.Allocator, matrix: PerfMatrix) !BenchRep
         .version = matrix.version,
         .scenario_count = matrix.scenarios.len,
         .total_elapsed_ms = total_elapsed_ms,
+        .upstream_root_present = upstream_present,
         .scenarios = scenarios,
     };
 }
@@ -131,6 +133,10 @@ pub fn assertExecutionSanity(report: BenchReport) !void {
         try std.testing.expect(scenario.iterations > 0);
         try std.testing.expect(scenario.budget_ms > 0);
         try std.testing.expect(scenario.checksum > 0);
+        try std.testing.expect(scenario.elapsed_ms <= scenario.budget_ms);
+        if (report.upstream_root_present) {
+            try std.testing.expect(scenario.upstream_anchor_present);
+        }
     }
 }
 

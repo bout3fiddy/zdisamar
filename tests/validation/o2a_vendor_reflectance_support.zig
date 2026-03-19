@@ -294,16 +294,6 @@ pub fn compareAbsoluteCeiling(current: f64, ceiling: f64) TrendState {
     return .flat;
 }
 
-fn pathExists(path: []const u8) bool {
-    std.fs.cwd().access(path, .{}) catch return false;
-    return true;
-}
-
-fn preferredO2AAssetId(vendor_id: []const u8, subset_id: []const u8) []const u8 {
-    if (pathExists("vendor/disamar-fortran/RefSpec")) return vendor_id;
-    return subset_id;
-}
-
 pub fn assessAgainstBaseline(
     current: ComparisonMetrics,
     baseline: ComparisonMetrics,
@@ -334,32 +324,32 @@ pub fn assessAgainstBaseline(
         .blue_wing_mean_difference = compareLowerIsBetter(
             @abs(current.blue_wing_mean_difference),
             @abs(baseline.blue_wing_mean_difference),
-            0.0,
+            tolerances.blue_wing_mean_difference_abs,
         ),
         .trough_wavelength_difference_nm = compareLowerIsBetter(
             @abs(current.trough_wavelength_difference_nm),
             @abs(baseline.trough_wavelength_difference_nm),
-            0.0,
+            tolerances.trough_wavelength_difference_nm_abs,
         ),
         .trough_value_difference = compareLowerIsBetter(
             @abs(current.trough_value_difference),
             @abs(baseline.trough_value_difference),
-            0.0,
+            tolerances.trough_value_difference_abs,
         ),
         .rebound_peak_difference = compareLowerIsBetter(
             @abs(current.rebound_peak_difference),
             @abs(baseline.rebound_peak_difference),
-            0.0,
+            tolerances.rebound_peak_difference_abs,
         ),
         .mid_band_mean_difference = compareLowerIsBetter(
             @abs(current.mid_band_mean_difference),
             @abs(baseline.mid_band_mean_difference),
-            0.0,
+            tolerances.mid_band_mean_difference_abs,
         ),
         .red_wing_mean_difference = compareLowerIsBetter(
             @abs(current.red_wing_mean_difference),
             @abs(baseline.red_wing_mean_difference),
-            0.0,
+            tolerances.red_wing_mean_difference_abs,
         ),
     };
 
@@ -507,14 +497,6 @@ pub fn computeComparisonMetrics(
 }
 
 pub fn runVendorO2AReflectanceCase(allocator: std.mem.Allocator) !VendorO2AReflectanceCase {
-    const line_asset_id = preferredO2AAssetId(
-        "o2a_hitran_07_hit08_tropomi",
-        "o2a_hitran_subset_07_hit08_tropomi",
-    );
-    const strong_asset_id = preferredO2AAssetId("o2a_lisa_sdf", "o2a_lisa_sdf_subset");
-    const rmf_asset_id = preferredO2AAssetId("o2a_lisa_rmf", "o2a_lisa_rmf_subset");
-    const cia_asset_id = preferredO2AAssetId("o2o2_bira_o2a", "o2o2_bira_o2a_subset");
-
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         allocator,
         .climatology_profile,
@@ -527,28 +509,28 @@ pub fn runVendorO2AReflectanceCase(allocator: std.mem.Allocator) !VendorO2ARefle
         allocator,
         .spectroscopy_line_list,
         "data/cross_sections/bundle_manifest.json",
-        line_asset_id,
+        "o2a_hitran_07_hit08_tropomi",
     );
     defer line_asset.deinit(allocator);
     var strong_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         allocator,
         .spectroscopy_strong_line_set,
         "data/cross_sections/bundle_manifest.json",
-        strong_asset_id,
+        "o2a_lisa_sdf",
     );
     defer strong_asset.deinit(allocator);
     var rmf_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         allocator,
         .spectroscopy_relaxation_matrix,
         "data/cross_sections/bundle_manifest.json",
-        rmf_asset_id,
+        "o2a_lisa_rmf",
     );
     defer rmf_asset.deinit(allocator);
     var cia_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         allocator,
         .collision_induced_absorption_table,
         "data/cross_sections/bundle_manifest.json",
-        cia_asset_id,
+        "o2o2_bira_o2a",
     );
     defer cia_asset.deinit(allocator);
     var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
