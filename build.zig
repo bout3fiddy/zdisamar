@@ -235,6 +235,9 @@ pub fn build(b: *std.Build) void {
         "tests/validation/main.zig",
     );
 
+    const check_step = b.step("check", "Run fast local verification");
+    check_step.dependOn(run_unit_suite);
+
     const test_suites_step = b.step("test-suites", "Run all verification suites");
     test_suites_step.dependOn(run_unit_suite);
     test_suites_step.dependOn(run_integration_suite);
@@ -242,7 +245,7 @@ pub fn build(b: *std.Build) void {
     test_suites_step.dependOn(run_perf_suite);
     test_suites_step.dependOn(run_validation_suite);
 
-    const test_step = b.step("test", "Run library tests");
+    const test_step = b.step("test", "Run full verification baseline");
     test_step.dependOn(&run_lib_tests.step);
     test_step.dependOn(test_suites_step);
 }

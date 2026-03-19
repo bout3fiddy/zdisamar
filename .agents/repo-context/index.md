@@ -1,13 +1,11 @@
 # Repo Context Index
 
 owner: zdisamar
-last_verified: 2026-03-14
+last_verified: 2026-03-18
 
 ## Canonical References
 
-- [Architecture spec](/Users/swadhinnanda/Projects/git/zdisamar/specs/architecture.md)
-- [Fortran mapping spec](/Users/swadhinnanda/Projects/git/zdisamar/specs/fortran-mapping.md)
-- [Root AGENTS router](/Users/swadhinnanda/Projects/git/zdisamar/AGENTS.md)
+- root AGENTS.md
 
 ## Local-Only Areas
 
@@ -16,5 +14,6 @@ last_verified: 2026-03-14
 
 ## Verification Baseline
 
-- The repo currently verifies with `zig build test`.
+- Use `zig build check` for the fast local verification loop.
+- Use `zig build test` for the full verification baseline.
 - Treat changes under `src/core`, `src/kernels`, `src/retrieval`, `src/runtime`, `src/plugins`, and `src/api` as code changes that should keep that baseline green.

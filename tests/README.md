@@ -9,6 +9,8 @@ development.
 - `tests/perf/`: repeatable performance smoke checks with bounded loops.
 - `tests/validation/`: schema and evidence-asset integrity checks for validation data.
 
+Use `zig build check` for the fast local loop.
+
 Run all suites with `zig build test`, or targeted suites with:
 
 - `zig build test-unit`
