@@ -314,7 +314,7 @@ pub fn simulate(
         );
         var integration: OperationalInstrumentIntegration = undefined;
         providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
-        buffers.scratch[index] = integrateIrradianceAtNominal(
+        buffers.scratch[index] = try integrateIrradianceAtNominal(
             scene,
             prepared,
             evaluation_wavelength_nm,
@@ -812,7 +812,7 @@ fn integrateIrradianceAtNominal(
     safe_span: f64,
     cache: *SpectralEvaluationCache,
     integration: *const OperationalInstrumentIntegration,
-) f64 {
+) Error!f64 {
     if (!integration.enabled) {
         return cachedIrradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span, cache);
     }
@@ -821,7 +821,7 @@ fn integrateIrradianceAtNominal(
     for (0..integration.sample_count) |index| {
         const offset_nm = integration.offsets_nm[index];
         const weight = integration.weights[index];
-        irradiance_sum += weight * cachedIrradianceAtWavelength(
+        irradiance_sum += weight * try cachedIrradianceAtWavelength(
             scene,
             prepared,
             nominal_wavelength_nm + offset_nm,
@@ -880,12 +880,12 @@ fn cachedIrradianceAtWavelength(
     wavelength_nm: f64,
     safe_span: f64,
     cache: *SpectralEvaluationCache,
-) f64 {
+) Error!f64 {
     const key = SpectralEvaluationCache.keyFor(wavelength_nm);
     if (cache.irradiance.get(key)) |cached| return cached;
 
     const value = irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
-    cache.irradiance.put(key, value) catch return value;
+    try cache.irradiance.put(key, value);
     return value;
 }
 

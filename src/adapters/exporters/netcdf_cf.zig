@@ -474,6 +474,7 @@ fn allocOwnedPrint(
     args: anytype,
 ) ![]const u8 {
     const payload = try std.fmt.allocPrint(allocator, format, args);
+    errdefer allocator.free(payload);
     try owned_buffers.append(allocator, payload);
     return payload;
 }

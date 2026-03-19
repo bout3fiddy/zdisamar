@@ -165,6 +165,7 @@ pub fn solveWithEvaluator(
     defer allocator.free(parameter_names);
     const final_jacobian = final_context.jacobian;
     final_context.jacobian = &[_]f64{};
+    errdefer allocator.free(final_jacobian);
 
     const outcome = try common.outcome(
         allocator,

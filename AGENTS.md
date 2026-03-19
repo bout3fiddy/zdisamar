@@ -12,12 +12,28 @@
 - Start in [src/AGENTS.md](src/AGENTS.md) for source-tree work.
 - Use [packages/AGENTS.md](packages/AGENTS.md) for distributable bundles.
 - Use [tests/AGENTS.md](tests/AGENTS.md) and [validation/AGENTS.md](validation/AGENTS.md) for verification work.
+- Use [scripts/AGENTS.md](scripts/AGENTS.md) for repo automation and testing-harness helper scripts.
 - Use [vendor/AGENTS.md](vendor/AGENTS.md) before touching any vendored reference assets.
 - Deep repo context lives in [.agents/repo-context/index.md](.agents/repo-context/index.md).
+
+## Testing Harness
+
+- The verification harness is layered; keep the current suite split and validation assets as the base layer instead of replacing them with one monolithic runner.
+- `zig build` is the front door for local and CI verification. Prefer adding or changing build steps before adding ad hoc shell commands in CI.
+- `zig build check` is the fast baseline: format check, compile the shipped artifacts and suite roots, then run unit tests.
+- `zig build test-fast` is the broader presubmit lane: unit plus integration, including the leak/lifecycle coverage that uses allocation-failure and `DebugAllocator` checks.
+- `zig build ci` mirrors the blocking Linux PR workflow: `check` prerequisites plus integration, golden, validation compatibility, and perf smoke coverage.
+- `zig build bench` is non-gating. It reuses `validation/perf/perf_matrix.json` and writes disposable benchmark summaries to `out/ci/bench/summary.json`.
+- `zig build tidy` is the advisory architecture lane. It writes `out/ci/tidy/report.json` and is expected to fail while findings still exist.
+- Keep heavier lanes like vendor differential runs, perf guardrails, and Valgrind out of the first-pass harness until their backing assets and packages are ready.
 
 ## Commands
 
 - `zig build check` is the fast local verification command.
+- `zig build test-fast` is the fast presubmit verification command.
+- `zig build ci` is the blocking Linux CI mirror.
+- `zig build bench` emits the non-gating benchmark summary at `out/ci/bench/summary.json`.
+- `zig build tidy` runs advisory architecture checks and writes `out/ci/tidy/report.json`.
 - `zig build test-transport` is the focused transport/parity verification command.
 - `zig build test-validation-compatibility` is the fast compatibility smoke command.
 - `zig build test-validation-compatibility-full` runs the full DISAMAR compatibility harness.

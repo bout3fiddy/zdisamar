@@ -1,5 +1,6 @@
 comptime {
     _ = @import("adapter_ingest_test.zig");
+    _ = @import("allocation_failure_test.zig");
     _ = @import("api_wrappers_test.zig");
     _ = @import("canonical_config_test.zig");
     _ = @import("canonical_config_execution_test.zig");

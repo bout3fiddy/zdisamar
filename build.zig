@@ -1,5 +1,10 @@
 const std = @import("std");
 
+const SuiteSteps = struct {
+    compile_step: *std.Build.Step,
+    run_step: *std.Build.Step,
+};
+
 fn addSuiteRunStep(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -11,7 +16,7 @@ fn addSuiteRunStep(
     step_name: []const u8,
     step_description: []const u8,
     root_source_file: []const u8,
-) *std.Build.Step {
+) SuiteSteps {
     return addSuiteRunStepWithArgs(
         b,
         target,
@@ -39,7 +44,7 @@ fn addSuiteRunStepWithArgs(
     step_description: []const u8,
     root_source_file: []const u8,
     filters: []const []const u8,
-) *std.Build.Step {
+) SuiteSteps {
     const suite_module = b.createModule(.{
         .root_source_file = b.path(root_source_file),
         .target = target,
@@ -72,7 +77,10 @@ fn addSuiteRunStepWithArgs(
 
     const suite_step = b.step(step_name, step_description);
     suite_step.dependOn(&run_suite_tests.step);
-    return &run_suite_tests.step;
+    return .{
+        .compile_step = &suite_tests.step,
+        .run_step = &run_suite_tests.step,
+    };
 }
 
 pub fn build(b: *std.Build) void {
@@ -184,6 +192,22 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_module,
     });
     b.installArtifact(exe);
+
+    const bench_module = b.createModule(.{
+        .root_source_file = b.path("tests/perf/bench_main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "zdisamar",
+                .module = lib_module,
+            },
+        },
+    });
+    const bench_exe = b.addExecutable(.{
+        .name = "zdisamar-bench",
+        .root_module = bench_module,
+    });
 
     const test_module = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -378,8 +402,8 @@ pub fn build(b: *std.Build) void {
         },
     );
     const validation_step = b.step("test-validation", "Run compatibility and validation asset suite");
-    validation_step.dependOn(run_validation_asset_suite);
-    validation_step.dependOn(run_validation_compatibility_full);
+    validation_step.dependOn(run_validation_asset_suite.run_step);
+    validation_step.dependOn(run_validation_compatibility_full.run_step);
     const run_validation_o2a = addSuiteRunStep(
         b,
         target,
@@ -405,20 +429,71 @@ pub fn build(b: *std.Build) void {
         "tests/validation/o2a_vendor_reflectance_assessment_test.zig",
     );
 
+    const fmt_check_cmd = b.addSystemCommand(&.{
+        "zig",
+        "fmt",
+        "--check",
+        "build.zig",
+        "src",
+        "tests",
+    });
+    const fmt_check_step = b.step("fmt-check", "Verify Zig formatting without rewriting files");
+    fmt_check_step.dependOn(&fmt_check_cmd.step);
+
+    const bench_run = b.addRunArtifact(bench_exe);
+    bench_run.addArg("out/ci/bench/summary.json");
+    const bench_step = b.step("bench", "Run the non-gating benchmark harness and emit summaries");
+    bench_step.dependOn(&bench_run.step);
+
+    const tidy_cmd = b.addSystemCommand(&.{
+        "python3",
+        "scripts/testing_harness/tidy.py",
+        "--report",
+        "out/ci/tidy/report.json",
+    });
+    const tidy_step = b.step("tidy", "Run architecture and policy checks");
+    tidy_step.dependOn(&tidy_cmd.step);
+
     const check_step = b.step("check", "Run fast local verification");
-    check_step.dependOn(run_unit_suite);
+    check_step.dependOn(fmt_check_step);
+    check_step.dependOn(&lib.step);
+    check_step.dependOn(&exe.step);
+    check_step.dependOn(&lib_tests.step);
+    check_step.dependOn(run_unit_suite.compile_step);
+    check_step.dependOn(run_integration_suite.compile_step);
+    check_step.dependOn(run_golden_suite.compile_step);
+    check_step.dependOn(run_perf_suite.compile_step);
+    check_step.dependOn(run_validation_asset_suite.compile_step);
+    check_step.dependOn(run_validation_compatibility.compile_step);
+    check_step.dependOn(run_validation_compatibility_full.compile_step);
+    check_step.dependOn(run_unit_suite.run_step);
+
+    const test_fast_step = b.step("test-fast", "Run the fast presubmit suites");
+    test_fast_step.dependOn(run_unit_suite.run_step);
+    test_fast_step.dependOn(run_integration_suite.run_step);
+
+    const ci_step = b.step("ci", "Run the blocking Linux CI mirror");
+    ci_step.dependOn(fmt_check_step);
+    ci_step.dependOn(&lib.step);
+    ci_step.dependOn(&exe.step);
+    ci_step.dependOn(&lib_tests.step);
+    ci_step.dependOn(run_unit_suite.run_step);
+    ci_step.dependOn(run_integration_suite.run_step);
+    ci_step.dependOn(run_golden_suite.run_step);
+    ci_step.dependOn(run_validation_compatibility.run_step);
+    ci_step.dependOn(run_perf_suite.run_step);
 
     const transport_step = b.step("test-transport", "Run focused transport parity verification");
-    transport_step.dependOn(run_unit_suite);
-    transport_step.dependOn(run_integration_forward_model);
-    transport_step.dependOn(run_validation_compatibility);
-    transport_step.dependOn(run_validation_o2a);
+    transport_step.dependOn(run_unit_suite.run_step);
+    transport_step.dependOn(run_integration_forward_model.run_step);
+    transport_step.dependOn(run_validation_compatibility.run_step);
+    transport_step.dependOn(run_validation_o2a.run_step);
 
     const test_suites_step = b.step("test-suites", "Run all verification suites");
-    test_suites_step.dependOn(run_unit_suite);
-    test_suites_step.dependOn(run_integration_suite);
-    test_suites_step.dependOn(run_golden_suite);
-    test_suites_step.dependOn(run_perf_suite);
+    test_suites_step.dependOn(run_unit_suite.run_step);
+    test_suites_step.dependOn(run_integration_suite.run_step);
+    test_suites_step.dependOn(run_golden_suite.run_step);
+    test_suites_step.dependOn(run_perf_suite.run_step);
     test_suites_step.dependOn(validation_step);
 
     const test_step = b.step("test", "Run full verification baseline");
