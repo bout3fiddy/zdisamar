@@ -1043,11 +1043,20 @@ fn ordersScat(
     const n_gauss = geo.n_gauss;
     const nlevel = end_level + 1;
 
+    const ud = try allocator.alloc(UDField, nlevel);
+    var ud_owned_by_result = false;
+    errdefer if (!ud_owned_by_result) allocator.free(ud);
+    const ud_sum_local = try allocator.alloc(UDLocal, nlevel);
+    var ud_sum_local_owned_by_result = false;
+    errdefer if (!ud_sum_local_owned_by_result) allocator.free(ud_sum_local);
+
     var result = OrdersResult{
         .allocator = allocator,
-        .ud = try allocator.alloc(UDField, nlevel),
-        .ud_sum_local = try allocator.alloc(UDLocal, nlevel),
+        .ud = ud,
+        .ud_sum_local = ud_sum_local,
     };
+    ud_owned_by_result = true;
+    ud_sum_local_owned_by_result = true;
     errdefer result.deinit();
 
     var ud_orde = try allocator.alloc(UDField, nlevel);

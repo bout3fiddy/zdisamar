@@ -403,7 +403,6 @@ pub const AbsorberSpecies = enum {
     }
 };
 
-
 /// Cloud scatterer classification in the vendor config.
 /// Aerosol scatterer classification (same variants as CloudType).
 /// Surface albedo wavelength dependence.
@@ -527,7 +526,6 @@ pub fn normalizeSurfaceProvider(explicit_provider: []const u8, model: SurfaceKin
         .wavel_dependent => "builtin.wavel_dependent_surface",
     };
 }
-
 
 pub fn parseCloudType(value: []const u8) Error!CloudType {
     if (std.mem.eql(u8, value, "none")) return .none;
@@ -743,7 +741,7 @@ test "sectionDefaultStatus returns unsupported for non-parity sections" {
     const unsupported_sections = [_]VendorSection{
         .general,       .instrument,            .mul_offset,
         .stray_light,   .reference_data,        .pressure_temperature,
-        .absorbing_gas, .atmospheric_intervals,  .cloud_aerosol_fraction,
+        .absorbing_gas, .atmospheric_intervals, .cloud_aerosol_fraction,
         .cloud,         .aerosol,               .subcolumns,
     };
     for (unsupported_sections) |section| {

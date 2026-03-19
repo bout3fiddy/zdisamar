@@ -7,7 +7,6 @@ const document_fields = @import("../adapters/canonical_config/document_fields.zi
 
 pub const AbsorberSpecies = document_fields.AbsorberSpecies;
 
-
 pub const SpectroscopyMode = enum {
     none,
     line_by_line,

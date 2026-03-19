@@ -75,6 +75,7 @@ pub const test_support = if (build_options.enable_test_support) struct {
     pub const zig_wrappers = @import("api/zig/wrappers.zig");
     pub const retrieval = @import("retrieval/root.zig");
     pub const builtin_exporters_catalog = @import("plugins/builtin/exporters/catalog.zig");
+    pub const exporter_spec = @import("adapters/exporters/spec.zig");
     pub const reference_data = @import("model/ReferenceData.zig");
     pub const kernels = struct {
         pub const transport = @import("kernels/transport/root.zig");

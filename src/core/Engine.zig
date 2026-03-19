@@ -223,8 +223,9 @@ fn preparePluginState(
     self: *Engine,
     template: PlanModule.Template,
 ) errors.PreparationError!PluginPreparation {
-    var snapshot = self.registry.snapshotSelection(self.allocator, template.providers) catch {
-        return errors.PreparationError.UnsupportedCapability;
+    var snapshot = self.registry.snapshotSelection(self.allocator, template.providers) catch |err| switch (err) {
+        error.OutOfMemory => return errors.PreparationError.OutOfMemory,
+        else => return errors.PreparationError.UnsupportedCapability,
     };
     errdefer snapshot.deinit(self.allocator);
 

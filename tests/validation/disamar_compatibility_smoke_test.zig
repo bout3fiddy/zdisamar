@@ -8,6 +8,8 @@ const VendorRetrievalAnchor = struct {
     dfs: f64,
 };
 
+const vendor_ascii_hdf_anchor_path = "validation/compatibility/disamar_asciihdf_anchor.txt";
+
 fn meanAbsoluteDifference(values_a: []const f64, values_b: []const f64) f64 {
     var sum: f64 = 0.0;
     for (values_a, values_b) |value_a, value_b| {
@@ -180,7 +182,7 @@ test "compatibility harness execution honors RTM controls in prepared routes" {
 
 test "compatibility harness parses bounded vendor retrieval diagnostics from asciiHDF" {
     const anchor = try parseVendorAsciiHdfAnchor(
-        "vendor/disamar-fortran/test/disamar.asciiHDF",
+        vendor_ascii_hdf_anchor_path,
         std.testing.allocator,
     );
 

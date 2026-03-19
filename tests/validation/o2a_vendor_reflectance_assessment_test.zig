@@ -7,12 +7,7 @@ const BaselineAnchor = struct {
     upstream_config: []const u8,
     reference_path: []const u8,
     zero_tolerance_abs: f64,
-    trend_tolerances: struct {
-        mean_abs_difference_abs: f64,
-        root_mean_square_difference_abs: f64,
-        max_abs_difference_abs: f64,
-        correlation_abs: f64,
-    },
+    trend_tolerances: o2a_vendor.TrendTolerances,
     guidance: struct {
         allowed_to_fail: bool,
         summary: []const u8,
@@ -52,31 +47,26 @@ fn loadBaselineAnchor(allocator: std.mem.Allocator) !LoadedBaselineAnchor {
     };
 }
 
-fn compareLowerIsBetter(current: f64, baseline: f64, tolerance: f64) []const u8 {
-    if (current < baseline - tolerance) return "improved";
-    if (current > baseline + tolerance) return "regressed";
-    return "flat";
-}
-
-fn compareHigherIsBetter(current: f64, baseline: f64, tolerance: f64) []const u8 {
-    if (current > baseline + tolerance) return "improved";
-    if (current < baseline - tolerance) return "regressed";
-    return "flat";
+fn verdictLabel(verdict: o2a_vendor.AssessmentVerdict) []const u8 {
+    return switch (verdict) {
+        .exact_zero_pass => "pass_exact_zero",
+        .baseline_pass => "pass_baseline_trend",
+        .regression_fail => "fail_regression",
+        .nonzero_fail => "fail_nonzero",
+    };
 }
 
 fn emitAssessment(
     allocator: std.mem.Allocator,
     anchor: BaselineAnchor,
     current: o2a_vendor.ComparisonMetrics,
+    outcome: o2a_vendor.AssessmentOutcome,
 ) !void {
     const assessment = .{
         .scenario = anchor.scenario,
         .upstream_config = anchor.upstream_config,
         .reference_path = anchor.reference_path,
-        .status = if (current.exact_match_within_zero_tolerance)
-            "pass_exact_zero"
-        else
-            "allowed_fail_nonzero_delta",
+        .status = verdictLabel(outcome.verdict),
         .zero_tolerance_abs = anchor.zero_tolerance_abs,
         .baseline = anchor.baseline,
         .current = current,
@@ -95,28 +85,7 @@ fn emitAssessment(
             .nonzero_sample_count = @as(i64, @intCast(current.nonzero_sample_count)) -
                 @as(i64, @intCast(anchor.baseline.nonzero_sample_count)),
         },
-        .trend = .{
-            .mean_abs_difference = compareLowerIsBetter(
-                current.mean_abs_difference,
-                anchor.baseline.mean_abs_difference,
-                anchor.trend_tolerances.mean_abs_difference_abs,
-            ),
-            .root_mean_square_difference = compareLowerIsBetter(
-                current.root_mean_square_difference,
-                anchor.baseline.root_mean_square_difference,
-                anchor.trend_tolerances.root_mean_square_difference_abs,
-            ),
-            .max_abs_difference = compareLowerIsBetter(
-                current.max_abs_difference,
-                anchor.baseline.max_abs_difference,
-                anchor.trend_tolerances.max_abs_difference_abs,
-            ),
-            .correlation = compareHigherIsBetter(
-                current.correlation,
-                anchor.baseline.correlation,
-                anchor.trend_tolerances.correlation_abs,
-            ),
-        },
+        .trend = outcome.trend,
         .guidance = anchor.guidance,
     };
 
@@ -127,6 +96,130 @@ fn emitAssessment(
     );
     defer allocator.free(rendered);
     std.debug.print("{s}", .{rendered});
+}
+
+fn makeMetrics(
+    mean_abs_difference: f64,
+    root_mean_square_difference: f64,
+    max_abs_difference: f64,
+    correlation: f64,
+    exact_match_within_zero_tolerance: bool,
+) o2a_vendor.ComparisonMetrics {
+    return .{
+        .sample_count = 1,
+        .nonzero_sample_count = if (exact_match_within_zero_tolerance) 0 else 1,
+        .exact_match_within_zero_tolerance = exact_match_within_zero_tolerance,
+        .mean_signed_difference = 0.0,
+        .mean_abs_difference = mean_abs_difference,
+        .root_mean_square_difference = root_mean_square_difference,
+        .max_abs_difference = max_abs_difference,
+        .max_abs_difference_wavelength_nm = 760.8,
+        .correlation = correlation,
+        .blue_wing_mean_difference = 0.0,
+        .trough_wavelength_difference_nm = 0.0,
+        .trough_value_difference = 0.0,
+        .rebound_peak_difference = 0.0,
+        .mid_band_mean_difference = 0.0,
+        .red_wing_mean_difference = 0.0,
+    };
+}
+
+test "o2a vendor assessment passes when metrics are flat versus baseline" {
+    const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
+    const outcome = o2a_vendor.assessAgainstBaseline(
+        baseline,
+        baseline,
+        .{
+            .mean_abs_difference_abs = 1.0e-6,
+            .root_mean_square_difference_abs = 1.0e-6,
+            .max_abs_difference_abs = 1.0e-6,
+            .correlation_abs = 1.0e-6,
+        },
+        true,
+    );
+
+    try std.testing.expectEqual(o2a_vendor.AssessmentVerdict.baseline_pass, outcome.verdict);
+    try std.testing.expectEqual(o2a_vendor.TrendState.flat, outcome.trend.mean_abs_difference);
+    try std.testing.expectEqual(o2a_vendor.TrendState.flat, outcome.trend.correlation);
+}
+
+test "o2a vendor assessment passes when lower-is-better metrics improve" {
+    const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
+    const improved = makeMetrics(0.03, 0.04, 0.07, 0.991, false);
+    const outcome = o2a_vendor.assessAgainstBaseline(
+        improved,
+        baseline,
+        .{
+            .mean_abs_difference_abs = 1.0e-6,
+            .root_mean_square_difference_abs = 1.0e-6,
+            .max_abs_difference_abs = 1.0e-6,
+            .correlation_abs = 1.0e-6,
+        },
+        true,
+    );
+
+    try std.testing.expectEqual(o2a_vendor.AssessmentVerdict.baseline_pass, outcome.verdict);
+    try std.testing.expectEqual(o2a_vendor.TrendState.improved, outcome.trend.mean_abs_difference);
+    try std.testing.expectEqual(o2a_vendor.TrendState.improved, outcome.trend.correlation);
+}
+
+test "o2a vendor assessment fails when lower-is-better metrics regress" {
+    const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
+    const regressed = makeMetrics(0.05, 0.06, 0.09, 0.99, false);
+    const outcome = o2a_vendor.assessAgainstBaseline(
+        regressed,
+        baseline,
+        .{
+            .mean_abs_difference_abs = 1.0e-6,
+            .root_mean_square_difference_abs = 1.0e-6,
+            .max_abs_difference_abs = 1.0e-6,
+            .correlation_abs = 1.0e-6,
+        },
+        true,
+    );
+
+    try std.testing.expectEqual(o2a_vendor.AssessmentVerdict.regression_fail, outcome.verdict);
+    try std.testing.expectEqual(o2a_vendor.TrendState.regressed, outcome.trend.mean_abs_difference);
+}
+
+test "o2a vendor assessment fails when higher-is-better metrics regress" {
+    const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
+    const regressed = makeMetrics(0.04, 0.05, 0.08, 0.98, false);
+    const outcome = o2a_vendor.assessAgainstBaseline(
+        regressed,
+        baseline,
+        .{
+            .mean_abs_difference_abs = 1.0e-6,
+            .root_mean_square_difference_abs = 1.0e-6,
+            .max_abs_difference_abs = 1.0e-6,
+            .correlation_abs = 1.0e-6,
+        },
+        true,
+    );
+
+    try std.testing.expectEqual(o2a_vendor.AssessmentVerdict.regression_fail, outcome.verdict);
+    try std.testing.expectEqual(o2a_vendor.TrendState.regressed, outcome.trend.correlation);
+}
+
+test "o2a vendor assessment fails when morphology metrics regress" {
+    const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
+    var regressed = baseline;
+    regressed.mid_band_mean_difference = 0.02;
+
+    const outcome = o2a_vendor.assessAgainstBaseline(
+        regressed,
+        baseline,
+        .{
+            .mean_abs_difference_abs = 1.0e-6,
+            .root_mean_square_difference_abs = 1.0e-6,
+            .max_abs_difference_abs = 1.0e-6,
+            .correlation_abs = 1.0e-6,
+        },
+        true,
+    );
+
+    try std.testing.expectEqual(o2a_vendor.AssessmentVerdict.regression_fail, outcome.verdict);
+    try std.testing.expectEqual(o2a_vendor.TrendState.regressed, outcome.trend.mid_band_mean_difference);
 }
 
 test "o2a vendor forward reflectance assessment reports trend against stored baseline" {
@@ -146,9 +239,15 @@ test "o2a vendor forward reflectance assessment reports trend against stored bas
         vendor_case.reference,
         anchor.parsed.value.zero_tolerance_abs,
     );
-    try emitAssessment(std.testing.allocator, anchor.parsed.value, current);
+    const outcome = o2a_vendor.assessAgainstBaseline(
+        current,
+        anchor.parsed.value.baseline,
+        anchor.parsed.value.trend_tolerances,
+        anchor.parsed.value.guidance.allowed_to_fail,
+    );
+    try emitAssessment(std.testing.allocator, anchor.parsed.value, current, outcome);
 
-    if (!current.exact_match_within_zero_tolerance) {
+    if (outcome.verdict == .regression_fail or outcome.verdict == .nonzero_fail) {
         return error.TestUnexpectedResult;
     }
 }

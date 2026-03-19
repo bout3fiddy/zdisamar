@@ -601,14 +601,27 @@ fn initLoadedAsset(
         if (!std.mem.eql(u8, actual, expected)) return error.ColumnMismatch;
     }
 
+    const owned_bundle_manifest_path = try allocator.dupe(u8, bundle_manifest_path);
+    errdefer allocator.free(owned_bundle_manifest_path);
+    const owned_bundle_id = try allocator.dupe(u8, manifest.bundle_id);
+    errdefer allocator.free(owned_bundle_id);
+    const owned_owner_package = try allocator.dupe(u8, manifest.owner_package);
+    errdefer allocator.free(owned_owner_package);
+    const owned_asset_id = try allocator.dupe(u8, manifest_asset.id);
+    errdefer allocator.free(owned_asset_id);
+    const owned_asset_path = try allocator.dupe(u8, manifest_asset.path);
+    errdefer allocator.free(owned_asset_path);
+    const owned_dataset_id = try std.fmt.allocPrint(allocator, "{s}:{s}", .{ manifest.bundle_id, manifest_asset.id });
+    errdefer allocator.free(owned_dataset_id);
+
     return .{
         .kind = kind,
-        .bundle_manifest_path = try allocator.dupe(u8, bundle_manifest_path),
-        .bundle_id = try allocator.dupe(u8, manifest.bundle_id),
-        .owner_package = try allocator.dupe(u8, manifest.owner_package),
-        .asset_id = try allocator.dupe(u8, manifest_asset.id),
-        .asset_path = try allocator.dupe(u8, manifest_asset.path),
-        .dataset_id = try std.fmt.allocPrint(allocator, "{s}:{s}", .{ manifest.bundle_id, manifest_asset.id }),
+        .bundle_manifest_path = owned_bundle_manifest_path,
+        .bundle_id = owned_bundle_id,
+        .owner_package = owned_owner_package,
+        .asset_id = owned_asset_id,
+        .asset_path = owned_asset_path,
+        .dataset_id = owned_dataset_id,
         .dataset_hash = dataset_hash,
         .column_names = parsed_table.column_names,
         .values = parsed_table.values,

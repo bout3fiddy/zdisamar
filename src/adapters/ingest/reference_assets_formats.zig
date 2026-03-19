@@ -57,9 +57,14 @@ fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!Par
     var header_tokens = std.mem.splitScalar(u8, header, ',');
     var header_names = std.ArrayList([]const u8).empty;
     defer header_names.deinit(allocator);
+    errdefer {
+        for (header_names.items) |name| allocator.free(name);
+    }
 
     while (header_tokens.next()) |token| {
-        try header_names.append(allocator, try allocator.dupe(u8, trimWhitespace(token)));
+        const name = try allocator.dupe(u8, trimWhitespace(token));
+        errdefer allocator.free(name);
+        try header_names.append(allocator, name);
     }
     if (header_names.items.len == 0) return error.InvalidCsv;
 
@@ -85,7 +90,15 @@ fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!Par
     if (row_count == 0) return error.InvalidCsv;
 
     const columns = try allocator.alloc([]const u8, header_names.items.len);
-    for (header_names.items, 0..) |name, index| columns[index] = name;
+    var copied_columns: usize = 0;
+    errdefer {
+        for (columns[0..copied_columns]) |name| allocator.free(name);
+        allocator.free(columns);
+    }
+    for (header_names.items, 0..) |name, index| {
+        columns[index] = name;
+        copied_columns = index + 1;
+    }
     header_names.clearRetainingCapacity();
 
     return .{
