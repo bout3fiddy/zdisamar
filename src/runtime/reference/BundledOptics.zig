@@ -116,7 +116,7 @@ fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Referen
             allocator,
             .spectroscopy_line_list,
             cross_section_manifest_path,
-            "o2a_hitran_subset_07_hit08_tropomi",
+            "o2a_hitran_07_hit08_tropomi",
         );
         defer line_asset.deinit(allocator);
 
@@ -126,7 +126,7 @@ fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Referen
             allocator,
             .spectroscopy_strong_line_set,
             cross_section_manifest_path,
-            "o2a_lisa_sdf_subset",
+            "o2a_lisa_sdf",
         );
         defer strong_asset.deinit(allocator);
 
@@ -137,7 +137,7 @@ fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Referen
             allocator,
             .spectroscopy_relaxation_matrix,
             cross_section_manifest_path,
-            "o2a_lisa_rmf_subset",
+            "o2a_lisa_rmf",
         );
         defer rmf_asset.deinit(allocator);
 
@@ -181,7 +181,7 @@ fn loadCollisionInducedAbsorptionForScene(
         allocator,
         .collision_induced_absorption_table,
         cross_section_manifest_path,
-        "o2o2_bira_o2a_subset",
+        "o2o2_bira_o2a",
     );
     defer asset.deinit(allocator);
     return try asset.toCollisionInducedAbsorptionTable(allocator);

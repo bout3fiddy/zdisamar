@@ -60,7 +60,7 @@
     },
     {
       "id": "o2a_hitran_07_hit08_tropomi",
-      "path": "vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par",
+      "path": "data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
       "format": "hitran_160",
       "sha256": "sha256:a380be78be60379201a397117eee58fbcd8ae228e8372449ddc8b6707c711507",
       "columns": [
@@ -98,7 +98,7 @@
     },
     {
       "id": "o2a_lisa_sdf",
-      "path": "vendor/disamar-fortran/RefSpec/O2A_LISA_SDF.dat",
+      "path": "data/cross_sections/o2a_lisa_sdf.dat",
       "format": "lisa_sdf",
       "sha256": "sha256:292e5a28b8993bc8a221a02b1c75ecd4f48bc8d11c489b795bc21c821b85f868",
       "columns": [
@@ -128,7 +128,7 @@
     },
     {
       "id": "o2a_lisa_rmf",
-      "path": "vendor/disamar-fortran/RefSpec/O2A_LISA_RMF.dat",
+      "path": "data/cross_sections/o2a_lisa_rmf.dat",
       "format": "lisa_rmf",
       "sha256": "sha256:469b71408dad0eb6875b4133250685bc0614978a4110df8a706860224ef4c432",
       "columns": [
@@ -151,7 +151,7 @@
     },
     {
       "id": "o2o2_bira_o2a",
-      "path": "vendor/disamar-fortran/RefSpec/O2O2T_BIRA_full_spectrum.dat",
+      "path": "data/cross_sections/o2o2_bira_o2a.dat",
       "format": "bira_cia_poly",
       "sha256": "sha256:37bfd7662114816366c4e19d846715ae6aff5db2c48e10c49f02a20783d02cb4",
       "columns": [
