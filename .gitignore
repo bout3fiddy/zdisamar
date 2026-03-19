@@ -12,4 +12,7 @@ profile_errorCovariance.out
 vendor/
 specs/
 docs/specs/
-docs/workpackages/
+docs/workpackages/*
+!docs/workpackages/fp-03/
+!docs/workpackages/fp-03/**
+docs/workpackages/fp-03/.DS_Store
