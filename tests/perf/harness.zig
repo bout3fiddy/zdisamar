@@ -19,6 +19,7 @@ pub const ScenarioMeasurement = struct {
     id: []u8,
     iterations: u32,
     budget_ms: u64,
+    runtime_limit_ms: u64,
     elapsed_ms: u64,
     checksum: u64,
     upstream_anchor_present: bool,
@@ -97,7 +98,11 @@ pub fn measureMatrixWithOptions(
             @min(scenario.iterations, max_iterations)
         else
             scenario.iterations;
-        const budget_ms: u64 = @as(u64, scenario.max_runtime_ms) * 25 + 100;
+        const budget_ms: u64 = scenario.max_runtime_ms;
+        const runtime_limit_ms: u64 = if (options.max_iterations != null)
+            budget_ms * 25 + 100
+        else
+            budget_ms;
 
         const start_ns = std.time.nanoTimestamp();
         var checksum: u64 = 0;
@@ -126,6 +131,7 @@ pub fn measureMatrixWithOptions(
             .id = try allocator.dupe(u8, scenario.id),
             .iterations = iterations,
             .budget_ms = budget_ms,
+            .runtime_limit_ms = runtime_limit_ms,
             .elapsed_ms = elapsed_ms,
             .checksum = checksum,
             .upstream_anchor_present = anchor_present,
@@ -147,8 +153,9 @@ pub fn assertExecutionSanity(report: BenchReport) !void {
     for (report.scenarios) |scenario| {
         try std.testing.expect(scenario.iterations > 0);
         try std.testing.expect(scenario.budget_ms > 0);
+        try std.testing.expect(scenario.runtime_limit_ms >= scenario.budget_ms);
         try std.testing.expect(scenario.checksum > 0);
-        try std.testing.expect(scenario.elapsed_ms <= scenario.budget_ms);
+        try std.testing.expect(scenario.elapsed_ms <= scenario.runtime_limit_ms);
         if (report.upstream_root_present) {
             try std.testing.expect(scenario.upstream_anchor_present);
         }
