@@ -18,5 +18,6 @@
 ## Commands
 
 - `zig build check` is the fast local verification command.
+- `zig build test-transport` is the focused transport/parity verification command.
 - `zig build test` is the full verification command.
 - `zig build` builds the scaffold CLI and library.

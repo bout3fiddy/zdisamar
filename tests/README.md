@@ -10,11 +10,15 @@ development.
 - `tests/validation/`: schema and evidence-asset integrity checks for validation data.
 
 Use `zig build check` for the fast local loop.
+Use `zig build test-transport` for the focused transport/parity loop.
 
 Run all suites with `zig build test`, or targeted suites with:
 
 - `zig build test-unit`
 - `zig build test-integration`
+- `zig build test-integration-forward-model`
 - `zig build test-golden`
 - `zig build test-perf`
 - `zig build test-validation`
+- `zig build test-validation-compatibility`
+- `zig build test-validation-o2a`

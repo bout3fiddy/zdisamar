@@ -198,6 +198,18 @@ pub fn build(b: *std.Build) void {
         "Run integration verification suite",
         "tests/integration/main.zig",
     );
+    const run_integration_forward_model = addSuiteRunStep(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-integration-forward-model",
+        "Run focused forward-model integration tests",
+        "tests/integration/forward_model_integration_test.zig",
+    );
     const run_golden_suite = addSuiteRunStep(
         b,
         target,
@@ -234,9 +246,39 @@ pub fn build(b: *std.Build) void {
         "Run compatibility and validation asset suite",
         "tests/validation/main.zig",
     );
+    const run_validation_compatibility = addSuiteRunStep(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-compatibility",
+        "Run focused DISAMAR compatibility harness tests",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+    );
+    const run_validation_o2a = addSuiteRunStep(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-o2a",
+        "Run focused O2A forward-shape validation tests",
+        "tests/validation/o2a_forward_shape_test.zig",
+    );
 
     const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(run_unit_suite);
+
+    const transport_step = b.step("test-transport", "Run focused transport parity verification");
+    transport_step.dependOn(run_unit_suite);
+    transport_step.dependOn(run_integration_forward_model);
+    transport_step.dependOn(run_validation_compatibility);
+    transport_step.dependOn(run_validation_o2a);
 
     const test_suites_step = b.step("test-suites", "Run all verification suites");
     test_suites_step.dependOn(run_unit_suite);
