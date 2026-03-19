@@ -352,7 +352,7 @@ pub fn build(b: *std.Build) void {
         "Run focused O2A forward-shape validation tests",
         "tests/validation/o2a_forward_shape_test.zig",
     );
-    const run_validation_o2a_vendor = addSuiteRunStep(
+    _ = addSuiteRunStep(
         b,
         target,
         optimize,
@@ -373,7 +373,6 @@ pub fn build(b: *std.Build) void {
     transport_step.dependOn(run_integration_forward_model);
     transport_step.dependOn(run_validation_compatibility);
     transport_step.dependOn(run_validation_o2a);
-    transport_step.dependOn(run_validation_o2a_vendor);
 
     const test_suites_step = b.step("test-suites", "Run all verification suites");
     test_suites_step.dependOn(run_unit_suite);

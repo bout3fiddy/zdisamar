@@ -21,6 +21,6 @@
 - `zig build test-transport` is the focused transport/parity verification command.
 - `zig build test-validation-compatibility` is the fast compatibility smoke command.
 - `zig build test-validation-compatibility-full` runs the full DISAMAR compatibility harness.
-- `zig build test-validation-o2a-vendor` runs the O2A vendor trend assessment lane.
+- `zig build test-validation-o2a-vendor` runs the opt-in O2A vendor trend assessment lane.
 - `zig build test` is the full verification command.
 - `zig build` builds the scaffold CLI and library.
