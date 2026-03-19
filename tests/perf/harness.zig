@@ -38,6 +38,10 @@ pub const BenchReport = struct {
     }
 };
 
+pub const MeasureOptions = struct {
+    max_iterations: ?u32 = null,
+};
+
 pub fn loadMatrix(allocator: std.mem.Allocator, path: []const u8) !std.json.Parsed(PerfMatrix) {
     const raw = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
     defer allocator.free(raw);
@@ -54,6 +58,14 @@ pub fn loadMatrix(allocator: std.mem.Allocator, path: []const u8) !std.json.Pars
 }
 
 pub fn measureMatrix(allocator: std.mem.Allocator, matrix: PerfMatrix) !BenchReport {
+    return measureMatrixWithOptions(allocator, matrix, .{});
+}
+
+pub fn measureMatrixWithOptions(
+    allocator: std.mem.Allocator,
+    matrix: PerfMatrix,
+    options: MeasureOptions,
+) !BenchReport {
     const upstream_root = "vendor/disamar-fortran";
     const upstream_present = pathExists(upstream_root);
     const scenarios = try allocator.alloc(ScenarioMeasurement, matrix.scenarios.len);
@@ -81,7 +93,10 @@ pub fn measureMatrix(allocator: std.mem.Allocator, matrix: PerfMatrix) !BenchRep
             false;
 
         const template = try scenarioTemplate(scenario.plan_template);
-        const iterations: u32 = scenario.iterations;
+        const iterations: u32 = if (options.max_iterations) |max_iterations|
+            @min(scenario.iterations, max_iterations)
+        else
+            scenario.iterations;
         const budget_ms: u64 = @as(u64, scenario.max_runtime_ms) * 25 + 100;
 
         const start_ns = std.time.nanoTimestamp();

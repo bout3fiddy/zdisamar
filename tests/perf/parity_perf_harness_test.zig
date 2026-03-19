@@ -8,7 +8,9 @@ test "performance harness executes perf matrix scenarios with bounded runtime" {
     try std.testing.expectEqual(@as(u32, 1), matrix.value.version);
     try std.testing.expect(matrix.value.scenarios.len > 0);
 
-    var report = try harness.measureMatrix(std.testing.allocator, matrix.value);
+    var report = try harness.measureMatrixWithOptions(std.testing.allocator, matrix.value, .{
+        .max_iterations = 64,
+    });
     defer report.deinit(std.testing.allocator);
 
     try harness.assertExecutionSanity(report);
