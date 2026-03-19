@@ -61,6 +61,13 @@ const ExecutedParityCounts = struct {
     measurement_space: usize = 0,
 };
 
+const ParityRunResult = struct {
+    expected: ExecutedParityCounts,
+    executed: ExecutedParityCounts,
+};
+
+const vendor_ascii_hdf_anchor_path = "validation/compatibility/disamar_asciihdf_anchor.txt";
+
 fn parseParityComponent(value: []const u8) !ParityComponent {
     if (std.mem.eql(u8, value, "transport")) return .transport;
     if (std.mem.eql(u8, value, "retrieval")) return .retrieval;
@@ -77,6 +84,16 @@ fn includesParityComponent(
         if (allowed == component) return true;
     }
     return false;
+}
+
+fn incrementParityCounts(counts: *ExecutedParityCounts, component: ParityComponent) void {
+    counts.total += 1;
+    switch (component) {
+        .transport => counts.transport += 1,
+        .retrieval => counts.retrieval += 1,
+        .optics => counts.optics += 1,
+        .measurement_space => counts.measurement_space += 1,
+    }
 }
 
 fn matrixIndex(row: usize, column: usize, column_count: usize) usize {
@@ -533,21 +550,21 @@ fn prepareOpticalStateForCase(
             allocator,
             .spectroscopy_line_list,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_hitran_07_hit08_tropomi",
+            "o2a_hitran_subset_07_hit08_tropomi",
         );
         defer line_asset.deinit(allocator);
         var strong_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
             allocator,
             .spectroscopy_strong_line_set,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_lisa_sdf",
+            "o2a_lisa_sdf_subset",
         );
         defer strong_asset.deinit(allocator);
         var rmf_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
             allocator,
             .spectroscopy_relaxation_matrix,
             "data/cross_sections/bundle_manifest.json",
-            "o2a_lisa_rmf",
+            "o2a_lisa_rmf_subset",
         );
         defer rmf_asset.deinit(allocator);
 
@@ -563,7 +580,7 @@ fn prepareOpticalStateForCase(
             allocator,
             .collision_induced_absorption_table,
             "data/cross_sections/bundle_manifest.json",
-            "o2o2_bira_o2a",
+            "o2o2_bira_o2a_subset",
         );
         defer cia_asset.deinit(allocator);
         collision_induced_absorption = try cia_asset.toCollisionInducedAbsorptionTable(allocator);
@@ -716,7 +733,7 @@ fn expectNear(actual: f64, expected: f64, absolute_tolerance: f64, relative_tole
 
 fn runParityCases(
     components: []const ParityComponent,
-) !ExecutedParityCounts {
+) !ParityRunResult {
     const raw = try std.fs.cwd().readFileAlloc(
         std.testing.allocator,
         "validation/compatibility/parity_matrix.json",
@@ -743,11 +760,13 @@ fn runParityCases(
     try engine.bootstrapBuiltinCatalog();
 
     var workspace = engine.createWorkspace("compatibility-suite");
+    var expected_counts = ExecutedParityCounts{};
     var executed_counts = ExecutedParityCounts{};
 
     for (matrix.value.cases) |case| {
         const component = try parseParityComponent(case.component);
         if (!includesParityComponent(components, component)) continue;
+        incrementParityCounts(&expected_counts, component);
 
         if (component == .retrieval) {
             const supported_status =
@@ -921,40 +940,40 @@ fn runParityCases(
                 try expectBoundedO2AMorphology(product.wavelengths, product.reflectance);
             }
         }
-        executed_counts.total += 1;
-        switch (component) {
-            .transport => executed_counts.transport += 1,
-            .retrieval => executed_counts.retrieval += 1,
-            .optics => executed_counts.optics += 1,
-            .measurement_space => executed_counts.measurement_space += 1,
-        }
+        incrementParityCounts(&executed_counts, component);
     }
 
-    return executed_counts;
+    return .{
+        .expected = expected_counts,
+        .executed = executed_counts,
+    };
 }
 
 test "compatibility harness executes transport and measurement-space parity cases against vendor anchors" {
-    const executed = try runParityCases(&.{ .transport, .measurement_space });
-    try std.testing.expect(executed.total > 0);
-    try std.testing.expect(executed.transport > 0);
-    try std.testing.expect(executed.measurement_space > 0);
+    const result = try runParityCases(&.{ .transport, .measurement_space });
+    try std.testing.expect(result.expected.total > 0);
+    try std.testing.expectEqual(result.expected.total, result.executed.total);
+    try std.testing.expectEqual(result.expected.transport, result.executed.transport);
+    try std.testing.expectEqual(result.expected.measurement_space, result.executed.measurement_space);
 }
 
 test "compatibility harness executes retrieval parity cases against vendor anchors" {
-    const executed = try runParityCases(&.{.retrieval});
-    try std.testing.expect(executed.total > 0);
-    try std.testing.expect(executed.retrieval > 0);
+    const result = try runParityCases(&.{.retrieval});
+    try std.testing.expect(result.expected.retrieval > 0);
+    try std.testing.expectEqual(result.expected.total, result.executed.total);
+    try std.testing.expectEqual(result.expected.retrieval, result.executed.retrieval);
 }
 
 test "compatibility harness executes optics parity cases against vendor anchors" {
-    const executed = try runParityCases(&.{.optics});
-    try std.testing.expect(executed.total > 0);
-    try std.testing.expect(executed.optics > 0);
+    const result = try runParityCases(&.{.optics});
+    try std.testing.expect(result.expected.optics > 0);
+    try std.testing.expectEqual(result.expected.total, result.executed.total);
+    try std.testing.expectEqual(result.expected.optics, result.executed.optics);
 }
 
 fn expectBoundedVendorAsciiHdfDiagnostics() !void {
     const anchor = try parseVendorAsciiHdfAnchor(
-        "vendor/disamar-fortran/test/disamar.asciiHDF",
+        vendor_ascii_hdf_anchor_path,
         std.testing.allocator,
     );
 
@@ -969,12 +988,13 @@ test "compatibility harness parses bounded vendor retrieval diagnostics from asc
 }
 
 test "compatibility harness executes the full parity matrix against vendor anchors" {
-    const executed = try runParityCases(&.{ .transport, .measurement_space, .retrieval, .optics });
-    try std.testing.expect(executed.total > 0);
-    try std.testing.expect(executed.transport > 0);
-    try std.testing.expect(executed.measurement_space > 0);
-    try std.testing.expect(executed.retrieval > 0);
-    try std.testing.expect(executed.optics > 0);
+    const result = try runParityCases(&.{ .transport, .measurement_space, .retrieval, .optics });
+    try std.testing.expect(result.expected.total > 0);
+    try std.testing.expectEqual(result.expected.total, result.executed.total);
+    try std.testing.expectEqual(result.expected.transport, result.executed.transport);
+    try std.testing.expectEqual(result.expected.measurement_space, result.executed.measurement_space);
+    try std.testing.expectEqual(result.expected.retrieval, result.executed.retrieval);
+    try std.testing.expectEqual(result.expected.optics, result.executed.optics);
     try expectPreparedRouteRtmControls();
     try expectBoundedVendorAsciiHdfDiagnostics();
 }

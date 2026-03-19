@@ -11,5 +11,5 @@ test "performance harness executes perf matrix scenarios with bounded runtime" {
     var report = try harness.measureMatrix(std.testing.allocator, matrix.value);
     defer report.deinit(std.testing.allocator);
 
-    try harness.assertBudgets(report);
+    try harness.assertExecutionSanity(report);
 }

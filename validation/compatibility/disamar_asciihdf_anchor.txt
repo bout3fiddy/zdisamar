@@ -1,0 +1,8 @@
+BeginGroup(/)
+BeginAttributes
+number of iterations = 6
+solution_has_converged = true
+chi2 = 0.8421
+DFS = 1.734
+EndAttributes
+EndGroup(/)

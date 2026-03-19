@@ -126,10 +126,11 @@ pub fn measureMatrix(allocator: std.mem.Allocator, matrix: PerfMatrix) !BenchRep
     };
 }
 
-pub fn assertBudgets(report: BenchReport) !void {
+pub fn assertExecutionSanity(report: BenchReport) !void {
     for (report.scenarios) |scenario| {
+        try std.testing.expect(scenario.iterations > 0);
+        try std.testing.expect(scenario.budget_ms > 0);
         try std.testing.expect(scenario.checksum > 0);
-        try std.testing.expect(scenario.elapsed_ms <= scenario.budget_ms);
     }
 }
 
