@@ -11,7 +11,6 @@ development.
 
 Use `zig build check` for the fast local loop.
 Use `zig build test-fast` for the fast presubmit lane.
-Use `zig build ci` for the blocking Linux CI mirror.
 Use `zig build bench` for the non-gating benchmark summary lane.
 Use `zig build tidy` for architecture and policy checks.
 Use `zig build test-transport` for the focused transport/parity loop.
