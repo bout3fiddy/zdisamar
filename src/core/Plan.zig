@@ -4,6 +4,7 @@ const PluginRuntime = @import("../plugins/loader/runtime.zig");
 const PluginProviders = @import("../plugins/providers/root.zig");
 const PluginSelection = @import("../plugins/selection.zig");
 const PreparedLayout = @import("../runtime/cache/PreparedLayout.zig").PreparedLayout;
+const RtmControls = @import("../kernels/transport/common.zig").RtmControls;
 const TransportRoute = @import("../kernels/transport/common.zig").Route;
 const std = @import("std");
 const errors = @import("errors.zig");
@@ -22,6 +23,7 @@ pub const Template = struct {
     providers: PluginSelection.ProviderSelection = .{},
     solver_mode: SolverMode = .scalar,
     scene_blueprint: SceneModel.Blueprint = .{},
+    rtm_controls: RtmControls = .{},
 
     pub fn validate(self: Template) errors.TemplateError!void {
         if (self.model_family.len == 0) {

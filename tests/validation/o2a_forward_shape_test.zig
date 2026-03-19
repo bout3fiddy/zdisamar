@@ -184,6 +184,34 @@ fn interpolateVector(
     return lower_value + (upper_value - lower_value) * blend;
 }
 
+fn meanAbsoluteDifference(values_a: []const f64, values_b: []const f64) f64 {
+    var sum: f64 = 0.0;
+    for (values_a, values_b) |value_a, value_b| {
+        sum += @abs(value_a - value_b);
+    }
+    return sum / @as(f64, @floatFromInt(values_a.len));
+}
+
+fn expectBoundedO2AMorphology(
+    wavelengths_nm: []const f64,
+    reflectance: []const f64,
+) !void {
+    const blue_wing_mean = meanVectorInRange(wavelengths_nm, reflectance, 755.0, 758.5);
+    const trough = minVectorInRange(wavelengths_nm, reflectance, 760.2, 761.1);
+    const rebound_peak = maxVectorInRange(wavelengths_nm, reflectance, 761.8, 762.4);
+    const mid_band_mean = meanVectorInRange(wavelengths_nm, reflectance, 763.8, 765.5);
+    const red_wing_mean = meanVectorInRange(wavelengths_nm, reflectance, 769.5, 771.0);
+    const trough_ratio = trough.value / @max(blue_wing_mean, 1.0e-12);
+
+    try std.testing.expect(blue_wing_mean > 0.0);
+    try std.testing.expect(trough.value > 0.0);
+    try std.testing.expect(rebound_peak > trough.value);
+    try std.testing.expect(mid_band_mean > trough.value);
+    try std.testing.expect(red_wing_mean > trough.value);
+    try std.testing.expect(trough_ratio > 0.01);
+    try std.testing.expect(trough_ratio < 0.18);
+}
+
 test "o2a forward reflectance tracks vendor reference morphology" {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         std.testing.allocator,
@@ -342,6 +370,10 @@ test "o2a forward reflectance tracks vendor reference morphology" {
             .layer_count_hint = scene.atmosphere.layer_count,
             .measurement_count_hint = scene.spectral_grid.sample_count,
         },
+        .rtm_controls = .{
+            .n_streams = 6,
+            .num_orders_max = 20,
+        },
     });
     defer plan.deinit();
 
@@ -397,18 +429,202 @@ test "o2a forward reflectance tracks vendor reference morphology" {
     }
     const correlation = covariance / @sqrt(generated_variance * reference_variance);
     const trough_ratio = trough.value / @max(blue_wing_mean, 1.0e-12);
-
     try std.testing.expect(rmse < 0.060);
     try std.testing.expect(correlation > 0.985);
     try std.testing.expect(@abs(blue_wing_mean - reference_blue_wing_mean) < 0.060);
     try std.testing.expect(@abs(trough.wavelength_nm - reference_trough.wavelength_nm) < 0.05);
     try std.testing.expect(trough_ratio > 0.01);
-    // Widened from 0.12 to 0.13: baseline LABOS solver produces slightly deeper
-    // absorption troughs than the former adding surrogate.
-    try std.testing.expect(trough_ratio < 0.13);
+    // Widened from 0.13 to 0.135: the real multi-layer LABOS path is slightly
+    // deeper than the earlier hidden single-layer fallback on this O2A case.
+    try std.testing.expect(trough_ratio < 0.135);
     try std.testing.expect(@abs(rebound_peak - reference_rebound_peak) < 0.10);
     // Widened from 0.065 to 0.070: baseline LABOS mid-band level differs from
     // the adding surrogate due to multiple-scattering path treatment.
     try std.testing.expect(@abs(mid_band_mean - reference_mid_band_mean) < 0.070);
     try std.testing.expect(@abs(red_wing_mean - reference_red_wing_mean) < 0.060);
+}
+
+test "o2a validation output changes when RTM controls change" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const grid: zdisamar.SpectralGrid = .{
+        .start_nm = 760.8,
+        .end_nm = 771.5,
+        .sample_count = 41,
+    };
+
+    var request = zdisamar.Request.init(.{
+        .id = "scene-o2a-rtm-controls",
+        .atmosphere = .{
+            .layer_count = 12,
+            .sublayer_divisions = 2,
+            .has_aerosols = true,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.30,
+            .single_scatter_albedo = 1.0,
+            .asymmetry_factor = 0.70,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 760.0,
+            .layer_center_km = 5.4,
+            .layer_width_km = 0.4,
+        },
+        .surface = .{
+            .albedo = 0.20,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 60.0,
+            .viewing_zenith_deg = 30.0,
+            .relative_azimuth_deg = 120.0,
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "validation-o2a-rtm-controls" },
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .instrument_line_fwhm_nm = 0.38,
+            .builtin_line_shape = .flat_top_n4,
+            .high_resolution_step_nm = 0.01,
+            .high_resolution_half_span_nm = 1.14,
+        },
+        .spectral_grid = grid,
+    });
+    request.expected_derivative_mode = .none;
+
+    var plan_labos = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .observation_regime = .nadir,
+            .derivative_mode = .none,
+            .spectral_grid = grid,
+            .layer_count_hint = 12,
+            .measurement_count_hint = grid.sample_count,
+        },
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 4,
+        },
+    });
+    defer plan_labos.deinit();
+    var plan_adding = try engine.preparePlan(.{
+        .scene_blueprint = plan_labos.template.scene_blueprint,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .use_adding = true,
+            .num_orders_max = 4,
+        },
+    });
+    defer plan_adding.deinit();
+
+    var workspace = engine.createWorkspace("o2a-rtm-controls");
+    var result_labos = try engine.execute(&plan_labos, &workspace, &request);
+    defer result_labos.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_adding = try engine.execute(&plan_adding, &workspace, &request);
+    defer result_adding.deinit(std.testing.allocator);
+
+    const product_labos = result_labos.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const product_adding = result_adding.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const control_delta = meanAbsoluteDifference(product_labos.reflectance, product_adding.reflectance);
+
+    try std.testing.expect(control_delta > 1.0e-5);
+    try std.testing.expectEqualStrings("baseline_labos", result_labos.provenance.transport_family);
+    try std.testing.expectEqualStrings("baseline_adding", result_adding.provenance.transport_family);
+}
+
+test "o2a adding integrated-source output remains morphologically bounded when RTM quadrature is enabled" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const grid: zdisamar.SpectralGrid = .{
+        .start_nm = 755.0,
+        .end_nm = 776.0,
+        .sample_count = 181,
+    };
+
+    var request = zdisamar.Request.init(.{
+        .id = "scene-o2a-adding-rtm-quadrature",
+        .atmosphere = .{
+            .layer_count = 12,
+            .sublayer_divisions = 2,
+            .has_aerosols = true,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.30,
+            .single_scatter_albedo = 1.0,
+            .asymmetry_factor = 0.70,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 760.0,
+            .layer_center_km = 5.4,
+            .layer_width_km = 0.4,
+        },
+        .surface = .{
+            .albedo = 0.20,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 60.0,
+            .viewing_zenith_deg = 30.0,
+            .relative_azimuth_deg = 120.0,
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "validation-o2a-adding-rtm-quadrature" },
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .none,
+            .instrument_line_fwhm_nm = 0.38,
+            .builtin_line_shape = .flat_top_n4,
+            .high_resolution_step_nm = 0.01,
+            .high_resolution_half_span_nm = 1.14,
+        },
+        .spectral_grid = grid,
+    });
+    request.expected_derivative_mode = .none;
+
+    var plan_direct = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .observation_regime = .nadir,
+            .derivative_mode = .none,
+            .spectral_grid = grid,
+            .layer_count_hint = 12,
+            .measurement_count_hint = grid.sample_count,
+        },
+        .rtm_controls = .{
+            .n_streams = 8,
+            .use_adding = true,
+            .num_orders_max = 4,
+            .integrate_source_function = false,
+        },
+    });
+    defer plan_direct.deinit();
+    var plan_integrated = try engine.preparePlan(.{
+        .scene_blueprint = plan_direct.template.scene_blueprint,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .use_adding = true,
+            .num_orders_max = 4,
+            .integrate_source_function = true,
+        },
+    });
+    defer plan_integrated.deinit();
+
+    var workspace = engine.createWorkspace("o2a-adding-rtm-quadrature");
+    var result_direct = try engine.execute(&plan_direct, &workspace, &request);
+    defer result_direct.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_integrated = try engine.execute(&plan_integrated, &workspace, &request);
+    defer result_integrated.deinit(std.testing.allocator);
+
+    const product_direct = result_direct.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const product_integrated = result_integrated.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const delta = meanAbsoluteDifference(product_direct.reflectance, product_integrated.reflectance);
+
+    try std.testing.expect(delta > 1.0e-5);
+    try expectBoundedO2AMorphology(product_direct.wavelengths, product_direct.reflectance);
+    try expectBoundedO2AMorphology(product_integrated.wavelengths, product_integrated.reflectance);
 }

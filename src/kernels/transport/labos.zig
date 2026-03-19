@@ -4,80 +4,75 @@ const common = @import("common.zig");
 const derivatives = @import("derivatives.zig");
 
 const gauss_legendre = @import("../quadrature/gauss_legendre.zig");
+const Allocator = std.mem.Allocator;
 
 // --- Compile-time sizing ---------------------------------------------------
 // Maximum Gauss points for integration over the hemisphere. The total direction
-// count is nGauss + 2 (viewing + solar). With max_gauss=4 the largest matrix
-// is 6x6 = 36 f64s, comfortably stack-allocated.
-const max_gauss: usize = 4;
-const max_extra: usize = 2; // viewing + solar
-const max_nmutot: usize = max_gauss + max_extra;
-const max_n2: usize = max_nmutot * max_nmutot;
-const max_phase_coef: usize = @import("../optics/prepare/phase_functions.zig").phase_coefficient_count;
+// count is nGauss + 2 (viewing + solar). With max_gauss=10 the largest matrix
+// is 12x12 = 144 f64s, still comfortably stack-allocated.
+pub const max_gauss: usize = 10;
+pub const max_extra: usize = 2; // viewing + solar
+pub const max_nmutot: usize = max_gauss + max_extra;
+pub const max_n2: usize = max_nmutot * max_nmutot;
+pub const max_phase_coef: usize = @import("../optics/prepare/phase_functions.zig").phase_coefficient_count;
 
-// Controls for scattering-order convergence
-const default_threshold_doubl: f64 = 0.1;
-const default_threshold_mul: f64 = 1.0e-12;
-const default_threshold_conv_first: f64 = 1.0e-6;
-const default_threshold_conv_mult: f64 = 1.0e-4;
-const default_max_orders: usize = 20;
 const threshold_q: f64 = 1.0e-3;
 
 // ---------- Stack-allocated matrix type (nmutot x nmutot) ------------------
 // Stored row-major: element (i,j) = data[i * stride + j], where stride = nmutot.
-const Mat = struct {
+pub const Mat = struct {
     data: [max_n2]f64,
     n: usize,
 
     const Self = @This();
 
-    fn zero(n: usize) Self {
+    pub fn zero(n: usize) Self {
         return .{ .data = .{0.0} ** max_n2, .n = n };
     }
 
-    fn identity(n: usize) Self {
+    pub fn identity(n: usize) Self {
         var m = zero(n);
         for (0..n) |i| m.set(i, i, 1.0);
         return m;
     }
 
-    fn get(self: *const Self, i: usize, j: usize) f64 {
+    pub fn get(self: *const Self, i: usize, j: usize) f64 {
         return self.data[i * self.n + j];
     }
 
-    fn set(self: *Self, i: usize, j: usize, val: f64) void {
+    pub fn set(self: *Self, i: usize, j: usize, val: f64) void {
         self.data[i * self.n + j] = val;
     }
 
-    fn addTo(self: *Self, i: usize, j: usize, val: f64) void {
+    pub fn addTo(self: *Self, i: usize, j: usize, val: f64) void {
         self.data[i * self.n + j] += val;
     }
 };
 
 // Column vector sized nmutot.
-const Vec = struct {
+pub const Vec = struct {
     data: [max_nmutot]f64,
     n: usize,
 
-    fn zero(n: usize) Vec {
+    pub fn zero(n: usize) Vec {
         return .{ .data = .{0.0} ** max_nmutot, .n = n };
     }
 
-    fn get(self: *const Vec, i: usize) f64 {
+    pub fn get(self: *const Vec, i: usize) f64 {
         return self.data[i];
     }
 
-    fn set(self: *Vec, i: usize, val: f64) void {
+    pub fn set(self: *Vec, i: usize, val: f64) void {
         self.data[i] = val;
     }
 };
 
 // Two-column array for (viewing, solar) internal fields.
-const Vec2 = struct {
+pub const Vec2 = struct {
     col: [2]Vec,
     n: usize,
 
-    fn zero(n: usize) Vec2 {
+    pub fn zero(n: usize) Vec2 {
         return .{
             .col = .{ Vec.zero(n), Vec.zero(n) },
             .n = n,
@@ -86,26 +81,26 @@ const Vec2 = struct {
 };
 
 // Per-layer reflection/transmission operators.
-const LayerRT = struct {
+pub const LayerRT = struct {
     R: Mat, // reflection from top
     T: Mat, // transmission from top
 };
 
 // Internal radiation field at one level.
-const UDField = struct {
+pub const UDField = struct {
     E: Vec, // direct beam attenuation
     U: Vec2, // upward diffuse (2 cols: view, solar)
     D: Vec2, // downward diffuse (2 cols: view, solar)
 };
 
 // Local source at one layer boundary (upward + downward).
-const UDLocal = struct {
+pub const UDLocal = struct {
     U: Vec2,
     D: Vec2,
 };
 
 // --- Geometry setup --------------------------------------------------------
-const Geometry = struct {
+pub const Geometry = struct {
     n_gauss: usize,
     nmutot: usize,
     u: [max_nmutot]f64, // direction cosines: gauss[0..nGauss], muv, mu0
@@ -113,7 +108,7 @@ const Geometry = struct {
     mu0: f64,
     muv: f64,
 
-    fn init(n_gauss: usize, mu0: f64, muv: f64) Geometry {
+    pub fn init(n_gauss: usize, mu0: f64, muv: f64) Geometry {
         const rule = gauss_legendre.rule(@intCast(n_gauss)) catch unreachable;
         var geo: Geometry = undefined;
         geo.n_gauss = n_gauss;
@@ -141,7 +136,7 @@ const Geometry = struct {
         return geo;
     }
 
-    fn viewIdx(self: *const Geometry) usize {
+    pub fn viewIdx(self: *const Geometry) usize {
         return self.n_gauss;
     }
 };
@@ -151,7 +146,7 @@ const Geometry = struct {
 /// Matrix multiply that sums only over Gauss-point indices (0..nGauss).
 /// This ensures that the extra directions (view, solar) participate only
 /// as row/column recipients, not as quadrature nodes.
-fn smul(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
+pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     var result = Mat.zero(n);
     // Threshold: skip multiplication if both traces are essentially zero
     var tra: f64 = 0.0;
@@ -160,7 +155,7 @@ fn smul(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
         tra += a.get(k, k);
         trb += b.get(k, k);
     }
-    if (@abs(tra * trb) <= default_threshold_mul) return result;
+    if (@abs(tra * trb) <= threshold_mul) return result;
 
     for (0..n) |j| {
         for (0..n_gauss) |k| {
@@ -174,7 +169,7 @@ fn smul(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
 }
 
 /// Diagonal * matrix: result(i,j) = e(i) * a(i,j)
-fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
+pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
     var result = Mat.zero(n);
     for (0..n) |j| {
         for (0..n) |i| {
@@ -185,7 +180,7 @@ fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
 }
 
 /// Matrix * diagonal: result(i,j) = a(i,j) * e(j)
-fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
+pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
     var result = Mat.zero(n);
     for (0..n) |j| {
         const ej = e.get(j);
@@ -197,7 +192,7 @@ fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
 }
 
 /// Sum two matrices element-wise.
-fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
+pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
     var result = Mat.zero(n);
     for (0..n * n) |idx| {
         result.data[idx] = a.data[idx] + b.data[idx];
@@ -207,8 +202,8 @@ fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
 
 /// Compute Q = (I - A*B)^{-1} * A*B via LU decomposition of the Gauss block.
 /// For small Trace(AB), just returns AB (single-term approximation).
-fn qseries(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
-    const ab = smul(n, n_gauss, a, b);
+pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
+    const ab = smul(n, n_gauss, threshold_mul, a, b);
 
     // Check trace of the Gauss-Gauss block
     var trab: f64 = 0.0;
@@ -473,15 +468,15 @@ fn fillZplusZmin(
 /// Attenuation array: atten[imu][from][to] = exp(-slant optical depth between
 /// levels `from` and `to` along direction u[imu]). For plane-parallel geometry,
 /// atten(from,to) = atten(to,from). Indices: level 0 = surface, level nlayer = TOA.
-const AttenArray = struct {
-    const max_levels: usize = 33; // max nlayer + 1
+pub const AttenArray = struct {
+    pub const max_levels: usize = 65; // max transport layers + 1
 
     /// data[imu][from][to]
     data: [max_nmutot][max_levels][max_levels]f64,
     nmutot: usize,
     nlayer: usize,
 
-    fn get(self: *const AttenArray, imu: usize, from: usize, to: usize) f64 {
+    pub fn get(self: *const AttenArray, imu: usize, from: usize, to: usize) f64 {
         return self.data[imu][from][to];
     }
 
@@ -490,9 +485,45 @@ const AttenArray = struct {
     }
 };
 
-fn fillAttenuation(
+pub const DynamicAttenArray = struct {
+    allocator: Allocator,
+    data: []f64,
+    nmutot: usize,
+    nlevel: usize,
+
+    fn init(allocator: Allocator, nmutot: usize, nlevel: usize) !DynamicAttenArray {
+        const data = try allocator.alloc(f64, nmutot * nlevel * nlevel);
+        for (data) |*value| value.* = 1.0;
+        return .{
+            .allocator = allocator,
+            .data = data,
+            .nmutot = nmutot,
+            .nlevel = nlevel,
+        };
+    }
+
+    pub fn deinit(self: *DynamicAttenArray) void {
+        self.allocator.free(self.data);
+        self.* = undefined;
+    }
+
+    fn index(self: *const DynamicAttenArray, imu: usize, from: usize, to: usize) usize {
+        return (imu * self.nlevel + from) * self.nlevel + to;
+    }
+
+    pub fn get(self: *const DynamicAttenArray, imu: usize, from: usize, to: usize) f64 {
+        return self.data[self.index(imu, from, to)];
+    }
+
+    pub fn set(self: *DynamicAttenArray, imu: usize, from: usize, to: usize, value: f64) void {
+        self.data[self.index(imu, from, to)] = value;
+    }
+};
+
+pub fn fillAttenuation(
     layers: []const common.LayerInput,
     geo: *const Geometry,
+    use_spherical_correction: bool,
 ) AttenArray {
     const nlayer = layers.len;
     var atten: AttenArray = undefined;
@@ -538,7 +569,165 @@ fn fillAttenuation(
         }
     }
 
+    if (use_spherical_correction) {
+        applyPseudoSphericalTopLevelAttenuation(&atten, layers, geo);
+    }
+
     return atten;
+}
+
+pub fn fillAttenuationDynamic(
+    allocator: Allocator,
+    layers: []const common.LayerInput,
+    geo: *const Geometry,
+    use_spherical_correction: bool,
+) !DynamicAttenArray {
+    return fillAttenuationDynamicWithGrid(
+        allocator,
+        layers,
+        .{},
+        geo,
+        use_spherical_correction,
+    );
+}
+
+pub fn fillAttenuationDynamicWithGrid(
+    allocator: Allocator,
+    layers: []const common.LayerInput,
+    pseudo_spherical_grid: common.PseudoSphericalGrid,
+    geo: *const Geometry,
+    use_spherical_correction: bool,
+) !DynamicAttenArray {
+    const nlayer = layers.len;
+    const nlevel = nlayer + 1;
+    var atten = try DynamicAttenArray.init(allocator, geo.nmutot, nlevel);
+
+    for (0..nlayer) |ilTo_0| {
+        const ilTo = ilTo_0 + 1;
+        var ilFrom_idx = ilTo;
+        while (ilFrom_idx >= 1) : (ilFrom_idx -= 1) {
+            const layer_idx = ilFrom_idx - 1;
+            for (0..geo.nmutot) |imu| {
+                const u = @max(geo.u[imu], 1.0e-6);
+                const atten_lay = math.exp(-layers[layer_idx].optical_depth / u);
+                atten.set(imu, ilFrom_idx - 1, ilTo, atten.get(imu, ilFrom_idx, ilTo) * atten_lay);
+            }
+        }
+    }
+
+    for (0..nlevel) |ilTo| {
+        for (ilTo..nlevel) |ilFrom| {
+            for (0..geo.nmutot) |imu| {
+                atten.set(imu, ilFrom, ilTo, atten.get(imu, ilTo, ilFrom));
+            }
+        }
+    }
+
+    if (use_spherical_correction) {
+        if (pseudo_spherical_grid.isValidFor(nlayer)) {
+            applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(&atten, pseudo_spherical_grid, geo);
+        } else {
+            applyPseudoSphericalTopLevelAttenuationDynamic(&atten, layers, geo);
+        }
+    }
+
+    return atten;
+}
+
+fn levelAltitudeFromPseudoSphericalGrid(
+    pseudo_spherical_grid: common.PseudoSphericalGrid,
+    level: usize,
+) f64 {
+    if (level == 0) {
+        const first = pseudo_spherical_grid.samples[0];
+        return @max(first.altitude_km - 0.5 * first.thickness_km, 0.0);
+    }
+
+    const start_index = pseudo_spherical_grid.level_sample_starts[level];
+    if (start_index >= pseudo_spherical_grid.samples.len) {
+        const last = pseudo_spherical_grid.samples[pseudo_spherical_grid.samples.len - 1];
+        return @max(last.altitude_km + 0.5 * last.thickness_km, 0.0);
+    }
+
+    const sample = pseudo_spherical_grid.samples[start_index];
+    return @max(sample.altitude_km - 0.5 * sample.thickness_km, 0.0);
+}
+
+fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
+    atten: *DynamicAttenArray,
+    pseudo_spherical_grid: common.PseudoSphericalGrid,
+    geo: *const Geometry,
+) void {
+    const rearth_km = 6371.0;
+    const top_level = pseudo_spherical_grid.level_sample_starts.len - 1;
+    for (0..geo.nmutot) |imu| {
+        const u = std.math.clamp(geo.u[imu], -1.0, 1.0);
+        const sin2theta = @max(1.0 - u * u, 0.0);
+        atten.set(imu, top_level, top_level, 1.0);
+        var level = top_level;
+        while (level > 0) {
+            level -= 1;
+            const level_radius = rearth_km + levelAltitudeFromPseudoSphericalGrid(pseudo_spherical_grid, level);
+            const sqrx_sin2theta = sin2theta * level_radius * level_radius;
+            var sumkext: f64 = 0.0;
+            for (pseudo_spherical_grid.level_sample_starts[level]..pseudo_spherical_grid.samples.len) |index| {
+                const sample = pseudo_spherical_grid.samples[index];
+                if (sample.optical_depth <= 0.0) continue;
+                const sample_radius = rearth_km + sample.altitude_km;
+                const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
+                sumkext += (sample.optical_depth * sample_radius) / @max(denominator, 1.0e-12);
+            }
+            atten.set(imu, top_level, level, math.exp(-sumkext));
+        }
+    }
+}
+
+fn pseudoSphericalDirectionCosine(
+    geo: *const Geometry,
+    layer: common.LayerInput,
+    imu: usize,
+) f64 {
+    if (imu == geo.viewIdx()) return layer.view_mu;
+    if (imu == geo.n_gauss + 1) return layer.solar_mu;
+    return geo.u[imu];
+}
+
+fn applyPseudoSphericalTopLevelAttenuation(
+    atten: *AttenArray,
+    layers: []const common.LayerInput,
+    geo: *const Geometry,
+) void {
+    const top_level = layers.len;
+    for (0..geo.nmutot) |imu| {
+        var cumulative: f64 = 1.0;
+        atten.set(imu, top_level, top_level, 1.0);
+        var level = top_level;
+        while (level > 0) {
+            level -= 1;
+            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), 1.0e-6);
+            cumulative *= math.exp(-layers[level].optical_depth / u);
+            atten.set(imu, top_level, level, cumulative);
+        }
+    }
+}
+
+fn applyPseudoSphericalTopLevelAttenuationDynamic(
+    atten: *DynamicAttenArray,
+    layers: []const common.LayerInput,
+    geo: *const Geometry,
+) void {
+    const top_level = layers.len;
+    for (0..geo.nmutot) |imu| {
+        var cumulative: f64 = 1.0;
+        atten.set(imu, top_level, top_level, 1.0);
+        var level = top_level;
+        while (level > 0) {
+            level -= 1;
+            const u = @max(pseudoSphericalDirectionCosine(geo, layers[level], imu), 1.0e-6);
+            cumulative *= math.exp(-layers[level].optical_depth / u);
+            atten.set(imu, top_level, level, cumulative);
+        }
+    }
 }
 
 // ---------- Single-scatter R and T for a layer ----------------------------
@@ -609,6 +798,7 @@ fn doDouble(
     ndouble: usize,
     n: usize,
     n_gauss: usize,
+    threshold_mul: f64,
     geo: *const Geometry,
     b_start: f64,
     R: *Mat,
@@ -618,21 +808,21 @@ fn doDouble(
     var b = b_start;
     for (0..ndouble) |_| {
         // For scalar case, Rst = R and Tst = T (transform_top_bottom is identity for dimSV_fc < 3)
-        const Q = qseries(n, n_gauss, R, R);
+        const Q = qseries(n, n_gauss, threshold_mul, R, R);
         // D = T + semul(Q, E) + smul(Q, T)
         const qe = semul(n, &Q, E);
-        const qt = smul(n, n_gauss, &Q, T);
+        const qt = smul(n, n_gauss, threshold_mul, &Q, T);
         var D = matAdd(n, T, &qe);
         D = matAdd(n, &D, &qt);
 
         // U = semul(R, E) + smul(R, D)
         const re = semul(n, R, E);
-        const rd = smul(n, n_gauss, R, &D);
+        const rd = smul(n, n_gauss, threshold_mul, R, &D);
         const U = matAdd(n, &re, &rd);
 
         // R_new = R + esmul(E, U) + smul(Tst, U) — Tst = T for scalar
         const eu = esmul(n, E, &U);
-        const tu = smul(n, n_gauss, T, &U);
+        const tu = smul(n, n_gauss, threshold_mul, T, &U);
         var R_new = matAdd(n, R, &eu);
         R_new = matAdd(n, &R_new, &tu);
         R.* = R_new;
@@ -640,7 +830,7 @@ fn doDouble(
         // T_new = esmul(E, D) + semul(T, E) + smul(T, D)
         const ed = esmul(n, E, &D);
         const te = semul(n, T, E);
-        const td = smul(n, n_gauss, T, &D);
+        const td = smul(n, n_gauss, threshold_mul, T, &D);
         var T_new = matAdd(n, &ed, &te);
         T_new = matAdd(n, &T_new, &td);
         T.* = T_new;
@@ -662,17 +852,17 @@ fn doDouble(
 
 // ---------- Per-layer R/T calculation (CalcRTlayers) -----------------------
 
-fn calcRTlayers(
+pub fn calcRTlayersInto(
+    rt: []LayerRT,
     layers: []const common.LayerInput,
     i_fourier: usize,
     geo: *const Geometry,
-) [AttenArray.max_levels]LayerRT {
+    controls: common.RtmControls,
+) void {
     const nlayer = layers.len;
-    var rt: [AttenArray.max_levels]LayerRT = undefined;
 
-    // Initialize all entries
-    for (0..nlayer + 1) |i| {
-        rt[i] = .{
+    for (rt) |*entry| {
+        entry.* = .{
             .R = Mat.zero(geo.nmutot),
             .T = Mat.zero(geo.nmutot),
         };
@@ -710,13 +900,13 @@ fn calcRTlayers(
         var b_start = b;
         var ndouble: usize = 0;
 
-        if (a_eff * b > default_threshold_doubl) {
+        if (controls.scattering == .multiple and a_eff * b > controls.threshold_doubl) {
             use_doubling = true;
             var bd = b;
             for (0..60) |_| {
                 bd /= 2.0;
                 ndouble += 1;
-                if (a_eff * bd < default_threshold_doubl) break;
+                if (a_eff * bd < controls.threshold_doubl) break;
             }
             b_start = bd;
         }
@@ -731,13 +921,22 @@ fn calcRTlayers(
         var T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
 
         if (use_doubling) {
-            doDouble(ndouble, geo.nmutot, geo.n_gauss, geo, b_start, &R, &T, &E);
+            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E);
         }
 
         rt[rt_idx].R = R;
         rt[rt_idx].T = T;
     }
+}
 
+pub fn calcRTlayers(
+    layers: []const common.LayerInput,
+    i_fourier: usize,
+    geo: *const Geometry,
+    controls: common.RtmControls,
+) [AttenArray.max_levels]LayerRT {
+    var rt: [AttenArray.max_levels]LayerRT = undefined;
+    calcRTlayersInto(rt[0 .. layers.len + 1], layers, i_fourier, geo, controls);
     return rt;
 }
 
@@ -745,7 +944,7 @@ fn calcRTlayers(
 
 /// Fill the surface R/T for a Lambertian reflector at level 0 (or cloud level).
 /// For iFourier=0, R(i,j) = w(i) * albedo * w(j). Otherwise R=T=0.
-fn fillSurface(
+pub fn fillSurface(
     i_fourier: usize,
     albedo: f64,
     geo: *const Geometry,
@@ -770,8 +969,15 @@ fn fillSurface(
 // ---------- Orders of scattering ------------------------------------------
 
 const OrdersResult = struct {
-    ud: [AttenArray.max_levels]UDField,
-    ud_sum_local: [AttenArray.max_levels]UDLocal,
+    allocator: Allocator,
+    ud: []UDField,
+    ud_sum_local: []UDLocal,
+
+    fn deinit(self: *OrdersResult) void {
+        self.allocator.free(self.ud);
+        self.allocator.free(self.ud_sum_local);
+        self.* = undefined;
+    }
 };
 
 /// Transport scattered light from local sources to all interface levels.
@@ -781,9 +987,9 @@ fn transportToOtherLevels(
     start_level: usize,
     end_level: usize,
     nmutot: usize,
-    atten: *const AttenArray,
-    ud_local: *const [AttenArray.max_levels]UDLocal,
-    ud_orde: *[AttenArray.max_levels]UDField,
+    atten: anytype,
+    ud_local: []const UDLocal,
+    ud_orde: []UDField,
 ) void {
     // Upward: level start -> end
     ud_orde[start_level].U = ud_local[start_level].U;
@@ -815,7 +1021,7 @@ fn transportToOtherLevels(
 }
 
 /// Dot product over the first n_gauss elements of a matrix row and a vector column.
-fn dotGauss(mat: *const Mat, row: usize, vec_col: *const Vec, n_gauss: usize) f64 {
+pub fn dotGauss(mat: *const Mat, row: usize, vec_col: *const Vec, n_gauss: usize) f64 {
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
         s += mat.get(row, k) * vec_col.get(k);
@@ -824,40 +1030,47 @@ fn dotGauss(mat: *const Mat, row: usize, vec_col: *const Vec, n_gauss: usize) f6
 }
 
 fn ordersScat(
+    allocator: Allocator,
     start_level: usize,
     end_level: usize,
     geo: *const Geometry,
-    atten: *const AttenArray,
-    rt: *const [AttenArray.max_levels]LayerRT,
-) OrdersResult {
+    atten: anytype,
+    rt: []const LayerRT,
+    controls: common.RtmControls,
+    num_orders_max: usize,
+) !OrdersResult {
     const nmutot = geo.nmutot;
     const n_gauss = geo.n_gauss;
-    const num_orders_max = default_max_orders;
+    const nlevel = end_level + 1;
 
-    var result: OrdersResult = undefined;
+    var result = OrdersResult{
+        .allocator = allocator,
+        .ud = try allocator.alloc(UDField, nlevel),
+        .ud_sum_local = try allocator.alloc(UDLocal, nlevel),
+    };
+    errdefer result.deinit();
 
-    // Initialize all fields to zero
-    for (0..end_level + 1) |il| {
-        result.ud[il] = .{
+    var ud_orde = try allocator.alloc(UDField, nlevel);
+    defer allocator.free(ud_orde);
+    var ud_local = try allocator.alloc(UDLocal, nlevel);
+    defer allocator.free(ud_local);
+
+    for (result.ud, result.ud_sum_local, ud_orde, ud_local) |*field, *sum_local, *orde, *local| {
+        field.* = .{
             .E = Vec.zero(nmutot),
             .U = Vec2.zero(nmutot),
             .D = Vec2.zero(nmutot),
         };
-        result.ud_sum_local[il] = .{
+        sum_local.* = .{
             .U = Vec2.zero(nmutot),
             .D = Vec2.zero(nmutot),
         };
-    }
-
-    var ud_orde: [AttenArray.max_levels]UDField = undefined;
-    var ud_local: [AttenArray.max_levels]UDLocal = undefined;
-    for (0..end_level + 1) |il| {
-        ud_orde[il] = .{
+        orde.* = .{
             .E = Vec.zero(nmutot),
             .U = Vec2.zero(nmutot),
             .D = Vec2.zero(nmutot),
         };
-        ud_local[il] = .{
+        local.* = .{
             .U = Vec2.zero(nmutot),
             .D = Vec2.zero(nmutot),
         };
@@ -903,7 +1116,7 @@ fn ordersScat(
         result.ud_sum_local[ilevel].D = ud_local[ilevel].D;
     }
 
-    transportToOtherLevels(start_level, end_level, nmutot, atten, &ud_local, &ud_orde);
+    transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local, ud_orde);
 
     // Copy first order to total
     for (start_level..end_level + 1) |ilevel| {
@@ -919,7 +1132,7 @@ fn ordersScat(
             if (val > max_value) max_value = val;
         }
     }
-    if (max_value < default_threshold_conv_first) return result;
+    if (controls.scattering != .multiple or max_value < controls.threshold_conv_first) return result;
 
     // Higher orders of scattering
     var num_orders: usize = 1;
@@ -962,7 +1175,7 @@ fn ordersScat(
             }
         }
 
-        transportToOtherLevels(start_level, end_level, nmutot, atten, &ud_local, &ud_orde);
+        transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local, ud_orde);
 
         // Test convergence
         max_value = 0.0;
@@ -973,7 +1186,7 @@ fn ordersScat(
             }
         }
 
-        if (max_value < default_threshold_conv_mult or num_orders >= num_orders_max) {
+        if (max_value < controls.threshold_conv_mult or num_orders >= num_orders_max) {
             // Compute eigenvalue for geometric-series summation of remaining orders
             var sum_int_field: [2]f64 = .{ 0.0, 0.0 };
             for (0..2) |imu0| {
@@ -1064,8 +1277,8 @@ fn ordersScat(
 
 /// Extract TOA reflectance from the internal radiation field.
 /// For scalar case, uses U at TOA for the solar column (col index 1 = solar).
-fn calcReflectance(
-    ud: *const [AttenArray.max_levels]UDField,
+pub fn calcReflectance(
+    ud: []const UDField,
     end_level: usize,
     geo: *const Geometry,
 ) f64 {
@@ -1075,19 +1288,214 @@ fn calcReflectance(
     return ud[end_level].U.col[solar_col].get(view_idx);
 }
 
+fn sourceInterfaceAtLevel(
+    layers: []const common.LayerInput,
+    source_interfaces: []const common.SourceInterfaceInput,
+    ilevel: usize,
+) common.SourceInterfaceInput {
+    if (source_interfaces.len == layers.len + 1 and ilevel < source_interfaces.len) {
+        return source_interfaces[ilevel];
+    }
+    return common.sourceInterfaceFromLayers(layers, ilevel);
+}
+
+fn maxPhaseCoefficientIndex(phase_coefficients: [max_phase_coef]f64) usize {
+    var max_index: usize = 0;
+    for (1..max_phase_coef) |idx| {
+        if (@abs(phase_coefficients[idx]) > 1.0e-12) {
+            max_index = idx;
+        }
+    }
+    return max_index;
+}
+
+fn maxInterfacePhaseCoefficientIndex(
+    layers: []const common.LayerInput,
+    source_interfaces: []const common.SourceInterfaceInput,
+    ilevel: usize,
+) usize {
+    const source_interface = sourceInterfaceAtLevel(layers, source_interfaces, ilevel);
+    const above_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_above);
+    if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return above_max;
+    const below_max = maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients);
+    return @max(above_max, below_max);
+}
+
+pub fn calcIntegratedReflectance(
+    layers: []const common.LayerInput,
+    source_interfaces: []const common.SourceInterfaceInput,
+    rtm_quadrature: common.RtmQuadratureGrid,
+    ud: []const UDField,
+    end_level: usize,
+    i_fourier: usize,
+    geo: *const Geometry,
+) f64 {
+    const solar_col: usize = 1;
+    const view_idx = geo.viewIdx();
+    const solar_idx = geo.n_gauss + 1;
+    const view_mu = @max(geo.u[view_idx], 1.0e-12);
+    var reflectance: f64 = 0.0;
+    const use_rtm_quadrature = rtm_quadrature.isValidFor(layers.len);
+
+    for (0..end_level + 1) |ilevel| {
+        const source_interface = if (use_rtm_quadrature)
+            common.SourceInterfaceInput{}
+        else
+            sourceInterfaceAtLevel(layers, source_interfaces, ilevel);
+        const source_weight = if (use_rtm_quadrature)
+            rtm_quadrature.levels[ilevel].weightedScattering()
+        else
+            source_interface.effectiveWeight();
+        if (source_weight <= 0.0) continue;
+        const phase_coefficients = if (use_rtm_quadrature)
+            rtm_quadrature.levels[ilevel].phase_coefficients
+        else
+            source_interface.phase_coefficients_above;
+        if (i_fourier > if (use_rtm_quadrature)
+            maxPhaseCoefficientIndex(phase_coefficients)
+        else
+            maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel))
+        {
+            continue;
+        }
+
+        const z = fillZplusZmin(i_fourier, phase_coefficients, geo);
+        var pmin_ed: f64 = 0.0;
+        var pplusst_u: f64 = 0.0;
+
+        for (0..geo.n_gauss) |imu| {
+            const mu = @max(geo.u[imu], 1.0e-12);
+            const pmin = 0.25 * z.Zmin.get(view_idx, imu) / (view_mu * mu);
+            const pplusst = 0.25 * z.Zplus.get(view_idx, imu) / (view_mu * mu);
+            pmin_ed += pmin * ud[ilevel].D.col[solar_col].get(imu);
+            pplusst_u += pplusst * ud[ilevel].U.col[solar_col].get(imu);
+        }
+
+        const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
+        pmin_ed += 0.25 * z.Zmin.get(view_idx, solar_idx) /
+            (view_mu * solar_mu) * ud[ilevel].E.get(solar_idx);
+
+        reflectance += ud[ilevel].E.get(view_idx) *
+            source_weight *
+            (pmin_ed + pplusst_u);
+    }
+
+    if (i_fourier == 0) {
+        reflectance += ud[0].E.get(view_idx) * ud[0].U.col[solar_col].get(view_idx);
+    }
+
+    return reflectance;
+}
+
+fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
+    var total: f64 = 0.0;
+    for (layers) |layer| total += @max(layer.scattering_optical_depth, 0.0);
+    return total;
+}
+
+fn maxFourierIndex(layers: []const common.LayerInput) usize {
+    var max_index: usize = 0;
+    for (layers) |layer| {
+        max_index = @max(max_index, maxPhaseCoefficientIndex(layer.phase_coefficients));
+    }
+    return max_index;
+}
+
+fn maxFourierIndexInterfaces(source_interfaces: []const common.SourceInterfaceInput) usize {
+    var max_index: usize = 0;
+    for (source_interfaces) |source_interface| {
+        max_index = @max(max_index, maxPhaseCoefficientIndex(source_interface.phase_coefficients_above));
+    }
+    return max_index;
+}
+
+fn maxFourierIndexQuadrature(rtm_quadrature: common.RtmQuadratureGrid) usize {
+    var max_index: usize = 0;
+    for (rtm_quadrature.levels) |level| {
+        if (level.weight <= 0.0 or level.ksca <= 0.0) continue;
+        max_index = @max(max_index, maxPhaseCoefficientIndex(level.phase_coefficients));
+    }
+    return max_index;
+}
+
+pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RtmControls) usize {
+    _ = controls;
+    if (input.layers.len == 0) return 0;
+    // Match the vendor scalar short-circuit for near-normal geometries where
+    // azimuth dependence vanishes numerically.
+    if ((1.0 - input.muv) < 1.0e-5 or (1.0 - input.mu0) < 1.0e-5) return 0;
+    if (input.rtm_quadrature.isValidFor(input.layers.len)) {
+        return maxFourierIndexQuadrature(input.rtm_quadrature);
+    }
+    if (input.source_interfaces.len == input.layers.len + 1) {
+        return maxFourierIndexInterfaces(input.source_interfaces);
+    }
+    return maxFourierIndex(input.layers);
+}
+
+fn directSurfaceOnlyReflectance(input: common.ForwardInput) f64 {
+    const mu0 = @max(input.mu0, 0.05);
+    const muv = @max(input.muv, 0.05);
+    const direct = math.exp(-input.optical_depth / mu0) * math.exp(-input.optical_depth / muv);
+    return math.clamp(input.surface_albedo * direct, 0.0, 2.0);
+}
+
+fn directSurfaceOnlyReflectanceResolved(
+    allocator: Allocator,
+    input: common.ForwardInput,
+    controls: common.RtmControls,
+) common.ExecuteError!f64 {
+    if (input.layers.len == 0) return directSurfaceOnlyReflectance(input);
+
+    const mu0 = @max(input.mu0, 0.05);
+    const muv = @max(input.muv, 0.05);
+    const geo = Geometry.init(controls.nGauss(), mu0, muv);
+    var atten = try fillAttenuationDynamicWithGrid(
+        allocator,
+        input.layers,
+        input.pseudo_spherical_grid,
+        &geo,
+        controls.use_spherical_correction,
+    );
+    defer atten.deinit();
+
+    const view_idx = geo.viewIdx();
+    const solar_idx = geo.n_gauss + 1;
+    const surface = fillSurface(0, input.surface_albedo, &geo);
+    var upward_path: f64 = 1.0;
+    for (1..input.layers.len + 1) |ilevel| {
+        upward_path *= atten.get(view_idx, ilevel - 1, ilevel);
+    }
+
+    return math.clamp(
+        surface.R.get(view_idx, solar_idx) *
+            atten.get(solar_idx, input.layers.len, 0) *
+            upward_path,
+        0.0,
+        2.0,
+    );
+}
+
 // ---------- Main entry point -----------------------------------------------
 
-pub fn execute(route: common.Route, input: common.ForwardInput) common.ExecuteError!common.ForwardResult {
+pub fn execute(
+    allocator: Allocator,
+    route: common.Route,
+    input: common.ForwardInput,
+) common.ExecuteError!common.ForwardResult {
     if (route.family != .labos) unreachable;
     if (route.derivative_mode == .analytical_plugin) {
         return common.Error.UnsupportedDerivativeMode;
     }
 
+    const controls = route.rtm_controls;
     // Use the layer-resolved path when layers are provided
-    const toa = if (input.layers.len > 0)
-        layerResolvedLabos(input)
+    const toa = if (controls.scattering == .none)
+        try directSurfaceOnlyReflectanceResolved(allocator, input, controls)
+    else if (input.layers.len > 0)
+        try layerResolvedLabos(allocator, input, controls)
     else
-        singleLayerLabos(input);
+        try singleLayerLabos(allocator, input, controls);
 
     return .{
         .family = route.family,
@@ -1112,55 +1520,68 @@ pub fn execute(route: common.Route, input: common.ForwardInput) common.ExecuteEr
 /// 4. Set surface reflector
 /// 5. Solve for internal radiation field via successive orders of scattering
 /// 6. Extract TOA reflectance from the internal field
-fn layerResolvedLabos(input: common.ForwardInput) f64 {
+fn layerResolvedLabos(
+    allocator: Allocator,
+    input: common.ForwardInput,
+    controls: common.RtmControls,
+) common.ExecuteError!f64 {
     const nlayer = input.layers.len;
     if (nlayer == 0) return 0.0;
-    if (nlayer >= AttenArray.max_levels) {
-        // Fall back to single-layer for excessively many layers
-        return singleLayerLabos(input);
-    }
 
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
-    const n_gauss: usize = 3; // 3 Gauss points gives good accuracy for most cases
+    const n_gauss: usize = controls.nGauss();
+    const nlevel = nlayer + 1;
 
     const geo = Geometry.init(n_gauss, mu0, muv);
-
-    // Fourier term iFourier = 0 only (azimuth-independent, dominant contribution)
-    const i_fourier: usize = 0;
-
-    // Step 1: Fill attenuation array
-    const atten = fillAttenuation(input.layers, &geo);
-
-    // Step 2: Compute per-layer R/T (CalcRTlayers)
-    var rt = calcRTlayers(input.layers, i_fourier, &geo);
-
-    // Step 3: Fill surface at level 0
-    const surface = fillSurface(i_fourier, input.surface_albedo, &geo);
-    rt[0] = surface;
-
-    // Step 4: Successive orders of scattering
+    var atten = try fillAttenuationDynamicWithGrid(
+        allocator,
+        input.layers,
+        input.pseudo_spherical_grid,
+        &geo,
+        controls.use_spherical_correction,
+    );
+    defer atten.deinit();
+    var rt = try allocator.alloc(LayerRT, nlevel);
+    defer allocator.free(rt);
     const start_level: usize = 0;
     const end_level: usize = nlayer;
-    const orders_result = ordersScat(start_level, end_level, &geo, &atten, &rt);
+    const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
+    const fourier_max = resolvedFourierMax(input, controls);
+    const use_integrated_source = controls.integrate_source_function and nlayer > 1;
 
-    // Step 5: Extract reflectance
-    // Factor = 1 for iFourier = 0, cos(0*dphi) = 1
-    const refl_fc = calcReflectance(&orders_result.ud, end_level, &geo);
+    var reflectance: f64 = 0.0;
+    for (0..fourier_max + 1) |i_fourier| {
+        calcRTlayersInto(rt, input.layers, i_fourier, &geo, controls);
+        rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
+        var orders_result = try ordersScat(allocator, start_level, end_level, &geo, &atten, rt, controls, num_orders_max);
+        defer orders_result.deinit();
+        const refl_fc = if (use_integrated_source)
+            calcIntegratedReflectance(input.layers, input.source_interfaces, input.rtm_quadrature, orders_result.ud, end_level, i_fourier, &geo)
+        else
+            calcReflectance(orders_result.ud, end_level, &geo);
+        const fourier_weight = if (i_fourier == 0)
+            1.0
+        else
+            2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+        reflectance += fourier_weight * refl_fc;
+    }
 
-    // The reflectance from the Fourier decomposition for iFourier=0 with factor=1
-    return math.clamp(refl_fc, 0.0, 2.0);
+    return math.clamp(reflectance, 0.0, 2.0);
 }
 
 /// Simplified single-layer LABOS for backward compatibility when no layer data
 /// is provided. Uses the bulk optical properties from ForwardInput.
-fn singleLayerLabos(input: common.ForwardInput) f64 {
+fn singleLayerLabos(
+    allocator: Allocator,
+    input: common.ForwardInput,
+    controls: common.RtmControls,
+) common.ExecuteError!f64 {
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
-    const n_gauss: usize = 3;
+    const n_gauss: usize = controls.nGauss();
 
     const geo = Geometry.init(n_gauss, mu0, muv);
-    const i_fourier: usize = 0;
 
     // Create a single synthetic layer from the bulk properties
     const layer = common.LayerInput{
@@ -1172,14 +1593,29 @@ fn singleLayerLabos(input: common.ForwardInput) f64 {
     };
     const layers = [_]common.LayerInput{layer};
 
-    const atten = fillAttenuation(&layers, &geo);
-    var rt = calcRTlayers(&layers, i_fourier, &geo);
-    rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
+    const atten = fillAttenuation(&layers, &geo, controls.use_spherical_correction);
+    const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(layer.scattering_optical_depth));
+    const fourier_max = resolvedFourierMax(input, controls);
+    const use_integrated_source = false;
 
-    const orders_result = ordersScat(0, 1, &geo, &atten, &rt);
-    const refl_fc = calcReflectance(&orders_result.ud, 1, &geo);
+    var reflectance: f64 = 0.0;
+    for (0..fourier_max + 1) |i_fourier| {
+        var rt = calcRTlayers(&layers, i_fourier, &geo, controls);
+        rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
+        var orders_result = try ordersScat(allocator, 0, 1, &geo, &atten, rt[0..2], controls, num_orders_max);
+        defer orders_result.deinit();
+        const refl_fc = if (use_integrated_source)
+            calcIntegratedReflectance(&layers, &.{}, .{}, orders_result.ud, 1, i_fourier, &geo)
+        else
+            calcReflectance(orders_result.ud, 1, &geo);
+        const fourier_weight = if (i_fourier == 0)
+            1.0
+        else
+            2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+        reflectance += fourier_weight * refl_fc;
+    }
 
-    return math.clamp(refl_fc, 0.0, 2.0);
+    return math.clamp(reflectance, 0.0, 2.0);
 }
 
 // =================== Tests =================================================
@@ -1190,7 +1626,7 @@ test "labos execution supports semi-analytical derivatives but rejects plugin an
         .execution_mode = .scalar,
         .derivative_mode = .semi_analytical,
     });
-    const result = try execute(route, .{
+    const result = try execute(std.testing.allocator, route, .{
         .spectral_weight = 1.0,
         .air_mass_factor = 1.0,
     });
@@ -1211,7 +1647,7 @@ test "labos single-layer produces bounded positive reflectance" {
         .execution_mode = .scalar,
         .derivative_mode = .none,
     });
-    const result = try execute(route, .{
+    const result = try execute(std.testing.allocator, route, .{
         .mu0 = 0.6,
         .muv = 0.7,
         .optical_depth = 0.5,
@@ -1252,7 +1688,7 @@ test "labos multi-layer produces bounded positive reflectance" {
         .execution_mode = .scalar,
         .derivative_mode = .none,
     });
-    const result = try execute(route, .{
+    const result = try execute(std.testing.allocator, route, .{
         .mu0 = 0.5,
         .muv = 0.6,
         .optical_depth = 0.6,
@@ -1262,6 +1698,106 @@ test "labos multi-layer produces bounded positive reflectance" {
     });
     try std.testing.expect(result.toa_reflectance_factor >= 0.0);
     try std.testing.expect(result.toa_reflectance_factor <= 2.0);
+}
+
+test "labos supports 48 transport layers without collapsing to the synthetic single-layer fallback" {
+    var layers: [48]common.LayerInput = undefined;
+    for (&layers, 0..) |*layer, index| {
+        const lower_haze = index < 24;
+        layer.* = .{
+            .optical_depth = if (lower_haze) 0.024 else 0.011,
+            .scattering_optical_depth = if (lower_haze) 0.004 else 0.010,
+            .single_scatter_albedo = if (lower_haze) 0.17 else 0.92,
+            .solar_mu = 0.52,
+            .view_mu = 0.63,
+            .phase_coefficients = if (lower_haze)
+                .{ 1.0, 0.02, 0.0, 0.0 }
+            else
+                .{ 1.0, 0.58, 0.21, 0.07 },
+        };
+    }
+
+    const route = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+        },
+    });
+
+    const result_multi = try execute(std.testing.allocator, route, .{
+        .mu0 = 0.52,
+        .muv = 0.63,
+        .optical_depth = 0.84,
+        .single_scatter_albedo = 0.54,
+        .surface_albedo = 0.12,
+        .layers = &layers,
+    });
+    const result_single = try execute(std.testing.allocator, route, .{
+        .mu0 = 0.52,
+        .muv = 0.63,
+        .optical_depth = 0.84,
+        .single_scatter_albedo = 0.54,
+        .surface_albedo = 0.12,
+    });
+
+    try std.testing.expect(result_multi.toa_reflectance_factor >= 0.0);
+    try std.testing.expect(result_multi.toa_reflectance_factor <= 2.0);
+    try std.testing.expect(@abs(
+        result_multi.toa_reflectance_factor - result_single.toa_reflectance_factor,
+    ) > 1.0e-5);
+}
+
+test "labos supports 80 transport layers without collapsing to the synthetic single-layer fallback" {
+    var layers: [80]common.LayerInput = undefined;
+    for (&layers, 0..) |*layer, index| {
+        const lower_haze = index < 36;
+        layer.* = .{
+            .optical_depth = if (lower_haze) 0.016 else 0.009,
+            .scattering_optical_depth = if (lower_haze) 0.003 else 0.008,
+            .single_scatter_albedo = if (lower_haze) 0.19 else 0.90,
+            .solar_mu = 0.48,
+            .view_mu = 0.61,
+            .phase_coefficients = if (lower_haze)
+                .{ 1.0, 0.03, 0.0, 0.0 }
+            else
+                .{ 1.0, 0.51, 0.18, 0.06 },
+        };
+    }
+
+    const route = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+        },
+    });
+
+    const result_multi = try execute(std.testing.allocator, route, .{
+        .mu0 = 0.48,
+        .muv = 0.61,
+        .optical_depth = 0.88,
+        .single_scatter_albedo = 0.53,
+        .surface_albedo = 0.11,
+        .layers = &layers,
+    });
+    const result_single = try execute(std.testing.allocator, route, .{
+        .mu0 = 0.48,
+        .muv = 0.61,
+        .optical_depth = 0.88,
+        .single_scatter_albedo = 0.53,
+        .surface_albedo = 0.11,
+    });
+
+    try std.testing.expect(result_multi.toa_reflectance_factor >= 0.0);
+    try std.testing.expect(result_multi.toa_reflectance_factor <= 2.0);
+    try std.testing.expect(@abs(
+        result_multi.toa_reflectance_factor - result_single.toa_reflectance_factor,
+    ) > 1.0e-5);
 }
 
 test "labos reflectance increases with surface albedo" {
@@ -1278,7 +1814,7 @@ test "labos reflectance increases with surface albedo" {
         .execution_mode = .scalar,
         .derivative_mode = .none,
     });
-    const result_low = try execute(route, .{
+    const result_low = try execute(std.testing.allocator, route, .{
         .mu0 = 0.6,
         .muv = 0.7,
         .optical_depth = 0.3,
@@ -1286,7 +1822,7 @@ test "labos reflectance increases with surface albedo" {
         .surface_albedo = 0.05,
         .layers = &layers,
     });
-    const result_high = try execute(route, .{
+    const result_high = try execute(std.testing.allocator, route, .{
         .mu0 = 0.6,
         .muv = 0.7,
         .optical_depth = 0.3,
@@ -1317,7 +1853,7 @@ test "labos reflectance increases with single scatter albedo" {
     });
 
     const layer_low = [_]common.LayerInput{make_layer(0.3)};
-    const result_low = try execute(route, .{
+    const result_low = try execute(std.testing.allocator, route, .{
         .mu0 = 0.5,
         .muv = 0.6,
         .optical_depth = 0.4,
@@ -1327,7 +1863,7 @@ test "labos reflectance increases with single scatter albedo" {
     });
 
     const layer_high = [_]common.LayerInput{make_layer(0.99)};
-    const result_high = try execute(route, .{
+    const result_high = try execute(std.testing.allocator, route, .{
         .mu0 = 0.5,
         .muv = 0.6,
         .optical_depth = 0.4,
@@ -1356,7 +1892,7 @@ test "labos smul with zero matrices returns zero" {
     const n: usize = 4;
     const a = Mat.zero(n);
     const b = Mat.zero(n);
-    const c = smul(n, 2, &a, &b);
+    const c = smul(n, 2, 1e-12, &a, &b);
     for (0..n * n) |i| {
         try std.testing.expectApproxEqAbs(@as(f64, 0.0), c.data[i], 1e-15);
     }
@@ -1374,7 +1910,7 @@ test "labos smul with identity matrix returns original (Gauss block)" {
     b.set(0, 1, 1.0);
     b.set(1, 0, 0.5);
     b.set(1, 1, 2.0);
-    const c = smul(n, n_gauss, &a, &b);
+    const c = smul(n, n_gauss, 1e-12, &a, &b);
     // Only Gauss columns 0,1 of a contribute to the multiplication
     try std.testing.expectApproxEqAbs(@as(f64, 6.0), c.get(0, 0), 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), c.get(0, 1), 1e-12);
@@ -1403,7 +1939,7 @@ test "labos attenuation is 1.0 for same level" {
         .single_scatter_albedo = 0.9,
     }};
     const geo = Geometry.init(3, 0.6, 0.7);
-    const atten = fillAttenuation(&layers, &geo);
+    const atten = fillAttenuation(&layers, &geo, false);
     for (0..geo.nmutot) |imu| {
         try std.testing.expectApproxEqAbs(@as(f64, 1.0), atten.get(imu, 0, 0), 1e-12);
         try std.testing.expectApproxEqAbs(@as(f64, 1.0), atten.get(imu, 1, 1), 1e-12);
@@ -1416,12 +1952,109 @@ test "labos attenuation decreases with optical depth" {
         .single_scatter_albedo = 0.9,
     }};
     const geo = Geometry.init(3, 0.6, 0.7);
-    const atten = fillAttenuation(&layers, &geo);
+    const atten = fillAttenuation(&layers, &geo, false);
     // Attenuation from level 0 to level 1 should be < 1
     for (0..geo.nmutot) |imu| {
         try std.testing.expect(atten.get(imu, 0, 1) < 1.0);
         try std.testing.expect(atten.get(imu, 0, 1) > 0.0);
     }
+}
+
+test "labos spherical correction falls back to layer-dependent solar and view attenuation without explicit grid" {
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.3,
+            .single_scatter_albedo = 0.9,
+            .solar_mu = 0.45,
+            .view_mu = 0.55,
+        },
+        .{
+            .optical_depth = 0.2,
+            .single_scatter_albedo = 0.9,
+            .solar_mu = 0.50,
+            .view_mu = 0.60,
+        },
+    };
+    const geo = Geometry.init(3, 0.8, 0.9);
+    const plane = fillAttenuation(&layers, &geo, false);
+    const spherical = fillAttenuation(&layers, &geo, true);
+    var plane_dynamic = try fillAttenuationDynamic(std.testing.allocator, &layers, &geo, false);
+    defer plane_dynamic.deinit();
+    var spherical_dynamic = try fillAttenuationDynamic(std.testing.allocator, &layers, &geo, true);
+    defer spherical_dynamic.deinit();
+
+    try std.testing.expectApproxEqAbs(plane.get(0, 0, 1), spherical.get(0, 0, 1), 1.0e-12);
+    try std.testing.expectApproxEqAbs(plane.get(geo.viewIdx(), 1, 0), spherical.get(geo.viewIdx(), 1, 0), 1.0e-12);
+    try std.testing.expectApproxEqAbs(plane.get(geo.n_gauss + 1, 1, 0), spherical.get(geo.n_gauss + 1, 1, 0), 1.0e-12);
+    try std.testing.expectApproxEqAbs(plane.get(geo.viewIdx(), 0, 2), spherical.get(geo.viewIdx(), 0, 2), 1.0e-12);
+    try std.testing.expectApproxEqAbs(plane.get(geo.n_gauss + 1, 0, 2), spherical.get(geo.n_gauss + 1, 0, 2), 1.0e-12);
+    try std.testing.expect(plane.get(geo.viewIdx(), 2, 0) != spherical.get(geo.viewIdx(), 2, 0));
+    try std.testing.expect(plane.get(geo.n_gauss + 1, 2, 0) != spherical.get(geo.n_gauss + 1, 2, 0));
+    try std.testing.expectApproxEqAbs(plane_dynamic.get(geo.viewIdx(), 0, 2), spherical_dynamic.get(geo.viewIdx(), 0, 2), 1.0e-12);
+    try std.testing.expectApproxEqAbs(plane_dynamic.get(geo.n_gauss + 1, 0, 2), spherical_dynamic.get(geo.n_gauss + 1, 0, 2), 1.0e-12);
+    try std.testing.expect(plane_dynamic.get(geo.viewIdx(), 2, 0) != spherical_dynamic.get(geo.viewIdx(), 2, 0));
+    try std.testing.expect(plane_dynamic.get(geo.n_gauss + 1, 2, 0) != spherical_dynamic.get(geo.n_gauss + 1, 2, 0));
+}
+
+test "labos dynamic spherical correction uses pseudo-spherical sample grid when provided" {
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.27,
+            .single_scatter_albedo = 0.9,
+            .solar_mu = 0.45,
+            .view_mu = 0.55,
+        },
+        .{
+            .optical_depth = 0.14,
+            .single_scatter_albedo = 0.9,
+            .solar_mu = 0.50,
+            .view_mu = 0.60,
+        },
+    };
+    const pseudo_samples = [_]common.PseudoSphericalSample{
+        .{ .altitude_km = 1.0, .thickness_km = 2.0, .optical_depth = 0.14 },
+        .{ .altitude_km = 3.0, .thickness_km = 2.0, .optical_depth = 0.13 },
+        .{ .altitude_km = 8.0, .thickness_km = 4.0, .optical_depth = 0.08 },
+        .{ .altitude_km = 12.0, .thickness_km = 4.0, .optical_depth = 0.06 },
+    };
+    const pseudo_grid: common.PseudoSphericalGrid = .{
+        .samples = &pseudo_samples,
+        .level_sample_starts = &.{ 0, 2, 4 },
+    };
+    const rearth_km = 6371.0;
+    const geo = Geometry.init(3, 0.8, 0.9);
+    var spherical = try fillAttenuationDynamicWithGrid(std.testing.allocator, &layers, pseudo_grid, &geo, true);
+    defer spherical.deinit();
+    var fallback = try fillAttenuationDynamic(std.testing.allocator, &layers, &geo, true);
+    defer fallback.deinit();
+
+    const view_u = geo.u[geo.viewIdx()];
+    const sin2theta = 1.0 - view_u * view_u;
+    const expected_surface = blk: {
+        var sumkext: f64 = 0.0;
+        for (pseudo_samples) |sample| {
+            const sample_radius = rearth_km + sample.altitude_km;
+            const denominator = @sqrt(@abs(sample_radius * sample_radius - sin2theta * rearth_km * rearth_km));
+            sumkext += (sample.optical_depth * sample_radius) / denominator;
+        }
+        break :blk math.exp(-sumkext);
+    };
+    const expected_mid = blk: {
+        var sumkext: f64 = 0.0;
+        const level_radius = rearth_km + 6.0;
+        const sqrx_sin2theta = sin2theta * level_radius * level_radius;
+        for (pseudo_samples[2..]) |sample| {
+            const sample_radius = rearth_km + sample.altitude_km;
+            const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
+            sumkext += (sample.optical_depth * sample_radius) / denominator;
+        }
+        break :blk math.exp(-sumkext);
+    };
+
+    try std.testing.expectApproxEqRel(expected_surface, spherical.get(geo.viewIdx(), 2, 0), 1.0e-12);
+    try std.testing.expectApproxEqRel(expected_mid, spherical.get(geo.viewIdx(), 2, 1), 1.0e-12);
+    try std.testing.expect(@abs(spherical.get(geo.viewIdx(), 2, 0) - fallback.get(geo.viewIdx(), 2, 0)) > 1.0e-6);
+    try std.testing.expectApproxEqAbs(fallback.get(geo.viewIdx(), 0, 2), spherical.get(geo.viewIdx(), 0, 2), 1.0e-12);
 }
 
 test "labos surface reflector has correct structure" {
@@ -1440,6 +2073,318 @@ test "labos surface reflector has correct structure" {
     }
 }
 
+test "labos anisotropic layers respond to relative azimuth once Fourier terms are enabled" {
+    const route = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+        },
+    });
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.35,
+            .scattering_optical_depth = 0.30,
+            .single_scatter_albedo = 0.93,
+            .solar_mu = 0.58,
+            .view_mu = 0.64,
+            .phase_coefficients = .{ 1.0, 0.55, 0.24, 0.08 },
+        },
+        .{
+            .optical_depth = 0.22,
+            .scattering_optical_depth = 0.18,
+            .single_scatter_albedo = 0.91,
+            .solar_mu = 0.61,
+            .view_mu = 0.67,
+            .phase_coefficients = .{ 1.0, 0.42, 0.16, 0.05 },
+        },
+    };
+
+    const forward_input = common.ForwardInput{
+        .mu0 = 0.60,
+        .muv = 0.66,
+        .optical_depth = 0.57,
+        .single_scatter_albedo = 0.92,
+        .surface_albedo = 0.12,
+        .layers = &layers,
+    };
+    const result_zero = try execute(std.testing.allocator, route, forward_input);
+    const result_oblique = try execute(std.testing.allocator, route, .{
+        .mu0 = forward_input.mu0,
+        .muv = forward_input.muv,
+        .optical_depth = forward_input.optical_depth,
+        .single_scatter_albedo = forward_input.single_scatter_albedo,
+        .surface_albedo = forward_input.surface_albedo,
+        .relative_azimuth_rad = std.math.degreesToRadians(120.0),
+        .layers = &layers,
+    });
+
+    try std.testing.expect(@abs(result_zero.toa_reflectance_factor - result_oblique.toa_reflectance_factor) > 1.0e-5);
+}
+
+test "labos raw-layer integrated source-function fallback stays close to direct TOA extraction" {
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.28,
+            .scattering_optical_depth = 0.22,
+            .single_scatter_albedo = 0.90,
+            .solar_mu = 0.58,
+            .view_mu = 0.64,
+            .phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+        },
+        .{
+            .optical_depth = 0.17,
+            .scattering_optical_depth = 0.13,
+            .single_scatter_albedo = 0.88,
+            .solar_mu = 0.61,
+            .view_mu = 0.67,
+            .phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+        },
+    };
+
+    const route_integrated = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+        },
+    });
+    const route_direct = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = false,
+        },
+    });
+
+    const forward_input = common.ForwardInput{
+        .mu0 = 0.60,
+        .muv = 0.66,
+        .optical_depth = 0.45,
+        .single_scatter_albedo = 0.89,
+        .surface_albedo = 0.10,
+        .relative_azimuth_rad = std.math.degreesToRadians(75.0),
+        .layers = &layers,
+    };
+    const result_integrated = try execute(std.testing.allocator, route_integrated, forward_input);
+    const result_direct = try execute(std.testing.allocator, route_direct, forward_input);
+
+    try std.testing.expectApproxEqRel(
+        result_direct.toa_reflectance_factor,
+        result_integrated.toa_reflectance_factor,
+        6.0e-3,
+    );
+}
+
+test "labos single-layer integrated source-function falls back to direct TOA extraction" {
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.31,
+            .scattering_optical_depth = 0.24,
+            .single_scatter_albedo = 0.91,
+            .solar_mu = 0.59,
+            .view_mu = 0.65,
+            .phase_coefficients = .{ 1.0, 0.28, 0.07, 0.01 },
+        },
+    };
+
+    const route_integrated = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+        },
+    });
+    const route_direct = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = false,
+        },
+    });
+
+    const forward_input = common.ForwardInput{
+        .mu0 = 0.60,
+        .muv = 0.66,
+        .optical_depth = 0.31,
+        .single_scatter_albedo = 0.91,
+        .surface_albedo = 0.10,
+        .relative_azimuth_rad = std.math.degreesToRadians(70.0),
+        .layers = &layers,
+    };
+    const result_integrated = try execute(std.testing.allocator, route_integrated, forward_input);
+    const result_direct = try execute(std.testing.allocator, route_direct, forward_input);
+
+    try std.testing.expectApproxEqRel(
+        result_direct.toa_reflectance_factor,
+        result_integrated.toa_reflectance_factor,
+        1.0e-12,
+    );
+}
+
+test "labos integrated source-function path uses explicit source interface metadata" {
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.28,
+            .scattering_optical_depth = 0.22,
+            .single_scatter_albedo = 0.90,
+            .solar_mu = 0.58,
+            .view_mu = 0.64,
+            .phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+        },
+        .{
+            .optical_depth = 0.17,
+            .scattering_optical_depth = 0.13,
+            .single_scatter_albedo = 0.88,
+            .solar_mu = 0.61,
+            .view_mu = 0.67,
+            .phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+        },
+    };
+    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
+    common.fillSourceInterfacesFromLayers(&layers, &source_interfaces);
+
+    const route = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+        },
+    });
+    const route_direct = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = false,
+        },
+    });
+
+    source_interfaces[1].rtm_weight = 2.0;
+    source_interfaces[1].ksca_above = source_interfaces[1].source_weight / source_interfaces[1].rtm_weight;
+    source_interfaces[1].source_weight = 0.0;
+
+    const base_input = common.ForwardInput{
+        .mu0 = 0.60,
+        .muv = 0.66,
+        .optical_depth = 0.45,
+        .single_scatter_albedo = 0.89,
+        .surface_albedo = 0.10,
+        .relative_azimuth_rad = std.math.degreesToRadians(75.0),
+        .layers = &layers,
+        .source_interfaces = &source_interfaces,
+    };
+    const baseline = try execute(std.testing.allocator, route, base_input);
+    const direct_baseline = try execute(std.testing.allocator, route_direct, base_input);
+
+    var altered_interfaces = source_interfaces;
+    altered_interfaces[1].ksca_above *= 1.8;
+    altered_interfaces[1].phase_coefficients_above[1] = 0.60;
+    const altered = try execute(std.testing.allocator, route, .{
+        .mu0 = base_input.mu0,
+        .muv = base_input.muv,
+        .optical_depth = base_input.optical_depth,
+        .single_scatter_albedo = base_input.single_scatter_albedo,
+        .surface_albedo = base_input.surface_albedo,
+        .relative_azimuth_rad = base_input.relative_azimuth_rad,
+        .layers = &layers,
+        .source_interfaces = &altered_interfaces,
+    });
+    const direct_altered = try execute(std.testing.allocator, route_direct, .{
+        .mu0 = base_input.mu0,
+        .muv = base_input.muv,
+        .optical_depth = base_input.optical_depth,
+        .single_scatter_albedo = base_input.single_scatter_albedo,
+        .surface_albedo = base_input.surface_albedo,
+        .relative_azimuth_rad = base_input.relative_azimuth_rad,
+        .layers = &layers,
+        .source_interfaces = &altered_interfaces,
+    });
+
+    try std.testing.expect(@abs(
+        baseline.toa_reflectance_factor - altered.toa_reflectance_factor,
+    ) > 1.0e-5);
+    try std.testing.expectApproxEqAbs(
+        direct_baseline.toa_reflectance_factor,
+        direct_altered.toa_reflectance_factor,
+        1.0e-10,
+    );
+}
+
+test "labos spherical correction changes reflectance for layered scalar scenes" {
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.24,
+            .scattering_optical_depth = 0.18,
+            .single_scatter_albedo = 0.88,
+            .solar_mu = 0.42,
+            .view_mu = 0.54,
+            .phase_coefficients = .{ 1.0, 0.31, 0.10, 0.02 },
+        },
+        .{
+            .optical_depth = 0.16,
+            .scattering_optical_depth = 0.12,
+            .single_scatter_albedo = 0.90,
+            .solar_mu = 0.48,
+            .view_mu = 0.60,
+            .phase_coefficients = .{ 1.0, 0.26, 0.08, 0.02 },
+        },
+    };
+
+    const route_plane = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .use_spherical_correction = false,
+        },
+    });
+    const route_spherical = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .use_spherical_correction = true,
+        },
+    });
+
+    const forward_input = common.ForwardInput{
+        .mu0 = 0.60,
+        .muv = 0.66,
+        .optical_depth = 0.40,
+        .single_scatter_albedo = 0.89,
+        .surface_albedo = 0.10,
+        .layers = &layers,
+    };
+    const plane = try execute(std.testing.allocator, route_plane, forward_input);
+    const spherical = try execute(std.testing.allocator, route_spherical, forward_input);
+
+    try std.testing.expect(@abs(plane.toa_reflectance_factor - spherical.toa_reflectance_factor) > 1.0e-5);
+}
+
 test "labos optically thin layer has small reflectance" {
     const layers = [_]common.LayerInput{.{
         .optical_depth = 0.001,
@@ -1453,7 +2398,7 @@ test "labos optically thin layer has small reflectance" {
         .execution_mode = .scalar,
         .derivative_mode = .none,
     });
-    const result = try execute(route, .{
+    const result = try execute(std.testing.allocator, route, .{
         .mu0 = 0.5,
         .muv = 0.6,
         .optical_depth = 0.001,

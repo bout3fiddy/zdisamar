@@ -211,9 +211,11 @@ fn prepareTransportRoute(
         .regime = template.scene_blueprint.observation_regime,
         .execution_mode = transportExecutionMode(template.solver_mode),
         .derivative_mode = template.scene_blueprint.derivative_mode,
+        .rtm_controls = template.rtm_controls,
     }) catch |err| switch (err) {
         error.UnsupportedDerivativeMode => return errors.PreparationError.UnsupportedDerivativeMode,
         error.UnsupportedExecutionMode => return errors.PreparationError.UnsupportedExecutionMode,
+        error.UnsupportedRtmControls => return errors.PreparationError.UnsupportedRtmControls,
     };
 }
 

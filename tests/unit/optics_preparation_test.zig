@@ -4,6 +4,7 @@ const internal = @import("zdisamar_internal");
 const ReferenceData = internal.reference_data;
 const OpticsPrepare = internal.kernels.optics.prepare;
 const TransportDispatcher = internal.kernels.transport.dispatcher;
+const centimeters_per_kilometer = 1.0e5;
 
 test "optical preparation bridges tracked assets into transport-ready state" {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
@@ -122,6 +123,7 @@ test "optical preparation bridges tracked assets into transport-ready state" {
         .derivative_mode = .semi_analytical,
     });
     const result = try TransportDispatcher.executePrepared(
+        std.testing.allocator,
         route,
         prepared.toForwardInput(&scene),
     );
@@ -504,6 +506,280 @@ test "optical preparation materializes RTM-style gas sublayers with stable paren
         try std.testing.expectApproxEqAbs(layer.gas_optical_depth, summed_gas_optical_depth, 1e-12);
         try std.testing.expect(summed_temperature_derivative != 0.0);
     }
+}
+
+test "optical preparation builds sublayer-informed source interfaces for prepared transport inputs" {
+    var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .climatology_profile,
+        "data/climatologies/bundle_manifest.json",
+        "us_standard_1976_profile",
+    );
+    defer climatology_asset.deinit(std.testing.allocator);
+
+    var cross_section_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .cross_section_table,
+        "data/cross_sections/bundle_manifest.json",
+        "no2_405_465_demo",
+    );
+    defer cross_section_asset.deinit(std.testing.allocator);
+    var spectroscopy_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .spectroscopy_line_list,
+        "data/cross_sections/bundle_manifest.json",
+        "no2_demo_lines",
+    );
+    defer spectroscopy_asset.deinit(std.testing.allocator);
+    var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .lookup_table,
+        "data/luts/bundle_manifest.json",
+        "airmass_factor_nadir_demo",
+    );
+    defer lut_asset.deinit(std.testing.allocator);
+
+    var profile = try climatology_asset.toClimatologyProfile(std.testing.allocator);
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = try cross_section_asset.toCrossSectionTable(std.testing.allocator);
+    defer cross_sections.deinit(std.testing.allocator);
+    var spectroscopy = try spectroscopy_asset.toSpectroscopyLineList(std.testing.allocator);
+    defer spectroscopy.deinit(std.testing.allocator);
+    var lut = try lut_asset.toAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "source-interface-grid",
+        .atmosphere = .{
+            .layer_count = 4,
+            .sublayer_divisions = 4,
+            .has_clouds = false,
+            .has_aerosols = false,
+        },
+        .geometry = .{
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 30.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 121,
+        },
+    };
+
+    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &cross_sections,
+        &spectroscopy,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [4]internal.kernels.transport.common.LayerInput = undefined;
+    _ = prepared.fillForwardLayersAtWavelength(&scene, 434.6, &layer_inputs);
+
+    var source_interfaces: [5]internal.kernels.transport.common.SourceInterfaceInput = undefined;
+    prepared.fillSourceInterfacesAtWavelengthWithLayers(434.6, &layer_inputs, &source_interfaces);
+
+    try std.testing.expectApproxEqRel(
+        layer_inputs[0].scattering_optical_depth,
+        source_interfaces[0].source_weight,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[0].rtm_weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[0].ksca_above, 1.0e-12);
+    try std.testing.expectApproxEqRel(
+        0.5 * layer_inputs[3].scattering_optical_depth,
+        source_interfaces[4].source_weight,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[4].rtm_weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[4].ksca_above, 1.0e-12);
+    const coarse_sublayers = prepared.sublayers.?;
+    for (1..4) |ilevel| {
+        const layer = prepared.layers[ilevel];
+        const start_index: usize = @intCast(layer.sublayer_start_index);
+        const stop_index = start_index + @as(usize, @intCast(layer.sublayer_count));
+        var expected_weight_km: f64 = 0.0;
+        for (coarse_sublayers[start_index..stop_index]) |sublayer| {
+            expected_weight_km += @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+        }
+        try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[ilevel].source_weight, 1.0e-12);
+        try std.testing.expect(source_interfaces[ilevel].rtm_weight > 0.0);
+        try std.testing.expect(source_interfaces[ilevel].ksca_above >= 0.0);
+        try std.testing.expectApproxEqRel(
+            expected_weight_km,
+            source_interfaces[ilevel].rtm_weight,
+            1.0e-12,
+        );
+        try std.testing.expectApproxEqRel(
+            layer_inputs[ilevel].scattering_optical_depth,
+            source_interfaces[ilevel].rtm_weight * source_interfaces[ilevel].ksca_above,
+            1.0e-12,
+        );
+        try std.testing.expectEqual(
+            layer_inputs[ilevel].phase_coefficients[0],
+            source_interfaces[ilevel].phase_coefficients_above[0],
+        );
+        try std.testing.expectApproxEqRel(
+            layer_inputs[ilevel].phase_coefficients[1],
+            source_interfaces[ilevel].phase_coefficients_above[1],
+            1.0e-12,
+        );
+    }
+
+    var fine_layer_inputs: [16]internal.kernels.transport.common.LayerInput = undefined;
+    _ = prepared.fillForwardLayersAtWavelength(&scene, 434.6, &fine_layer_inputs);
+
+    var fine_source_interfaces: [17]internal.kernels.transport.common.SourceInterfaceInput = undefined;
+    prepared.fillSourceInterfacesAtWavelengthWithLayers(434.6, &fine_layer_inputs, &fine_source_interfaces);
+
+    try std.testing.expectApproxEqRel(
+        fine_layer_inputs[0].scattering_optical_depth,
+        fine_source_interfaces[0].source_weight,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), fine_source_interfaces[0].rtm_weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), fine_source_interfaces[0].ksca_above, 1.0e-12);
+    try std.testing.expectApproxEqRel(
+        0.5 * fine_layer_inputs[15].scattering_optical_depth,
+        fine_source_interfaces[16].source_weight,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), fine_source_interfaces[16].rtm_weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), fine_source_interfaces[16].ksca_above, 1.0e-12);
+    const sublayers = prepared.sublayers.?;
+    for (1..16) |ilevel| {
+        const sublayer = sublayers[ilevel];
+        const expected_weight_km = @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+        try std.testing.expectApproxEqAbs(@as(f64, 0.0), fine_source_interfaces[ilevel].source_weight, 1.0e-12);
+        try std.testing.expect(fine_source_interfaces[ilevel].rtm_weight > 0.0);
+        try std.testing.expect(fine_source_interfaces[ilevel].ksca_above >= 0.0);
+        try std.testing.expectApproxEqRel(
+            expected_weight_km,
+            fine_source_interfaces[ilevel].rtm_weight,
+            1.0e-12,
+        );
+        try std.testing.expect(@abs(
+            fine_source_interfaces[ilevel].rtm_weight - sublayer.path_length_cm,
+        ) > 1.0);
+        try std.testing.expectApproxEqRel(
+            if (expected_weight_km > 0.0)
+                fine_layer_inputs[ilevel].scattering_optical_depth / expected_weight_km
+            else
+                0.0,
+            fine_source_interfaces[ilevel].ksca_above,
+            1.0e-12,
+        );
+        try std.testing.expectApproxEqRel(
+            fine_layer_inputs[ilevel].scattering_optical_depth,
+            fine_source_interfaces[ilevel].rtm_weight * fine_source_interfaces[ilevel].ksca_above,
+            1.0e-12,
+        );
+        try std.testing.expectEqual(
+            fine_layer_inputs[ilevel].phase_coefficients[0],
+            fine_source_interfaces[ilevel].phase_coefficients_above[0],
+        );
+        try std.testing.expectApproxEqRel(
+            fine_layer_inputs[ilevel].phase_coefficients[1],
+            fine_source_interfaces[ilevel].phase_coefficients_above[1],
+            1.0e-12,
+        );
+    }
+}
+
+test "optical preparation recomputes layer phase mixing with wavelength-specific gas scattering" {
+    var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .climatology_profile,
+        "data/climatologies/bundle_manifest.json",
+        "us_standard_1976_profile",
+    );
+    defer climatology_asset.deinit(std.testing.allocator);
+    var cross_section_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .cross_section_table,
+        "data/cross_sections/bundle_manifest.json",
+        "no2_405_465_demo",
+    );
+    defer cross_section_asset.deinit(std.testing.allocator);
+    var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .lookup_table,
+        "data/luts/bundle_manifest.json",
+        "airmass_factor_nadir_demo",
+    );
+    defer lut_asset.deinit(std.testing.allocator);
+
+    var profile = try climatology_asset.toClimatologyProfile(std.testing.allocator);
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = try cross_section_asset.toCrossSectionTable(std.testing.allocator);
+    defer cross_sections.deinit(std.testing.allocator);
+    var lut = try lut_asset.toAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "wavelength-phase-mix",
+        .atmosphere = .{
+            .layer_count = 4,
+            .sublayer_divisions = 3,
+            .has_clouds = false,
+            .has_aerosols = true,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.18,
+            .single_scatter_albedo = 0.94,
+            .asymmetry_factor = 0.72,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 550.0,
+            .layer_center_km = 2.0,
+            .layer_width_km = 2.0,
+        },
+        .geometry = .{
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 30.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 121,
+        },
+    };
+
+    var prepared = try OpticsPrepare.prepare(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &cross_sections,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    // The scalar gas phase basis used by the current optics preparation keeps
+    // the first non-isotropic coefficient at zero.
+    const gas_phase_l1: f64 = 0.0;
+    const aerosol_phase_l1 = prepared.sublayers.?[0].aerosol_phase_coefficients[1];
+    var layers_405: [4]internal.kernels.transport.common.LayerInput = undefined;
+    var layers_465: [4]internal.kernels.transport.common.LayerInput = undefined;
+    _ = prepared.fillForwardLayersAtWavelength(&scene, 405.0, &layers_405);
+    _ = prepared.fillForwardLayersAtWavelength(&scene, 465.0, &layers_465);
+
+    for (&[_][]const internal.kernels.transport.common.LayerInput{ &layers_405, &layers_465 }) |layer_set| {
+        const layer = layer_set[0];
+        const total_scattering = layer.gas_scattering_optical_depth + layer.aerosol_scattering_optical_depth;
+        const expected_l1 =
+            (layer.gas_scattering_optical_depth * gas_phase_l1 +
+                layer.aerosol_scattering_optical_depth * aerosol_phase_l1) /
+            total_scattering;
+        try std.testing.expectApproxEqRel(expected_l1, layer.phase_coefficients[1], 1.0e-12);
+    }
+
+    try std.testing.expect(@abs(layers_405[0].phase_coefficients[1] - layers_465[0].phase_coefficients[1]) > 1.0e-4);
 }
 
 test "optical preparation distributes aerosol and cloud optical depth across HG-style sublayers" {

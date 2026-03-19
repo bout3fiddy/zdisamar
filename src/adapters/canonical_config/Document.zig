@@ -47,6 +47,7 @@ const reference_assets = @import("../ingest/reference_assets.zig");
 const spectral_ascii = @import("../ingest/spectral_ascii.zig");
 const spectral_ascii_runtime = @import("../ingest/spectral_ascii_runtime.zig");
 const spectra_grid = @import("../../kernels/spectra/grid.zig");
+const transport_common = @import("../../kernels/transport/common.zig");
 const ExportFormat = @import("../exporters/format.zig").ExportFormat;
 const Allocator = std.mem.Allocator;
 const parseAssetKind = fields.parseAssetKind;
@@ -782,6 +783,7 @@ const ResolveContext = struct {
         // Decode optional typed vendor sections
         stage.vendor_compat = try decodeVendorCompat(mapGet(stage_map, "vendor_compat"), self.strict_unknown_fields);
         stage.radiative_transfer = try decodeRadiativeTransferConfig(self.allocator, mapGet(stage_map, "radiative_transfer"), self.strict_unknown_fields);
+        stage.plan.rtm_controls = try compileStageRtmControls(kind, stage.vendor_compat, stage.radiative_transfer);
         stage.rrs_ring = try decodeRrsRingConfig(self.allocator, mapGet(stage_map, "rrs_ring"), self.strict_unknown_fields);
         stage.additional_output = try decodeAdditionalOutputConfig(mapGet(stage_map, "additional_output"), self.strict_unknown_fields);
         stage.general = try decodeGeneralConfig(self.allocator, mapGet(stage_map, "general"), self.strict_unknown_fields);
@@ -1754,6 +1756,79 @@ fn decodeRadiativeTransferConfig(allocator: Allocator, value: ?yaml.Value, stric
     if (mapGet(rt_map, "num_div_points_alt_sim")) |v| rt.num_div_points_alt_sim = try decodeU32Sequence(allocator, v);
     if (mapGet(rt_map, "num_div_points_alt_retr")) |v| rt.num_div_points_alt_retr = try decodeU32Sequence(allocator, v);
     return rt;
+}
+
+fn compileStageRtmControls(
+    kind: StageKind,
+    vendor_compat: ?VendorCompat,
+    radiative_transfer: ?RadiativeTransferConfig,
+) !transport_common.RtmControls {
+    var controls = transport_common.RtmControls.default_vendor;
+
+    if (radiative_transfer) |rt| {
+        try rejectUnsupportedRtmControls(kind, rt);
+        const scattering_mode = switch (kind) {
+            .simulation => rt.scattering_mode_sim,
+            .retrieval => rt.scattering_mode_retr,
+        };
+        controls.scattering = switch (scattering_mode) {
+            .none => .none,
+            .single => .single,
+            .multiple => .multiple,
+        };
+        controls.integrate_source_function = scattering_mode != .none;
+        controls.stokes_dimension = switch (kind) {
+            .simulation => rt.stokes_dimension_sim,
+            .retrieval => rt.stokes_dimension_retr,
+        };
+        controls.n_streams = @intCast(switch (kind) {
+            .simulation => rt.nstreams_sim,
+            .retrieval => rt.nstreams_retr,
+        });
+        controls.use_adding = switch (kind) {
+            .simulation => rt.use_adding_sim,
+            .retrieval => rt.use_adding_retr,
+        };
+        controls.fourier_floor_scalar = @intFromFloat(@max(switch (kind) {
+            .simulation => rt.fourier_floor_scalar_sim orelse @as(f64, @floatFromInt(controls.fourier_floor_scalar)),
+            .retrieval => rt.fourier_floor_scalar_retr orelse @as(f64, @floatFromInt(controls.fourier_floor_scalar)),
+        }, 0.0));
+        controls.num_orders_max = @intCast(switch (kind) {
+            .simulation => rt.num_orders_max_sim orelse controls.num_orders_max,
+            .retrieval => rt.num_orders_max_retr orelse controls.num_orders_max,
+        });
+        controls.use_spherical_correction = rt.use_correction_spherical_atm;
+        controls.threshold_conv_first = rt.threshold_conv_first orelse controls.threshold_conv_first;
+        controls.threshold_conv_mult = rt.threshold_conv_mult orelse controls.threshold_conv_mult;
+        controls.threshold_doubl = rt.threshold_doubling orelse controls.threshold_doubl;
+        controls.threshold_mul = rt.threshold_multiplier orelse controls.threshold_mul;
+    }
+
+    if (vendor_compat) |compat| {
+        const compat_use_adding = switch (kind) {
+            .simulation => compat.use_adding_sim,
+            .retrieval => compat.use_adding_retr,
+        };
+        if (compat_use_adding) |value| {
+            if (radiative_transfer != null and controls.use_adding != value) return Error.InvalidValue;
+            controls.use_adding = value;
+        }
+    }
+
+    return controls;
+}
+
+fn rejectUnsupportedRtmControls(
+    kind: StageKind,
+    rt: RadiativeTransferConfig,
+) Error!void {
+    const trunc_threshold = switch (kind) {
+        .simulation => rt.threshold_trunc_phase_sim,
+        .retrieval => rt.threshold_trunc_phase_retr,
+    };
+    if (trunc_threshold != null) return Error.InvalidValue;
+    if (rt.use_polarization_correction) return Error.InvalidValue;
+    if (rt.threshold_cloud_fraction != null) return Error.InvalidValue;
 }
 
 fn decodeRrsRingConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?RrsRingConfig {

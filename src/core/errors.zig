@@ -10,6 +10,7 @@ pub const PreparationError = TemplateError || error{
     PreparedPlanLimitExceeded,
     UnsupportedDerivativeMode,
     UnsupportedExecutionMode,
+    UnsupportedRtmControls,
     UnsupportedCapability,
     MissingNativeSource,
     MissingPrepareHook,

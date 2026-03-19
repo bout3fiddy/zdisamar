@@ -106,6 +106,14 @@ fn maxVectorInRange(
     return best;
 }
 
+fn meanAbsoluteDifference(values_a: []const f64, values_b: []const f64) f64 {
+    var sum: f64 = 0.0;
+    for (values_a, values_b) |value_a, value_b| {
+        sum += @abs(value_a - value_b);
+    }
+    return sum / @as(f64, @floatFromInt(values_a.len));
+}
+
 fn expectBoundedO2AMorphology(
     wavelengths_nm: []const f64,
     reflectance: []const f64,
@@ -338,6 +346,79 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
     }
 
     return scene;
+}
+
+test "compatibility harness execution honors RTM controls in prepared routes" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const case = ParityCase{
+        .id = "compat-rtm-controls",
+        .component = "measurement_space",
+        .upstream_case = "unused",
+        .runtime_profile = .{
+            .observation_regime = "nadir",
+            .solver_mode = "scalar",
+            .derivative_mode = "none",
+            .spectral_samples = 41,
+        },
+        .expected_route_family = "baseline_labos",
+        .expected_derivative_mode = "none",
+        .status = "measurement_space_contract",
+        .spectral_start_nm = 760.8,
+        .spectral_end_nm = 771.5,
+        .has_aerosols = true,
+        .use_o2a_spectroscopy = true,
+        .tolerances = .{ .absolute = 1.0e-6, .relative = 1.0e-6 },
+    };
+
+    const scene = makeSceneForCase(case, .nadir);
+    var request = zdisamar.Request.init(scene);
+    request.expected_derivative_mode = .none;
+
+    var plan_labos = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .id = case.id,
+            .observation_regime = .nadir,
+            .derivative_mode = .none,
+            .spectral_grid = scene.spectral_grid,
+            .measurement_count_hint = case.runtime_profile.spectral_samples,
+        },
+        .rtm_controls = .{
+            .n_streams = 4,
+            .num_orders_max = 4,
+        },
+    });
+    defer plan_labos.deinit();
+    var plan_adding = try engine.preparePlan(.{
+        .scene_blueprint = plan_labos.template.scene_blueprint,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .use_adding = true,
+            .num_orders_max = 4,
+        },
+    });
+    defer plan_adding.deinit();
+
+    try std.testing.expectEqual(@as(u16, 4), plan_labos.transport_route.rtm_controls.n_streams);
+    try std.testing.expectEqual(@as(u16, 8), plan_adding.transport_route.rtm_controls.n_streams);
+    try std.testing.expect(plan_adding.transport_route.rtm_controls.use_adding);
+
+    var workspace = engine.createWorkspace("compatibility-rtm-controls");
+    var result_labos = try engine.execute(&plan_labos, &workspace, &request);
+    defer result_labos.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_adding = try engine.execute(&plan_adding, &workspace, &request);
+    defer result_adding.deinit(std.testing.allocator);
+
+    const product_labos = result_labos.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const product_adding = result_adding.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const reflectance_delta = meanAbsoluteDifference(product_labos.reflectance, product_adding.reflectance);
+
+    try std.testing.expectEqualStrings("baseline_labos", result_labos.provenance.transport_family);
+    try std.testing.expectEqualStrings("baseline_adding", result_adding.provenance.transport_family);
+    try std.testing.expect(reflectance_delta > 1.0e-5);
 }
 
 fn buildZeroContinuumTable(
@@ -680,6 +761,11 @@ test "compatibility harness executes bounded parity matrix cases against vendor 
                     .sample_count = case.runtime_profile.spectral_samples,
                 },
                 .measurement_count_hint = case.runtime_profile.spectral_samples,
+            },
+            .rtm_controls = .{
+                .n_streams = if (case.use_o2a_spectroscopy) 8 else 6,
+                .use_adding = std.mem.eql(u8, case.expected_route_family, "baseline_adding"),
+                .num_orders_max = 4,
             },
         });
         defer plan.deinit();

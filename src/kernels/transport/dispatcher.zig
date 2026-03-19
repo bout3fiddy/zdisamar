@@ -7,16 +7,24 @@ pub fn prepare(request: common.DispatchRequest) common.PrepareError!common.Route
     return common.prepareRoute(request);
 }
 
-pub fn executePrepared(route: common.Route, input: common.ForwardInput) common.ExecuteError!common.ForwardResult {
+pub fn executePrepared(
+    allocator: std.mem.Allocator,
+    route: common.Route,
+    input: common.ForwardInput,
+) common.ExecuteError!common.ForwardResult {
     return switch (route.family) {
-        .adding => adding.execute(route, input),
-        .labos => labos.execute(route, input),
+        .adding => adding.execute(allocator, route, input),
+        .labos => labos.execute(allocator, route, input),
     };
 }
 
-pub fn execute(request: common.DispatchRequest, input: common.ForwardInput) common.ExecuteError!common.ForwardResult {
+pub fn execute(
+    allocator: std.mem.Allocator,
+    request: common.DispatchRequest,
+    input: common.ForwardInput,
+) common.ExecuteError!common.ForwardResult {
     const route = try prepare(request);
-    return executePrepared(route, input);
+    return executePrepared(allocator, route, input);
 }
 
 test "dispatcher picks adding lane when use_adding is set" {
@@ -28,9 +36,22 @@ test "dispatcher picks adding lane when use_adding is set" {
     });
     try std.testing.expectEqual(common.TransportFamily.adding, route.family);
 
-    const result = try executePrepared(route, .{
+    const layers = [_]common.LayerInput{.{
+        .optical_depth = 0.38,
+        .scattering_optical_depth = 0.31,
+        .single_scatter_albedo = 0.82,
+        .solar_mu = 0.71,
+        .view_mu = 0.66,
+        .phase_coefficients = .{ 1.0, 0.15, 0.03, 0.0 },
+    }};
+    const result = try executePrepared(std.testing.allocator, route, .{
         .spectral_weight = 1.5,
         .air_mass_factor = 0.75,
+        .mu0 = 0.71,
+        .muv = 0.66,
+        .optical_depth = 0.38,
+        .single_scatter_albedo = 0.82,
+        .layers = &layers,
     });
     try std.testing.expectEqual(common.TransportFamily.adding, result.family);
     try std.testing.expect(result.jacobian_column != null);
@@ -44,7 +65,7 @@ test "dispatcher picks labos lane for limb semi-analytical mode" {
     });
     try std.testing.expectEqual(common.TransportFamily.labos, route.family);
 
-    const result = try executePrepared(route, .{});
+    const result = try executePrepared(std.testing.allocator, route, .{});
     try std.testing.expectEqual(common.TransportFamily.labos, result.family);
     try std.testing.expect(result.jacobian_column != null);
 }
