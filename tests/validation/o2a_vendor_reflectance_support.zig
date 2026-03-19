@@ -40,6 +40,12 @@ pub const TrendTolerances = struct {
     root_mean_square_difference_abs: f64,
     max_abs_difference_abs: f64,
     correlation_abs: f64,
+    blue_wing_mean_difference_abs: f64 = 1.0e-6,
+    trough_wavelength_difference_nm_abs: f64 = 1.0e-6,
+    trough_value_difference_abs: f64 = 1.0e-6,
+    rebound_peak_difference_abs: f64 = 1.0e-6,
+    mid_band_mean_difference_abs: f64 = 1.0e-6,
+    red_wing_mean_difference_abs: f64 = 1.0e-6,
 };
 
 pub const TrendState = enum {
@@ -60,6 +66,12 @@ pub const AssessmentTrend = struct {
     root_mean_square_difference: TrendState,
     max_abs_difference: TrendState,
     correlation: TrendState,
+    blue_wing_mean_difference: TrendState,
+    trough_wavelength_difference_nm: TrendState,
+    trough_value_difference: TrendState,
+    rebound_peak_difference: TrendState,
+    mid_band_mean_difference: TrendState,
+    red_wing_mean_difference: TrendState,
 };
 
 pub const AssessmentOutcome = struct {
@@ -304,6 +316,36 @@ pub fn assessAgainstBaseline(
             baseline.correlation,
             tolerances.correlation_abs,
         ),
+        .blue_wing_mean_difference = compareLowerIsBetter(
+            @abs(current.blue_wing_mean_difference),
+            @abs(baseline.blue_wing_mean_difference),
+            tolerances.blue_wing_mean_difference_abs,
+        ),
+        .trough_wavelength_difference_nm = compareLowerIsBetter(
+            @abs(current.trough_wavelength_difference_nm),
+            @abs(baseline.trough_wavelength_difference_nm),
+            tolerances.trough_wavelength_difference_nm_abs,
+        ),
+        .trough_value_difference = compareLowerIsBetter(
+            @abs(current.trough_value_difference),
+            @abs(baseline.trough_value_difference),
+            tolerances.trough_value_difference_abs,
+        ),
+        .rebound_peak_difference = compareLowerIsBetter(
+            @abs(current.rebound_peak_difference),
+            @abs(baseline.rebound_peak_difference),
+            tolerances.rebound_peak_difference_abs,
+        ),
+        .mid_band_mean_difference = compareLowerIsBetter(
+            @abs(current.mid_band_mean_difference),
+            @abs(baseline.mid_band_mean_difference),
+            tolerances.mid_band_mean_difference_abs,
+        ),
+        .red_wing_mean_difference = compareLowerIsBetter(
+            @abs(current.red_wing_mean_difference),
+            @abs(baseline.red_wing_mean_difference),
+            tolerances.red_wing_mean_difference_abs,
+        ),
     };
 
     if (current.exact_match_within_zero_tolerance) {
@@ -323,7 +365,13 @@ pub fn assessAgainstBaseline(
     if (trend.mean_abs_difference == .regressed or
         trend.root_mean_square_difference == .regressed or
         trend.max_abs_difference == .regressed or
-        trend.correlation == .regressed)
+        trend.correlation == .regressed or
+        trend.blue_wing_mean_difference == .regressed or
+        trend.trough_wavelength_difference_nm == .regressed or
+        trend.trough_value_difference == .regressed or
+        trend.rebound_peak_difference == .regressed or
+        trend.mid_band_mean_difference == .regressed or
+        trend.red_wing_mean_difference == .regressed)
     {
         return .{
             .verdict = .regression_fail,

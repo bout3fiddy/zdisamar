@@ -362,7 +362,7 @@ pub fn build(b: *std.Build) void {
             "compatibility harness parses bounded vendor retrieval diagnostics from asciiHDF",
         },
     );
-    const run_validation_compatibility_full = addSuiteRunStep(
+    const run_validation_compatibility_full = addSuiteRunStepWithArgs(
         b,
         target,
         optimize,
@@ -373,6 +373,9 @@ pub fn build(b: *std.Build) void {
         "test-validation-compatibility-full",
         "Run full DISAMAR compatibility harness validation",
         "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "compatibility harness executes the full parity matrix against vendor anchors",
+        },
     );
     const validation_step = b.step("test-validation", "Run compatibility and validation asset suite");
     validation_step.dependOn(run_validation_asset_suite);

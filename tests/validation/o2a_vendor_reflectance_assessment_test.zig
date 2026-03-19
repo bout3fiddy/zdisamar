@@ -201,6 +201,27 @@ test "o2a vendor assessment fails when higher-is-better metrics regress" {
     try std.testing.expectEqual(o2a_vendor.TrendState.regressed, outcome.trend.correlation);
 }
 
+test "o2a vendor assessment fails when morphology metrics regress" {
+    const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
+    var regressed = baseline;
+    regressed.mid_band_mean_difference = 0.02;
+
+    const outcome = o2a_vendor.assessAgainstBaseline(
+        regressed,
+        baseline,
+        .{
+            .mean_abs_difference_abs = 1.0e-6,
+            .root_mean_square_difference_abs = 1.0e-6,
+            .max_abs_difference_abs = 1.0e-6,
+            .correlation_abs = 1.0e-6,
+        },
+        true,
+    );
+
+    try std.testing.expectEqual(o2a_vendor.AssessmentVerdict.regression_fail, outcome.verdict);
+    try std.testing.expectEqual(o2a_vendor.TrendState.regressed, outcome.trend.mid_band_mean_difference);
+}
+
 test "o2a vendor forward reflectance assessment reports trend against stored baseline" {
     var anchor = try loadBaselineAnchor(std.testing.allocator);
     defer anchor.deinit(std.testing.allocator);

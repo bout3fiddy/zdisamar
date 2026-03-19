@@ -381,7 +381,7 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
     return scene;
 }
 
-test "compatibility harness execution honors RTM controls in prepared routes" {
+fn expectPreparedRouteRtmControls() !void {
     var engine = zdisamar.Engine.init(std.testing.allocator, .{});
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
@@ -452,6 +452,10 @@ test "compatibility harness execution honors RTM controls in prepared routes" {
     try std.testing.expectEqualStrings("baseline_labos", result_labos.provenance.transport_family);
     try std.testing.expectEqualStrings("baseline_adding", result_adding.provenance.transport_family);
     try std.testing.expect(reflectance_delta > 1.0e-5);
+}
+
+test "compatibility harness execution honors RTM controls in prepared routes" {
+    try expectPreparedRouteRtmControls();
 }
 
 fn buildZeroContinuumTable(
@@ -948,7 +952,7 @@ test "compatibility harness executes optics parity cases against vendor anchors"
     try std.testing.expect(executed.optics > 0);
 }
 
-test "compatibility harness parses bounded vendor retrieval diagnostics from asciiHDF" {
+fn expectBoundedVendorAsciiHdfDiagnostics() !void {
     const anchor = try parseVendorAsciiHdfAnchor(
         "vendor/disamar-fortran/test/disamar.asciiHDF",
         std.testing.allocator,
@@ -958,4 +962,19 @@ test "compatibility harness parses bounded vendor retrieval diagnostics from asc
     try std.testing.expect(anchor.solution_has_converged);
     try std.testing.expect(anchor.chi2 >= 0.0);
     try std.testing.expect(anchor.dfs > 0.0);
+}
+
+test "compatibility harness parses bounded vendor retrieval diagnostics from asciiHDF" {
+    try expectBoundedVendorAsciiHdfDiagnostics();
+}
+
+test "compatibility harness executes the full parity matrix against vendor anchors" {
+    const executed = try runParityCases(&.{ .transport, .measurement_space, .retrieval, .optics });
+    try std.testing.expect(executed.total > 0);
+    try std.testing.expect(executed.transport > 0);
+    try std.testing.expect(executed.measurement_space > 0);
+    try std.testing.expect(executed.retrieval > 0);
+    try std.testing.expect(executed.optics > 0);
+    try expectPreparedRouteRtmControls();
+    try expectBoundedVendorAsciiHdfDiagnostics();
 }

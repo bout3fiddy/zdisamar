@@ -8,7 +8,13 @@
     "mean_abs_difference_abs": 1.0e-6,
     "root_mean_square_difference_abs": 1.0e-6,
     "max_abs_difference_abs": 1.0e-6,
-    "correlation_abs": 1.0e-6
+    "correlation_abs": 1.0e-6,
+    "blue_wing_mean_difference_abs": 1.0e-6,
+    "trough_wavelength_difference_nm_abs": 1.0e-6,
+    "trough_value_difference_abs": 1.0e-6,
+    "rebound_peak_difference_abs": 1.0e-6,
+    "mid_band_mean_difference_abs": 1.0e-6,
+    "red_wing_mean_difference_abs": 1.0e-6
   },
   "guidance": {
     "allowed_to_fail": true,
