@@ -472,17 +472,6 @@ pub fn build(b: *std.Build) void {
     test_fast_step.dependOn(run_unit_suite.run_step);
     test_fast_step.dependOn(run_integration_suite.run_step);
 
-    const ci_step = b.step("ci", "Run the blocking Linux CI mirror");
-    ci_step.dependOn(fmt_check_step);
-    ci_step.dependOn(&lib.step);
-    ci_step.dependOn(&exe.step);
-    ci_step.dependOn(&lib_tests.step);
-    ci_step.dependOn(run_unit_suite.run_step);
-    ci_step.dependOn(run_integration_suite.run_step);
-    ci_step.dependOn(run_golden_suite.run_step);
-    ci_step.dependOn(run_validation_compatibility.run_step);
-    ci_step.dependOn(run_perf_suite.run_step);
-
     const transport_step = b.step("test-transport", "Run focused transport parity verification");
     transport_step.dependOn(run_unit_suite.run_step);
     transport_step.dependOn(run_integration_forward_model.run_step);
