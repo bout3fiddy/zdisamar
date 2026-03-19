@@ -255,9 +255,22 @@ pub fn build(b: *std.Build) void {
         test_legacy_config_module,
         test_cli_app_module,
         "test-validation-compatibility",
-        "Run focused DISAMAR compatibility harness tests",
+        "Run fast DISAMAR compatibility smoke tests",
+        "tests/validation/disamar_compatibility_smoke_test.zig",
+    );
+    const run_validation_compatibility_full = addSuiteRunStep(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-compatibility-full",
+        "Run full DISAMAR compatibility harness validation",
         "tests/validation/disamar_compatibility_harness_test.zig",
     );
+    _ = run_validation_compatibility_full;
     const run_validation_o2a = addSuiteRunStep(
         b,
         target,

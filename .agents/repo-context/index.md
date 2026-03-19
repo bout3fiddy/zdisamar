@@ -16,5 +16,6 @@ last_verified: 2026-03-18
 
 - Use `zig build check` for the fast local verification loop.
 - Use `zig build test-transport` for focused transport/parity verification.
+- Use `zig build test-validation-compatibility` for fast compatibility smoke checks.
 - Use `zig build test` for the full verification baseline.
 - Treat changes under `src/core`, `src/kernels`, `src/retrieval`, `src/runtime`, `src/plugins`, and `src/api` as code changes that should keep that baseline green.
