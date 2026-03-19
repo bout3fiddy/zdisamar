@@ -321,35 +321,37 @@ pub fn assessAgainstBaseline(
             baseline.correlation,
             tolerances.correlation_abs,
         ),
+        // Keep morphology trends sensitive to any baseline improvement while
+        // enforcing the broader absolute ceilings separately below.
         .blue_wing_mean_difference = compareLowerIsBetter(
             @abs(current.blue_wing_mean_difference),
             @abs(baseline.blue_wing_mean_difference),
-            tolerances.blue_wing_mean_difference_abs,
+            0.0,
         ),
         .trough_wavelength_difference_nm = compareLowerIsBetter(
             @abs(current.trough_wavelength_difference_nm),
             @abs(baseline.trough_wavelength_difference_nm),
-            tolerances.trough_wavelength_difference_nm_abs,
+            0.0,
         ),
         .trough_value_difference = compareLowerIsBetter(
             @abs(current.trough_value_difference),
             @abs(baseline.trough_value_difference),
-            tolerances.trough_value_difference_abs,
+            0.0,
         ),
         .rebound_peak_difference = compareLowerIsBetter(
             @abs(current.rebound_peak_difference),
             @abs(baseline.rebound_peak_difference),
-            tolerances.rebound_peak_difference_abs,
+            0.0,
         ),
         .mid_band_mean_difference = compareLowerIsBetter(
             @abs(current.mid_band_mean_difference),
             @abs(baseline.mid_band_mean_difference),
-            tolerances.mid_band_mean_difference_abs,
+            0.0,
         ),
         .red_wing_mean_difference = compareLowerIsBetter(
             @abs(current.red_wing_mean_difference),
             @abs(baseline.red_wing_mean_difference),
-            tolerances.red_wing_mean_difference_abs,
+            0.0,
         ),
     };
 
