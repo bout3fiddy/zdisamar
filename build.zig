@@ -299,7 +299,6 @@ pub fn build(b: *std.Build) void {
         "Run DISAMAR compatibility transport and measurement-space shards",
         "tests/validation/disamar_compatibility_harness_test.zig",
         &.{
-            "--test-filter",
             "compatibility harness executes transport and measurement-space parity cases against vendor anchors",
         },
     );
@@ -315,7 +314,6 @@ pub fn build(b: *std.Build) void {
         "Run DISAMAR compatibility retrieval shard",
         "tests/validation/disamar_compatibility_harness_test.zig",
         &.{
-            "--test-filter",
             "compatibility harness executes retrieval parity cases against vendor anchors",
         },
     );
@@ -331,7 +329,6 @@ pub fn build(b: *std.Build) void {
         "Run DISAMAR compatibility optics shard",
         "tests/validation/disamar_compatibility_harness_test.zig",
         &.{
-            "--test-filter",
             "compatibility harness executes optics parity cases against vendor anchors",
         },
     );
