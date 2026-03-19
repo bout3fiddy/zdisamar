@@ -263,7 +263,7 @@ pub fn build(b: *std.Build) void {
         "Run performance smoke suite",
         "tests/perf/main.zig",
     );
-    const run_validation_suite = addSuiteRunStep(
+    const run_validation_asset_suite = addSuiteRunStep(
         b,
         target,
         optimize,
@@ -271,8 +271,8 @@ pub fn build(b: *std.Build) void {
         internal_module,
         test_legacy_config_module,
         test_cli_app_module,
-        "test-validation",
-        "Run compatibility and validation asset suite",
+        "test-validation-assets",
+        "Run non-compatibility validation asset suite",
         "tests/validation/main.zig",
     );
     const run_validation_compatibility = addSuiteRunStep(
@@ -372,6 +372,9 @@ pub fn build(b: *std.Build) void {
     validation_compatibility_full_step.dependOn(run_validation_compatibility_optics);
     validation_compatibility_full_step.dependOn(run_validation_compatibility_rtm_controls);
     validation_compatibility_full_step.dependOn(run_validation_compatibility_asciihdf);
+    const validation_step = b.step("test-validation", "Run compatibility and validation asset suite");
+    validation_step.dependOn(run_validation_asset_suite);
+    validation_step.dependOn(validation_compatibility_full_step);
     const run_validation_o2a = addSuiteRunStep(
         b,
         target,
@@ -411,7 +414,7 @@ pub fn build(b: *std.Build) void {
     test_suites_step.dependOn(run_integration_suite);
     test_suites_step.dependOn(run_golden_suite);
     test_suites_step.dependOn(run_perf_suite);
-    test_suites_step.dependOn(run_validation_suite);
+    test_suites_step.dependOn(validation_step);
 
     const test_step = b.step("test", "Run full verification baseline");
     test_step.dependOn(&run_lib_tests.step);
