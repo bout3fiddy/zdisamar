@@ -120,8 +120,23 @@ fn selectMeasurement(
     product: Request.BorrowedMeasurementProduct,
 ) common.Error!SpectralMeasurement {
     const raw_product = product.product;
+    const source_values = measurementValues(raw_product, observable) catch return common.Error.InvalidRequest;
+    const source_jacobian = measurementJacobian(raw_product, observable);
+    const source_count = raw_product.wavelengths.len;
+    if (source_count == 0 or
+        source_values.len != source_count or
+        raw_product.radiance.len != source_count or
+        raw_product.irradiance.len != source_count or
+        raw_product.reflectance.len != source_count)
+    {
+        return common.Error.InvalidRequest;
+    }
+    if (source_jacobian) |jacobian| {
+        if (jacobian.len != source_count) return common.Error.InvalidRequest;
+    }
+
     const selected_count = measurement.selectedSampleCount(product.wavelengths());
-    if (selected_count != measurement.sample_count) return common.Error.ShapeMismatch;
+    if (selected_count == 0 or selected_count != measurement.sample_count) return common.Error.ShapeMismatch;
 
     const wavelengths = try allocator.alloc(f64, selected_count);
     errdefer allocator.free(wavelengths);
@@ -135,9 +150,6 @@ fn selectMeasurement(
     errdefer allocator.free(irradiance);
     const reflectance = try allocator.alloc(f64, selected_count);
     errdefer allocator.free(reflectance);
-
-    const source_values = measurementValues(raw_product, observable) catch return common.Error.InvalidRequest;
-    const source_jacobian = measurementJacobian(raw_product, observable);
     const selected_jacobian = if (source_jacobian != null)
         try allocator.alloc(f64, selected_count)
     else
@@ -159,6 +171,7 @@ fn selectMeasurement(
         }
         output_index += 1;
     }
+    if (output_index != selected_count) return common.Error.ShapeMismatch;
 
     return .{
         .wavelengths_nm = wavelengths,
@@ -168,8 +181,41 @@ fn selectMeasurement(
         .irradiance = irradiance,
         .reflectance = reflectance,
         .jacobian = selected_jacobian,
-        .summary = raw_product.summary,
+        .summary = summarizeSelectedMeasurement(wavelengths, radiance, irradiance, reflectance, sigma, selected_jacobian),
         .metadata = metadataForProduct(raw_product),
+    };
+}
+
+fn summarizeSelectedMeasurement(
+    wavelengths: []const f64,
+    radiance: []const f64,
+    irradiance: []const f64,
+    reflectance: []const f64,
+    sigma: []const f64,
+    jacobian: ?[]const f64,
+) MeasurementSpaceSummary {
+    const sample_count_f64 = @as(f64, @floatFromInt(wavelengths.len));
+    var radiance_sum: f64 = 0.0;
+    var irradiance_sum: f64 = 0.0;
+    var reflectance_sum: f64 = 0.0;
+    var sigma_sum: f64 = 0.0;
+    var jacobian_sum: f64 = 0.0;
+    for (0..wavelengths.len) |index| {
+        radiance_sum += radiance[index];
+        irradiance_sum += irradiance[index];
+        reflectance_sum += reflectance[index];
+        sigma_sum += sigma[index];
+        if (jacobian) |values| jacobian_sum += values[index];
+    }
+    return .{
+        .sample_count = @intCast(wavelengths.len),
+        .wavelength_start_nm = wavelengths[0],
+        .wavelength_end_nm = wavelengths[wavelengths.len - 1],
+        .mean_radiance = radiance_sum / sample_count_f64,
+        .mean_irradiance = irradiance_sum / sample_count_f64,
+        .mean_reflectance = reflectance_sum / sample_count_f64,
+        .mean_noise_sigma = sigma_sum / sample_count_f64,
+        .mean_jacobian = if (jacobian != null) jacobian_sum / sample_count_f64 else null,
     };
 }
 
@@ -301,6 +347,10 @@ test "spectral evaluator selects masked observable vectors with sigma" {
     try std.testing.expectEqual(@as(usize, 3), selected.values.len);
     try std.testing.expect(selected.sigma[0] > 0.0);
     try std.testing.expectEqual(@as(usize, 3), selected.radiance.len);
+    try std.testing.expectEqual(@as(u32, 3), selected.summary.sample_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 759.5), selected.summary.wavelength_start_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 762.0), selected.summary.wavelength_end_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5333333333333334), selected.summary.mean_radiance, 1.0e-12);
     try std.testing.expectEqual(@as(f64, 1.0), selected.metadata.effective_air_mass_factor);
     try std.testing.expectEqual(@as(f64, 0.1), selected.metadata.total_optical_depth);
     try std.testing.expect(selected.jacobian == null);
@@ -388,4 +438,80 @@ test "spectral evaluator carries routed radiance jacobian when available" {
     try std.testing.expectApproxEqAbs(@as(f64, -0.3), selected.jacobian.?[0], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, -0.1), selected.jacobian.?[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, -0.05), selected.jacobian.?[2], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, -0.15), selected.summary.mean_jacobian.?, 1.0e-12);
+}
+
+test "spectral evaluator rejects routed radiance jacobian shape mismatches" {
+    var short_jacobian = [_]f64{ -0.3, -0.2, -0.1 };
+    const product = MeasurementSpaceProduct{
+        .summary = .{
+            .sample_count = 4,
+            .wavelength_start_nm = 759.5,
+            .wavelength_end_nm = 762.0,
+            .mean_radiance = 1.525,
+            .mean_irradiance = 2.0,
+            .mean_reflectance = 0.7625,
+            .mean_noise_sigma = 0.0225,
+            .mean_jacobian = -0.2,
+        },
+        .wavelengths = @constCast(@as([]const f64, &[_]f64{ 759.5, 760.0, 761.0, 762.0 })),
+        .radiance = @constCast(@as([]const f64, &[_]f64{ 1.6, 1.5, 1.4, 1.6 })),
+        .irradiance = @constCast(@as([]const f64, &[_]f64{ 2.0, 2.0, 2.0, 2.0 })),
+        .reflectance = @constCast(@as([]const f64, &[_]f64{ 0.8, 0.75, 0.70, 0.8 })),
+        .noise_sigma = @constCast(@as([]const f64, &[_]f64{ 0.02, 0.02, 0.03, 0.02 })),
+        .jacobian = &short_jacobian,
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 1.0,
+        .effective_temperature_k = 270.0,
+        .effective_pressure_hpa = 700.0,
+        .gas_optical_depth = 0.1,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .total_optical_depth = 0.1,
+        .depolarization_factor = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+    };
+
+    const problem: common.RetrievalProblem = .{
+        .scene = .{
+            .id = "scene-forward-model-jacobian-mismatch",
+            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 762.0, .sample_count = 4 },
+            .observation_model = .{ .instrument = .synthetic },
+        },
+        .inverse_problem = .{
+            .id = "inverse-forward-model-jacobian-mismatch",
+            .state_vector = .{
+                .parameters = &[_]@import("../../model/Scene.zig").StateParameter{
+                    .{
+                        .name = "aerosol_tau",
+                        .target = .aerosol_optical_depth_550_nm,
+                        .prior = .{ .enabled = true, .mean = 0.08, .sigma = 0.02 },
+                    },
+                },
+            },
+            .measurements = .{
+                .product_name = "radiance",
+                .observable = .radiance,
+                .sample_count = 3,
+                .mask = .{
+                    .exclude = &[_]@import("../../model/Scene.zig").SpectralWindow{
+                        .{ .start_nm = 760.0, .end_nm = 761.0 },
+                    },
+                },
+                .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
+            },
+        },
+        .derivative_mode = .semi_analytical,
+        .jacobians_requested = true,
+        .observed_measurement = .{
+            .source_name = "synthetic-observed",
+            .observable = .radiance,
+            .product_name = "radiance",
+            .sample_count = 3,
+            .product = .init(&product),
+        },
+    };
+
+    try std.testing.expectError(common.Error.InvalidRequest, observedMeasurement(std.testing.allocator, problem));
 }

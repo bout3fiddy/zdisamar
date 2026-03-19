@@ -926,7 +926,11 @@ const ResolveContext = struct {
             if (mapGet(response_map, "shape")) |shape| {
                 const shape_name = try expectString(shape);
                 result.spectral_response_shape = try self.allocator.dupe(u8, shape_name);
-                model.builtin_line_shape = try BuiltinLineShapeKind.parse(shape_name);
+                if (std.mem.eql(u8, shape_name, "table")) {
+                    if (mapGet(response_map, "table") == null) return Error.MissingField;
+                } else {
+                    model.builtin_line_shape = try BuiltinLineShapeKind.parse(shape_name);
+                }
             }
             if (mapGet(response_map, "fwhm_nm")) |fwhm| model.instrument_line_fwhm_nm = try expectF64(fwhm);
             if (mapGet(response_map, "table")) |table_value| {
@@ -1124,7 +1128,10 @@ const ResolveContext = struct {
 
         if (mapGet(measurement_map, "mask")) |mask_value| {
             measurement.mask = try decodeMeasurementMask(self.allocator, mask_value, self.strict_unknown_fields);
-            measurement.sample_count = try maskedMeasurementSampleCount(source_scene, measurement.mask);
+            measurement.sample_count = if (binding.kind() == .ingest)
+                try maskedIngestMeasurementSampleCount(self.allocator, self.ingests, binding, measurement.mask)
+            else
+                try maskedMeasurementSampleCount(source_scene, measurement.mask);
         }
         if (mapGet(measurement_map, "error_model")) |error_model| {
             measurement.error_model = try decodeMeasurementErrorModel(error_model, self.strict_unknown_fields);
@@ -2371,6 +2378,35 @@ fn ingestMeasurementSampleCount(ingests: []const Ingest, binding: Binding) u32 {
     return 0;
 }
 
+fn maskedIngestMeasurementSampleCount(
+    allocator: Allocator,
+    ingests: []const Ingest,
+    binding: Binding,
+    mask: MeasurementMask,
+) !u32 {
+    const ingest_ref = binding.ingestReference().?;
+    const ingest = getReferencedIngest(ingests, ingest_ref);
+    const kind = if (std.mem.eql(u8, ingest_ref.output_name, "radiance"))
+        spectral_ascii.ChannelKind.radiance
+    else if (std.mem.eql(u8, ingest_ref.output_name, "irradiance"))
+        spectral_ascii.ChannelKind.irradiance
+    else
+        return Error.MissingIngestOutput;
+    const wavelengths_nm = try ingest.loaded_spectra.wavelengthsForKind(allocator, kind);
+    defer if (wavelengths_nm.len != 0) allocator.free(wavelengths_nm);
+
+    if (mask.exclude.len == 0) return @intCast(wavelengths_nm.len);
+    try spectra_grid.validateExplicitSamples(wavelengths_nm);
+
+    const measurement: Measurement = .{
+        .product_name = "radiance",
+        .observable = .radiance,
+        .sample_count = @intCast(wavelengths_nm.len),
+        .mask = mask,
+    };
+    return measurement.selectedSampleCount(wavelengths_nm);
+}
+
 fn resolveInstrumentLineShapeTable(ingests: []const Ingest, binding: Binding) !@import("../../model/Instrument.zig").InstrumentLineShapeTable {
     const ingest_ref = binding.ingestReference().?;
     const ingest = findIngest(ingests, ingest_ref.ingest_name) orelse return Error.MissingIngest;
@@ -2390,6 +2426,7 @@ fn hydrateSceneFromIngestMeasurement(
     const ingest = getReferencedIngest(ingests, ingest_ref);
     if (!std.mem.eql(u8, ingest_ref.output_name, "radiance")) return;
 
+    scene.observation_model.sampling = .measured_channels;
     scene.observation_model.measured_wavelengths_nm = try ingest.loaded_spectra.wavelengthsForKind(allocator, .radiance);
     scene.observation_model.owns_measured_wavelengths = scene.observation_model.measured_wavelengths_nm.len != 0;
     scene.observation_model.reference_radiance = try spectral_ascii_runtime.channelValuesForKind(allocator, ingest.loaded_spectra, .radiance);

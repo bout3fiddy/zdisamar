@@ -95,6 +95,12 @@ pub const Parameter = struct {
         if (self.name.len == 0 or self.target == .unset) {
             return errors.Error.InvalidRequest;
         }
+        switch (self.target) {
+            .absorber_column_amount, .temperature_shift, .cloud_top_pressure => {
+                return errors.Error.InvalidRequest;
+            },
+            else => {},
+        }
         try self.prior.validate();
         try self.bounds.validate();
 
@@ -186,4 +192,25 @@ test "state targets parse canonical labels and reject unknown labels" {
         Target.aerosol_layer_center_km.label(),
     );
     try std.testing.expectError(errors.Error.InvalidRequest, Target.parse("scene.unknown.target"));
+}
+
+test "state vector rejects parsed-but-unwired retrieval targets" {
+    const unsupported_targets = [_]Target{
+        .absorber_column_amount,
+        .temperature_shift,
+        .cloud_top_pressure,
+    };
+    for (unsupported_targets) |target| {
+        const vector: StateVector = .{
+            .parameters = &[_]Parameter{
+                .{
+                    .name = "unsupported_target",
+                    .target = target,
+                    .prior = .{ .enabled = true, .mean = 1.0, .sigma = 0.1 },
+                },
+            },
+        };
+
+        try std.testing.expectError(errors.Error.InvalidRequest, vector.validate());
+    }
 }

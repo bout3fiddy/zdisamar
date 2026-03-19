@@ -558,7 +558,7 @@ fn transformMeasurement(
                     @max(measurement.radiance[source_index], 1.0e-12);
             },
             .radiance => {
-                values[output_index] = measurement.radiance[source_index];
+                values[output_index] = measurement.values[source_index];
                 sigma[output_index] = measurement.sigma[source_index];
             },
         }
@@ -1026,4 +1026,40 @@ test "dismas selection prefers differential optical-depth zero crossings" {
     for (selection.indices) |selected_index| {
         try std.testing.expect(std.mem.indexOfScalar(usize, zero_crossings, selected_index) != null);
     }
+}
+
+test "radiance-space transform preserves selected measurement values" {
+    const measurement: forward_model.SpectralMeasurement = .{
+        .wavelengths_nm = @constCast(@as([]const f64, &[_]f64{ 405.0, 411.0, 417.0 })),
+        .values = @constCast(@as([]const f64, &[_]f64{ 0.81, 0.78, 0.75 })),
+        .sigma = @constCast(@as([]const f64, &[_]f64{ 0.01, 0.02, 0.03 })),
+        .radiance = @constCast(@as([]const f64, &[_]f64{ 1.5, 1.4, 1.3 })),
+        .irradiance = @constCast(@as([]const f64, &[_]f64{ 2.0, 2.0, 2.0 })),
+        .reflectance = @constCast(@as([]const f64, &[_]f64{ 0.81, 0.78, 0.75 })),
+        .summary = .{
+            .sample_count = 3,
+            .wavelength_start_nm = 405.0,
+            .wavelength_end_nm = 417.0,
+            .mean_radiance = 1.4,
+            .mean_irradiance = 2.0,
+            .mean_reflectance = 0.78,
+            .mean_noise_sigma = 0.02,
+        },
+        .metadata = .{ .effective_air_mass_factor = 2.0 },
+    };
+    const policy: Policy = .{
+        .selection_strategy = .all_samples,
+        .fit_space = .radiance,
+        .polynomial_order = 1,
+        .max_iterations_default = 8,
+        .damping = 1.0e-4,
+        .selection_budget = 0,
+    };
+    const selection_indices = [_]usize{ 0, 2 };
+
+    var transformed = try transformMeasurement(std.testing.allocator, measurement, policy, &selection_indices);
+    defer transformed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualSlices(f64, &.{ 0.81, 0.75 }, transformed.values);
+    try std.testing.expectEqualSlices(f64, &.{ 0.01, 0.03 }, transformed.sigma);
 }

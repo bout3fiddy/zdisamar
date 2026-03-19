@@ -283,6 +283,19 @@ pub fn build(b: *std.Build) void {
         "Run focused O2A forward-shape validation tests",
         "tests/validation/o2a_forward_shape_test.zig",
     );
+    const run_validation_o2a_vendor = addSuiteRunStep(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-o2a-vendor",
+        "Run O2A vendor reflectance assessment lane",
+        "tests/validation/o2a_vendor_reflectance_assessment_test.zig",
+    );
+    _ = run_validation_o2a_vendor;
 
     const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(run_unit_suite);

@@ -427,6 +427,9 @@ fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel
         if (product.noise_sigma.len == 0 or product.noise_sigma.len != product.radiance.len) {
             return error.MissingNoiseSigma;
         }
+        if (product.irradiance.len != product.radiance.len or product.reflectance.len != product.radiance.len) {
+            return error.InvalidRequest;
+        }
 
         var prng = std.Random.DefaultPrng.init(seed);
         const random = prng.random();
@@ -436,6 +439,7 @@ fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel
             product.reflectance[index] = reflectanceForSample(scene, radiance.*, product.irradiance[index]);
         }
         recomputeMeasurementSummary(product);
+        result.measurement_space = product.summary;
         return;
     }
     return error.UnsupportedOutputTarget;
@@ -545,7 +549,7 @@ fn buildRadianceObservationProduct(
         radiance_sum += radiance[index];
         irradiance_sum += irradiance[index];
         reflectance_sum += reflectance[index];
-        sigma_sum += noise_sigma[index];
+        if (index < noise_sigma.len) sigma_sum += noise_sigma[index];
     }
 
     const product = try allocator.create(MeasurementSpaceProduct);
@@ -732,6 +736,10 @@ fn validateVendorControls(experiment: *const ResolvedExperiment) Error!void {
                     return error.UnsupportedVendorControl;
                 }
             }
+            if (compat.simulation_only) {
+                log.err("UnsupportedVendorControl: vendor_compat.simulation_only is parsed but not yet honored", .{});
+                return error.UnsupportedVendorControl;
+            }
 
             // DOAS-family and DOMINO retrieval methods are not yet supported;
             // only OE is fully implemented. The vendor verifier
@@ -746,6 +754,12 @@ fn validateVendorControls(experiment: *const ResolvedExperiment) Error!void {
                     },
                     .oe, .dismas => {},
                 }
+            }
+        }
+        if (stage.general) |general| {
+            if (general.simulation_only) {
+                log.err("UnsupportedVendorControl: general.simulation_only is parsed but not yet honored", .{});
+                return error.UnsupportedVendorControl;
             }
         }
     }

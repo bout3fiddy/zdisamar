@@ -276,11 +276,18 @@ test "canonical execution applies deterministic stage noise when requested" {
     const clean = clean_execution.outcome.stage_outcomes[0].result.measurement_space_product.?;
     const noisy_a = noisy_execution_a.outcome.stage_outcomes[0].result.measurement_space_product.?;
     const noisy_b = noisy_execution_b.outcome.stage_outcomes[0].result.measurement_space_product.?;
+    const noisy_a_summary = noisy_execution_a.outcome.stage_outcomes[0].result.measurement_space.?;
+    const noisy_b_summary = noisy_execution_b.outcome.stage_outcomes[0].result.measurement_space.?;
 
     try std.testing.expectEqual(clean.radiance.len, noisy_a.radiance.len);
     try std.testing.expectEqualSlices(f64, noisy_a.radiance, noisy_b.radiance);
     try std.testing.expectEqualSlices(f64, noisy_a.reflectance, noisy_b.reflectance);
     try std.testing.expectEqualSlices(f64, clean.noise_sigma, noisy_a.noise_sigma);
+    try std.testing.expectEqual(noisy_a.summary.sample_count, noisy_a_summary.sample_count);
+    try std.testing.expectApproxEqAbs(noisy_a.summary.mean_radiance, noisy_a_summary.mean_radiance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(noisy_a.summary.mean_reflectance, noisy_a_summary.mean_reflectance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(noisy_b.summary.mean_radiance, noisy_b_summary.mean_radiance, 1.0e-12);
+    try std.testing.expectApproxEqAbs(noisy_b.summary.mean_reflectance, noisy_b_summary.mean_reflectance, 1.0e-12);
 
     var found_delta = false;
     for (clean.radiance, noisy_a.radiance) |clean_value, noisy_value| {
@@ -413,7 +420,7 @@ test "canonical execution resolves measured-channel observation config from inge
     try std.testing.expectEqual(@as(usize, 3), product.wavelengths.len);
 }
 
-test "canonical execution binds ingest-backed radiance observations into measured-channel retrievals" {
+test "canonical execution hydrates ingest-backed radiance observations onto the ingest channel grid" {
     const yaml =
         \\schema_version: 1
         \\
@@ -468,7 +475,7 @@ test "canonical execution binds ingest-backed radiance observations into measure
         \\        instrument:
         \\          name: tropomi
         \\        sampling:
-        \\          mode: measured_channels
+        \\          mode: native
         \\        noise:
         \\          model: snr_from_input
         \\
@@ -483,6 +490,9 @@ test "canonical execution binds ingest-backed radiance observations into measure
         \\      measurement:
         \\        source: observed.radiance
         \\        observable: radiance
+        \\        mask:
+        \\          exclude:
+        \\            - [405.45, 405.55]
         \\        error_model:
         \\          from_source_noise: true
         \\      state:
@@ -519,7 +529,9 @@ test "canonical execution binds ingest-backed radiance observations into measure
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, execution.outcome.stage_outcomes[0].result.status);
     try std.testing.expectEqual(zdisamar.DataBindingKind.ingest, execution.program.stages[0].stage.inverse.?.measurements.source.kind());
+    try std.testing.expectEqual(zdisamar.Instrument.SamplingMode.measured_channels, execution.program.stages[0].stage.scene.observation_model.sampling);
     try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval != null);
+    try std.testing.expectEqual(@as(u32, 2), execution.outcome.stage_outcomes[0].result.retrieval.?.observed_measurement.?.sample_count);
     try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval.?.jacobian != null);
     try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval.?.averaging_kernel != null);
     try std.testing.expect(execution.outcome.stage_outcomes[0].result.retrieval.?.posterior_covariance != null);

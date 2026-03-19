@@ -373,6 +373,67 @@ test "canonical config parses typed vendor sections into resolved stage" {
     try std.testing.expectEqualStrings("baseline_labos", retr_plan.transport_route.family.provenanceLabel());
 }
 
+test "canonical config rejects table spectral responses without a table binding" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: missing-spectral-response-table
+        \\experiment:
+        \\  simulation:
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      id: spectral_response_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        band_1:
+        \\          start_nm: 758.0
+        \\          end_nm: 771.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: tropomi
+        \\        spectral_response:
+        \\          shape: table
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.MissingField,
+        document.resolve(std.testing.allocator),
+    );
+}
+
 test "canonical config rejects unsupported radiative transfer controls that cannot be honored" {
     const source =
         \\schema_version: 1

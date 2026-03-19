@@ -89,8 +89,8 @@ test "canonical execution accepts supported vendor controls and rejects unsuppor
     // WP-01: unsupported vendor controls must fail loudly with a stable error.
     // The UnsupportedVendorControl error type is defined in the execution Error
     // union and is triggered by validateVendorControls for DISMAS simulation,
-    // DOAS/classic_DOAS/DOMINO retrieval methods, and unknown spectral response
-    // shapes.
+    // DOAS/classic_DOAS/DOMINO retrieval methods, parsed-but-unhonored vendor
+    // flags such as simulation_only, and unknown spectral response shapes.
     //
     // We verify the contract from the supported side: a config with vendor_compat
     // using a supported method (oe_lbl) must compile without error. The
@@ -151,7 +151,6 @@ test "canonical execution accepts supported vendor controls and rejects unsuppor
         \\    from: base
         \\    vendor_compat:
         \\      simulation_method: oe_lbl
-        \\      simulation_only: true
         \\    scene:
         \\      id: supported_scene
         \\    products:

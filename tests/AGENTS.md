@@ -3,3 +3,7 @@
 - `tests/` is for first-class unit, integration, golden, and performance suites.
 - Do not treat dumped output artifacts as tests without harnesses or assertions.
 - Keep fast correctness checks here; longer-running compatibility or benchmark assets belong in `validation/`.
+- `tests/validation/o2a_vendor_reflectance_assessment_test.zig` is an opt-in assessment lane, not a default correctness gate.
+- Run it with `zig build test-validation-o2a-vendor` when you need to compare zdisamar's O2 A forward reflectance against the stored vendor reference for `Config_O2_with_CIA.in`.
+- The lane intentionally fails whenever the vendor delta is nonzero. Treat the emitted JSON as the real output: compare `current` against `baseline`, look at `trend`, and decide whether `improved`, `flat`, or `regressed` matches the files that changed.
+- A `flat` result is acceptable when the change did not touch forward physics or O2 A reference assets. A `regressed` result is a concern when work touched `src/kernels/transport`, `src/kernels/optics`, `src/runtime/reference`, `src/model/reference`, `data/cross_sections`, or the O2 A reference CSV. A zero-difference pass is exceptional and should be called out explicitly.
