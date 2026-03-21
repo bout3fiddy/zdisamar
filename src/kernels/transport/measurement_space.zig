@@ -497,8 +497,8 @@ pub fn simulateProduct(
 }
 
 fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
+    _ = route;
     const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
-    if (route.family != .adding) return layer_count;
     return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
@@ -508,7 +508,8 @@ fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usiz
 }
 
 fn resolvedTransportLayerCount(route: common.Route, prepared: *const PreparedOpticalState) usize {
-    return if (route.family == .adding) prepared.transportLayerCount() else prepared.layers.len;
+    _ = route;
+    return prepared.transportLayerCount();
 }
 
 fn resolvedPseudoSphericalSampleCount(
@@ -1722,13 +1723,13 @@ test "configured forward input preserves prepared source-function boundary weigh
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var layer_inputs: [2]common.LayerInput = undefined;
-    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
-    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
-    var rtm_quadrature_levels: [3]common.RtmQuadratureLevel = undefined;
-    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
-    var pseudo_spherical_level_starts: [3]usize = undefined;
-    var pseudo_spherical_level_altitudes: [3]f64 = undefined;
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [8]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [8]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    var pseudo_spherical_level_altitudes: [5]f64 = undefined;
     const input = configuredForwardInput(
         &scene,
         route,
@@ -1743,26 +1744,33 @@ test "configured forward input preserves prepared source-function boundary weigh
         &pseudo_spherical_level_altitudes,
     );
 
-    try std.testing.expectEqual(@as(usize, 2), input.layers.len);
-    try std.testing.expectEqual(@as(usize, 3), input.source_interfaces.len);
+    try std.testing.expectEqual(@as(usize, 4), input.layers.len);
+    try std.testing.expectEqual(@as(usize, 5), input.source_interfaces.len);
     try std.testing.expectApproxEqRel(
         input.layers[0].scattering_optical_depth,
         input.source_interfaces[0].source_weight,
         1.0e-12,
     );
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[0].rtm_weight, 1.0e-12);
-    try std.testing.expectApproxEqRel(
-        0.5 * input.layers[1].scattering_optical_depth,
-        input.source_interfaces[2].source_weight,
-        1.0e-12,
-    );
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[2].rtm_weight, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[1].source_weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[2].source_weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[3].source_weight, 1.0e-12);
     try std.testing.expect(input.source_interfaces[1].rtm_weight > 0.0);
-    try std.testing.expect(input.source_interfaces[1].ksca_above >= 0.0);
+    try std.testing.expect(input.source_interfaces[2].rtm_weight > 0.0);
+    try std.testing.expect(input.source_interfaces[3].rtm_weight > 0.0);
     try std.testing.expectApproxEqRel(
         input.layers[1].scattering_optical_depth,
         input.source_interfaces[1].rtm_weight * input.source_interfaces[1].ksca_above,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqRel(
+        input.layers[2].scattering_optical_depth,
+        input.source_interfaces[2].rtm_weight * input.source_interfaces[2].ksca_above,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqRel(
+        input.layers[3].scattering_optical_depth,
+        input.source_interfaces[3].rtm_weight * input.source_interfaces[3].ksca_above,
         1.0e-12,
     );
     try std.testing.expectApproxEqRel(
@@ -1770,6 +1778,17 @@ test "configured forward input preserves prepared source-function boundary weigh
         input.source_interfaces[1].phase_coefficients_above[1],
         1.0e-12,
     );
+    try std.testing.expectApproxEqRel(
+        input.layers[2].phase_coefficients[1],
+        input.source_interfaces[2].phase_coefficients_above[1],
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqRel(
+        0.5 * input.layers[3].scattering_optical_depth,
+        input.source_interfaces[4].source_weight,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.source_interfaces[4].rtm_weight, 1.0e-12);
 }
 
 test "configured forward input wires pseudo-spherical attenuation samples from prepared sublayers" {
@@ -1802,13 +1821,13 @@ test "configured forward input wires pseudo-spherical attenuation samples from p
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
     defer prepared.deinit(std.testing.allocator);
 
-    var layer_inputs: [2]common.LayerInput = undefined;
-    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
-    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
-    var rtm_quadrature_levels: [3]common.RtmQuadratureLevel = undefined;
-    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
-    var pseudo_spherical_level_starts: [3]usize = undefined;
-    var pseudo_spherical_level_altitudes: [3]f64 = undefined;
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [8]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [8]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    var pseudo_spherical_level_altitudes: [5]f64 = undefined;
     const input = configuredForwardInput(
         &scene,
         route,
@@ -1824,8 +1843,10 @@ test "configured forward input wires pseudo-spherical attenuation samples from p
     );
 
     try std.testing.expect(input.pseudo_spherical_grid.isValidFor(input.layers.len));
-    try std.testing.expectEqualSlices(usize, &.{ 0, 2, 4 }, input.pseudo_spherical_grid.level_sample_starts);
-    try std.testing.expectEqualSlices(f64, &.{ 0.75, 7.75, 12.25 }, input.pseudo_spherical_grid.level_altitudes_km);
+    try std.testing.expectEqual(@as(usize, 4), input.layers.len);
+    try std.testing.expectEqual(@as(usize, 8), input.pseudo_spherical_grid.samples.len);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 2, 4, 6, 8 }, input.pseudo_spherical_grid.level_sample_starts);
+    try std.testing.expectEqualSlices(f64, &.{ 0.75, 2.75, 7.75, 11.75, 12.25 }, input.pseudo_spherical_grid.level_altitudes_km);
     try std.testing.expectApproxEqRel(@as(f64, 0.75), input.pseudo_spherical_grid.samples[0].altitude_km, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[0].thickness_km, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[0].optical_depth, 1.0e-12);
@@ -1834,6 +1855,10 @@ test "configured forward input wires pseudo-spherical attenuation samples from p
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[2].thickness_km, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[2].optical_depth, 1.0e-12);
     try std.testing.expect(input.pseudo_spherical_grid.samples[3].optical_depth > 0.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[4].thickness_km, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[6].thickness_km, 1.0e-12);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[5].optical_depth > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[7].optical_depth > 0.0);
 }
 
 test "configured forward input builds adding pseudo-spherical subgrid within prepared RTM layers" {
@@ -2854,8 +2879,8 @@ test "summary workspace sizes adding transport buffers from sublayer hints" {
         route_labos,
         testProviders(),
     );
-    try std.testing.expectEqual(@as(usize, 2), labos_buffers.layer_inputs.len);
-    try std.testing.expectEqual(@as(usize, 3), labos_buffers.source_interfaces.len);
+    try std.testing.expectEqual(@as(usize, 4), labos_buffers.layer_inputs.len);
+    try std.testing.expectEqual(@as(usize, 5), labos_buffers.source_interfaces.len);
 
     const adding_buffers = try workspace.buffers(
         std.testing.allocator,
@@ -2895,6 +2920,51 @@ test "measurement-space simulation supports adding routes on prepared sublayer g
             .n_streams = 8,
             .num_orders_max = 4,
             .integrate_source_function = false,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    const summary = try simulateSummary(std.testing.allocator, &scene, route, &prepared, testProviders());
+    try std.testing.expect(summary.mean_radiance > 0.0);
+    try std.testing.expect(summary.mean_irradiance > 0.0);
+    try std.testing.expect(summary.mean_reflectance > 0.0);
+}
+
+test "measurement-space simulation supports labos routes on prepared sublayer grids" {
+    const scene: Scene = .{
+        .id = "measurement-space-labos-sublayers",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 16,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .shot_noise,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 56.0,
+            .viewing_zenith_deg = 28.0,
+            .relative_azimuth_deg = 75.0,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 4,
+            .integrate_source_function = true,
+            .use_spherical_correction = true,
         },
     });
     var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
