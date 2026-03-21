@@ -2018,6 +2018,50 @@ test "configured forward input builds prepared adding RTM quadrature from nonuni
     try std.testing.expectApproxEqRel(total_scattering, quadrature_scattering, 1.0e-12);
 }
 
+test "prepared adding RTM quadrature recomputes node phase from prepared sublayer state" {
+    var prepared = try buildNonuniformQuadraturePreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    const surrogate_layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.125,
+            .scattering_optical_depth = 0.125,
+            .single_scatter_albedo = 1.0,
+            .phase_coefficients = .{ 1.0, 0.95, 0.0, 0.0 },
+        },
+        .{
+            .optical_depth = 0.125,
+            .scattering_optical_depth = 0.125,
+            .single_scatter_albedo = 1.0,
+            .phase_coefficients = .{ 1.0, 0.95, 0.0, 0.0 },
+        },
+        .{
+            .optical_depth = 0.125,
+            .scattering_optical_depth = 0.125,
+            .single_scatter_albedo = 1.0,
+            .phase_coefficients = .{ 1.0, 0.95, 0.0, 0.0 },
+        },
+        .{
+            .optical_depth = 0.125,
+            .scattering_optical_depth = 0.125,
+            .single_scatter_albedo = 1.0,
+            .phase_coefficients = .{ 1.0, 0.95, 0.0, 0.0 },
+        },
+    };
+    var levels: [5]common.RtmQuadratureLevel = undefined;
+    const has_quadrature = prepared.fillRtmQuadratureAtWavelengthWithLayers(435.0, &surrogate_layers, &levels);
+
+    try std.testing.expect(has_quadrature);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), levels[0].weight, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), levels[4].weight, 1.0e-12);
+    try std.testing.expect(@abs(levels[1].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
+    try std.testing.expect(@abs(levels[2].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
+    try std.testing.expect(@abs(levels[3].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
+    try std.testing.expectApproxEqRel(@as(f64, 0.2050806661517033), levels[1].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.32), levels[2].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.38), levels[3].phase_coefficients[1], 1.0e-12);
+}
+
 test "prepared adding live route uses nonuniform quadrature weights instead of the legacy midpoint surrogate" {
     const scene: Scene = .{
         .id = "measurement-adding-nonuniform-live",
