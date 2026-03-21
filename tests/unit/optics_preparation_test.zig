@@ -170,7 +170,6 @@ test "optical preparation consumes vendor-shaped strong-line sidecars for bounde
         "o2o2_bira_o2a_subset",
     );
     defer cia_asset.deinit(std.testing.allocator);
-
     var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         std.testing.allocator,
         .lookup_table,
@@ -267,6 +266,179 @@ test "optical preparation consumes vendor-shaped strong-line sidecars for bounde
     try std.testing.expect(gas_tau_band_center > gas_tau_off_band);
     try std.testing.expect(@abs(prepared.spectroscopy_lines.?.evaluateAt(771.3, prepared.effective_temperature_k, prepared.effective_pressure_hpa).line_mixing_sigma_cm2_per_molecule) > 0.0);
     try std.testing.expect(prepared.sublayers.?[prepared.sublayers.?.len - 1].combined_phase_coefficients[1] >= 0.0);
+}
+
+test "pseudo-spherical prepared carriers preserve strong-line prepared states" {
+    var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .climatology_profile,
+        "data/climatologies/bundle_manifest.json",
+        "us_standard_1976_profile",
+    );
+    defer climatology_asset.deinit(std.testing.allocator);
+
+    var line_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .spectroscopy_line_list,
+        "data/cross_sections/bundle_manifest.json",
+        "o2a_hitran_subset_07_hit08_tropomi",
+    );
+    defer line_asset.deinit(std.testing.allocator);
+    var strong_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .spectroscopy_strong_line_set,
+        "data/cross_sections/bundle_manifest.json",
+        "o2a_lisa_sdf_subset",
+    );
+    defer strong_asset.deinit(std.testing.allocator);
+    var rmf_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .spectroscopy_relaxation_matrix,
+        "data/cross_sections/bundle_manifest.json",
+        "o2a_lisa_rmf_subset",
+    );
+    defer rmf_asset.deinit(std.testing.allocator);
+    var cia_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .collision_induced_absorption_table,
+        "data/cross_sections/bundle_manifest.json",
+        "o2o2_bira_o2a_subset",
+    );
+    defer cia_asset.deinit(std.testing.allocator);
+
+    var profile = try climatology_asset.toClimatologyProfile(std.testing.allocator);
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.8, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 766.15, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 771.5, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+    var line_list = try line_asset.toSpectroscopyLineList(std.testing.allocator);
+    defer line_list.deinit(std.testing.allocator);
+    var strong_lines = try strong_asset.toSpectroscopyStrongLineSet(std.testing.allocator);
+    defer strong_lines.deinit(std.testing.allocator);
+    var relaxation_matrix = try rmf_asset.toSpectroscopyRelaxationMatrix(std.testing.allocator);
+    defer relaxation_matrix.deinit(std.testing.allocator);
+    var cia_table = try cia_asset.toCollisionInducedAbsorptionTable(std.testing.allocator);
+    defer cia_table.deinit(std.testing.allocator);
+    try line_list.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
+    var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .lookup_table,
+        "data/luts/bundle_manifest.json",
+        "airmass_factor_nadir_demo",
+    );
+    defer lut_asset.deinit(std.testing.allocator);
+    var lut = try lut_asset.toAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "o2a-pseudo-strong-line",
+        .atmosphere = .{
+            .layer_count = 6,
+            .sublayer_divisions = 3,
+        },
+        .geometry = .{
+            .solar_zenith_deg = 55.0,
+            .viewing_zenith_deg = 20.0,
+            .relative_azimuth_deg = 60.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 771.5,
+            .sample_count = 161,
+        },
+    };
+
+    var prepared = try OpticsPrepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &cross_sections,
+        &cia_table,
+        &line_list,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    const transport_common = internal.kernels.transport.common;
+    const sublayers = prepared.sublayers.?;
+    const strong_line_states = prepared.strong_line_states.?;
+    const solver_layer_count = sublayers.len;
+    const wavelength_nm = 771.3;
+    const continuum_sigma = (ReferenceData.CrossSectionTable{
+        .points = prepared.continuum_points,
+    }).interpolateSigma(wavelength_nm);
+
+    const attenuation_layers = try std.testing.allocator.alloc(transport_common.LayerInput, solver_layer_count);
+    defer std.testing.allocator.free(attenuation_layers);
+    const attenuation_samples = try std.testing.allocator.alloc(
+        transport_common.PseudoSphericalSample,
+        solver_layer_count * scene.atmosphere.sublayer_divisions,
+    );
+    defer std.testing.allocator.free(attenuation_samples);
+    const level_sample_starts = try std.testing.allocator.alloc(usize, solver_layer_count + 1);
+    defer std.testing.allocator.free(level_sample_starts);
+    const level_altitudes_km = try std.testing.allocator.alloc(f64, solver_layer_count + 1);
+    defer std.testing.allocator.free(level_altitudes_km);
+
+    var selected_index: ?usize = null;
+    for (strong_line_states, 0..) |prepared_state, index| {
+        if (prepared_state.line_count == 0) continue;
+        strong_line_states[index].population_t[0] *= 1.25;
+        selected_index = index;
+        break;
+    }
+    try std.testing.expect(selected_index != null);
+
+    try std.testing.expect(prepared.fillPseudoSphericalGridAtWavelength(
+        &scene,
+        wavelength_nm,
+        solver_layer_count,
+        attenuation_layers,
+        attenuation_samples,
+        level_sample_starts,
+        level_altitudes_km,
+    ));
+
+    const sublayer = sublayers[selected_index.?];
+    const prepared_sigma = prepared.spectroscopy_lines.?.sigmaAtPrepared(
+        wavelength_nm,
+        sublayer.temperature_k,
+        sublayer.pressure_hpa,
+        &strong_line_states[selected_index.?],
+    );
+    const raw_sigma = prepared.spectroscopy_lines.?.sigmaAt(
+        wavelength_nm,
+        sublayer.temperature_k,
+        sublayer.pressure_hpa,
+    );
+    try std.testing.expect(@abs(prepared_sigma - raw_sigma) > 0.0);
+
+    const sample_index = level_sample_starts[selected_index.?] + 1;
+    const sample = attenuation_samples[sample_index];
+    const expected_optical_depth =
+        sample.thickness_km *
+        ((continuum_sigma + prepared_sigma) * sublayer.oxygen_number_density_cm3 * centimeters_per_kilometer +
+            ReferenceData.Rayleigh.crossSectionCm2(wavelength_nm) * sublayer.number_density_cm3 * centimeters_per_kilometer +
+            prepared.collision_induced_absorption.?.sigmaAt(wavelength_nm, sublayer.temperature_k) *
+                sublayer.oxygen_number_density_cm3 *
+                sublayer.oxygen_number_density_cm3 *
+                centimeters_per_kilometer);
+    const raw_optical_depth =
+        sample.thickness_km *
+        ((continuum_sigma + raw_sigma) * sublayer.oxygen_number_density_cm3 * centimeters_per_kilometer +
+            ReferenceData.Rayleigh.crossSectionCm2(wavelength_nm) * sublayer.number_density_cm3 * centimeters_per_kilometer +
+            prepared.collision_induced_absorption.?.sigmaAt(wavelength_nm, sublayer.temperature_k) *
+                sublayer.oxygen_number_density_cm3 *
+                sublayer.oxygen_number_density_cm3 *
+                centimeters_per_kilometer);
+
+    try std.testing.expectApproxEqRel(expected_optical_depth, sample.optical_depth, 1e-12);
+    try std.testing.expect(@abs(sample.optical_depth - raw_optical_depth) > 0.0);
 }
 
 test "optical preparation applies operational O2 and O2-O2 LUT replacements for O2A scenes" {

@@ -22,9 +22,6 @@ pub const Atmosphere = struct {
         if (self.sublayer_divisions == 0) {
             return errors.Error.InvalidRequest;
         }
-        if (self.sublayer_divisions > 11) {
-            return errors.Error.InvalidRequest;
-        }
         if (self.surface_pressure_hpa != 0.0 and
             (!std.math.isFinite(self.surface_pressure_hpa) or self.surface_pressure_hpa <= 0.0))
         {
@@ -51,11 +48,8 @@ test "atmosphere validates profile source and positive surface pressure" {
             .layer_count = 0,
         }).validate(),
     );
-    try @import("std").testing.expectError(
-        errors.Error.InvalidRequest,
-        (Atmosphere{
-            .layer_count = 48,
-            .sublayer_divisions = 12,
-        }).validate(),
-    );
+    try (Atmosphere{
+        .layer_count = 48,
+        .sublayer_divisions = 12,
+    }).validate();
 }

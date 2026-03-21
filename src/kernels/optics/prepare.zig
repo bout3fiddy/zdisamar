@@ -489,6 +489,7 @@ pub const PreparedOpticalState = struct {
 
     const PseudoSphericalInterval = struct {
         support_sublayers: []const PreparedSublayer,
+        strong_line_states: ?[]const ReferenceData.StrongLinePreparedState = null,
         lower_altitude_km: f64,
         upper_altitude_km: f64,
     };
@@ -639,6 +640,28 @@ pub const PreparedOpticalState = struct {
         return null;
     }
 
+    fn preparedStrongLineStateAtAltitude(
+        sublayers: []const PreparedSublayer,
+        strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+        altitude_km: f64,
+    ) ?*const ReferenceData.StrongLinePreparedState {
+        const states = strong_line_states orelse return null;
+        if (states.len == 0 or states.len != sublayers.len) return null;
+        if (states.len == 1) return &states[0];
+
+        if (altitude_km <= sublayers[0].altitude_km) return &states[0];
+        if (altitude_km >= sublayers[sublayers.len - 1].altitude_km) return &states[states.len - 1];
+
+        for (sublayers[0 .. sublayers.len - 1], sublayers[1..], 0..) |left, right, index| {
+            if (altitude_km > right.altitude_km) continue;
+            const left_distance = @abs(altitude_km - left.altitude_km);
+            const right_distance = @abs(right.altitude_km - altitude_km);
+            return if (left_distance <= right_distance) &states[index] else &states[index + 1];
+        }
+
+        return &states[states.len - 1];
+    }
+
     fn quadratureCarrierAtAltitude(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
@@ -690,17 +713,20 @@ pub const PreparedOpticalState = struct {
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
         sublayers: []const PreparedSublayer,
+        strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
         altitude_km: f64,
         weight_km: f64,
     ) PseudoSphericalCarrier {
         const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{ .optical_depth = 0.0 };
         const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
         const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
-        const spectroscopy_sigma = self.spectroscopyEvaluationAtWavelength(
+        const prepared_state = preparedStrongLineStateAtAltitude(sublayers, strong_line_states, altitude_km);
+        const spectroscopy_sigma = self.spectroscopySigmaAtWavelength(
             wavelength_nm,
             state.temperature_k,
             state.pressure_hpa,
-        ).total_sigma_cm2_per_molecule;
+            prepared_state,
+        );
         const gas_absorption_optical_depth_per_km =
             (continuum_sigma + spectroscopy_sigma) *
             state.oxygen_number_density_cm3 *
@@ -866,6 +892,10 @@ pub const PreparedOpticalState = struct {
             const interval = if (solver_layer_count == sublayers.len)
                 PseudoSphericalInterval{
                     .support_sublayers = sublayers[solver_level .. solver_level + 1],
+                    .strong_line_states = if (self.strong_line_states) |states|
+                        states[solver_level .. solver_level + 1]
+                    else
+                        null,
                     .lower_altitude_km = levelAltitudeFromSublayers(sublayers, solver_level),
                     .upper_altitude_km = levelAltitudeFromSublayers(sublayers, solver_level + 1),
                 }
@@ -877,6 +907,10 @@ pub const PreparedOpticalState = struct {
                 const stop = start + count;
                 break :blk PseudoSphericalInterval{
                     .support_sublayers = sublayers[start..stop],
+                    .strong_line_states = if (self.strong_line_states) |states|
+                        states[start..stop]
+                    else
+                        null,
                     .lower_altitude_km = levelAltitudeFromSublayers(sublayers, start),
                     .upper_altitude_km = levelAltitudeFromSublayers(sublayers, stop),
                 };
@@ -896,6 +930,7 @@ pub const PreparedOpticalState = struct {
                     .optical_depth = self.pseudoSphericalCarrierAtAltitude(
                         wavelength_nm,
                         interval.support_sublayers,
+                        interval.strong_line_states,
                         sample_altitude_km,
                         altitude_span_km,
                     ).optical_depth,
@@ -934,6 +969,7 @@ pub const PreparedOpticalState = struct {
                     .optical_depth = self.pseudoSphericalCarrierAtAltitude(
                         wavelength_nm,
                         interval.support_sublayers,
+                        interval.strong_line_states,
                         node_altitude_km,
                         weight_km,
                     ).optical_depth,
