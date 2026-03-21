@@ -638,6 +638,9 @@ fn levelAltitudeFromPseudoSphericalGrid(
     pseudo_spherical_grid: common.PseudoSphericalGrid,
     level: usize,
 ) f64 {
+    if (pseudo_spherical_grid.level_altitudes_km.len != 0) {
+        return pseudo_spherical_grid.level_altitudes_km[level];
+    }
     if (level == 0) {
         const first = pseudo_spherical_grid.samples[0];
         return @max(first.altitude_km - 0.5 * first.thickness_km, 0.0);
@@ -2064,6 +2067,64 @@ test "labos dynamic spherical correction uses pseudo-spherical sample grid when 
     try std.testing.expectApproxEqRel(expected_mid, spherical.get(geo.viewIdx(), 2, 1), 1.0e-12);
     try std.testing.expect(@abs(spherical.get(geo.viewIdx(), 2, 0) - fallback.get(geo.viewIdx(), 2, 0)) > 1.0e-6);
     try std.testing.expectApproxEqAbs(fallback.get(geo.viewIdx(), 0, 2), spherical.get(geo.viewIdx(), 0, 2), 1.0e-12);
+}
+
+test "labos dynamic spherical correction prefers explicit pseudo-spherical level altitudes" {
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.27,
+            .single_scatter_albedo = 0.9,
+            .solar_mu = 0.45,
+            .view_mu = 0.55,
+        },
+        .{
+            .optical_depth = 0.14,
+            .single_scatter_albedo = 0.9,
+            .solar_mu = 0.50,
+            .view_mu = 0.60,
+        },
+    };
+    const pseudo_samples = [_]common.PseudoSphericalSample{
+        .{ .altitude_km = 0.75, .thickness_km = 0.0, .optical_depth = 0.0 },
+        .{ .altitude_km = 4.25, .thickness_km = 1.0, .optical_depth = 0.14 },
+        .{ .altitude_km = 7.75, .thickness_km = 0.0, .optical_depth = 0.0 },
+        .{ .altitude_km = 10.0, .thickness_km = 1.0, .optical_depth = 0.08 },
+    };
+    const pseudo_grid: common.PseudoSphericalGrid = .{
+        .samples = &pseudo_samples,
+        .level_sample_starts = &.{ 0, 2, 4 },
+        .level_altitudes_km = &.{ 0.75, 7.75, 12.25 },
+    };
+    const inferred_grid: common.PseudoSphericalGrid = .{
+        .samples = &pseudo_samples,
+        .level_sample_starts = &.{ 0, 2, 4 },
+    };
+    const rearth_km = 6371.0;
+    const geo = Geometry.init(3, 0.8, 0.9);
+    var explicit = try fillAttenuationDynamicWithGrid(std.testing.allocator, &layers, pseudo_grid, &geo, true);
+    defer explicit.deinit();
+    var inferred = try fillAttenuationDynamicWithGrid(std.testing.allocator, &layers, inferred_grid, &geo, true);
+    defer inferred.deinit();
+
+    const view_u = geo.u[geo.viewIdx()];
+    const sin2theta = 1.0 - view_u * view_u;
+    const expected_mid = blk: {
+        var sumkext: f64 = 0.0;
+        const level_radius = rearth_km + 7.75;
+        const sqrx_sin2theta = sin2theta * level_radius * level_radius;
+        for (pseudo_samples[2..]) |sample| {
+            if (sample.optical_depth <= 0.0) continue;
+            const sample_radius = rearth_km + sample.altitude_km;
+            const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
+            sumkext += (sample.optical_depth * sample_radius) / denominator;
+        }
+        break :blk math.exp(-sumkext);
+    };
+
+    try std.testing.expectApproxEqRel(expected_mid, explicit.get(geo.viewIdx(), 2, 1), 1.0e-12);
+    try std.testing.expect(@abs(
+        explicit.get(geo.viewIdx(), 2, 1) - inferred.get(geo.viewIdx(), 2, 1),
+    ) > 1.0e-9);
 }
 
 test "labos surface reflector has correct structure" {

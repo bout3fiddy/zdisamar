@@ -48,4 +48,8 @@ test "atmosphere validates profile source and positive surface pressure" {
             .layer_count = 0,
         }).validate(),
     );
+    try (Atmosphere{
+        .layer_count = 48,
+        .sublayer_divisions = 12,
+    }).validate();
 }
