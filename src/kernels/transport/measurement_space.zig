@@ -2029,12 +2029,14 @@ test "configured forward input builds prepared adding RTM quadrature on sublayer
     try std.testing.expect(input.rtm_controls.integrate_source_function);
     try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[0].weight, 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[2].weight, 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[4].weight, 1.0e-12);
     try std.testing.expect(input.rtm_quadrature.levels[1].weight > 0.0);
+    try std.testing.expect(input.rtm_quadrature.levels[2].weight > 0.0);
     try std.testing.expect(input.rtm_quadrature.levels[3].weight > 0.0);
+    try std.testing.expect(input.rtm_quadrature.levels[4].weight > 0.0);
     try std.testing.expect(input.rtm_quadrature.levels[1].ksca > 0.0);
+    try std.testing.expect(input.rtm_quadrature.levels[2].ksca > 0.0);
     try std.testing.expect(input.rtm_quadrature.levels[3].ksca > 0.0);
+    try std.testing.expect(input.rtm_quadrature.levels[4].ksca > 0.0);
 
     var lower_interval_scattering: f64 = 0.0;
     for (input.layers[0..2]) |layer| lower_interval_scattering += @max(layer.scattering_optical_depth, 0.0);
@@ -2042,12 +2044,14 @@ test "configured forward input builds prepared adding RTM quadrature on sublayer
     for (input.layers[2..4]) |layer| upper_interval_scattering += @max(layer.scattering_optical_depth, 0.0);
     try std.testing.expectApproxEqRel(
         lower_interval_scattering,
-        input.rtm_quadrature.levels[1].weightedScattering(),
+        input.rtm_quadrature.levels[1].weightedScattering() +
+            input.rtm_quadrature.levels[2].weightedScattering(),
         1.0e-12,
     );
     try std.testing.expectApproxEqRel(
         upper_interval_scattering,
-        input.rtm_quadrature.levels[3].weightedScattering(),
+        input.rtm_quadrature.levels[3].weightedScattering() +
+            input.rtm_quadrature.levels[4].weightedScattering(),
         1.0e-12,
     );
 }
@@ -2107,24 +2111,24 @@ test "configured forward input builds prepared adding RTM quadrature from nonuni
     try std.testing.expectEqual(@as(usize, 4), input.layers.len);
     try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[0].weight, 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[4].weight, 1.0e-12);
-    const three_point = try gauss_legendre.rule(3);
+    const four_point = try gauss_legendre.rule(4);
     const expected_total_span_km = 10.0;
-    for (0..3) |index| {
+    for (0..4) |index| {
         try std.testing.expectApproxEqRel(
-            0.5 * three_point.weights[index] * expected_total_span_km,
+            0.5 * four_point.weights[index] * expected_total_span_km,
             input.rtm_quadrature.levels[index + 1].weight,
             1.0e-12,
         );
         try std.testing.expectApproxEqRel(
-            0.5 * (three_point.nodes[index] + 1.0) * expected_total_span_km,
+            0.5 * (four_point.nodes[index] + 1.0) * expected_total_span_km,
             input.rtm_quadrature.levels[index + 1].altitude_km,
             1.0e-12,
         );
     }
-    try std.testing.expectApproxEqRel(@as(f64, 0.2050806661517033), input.rtm_quadrature.levels[1].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.32), input.rtm_quadrature.levels[2].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.38), input.rtm_quadrature.levels[3].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.18777273768118946), input.rtm_quadrature.levels[1].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.27640265389812013), input.rtm_quadrature.levels[2].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.3539981043584856), input.rtm_quadrature.levels[3].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.38), input.rtm_quadrature.levels[4].phase_coefficients[1], 1.0e-12);
     try std.testing.expect(@abs(input.rtm_quadrature.levels[1].phase_coefficients[1] - @as(f64, 0.24)) > 1.0e-2);
     try std.testing.expect(@abs(input.rtm_quadrature.levels[2].phase_coefficients[1] - @as(f64, 0.38)) > 1.0e-2);
 
@@ -2135,7 +2139,7 @@ test "configured forward input builds prepared adding RTM quadrature from nonuni
     for (input.layers) |layer| total_scattering += @max(layer.scattering_optical_depth, 0.0);
 
     var quadrature_scattering: f64 = 0.0;
-    for (input.rtm_quadrature.levels[1..4]) |level| {
+    for (input.rtm_quadrature.levels[1..5]) |level| {
         quadrature_scattering += level.weightedScattering();
     }
     try std.testing.expectApproxEqRel(total_scattering, quadrature_scattering, 1.0e-12);
@@ -2176,13 +2180,14 @@ test "prepared adding RTM quadrature recomputes node phase from prepared sublaye
 
     try std.testing.expect(has_quadrature);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), levels[0].weight, 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), levels[4].weight, 1.0e-12);
     try std.testing.expect(@abs(levels[1].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
     try std.testing.expect(@abs(levels[2].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
     try std.testing.expect(@abs(levels[3].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
-    try std.testing.expectApproxEqRel(@as(f64, 0.2050806661517033), levels[1].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.32), levels[2].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.38), levels[3].phase_coefficients[1], 1.0e-12);
+    try std.testing.expect(@abs(levels[4].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
+    try std.testing.expectApproxEqRel(@as(f64, 0.18777273768118946), levels[1].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.27640265389812013), levels[2].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.3539981043584856), levels[3].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.38), levels[4].phase_coefficients[1], 1.0e-12);
 }
 
 test "prepared adding live route uses nonuniform quadrature weights instead of the legacy midpoint surrogate" {
@@ -2530,7 +2535,7 @@ test "cached forward execution preserves prepared adding RTM quadrature and its 
     ) > 1.0e-10);
 }
 
-test "prepared adding RTM quadrature keeps boundaries inert and interior samples active" {
+test "prepared adding RTM quadrature keeps the lower boundary inert and activates all prepared RTM samples" {
     const scene: Scene = .{
         .id = "measurement-adding-boundary-weights",
         .spectral_grid = .{
@@ -2594,8 +2599,8 @@ test "prepared adding RTM quadrature keeps boundaries inert and interior samples
         &geo,
     );
     var boundary_quadrature = rtm_quadrature_levels;
-    boundary_quadrature[2].ksca = 9.0;
-    boundary_quadrature[2].phase_coefficients[1] = 0.95;
+    boundary_quadrature[0].ksca = 9.0;
+    boundary_quadrature[0].phase_coefficients[1] = 0.95;
     const boundary_integrated = labos.calcIntegratedReflectance(
         baseline_input.layers,
         baseline_input.source_interfaces,
@@ -2620,9 +2625,10 @@ test "prepared adding RTM quadrature keeps boundaries inert and interior samples
 
     try std.testing.expect(baseline_input.rtm_quadrature.isValidFor(baseline_input.layers.len));
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), rtm_quadrature_levels[0].weight, 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), rtm_quadrature_levels[2].weight, 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), rtm_quadrature_levels[4].weight, 1.0e-12);
     try std.testing.expect(rtm_quadrature_levels[1].weight > 0.0);
+    try std.testing.expect(rtm_quadrature_levels[2].weight > 0.0);
+    try std.testing.expect(rtm_quadrature_levels[3].weight > 0.0);
+    try std.testing.expect(rtm_quadrature_levels[4].weight > 0.0);
     try std.testing.expectApproxEqRel(
         baseline_integrated,
         boundary_integrated,
@@ -2633,7 +2639,7 @@ test "prepared adding RTM quadrature keeps boundaries inert and interior samples
     ) > 1.0e-8);
 }
 
-test "prepared adding live route consumes RTM quadrature while boundary nodes stay inert" {
+test "prepared adding live route consumes RTM quadrature while the lower boundary stays inert" {
     const scene: Scene = .{
         .id = "measurement-adding-live-quadrature",
         .observation_model = .{
@@ -2703,20 +2709,17 @@ test "prepared adding live route consumes RTM quadrature while boundary nodes st
         input,
     );
 
-    var boundary_index: usize = 0;
+    const boundary_index: usize = 0;
     var interior_index: usize = 0;
-    for (1..input.rtm_quadrature.levels.len - 1) |ilevel| {
-        if (boundary_index == 0 and @abs(input.rtm_quadrature.levels[ilevel].weight) <= 1.0e-12) {
-            boundary_index = ilevel;
-        }
+    for (1..input.rtm_quadrature.levels.len) |ilevel| {
         if (interior_index == 0 and input.rtm_quadrature.levels[ilevel].weight > 0.0) {
             interior_index = ilevel;
         }
     }
 
     try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
-    try std.testing.expect(boundary_index != 0);
     try std.testing.expect(interior_index != 0);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[boundary_index].weight, 1.0e-12);
     try std.testing.expect(baseline.toa_reflectance_factor > 0.0);
 
     var boundary_quadrature = rtm_quadrature_levels;

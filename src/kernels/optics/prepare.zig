@@ -741,7 +741,7 @@ pub const PreparedOpticalState = struct {
             const stop = start + count;
             if (stop >= rtm_levels.len) return false;
 
-            const active_count = count - 1;
+            const active_count = if (count > 1) count else 0;
             if (active_count == 0) continue;
             const rule = gauss_legendre.rule(@intCast(active_count)) catch return false;
             const lower_altitude_km = rtm_levels[start].altitude_km;
@@ -774,7 +774,7 @@ pub const PreparedOpticalState = struct {
             }
 
             if (total_scattering <= 0.0) {
-                for (start + 1..stop) |level| {
+                for (start + 1..stop + 1) |level| {
                     rtm_levels[level].ksca = 0.0;
                 }
                 continue;
@@ -782,12 +782,12 @@ pub const PreparedOpticalState = struct {
 
             if (raw_scattering_sum > 0.0) {
                 const scale = total_scattering / raw_scattering_sum;
-                for (start + 1..stop) |level| {
+                for (start + 1..stop + 1) |level| {
                     rtm_levels[level].ksca *= scale;
                 }
                 has_active_quadrature = true;
             } else {
-                for (start + 1..stop) |level| {
+                for (start + 1..stop + 1) |level| {
                     rtm_levels[level].weight = 0.0;
                     rtm_levels[level].ksca = 0.0;
                 }
