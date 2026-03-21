@@ -227,10 +227,12 @@ pub const PseudoSphericalSample = struct {
 pub const PseudoSphericalGrid = struct {
     samples: []const PseudoSphericalSample = &.{},
     level_sample_starts: []const usize = &.{},
+    level_altitudes_km: []const f64 = &.{},
 
     pub fn isValidFor(self: PseudoSphericalGrid, layer_count: usize) bool {
         if (self.samples.len == 0) return false;
         if (self.level_sample_starts.len != layer_count + 1) return false;
+        if (self.level_altitudes_km.len != 0 and self.level_altitudes_km.len != layer_count + 1) return false;
         if (self.level_sample_starts[0] != 0) return false;
         if (self.level_sample_starts[self.level_sample_starts.len - 1] != self.samples.len) return false;
         for (1..self.level_sample_starts.len) |index| {

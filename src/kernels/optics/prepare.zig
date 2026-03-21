@@ -483,6 +483,10 @@ pub const PreparedOpticalState = struct {
         phase_coefficients: [phase_coefficient_count]f64,
     };
 
+    const PseudoSphericalCarrier = struct {
+        optical_depth: f64,
+    };
+
     const InterpolatedQuadratureState = struct {
         pressure_hpa: f64,
         temperature_k: f64,
@@ -651,6 +655,60 @@ pub const PreparedOpticalState = struct {
         };
     }
 
+    fn pseudoSphericalCarrierAtAltitude(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        sublayers: []const PreparedSublayer,
+        altitude_km: f64,
+        weight_km: f64,
+    ) PseudoSphericalCarrier {
+        const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{ .optical_depth = 0.0 };
+        const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
+        const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
+        const spectroscopy_sigma = self.spectroscopyEvaluationAtWavelength(
+            wavelength_nm,
+            state.temperature_k,
+            state.pressure_hpa,
+        ).total_sigma_cm2_per_molecule;
+        const gas_absorption_optical_depth_per_km =
+            (continuum_sigma + spectroscopy_sigma) *
+            state.oxygen_number_density_cm3 *
+            centimeters_per_kilometer;
+        const gas_scattering_optical_depth_per_km =
+            Rayleigh.crossSectionCm2(wavelength_nm) *
+            state.number_density_cm3 *
+            centimeters_per_kilometer;
+        const cia_optical_depth_per_km =
+            self.ciaSigmaAtWavelength(
+                wavelength_nm,
+                state.temperature_k,
+                state.pressure_hpa,
+            ) *
+            state.oxygen_number_density_cm3 *
+            state.oxygen_number_density_cm3 *
+            centimeters_per_kilometer;
+        const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
+            state.aerosol_optical_depth_per_km,
+            self.aerosol_reference_wavelength_nm,
+            self.aerosol_angstrom_exponent,
+            wavelength_nm,
+        );
+        const cloud_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
+            state.cloud_optical_depth_per_km,
+            self.cloud_reference_wavelength_nm,
+            self.cloud_angstrom_exponent,
+            wavelength_nm,
+        );
+
+        return .{
+            .optical_depth = weight_km * (gas_absorption_optical_depth_per_km +
+                gas_scattering_optical_depth_per_km +
+                cia_optical_depth_per_km +
+                aerosol_optical_depth_per_km +
+                cloud_optical_depth_per_km),
+        };
+    }
+
     pub fn fillRtmQuadratureAtWavelengthWithLayers(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
@@ -741,37 +799,101 @@ pub const PreparedOpticalState = struct {
         attenuation_layers: []transport_common.LayerInput,
         attenuation_samples: []transport_common.PseudoSphericalSample,
         level_sample_starts: []usize,
+        level_altitudes_km: []f64,
     ) bool {
         const sublayers = self.sublayers orelse return false;
         if (attenuation_layers.len < sublayers.len or
             attenuation_samples.len < sublayers.len or
-            level_sample_starts.len != solver_layer_count + 1)
+            level_sample_starts.len != solver_layer_count + 1 or
+            level_altitudes_km.len != solver_layer_count + 1)
         {
             return false;
         }
 
         _ = self.fillForwardLayersAtWavelength(scene, wavelength_nm, attenuation_layers[0..sublayers.len]);
-        for (sublayers, attenuation_layers[0..sublayers.len], 0..) |sublayer, attenuation_layer, index| {
-            attenuation_samples[index] = .{
-                .altitude_km = sublayer.altitude_km,
-                .thickness_km = @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0),
-                .optical_depth = @max(attenuation_layer.optical_depth, 0.0),
-            };
-        }
-
-        level_sample_starts[0] = 0;
-        if (solver_layer_count == sublayers.len) {
-            for (1..solver_layer_count) |ilevel| {
-                level_sample_starts[ilevel] = ilevel;
-            }
-        } else if (solver_layer_count == self.layers.len) {
-            for (1..solver_layer_count) |ilevel| {
-                level_sample_starts[ilevel] = @intCast(self.layers[ilevel].sublayer_start_index);
-            }
-        } else {
+        if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
             return false;
         }
-        level_sample_starts[solver_layer_count] = sublayers.len;
+
+        var sample_index: usize = 0;
+        if (solver_layer_count == sublayers.len) {
+            level_altitudes_km[0] = levelAltitudeFromSublayers(sublayers, 0);
+            for (1..solver_layer_count + 1) |ilevel| {
+                level_altitudes_km[ilevel] = levelAltitudeFromSublayers(sublayers, ilevel);
+            }
+        } else {
+            level_altitudes_km[0] = levelAltitudeFromSublayers(sublayers, 0);
+            for (1..solver_layer_count) |ilevel| {
+                const start_index: usize = @intCast(self.layers[ilevel].sublayer_start_index);
+                level_altitudes_km[ilevel] = levelAltitudeFromSublayers(sublayers, start_index);
+            }
+            level_altitudes_km[solver_layer_count] = levelAltitudeFromSublayers(sublayers, sublayers.len);
+        }
+
+        for (self.layers, 0..) |layer, layer_index| {
+            const start: usize = @intCast(layer.sublayer_start_index);
+            const count: usize = @intCast(layer.sublayer_count);
+            if (count == 0) continue;
+            const stop = start + count;
+            const lower_altitude_km = levelAltitudeFromSublayers(sublayers, start);
+            const upper_altitude_km = levelAltitudeFromSublayers(sublayers, stop);
+            const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+
+            attenuation_samples[sample_index] = .{
+                .altitude_km = lower_altitude_km,
+                .thickness_km = 0.0,
+                .optical_depth = 0.0,
+            };
+
+            if (solver_layer_count == sublayers.len) {
+                level_sample_starts[start] = sample_index;
+            } else {
+                level_sample_starts[layer_index] = sample_index;
+            }
+            sample_index += 1;
+
+            const active_count = count - 1;
+            if (active_count == 0) continue;
+
+            var total_span_km: f64 = 0.0;
+            for (sublayers[start..stop]) |sublayer| {
+                total_span_km += @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
+            }
+            if (total_span_km <= 0.0) {
+                for (0..active_count) |_| {
+                    attenuation_samples[sample_index] = .{
+                        .altitude_km = lower_altitude_km,
+                        .thickness_km = 0.0,
+                        .optical_depth = 0.0,
+                    };
+                    sample_index += 1;
+                }
+                continue;
+            }
+
+            const rule = gauss_legendre.rule(@intCast(active_count)) catch return false;
+            for (0..active_count) |node_index| {
+                const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
+                const node_altitude_km = lower_altitude_km + normalized_position * altitude_span_km;
+                const weight_km = 0.5 * rule.weights[node_index] * total_span_km;
+                attenuation_samples[sample_index] = .{
+                    .altitude_km = node_altitude_km,
+                    .thickness_km = weight_km,
+                    .optical_depth = self.pseudoSphericalCarrierAtAltitude(
+                        wavelength_nm,
+                        sublayers[start..stop],
+                        node_altitude_km,
+                        weight_km,
+                    ).optical_depth,
+                };
+                if (solver_layer_count == sublayers.len) {
+                    level_sample_starts[start + 1 + node_index] = sample_index;
+                }
+                sample_index += 1;
+            }
+        }
+
+        level_sample_starts[solver_layer_count] = sample_index;
         return true;
     }
 
