@@ -478,69 +478,65 @@ pub const PreparedOpticalState = struct {
         return @max(sample.altitude_km - 0.5 * sample.path_length_cm / centimeters_per_kilometer, 0.0);
     }
 
-    fn interpolatePhaseCoefficients(
-        left: [phase_coefficient_count]f64,
-        right: [phase_coefficient_count]f64,
-        fraction: f64,
-    ) [phase_coefficient_count]f64 {
-        const clamped_fraction = std.math.clamp(fraction, 0.0, 1.0);
-        var interpolated = [_]f64{0.0} ** phase_coefficient_count;
-        for (0..phase_coefficient_count) |index| {
-            interpolated[index] =
-                (1.0 - clamped_fraction) * left[index] +
-                clamped_fraction * right[index];
-        }
-        interpolated[0] = 1.0;
-        return interpolated;
-    }
-
-    const InterpolatedQuadratureCarrier = struct {
+    const PreparedQuadratureCarrier = struct {
         ksca: f64,
         phase_coefficients: [phase_coefficient_count]f64,
     };
 
-    fn interpolatedQuadratureCarrierAtNormalizedPosition(
+    fn quadratureCarrierForNormalizedSupport(
         sublayers: []const PreparedSublayer,
         layer_inputs: []const transport_common.LayerInput,
         total_span_km: f64,
-        normalized_position: f64,
-    ) InterpolatedQuadratureCarrier {
-        const default: InterpolatedQuadratureCarrier = .{
+        normalized_support_start: f64,
+        normalized_support_end: f64,
+    ) PreparedQuadratureCarrier {
+        const default: PreparedQuadratureCarrier = .{
             .ksca = 0.0,
             .phase_coefficients = [_]f64{ 1.0, 0.0, 0.0, 0.0 },
         };
         if (sublayers.len == 0 or layer_inputs.len != sublayers.len or total_span_km <= 0.0) return default;
 
-        const target = std.math.clamp(normalized_position, 0.0, 1.0);
+        const support_start_km =
+            std.math.clamp(normalized_support_start, 0.0, 1.0) * total_span_km;
+        const support_end_km =
+            std.math.clamp(normalized_support_end, 0.0, 1.0) * total_span_km;
+        const support_span_km = support_end_km - support_start_km;
+        if (support_span_km <= 0.0) return default;
 
         var cumulative_km: f64 = 0.0;
-        var donor = default;
+        var support_scattering_optical_depth: f64 = 0.0;
+        var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
 
         for (sublayers, layer_inputs) |sublayer, layer_input| {
             const span_km = @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
-            const center = if (total_span_km > 0.0)
-                (cumulative_km + 0.5 * span_km) / total_span_km
-            else
-                0.5;
-            const scattering_optical_depth = @max(layer_input.scattering_optical_depth, 0.0);
-            const ksca = if (span_km > 0.0) scattering_optical_depth / span_km else 0.0;
-            const phase_coefficients = layer_input.phase_coefficients;
-
-            donor = .{
-                .ksca = ksca,
-                .phase_coefficients = phase_coefficients,
-            };
-            if (target <= center) {
-                return .{
-                    .ksca = ksca,
-                    .phase_coefficients = phase_coefficients,
-                };
+            const next_cumulative_km = cumulative_km + span_km;
+            const overlap_km =
+                @min(support_end_km, next_cumulative_km) - @max(support_start_km, cumulative_km);
+            if (overlap_km > 0.0 and span_km > 0.0) {
+                const scattering_optical_depth = @max(layer_input.scattering_optical_depth, 0.0);
+                const overlap_scattering_optical_depth = overlap_km * scattering_optical_depth / span_km;
+                support_scattering_optical_depth += overlap_scattering_optical_depth;
+                for (0..phase_coefficient_count) |index| {
+                    phase_numerator[index] +=
+                        overlap_scattering_optical_depth * layer_input.phase_coefficients[index];
+                }
             }
-
-            cumulative_km += span_km;
+            cumulative_km = next_cumulative_km;
         }
 
-        return donor;
+        if (support_scattering_optical_depth <= 0.0) return default;
+
+        var phase_coefficients = [_]f64{0.0} ** phase_coefficient_count;
+        for (0..phase_coefficient_count) |index| {
+            phase_coefficients[index] =
+                phase_numerator[index] / support_scattering_optical_depth;
+        }
+        phase_coefficients[0] = 1.0;
+
+        return .{
+            .ksca = support_scattering_optical_depth / support_span_km,
+            .phase_coefficients = phase_coefficients,
+        };
     }
 
     pub fn fillRtmQuadratureAtWavelengthWithLayers(
@@ -588,11 +584,20 @@ pub const PreparedOpticalState = struct {
             for (0..active_count) |node_index| {
                 const level = start + 1 + node_index;
                 const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
-                const carrier = interpolatedQuadratureCarrierAtNormalizedPosition(
+                const normalized_support_start = if (node_index == 0)
+                    0.0
+                else
+                    0.25 * (rule.nodes[node_index - 1] + rule.nodes[node_index] + 2.0);
+                const normalized_support_end = if (node_index + 1 == active_count)
+                    1.0
+                else
+                    0.25 * (rule.nodes[node_index] + rule.nodes[node_index + 1] + 2.0);
+                const carrier = quadratureCarrierForNormalizedSupport(
                     sublayers[start..stop],
                     layer_inputs[start..stop],
                     total_span_km,
-                    normalized_position,
+                    normalized_support_start,
+                    normalized_support_end,
                 );
                 rtm_levels[level].altitude_km = lower_altitude_km + normalized_position * altitude_span_km;
                 rtm_levels[level].weight = 0.5 * rule.weights[node_index] * total_span_km;

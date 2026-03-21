@@ -1999,9 +1999,11 @@ test "configured forward input builds prepared adding RTM quadrature from nonuni
             1.0e-12,
         );
     }
-    try std.testing.expectApproxEqRel(@as(f64, 0.24), input.rtm_quadrature.levels[1].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.38), input.rtm_quadrature.levels[2].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.2204667965555689), input.rtm_quadrature.levels[1].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.3291228887852323), input.rtm_quadrature.levels[2].phase_coefficients[1], 1.0e-12);
     try std.testing.expectApproxEqRel(@as(f64, 0.38), input.rtm_quadrature.levels[3].phase_coefficients[1], 1.0e-12);
+    try std.testing.expect(@abs(input.rtm_quadrature.levels[1].phase_coefficients[1] - @as(f64, 0.24)) > 1.0e-2);
+    try std.testing.expect(@abs(input.rtm_quadrature.levels[2].phase_coefficients[1] - @as(f64, 0.38)) > 1.0e-2);
 
     const legacy_middle_weight = 2.5 * (10.0 / 7.5);
     try std.testing.expect(@abs(input.rtm_quadrature.levels[2].weight - legacy_middle_weight) > 1.0e-3);
