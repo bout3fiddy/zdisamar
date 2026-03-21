@@ -554,6 +554,7 @@ pub const PreparedOpticalState = struct {
             (altitude_km - left.altitude_km) / interpolation_span_km
         else
             0.0;
+        const clamped_fraction = std.math.clamp(fraction, 0.0, 1.0);
         const left_weight = 1.0 - fraction;
         const right_weight = fraction;
 
@@ -567,27 +568,35 @@ pub const PreparedOpticalState = struct {
         const right_cloud_scattering_per_km = right_cloud_per_km * right.cloud_single_scatter_albedo;
 
         return .{
-            .pressure_hpa = left_weight * left.pressure_hpa + right_weight * right.pressure_hpa,
-            .temperature_k = left_weight * left.temperature_k + right_weight * right.temperature_k,
-            .number_density_cm3 = left_weight * left.number_density_cm3 + right_weight * right.number_density_cm3,
-            .oxygen_number_density_cm3 = left_weight * left.oxygen_number_density_cm3 + right_weight * right.oxygen_number_density_cm3,
-            .aerosol_optical_depth_per_km = left_weight * left_aerosol_per_km + right_weight * right_aerosol_per_km,
-            .cloud_optical_depth_per_km = left_weight * left_cloud_per_km + right_weight * right_cloud_per_km,
-            .aerosol_single_scatter_albedo = left_weight * left.aerosol_single_scatter_albedo + right_weight * right.aerosol_single_scatter_albedo,
-            .cloud_single_scatter_albedo = left_weight * left.cloud_single_scatter_albedo + right_weight * right.cloud_single_scatter_albedo,
+            .pressure_hpa = @max(left_weight * left.pressure_hpa + right_weight * right.pressure_hpa, 0.0),
+            .temperature_k = @max(left_weight * left.temperature_k + right_weight * right.temperature_k, 0.0),
+            .number_density_cm3 = @max(left_weight * left.number_density_cm3 + right_weight * right.number_density_cm3, 0.0),
+            .oxygen_number_density_cm3 = @max(left_weight * left.oxygen_number_density_cm3 + right_weight * right.oxygen_number_density_cm3, 0.0),
+            .aerosol_optical_depth_per_km = @max(left_weight * left_aerosol_per_km + right_weight * right_aerosol_per_km, 0.0),
+            .cloud_optical_depth_per_km = @max(left_weight * left_cloud_per_km + right_weight * right_cloud_per_km, 0.0),
+            .aerosol_single_scatter_albedo = std.math.clamp(
+                left_weight * left.aerosol_single_scatter_albedo + right_weight * right.aerosol_single_scatter_albedo,
+                0.0,
+                1.0,
+            ),
+            .cloud_single_scatter_albedo = std.math.clamp(
+                left_weight * left.cloud_single_scatter_albedo + right_weight * right.cloud_single_scatter_albedo,
+                0.0,
+                1.0,
+            ),
             .aerosol_phase_coefficients = interpolatePhaseCoefficientsByScattering(
                 left_aerosol_scattering_per_km,
                 right_aerosol_scattering_per_km,
                 left.aerosol_phase_coefficients,
                 right.aerosol_phase_coefficients,
-                fraction,
+                clamped_fraction,
             ),
             .cloud_phase_coefficients = interpolatePhaseCoefficientsByScattering(
                 left_cloud_scattering_per_km,
                 right_cloud_scattering_per_km,
                 left.cloud_phase_coefficients,
                 right.cloud_phase_coefficients,
-                fraction,
+                clamped_fraction,
             ),
         };
     }
