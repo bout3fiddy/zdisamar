@@ -2125,10 +2125,11 @@ test "configured forward input builds prepared adding RTM quadrature from nonuni
             1.0e-12,
         );
     }
-    try std.testing.expectApproxEqRel(@as(f64, 0.18777273768118946), input.rtm_quadrature.levels[1].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.27640265389812013), input.rtm_quadrature.levels[2].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.3539981043584856), input.rtm_quadrature.levels[3].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.38), input.rtm_quadrature.levels[4].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.18708727648134307), input.rtm_quadrature.levels[1].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.27703753288334537), input.rtm_quadrature.levels[2].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.3566220472300655), input.rtm_quadrature.levels[3].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.4009716401284926), input.rtm_quadrature.levels[4].phase_coefficients[1], 1.0e-12);
+    try std.testing.expect(input.rtm_quadrature.levels[4].phase_coefficients[1] > 0.38);
     try std.testing.expect(@abs(input.rtm_quadrature.levels[1].phase_coefficients[1] - @as(f64, 0.24)) > 1.0e-2);
     try std.testing.expect(@abs(input.rtm_quadrature.levels[2].phase_coefficients[1] - @as(f64, 0.38)) > 1.0e-2);
 
@@ -2184,10 +2185,11 @@ test "prepared adding RTM quadrature recomputes node phase from prepared sublaye
     try std.testing.expect(@abs(levels[2].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
     try std.testing.expect(@abs(levels[3].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
     try std.testing.expect(@abs(levels[4].phase_coefficients[1] - @as(f64, 0.95)) > 1.0e-1);
-    try std.testing.expectApproxEqRel(@as(f64, 0.18777273768118946), levels[1].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.27640265389812013), levels[2].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.3539981043584856), levels[3].phase_coefficients[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 0.38), levels[4].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.18708727648134307), levels[1].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.27703753288334537), levels[2].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.3566220472300655), levels[3].phase_coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.4009716401284926), levels[4].phase_coefficients[1], 1.0e-12);
+    try std.testing.expect(levels[4].phase_coefficients[1] > 0.38);
 }
 
 test "prepared adding live route uses nonuniform quadrature weights instead of the legacy midpoint surrogate" {
@@ -2371,6 +2373,75 @@ test "prepared adding live route falls back when no explicit RTM quadrature node
     try std.testing.expect(@abs(
         forward_fallback.toa_reflectance_factor - forward_bad.toa_reflectance_factor,
     ) > 1.0e-8);
+}
+
+test "configured forward input preserves pseudo-spherical attenuation when only one sublayer division is requested" {
+    const scene: Scene = .{
+        .id = "measurement-pseudo-spherical-single-subdivision",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 52.0,
+            .viewing_zenith_deg = 44.0,
+            .relative_azimuth_deg = 70.0,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 1,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_spherical_correction = true,
+        },
+    });
+    var prepared = try buildSingleSubdivisionPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [2]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [2]common.LayerInput = undefined;
+    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [3]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [2]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [3]usize = undefined;
+    var pseudo_spherical_level_altitudes: [3]f64 = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+        &pseudo_spherical_level_altitudes,
+    );
+
+    try std.testing.expect(input.pseudo_spherical_grid.isValidFor(input.layers.len));
+    try std.testing.expectEqual(@as(usize, 2), input.pseudo_spherical_grid.samples.len);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 2 }, input.pseudo_spherical_grid.level_sample_starts);
+    try std.testing.expectEqualSlices(f64, &.{ 0.0, 3.0, 9.0 }, input.pseudo_spherical_grid.level_altitudes_km);
+    try std.testing.expectApproxEqRel(@as(f64, 1.5), input.pseudo_spherical_grid.samples[0].altitude_km, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 6.0), input.pseudo_spherical_grid.samples[1].altitude_km, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 3.0), input.pseudo_spherical_grid.samples[0].thickness_km, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 6.0), input.pseudo_spherical_grid.samples[1].thickness_km, 1.0e-12);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[0].optical_depth > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[1].optical_depth > 0.0);
 }
 
 test "cached forward execution preserves prepared adding RTM quadrature and its reflectance semantics" {

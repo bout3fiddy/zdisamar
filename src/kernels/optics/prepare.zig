@@ -506,87 +506,125 @@ pub const PreparedOpticalState = struct {
         cloud_phase_coefficients: [phase_coefficient_count]f64,
     };
 
+    fn opticalDepthPerKilometer(
+        optical_depth: f64,
+        path_length_cm: f64,
+    ) f64 {
+        const span_km = @max(path_length_cm / centimeters_per_kilometer, 0.0);
+        return if (span_km > 0.0) optical_depth / span_km else 0.0;
+    }
+
+    fn interpolatePhaseCoefficientsByScattering(
+        left_scattering_per_km: f64,
+        right_scattering_per_km: f64,
+        left_phase_coefficients: [phase_coefficient_count]f64,
+        right_phase_coefficients: [phase_coefficient_count]f64,
+        fraction: f64,
+    ) [phase_coefficient_count]f64 {
+        const left_weight = 1.0 - fraction;
+        const right_weight = fraction;
+        const interpolated_scattering_per_km =
+            left_weight * left_scattering_per_km +
+            right_weight * right_scattering_per_km;
+
+        var coefficients = [_]f64{0.0} ** phase_coefficient_count;
+        coefficients[0] = 1.0;
+        for (1..phase_coefficient_count) |index| {
+            if (interpolated_scattering_per_km > 0.0) {
+                coefficients[index] =
+                    (left_weight * left_scattering_per_km * left_phase_coefficients[index] +
+                        right_weight * right_scattering_per_km * right_phase_coefficients[index]) /
+                    interpolated_scattering_per_km;
+            } else {
+                coefficients[index] =
+                    left_weight * left_phase_coefficients[index] +
+                    right_weight * right_phase_coefficients[index];
+            }
+        }
+        return coefficients;
+    }
+
+    fn interpolateQuadratureStateBetweenSublayers(
+        left: PreparedSublayer,
+        right: PreparedSublayer,
+        altitude_km: f64,
+    ) InterpolatedQuadratureState {
+        const interpolation_span_km = right.altitude_km - left.altitude_km;
+        const fraction = if (interpolation_span_km > 0.0)
+            (altitude_km - left.altitude_km) / interpolation_span_km
+        else
+            0.0;
+        const left_weight = 1.0 - fraction;
+        const right_weight = fraction;
+
+        const left_aerosol_per_km = opticalDepthPerKilometer(left.aerosol_optical_depth, left.path_length_cm);
+        const right_aerosol_per_km = opticalDepthPerKilometer(right.aerosol_optical_depth, right.path_length_cm);
+        const left_cloud_per_km = opticalDepthPerKilometer(left.cloud_optical_depth, left.path_length_cm);
+        const right_cloud_per_km = opticalDepthPerKilometer(right.cloud_optical_depth, right.path_length_cm);
+        const left_aerosol_scattering_per_km = left_aerosol_per_km * left.aerosol_single_scatter_albedo;
+        const right_aerosol_scattering_per_km = right_aerosol_per_km * right.aerosol_single_scatter_albedo;
+        const left_cloud_scattering_per_km = left_cloud_per_km * left.cloud_single_scatter_albedo;
+        const right_cloud_scattering_per_km = right_cloud_per_km * right.cloud_single_scatter_albedo;
+
+        return .{
+            .pressure_hpa = left_weight * left.pressure_hpa + right_weight * right.pressure_hpa,
+            .temperature_k = left_weight * left.temperature_k + right_weight * right.temperature_k,
+            .number_density_cm3 = left_weight * left.number_density_cm3 + right_weight * right.number_density_cm3,
+            .oxygen_number_density_cm3 = left_weight * left.oxygen_number_density_cm3 + right_weight * right.oxygen_number_density_cm3,
+            .aerosol_optical_depth_per_km = left_weight * left_aerosol_per_km + right_weight * right_aerosol_per_km,
+            .cloud_optical_depth_per_km = left_weight * left_cloud_per_km + right_weight * right_cloud_per_km,
+            .aerosol_single_scatter_albedo = left_weight * left.aerosol_single_scatter_albedo + right_weight * right.aerosol_single_scatter_albedo,
+            .cloud_single_scatter_albedo = left_weight * left.cloud_single_scatter_albedo + right_weight * right.cloud_single_scatter_albedo,
+            .aerosol_phase_coefficients = interpolatePhaseCoefficientsByScattering(
+                left_aerosol_scattering_per_km,
+                right_aerosol_scattering_per_km,
+                left.aerosol_phase_coefficients,
+                right.aerosol_phase_coefficients,
+                fraction,
+            ),
+            .cloud_phase_coefficients = interpolatePhaseCoefficientsByScattering(
+                left_cloud_scattering_per_km,
+                right_cloud_scattering_per_km,
+                left.cloud_phase_coefficients,
+                right.cloud_phase_coefficients,
+                fraction,
+            ),
+        };
+    }
+
     fn interpolateQuadratureStateAtAltitude(
         sublayers: []const PreparedSublayer,
         altitude_km: f64,
     ) ?InterpolatedQuadratureState {
         if (sublayers.len == 0) return null;
 
+        if (sublayers.len == 1) {
+            const sublayer = sublayers[0];
+            return .{
+                .pressure_hpa = sublayer.pressure_hpa,
+                .temperature_k = sublayer.temperature_k,
+                .number_density_cm3 = sublayer.number_density_cm3,
+                .oxygen_number_density_cm3 = sublayer.oxygen_number_density_cm3,
+                .aerosol_optical_depth_per_km = opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
+                .cloud_optical_depth_per_km = opticalDepthPerKilometer(sublayer.cloud_optical_depth, sublayer.path_length_cm),
+                .aerosol_single_scatter_albedo = sublayer.aerosol_single_scatter_albedo,
+                .cloud_single_scatter_albedo = sublayer.cloud_single_scatter_albedo,
+                .aerosol_phase_coefficients = sublayer.aerosol_phase_coefficients,
+                .cloud_phase_coefficients = sublayer.cloud_phase_coefficients,
+            };
+        }
+
         const first = sublayers[0];
         const last = sublayers[sublayers.len - 1];
         if (altitude_km <= first.altitude_km) {
-            const first_span_km = @max(first.path_length_cm / centimeters_per_kilometer, 0.0);
-            return .{
-                .pressure_hpa = first.pressure_hpa,
-                .temperature_k = first.temperature_k,
-                .number_density_cm3 = first.number_density_cm3,
-                .oxygen_number_density_cm3 = first.oxygen_number_density_cm3,
-                .aerosol_optical_depth_per_km = if (first_span_km > 0.0) first.aerosol_optical_depth / first_span_km else 0.0,
-                .cloud_optical_depth_per_km = if (first_span_km > 0.0) first.cloud_optical_depth / first_span_km else 0.0,
-                .aerosol_single_scatter_albedo = first.aerosol_single_scatter_albedo,
-                .cloud_single_scatter_albedo = first.cloud_single_scatter_albedo,
-                .aerosol_phase_coefficients = first.aerosol_phase_coefficients,
-                .cloud_phase_coefficients = first.cloud_phase_coefficients,
-            };
+            return interpolateQuadratureStateBetweenSublayers(first, sublayers[1], altitude_km);
         }
         if (altitude_km >= last.altitude_km) {
-            const last_span_km = @max(last.path_length_cm / centimeters_per_kilometer, 0.0);
-            return .{
-                .pressure_hpa = last.pressure_hpa,
-                .temperature_k = last.temperature_k,
-                .number_density_cm3 = last.number_density_cm3,
-                .oxygen_number_density_cm3 = last.oxygen_number_density_cm3,
-                .aerosol_optical_depth_per_km = if (last_span_km > 0.0) last.aerosol_optical_depth / last_span_km else 0.0,
-                .cloud_optical_depth_per_km = if (last_span_km > 0.0) last.cloud_optical_depth / last_span_km else 0.0,
-                .aerosol_single_scatter_albedo = last.aerosol_single_scatter_albedo,
-                .cloud_single_scatter_albedo = last.cloud_single_scatter_albedo,
-                .aerosol_phase_coefficients = last.aerosol_phase_coefficients,
-                .cloud_phase_coefficients = last.cloud_phase_coefficients,
-            };
+            return interpolateQuadratureStateBetweenSublayers(sublayers[sublayers.len - 2], last, altitude_km);
         }
-
         for (sublayers[0 .. sublayers.len - 1], sublayers[1..]) |left, right| {
             if (altitude_km > right.altitude_km) continue;
-
-            const interpolation_span_km = right.altitude_km - left.altitude_km;
-            const fraction = if (interpolation_span_km > 0.0)
-                (altitude_km - left.altitude_km) / interpolation_span_km
-            else
-                1.0;
-            const clamped_fraction = std.math.clamp(fraction, 0.0, 1.0);
-
-            const left_span_km = @max(left.path_length_cm / centimeters_per_kilometer, 0.0);
-            const right_span_km = @max(right.path_length_cm / centimeters_per_kilometer, 0.0);
-            const left_aerosol_per_km = if (left_span_km > 0.0) left.aerosol_optical_depth / left_span_km else 0.0;
-            const right_aerosol_per_km = if (right_span_km > 0.0) right.aerosol_optical_depth / right_span_km else 0.0;
-            const left_cloud_per_km = if (left_span_km > 0.0) left.cloud_optical_depth / left_span_km else 0.0;
-            const right_cloud_per_km = if (right_span_km > 0.0) right.cloud_optical_depth / right_span_km else 0.0;
-
-            var aerosol_phase_coefficients = [_]f64{0.0} ** phase_coefficient_count;
-            var cloud_phase_coefficients = [_]f64{0.0} ** phase_coefficient_count;
-            for (0..phase_coefficient_count) |index| {
-                aerosol_phase_coefficients[index] =
-                    (1.0 - clamped_fraction) * left.aerosol_phase_coefficients[index] +
-                    clamped_fraction * right.aerosol_phase_coefficients[index];
-                cloud_phase_coefficients[index] =
-                    (1.0 - clamped_fraction) * left.cloud_phase_coefficients[index] +
-                    clamped_fraction * right.cloud_phase_coefficients[index];
-            }
-            aerosol_phase_coefficients[0] = 1.0;
-            cloud_phase_coefficients[0] = 1.0;
-
-            return .{
-                .pressure_hpa = (1.0 - clamped_fraction) * left.pressure_hpa + clamped_fraction * right.pressure_hpa,
-                .temperature_k = (1.0 - clamped_fraction) * left.temperature_k + clamped_fraction * right.temperature_k,
-                .number_density_cm3 = (1.0 - clamped_fraction) * left.number_density_cm3 + clamped_fraction * right.number_density_cm3,
-                .oxygen_number_density_cm3 = (1.0 - clamped_fraction) * left.oxygen_number_density_cm3 + clamped_fraction * right.oxygen_number_density_cm3,
-                .aerosol_optical_depth_per_km = (1.0 - clamped_fraction) * left_aerosol_per_km + clamped_fraction * right_aerosol_per_km,
-                .cloud_optical_depth_per_km = (1.0 - clamped_fraction) * left_cloud_per_km + clamped_fraction * right_cloud_per_km,
-                .aerosol_single_scatter_albedo = (1.0 - clamped_fraction) * left.aerosol_single_scatter_albedo + clamped_fraction * right.aerosol_single_scatter_albedo,
-                .cloud_single_scatter_albedo = (1.0 - clamped_fraction) * left.cloud_single_scatter_albedo + clamped_fraction * right.cloud_single_scatter_albedo,
-                .aerosol_phase_coefficients = aerosol_phase_coefficients,
-                .cloud_phase_coefficients = cloud_phase_coefficients,
-            };
+            return interpolateQuadratureStateBetweenSublayers(left, right, altitude_km);
         }
 
         return null;
@@ -604,13 +642,6 @@ pub const PreparedOpticalState = struct {
         };
         const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return default;
 
-        const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
-        const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
-        const spectroscopy_sigma = self.spectroscopyEvaluationAtWavelength(
-            wavelength_nm,
-            state.temperature_k,
-            state.pressure_hpa,
-        ).total_sigma_cm2_per_molecule;
         const gas_scattering_optical_depth_per_km =
             Rayleigh.crossSectionCm2(wavelength_nm) *
             state.number_density_cm3 *
@@ -631,21 +662,6 @@ pub const PreparedOpticalState = struct {
             aerosol_optical_depth_per_km * state.aerosol_single_scatter_albedo;
         const cloud_scattering_optical_depth_per_km =
             cloud_optical_depth_per_km * state.cloud_single_scatter_albedo;
-        const gas_absorption_optical_depth_per_km =
-            (continuum_sigma + spectroscopy_sigma) *
-            state.oxygen_number_density_cm3 *
-            centimeters_per_kilometer;
-        const cia_optical_depth_per_km =
-            self.ciaSigmaAtWavelength(
-                wavelength_nm,
-                state.temperature_k,
-                state.pressure_hpa,
-            ) *
-            state.oxygen_number_density_cm3 *
-            state.oxygen_number_density_cm3 *
-            centimeters_per_kilometer;
-        _ = gas_absorption_optical_depth_per_km;
-        _ = cia_optical_depth_per_km;
 
         return .{
             .ksca = gas_scattering_optical_depth_per_km +
@@ -810,15 +826,14 @@ pub const PreparedOpticalState = struct {
         const sublayers = self.sublayers orelse return false;
         const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
         const sample_count = solver_layer_count * subgrid_divisions;
-        if (attenuation_layers.len < solver_layer_count or
-            attenuation_samples.len < sample_count or
+        _ = attenuation_layers;
+        if (attenuation_samples.len < sample_count or
             level_sample_starts.len != solver_layer_count + 1 or
             level_altitudes_km.len != solver_layer_count + 1)
         {
             return false;
         }
 
-        _ = self.fillForwardLayersAtWavelength(scene, wavelength_nm, attenuation_layers[0..solver_layer_count]);
         if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
             return false;
         }
@@ -861,14 +876,31 @@ pub const PreparedOpticalState = struct {
             const active_count = subgrid_divisions - 1;
 
             level_sample_starts[solver_level] = sample_index;
+            if (active_count == 0) {
+                const sample_altitude_km = if (altitude_span_km > 0.0)
+                    interval.lower_altitude_km + 0.5 * altitude_span_km
+                else
+                    interval.lower_altitude_km;
+                attenuation_samples[sample_index] = .{
+                    .altitude_km = sample_altitude_km,
+                    .thickness_km = altitude_span_km,
+                    .optical_depth = self.pseudoSphericalCarrierAtAltitude(
+                        wavelength_nm,
+                        interval.support_sublayers,
+                        sample_altitude_km,
+                        altitude_span_km,
+                    ).optical_depth,
+                };
+                sample_index += 1;
+                continue;
+            }
+
             attenuation_samples[sample_index] = .{
                 .altitude_km = interval.lower_altitude_km,
                 .thickness_km = 0.0,
                 .optical_depth = 0.0,
             };
             sample_index += 1;
-
-            if (active_count == 0) continue;
 
             if (altitude_span_km <= 0.0) {
                 for (0..active_count) |_| {
