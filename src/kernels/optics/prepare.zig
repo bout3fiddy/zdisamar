@@ -581,17 +581,11 @@ pub const PreparedOpticalState = struct {
             if (total_span_km <= 0.0) continue;
 
             var raw_scattering_sum: f64 = 0.0;
+            var normalized_support_start: f64 = 0.0;
             for (0..active_count) |node_index| {
                 const level = start + 1 + node_index;
                 const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
-                const normalized_support_start = if (node_index == 0)
-                    0.0
-                else
-                    0.25 * (rule.nodes[node_index - 1] + rule.nodes[node_index] + 2.0);
-                const normalized_support_end = if (node_index + 1 == active_count)
-                    1.0
-                else
-                    0.25 * (rule.nodes[node_index] + rule.nodes[node_index + 1] + 2.0);
+                const normalized_support_end = normalized_support_start + 0.5 * rule.weights[node_index];
                 const carrier = quadratureCarrierForNormalizedSupport(
                     sublayers[start..stop],
                     layer_inputs[start..stop],
@@ -604,6 +598,7 @@ pub const PreparedOpticalState = struct {
                 rtm_levels[level].ksca = carrier.ksca;
                 rtm_levels[level].phase_coefficients = carrier.phase_coefficients;
                 raw_scattering_sum += rtm_levels[level].weightedScattering();
+                normalized_support_start = normalized_support_end;
             }
 
             if (total_scattering <= 0.0) {
