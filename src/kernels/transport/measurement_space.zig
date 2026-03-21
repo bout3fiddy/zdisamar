@@ -142,7 +142,7 @@ pub const SummaryWorkspace = struct {
     ) Error!Buffers {
         const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
         const layer_count = transportLayerCountHint(scene, route);
-        const pseudo_spherical_sample_count = pseudoSphericalSampleCountHint(scene);
+        const pseudo_spherical_sample_count = pseudoSphericalSampleCountHint(scene, route);
         const wants_jacobian = route.derivative_mode != .none;
         const wants_noise = providers.noise.materializesSigma(scene);
 
@@ -419,7 +419,7 @@ pub fn simulateProduct(
 ) Error!MeasurementSpaceProduct {
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     const transport_layer_count = resolvedTransportLayerCount(route, prepared);
-    const pseudo_spherical_sample_count = prepared.transportLayerCount();
+    const pseudo_spherical_sample_count = resolvedPseudoSphericalSampleCount(scene, route, prepared);
 
     const wavelengths = try allocator.alloc(f64, sample_count);
     errdefer allocator.free(wavelengths);
@@ -502,13 +502,25 @@ fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
     return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
-fn pseudoSphericalSampleCountHint(scene: *const Scene) usize {
-    const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
-    return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
+fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usize {
+    const layer_count = transportLayerCountHint(scene, route);
+    return layer_count * pseudoSphericalSubgridDivisions(scene);
 }
 
 fn resolvedTransportLayerCount(route: common.Route, prepared: *const PreparedOpticalState) usize {
     return if (route.family == .adding) prepared.transportLayerCount() else prepared.layers.len;
+}
+
+fn resolvedPseudoSphericalSampleCount(
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const PreparedOpticalState,
+) usize {
+    return resolvedTransportLayerCount(route, prepared) * pseudoSphericalSubgridDivisions(scene);
+}
+
+fn pseudoSphericalSubgridDivisions(scene: *const Scene) usize {
+    return @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
 fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
@@ -659,7 +671,7 @@ fn configuredForwardInput(
             pseudo_spherical_level_altitudes,
         )) {
             input.pseudo_spherical_grid = .{
-                .samples = pseudo_spherical_samples[0..prepared.transportLayerCount()],
+                .samples = pseudo_spherical_samples[0..resolvedPseudoSphericalSampleCount(scene, route, prepared)],
                 .level_sample_starts = pseudo_spherical_level_starts[0 .. input.layers.len + 1],
                 .level_altitudes_km = pseudo_spherical_level_altitudes[0 .. input.layers.len + 1],
             };
@@ -1822,6 +1834,83 @@ test "configured forward input wires pseudo-spherical attenuation samples from p
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[2].thickness_km, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[2].optical_depth, 1.0e-12);
     try std.testing.expect(input.pseudo_spherical_grid.samples[3].optical_depth > 0.0);
+}
+
+test "configured forward input builds adding pseudo-spherical subgrid within prepared RTM layers" {
+    const scene: Scene = .{
+        .id = "measurement-adding-pseudo-spherical-subgrid",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 60.0,
+            .viewing_zenith_deg = 30.0,
+            .relative_azimuth_deg = 90.0,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .use_spherical_correction = true,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [8]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [8]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    var pseudo_spherical_level_altitudes: [5]f64 = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+        &pseudo_spherical_level_altitudes,
+    );
+
+    try std.testing.expectEqual(@as(usize, 4), input.layers.len);
+    try std.testing.expect(input.pseudo_spherical_grid.isValidFor(input.layers.len));
+    try std.testing.expectEqual(@as(usize, 8), input.pseudo_spherical_grid.samples.len);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 2, 4, 6, 8 }, input.pseudo_spherical_grid.level_sample_starts);
+    try std.testing.expectEqualSlices(f64, &.{ 0.75, 2.75, 7.75, 11.75, 12.25 }, input.pseudo_spherical_grid.level_altitudes_km);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[0].thickness_km, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[2].thickness_km, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[4].thickness_km, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.pseudo_spherical_grid.samples[6].thickness_km, 1.0e-12);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[1].thickness_km > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[3].thickness_km > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[5].thickness_km > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[7].thickness_km > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[1].optical_depth > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[3].optical_depth > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[5].optical_depth > 0.0);
+    try std.testing.expect(input.pseudo_spherical_grid.samples[7].optical_depth > 0.0);
 }
 
 test "configured forward input leaves pseudo-spherical attenuation grid empty when prepared sublayers are unavailable" {

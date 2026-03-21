@@ -487,6 +487,12 @@ pub const PreparedOpticalState = struct {
         optical_depth: f64,
     };
 
+    const PseudoSphericalInterval = struct {
+        support_sublayers: []const PreparedSublayer,
+        lower_altitude_km: f64,
+        upper_altitude_km: f64,
+    };
+
     const InterpolatedQuadratureState = struct {
         pressure_hpa: f64,
         temperature_k: f64,
@@ -802,15 +808,17 @@ pub const PreparedOpticalState = struct {
         level_altitudes_km: []f64,
     ) bool {
         const sublayers = self.sublayers orelse return false;
-        if (attenuation_layers.len < sublayers.len or
-            attenuation_samples.len < sublayers.len or
+        const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
+        const sample_count = solver_layer_count * subgrid_divisions;
+        if (attenuation_layers.len < solver_layer_count or
+            attenuation_samples.len < sample_count or
             level_sample_starts.len != solver_layer_count + 1 or
             level_altitudes_km.len != solver_layer_count + 1)
         {
             return false;
         }
 
-        _ = self.fillForwardLayersAtWavelength(scene, wavelength_nm, attenuation_layers[0..sublayers.len]);
+        _ = self.fillForwardLayersAtWavelength(scene, wavelength_nm, attenuation_layers[0..solver_layer_count]);
         if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
             return false;
         }
@@ -830,39 +838,42 @@ pub const PreparedOpticalState = struct {
             level_altitudes_km[solver_layer_count] = levelAltitudeFromSublayers(sublayers, sublayers.len);
         }
 
-        for (self.layers, 0..) |layer, layer_index| {
-            const start: usize = @intCast(layer.sublayer_start_index);
-            const count: usize = @intCast(layer.sublayer_count);
-            if (count == 0) continue;
-            const stop = start + count;
-            const lower_altitude_km = levelAltitudeFromSublayers(sublayers, start);
-            const upper_altitude_km = levelAltitudeFromSublayers(sublayers, stop);
-            const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+        for (0..solver_layer_count) |solver_level| {
+            const interval = if (solver_layer_count == sublayers.len)
+                PseudoSphericalInterval{
+                    .support_sublayers = sublayers[solver_level .. solver_level + 1],
+                    .lower_altitude_km = levelAltitudeFromSublayers(sublayers, solver_level),
+                    .upper_altitude_km = levelAltitudeFromSublayers(sublayers, solver_level + 1),
+                }
+            else blk: {
+                const layer = self.layers[solver_level];
+                const start: usize = @intCast(layer.sublayer_start_index);
+                const count: usize = @intCast(layer.sublayer_count);
+                if (count == 0) return false;
+                const stop = start + count;
+                break :blk PseudoSphericalInterval{
+                    .support_sublayers = sublayers[start..stop],
+                    .lower_altitude_km = levelAltitudeFromSublayers(sublayers, start),
+                    .upper_altitude_km = levelAltitudeFromSublayers(sublayers, stop),
+                };
+            };
+            const altitude_span_km = @max(interval.upper_altitude_km - interval.lower_altitude_km, 0.0);
+            const active_count = subgrid_divisions - 1;
 
+            level_sample_starts[solver_level] = sample_index;
             attenuation_samples[sample_index] = .{
-                .altitude_km = lower_altitude_km,
+                .altitude_km = interval.lower_altitude_km,
                 .thickness_km = 0.0,
                 .optical_depth = 0.0,
             };
-
-            if (solver_layer_count == sublayers.len) {
-                level_sample_starts[start] = sample_index;
-            } else {
-                level_sample_starts[layer_index] = sample_index;
-            }
             sample_index += 1;
 
-            const active_count = count - 1;
             if (active_count == 0) continue;
 
-            var total_span_km: f64 = 0.0;
-            for (sublayers[start..stop]) |sublayer| {
-                total_span_km += @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
-            }
-            if (total_span_km <= 0.0) {
+            if (altitude_span_km <= 0.0) {
                 for (0..active_count) |_| {
                     attenuation_samples[sample_index] = .{
-                        .altitude_km = lower_altitude_km,
+                        .altitude_km = interval.lower_altitude_km,
                         .thickness_km = 0.0,
                         .optical_depth = 0.0,
                     };
@@ -874,21 +885,18 @@ pub const PreparedOpticalState = struct {
             const rule = gauss_legendre.rule(@intCast(active_count)) catch return false;
             for (0..active_count) |node_index| {
                 const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
-                const node_altitude_km = lower_altitude_km + normalized_position * altitude_span_km;
-                const weight_km = 0.5 * rule.weights[node_index] * total_span_km;
+                const node_altitude_km = interval.lower_altitude_km + normalized_position * altitude_span_km;
+                const weight_km = 0.5 * rule.weights[node_index] * altitude_span_km;
                 attenuation_samples[sample_index] = .{
                     .altitude_km = node_altitude_km,
                     .thickness_km = weight_km,
                     .optical_depth = self.pseudoSphericalCarrierAtAltitude(
                         wavelength_nm,
-                        sublayers[start..stop],
+                        interval.support_sublayers,
                         node_altitude_km,
                         weight_km,
                     ).optical_depth,
                 };
-                if (solver_layer_count == sublayers.len) {
-                    level_sample_starts[start + 1 + node_index] = sample_index;
-                }
                 sample_index += 1;
             }
         }
