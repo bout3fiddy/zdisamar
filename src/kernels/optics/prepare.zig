@@ -22,6 +22,25 @@ const ActiveLineAbsorber = struct {
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
 };
 
+const PreparedLineAbsorber = struct {
+    species: AbsorberModel.AbsorberSpecies,
+    line_list: ReferenceData.SpectroscopyLineList,
+    number_densities_cm3: []f64,
+    strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
+    strong_line_state_count: usize = 0,
+    column_density_factor: f64 = 0.0,
+
+    fn deinit(self: *PreparedLineAbsorber, allocator: Allocator) void {
+        self.line_list.deinit(allocator);
+        allocator.free(self.number_densities_cm3);
+        if (self.strong_line_states) |states| {
+            for (states[0..self.strong_line_state_count]) |*state| state.deinit(allocator);
+            allocator.free(states);
+        }
+        self.* = undefined;
+    }
+};
+
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,
@@ -122,6 +141,7 @@ pub const PreparedOpticalState = struct {
     continuum_points: []ReferenceData.CrossSectionPoint,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
+    line_absorbers: []PreparedLineAbsorber = &.{},
     operational_o2_lut: OperationalCrossSectionLut = .{},
     operational_o2o2_lut: OperationalCrossSectionLut = .{},
     mean_cross_section_cm2_per_molecule: f64,
@@ -150,18 +170,25 @@ pub const PreparedOpticalState = struct {
     pub fn deinit(self: *PreparedOpticalState, allocator: Allocator) void {
         allocator.free(self.layers);
         if (self.sublayers) |sublayers| allocator.free(sublayers);
-        if (self.strong_line_states) |states| {
-            for (states) |*state| state.deinit(allocator);
-            allocator.free(states);
-        }
         allocator.free(self.continuum_points);
         if (self.collision_induced_absorption) |cia| {
             var owned_cia = cia;
             owned_cia.deinit(allocator);
         }
-        if (self.spectroscopy_lines) |line_list| {
-            var owned = line_list;
-            owned.deinit(allocator);
+        if (self.line_absorbers.len != 0) {
+            for (self.line_absorbers) |*line_absorber| {
+                line_absorber.deinit(allocator);
+            }
+            allocator.free(self.line_absorbers);
+        } else {
+            if (self.strong_line_states) |states| {
+                for (states) |*state| state.deinit(allocator);
+                allocator.free(states);
+            }
+            if (self.spectroscopy_lines) |line_list| {
+                var owned = line_list;
+                owned.deinit(allocator);
+            }
         }
         self.* = undefined;
     }
@@ -252,6 +279,12 @@ pub const PreparedOpticalState = struct {
                 self.effective_temperature_k,
                 self.effective_pressure_hpa,
             ).total_sigma_cm2_per_molecule
+        else if (self.line_absorbers.len != 0)
+            self.weightedSpectroscopyEvaluationAtWavelength(
+                wavelength_nm,
+                self.effective_temperature_k,
+                self.effective_pressure_hpa,
+            ).total_sigma_cm2_per_molecule
         else
             0.0;
         return continuum + line_sigma;
@@ -294,6 +327,7 @@ pub const PreparedOpticalState = struct {
                         scene,
                         sublayer.altitude_km,
                         wavelength_nm,
+                        sublayer_index,
                         sublayers[sublayer_index .. sublayer_index + 1],
                         if (self.strong_line_states) |states| states[sublayer_index .. sublayer_index + 1] else null,
                     );
@@ -331,6 +365,7 @@ pub const PreparedOpticalState = struct {
                     scene,
                     layer.altitude_km,
                     wavelength_nm,
+                    start_index,
                     sublayers[start_index..end_index],
                     if (self.strong_line_states) |states| states[start_index..end_index] else null,
                 );
@@ -1007,6 +1042,7 @@ pub const PreparedOpticalState = struct {
                     null,
                     layer.altitude_km,
                     wavelength_nm,
+                    start_index,
                     sublayers[start_index..end_index],
                     if (self.strong_line_states) |states| states[start_index..end_index] else null,
                 );
@@ -1063,6 +1099,7 @@ pub const PreparedOpticalState = struct {
         scene: ?*const Scene,
         altitude_km: f64,
         wavelength_nm: f64,
+        sublayer_start_index: usize,
         sublayers: []const PreparedSublayer,
         strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     ) EvaluatedLayer {
@@ -1073,16 +1110,40 @@ pub const PreparedOpticalState = struct {
 
         for (sublayers, 0..) |sublayer, sublayer_index| {
             const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
-            const spectroscopy_sigma = self.spectroscopySigmaAtWavelength(
-                wavelength_nm,
-                sublayer.temperature_k,
-                sublayer.pressure_hpa,
-                if (strong_line_states) |states| &states[sublayer_index] else null,
-            );
-            const gas_column_density_cm2 = sublayer.absorber_number_density_cm3 * sublayer.path_length_cm;
-            const gas_absorption_optical_depth =
-                (continuum_sigma + spectroscopy_sigma) *
-                gas_column_density_cm2;
+            const gas_absorption_optical_depth = blk: {
+                const continuum_optical_depth =
+                    continuum_sigma *
+                    sublayer.absorber_number_density_cm3 *
+                    sublayer.path_length_cm;
+                if (self.line_absorbers.len != 0) {
+                    const global_sublayer_index = sublayer_start_index + sublayer_index;
+                    var line_optical_depth: f64 = 0.0;
+                    for (self.line_absorbers) |line_absorber| {
+                        const absorber_density_cm3 = line_absorber.number_densities_cm3[global_sublayer_index];
+                        if (absorber_density_cm3 <= 0.0) continue;
+                        const sigma = line_absorber.line_list.sigmaAtPrepared(
+                            wavelength_nm,
+                            sublayer.temperature_k,
+                            sublayer.pressure_hpa,
+                            if (line_absorber.strong_line_states) |states|
+                                &states[global_sublayer_index]
+                            else
+                                null,
+                        );
+                        line_optical_depth += sigma * absorber_density_cm3 * sublayer.path_length_cm;
+                    }
+                    break :blk continuum_optical_depth + line_optical_depth;
+                }
+
+                const spectroscopy_sigma = self.spectroscopySigmaAtWavelength(
+                    wavelength_nm,
+                    sublayer.temperature_k,
+                    sublayer.pressure_hpa,
+                    if (strong_line_states) |states| &states[sublayer_index] else null,
+                );
+                const gas_column_density_cm2 = sublayer.absorber_number_density_cm3 * sublayer.path_length_cm;
+                break :blk continuum_optical_depth + spectroscopy_sigma * gas_column_density_cm2;
+            };
             const gas_scattering_optical_depth =
                 Rayleigh.crossSectionCm2(wavelength_nm) *
                 sublayer.number_density_cm3 *
@@ -1169,6 +1230,13 @@ pub const PreparedOpticalState = struct {
         if (self.spectroscopy_lines) |line_list| {
             return line_list.evaluateAt(wavelength_nm, temperature_k, pressure_hpa);
         }
+        if (self.line_absorbers.len != 0) {
+            return self.weightedSpectroscopyEvaluationAtWavelength(
+                wavelength_nm,
+                temperature_k,
+                pressure_hpa,
+            );
+        }
         return .{
             .weak_line_sigma_cm2_per_molecule = 0.0,
             .strong_line_sigma_cm2_per_molecule = 0.0,
@@ -1192,7 +1260,66 @@ pub const PreparedOpticalState = struct {
         if (self.spectroscopy_lines) |line_list| {
             return line_list.sigmaAtPrepared(wavelength_nm, temperature_k, pressure_hpa, prepared_state);
         }
+        if (self.line_absorbers.len != 0) {
+            return self.weightedSpectroscopyEvaluationAtWavelength(
+                wavelength_nm,
+                temperature_k,
+                pressure_hpa,
+            ).total_sigma_cm2_per_molecule;
+        }
         return 0.0;
+    }
+
+    fn weightedSpectroscopyEvaluationAtWavelength(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) ReferenceData.SpectroscopyEvaluation {
+        var total_weight: f64 = 0.0;
+        var weighted: ReferenceData.SpectroscopyEvaluation = .{
+            .line_sigma_cm2_per_molecule = 0.0,
+            .line_mixing_sigma_cm2_per_molecule = 0.0,
+            .total_sigma_cm2_per_molecule = 0.0,
+            .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+        };
+
+        for (self.line_absorbers) |line_absorber| {
+            const weight = if (line_absorber.column_density_factor > 0.0)
+                line_absorber.column_density_factor
+            else
+                1.0;
+            const evaluation = line_absorber.line_list.evaluateAt(
+                wavelength_nm,
+                temperature_k,
+                pressure_hpa,
+            );
+            total_weight += weight;
+            weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * weight;
+            weighted.strong_line_sigma_cm2_per_molecule += evaluation.strong_line_sigma_cm2_per_molecule * weight;
+            weighted.line_sigma_cm2_per_molecule += evaluation.line_sigma_cm2_per_molecule * weight;
+            weighted.line_mixing_sigma_cm2_per_molecule += evaluation.line_mixing_sigma_cm2_per_molecule * weight;
+            weighted.total_sigma_cm2_per_molecule += evaluation.total_sigma_cm2_per_molecule * weight;
+            weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
+                evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * weight;
+        }
+
+        if (total_weight <= 0.0) {
+            return .{
+                .line_sigma_cm2_per_molecule = 0.0,
+                .line_mixing_sigma_cm2_per_molecule = 0.0,
+                .total_sigma_cm2_per_molecule = 0.0,
+                .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+            };
+        }
+
+        weighted.weak_line_sigma_cm2_per_molecule /= total_weight;
+        weighted.strong_line_sigma_cm2_per_molecule /= total_weight;
+        weighted.line_sigma_cm2_per_molecule /= total_weight;
+        weighted.line_mixing_sigma_cm2_per_molecule /= total_weight;
+        weighted.total_sigma_cm2_per_molecule /= total_weight;
+        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k /= total_weight;
+        return weighted;
     }
 
     fn ciaSigmaAtWavelength(
@@ -1313,42 +1440,120 @@ pub fn prepareWithParticleTables(
     };
     const operational_o2_lut = scene.observation_model.o2_operational_lut;
     const operational_o2o2_lut = scene.observation_model.o2o2_operational_lut;
-    const active_line_absorber = findActiveLineAbsorber(scene);
-    if (owned_lines) |*line_list| {
-        if (active_line_absorber) |line_absorber| {
-            try line_list.applyRuntimeControls(
-                allocator,
-                if (line_absorber.species.hitranIndex()) |hitran_index|
-                    @as(u16, hitran_index)
-                else
-                    null,
-                line_absorber.controls.activeIsotopes(),
-                line_absorber.controls.activeThresholdLine(),
-                line_absorber.controls.activeCutoffCm1(),
-                if (line_absorber.species == .o2)
-                    line_absorber.controls.activeLineMixingFactor()
-                else
-                    0.0,
-            );
+    const total_sublayer_count = @as(usize, layer_count) * @as(usize, sublayer_divisions);
+    const active_line_absorbers = try collectActiveLineAbsorbers(allocator, scene);
+    defer allocator.free(active_line_absorbers);
+    const single_active_line_absorber = if (active_line_absorbers.len == 1)
+        active_line_absorbers[0]
+    else
+        null;
+
+    var owned_line_absorbers: []PreparedLineAbsorber = &.{};
+    var owned_line_absorber_count: usize = 0;
+    errdefer if (owned_line_absorbers.len != 0) {
+        for (owned_line_absorbers[0..owned_line_absorber_count]) |*line_absorber| {
+            line_absorber.deinit(allocator);
         }
-        std.sort.pdq(
-            ReferenceData.SpectroscopyLine,
-            line_list.lines,
-            {},
-            struct {
-                fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
-                    return left.center_wavelength_nm < right.center_wavelength_nm;
+        allocator.free(owned_line_absorbers);
+    };
+
+    var multi_strong_line_state_counts: []usize = &.{};
+    defer if (multi_strong_line_state_counts.len != 0) allocator.free(multi_strong_line_state_counts);
+
+    if (owned_lines) |*line_list| {
+        if (active_line_absorbers.len > 1) {
+            owned_line_absorbers = try allocator.alloc(PreparedLineAbsorber, active_line_absorbers.len);
+            multi_strong_line_state_counts = try allocator.alloc(usize, active_line_absorbers.len);
+            @memset(multi_strong_line_state_counts, 0);
+
+            for (active_line_absorbers, 0..) |line_absorber, index| {
+                var filtered = try line_list.clone(allocator);
+                errdefer filtered.deinit(allocator);
+
+                try filtered.applyRuntimeControls(
+                    allocator,
+                    if (line_absorber.species.hitranIndex()) |hitran_index|
+                        @as(u16, hitran_index)
+                    else
+                        null,
+                    line_absorber.controls.activeIsotopes(),
+                    line_absorber.controls.activeThresholdLine(),
+                    line_absorber.controls.activeCutoffCm1(),
+                    if (line_absorber.species == .o2)
+                        line_absorber.controls.activeLineMixingFactor()
+                    else
+                        0.0,
+                );
+                std.sort.pdq(
+                    ReferenceData.SpectroscopyLine,
+                    filtered.lines,
+                    {},
+                    struct {
+                        fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
+                            return left.center_wavelength_nm < right.center_wavelength_nm;
+                        }
+                    }.lessThan,
+                );
+                filtered.lines_sorted_ascending = true;
+                if (!operational_o2_lut.enabled()) {
+                    try filtered.buildStrongLineMatchIndex(allocator);
                 }
-            }.lessThan,
-        );
-        line_list.lines_sorted_ascending = true;
-        if (!operational_o2_lut.enabled()) {
-            try line_list.buildStrongLineMatchIndex(allocator);
+
+                owned_line_absorbers[index] = .{
+                    .species = line_absorber.species,
+                    .line_list = filtered,
+                    .number_densities_cm3 = try allocator.alloc(f64, total_sublayer_count),
+                    .strong_line_states = if (!operational_o2_lut.enabled() and filtered.hasStrongLineSidecars())
+                        try allocator.alloc(ReferenceData.StrongLinePreparedState, total_sublayer_count)
+                    else
+                        null,
+                };
+                @memset(owned_line_absorbers[index].number_densities_cm3, 0.0);
+                owned_line_absorber_count += 1;
+            }
+
+            var owned = line_list.*;
+            owned.deinit(allocator);
+            owned_lines = null;
+        } else {
+            if (single_active_line_absorber) |line_absorber| {
+                try line_list.applyRuntimeControls(
+                    allocator,
+                    if (line_absorber.species.hitranIndex()) |hitran_index|
+                        @as(u16, hitran_index)
+                    else
+                        null,
+                    line_absorber.controls.activeIsotopes(),
+                    line_absorber.controls.activeThresholdLine(),
+                    line_absorber.controls.activeCutoffCm1(),
+                    if (line_absorber.species == .o2)
+                        line_absorber.controls.activeLineMixingFactor()
+                    else
+                        0.0,
+                );
+            }
+            std.sort.pdq(
+                ReferenceData.SpectroscopyLine,
+                line_list.lines,
+                {},
+                struct {
+                    fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
+                        return left.center_wavelength_nm < right.center_wavelength_nm;
+                    }
+                }.lessThan,
+            );
+            line_list.lines_sorted_ascending = true;
+            if (!operational_o2_lut.enabled()) {
+                try line_list.buildStrongLineMatchIndex(allocator);
+            }
         }
     }
-    const strong_line_states = if (owned_lines) |line_list|
-        if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars())
-            try allocator.alloc(ReferenceData.StrongLinePreparedState, @as(usize, layer_count) * @as(usize, sublayer_divisions))
+    const strong_line_states = if (owned_line_absorbers.len == 0)
+        if (owned_lines) |line_list|
+            if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars())
+                try allocator.alloc(ReferenceData.StrongLinePreparedState, total_sublayer_count)
+            else
+                null
         else
             null
     else
@@ -1360,7 +1565,10 @@ pub fn prepareWithParticleTables(
     };
 
     const midpoint_nm = (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5;
-    const active_line_species = resolveActiveLineSpecies(active_line_absorber, owned_lines, operational_o2_lut);
+    const active_line_species = if (owned_line_absorbers.len == 0)
+        resolveActiveLineSpecies(single_active_line_absorber, owned_lines, operational_o2_lut)
+    else
+        null;
     const mean_sigma = cross_sections.meanSigmaInRange(
         scene.spectral_grid.start_nm,
         scene.spectral_grid.end_nm,
@@ -1440,16 +1648,6 @@ pub fn prepareWithParticleTables(
             const density = profile.interpolateDensity(altitude_km);
             const pressure = profile.interpolatePressure(altitude_km);
             const temperature = profile.interpolateTemperature(altitude_km);
-            const absorber_mixing_ratio = if (active_line_species) |species|
-                speciesMixingRatioAtPressure(
-                    scene,
-                    species,
-                    if (active_line_absorber) |line_absorber| line_absorber.volume_mixing_ratio_profile_ppmv else &.{},
-                    pressure,
-                    if (species == .o2) oxygen_volume_mixing_ratio else null,
-                ) orelse return error.InvalidRequest
-            else
-                oxygen_volume_mixing_ratio;
             const oxygen_mixing_ratio = speciesMixingRatioAtPressure(
                 scene,
                 .o2,
@@ -1457,49 +1655,148 @@ pub fn prepareWithParticleTables(
                 pressure,
                 oxygen_volume_mixing_ratio,
             ) orelse oxygen_volume_mixing_ratio;
-            const spectroscopy_eval = if (operational_o2_lut.enabled())
-                ReferenceData.SpectroscopyEvaluation{
-                    .weak_line_sigma_cm2_per_molecule = operational_o2_lut.sigmaAt(midpoint_nm, temperature, pressure),
-                    .strong_line_sigma_cm2_per_molecule = 0.0,
-                    .line_sigma_cm2_per_molecule = operational_o2_lut.sigmaAt(midpoint_nm, temperature, pressure),
+            var absorber_density_cm3: f64 = 0.0;
+            const spectroscopy_eval = if (owned_line_absorbers.len != 0) blk: {
+                const delta_t = 0.5;
+                var spectroscopy_weight: f64 = 0.0;
+                var weighted: ReferenceData.SpectroscopyEvaluation = .{
+                    .line_sigma_cm2_per_molecule = 0.0,
                     .line_mixing_sigma_cm2_per_molecule = 0.0,
-                    .total_sigma_cm2_per_molecule = operational_o2_lut.sigmaAt(midpoint_nm, temperature, pressure),
-                    .d_sigma_d_temperature_cm2_per_molecule_per_k = operational_o2_lut.dSigmaDTemperatureAt(midpoint_nm, temperature, pressure),
-                }
-            else if (owned_lines) |line_list|
-                if (strong_line_states) |states| blk: {
-                    const delta_t = 0.5;
-                    states[sublayer_write_index] = (try line_list.prepareStrongLineState(
-                        allocator,
-                        temperature,
-                        pressure,
-                    )).?;
-                    strong_line_state_count += 1;
+                    .total_sigma_cm2_per_molecule = 0.0,
+                    .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+                };
 
-                    var evaluation = line_list.evaluateAtPrepared(
-                        midpoint_nm,
-                        temperature,
+                for (owned_line_absorbers, active_line_absorbers, 0..) |*line_absorber, active_absorber, line_absorber_index| {
+                    const absorber_mixing_ratio = speciesMixingRatioAtPressure(
+                        scene,
+                        line_absorber.species,
+                        active_absorber.volume_mixing_ratio_profile_ppmv,
                         pressure,
-                        &states[sublayer_write_index],
-                    );
-                    const upper = line_list.evaluateAt(midpoint_nm, temperature + delta_t, pressure);
-                    const lower = line_list.evaluateAt(
+                        if (line_absorber.species == .o2) oxygen_volume_mixing_ratio else null,
+                    ) orelse return error.InvalidRequest;
+                    const line_absorber_density_cm3 = density * absorber_mixing_ratio;
+                    line_absorber.number_densities_cm3[sublayer_write_index] = line_absorber_density_cm3;
+                    absorber_density_cm3 += line_absorber_density_cm3;
+                    if (line_absorber_density_cm3 <= 0.0) continue;
+
+                    var evaluation = if (line_absorber.strong_line_states) |states| blk_eval: {
+                        states[sublayer_write_index] = (try line_absorber.line_list.prepareStrongLineState(
+                            allocator,
+                            temperature,
+                            pressure,
+                        )).?;
+                        line_absorber.strong_line_state_count += 1;
+                        const prepared_evaluation = line_absorber.line_list.evaluateAtPrepared(
+                            midpoint_nm,
+                            temperature,
+                            pressure,
+                            &states[sublayer_write_index],
+                        );
+                        break :blk_eval prepared_evaluation;
+                    } else line_absorber.line_list.evaluateAt(midpoint_nm, temperature, pressure);
+
+                    const upper = line_absorber.line_list.evaluateAt(midpoint_nm, temperature + delta_t, pressure);
+                    const lower = line_absorber.line_list.evaluateAt(
                         midpoint_nm,
                         @max(temperature - delta_t, 150.0),
                         pressure,
                     );
                     evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k =
                         (upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule) / (2.0 * delta_t);
-                    break :blk evaluation;
-                } else line_list.evaluateAt(midpoint_nm, temperature, pressure)
-            else
-                ReferenceData.SpectroscopyEvaluation{
+
+                    spectroscopy_weight += line_absorber_density_cm3;
+                    weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * line_absorber_density_cm3;
+                    weighted.strong_line_sigma_cm2_per_molecule += evaluation.strong_line_sigma_cm2_per_molecule * line_absorber_density_cm3;
+                    weighted.line_sigma_cm2_per_molecule += evaluation.line_sigma_cm2_per_molecule * line_absorber_density_cm3;
+                    weighted.line_mixing_sigma_cm2_per_molecule += evaluation.line_mixing_sigma_cm2_per_molecule * line_absorber_density_cm3;
+                    weighted.total_sigma_cm2_per_molecule += evaluation.total_sigma_cm2_per_molecule * line_absorber_density_cm3;
+                    weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
+                        evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * line_absorber_density_cm3;
+
+                    const line_absorber_column_density_cm2 = line_absorber_density_cm3 * layer_span_km * centimeters_per_kilometer * sublayer_weight;
+                    line_absorber.column_density_factor += line_absorber_column_density_cm2;
+                    _ = line_absorber_index;
+                }
+
+                if (spectroscopy_weight <= 0.0) {
+                    break :blk ReferenceData.SpectroscopyEvaluation{
+                        .line_sigma_cm2_per_molecule = 0.0,
+                        .line_mixing_sigma_cm2_per_molecule = 0.0,
+                        .total_sigma_cm2_per_molecule = 0.0,
+                        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+                    };
+                }
+
+                weighted.weak_line_sigma_cm2_per_molecule /= spectroscopy_weight;
+                weighted.strong_line_sigma_cm2_per_molecule /= spectroscopy_weight;
+                weighted.line_sigma_cm2_per_molecule /= spectroscopy_weight;
+                weighted.line_mixing_sigma_cm2_per_molecule /= spectroscopy_weight;
+                weighted.total_sigma_cm2_per_molecule /= spectroscopy_weight;
+                weighted.d_sigma_d_temperature_cm2_per_molecule_per_k /= spectroscopy_weight;
+                break :blk weighted;
+            } else blk: {
+                const absorber_mixing_ratio = if (active_line_species) |species|
+                    speciesMixingRatioAtPressure(
+                        scene,
+                        species,
+                        if (single_active_line_absorber) |line_absorber| line_absorber.volume_mixing_ratio_profile_ppmv else &.{},
+                        pressure,
+                        if (species == .o2) oxygen_volume_mixing_ratio else null,
+                    ) orelse return error.InvalidRequest
+                else
+                    oxygen_volume_mixing_ratio;
+                absorber_density_cm3 = density * absorber_mixing_ratio;
+
+                if (operational_o2_lut.enabled()) {
+                    const sigma = operational_o2_lut.sigmaAt(midpoint_nm, temperature, pressure);
+                    break :blk ReferenceData.SpectroscopyEvaluation{
+                        .weak_line_sigma_cm2_per_molecule = sigma,
+                        .strong_line_sigma_cm2_per_molecule = 0.0,
+                        .line_sigma_cm2_per_molecule = sigma,
+                        .line_mixing_sigma_cm2_per_molecule = 0.0,
+                        .total_sigma_cm2_per_molecule = sigma,
+                        .d_sigma_d_temperature_cm2_per_molecule_per_k = operational_o2_lut.dSigmaDTemperatureAt(midpoint_nm, temperature, pressure),
+                    };
+                }
+
+                if (owned_lines) |line_list| {
+                    if (strong_line_states) |states| {
+                        const delta_t = 0.5;
+                        states[sublayer_write_index] = (try line_list.prepareStrongLineState(
+                            allocator,
+                            temperature,
+                            pressure,
+                        )).?;
+                        strong_line_state_count += 1;
+
+                        var evaluation = line_list.evaluateAtPrepared(
+                            midpoint_nm,
+                            temperature,
+                            pressure,
+                            &states[sublayer_write_index],
+                        );
+                        const upper = line_list.evaluateAt(midpoint_nm, temperature + delta_t, pressure);
+                        const lower = line_list.evaluateAt(
+                            midpoint_nm,
+                            @max(temperature - delta_t, 150.0),
+                            pressure,
+                        );
+                        evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k =
+                            (upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule) / (2.0 * delta_t);
+                        break :blk evaluation;
+                    }
+                    break :blk line_list.evaluateAt(midpoint_nm, temperature, pressure);
+                }
+
+                break :blk ReferenceData.SpectroscopyEvaluation{
+                    .weak_line_sigma_cm2_per_molecule = 0.0,
+                    .strong_line_sigma_cm2_per_molecule = 0.0,
                     .line_sigma_cm2_per_molecule = 0.0,
                     .line_mixing_sigma_cm2_per_molecule = 0.0,
                     .total_sigma_cm2_per_molecule = 0.0,
                     .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
                 };
-            const absorber_density_cm3 = density * absorber_mixing_ratio;
+            };
             const o2_density_cm3 = density * oxygen_mixing_ratio;
             const sublayer_path_length_cm = layer_span_km * centimeters_per_kilometer * sublayer_weight;
             const gas_column_density_cm2 = absorber_density_cm3 * sublayer_path_length_cm;
@@ -1647,7 +1944,31 @@ pub fn prepareWithParticleTables(
             ),
             .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
         }
-    else if (owned_lines) |*line_list|
+    else if (owned_line_absorbers.len != 0) blk: {
+        var line_mean_weight: f64 = 0.0;
+        var weighted: BandMeans.LineBandMeans = .{};
+        for (owned_line_absorbers) |*line_absorber| {
+            const weight = line_absorber.column_density_factor;
+            if (weight <= 0.0) continue;
+            const means = try BandMeans.computeBandLineMeans(
+                allocator,
+                scene,
+                &line_absorber.line_list,
+                effective_temperature,
+                effective_pressure,
+            );
+            line_mean_weight += weight;
+            weighted.line_mean_cross_section_cm2_per_molecule +=
+                means.line_mean_cross_section_cm2_per_molecule * weight;
+            weighted.line_mixing_mean_cross_section_cm2_per_molecule +=
+                means.line_mixing_mean_cross_section_cm2_per_molecule * weight;
+        }
+        if (line_mean_weight > 0.0) {
+            weighted.line_mean_cross_section_cm2_per_molecule /= line_mean_weight;
+            weighted.line_mixing_mean_cross_section_cm2_per_molecule /= line_mean_weight;
+        }
+        break :blk weighted;
+    } else if (owned_lines) |*line_list|
         try BandMeans.computeBandLineMeans(allocator, scene, line_list, effective_temperature, effective_pressure)
     else
         BandMeans.LineBandMeans{};
@@ -1674,6 +1995,7 @@ pub fn prepareWithParticleTables(
         .continuum_points = continuum_points,
         .collision_induced_absorption = owned_cia,
         .spectroscopy_lines = owned_lines,
+        .line_absorbers = owned_line_absorbers,
         .operational_o2_lut = operational_o2_lut,
         .operational_o2o2_lut = operational_o2o2_lut,
         .mean_cross_section_cm2_per_molecule = mean_sigma + line_means.line_mean_cross_section_cm2_per_molecule + line_means.line_mixing_mean_cross_section_cm2_per_molecule,
@@ -1704,18 +2026,21 @@ pub fn prepareWithParticleTables(
     };
 }
 
-fn findActiveLineAbsorber(scene: *const Scene) ?ActiveLineAbsorber {
+fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]ActiveLineAbsorber {
+    var active = std.ArrayList(ActiveLineAbsorber).empty;
+    defer active.deinit(allocator);
+
     for (scene.absorbers.items) |absorber| {
         const species = absorber.resolved_species orelse continue;
         if (!species.isLineAbsorbing()) continue;
         if (absorber.spectroscopy.mode != .line_by_line) continue;
-        return .{
+        try active.append(allocator, .{
             .species = species,
             .controls = absorber.spectroscopy.line_gas_controls,
             .volume_mixing_ratio_profile_ppmv = absorber.volume_mixing_ratio_profile_ppmv,
-        };
+        });
     }
-    return null;
+    return active.toOwnedSlice(allocator);
 }
 
 fn resolveActiveLineSpecies(

@@ -181,8 +181,11 @@ fn buildAdaptiveIntegrationKernel(
     if (!adaptive.enabled()) return false;
     if (scene.observation_model.instrument_line_fwhm_nm <= 0.0) return false;
 
-    const line_list = prepared.spectroscopy_lines orelse return false;
-    if (line_list.lines.len == 0) return false;
+    const has_single_line_list = if (prepared.spectroscopy_lines) |line_list|
+        line_list.lines.len != 0
+    else
+        false;
+    if (!has_single_line_list and prepared.line_absorbers.len == 0) return false;
 
     const fwhm_nm = @max(scene.observation_model.instrument_line_fwhm_nm, 1.0e-4);
     const half_span_nm = if (scene.observation_model.high_resolution_half_span_nm > 0.0)
@@ -209,31 +212,33 @@ fn buildAdaptiveIntegrationKernel(
         adaptive.points_per_fwhm,
     )) return false;
 
-    if (line_list.runtime_controls.thresholdStrength(line_list.lines)) |threshold_strength| {
-        var previous_center_nm: ?f64 = null;
-        for (line_list.lines) |line| {
-            if (line.line_strength_cm2_per_molecule < threshold_strength) continue;
-            if (line.center_wavelength_nm < window_start_nm or line.center_wavelength_nm > window_end_nm) continue;
-            if (previous_center_nm) |previous| {
-                if (@abs(line.center_wavelength_nm - previous) <= 1.0e-9) continue;
-            }
-            previous_center_nm = line.center_wavelength_nm;
-
-            const strong_half_span_nm = 0.5 * fwhm_nm;
-            const strong_start_nm = @max(window_start_nm, line.center_wavelength_nm - strong_half_span_nm);
-            const strong_end_nm = @min(window_end_nm, line.center_wavelength_nm + strong_half_span_nm);
-            const refinement_count = strongDivisionCount(adaptive, strong_end_nm - strong_start_nm, fwhm_nm);
-            if (!addStrongAdaptiveSamples(
-                &sample_wavelengths_nm,
-                &sample_raw_weights,
-                &sample_count,
+    if (prepared.spectroscopy_lines) |line_list| {
+        if (!addAdaptiveStrongLineSamplesFromList(
+            adaptive,
+            line_list,
+            shape,
+            fwhm_nm,
+            nominal_wavelength_nm,
+            window_start_nm,
+            window_end_nm,
+            &sample_wavelengths_nm,
+            &sample_raw_weights,
+            &sample_count,
+        )) return false;
+    }
+    if (prepared.line_absorbers.len != 0) {
+        for (prepared.line_absorbers) |line_absorber| {
+            if (!addAdaptiveStrongLineSamplesFromList(
+                adaptive,
+                line_absorber.line_list,
                 shape,
                 fwhm_nm,
                 nominal_wavelength_nm,
-                line.center_wavelength_nm,
-                strong_start_nm,
-                strong_end_nm,
-                refinement_count,
+                window_start_nm,
+                window_end_nm,
+                &sample_wavelengths_nm,
+                &sample_raw_weights,
+                &sample_count,
             )) return false;
         }
     }
@@ -244,6 +249,48 @@ fn buildAdaptiveIntegrationKernel(
         sample_wavelengths_nm[0..sample_count],
         sample_raw_weights[0..sample_count],
     );
+}
+
+fn addAdaptiveStrongLineSamplesFromList(
+    adaptive: AdaptiveReferenceGrid,
+    line_list: ReferenceData.SpectroscopyLineList,
+    shape: BuiltinLineShapeKind,
+    fwhm_nm: f64,
+    nominal_wavelength_nm: f64,
+    window_start_nm: f64,
+    window_end_nm: f64,
+    sample_wavelengths_nm: *[max_integration_sample_count]f64,
+    sample_raw_weights: *[max_integration_sample_count]f64,
+    sample_count: *usize,
+) bool {
+    const threshold_strength = line_list.runtime_controls.thresholdStrength(line_list.lines) orelse return true;
+    var previous_center_nm: ?f64 = null;
+    for (line_list.lines) |line| {
+        if (line.line_strength_cm2_per_molecule < threshold_strength) continue;
+        if (line.center_wavelength_nm < window_start_nm or line.center_wavelength_nm > window_end_nm) continue;
+        if (previous_center_nm) |previous| {
+            if (@abs(line.center_wavelength_nm - previous) <= 1.0e-9) continue;
+        }
+        previous_center_nm = line.center_wavelength_nm;
+
+        const strong_half_span_nm = 0.5 * fwhm_nm;
+        const strong_start_nm = @max(window_start_nm, line.center_wavelength_nm - strong_half_span_nm);
+        const strong_end_nm = @min(window_end_nm, line.center_wavelength_nm + strong_half_span_nm);
+        const refinement_count = strongDivisionCount(adaptive, strong_end_nm - strong_start_nm, fwhm_nm);
+        if (!addStrongAdaptiveSamples(
+            sample_wavelengths_nm,
+            sample_raw_weights,
+            sample_count,
+            shape,
+            fwhm_nm,
+            nominal_wavelength_nm,
+            line.center_wavelength_nm,
+            strong_start_nm,
+            strong_end_nm,
+            refinement_count,
+        )) return false;
+    }
+    return true;
 }
 
 fn addUniformAdaptiveSamples(

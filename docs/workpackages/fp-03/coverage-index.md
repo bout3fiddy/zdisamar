@@ -266,7 +266,7 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | --- | --- | --- |
 | `src/plugins/providers/transport.zig` | `WP-02` | Typed transport-provider seam. |
 | `src/plugins/providers/optics.zig` | `WP-03`, `WP-04`, `WP-08` | Optics provider seam. |
-| `src/plugins/providers/instrument.zig` | `WP-06`, `WP-07`, `WP-08` | Instrument/integration provider seam. |
+| `src/plugins/providers/instrument.zig` | `WP-03`, `WP-06`, `WP-07`, `WP-08` | Instrument/integration provider seam, including adaptive strong-line sampling over prepared line-gas families. |
 | `src/plugins/providers/noise.zig` | `WP-06`, `WP-07`, `WP-11`, `WP-12`, `WP-13` | Noise and measured-input semantics. |
 | `src/plugins/providers/surface.zig` | `WP-05`, `WP-06` | Surface semantics. |
 | `src/plugins/providers/retrieval.zig` | `WP-11`, `WP-12`, `WP-13`, `WP-15` | Retrieval-family exposure and later cleanup. |
@@ -312,7 +312,7 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | `tests/validation/main.zig` | `WP-03`, `WP-09` | Validation-suite entrypoint now includes the focused line-gas family lane. |
 | `tests/validation/o2a_vendor_reflectance_support.zig` | `WP-02`, `WP-03`, `WP-09` | Shared O2A validation harness for vendor reference comparison plus line-gas control/adaptive execution toggles. |
 | `tests/validation/o2a_forward_shape_test.zig` | `WP-02`, `WP-03`, `WP-09` | O2A morphology, RTM-control, adaptive sampling, and line-gas control/CIA sensitivity checks. |
-| `tests/validation/line_gas_family_validation_test.zig` | `WP-03`, `WP-09` | Focused non-O2 staged line-gas validation through the real prepare and measurement-space path. |
+| `tests/validation/line_gas_family_validation_test.zig` | `WP-03`, `WP-09` | Focused non-O2 staged line-gas validation through the real prepare and measurement-space path, now including the vendor-window-anchored H2O/NH3 SWIR multi-gas case. |
 | `tests/validation/disamar_compatibility_harness_test.zig` | `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-07`, `WP-08`, `WP-09`, `WP-14` | Shared compatibility harness that still needs broader non-O2 vendor-corpus line-gas coverage. |
 
 ## Preserve / No Immediate Patch
