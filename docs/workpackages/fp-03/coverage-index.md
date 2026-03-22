@@ -305,6 +305,16 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | `src/runtime/scheduler/ThreadContext.zig` | `WP-10`, `WP-15` | Execution-context cleanup. |
 | `src/runtime/scheduler/BatchRunner.zig` | `WP-10`, `WP-15` | Benchmark and later simplification. |
 
+## Current Zig Validation Files
+
+| File | Assignment | Why |
+| --- | --- | --- |
+| `tests/validation/main.zig` | `WP-03`, `WP-09` | Validation-suite entrypoint now includes the focused line-gas family lane. |
+| `tests/validation/o2a_vendor_reflectance_support.zig` | `WP-02`, `WP-03`, `WP-09` | Shared O2A validation harness for vendor reference comparison plus line-gas control/adaptive execution toggles. |
+| `tests/validation/o2a_forward_shape_test.zig` | `WP-02`, `WP-03`, `WP-09` | O2A morphology, RTM-control, adaptive sampling, and line-gas control/CIA sensitivity checks. |
+| `tests/validation/line_gas_family_validation_test.zig` | `WP-03`, `WP-09` | Focused non-O2 staged line-gas validation through the real prepare and measurement-space path. |
+| `tests/validation/disamar_compatibility_harness_test.zig` | `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-07`, `WP-08`, `WP-09`, `WP-14` | Shared compatibility harness that still needs broader non-O2 vendor-corpus line-gas coverage. |
+
 ## Preserve / No Immediate Patch
 
 | File or family | Assignment | Why |

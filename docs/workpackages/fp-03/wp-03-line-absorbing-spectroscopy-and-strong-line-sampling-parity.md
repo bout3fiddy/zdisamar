@@ -34,7 +34,7 @@ The current findings already point to O2 spectroscopy controls and adaptive stro
 - Measured-input replacement workflows; those belong later.
 - Papering over missing spectroscopy with measurement-space shape corrections.
 
-### WP-03 Line-absorbing spectroscopy and strong-line sampling parity [Status: Todo]
+### WP-03 Line-absorbing spectroscopy and strong-line sampling parity [Status: In Progress 2026-03-21]
 
 Issue:
 The current Zig line-gas handling still flattens important vendor controls. O2A already shows the consequence: the forward spectrum does not yet show the vendor line structure and depth correctly.
@@ -62,10 +62,10 @@ O2A no longer relies on synthetic shaping to mimic narrow-line behavior, and the
 
 Non-destructive tests:
 - `zig build test-unit --summary all`
-- `zig build test-validation --summary all`
-- `zig test tests/unit/optics_preparation_test.zig`
-- `zig test tests/validation/o2a_forward_shape_test.zig`
-- `zig test tests/validation/disamar_compatibility_harness_test.zig`
+- `zig build test-validation-o2a-adaptive`
+- `zig build test-validation-o2a-controls`
+- `zig build test-validation-line-gas`
+- `zig build test-validation-o2a`
 
 Files by type:
 - Gas/control carriers:
@@ -85,10 +85,11 @@ Files by type:
   - `tests/unit/optics_preparation_test.zig`
   - `tests/validation/o2a_forward_shape_test.zig`
   - `tests/validation/disamar_compatibility_harness_test.zig`
+  - `tests/validation/line_gas_family_validation_test.zig`
 
 ## Exact Patch Checklist
 
-- [ ] `src/model/Absorber.zig` and `src/model/ReferenceData.zig`: add typed fields for vendor line-gas controls.
+- [x] `src/model/Absorber.zig` and `src/model/ReferenceData.zig`: add typed fields for vendor line-gas controls.
   - Vendor anchors: `readConfigFileModule.f90::readAbsorbingGas` and its `HITRAN` subsection keys `factorLMSim/Retr`, `ISOsim/Retr`, `thresholdLineSim/Retr`, `cutoffSim/Retr`.
   - Keep sim and retr controls separate.
   - Example direction:
@@ -105,12 +106,12 @@ Files by type:
     };
     ```
 
-- [ ] `src/kernels/optics/prepare.zig`: make line-absorption preparation aware of gas family, line mixing, isotope selection, and strong-line filtering.
+- [x] `src/kernels/optics/prepare.zig`: make line-absorption preparation aware of gas family, line mixing, isotope selection, and strong-line filtering.
   - Vendor anchors: `HITRANModule.f90::{fillMolecularParameters,CalculatAbsXsec,CalculateLineMixingXsec,readLineParameters}`.
   - O2 line mixing must be controlled explicitly, because the vendor warns that line mixing is implemented only for O2.
   - Do not treat `factorLM` as a generic no-op scalar for all gases.
 
-- [ ] `src/model/instrument/reference_grid.zig` plus `src/kernels/optics/prepare.zig`: implement adaptive strong-line sampling rather than a fixed HR step.
+- [x] `src/model/instrument/reference_grid.zig` plus `src/kernels/optics/prepare.zig`: implement adaptive strong-line sampling rather than a fixed HR step.
   - Vendor anchors: `DISAMARModule.f90::setupHRWavelengthGrid`; `readRadiativeTransfer` subsections `numDivPointsWavel` and `numDivPointsWavelLineAbs`.
   - Support vendor-like controls such as points per FWHM and min/max division controls for strong lines.
   - The grid builder should be able to say: “for this band and gas, use baseline spacing here and refined spacing near detected strong-line centers.”
@@ -128,11 +129,11 @@ Files by type:
   - Vendor anchors: `Config_O2_with_CIA.in`, `Config_O2_no_CIA.in`, and reference assets such as `O2A_LISA_baseJPL.dat`, `O2A_LISA_CIAF.dat`, `O2O2T_BIRA.dat`.
   - The line-gas path should not bypass CIA or collision-complex handling when the vendor config includes it.
 
-- [ ] `src/adapters/canonical_config/Document.zig` and `document_fields.zig`: expose the vendor `HITRAN` subsection in canonical YAML exactly enough to express all line-gas controls.
+- [x] `src/adapters/canonical_config/Document.zig` and `document_fields.zig`: expose the vendor `HITRAN` subsection in canonical YAML exactly enough to express all line-gas controls.
   - Vendor anchors: `readConfigFileModule.f90::readAbsorbingGas` and the line-gas example configs `Config_O2_with_CIA.in`, `Config_O2A_XsecLUT.in`, `Config_H2O_NH3.in`, `Config_ESA_project_CO2+H2O.in`, `Config_ESA_project_O2+CO2+H2O_3bands.in`.
   - Do not collapse isotope lists or sim/retr split fields into a generic opaque blob.
 
-- [ ] `tests/unit/optics_preparation_test.zig`, `tests/validation/o2a_forward_shape_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: add line-gas family validation.
+- [ ] `tests/unit/optics_preparation_test.zig`, `tests/validation/o2a_forward_shape_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`, `tests/validation/line_gas_family_validation_test.zig`: add line-gas family validation.
   - O2A: verify trough depth, line density, and CIA toggle sensitivity.
   - Non-O2 line-gas cases: add at least one H2O/NH3 case and one CO2/H2O or O2+CO2+H2O pressure case from the vendor corpus.
   - Add tests that changing isotope selection or threshold/cutoff changes the prepared spectroscopy and downstream spectrum.
@@ -141,16 +142,16 @@ Files by type:
 
 - [ ] Implementation matches the described approach
 - [ ] Non-destructive tests pass
-- [ ] Proof / validation section filled with exact commands and outcomes
-- [ ] How to test section is reproducible
-- [ ] `overview.md` rollup row updated
-- [ ] O2 line-mixing and isotope controls are represented explicitly
-- [ ] Adaptive strong-line sampling exists and is used in execution
-- [ ] At least one non-O2 line-gas family case passes the validation harness
+- [x] Proof / validation section filled with exact commands and outcomes
+- [x] How to test section is reproducible
+- [x] `overview.md` rollup row updated
+- [x] O2 line-mixing and isotope controls are represented explicitly
+- [x] Adaptive strong-line sampling exists and is used in execution
+- [x] At least one non-O2 line-gas family case passes the validation harness
 
-## Implementation Status (2026-03-18)
+## Implementation Status (2026-03-21)
 
-Planning only. No code changes yet.
+In progress. The current slice lands the typed vendor `absorbing_gas.hitran` controls, compiles them onto stage scene absorbers, carries active line-gas runtime controls into prepared spectroscopy, splits active line-absorber density from O2 density, and adds adaptive strong-line instrument sampling driven by prepared spectroscopy lines and RTM subdivision controls. The latest validation pass also adds focused O2A execution checks for adaptive sampling plus line-mixing/isotope/cutoff/CIA sensitivity and a non-O2 staged CO2 validation lane. Vendor-corpus SWIR/H2O-NH3 coverage and the remaining CIA/bundled-asset parity checks are still open.
 
 ## Why This Works
 
@@ -158,13 +159,19 @@ Vendor line-gas parity is not just “read HITRAN.” It is the combination of g
 
 ## Proof / Validation
 
-- Planned: `zig test tests/validation/o2a_forward_shape_test.zig` -> O2A line structure and trough depth move toward vendor behavior
-- Planned: `zig test tests/unit/optics_preparation_test.zig` -> line controls change prepared cross sections and grids as expected
-- Planned: `zig test tests/validation/disamar_compatibility_harness_test.zig` -> line-gas example configs are classified and executed with the correct gas controls
+- `zig build test-unit --summary all` -> pass (`45/45` tests).
+- `zig build test-validation-o2a-adaptive` -> pass.
+- `zig build test-validation-o2a-controls` -> pass.
+- `zig build test-validation-line-gas` -> pass.
+- `zig build test-validation-o2a` -> not rerun to completion in this session; focused filtered O2A validation steps above were used instead because the full lane remained expensive.
+- `zig build test-fast --summary all` -> started but did not produce a conclusive result in this session; needs a fresh rerun before the WP can be marked done.
+- `zig build test-integration-forward-model --summary all` -> also needs a fresh rerun; the command was started during this session but did not return a conclusive result before being stopped.
 
 ## How To Test
 
-1. Run the O2-with-CIA and O2-without-CIA vendor cases and compare the radiance and reflectance overlays.
-2. Toggle line-mixing factor and isotope selection in a controlled test config and confirm the spectrum changes.
-3. Run one H2O/NH3 or CO2/H2O vendor-like case and confirm the same line-gas path is used without O2-specific assumptions.
-4. Inspect the generated HR grid and verify strong-line refinement happens near the strongest lines only.
+1. Run `zig build test-unit --summary all`.
+2. Run `zig build test-validation-o2a-adaptive`.
+3. Run `zig build test-validation-o2a-controls`.
+4. Run `zig build test-validation-line-gas`.
+5. Run `zig build test-validation-o2a` from a fresh shell when you want the heavier unfiltered O2A lane.
+6. Run `zig build test-fast --summary all` and `zig build test-integration-forward-model --summary all` before marking the WP done.
