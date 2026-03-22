@@ -5,6 +5,7 @@ const internal = @import("zdisamar_internal");
 const ReferenceData = internal.reference_data;
 const OpticsPrepare = internal.kernels.optics.prepare;
 const MeasurementSpace = internal.kernels.transport.measurement_space;
+const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
 
 pub const ReferenceSample = struct {
     wavelength_nm: f64,
@@ -90,6 +91,24 @@ pub const VendorO2AReflectanceCase = struct {
         allocator.free(self.reference);
         self.* = undefined;
     }
+};
+
+pub const VendorO2AExecutionConfig = struct {
+    spectral_grid: zdisamar.SpectralGrid = .{
+        .start_nm = 755.0,
+        .end_nm = 776.0,
+        .sample_count = 701,
+    },
+    layer_count: u32 = 48,
+    sublayer_divisions: u8 = 4,
+    line_mixing_factor: ?f64 = 1.0,
+    isotopes_sim: []const u8 = &.{},
+    threshold_line_sim: ?f64 = null,
+    cutoff_sim_cm1: ?f64 = null,
+    adaptive_points_per_fwhm: u16 = 0,
+    adaptive_strong_line_min_divisions: u16 = 0,
+    adaptive_strong_line_max_divisions: u16 = 0,
+    include_cia: bool = true,
 };
 
 pub fn zeroContinuumTable(
@@ -499,6 +518,13 @@ pub fn computeComparisonMetrics(
 }
 
 pub fn runVendorO2AReflectanceCase(allocator: std.mem.Allocator) !VendorO2AReflectanceCase {
+    return runConfiguredVendorO2AReflectanceCase(allocator, .{});
+}
+
+pub fn runConfiguredVendorO2AReflectanceCase(
+    allocator: std.mem.Allocator,
+    config: VendorO2AExecutionConfig,
+) !VendorO2AReflectanceCase {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         allocator,
         .climatology_profile,
@@ -553,9 +579,12 @@ pub fn runVendorO2AReflectanceCase(allocator: std.mem.Allocator) !VendorO2ARefle
     defer strong_lines.deinit(allocator);
     var relaxation_matrix = try rmf_asset.toSpectroscopyRelaxationMatrix(allocator);
     defer relaxation_matrix.deinit(allocator);
-    var cia_table = try cia_asset.toCollisionInducedAbsorptionTable(allocator);
-    defer cia_table.deinit(allocator);
     try line_list.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
+    var cia_table: ?ReferenceData.CollisionInducedAbsorptionTable = null;
+    defer if (cia_table) |*table| table.deinit(allocator);
+    if (config.include_cia) {
+        cia_table = try cia_asset.toCollisionInducedAbsorptionTable(allocator);
+    }
     var lut = try lut_asset.toAirmassFactorLut(allocator);
     defer lut.deinit(allocator);
 
@@ -597,14 +626,30 @@ pub fn runVendorO2AReflectanceCase(allocator: std.mem.Allocator) !VendorO2ARefle
             .relative_azimuth_deg = 120.0,
         },
         .atmosphere = .{
-            .layer_count = 48,
-            .sublayer_divisions = 4,
+            .layer_count = config.layer_count,
+            .sublayer_divisions = config.sublayer_divisions,
             .has_aerosols = true,
         },
-        .spectral_grid = .{
-            .start_nm = 755.0,
-            .end_nm = 776.0,
-            .sample_count = 701,
+        .spectral_grid = config.spectral_grid,
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "o2",
+                    .species = "o2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "o2").?,
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .factor_lm_sim = config.line_mixing_factor,
+                            .isotopes_sim = config.isotopes_sim,
+                            .threshold_line_sim = config.threshold_line_sim,
+                            .cutoff_sim_cm1 = config.cutoff_sim_cm1,
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+            },
         },
         .observation_model = .{
             .instrument = .{ .custom = "disamar-o2a-compare" },
@@ -615,6 +660,11 @@ pub fn runVendorO2AReflectanceCase(allocator: std.mem.Allocator) !VendorO2ARefle
             .builtin_line_shape = .flat_top_n4,
             .high_resolution_step_nm = 0.01,
             .high_resolution_half_span_nm = 1.14,
+            .adaptive_reference_grid = .{
+                .points_per_fwhm = config.adaptive_points_per_fwhm,
+                .strong_line_min_divisions = config.adaptive_strong_line_min_divisions,
+                .strong_line_max_divisions = config.adaptive_strong_line_max_divisions,
+            },
         },
     };
     scene.observation_model.operational_solar_spectrum = .{
@@ -627,7 +677,7 @@ pub fn runVendorO2AReflectanceCase(allocator: std.mem.Allocator) !VendorO2ARefle
         &scene,
         &profile,
         &cross_sections,
-        &cia_table,
+        if (cia_table) |*table| table else null,
         &line_list,
         &lut,
     );

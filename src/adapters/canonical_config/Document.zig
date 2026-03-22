@@ -16,7 +16,9 @@ const Geometry = @import("../../model/Geometry.zig").Geometry;
 const GeometryModel = @import("../../model/Geometry.zig").Model;
 const Absorber = @import("../../model/Absorber.zig").Absorber;
 const AbsorberSet = @import("../../model/Absorber.zig").AbsorberSet;
+const LineGasControls = @import("../../model/Absorber.zig").LineGasControls;
 const Spectroscopy = @import("../../model/Absorber.zig").Spectroscopy;
+const SpectroscopyStage = @import("../../model/Absorber.zig").SpectroscopyStage;
 const SpectroscopyMode = @import("../../model/Absorber.zig").SpectroscopyMode;
 const Surface = @import("../../model/Surface.zig").Surface;
 const SurfaceParameter = @import("../../model/Surface.zig").Parameter;
@@ -380,12 +382,24 @@ pub const RetrievalConfig = struct {
 
 /// Typed representation of per-gas controls from the vendor ABSORBING_GAS section.
 pub const AbsorbingGasConfig = struct {
+    pub const Hitran = struct {
+        factor_lm_sim: ?f64 = null,
+        factor_lm_retr: ?f64 = null,
+        isotopes_sim: ?[]const u8 = null,
+        isotopes_retr: ?[]const u8 = null,
+        threshold_line_sim: ?f64 = null,
+        threshold_line_retr: ?f64 = null,
+        cutoff_sim_cm1: ?f64 = null,
+        cutoff_retr_cm1: ?f64 = null,
+    };
+
     pub const GasEntry = struct {
         species: ?fields.AbsorberSpecies = null,
         xsection_file_sim: ?[]const u8 = null,
         xsection_file_retr: ?[]const u8 = null,
         fit_column: bool = false,
         profile_sim: ?[]const [2]f64 = null,
+        hitran: ?Hitran = null,
     };
     gases: ?[]const GasEntry = null,
 };
@@ -784,6 +798,7 @@ const ResolveContext = struct {
         stage.vendor_compat = try decodeVendorCompat(mapGet(stage_map, "vendor_compat"), self.strict_unknown_fields);
         stage.radiative_transfer = try decodeRadiativeTransferConfig(self.allocator, mapGet(stage_map, "radiative_transfer"), self.strict_unknown_fields);
         stage.plan.rtm_controls = try compileStageRtmControls(kind, stage.vendor_compat, stage.radiative_transfer);
+        try applyAdaptiveReferenceGrid(kind, stage.radiative_transfer, &stage.scene.observation_model);
         stage.rrs_ring = try decodeRrsRingConfig(self.allocator, mapGet(stage_map, "rrs_ring"), self.strict_unknown_fields);
         stage.additional_output = try decodeAdditionalOutputConfig(mapGet(stage_map, "additional_output"), self.strict_unknown_fields);
         stage.general = try decodeGeneralConfig(self.allocator, mapGet(stage_map, "general"), self.strict_unknown_fields);
@@ -795,6 +810,7 @@ const ResolveContext = struct {
         stage.aerosol_config = try decodeAerosolConfig(mapGet(stage_map, "aerosol_config"), self.strict_unknown_fields);
         stage.retrieval_config = try decodeRetrievalConfig(mapGet(stage_map, "retrieval_config"), self.strict_unknown_fields);
         stage.absorbing_gas = try decodeAbsorbingGasConfig(self.allocator, mapGet(stage_map, "absorbing_gas"), self.strict_unknown_fields);
+        try applyAbsorbingGasConfigToScene(self.allocator, kind, stage.absorbing_gas, &stage.scene);
 
         try ensureDistinctProducts(stage.products);
         try stage.plan.validate();
@@ -991,6 +1007,7 @@ const ResolveContext = struct {
             var absorber: Absorber = .{
                 .id = try self.allocator.dupe(u8, entry.key),
                 .species = try self.allocator.dupe(u8, try expectString(requiredField(item_map, "species"))),
+                .resolved_species = try fields.parseAbsorberSpecies(try expectString(requiredField(item_map, "species"))),
             };
 
             if (mapGet(item_map, "profile")) |profile_value| {
@@ -1838,6 +1855,40 @@ fn rejectUnsupportedRtmControls(
     if (rt.threshold_cloud_fraction != null) return Error.InvalidValue;
 }
 
+fn applyAdaptiveReferenceGrid(
+    kind: StageKind,
+    radiative_transfer: ?RadiativeTransferConfig,
+    observation_model: *ObservationModel,
+) !void {
+    const rt = radiative_transfer orelse return;
+    const points_per_fwhm = switch (kind) {
+        .simulation => rt.num_div_points_fwhm_sim,
+        .retrieval => rt.num_div_points_fwhm_retr,
+    };
+    const strong_line_min_divisions = switch (kind) {
+        .simulation => rt.num_div_points_min_sim,
+        .retrieval => rt.num_div_points_min_retr,
+    };
+    const strong_line_max_divisions = switch (kind) {
+        .simulation => rt.num_div_points_max_sim,
+        .retrieval => rt.num_div_points_max_retr,
+    };
+
+    const any_present = points_per_fwhm != null or
+        strong_line_min_divisions != null or
+        strong_line_max_divisions != null;
+    if (!any_present) return;
+    if (points_per_fwhm == null or strong_line_min_divisions == null or strong_line_max_divisions == null) {
+        return Error.InvalidValue;
+    }
+
+    observation_model.adaptive_reference_grid = .{
+        .points_per_fwhm = @intCast(points_per_fwhm.?),
+        .strong_line_min_divisions = @intCast(strong_line_min_divisions.?),
+        .strong_line_max_divisions = @intCast(strong_line_max_divisions.?),
+    };
+}
+
 fn decodeRrsRingConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?RrsRingConfig {
     const rrs_value = value orelse return null;
     const rrs_map = try expectMap(rrs_value);
@@ -2174,6 +2225,7 @@ fn decodeGasEntrySeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]c
             "xsection_file_retr",
             "fit_column",
             "profile_sim",
+            "hitran",
         }, strict);
 
         var ge: AbsorbingGasConfig.GasEntry = .{};
@@ -2182,9 +2234,35 @@ fn decodeGasEntrySeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]c
         if (mapGet(gas_map, "xsection_file_retr")) |v| ge.xsection_file_retr = try expectString(v);
         if (mapGet(gas_map, "fit_column")) |v| ge.fit_column = try expectBool(v);
         if (mapGet(gas_map, "profile_sim")) |v| ge.profile_sim = try decodeF64PairSequence(allocator, v);
+        if (mapGet(gas_map, "hitran")) |v| ge.hitran = try decodeGasHitranConfig(allocator, v, strict);
         entries[index] = ge;
     }
     return entries;
+}
+
+fn decodeGasHitranConfig(allocator: Allocator, value: yaml.Value, strict: bool) !AbsorbingGasConfig.Hitran {
+    const hitran_map = try expectMap(value);
+    try ensureKnownFields(hitran_map, &.{
+        "factor_lm_sim",
+        "factor_lm_retr",
+        "isotopes_sim",
+        "isotopes_retr",
+        "threshold_line_sim",
+        "threshold_line_retr",
+        "cutoff_sim_cm1",
+        "cutoff_retr_cm1",
+    }, strict);
+
+    var hitran: AbsorbingGasConfig.Hitran = .{};
+    if (mapGet(hitran_map, "factor_lm_sim")) |v| hitran.factor_lm_sim = try expectF64(v);
+    if (mapGet(hitran_map, "factor_lm_retr")) |v| hitran.factor_lm_retr = try expectF64(v);
+    if (mapGet(hitran_map, "isotopes_sim")) |v| hitran.isotopes_sim = try decodeU8Sequence(allocator, v);
+    if (mapGet(hitran_map, "isotopes_retr")) |v| hitran.isotopes_retr = try decodeU8Sequence(allocator, v);
+    if (mapGet(hitran_map, "threshold_line_sim")) |v| hitran.threshold_line_sim = try expectF64(v);
+    if (mapGet(hitran_map, "threshold_line_retr")) |v| hitran.threshold_line_retr = try expectF64(v);
+    if (mapGet(hitran_map, "cutoff_sim_cm1")) |v| hitran.cutoff_sim_cm1 = try expectF64(v);
+    if (mapGet(hitran_map, "cutoff_retr_cm1")) |v| hitran.cutoff_retr_cm1 = try expectF64(v);
+    return hitran;
 }
 
 /// Decode a YAML sequence of 2-element sub-sequences into a slice of f64 pairs.
@@ -2216,6 +2294,76 @@ fn decodeU32Sequence(allocator: Allocator, value: yaml.Value) ![]const u32 {
         result[index] = @intCast(try expectU64(entry));
     }
     return result;
+}
+
+fn decodeU8Sequence(allocator: Allocator, value: yaml.Value) ![]const u8 {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc(u8, seq.len);
+    for (seq, 0..) |entry, index| {
+        result[index] = @intCast(try expectU64(entry));
+    }
+    return result;
+}
+
+fn applyAbsorbingGasConfigToScene(
+    allocator: Allocator,
+    kind: StageKind,
+    config: ?AbsorbingGasConfig,
+    scene: *Scene,
+) !void {
+    const active_stage: SpectroscopyStage = switch (kind) {
+        .simulation => .simulation,
+        .retrieval => .retrieval,
+    };
+
+    for (0..scene.absorbers.items.len) |index| {
+        const absorber = @constCast(&scene.absorbers.items[index]);
+        if (absorber.resolved_species) |species| {
+            if (species.isLineAbsorbing()) {
+                absorber.spectroscopy.line_gas_controls.active_stage = active_stage;
+            }
+        }
+    }
+
+    const gases = if (config) |absorbing_gas|
+        absorbing_gas.gases orelse return
+    else
+        return;
+
+    for (gases) |entry| {
+        const species = entry.species orelse return Error.InvalidValue;
+        if (!species.isLineAbsorbing()) continue;
+
+        const absorber = findAbsorberForSpecies(scene.absorbers, species) orelse return Error.InvalidValue;
+        if (entry.profile_sim) |profile_ppmv| {
+            absorber.volume_mixing_ratio_profile_ppmv = try allocator.dupe([2]f64, profile_ppmv);
+        }
+        const hitran = entry.hitran orelse continue;
+        const isotopes_sim = if (hitran.isotopes_sim) |values| try allocator.dupe(u8, values) else &.{};
+        errdefer if (hitran.isotopes_sim != null) allocator.free(isotopes_sim);
+        const isotopes_retr = if (hitran.isotopes_retr) |values| try allocator.dupe(u8, values) else &.{};
+        errdefer if (hitran.isotopes_retr != null) allocator.free(isotopes_retr);
+
+        absorber.spectroscopy.line_gas_controls = LineGasControls{
+            .factor_lm_sim = hitran.factor_lm_sim,
+            .factor_lm_retr = hitran.factor_lm_retr,
+            .isotopes_sim = isotopes_sim,
+            .isotopes_retr = isotopes_retr,
+            .threshold_line_sim = hitran.threshold_line_sim,
+            .threshold_line_retr = hitran.threshold_line_retr,
+            .cutoff_sim_cm1 = hitran.cutoff_sim_cm1,
+            .cutoff_retr_cm1 = hitran.cutoff_retr_cm1,
+            .active_stage = active_stage,
+        };
+    }
+}
+
+fn findAbsorberForSpecies(absorbers: AbsorberSet, species: fields.AbsorberSpecies) ?*Absorber {
+    for (0..absorbers.items.len) |index| {
+        const absorber = @constCast(&absorbers.items[index]);
+        if (absorber.resolved_species == species) return absorber;
+    }
+    return null;
 }
 
 fn decodeMeasurementMask(allocator: Allocator, value: yaml.Value, strict: bool) !MeasurementMask {

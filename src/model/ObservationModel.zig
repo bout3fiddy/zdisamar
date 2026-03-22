@@ -4,6 +4,7 @@ const Binding = @import("Binding.zig").Binding;
 const Instrument = @import("Instrument.zig").Instrument;
 const InstrumentId = @import("Instrument.zig").Id;
 const BuiltinLineShapeKind = @import("Instrument.zig").BuiltinLineShapeKind;
+const AdaptiveReferenceGrid = @import("Instrument.zig").AdaptiveReferenceGrid;
 const InstrumentLineShape = @import("Instrument.zig").InstrumentLineShape;
 const InstrumentLineShapeTable = @import("Instrument.zig").InstrumentLineShapeTable;
 const OperationalReferenceGrid = @import("Instrument.zig").OperationalReferenceGrid;
@@ -29,6 +30,7 @@ pub const ObservationModel = struct {
     builtin_line_shape: BuiltinLineShapeKind = .gaussian,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
+    adaptive_reference_grid: AdaptiveReferenceGrid = .{},
     solar_spectrum_source: Binding = .none,
     weighted_reference_grid_source: Binding = .none,
     instrument_line_shape: InstrumentLineShape = .{},
@@ -94,6 +96,7 @@ pub const ObservationModel = struct {
         if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
             return errors.Error.InvalidRequest;
         }
+        try self.adaptive_reference_grid.validate();
         try self.instrument_line_shape.validate();
         try self.instrument_line_shape_table.validate();
         try self.operational_refspec_grid.validate();
@@ -133,6 +136,11 @@ test "observation model carries calibration and supporting-data bindings" {
         .noise_model = .shot_noise,
         .multiplicative_offset = 1.002,
         .stray_light = 0.0007,
+        .adaptive_reference_grid = .{
+            .points_per_fwhm = 5,
+            .strong_line_min_divisions = 3,
+            .strong_line_max_divisions = 8,
+        },
     };
 
     try std.testing.expectEqual(Instrument.SamplingMode.operational, model.sampling);

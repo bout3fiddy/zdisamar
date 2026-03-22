@@ -226,6 +226,9 @@ test "canonical config parses typed vendor sections into resolved stage" {
         \\      simulation_method: oe_lbl
         \\      simulation_only: true
         \\    radiative_transfer:
+        \\      num_div_points_fwhm_sim: 5
+        \\      num_div_points_max_sim: 8
+        \\      num_div_points_min_sim: 3
         \\      nstreams_sim: 8
         \\      nstreams_retr: 16
         \\      scattering_mode_sim: multiple
@@ -327,8 +330,12 @@ test "canonical config parses typed vendor sections into resolved stage" {
     const rt = sim_stage.radiative_transfer orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u32, 8), rt.nstreams_sim);
     try std.testing.expectEqual(@as(u32, 16), rt.nstreams_retr);
+    try std.testing.expectEqual(@as(?u32, 5), rt.num_div_points_fwhm_sim);
     try std.testing.expect(rt.use_adding_sim);
     try std.testing.expect(!rt.use_polarization_correction);
+    try std.testing.expectEqual(@as(u16, 5), sim_stage.scene.observation_model.adaptive_reference_grid.points_per_fwhm);
+    try std.testing.expectEqual(@as(u16, 3), sim_stage.scene.observation_model.adaptive_reference_grid.strong_line_min_divisions);
+    try std.testing.expectEqual(@as(u16, 8), sim_stage.scene.observation_model.adaptive_reference_grid.strong_line_max_divisions);
     try std.testing.expectEqual(@as(u16, 8), sim_stage.plan.rtm_controls.n_streams);
     try std.testing.expect(sim_stage.plan.rtm_controls.use_adding);
     try std.testing.expect(sim_stage.plan.rtm_controls.integrate_source_function);
@@ -371,6 +378,91 @@ test "canonical config parses typed vendor sections into resolved stage" {
     try std.testing.expectEqual(@as(u16, 16), retr_plan.transport_route.rtm_controls.n_streams);
     try std.testing.expectEqual(zdisamar.test_support.kernels.transport.common.ScatteringMode.none, retr_plan.transport_route.rtm_controls.scattering);
     try std.testing.expectEqualStrings("baseline_labos", retr_plan.transport_route.family.provenanceLabel());
+}
+
+test "canonical config compiles absorbing-gas HITRAN controls onto line absorbers" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: absorbing-gas-hitran
+        \\experiment:
+        \\  simulation:
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      id: absorbing_gas_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        o2a:
+        \\          start_nm: 760.8
+        \\          end_nm: 771.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: line_by_line
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: tropomi
+        \\    absorbing_gas:
+        \\      gases:
+        \\        - species: o2
+        \\          hitran:
+        \\            factor_lm_sim: 0.35
+        \\            factor_lm_retr: 0.10
+        \\            isotopes_sim: [1, 2]
+        \\            isotopes_retr: [1]
+        \\            threshold_line_sim: 0.02
+        \\            threshold_line_retr: 0.05
+        \\            cutoff_sim_cm1: 8.0
+        \\            cutoff_retr_cm1: 6.0
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const sim_stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    const absorbing_gas = sim_stage.absorbing_gas orelse return error.TestUnexpectedResult;
+    const gases = absorbing_gas.gases orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), gases.len);
+    try std.testing.expectEqualStrings("o2", @tagName(gases[0].species.?));
+    try std.testing.expectApproxEqAbs(@as(f64, 0.35), gases[0].hitran.?.factor_lm_sim.?, 1.0e-12);
+
+    try std.testing.expectEqual(@as(usize, 1), sim_stage.scene.absorbers.items.len);
+    const controls = sim_stage.scene.absorbers.items[0].spectroscopy.line_gas_controls;
+    try std.testing.expectEqualStrings("o2", @tagName(sim_stage.scene.absorbers.items[0].resolved_species.?));
+    try std.testing.expectEqualStrings("simulation", @tagName(controls.active_stage));
+    try std.testing.expectApproxEqAbs(@as(f64, 0.35), controls.factor_lm_sim.?, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.10), controls.factor_lm_retr.?, 1.0e-12);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, controls.isotopes_sim);
+    try std.testing.expectEqualSlices(u8, &.{1}, controls.isotopes_retr);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.02), controls.threshold_line_sim.?, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 6.0), controls.cutoff_retr_cm1.?, 1.0e-12);
 }
 
 test "canonical config rejects table spectral responses without a table binding" {

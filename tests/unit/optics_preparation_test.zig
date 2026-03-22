@@ -5,6 +5,7 @@ const ReferenceData = internal.reference_data;
 const OpticsPrepare = internal.kernels.optics.prepare;
 const TransportDispatcher = internal.kernels.transport.dispatcher;
 const centimeters_per_kilometer = 1.0e5;
+const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
 
 test "optical preparation bridges tracked assets into transport-ready state" {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
@@ -133,6 +134,102 @@ test "optical preparation bridges tracked assets into transport-ready state" {
     try std.testing.expect(result.jacobian_column != null);
 }
 
+test "optical preparation uses staged non-o2 line-gas profiles instead of O2 density" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 10.0, .pressure_hpa = 500.0, .temperature_k = 250.0, .air_number_density_cm3 = 1.0e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 760.5, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+
+    var line_list = ReferenceData.SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+            .{
+                .gas_index = 2,
+                .isotope_number = 1,
+                .center_wavelength_nm = 760.25,
+                .line_strength_cm2_per_molecule = 2.0e-21,
+                .air_half_width_nm = 0.001,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 120.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+        }),
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "co2-line-gas-profile",
+        .atmosphere = .{
+            .layer_count = 1,
+        },
+        .geometry = .{
+            .solar_zenith_deg = 30.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 30.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.0,
+            .end_nm = 760.5,
+            .sample_count = 5,
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "co2",
+                    .species = "co2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "co2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 400.0 },
+                        .{ 500.0, 200.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+        },
+    };
+
+    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &cross_sections,
+        &line_list,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(prepared.column_density_factor > 0.0);
+    try std.testing.expect(prepared.air_column_density_factor > prepared.column_density_factor);
+    try std.testing.expect(prepared.column_density_factor < prepared.air_column_density_factor * 1.0e-3);
+    try std.testing.expectApproxEqAbs(@as(f64, 6.722222222222222e15), prepared.sublayers.?[0].absorber_number_density_cm3, 5.0e13);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.8408333333333335e18), prepared.sublayers.?[0].oxygen_number_density_cm3, 5.0e16);
+}
+
 test "optical preparation consumes vendor-shaped strong-line sidecars for bounded O2A mixing" {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         std.testing.allocator,
@@ -197,6 +294,7 @@ test "optical preparation consumes vendor-shaped strong-line sidecars for bounde
     var cia_table = try cia_asset.toCollisionInducedAbsorptionTable(std.testing.allocator);
     defer cia_table.deinit(std.testing.allocator);
     try line_list.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
+    try line_list.applyRuntimeControls(std.testing.allocator, 7, &.{}, null, null, 1.0);
     var lut = try lut_asset.toAirmassFactorLut(std.testing.allocator);
     defer lut.deinit(std.testing.allocator);
 

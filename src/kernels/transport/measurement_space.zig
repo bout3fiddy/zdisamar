@@ -282,7 +282,7 @@ pub fn simulate(
         buffers.wavelengths[index] = nominal_wavelength_nm;
 
         var integration: OperationalInstrumentIntegration = undefined;
-        providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
+        providers.instrument.integrationForWavelength(scene, prepared, nominal_wavelength_nm, &integration);
 
         const integrated = try integrateForwardAtNominal(
             allocator,
@@ -319,7 +319,7 @@ pub fn simulate(
             nominal_wavelength_nm,
         );
         var integration: OperationalInstrumentIntegration = undefined;
-        providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
+        providers.instrument.integrationForWavelength(scene, prepared, nominal_wavelength_nm, &integration);
         buffers.scratch[index] = try integrateIrradianceAtNominal(
             scene,
             prepared,

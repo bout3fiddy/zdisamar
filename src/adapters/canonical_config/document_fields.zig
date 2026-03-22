@@ -552,7 +552,9 @@ pub fn parseSurfaceType(value: []const u8) Error!SurfaceType {
 }
 
 pub fn parseAbsorberSpecies(value: []const u8) Error!AbsorberSpecies {
-    return AbsorberSpecies.fromVendorName(value) orelse error.InvalidValue;
+    return AbsorberSpecies.fromVendorName(value) orelse
+        std.meta.stringToEnum(AbsorberSpecies, value) orelse
+        error.InvalidValue;
 }
 
 pub fn normalizeInstrumentProvider(explicit_provider: []const u8, instrument_id: InstrumentId) []const u8 {

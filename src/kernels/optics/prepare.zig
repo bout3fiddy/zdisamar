@@ -1,4 +1,5 @@
 const std = @import("std");
+const AbsorberModel = @import("../../model/Absorber.zig");
 const Scene = @import("../../model/Scene.zig").Scene;
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const OperationalReferenceGrid = @import("../../model/Instrument.zig").OperationalReferenceGrid;
@@ -14,6 +15,12 @@ const Allocator = std.mem.Allocator;
 const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const oxygen_volume_mixing_ratio = 0.2095;
 const centimeters_per_kilometer = 1.0e5;
+
+const ActiveLineAbsorber = struct {
+    species: AbsorberModel.AbsorberSpecies,
+    controls: AbsorberModel.LineGasControls,
+    volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
+};
 
 pub const PreparedLayer = struct {
     layer_index: u32,
@@ -45,6 +52,7 @@ pub const PreparedSublayer = struct {
     temperature_k: f64,
     number_density_cm3: f64,
     oxygen_number_density_cm3: f64,
+    absorber_number_density_cm3: f64 = 0.0,
     path_length_cm: f64,
     continuum_cross_section_cm2_per_molecule: f64,
     line_cross_section_cm2_per_molecule: f64,
@@ -124,6 +132,7 @@ pub const PreparedOpticalState = struct {
     effective_single_scatter_albedo: f64,
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
+    air_column_density_factor: f64 = 0.0,
     column_density_factor: f64,
     cia_pair_path_factor_cm5: f64,
     aerosol_reference_wavelength_nm: f64,
@@ -499,6 +508,7 @@ pub const PreparedOpticalState = struct {
         temperature_k: f64,
         number_density_cm3: f64,
         oxygen_number_density_cm3: f64,
+        absorber_number_density_cm3: f64,
         aerosol_optical_depth_per_km: f64,
         cloud_optical_depth_per_km: f64,
         aerosol_single_scatter_albedo: f64,
@@ -573,6 +583,7 @@ pub const PreparedOpticalState = struct {
             .temperature_k = @max(left_weight * left.temperature_k + right_weight * right.temperature_k, 0.0),
             .number_density_cm3 = @max(left_weight * left.number_density_cm3 + right_weight * right.number_density_cm3, 0.0),
             .oxygen_number_density_cm3 = @max(left_weight * left.oxygen_number_density_cm3 + right_weight * right.oxygen_number_density_cm3, 0.0),
+            .absorber_number_density_cm3 = @max(left_weight * left.absorber_number_density_cm3 + right_weight * right.absorber_number_density_cm3, 0.0),
             .aerosol_optical_depth_per_km = @max(left_weight * left_aerosol_per_km + right_weight * right_aerosol_per_km, 0.0),
             .cloud_optical_depth_per_km = @max(left_weight * left_cloud_per_km + right_weight * right_cloud_per_km, 0.0),
             .aerosol_single_scatter_albedo = std.math.clamp(
@@ -615,6 +626,7 @@ pub const PreparedOpticalState = struct {
                 .temperature_k = sublayer.temperature_k,
                 .number_density_cm3 = sublayer.number_density_cm3,
                 .oxygen_number_density_cm3 = sublayer.oxygen_number_density_cm3,
+                .absorber_number_density_cm3 = sublayer.absorber_number_density_cm3,
                 .aerosol_optical_depth_per_km = opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
                 .cloud_optical_depth_per_km = opticalDepthPerKilometer(sublayer.cloud_optical_depth, sublayer.path_length_cm),
                 .aerosol_single_scatter_albedo = sublayer.aerosol_single_scatter_albedo,
@@ -729,7 +741,7 @@ pub const PreparedOpticalState = struct {
         );
         const gas_absorption_optical_depth_per_km =
             (continuum_sigma + spectroscopy_sigma) *
-            state.oxygen_number_density_cm3 *
+            state.absorber_number_density_cm3 *
             centimeters_per_kilometer;
         const gas_scattering_optical_depth_per_km =
             Rayleigh.crossSectionCm2(wavelength_nm) *
@@ -1012,7 +1024,7 @@ pub const PreparedOpticalState = struct {
         const gas_absorption_optical_depth =
             self.totalCrossSectionAtWavelength(wavelength_nm) * self.column_density_factor;
         const gas_scattering_optical_depth = Rayleigh.crossSectionCm2(wavelength_nm) *
-            (self.column_density_factor / oxygen_volume_mixing_ratio);
+            self.air_column_density_factor;
         const cia_optical_depth = if (self.operational_o2o2_lut.enabled())
             self.operational_o2o2_lut.sigmaAt(
                 wavelength_nm,
@@ -1067,7 +1079,7 @@ pub const PreparedOpticalState = struct {
                 sublayer.pressure_hpa,
                 if (strong_line_states) |states| &states[sublayer_index] else null,
             );
-            const gas_column_density_cm2 = sublayer.oxygen_number_density_cm3 * sublayer.path_length_cm;
+            const gas_column_density_cm2 = sublayer.absorber_number_density_cm3 * sublayer.path_length_cm;
             const gas_absorption_optical_depth =
                 (continuum_sigma + spectroscopy_sigma) *
                 gas_column_density_cm2;
@@ -1301,7 +1313,24 @@ pub fn prepareWithParticleTables(
     };
     const operational_o2_lut = scene.observation_model.o2_operational_lut;
     const operational_o2o2_lut = scene.observation_model.o2o2_operational_lut;
+    const active_line_absorber = findActiveLineAbsorber(scene);
     if (owned_lines) |*line_list| {
+        if (active_line_absorber) |line_absorber| {
+            try line_list.applyRuntimeControls(
+                allocator,
+                if (line_absorber.species.hitranIndex()) |hitran_index|
+                    @as(u16, hitran_index)
+                else
+                    null,
+                line_absorber.controls.activeIsotopes(),
+                line_absorber.controls.activeThresholdLine(),
+                line_absorber.controls.activeCutoffCm1(),
+                if (line_absorber.species == .o2)
+                    line_absorber.controls.activeLineMixingFactor()
+                else
+                    0.0,
+            );
+        }
         std.sort.pdq(
             ReferenceData.SpectroscopyLine,
             line_list.lines,
@@ -1331,6 +1360,7 @@ pub fn prepareWithParticleTables(
     };
 
     const midpoint_nm = (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5;
+    const active_line_species = resolveActiveLineSpecies(active_line_absorber, owned_lines, operational_o2_lut);
     const mean_sigma = cross_sections.meanSigmaInRange(
         scene.spectral_grid.start_nm,
         scene.spectral_grid.end_nm,
@@ -1349,6 +1379,7 @@ pub fn prepareWithParticleTables(
     var total_temperature_weighted: f64 = 0.0;
     var total_pressure_weighted: f64 = 0.0;
     var total_weight: f64 = 0.0;
+    var air_column_density_factor: f64 = 0.0;
     var column_density_factor: f64 = 0.0;
     var cia_pair_path_factor_cm5: f64 = 0.0;
     var total_gas_optical_depth: f64 = 0.0;
@@ -1409,6 +1440,23 @@ pub fn prepareWithParticleTables(
             const density = profile.interpolateDensity(altitude_km);
             const pressure = profile.interpolatePressure(altitude_km);
             const temperature = profile.interpolateTemperature(altitude_km);
+            const absorber_mixing_ratio = if (active_line_species) |species|
+                speciesMixingRatioAtPressure(
+                    scene,
+                    species,
+                    if (active_line_absorber) |line_absorber| line_absorber.volume_mixing_ratio_profile_ppmv else &.{},
+                    pressure,
+                    if (species == .o2) oxygen_volume_mixing_ratio else null,
+                ) orelse return error.InvalidRequest
+            else
+                oxygen_volume_mixing_ratio;
+            const oxygen_mixing_ratio = speciesMixingRatioAtPressure(
+                scene,
+                .o2,
+                &.{},
+                pressure,
+                oxygen_volume_mixing_ratio,
+            ) orelse oxygen_volume_mixing_ratio;
             const spectroscopy_eval = if (operational_o2_lut.enabled())
                 ReferenceData.SpectroscopyEvaluation{
                     .weak_line_sigma_cm2_per_molecule = operational_o2_lut.sigmaAt(midpoint_nm, temperature, pressure),
@@ -1451,9 +1499,10 @@ pub fn prepareWithParticleTables(
                     .total_sigma_cm2_per_molecule = 0.0,
                     .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
                 };
-            const o2_density_cm3 = density * oxygen_volume_mixing_ratio;
+            const absorber_density_cm3 = density * absorber_mixing_ratio;
+            const o2_density_cm3 = density * oxygen_mixing_ratio;
             const sublayer_path_length_cm = layer_span_km * centimeters_per_kilometer * sublayer_weight;
-            const gas_column_density_cm2 = o2_density_cm3 * sublayer_path_length_cm;
+            const gas_column_density_cm2 = absorber_density_cm3 * sublayer_path_length_cm;
             const molecular_gas_optical_depth =
                 (midpoint_continuum_sigma + spectroscopy_eval.total_sigma_cm2_per_molecule) *
                 gas_column_density_cm2;
@@ -1496,7 +1545,8 @@ pub fn prepareWithParticleTables(
                 .pressure_hpa = pressure,
                 .temperature_k = temperature,
                 .number_density_cm3 = density,
-                .oxygen_number_density_cm3 = o2_density_cm3,
+                .oxygen_number_density_cm3 = density * oxygen_mixing_ratio,
+                .absorber_number_density_cm3 = absorber_density_cm3,
                 .path_length_cm = sublayer_path_length_cm,
                 .continuum_cross_section_cm2_per_molecule = midpoint_continuum_sigma,
                 .line_cross_section_cm2_per_molecule = spectroscopy_eval.line_sigma_cm2_per_molecule,
@@ -1529,6 +1579,7 @@ pub fn prepareWithParticleTables(
             layer_cia_optical_depth += cia_optical_depth;
             layer_aerosol_optical_depth += aerosol_optical_depth;
             layer_cloud_optical_depth += cloud_optical_depth;
+            air_column_density_factor += density * sublayer_path_length_cm;
             column_density_factor += gas_column_density_cm2;
             cia_pair_path_factor_cm5 += o2_density_cm3 * o2_density_cm3 * sublayer_path_length_cm;
             total_d_optical_depth_d_temperature += d_gas_optical_depth_d_temperature + d_cia_optical_depth_d_temperature;
@@ -1636,6 +1687,7 @@ pub fn prepareWithParticleTables(
             total_scattering_optical_depth / total_optical_depth,
         .effective_temperature_k = effective_temperature,
         .effective_pressure_hpa = effective_pressure,
+        .air_column_density_factor = air_column_density_factor,
         .column_density_factor = column_density_factor,
         .cia_pair_path_factor_cm5 = cia_pair_path_factor_cm5,
         .aerosol_reference_wavelength_nm = scene.aerosol.reference_wavelength_nm,
@@ -1650,6 +1702,124 @@ pub fn prepareWithParticleTables(
         .depolarization_factor = if (total_optical_depth == 0.0) 0.0 else depolarization_weighted / total_optical_depth,
         .total_optical_depth = total_optical_depth,
     };
+}
+
+fn findActiveLineAbsorber(scene: *const Scene) ?ActiveLineAbsorber {
+    for (scene.absorbers.items) |absorber| {
+        const species = absorber.resolved_species orelse continue;
+        if (!species.isLineAbsorbing()) continue;
+        if (absorber.spectroscopy.mode != .line_by_line) continue;
+        return .{
+            .species = species,
+            .controls = absorber.spectroscopy.line_gas_controls,
+            .volume_mixing_ratio_profile_ppmv = absorber.volume_mixing_ratio_profile_ppmv,
+        };
+    }
+    return null;
+}
+
+fn resolveActiveLineSpecies(
+    active_line_absorber: ?ActiveLineAbsorber,
+    line_list: ?ReferenceData.SpectroscopyLineList,
+    operational_o2_lut: OperationalCrossSectionLut,
+) ?AbsorberModel.AbsorberSpecies {
+    if (active_line_absorber) |line_absorber| return line_absorber.species;
+    if (operational_o2_lut.enabled()) return .o2;
+    const spectroscopy_lines = line_list orelse return null;
+    if (spectroscopy_lines.runtime_controls.gas_index) |gas_index| {
+        return speciesForHitranIndex(gas_index);
+    }
+    return inferLineSpecies(spectroscopy_lines.lines);
+}
+
+fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) ?AbsorberModel.AbsorberSpecies {
+    if (lines.len == 0) return null;
+    const first_gas_index = lines[0].gas_index;
+    if (first_gas_index == 0) return null;
+    for (lines[1..]) |line| {
+        if (line.gas_index != first_gas_index) return null;
+    }
+    return speciesForHitranIndex(first_gas_index);
+}
+
+fn speciesForHitranIndex(gas_index: u16) ?AbsorberModel.AbsorberSpecies {
+    return switch (gas_index) {
+        1 => .h2o,
+        2 => .co2,
+        5 => .co,
+        6 => .ch4,
+        7 => .o2,
+        11 => .nh3,
+        else => null,
+    };
+}
+
+fn speciesMixingRatioAtPressure(
+    scene: *const Scene,
+    species: AbsorberModel.AbsorberSpecies,
+    explicit_profile_ppmv: []const [2]f64,
+    pressure_hpa: f64,
+    default_fraction: ?f64,
+) ?f64 {
+    const profile_ppmv = if (explicit_profile_ppmv.len != 0)
+        explicit_profile_ppmv
+    else if (findAbsorberBySpecies(scene, species)) |absorber|
+        absorber.volume_mixing_ratio_profile_ppmv
+    else
+        &.{};
+    if (profile_ppmv.len != 0) {
+        return interpolateMixingRatioProfileFraction(profile_ppmv, pressure_hpa);
+    }
+    return default_fraction;
+}
+
+fn findAbsorberBySpecies(
+    scene: *const Scene,
+    species: AbsorberModel.AbsorberSpecies,
+) ?*const AbsorberModel.Absorber {
+    for (scene.absorbers.items) |*absorber| {
+        if (absorber.resolved_species == species) return absorber;
+    }
+    return null;
+}
+
+fn interpolateMixingRatioProfileFraction(profile_ppmv: []const [2]f64, pressure_hpa: f64) f64 {
+    if (profile_ppmv.len == 0) return 0.0;
+    const safe_pressure_hpa = @max(pressure_hpa, 0.0);
+    if (profile_ppmv.len == 1) return ppmvToFraction(profile_ppmv[0][1]);
+
+    const first_pressure_hpa = profile_ppmv[0][0];
+    const last_pressure_hpa = profile_ppmv[profile_ppmv.len - 1][0];
+    const descending = first_pressure_hpa >= last_pressure_hpa;
+    if ((descending and safe_pressure_hpa >= first_pressure_hpa) or
+        (!descending and safe_pressure_hpa <= first_pressure_hpa))
+    {
+        return ppmvToFraction(profile_ppmv[0][1]);
+    }
+    if ((descending and safe_pressure_hpa <= last_pressure_hpa) or
+        (!descending and safe_pressure_hpa >= last_pressure_hpa))
+    {
+        return ppmvToFraction(profile_ppmv[profile_ppmv.len - 1][1]);
+    }
+
+    for (profile_ppmv[0 .. profile_ppmv.len - 1], profile_ppmv[1..]) |left, right| {
+        const in_segment = if (descending)
+            safe_pressure_hpa <= left[0] and safe_pressure_hpa >= right[0]
+        else
+            safe_pressure_hpa >= left[0] and safe_pressure_hpa <= right[0];
+        if (!in_segment) continue;
+
+        const span = right[0] - left[0];
+        if (span == 0.0) return ppmvToFraction(right[1]);
+        const weight = (safe_pressure_hpa - left[0]) / span;
+        return ppmvToFraction(left[1] + weight * (right[1] - left[1]));
+    }
+
+    return ppmvToFraction(profile_ppmv[profile_ppmv.len - 1][1]);
+}
+
+fn ppmvToFraction(value_ppmv: f64) f64 {
+    return @max(value_ppmv, 0.0) * 1.0e-6;
 }
 
 test "optical preparation derives deterministic layer optical depths from typed assets" {

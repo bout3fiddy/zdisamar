@@ -416,6 +416,48 @@ pub fn build(b: *std.Build) void {
         "Run focused O2A forward-shape validation tests",
         "tests/validation/o2a_forward_shape_test.zig",
     );
+    _ = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-o2a-adaptive",
+        "Run focused O2A adaptive strong-line sampling validation",
+        "tests/validation/o2a_forward_shape_test.zig",
+        &.{
+            "o2a adaptive strong-line sampling is used in execution when adaptive grid is enabled",
+        },
+    );
+    _ = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-o2a-controls",
+        "Run focused O2A line-gas control and CIA sensitivity validation",
+        "tests/validation/o2a_forward_shape_test.zig",
+        &.{
+            "o2a validation responds to line mixing, isotope selection, cutoff, and CIA toggles",
+        },
+    );
+    _ = addSuiteRunStep(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-line-gas",
+        "Run focused line-gas family validation tests",
+        "tests/validation/line_gas_family_validation_test.zig",
+    );
     _ = addSuiteRunStep(
         b,
         target,
