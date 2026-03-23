@@ -1,3 +1,21 @@
+//! Purpose:
+//!   Provide damped inverse and solve fallbacks for tiny dense systems.
+//!
+//! Physics:
+//!   Applies diagonal regularization and Gaussian elimination when a direct factorization is too fragile.
+//!
+//! Vendor:
+//!   `damped inverse / solve fallback`
+//!
+//! Design:
+//!   The fallback is intentionally small and explicit so singularity handling stays predictable.
+//!
+//! Invariants:
+//!   Damping must be finite and non-negative; workspace sizes must match the augmented-system layout.
+//!
+//! Validation:
+//!   Tests cover regularization of nearly singular 2x2 systems and damped solve behavior.
+
 const std = @import("std");
 const dense = @import("small_dense.zig");
 
@@ -7,6 +25,14 @@ pub const Error = error{
     SingularMatrix,
 };
 
+/// Purpose:
+///   Compute the inverse of a damped 2x2 matrix.
+///
+/// Physics:
+///   Adds diagonal regularization before inverting the matrix analytically.
+///
+/// Vendor:
+///   `damped 2x2 inverse`
 pub fn dampedInverse2x2(matrix: [2][2]f64, damping: f64) Error![2][2]f64 {
     if (!std.math.isFinite(damping) or damping < 0.0) return error.InvalidDamping;
     const a = matrix[0][0] + damping;
@@ -22,6 +48,17 @@ pub fn dampedInverse2x2(matrix: [2][2]f64, damping: f64) Error![2][2]f64 {
     };
 }
 
+/// Purpose:
+///   Solve a small dense linear system with diagonal damping and partial pivoting.
+///
+/// Physics:
+///   Regularizes near-singular systems before elimination to stabilize retrieval fallbacks.
+///
+/// Vendor:
+///   `damped dense solve`
+///
+/// Assumptions:
+///   `workspace` stores the augmented matrix with `dimension * (dimension + 1)` entries.
 pub fn dampedSolve(
     matrix: []const f64,
     dimension: usize,

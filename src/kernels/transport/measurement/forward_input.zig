@@ -1,8 +1,49 @@
+//! Purpose:
+//!   Build the transport forward-input carrier used by measurement-space
+//!   evaluation.
+//!
+//! Physics:
+//!   Attaches the prepared optical state to source interfaces, RTM quadrature,
+//!   and pseudo-spherical geometry when the route requests them.
+//!
+//! Vendor:
+//!   `measurement forward-input` stage
+//!
+//! Design:
+//!   The builder keeps the instrument and transport integration points typed
+//!   so the measurement solver does not re-discover route policy.
+//!
+//! Invariants:
+//!   Source interfaces, quadrature levels, and pseudo-spherical samples must
+//!   match the resolved transport layer count.
+//!
+//! Validation:
+//!   Measurement-space workspace and integration tests.
+
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
 const common = @import("../common.zig");
 const Workspace = @import("workspace.zig");
 
+/// Purpose:
+///   Materialize the transport forward-input carrier for one wavelength.
+///
+/// Physics:
+///   Couples the prepared optical state to the active route policy so the
+///   transport executor sees the correct layer, source, and pseudo-spherical
+///   inputs.
+///
+/// Inputs:
+///   `prepared` owns the transport-ready optical state, `route` supplies the
+///   integration policy, and the buffer slices provide scratch storage for the
+///   aligned carriers.
+///
+/// Outputs:
+///   Returns a fully populated `common.ForwardInput` view for the active
+///   wavelength.
+///
+/// Validation:
+///   Measurement-space workspace and integration tests.
 pub fn configuredForwardInput(
     scene: *const Scene,
     route: common.Route,
@@ -30,6 +71,9 @@ pub fn configuredForwardInput(
     );
     input.source_interfaces = source_interfaces[0 .. input.layers.len + 1];
     if (route.rtm_controls.integrate_source_function) {
+        // DECISION:
+        //   Only attach RTM quadrature when the route requests integrated
+        //   source-function evaluation.
         if (OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayers(
             prepared,
             wavelength_nm,
@@ -42,6 +86,9 @@ pub fn configuredForwardInput(
         }
     }
     if (route.rtm_controls.use_spherical_correction) {
+        // DECISION:
+        //   Pseudo-spherical samples are only attached for routes that request
+        //   the geometric correction.
         if (OpticsPreparation.transport.fillPseudoSphericalGridAtWavelength(
             prepared,
             scene,

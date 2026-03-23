@@ -1,19 +1,43 @@
+//! Purpose:
+//!   Resolve manifest-declared native plugins into validated ABI handles.
+//!
+//! Physics:
+//!   No physics is introduced here; this file is the native-plugin policy and
+//!   ABI compatibility gate.
+//!
+//! Vendor:
+//!   `resolver`
+//!
+//! Design:
+//!   Validate the manifest first, then load the library, then compare the
+//!   returned native metadata against the declarative manifest. That keeps the
+//!   host in control of the trust boundary.
+//!
+//! Invariants:
+//!   Native resolution must reject manifest/entrypoint mismatches before the
+//!   resolved plugin is exposed to the runtime.
+//!
+//! Validation:
+//!   Covered by the resolver unit tests in this file.
 const std = @import("std");
 const Manifest = @import("manifest.zig");
 const DynLib = @import("dynlib.zig");
 const Abi = @import("../abi/abi_types.zig");
 const HostApi = @import("../abi/host_api.zig");
 
+/// Source for a native plugin resolution.
 pub const ResolutionSource = union(enum) {
     dynamic_path: []const u8,
     static_symbols: []const DynLib.SymbolEntry,
 };
 
+/// Request object for a native plugin resolution.
 pub const ResolutionRequest = struct {
     manifest: Manifest.PluginManifest,
     source: ResolutionSource,
 };
 
+/// Result of a successful native plugin resolution.
 pub const NativeResolution = struct {
     library: DynLib.Library,
     plugin_info: *const Abi.PluginInfo,
@@ -25,6 +49,7 @@ pub const NativeResolution = struct {
     }
 };
 
+/// Errors raised while resolving a native plugin.
 pub const Error = Manifest.Error || Abi.ValidationError || std.DynLib.Error || error{
     ManifestNotNative,
     MissingNativeEntryFunction,
@@ -43,10 +68,40 @@ pub const Error = Manifest.Error || Abi.ValidationError || std.DynLib.Error || e
     EntrySymbolTooLong,
 };
 
+/// Resolver state for one host policy context.
 pub const Resolver = struct {
     allow_native_plugins: bool,
     host_api: *const Abi.HostApi,
 
+    /// Purpose:
+    ///   Build a resolver with the host's native-plugin policy.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `resolver::init`
+    ///
+    /// Inputs:
+    ///   `allow_native_plugins` gates dynamic native loading and `host_api`
+    ///   supplies the callback table handed to plugin entrypoints.
+    ///
+    /// Outputs:
+    ///   Returns a resolver ready to resolve one native plugin request at a
+    ///   time.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   When `host_api` is null, the resolver uses the noop host API.
+    ///
+    /// Decisions:
+    ///   Keep the host API reference inside the resolver so entrypoint calls do
+    ///   not need extra plumbing.
+    ///
+    /// Validation:
+    ///   Covered by the resolver tests in this file.
     pub fn init(allow_native_plugins: bool, host_api: ?*const Abi.HostApi) Resolver {
         return .{
             .allow_native_plugins = allow_native_plugins,
@@ -54,12 +109,44 @@ pub const Resolver = struct {
         };
     }
 
+    /// Purpose:
+    ///   Resolve a manifest-declared native plugin into a validated runtime.
+    ///
+    /// Physics:
+    ///   No direct physics; this prepares the plugin side of the transport or
+    ///   retrieval pipeline.
+    ///
+    /// Vendor:
+    ///   `resolver::resolveNative`
+    ///
+    /// Inputs:
+    ///   `request.manifest` carries the declarative contract and `request.source`
+    ///   carries the dynamic or static library source.
+    ///
+    /// Outputs:
+    ///   Returns a loaded library, the plugin info struct, and the plugin vtable.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   The entry symbol can fit into the fixed local buffer.
+    ///
+    /// Decisions:
+    ///   Validate the manifest first, then the entrypoint response, then the
+    ///   resolved metadata so all compatibility checks stay centralized.
+    ///
+    /// Validation:
+    ///   Covered by the resolver unit tests in this file.
     pub fn resolveNative(self: *const Resolver, request: ResolutionRequest) Error!NativeResolution {
         try request.manifest.validate(self.allow_native_plugins);
         if (request.manifest.lane != .native) return error.ManifestNotNative;
 
         const native = request.manifest.native orelse return error.MissingNativeContract;
         var entry_symbol_storage: [128]u8 = undefined;
+        // GOTCHA:
+        //   The entry symbol must be copied into a sentinel buffer because the
+        //   ABI lookup helper expects a C-style string.
         const entry_symbol = try toSentinelSymbol(native.entry_symbol, &entry_symbol_storage);
 
         var library = switch (request.source) {
@@ -105,6 +192,9 @@ pub const Resolver = struct {
 
 fn toSentinelSymbol(symbol: []const u8, storage: *[128]u8) Error![:0]const u8 {
     if (symbol.len == 0) return error.MissingEntrySymbol;
+    // INVARIANT:
+    //   The fixed buffer only accepts entry symbols that fit with a trailing
+    //   sentinel byte.
     if (symbol.len + 1 > storage.len) return error.EntrySymbolTooLong;
     @memcpy(storage[0..symbol.len], symbol);
     storage[symbol.len] = 0;
@@ -112,6 +202,9 @@ fn toSentinelSymbol(symbol: []const u8, storage: *[128]u8) Error![:0]const u8 {
 }
 
 fn validateResolvedManifestCompatibility(info: *const Abi.PluginInfo, manifest: Manifest.PluginManifest) Error!void {
+    // INVARIANT:
+    //   The entrypoint response must match the manifest before any hook table is
+    //   trusted by the runtime.
     if (info.lane != .native) return error.LaneMismatch;
 
     const plugin_id = info.plugin_id orelse return error.MissingPluginId;
@@ -151,6 +244,9 @@ fn validateResolvedManifestCompatibility(info: *const Abi.PluginInfo, manifest: 
 }
 
 fn validateVTableHooks(vtable: *const Abi.PluginVTable) Error!void {
+    // INVARIANT:
+    //   Native plugins are not considered resolved unless prepare, execute, and
+    //   destroy hooks are all present.
     if (vtable.prepare == null or vtable.execute == null or vtable.destroy == null) {
         return error.MissingVTableHooks;
     }

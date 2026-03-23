@@ -1,3 +1,29 @@
+//! Purpose:
+//!   Map retrieval state-vector parameters onto canonical scene fields and
+//!   build solver-space seed states.
+//!
+//! Physics:
+//!   This module defines how typed retrieval parameters become scene-state
+//!   updates and how existing scene values seed the solver when priors are
+//!   absent.
+//!
+//! Vendor:
+//!   State-vector layout and scene-update mapping stages.
+//!
+//! Design:
+//!   Keep the typed accessor list separate from the scene mutation logic so
+//!   the solver can resolve a stable state order before any values are
+//!   clamped or transformed.
+//!
+//! Invariants:
+//!   State-vector length must stay within the fixed accessor capacity and any
+//!   scene generated from a solver state must preserve the measured-channel
+//!   configuration.
+//!
+//! Validation:
+//!   Retrieval state-access tests cover measured-channel preservation and
+//!   canonical target mapping.
+
 const std = @import("std");
 const common = @import("contracts.zig");
 const Scene = @import("../../model/Scene.zig").Scene;
@@ -15,12 +41,16 @@ pub const ResolvedStateLayout = struct {
     count: usize = 0,
     accessors: [MaxStateParameters]StateAccessor = undefined,
 
+    /// Purpose:
+    ///   Return the accessor for a state-vector position.
     pub fn at(self: ResolvedStateLayout, index: usize) StateAccessor {
         std.debug.assert(index < self.count);
         return self.accessors[index];
     }
 };
 
+/// Purpose:
+///   Resolve the canonical accessors for the retrieval state vector.
 pub fn resolveStateLayout(problem: common.RetrievalProblem) common.Error!ResolvedStateLayout {
     const state_count = try validateStateCount(problem);
     var layout: ResolvedStateLayout = .{ .count = state_count };
@@ -31,11 +61,15 @@ pub fn resolveStateLayout(problem: common.RetrievalProblem) common.Error!Resolve
     return layout;
 }
 
+/// Purpose:
+///   Seed a solver state from the current scene values and priors.
 pub fn seedState(allocator: Allocator, problem: common.RetrievalProblem) common.Error![]f64 {
     const layout = try resolveStateLayout(problem);
     return seedStateWithLayout(allocator, problem, layout);
 }
 
+/// Purpose:
+///   Seed a solver state using a pre-resolved layout.
 pub fn seedStateWithLayout(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -63,11 +97,15 @@ pub fn seedStateWithLayout(
     return state;
 }
 
+/// Purpose:
+///   Rebuild a scene from a solver-state vector.
 pub fn sceneForState(problem: common.RetrievalProblem, state: []const f64) common.Error!Scene {
     const layout = try resolveStateLayout(problem);
     return sceneForStateWithLayout(problem, state, layout);
 }
 
+/// Purpose:
+///   Rebuild a scene from a solver-state vector and resolved layout.
 pub fn sceneForStateWithLayout(
     problem: common.RetrievalProblem,
     state: []const f64,
@@ -101,6 +139,9 @@ fn stateParameter(problem: common.RetrievalProblem, index: usize) ?StateParamete
 }
 
 fn defaultStateAccessor(index: usize) StateAccessor {
+    // DECISION:
+    //   Preserve the legacy default ordering only for unconfigured state
+    //   vectors; typed parameters take precedence whenever present.
     return switch (index) {
         0 => .{ .target = .surface_albedo },
         1 => .{ .target = .aerosol_optical_depth_550_nm },
@@ -126,8 +167,9 @@ fn currentValue(scene: Scene, accessor: StateAccessor) f64 {
         .wavelength_shift_nm => scene.observation_model.wavelength_shift_nm,
         .multiplicative_offset => scene.observation_model.multiplicative_offset,
         .stray_light => scene.observation_model.stray_light,
-        // Forward-declared vendor targets; full scene field wiring deferred to
-        // the retrieval-parity work package.
+        // ISSUE:
+        //   Some vendor targets still fall back to placeholder scene fields
+        //   until the retrieval-parity work package wires the full mapping.
         .cloud_top_pressure => scene.cloud.top_altitude_km,
         .absorber_column_amount => 0.0,
         .temperature_shift => 0.0,
@@ -169,8 +211,9 @@ fn applyAccessor(scene: *Scene, accessor: StateAccessor, value: f64) void {
         .stray_light => {
             scene.observation_model.stray_light = std.math.clamp(value, -0.05, 0.05);
         },
-        // Forward-declared vendor targets; scene field wiring deferred to
-        // the retrieval-parity work package.
+        // ISSUE:
+        //   Some vendor targets still fall back to placeholder scene fields
+        //   until the retrieval-parity work package wires the full mapping.
         .cloud_top_pressure => {
             scene.cloud.enabled = true;
             scene.atmosphere.has_clouds = true;

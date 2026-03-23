@@ -1,9 +1,26 @@
+//! Purpose:
+//!   Hold small reference tables for airmass factors and Mie phase behavior used by optics preparation.
+//!
+//! Physics:
+//!   Encodes interpolation points for geometric airmass factors and wavelength-dependent phase proxies.
+//!
+//! Vendor:
+//!   `airmass / Mie phase helper tables`
+//!
+//! Design:
+//!   Zig keeps these as lightweight owned slices so preparation code can clone or discard them explicitly.
+//!
+//! Invariants:
+//!   Table points are monotonic in wavelength where interpolation is used, and empty tables fall back to safe defaults.
+//!
+//! Validation:
+//!   Tests cover mean-preserving AMF profiles and interpolation behavior.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-// Helper interpolation tables used by optics preparation and transport support.
-// This module does not claim full AMF or scattering-solver capability on its own.
-
+/// Purpose:
+///   Store a geometric airmass lookup point.
 pub const AirmassFactorPoint = struct {
     solar_zenith_deg: f64,
     view_zenith_deg: f64,
@@ -11,6 +28,8 @@ pub const AirmassFactorPoint = struct {
     airmass_factor: f64,
 };
 
+/// Purpose:
+///   Store a wavelength-dependent proxy for Mie phase and extinction behavior.
 pub const MiePhasePoint = struct {
     wavelength_nm: f64,
     extinction_scale: f64,
@@ -18,14 +37,23 @@ pub const MiePhasePoint = struct {
     phase_coefficients: [4]f64,
 };
 
+/// Purpose:
+///   Own an interpolatable Mie phase table.
 pub const MiePhaseTable = struct {
     points: []MiePhasePoint,
 
+    /// Purpose:
+    ///   Release the owned phase points.
     pub fn deinit(self: *MiePhaseTable, allocator: Allocator) void {
         allocator.free(self.points);
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Interpolate a phase point at an arbitrary wavelength.
+    ///
+    /// Physics:
+    ///   Linearly interpolates extinction, single-scatter albedo, and phase coefficients over wavelength.
     pub fn interpolate(self: MiePhaseTable, wavelength_nm: f64) MiePhasePoint {
         if (self.points.len == 0) {
             return .{
@@ -61,14 +89,23 @@ pub const MiePhaseTable = struct {
     }
 };
 
+/// Purpose:
+///   Own an airmass-factor lookup table.
 pub const AirmassFactorLut = struct {
     points: []AirmassFactorPoint,
 
+    /// Purpose:
+    ///   Release the owned airmass-factor points.
     pub fn deinit(self: *AirmassFactorLut, allocator: Allocator) void {
         allocator.free(self.points);
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Return the nearest airmass-factor point in the lookup table.
+    ///
+    /// Physics:
+    ///   Uses the closest sample in `(solar zenith, view zenith, relative azimuth)` space.
     pub fn nearest(self: AirmassFactorLut, solar_zenith_deg: f64, view_zenith_deg: f64, relative_azimuth_deg: f64) f64 {
         if (self.points.len == 0) return 1.0;
 
@@ -87,11 +124,27 @@ pub const AirmassFactorLut = struct {
         return best_value;
     }
 
+    /// Purpose:
+    ///   Mark the LUT as support-only rather than a full solver.
     pub fn providesSupportOnly(_: AirmassFactorLut) bool {
         return true;
     }
 };
 
+/// Purpose:
+///   Build a wavelength-dependent airmass profile from an optical-depth proxy.
+///
+/// Physics:
+///   Scales the mean airmass by local proxy intensity and a small geometric tilt, then renormalizes the mean.
+///
+/// Vendor:
+///   `spectral AMF profile`
+///
+/// Units:
+///   `wavelengths_nm` is in nanometers and the returned profile is a dimensionless airmass factor.
+///
+/// Decisions:
+///   The profile is renormalized to preserve the requested mean airmass factor after local weighting.
 pub fn spectralProfileFromOpticalDepth(
     allocator: Allocator,
     wavelengths_nm: []const f64,
@@ -117,6 +170,8 @@ pub fn spectralProfileFromOpticalDepth(
     for (profile, wavelengths_nm, optical_depth_proxy) |*slot, wavelength_nm, proxy| {
         const normalized_proxy = if (proxy_mean > 0.0) @max(proxy, 0.0) / proxy_mean else 1.0;
         const coordinate = (wavelength_nm - midpoint_nm) / half_span_nm;
+        // DECISION:
+        //   Keep a weak wavelength tilt so the profile is not numerically flat before the mean is restored.
         const geometric_tilt = 1.0 + 0.05 * coordinate;
         slot.* = safe_mean_airmass * normalized_proxy * geometric_tilt;
     }

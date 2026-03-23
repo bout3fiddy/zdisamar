@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Run the forward execution half of a prepared plan.
+//!
+//! Physics:
+//!   Bridges plan-time provider selection into runtime optics preparation, transport simulation,
+//!   and provenance/result initialization for the requested scene.
+//!
+//! Vendor:
+//!   `forward execution pipeline`
+//!
+//! Design:
+//!   Split execution into request/workspace setup, result initialization, and forward-product
+//!   materialization so each stage can fail with typed ownership boundaries.
+//!
+//! Invariants:
+//!   Plugin execute hooks run before workspace binding. Result provenance is initialized before
+//!   forward products are attached.
+//!
+//! Validation:
+//!   Engine execution tests and forward-product integration tests that exercise measurement-space
+//!   simulation through the public engine API.
+
 const std = @import("std");
 
 const errors = @import("../errors.zig");
@@ -11,6 +33,8 @@ const PluginRuntime = @import("../../plugins/loader/runtime.zig");
 const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 const shared = @import("shared.zig");
 
+/// Purpose:
+///   Execute plan/runtime hooks, bind the workspace, and reserve scratch for the request.
 pub fn beginExecution(
     plan_cache: *PlanCache,
     plan: *const PreparedPlan,
@@ -28,6 +52,8 @@ pub fn beginExecution(
     _ = plan_cache.markRun(plan.id);
 }
 
+/// Purpose:
+///   Initialize the owned result and provenance for a forward/retrieval execution.
 pub fn initializeResult(
     allocator: std.mem.Allocator,
     plan: *const PreparedPlan,
@@ -55,6 +81,8 @@ pub fn initializeResult(
     );
 }
 
+/// Purpose:
+///   Prepare optics and attach the forward measurement-space product to the result.
 pub fn executeForwardProducts(
     allocator: std.mem.Allocator,
     plan: *const PreparedPlan,
@@ -80,6 +108,8 @@ pub fn executeForwardProducts(
     result.attachMeasurementSpaceProduct(measurement_space_product);
 }
 
+/// Purpose:
+///   Translate native-plugin execute failures into public engine execution errors.
 fn mapPluginExecutionError(err: PluginRuntime.Error) errors.Error {
     return switch (err) {
         error.MissingExecuteHook => errors.Error.MissingExecuteHook,

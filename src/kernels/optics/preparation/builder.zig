@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Build the prepared optical state consumed by transport and measurement
+//!   evaluation.
+//!
+//! Physics:
+//!   Resolves climatology, spectroscopy, continuum, aerosol, cloud, and
+//!   pseudo-spherical preparation into the typed transport-ready carriers.
+//!
+//! Vendor:
+//!   `optics preparation builder`
+//!
+//! Design:
+//!   Keeps the preparation logic in a typed staging area so the transport
+//!   kernels do not own file-driven selection or mutable global state.
+//!
+//! Invariants:
+//!   Prepared layers, sublayers, and sidecar state must remain aligned with
+//!   the scene's atmospheric and spectral grid.
+//!
+//! Validation:
+//!   Optics-preparation transport tests and transport integration suites.
+
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
@@ -19,6 +41,7 @@ const PreparedLayer = State.PreparedLayer;
 const PreparedSublayer = State.PreparedSublayer;
 const PreparedLineAbsorber = State.PreparedLineAbsorber;
 
+/// Preparation inputs required to build the prepared optical state.
 pub const PreparationInputs = struct {
     profile: *const ReferenceData.ClimatologyProfile,
     cross_sections: *const ReferenceData.CrossSectionTable,
@@ -29,6 +52,12 @@ pub const PreparationInputs = struct {
     cloud_mie: ?*const ReferenceData.MiePhaseTable = null,
 };
 
+/// Purpose:
+///   Build the prepared optical state for one scene and input bundle.
+///
+/// Physics:
+///   Stages the climatology, spectroscopy, aerosol, cloud, and continuum data
+///   needed by the transport kernels.
 pub fn prepare(
     allocator: Allocator,
     scene: *const Scene,
@@ -37,6 +66,26 @@ pub fn prepare(
     return prepareWithInputs(allocator, scene, inputs);
 }
 
+/// Purpose:
+///   Stage the optical-preparation inputs into owned transport carriers.
+///
+/// Physics:
+///   Builds the layer, sublayer, spectroscopy, and sidecar state that the
+///   transport and measurement kernels reuse.
+///
+/// Vendor:
+///   `optics preparation builder`
+///
+/// Inputs:
+///   `scene` provides the resolved geometry and absorber layout, while
+///   `inputs` supplies the climatology and spectroscopy references.
+///
+/// Outputs:
+///   Returns the fully prepared optical state with owned layer and sidecar
+///   storage.
+///
+/// Validation:
+///   Optics-preparation transport tests and transport integration suites.
 fn prepareWithInputs(
     allocator: Allocator,
     scene: *const Scene,
@@ -96,6 +145,9 @@ fn prepareWithInputs(
     };
 
     if (owned_lines) |*line_list| {
+        // DECISION:
+        //   Clone the line list per active absorber when the runtime controls
+        //   can diverge, especially when the operational O2 LUT is active.
         if (active_line_absorbers.len > 1 or (operational_o2_lut.enabled() and active_line_absorbers.len != 0)) {
             owned_line_absorbers = try allocator.alloc(PreparedLineAbsorber, active_line_absorbers.len);
 
@@ -136,6 +188,9 @@ fn prepareWithInputs(
                     try filtered.buildStrongLineMatchIndex(allocator);
                 }
                 const has_strong_line_states = !use_operational_o2_lut and filtered.hasStrongLineSidecars();
+                // GOTCHA:
+                //   Strong-line sidecars are only materialized when the
+                //   operational O2 LUT is not replacing the line-by-line path.
                 const strong_line_states = if (has_strong_line_states)
                     try allocator.alloc(ReferenceData.StrongLinePreparedState, total_sublayer_count)
                 else

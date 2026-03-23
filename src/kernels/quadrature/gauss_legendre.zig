@@ -1,9 +1,37 @@
+//! Purpose:
+//!   Provide fixed Gauss-Legendre quadrature rules for small orders.
+//!
+//! Physics:
+//!   Supplies precomputed nodes and weights on the canonical interval `[-1, 1]`.
+//!
+//! Vendor:
+//!   `Gauss-Legendre quadrature`
+//!
+//! Design:
+//!   The rule table is hard-coded so higher-level integration code can stay allocation-free and deterministic.
+//!
+//! Invariants:
+//!   Only orders 1 through 10 are supported in this compact table.
+//!
+//! Validation:
+//!   Tests check representative nodes and weights across the supported orders.
+
+/// Purpose:
+///   Store a fixed Gauss-Legendre quadrature rule.
 pub const Rule = struct {
     count: u32,
     nodes: [10]f64,
     weights: [10]f64,
 };
 
+/// Purpose:
+///   Return a Gauss-Legendre rule of the requested order.
+///
+/// Physics:
+///   Provides fixed nodes and weights for numerical integration on `[-1, 1]`.
+///
+/// Vendor:
+///   `Gauss-Legendre rule lookup`
 pub fn rule(order: u32) error{UnsupportedOrder}!Rule {
     return switch (order) {
         1 => .{

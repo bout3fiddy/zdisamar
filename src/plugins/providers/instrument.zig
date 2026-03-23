@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Provide builtin instrument-response behavior for the registry-selected
+//!   observation model.
+//!
+//! Physics:
+//!   This file maps scene metadata into calibration, integration, and slit
+//!   kernel behavior used by the forward instrument response.
+//!
+//! Vendor:
+//!   `instrument`
+//!
+//! Design:
+//!   Keep the provider self-contained: select the response profile from the
+//!   scene, then build the integration kernel or slit kernel the caller needs.
+//!
+//! Invariants:
+//!   Sample kernels must remain normalized, and measured-channel sampling must
+//!   not fall back to legacy post-convolution behavior.
+//!
+//! Validation:
+//!   Covered by the instrument provider unit tests in this file.
 const std = @import("std");
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const calibration = @import("../../kernels/spectra/calibration.zig");
@@ -7,9 +28,12 @@ const BuiltinLineShapeKind = @import("../../model/Instrument.zig").BuiltinLineSh
 const max_line_shape_samples = @import("../../model/Instrument.zig").max_line_shape_samples;
 const Scene = @import("../../model/Scene.zig").Scene;
 
+/// Default number of samples used by the fallback integration kernel.
 pub const default_integration_sample_count: usize = 5;
+/// Maximum number of samples accepted by the integration kernel buffers.
 pub const max_integration_sample_count: usize = max_line_shape_samples;
 
+/// Integration kernel sampled around a nominal wavelength.
 pub const IntegrationKernel = struct {
     enabled: bool,
     sample_count: usize,
@@ -17,6 +41,7 @@ pub const IntegrationKernel = struct {
     weights: [max_integration_sample_count]f64,
 };
 
+/// Builtin instrument-response provider contract.
 pub const Provider = struct {
     id: []const u8,
     calibrationForScene: *const fn (scene: *const Scene) calibration.Calibration,
@@ -25,6 +50,7 @@ pub const Provider = struct {
     slitKernelForScene: *const fn (scene: *const Scene) [5]f64,
 };
 
+/// Resolve a builtin instrument response provider by identifier.
 pub fn resolve(provider_id: []const u8) ?Provider {
     if (std.mem.eql(u8, provider_id, "builtin.generic_response")) {
         return genericProvider(provider_id);
@@ -52,6 +78,10 @@ fn calibrationForScene(scene: *const Scene) calibration.Calibration {
 }
 
 fn usesIntegratedInstrumentSampling(scene: *const Scene) bool {
+    // DECISION:
+    //   Integrated sampling is driven by the observation model first; explicit
+    //   line-shape metadata also forces integration so the legacy convolution
+    //   path does not silently handle modern measured channels.
     const mode_requires_native_integration = switch (scene.observation_model.sampling) {
         .operational, .measured_channels => true,
         .native, .synthetic => false,
@@ -82,6 +112,9 @@ fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOptic
             kernel.weights[0] = 1.0;
             return;
         }
+        // PARITY:
+        //   Strong-line table kernels bypass the legacy slit convolution when
+        //   the table can provide a normalized kernel directly.
         kernel.enabled = true;
         return;
     }
@@ -134,6 +167,9 @@ fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOptic
         } else {
             for (0..sample_count) |index| kernel.weights[index] /= total_weight;
         }
+        // PARITY:
+        //   High-resolution measurement kernels are normalized in place rather
+        //   than routed through the legacy slit-convolution stage.
         kernel.enabled = true;
         kernel.sample_count = sample_count;
         return;
@@ -171,6 +207,34 @@ fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOptic
     kernel.sample_count = default_integration_sample_count;
 }
 
+/// Purpose:
+///   Build an adaptive integration kernel from prepared spectroscopy data.
+///
+/// Physics:
+///   The adaptive kernel refines sampling around strong spectral lines so the
+///   instrument response can capture line-centre structure.
+///
+/// Vendor:
+///   `instrument::buildAdaptiveIntegrationKernel`
+///
+/// Inputs:
+///   `prepared` carries prepared spectroscopy lines and absorber data.
+///
+/// Outputs:
+///   Returns true when an adaptive kernel could be built.
+///
+/// Units:
+///   Wavelengths are in nanometers.
+///
+/// Assumptions:
+///   The adaptive reference grid is enabled and the line FWHM is positive.
+///
+/// Decisions:
+///   The adaptive path short-circuits the legacy fixed-kernel path when the
+///   prepared state can provide a better sampled response.
+///
+/// Validation:
+///   Covered by the adaptive strong-line unit test in this file.
 fn buildAdaptiveIntegrationKernel(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
@@ -276,6 +340,9 @@ fn addAdaptiveStrongLineSamplesFromList(
         const strong_half_span_nm = 0.5 * fwhm_nm;
         const strong_start_nm = @max(window_start_nm, line.center_wavelength_nm - strong_half_span_nm);
         const strong_end_nm = @min(window_end_nm, line.center_wavelength_nm + strong_half_span_nm);
+        // UNITS:
+        //   `refinement_count` tracks how many wavelength intervals are used to
+        //   cover the strong-line window in nanometers.
         const refinement_count = strongDivisionCount(adaptive, strong_end_nm - strong_start_nm, fwhm_nm);
         if (!addStrongAdaptiveSamples(
             sample_wavelengths_nm,
@@ -305,6 +372,9 @@ fn addUniformAdaptiveSamples(
     points_per_fwhm: u16,
 ) bool {
     const safe_points_per_fwhm: usize = @max(@as(usize, points_per_fwhm), 1);
+    // UNITS:
+    //   The integration step is derived from FWHM in nanometers and the grid
+    //   points-per-FWHM control.
     const step_nm = fwhm_nm / @as(f64, @floatFromInt(safe_points_per_fwhm));
     var interval_start_nm = window_start_nm;
     while (interval_start_nm < window_end_nm - 1.0e-12) {
@@ -368,6 +438,9 @@ fn strongDivisionCount(adaptive: AdaptiveReferenceGrid, span_nm: f64, fwhm_nm: f
     const scaled = @as(usize, @intFromFloat(std.math.round(
         (@max(span_nm, 1.0e-9) / @max(fwhm_nm, 1.0e-9)) * @as(f64, @floatFromInt(min_divisions)),
     )));
+    // DECISION:
+    //   Clamp the division count into the configured min/max range so very
+    //   narrow or very broad strong-line windows still produce bounded work.
     return std.math.clamp(@max(scaled, min_divisions), min_divisions, max_divisions);
 }
 
@@ -441,6 +514,10 @@ fn resetKernel(kernel: *IntegrationKernel) void {
 }
 
 fn slitKernelForScene(scene: *const Scene) [5]f64 {
+    // PARITY:
+    //   The default slit kernel remains a five-point symmetric kernel so the
+    //   legacy convolution shape stays recognizable when explicit line-shape
+    //   metadata is absent.
     if (scene.observation_model.instrument_line_fwhm_nm <= 0.0) {
         return .{ 1.0, 4.0, 6.0, 4.0, 1.0 };
     }
@@ -467,6 +544,9 @@ fn slitKernelForScene(scene: *const Scene) [5]f64 {
 }
 
 fn defaultKernelHalfSpanNm(fwhm_nm: f64) f64 {
+    // UNITS:
+    //   Half-span is expressed in nanometers and clamped to keep the fallback
+    //   kernel away from degenerate widths.
     return @max(3.0 * @max(fwhm_nm, 1.0e-4), 1.0e-4);
 }
 
@@ -485,6 +565,9 @@ fn builtinLineShapeWeight(shape: BuiltinLineShapeKind, fwhm_nm: f64, offset_nm: 
 }
 
 fn flatTopN4Weight(fwhm_nm: f64, offset_nm: f64) f64 {
+    // UNITS:
+    //   The width parameter is in nanometers and controls the normalized
+    //   flat-top shape used by the builtin response.
     const w_nm = fwhm_nm / 1.681793;
     return std.math.pow(f64, 2.0, -2.0 * std.math.pow(f64, offset_nm / @max(w_nm, 1.0e-6), 4.0));
 }

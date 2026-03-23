@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Run the retrieval half of a prepared plan when an inverse problem is present.
+//!
+//! Physics:
+//!   Converts the request into a retrieval problem, evaluates candidate scenes through the same
+//!   optics/transport path as forward execution, and attaches the solver outcome and materialized
+//!   retrieval products to the result.
+//!
+//! Vendor:
+//!   `retrieval execution pipeline`
+//!
+//! Design:
+//!   The retrieval provider owns method-specific policy while this module owns typed execution
+//!   context, summary/product callbacks, and result attachment.
+//!
+//! Invariants:
+//!   Retrieval is skipped when no inverse problem is present. Summary/product callbacks must
+//!   evaluate scenes through the prepared plan's provider set and transport route.
+//!
+//! Validation:
+//!   Retrieval integration and parity tests covering OE, DOAS, and DISMAS execution through the
+//!   public engine surface.
+
 const std = @import("std");
 
 const errors = @import("../errors.zig");
@@ -11,6 +34,8 @@ const RetrievalContracts = @import("../../retrieval/common/contracts.zig");
 const shared = @import("shared.zig");
 const RetrievalProducts = @import("retrieval_products.zig");
 
+/// Purpose:
+///   Execute the selected retrieval provider and attach owned retrieval outputs to the result.
 pub fn execute(
     allocator: std.mem.Allocator,
     plan: *const PreparedPlan,
@@ -55,6 +80,8 @@ const RetrievalExecutionContext = struct {
     summary_workspace: *MeasurementSpace.SummaryWorkspace,
 };
 
+/// Purpose:
+///   Evaluate a candidate retrieval scene into a summary-only measurement-space product.
 fn evaluateRetrievalSceneSummary(
     context: *const anyopaque,
     scene: Scene,
@@ -74,6 +101,8 @@ fn evaluateRetrievalSceneSummary(
     );
 }
 
+/// Purpose:
+///   Evaluate a candidate retrieval scene into a fully sampled measurement-space product.
 fn evaluateRetrievalSceneProduct(
     allocator: std.mem.Allocator,
     context: *const anyopaque,

@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Shared helper functions for canonical YAML document resolution.
+//!
+//! Physics:
+//!   These helpers do not model science directly. They locate input files,
+//!   validate field presence, and provide typed accessors for the parsed YAML
+//!   tree used by the document resolver.
+//!
+//! Vendor:
+//!   Canonical YAML document helper stage.
+//!
+//! Design:
+//!   Keep common tree and filesystem operations in one place so document
+//!   decoding can stay focused on typed config semantics.
+//!
+//! Invariants:
+//!   File lookup must preserve the first-resolved asset path and field checks
+//!   must stay strict when requested.
+//!
+//! Validation:
+//!   Canonical config tests cover path resolution and field validation.
+
 const std = @import("std");
 const yaml = @import("yaml.zig");
 const Allocator = std.mem.Allocator;
@@ -16,6 +38,8 @@ pub const Error = error{
     UnterminatedFlowCollection,
 };
 
+/// Purpose:
+///   Resolve a canonical input path against the document source directory.
 pub fn resolveInputPath(allocator: Allocator, source_dir: []const u8, path: []const u8) Error![]const u8 {
     if (std.fs.path.isAbsolute(path)) {
         const file = std.fs.openFileAbsolute(path, .{}) catch return error.MissingAsset;
@@ -45,6 +69,8 @@ pub fn pathExists(path: []const u8) bool {
     return true;
 }
 
+/// Purpose:
+///   Clone a mapping while skipping selected keys.
 pub fn cloneMapSkipping(allocator: Allocator, entries: []const yaml.Entry, skipped_keys: []const []const u8) Error!yaml.Value {
     var cloned = std.ArrayListUnmanaged(yaml.Entry){};
     defer cloned.deinit(allocator);
@@ -58,6 +84,8 @@ pub fn cloneMapSkipping(allocator: Allocator, entries: []const yaml.Entry, skipp
     return .{ .map = try cloned.toOwnedSlice(allocator) };
 }
 
+/// Purpose:
+///   Enforce strict known-field checking when requested.
 pub fn ensureKnownFields(entries: []const yaml.Entry, allowed: []const []const u8, strict: bool) Error!void {
     if (!strict) return;
     for (entries) |entry| {

@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Provide embedded HITRAN partition-function tables and interpolation helpers used by
+//!   spectroscopy runtime controls in the canonical reference-data model.
+//!
+//! Physics:
+//!   The tables map isotopologue code and temperature to the molecular partition
+//!   function ratio `Q(T_ref) / Q(T)`, which scales line intensities under temperature
+//!   changes.
+//!
+//! Vendor:
+//!   `HITRAN partition sum tables`
+//!
+//! Design:
+//!   The Zig port embeds the small table set directly and interpolates it locally so
+//!   spectroscopy preparation does not depend on file I/O or mutable process-wide state.
+//!
+//! Invariants:
+//!   Temperatures are expressed in kelvin, isotopologue lookup is exact on the supported
+//!   HITRAN codes, and interpolation clamps to the tabulated temperature domain.
+//!
+//! Validation:
+//!   The regression test at the bottom checks representative isotopologues and the
+//!   identity condition `Q(T_ref) / Q(T_ref) = 1`.
 const std = @import("std");
 
 const temperature_grid = [_]f64{
@@ -405,6 +428,28 @@ const q_5111 = [_]f64{
     0.49230E+06, 0.51319E+06, 0.53487E+06, 0.55734E+06, 0.58064E+06, 0.60478E+06, 0.62981E+06, 0.65574E+06, 0.68260E+06,
 };
 
+/// Purpose:
+///   Return the partition-function ratio `Q(T_ref) / Q(T)` for a supported isotopologue.
+///
+/// Physics:
+///   This ratio rescales line strengths from the HITRAN reference temperature to the
+///   requested evaluation temperature.
+///
+/// Inputs:
+///   `isotopologue_code` is the HITRAN isotopologue identifier and both temperatures are
+///   in kelvin.
+///
+/// Outputs:
+///   Returns `null` when the isotopologue is not represented in the embedded tables.
+///
+/// Units:
+///   Temperatures are in kelvin and the returned ratio is dimensionless.
+///
+/// Assumptions:
+///   Temperatures outside the supported table range are clamped to the nearest endpoint.
+///
+/// Validation:
+///   Exercised by the representative isotopologue regression at the bottom of this file.
 pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temperature_k: f64) ?f64 {
     const table = switch (isotopologue_code) {
         161 => q_161[0..],
@@ -442,6 +487,9 @@ pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temper
 }
 
 fn interpolatePartitionTable(table: []const f64, temperature_k: f64) f64 {
+    // UNITS:
+    //   `temperature_k` is in kelvin and interpolation runs on the shared HITRAN
+    //   temperature grid declared at the top of this file.
     const safe_temperature = std.math.clamp(temperature_k, temperature_grid[0], temperature_grid[temperature_grid.len - 1]);
     if (safe_temperature <= temperature_grid[0]) return table[0];
 

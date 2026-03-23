@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Provide the optimal-estimation retrieval entrypoint.
+//!
+//! Physics:
+//!   OE solves the full inverse problem against the bound measurement product
+//!   and produces the posterior covariance and averaging-kernel outputs.
+//!
+//! Vendor:
+//!   Rodgers OE retrieval stage.
+//!
+//! Design:
+//!   Keep the OE entrypoint thin so the shared spectral-fit and common
+//!   retrieval helpers own the core mechanics.
+//!
+//! Invariants:
+//!   OE requires an observed measurement binding and a derivative-compatible
+//!   state vector.
+//!
+//! Validation:
+//!   OE solver tests cover the evaluator path and posterior product outputs.
+
 const std = @import("std");
 const common = @import("../common/contracts.zig");
 const covariance = @import("../common/covariance.zig");
@@ -17,6 +38,8 @@ const vector_ops = @import("../../kernels/linalg/vector_ops.zig");
 const Allocator = std.mem.Allocator;
 const StateParameter = @import("../../model/Scene.zig").StateParameter;
 
+/// Purpose:
+///   Solve an OE retrieval using the supplied evaluator.
 pub fn solveWithEvaluator(
     allocator: Allocator,
     problem: common.RetrievalProblem,

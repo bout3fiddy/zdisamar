@@ -154,6 +154,9 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
     pseudo_spherical_grid: common.PseudoSphericalGrid,
     geo: *const basis.Geometry,
 ) void {
+    // UNITS:
+    //   The Earth radius and altitude samples are in kilometers; attenuation
+    //   remains dimensionless.
     const rearth_km = 6371.0;
     const top_level = pseudo_spherical_grid.level_sample_starts.len - 1;
     for (0..geo.nmutot) |imu| {

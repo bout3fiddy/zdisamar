@@ -1,3 +1,28 @@
+//! Purpose:
+//!   Re-export the canonical retrieval helper vocabulary used by OE, DOAS,
+//!   and DISMAS solver paths.
+//!
+//! Physics:
+//!   This namespace does not implement science itself. It collects the
+//!   contracts, transforms, covariance helpers, and forward-model selectors
+//!   that shape retrieval behavior.
+//!
+//! Vendor:
+//!   Retrieval common helper surface and solver-shared stage names.
+//!
+//! Design:
+//!   Keep the solver-specific files focused on policy and iteration control
+//!   while this module provides a stable namespace for shared retrieval
+//!   plumbing.
+//!
+//! Invariants:
+//!   The re-export set must stay limited to retrieval-common helpers; no
+//!   adapter or engine wiring belongs here.
+//!
+//! Validation:
+//!   Compilation of the solver packages and retrieval unit tests exercises
+//!   this package root.
+
 const std = @import("std");
 
 pub const contracts = @import("contracts.zig");

@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Evaluate transport output at instrument wavelengths and cache the
+//!   spectral samples used by measurement-space materialization.
+//!
+//! Physics:
+//!   Combines transport forward results with solar irradiance and instrument
+//!   integration kernels, then reuses quantized wavelength caches for repeated
+//!   samples.
+//!
+//! Vendor:
+//!   `measurement spectral evaluation` stage
+//!
+//! Design:
+//!   Caches at a fixed wavelength quantization so the measurement reduction
+//!   can reuse forward and irradiance results without changing solver physics.
+//!
+//! Invariants:
+//!   Cache keys must be stable for a given wavelength quantization and the
+//!   bundled O2A irradiance reference remains band-limited.
+//!
+//! Validation:
+//!   Measurement-space summary and product tests.
+
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
@@ -10,7 +33,13 @@ const Allocator = std.mem.Allocator;
 const OperationalInstrumentIntegration = @import("../../../plugins/providers/instrument.zig").IntegrationKernel;
 const Error = Workspace.Error;
 
+// DECISION:
+//   Quantize spectral cache keys at the sub-picometer scale so repeated
+//   transport samples reuse the same cache entry without altering physics.
 const spectral_cache_quantization_nm = 1.0e-6;
+// DECISION:
+//   Keep the bundled O2A solar reference as a short reference band for the
+//   default solar spectrum fallback.
 const bundled_o2a_solar_wavelengths_nm = [_]f64{ 755.0, 758.0, 760.01, 761.99, 764.99, 770.0, 776.0 };
 const bundled_o2a_solar_irradiance = [_]f64{
     4.805854615e14,
@@ -27,11 +56,14 @@ pub const ForwardIntegratedSample = struct {
     jacobian: f64 = 0.0,
 };
 
+/// Quantized spectral cache for repeated forward and irradiance samples.
 pub const SpectralEvaluationCache = struct {
     allocator: Allocator,
     forward: std.AutoHashMap(i64, ForwardIntegratedSample),
     irradiance: std.AutoHashMap(i64, f64),
 
+    /// Purpose:
+    ///   Initialize the cache buckets for one measurement-space sweep.
     pub fn init(allocator: Allocator) SpectralEvaluationCache {
         return .{
             .allocator = allocator,
@@ -40,17 +72,26 @@ pub const SpectralEvaluationCache = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release both spectral cache maps.
     pub fn deinit(self: *SpectralEvaluationCache) void {
         self.forward.deinit();
         self.irradiance.deinit();
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Quantize a wavelength into the cache key space.
     pub fn keyFor(wavelength_nm: f64) i64 {
         return @as(i64, @intFromFloat(std.math.round(wavelength_nm / spectral_cache_quantization_nm)));
     }
 };
 
+/// Purpose:
+///   Convert a transport forward result into radiance at one wavelength.
+///
+/// Vendor:
+///   `measurement spectral evaluation`
 pub fn radianceFromForward(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -92,6 +133,9 @@ fn irradianceAtWavelength(
 
 fn bundledSolarIrradiance(wavelength_nm: f64) ?f64 {
     if (wavelength_nm < bundled_o2a_solar_wavelengths_nm[0] or wavelength_nm > bundled_o2a_solar_wavelengths_nm[bundled_o2a_solar_wavelengths_nm.len - 1]) {
+        // PARITY:
+        //   Preserve the bundled O2A band shape so the default spectrum matches
+        //   the vendor reference range.
         return null;
     }
 
@@ -132,6 +176,11 @@ fn planckContinuumShape(wavelength_nm: f64, temperature_k: f64) f64 {
         denominator;
 }
 
+/// Purpose:
+///   Integrate the forward model at one nominal instrument wavelength.
+///
+/// Vendor:
+///   `measurement spectral evaluation`
 pub fn integrateForwardAtNominal(
     allocator: Allocator,
     scene: *const Scene,
@@ -150,6 +199,9 @@ pub fn integrateForwardAtNominal(
     cache: *SpectralEvaluationCache,
     integration: *const OperationalInstrumentIntegration,
 ) Error!ForwardIntegratedSample {
+    // DECISION:
+    //   When the instrument has no internal integration kernel, fall back to
+    //   the quantized cached forward sample at the nominal wavelength.
     if (!integration.enabled) {
         return cachedForwardAtWavelength(
             allocator,
@@ -203,6 +255,11 @@ pub fn integrateForwardAtNominal(
     };
 }
 
+/// Purpose:
+///   Integrate the solar irradiance at one nominal instrument wavelength.
+///
+/// Vendor:
+///   `measurement spectral evaluation`
 pub fn integrateIrradianceAtNominal(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -211,6 +268,9 @@ pub fn integrateIrradianceAtNominal(
     cache: *SpectralEvaluationCache,
     integration: *const OperationalInstrumentIntegration,
 ) Error!f64 {
+    // DECISION:
+    //   Integrated instruments sample irradiance through the same kernel used
+    //   for radiance so the instrument response stays aligned.
     if (!integration.enabled) {
         return cachedIrradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span, cache);
     }
@@ -230,6 +290,11 @@ pub fn integrateIrradianceAtNominal(
     return irradiance_sum;
 }
 
+/// Purpose:
+///   Cache and return a forward sample at one wavelength.
+///
+/// Vendor:
+///   `measurement spectral evaluation`
 pub fn cachedForwardAtWavelength(
     allocator: Allocator,
     scene: *const Scene,
@@ -250,6 +315,9 @@ pub fn cachedForwardAtWavelength(
     const key = SpectralEvaluationCache.keyFor(wavelength_nm);
     if (cache.forward.get(key)) |cached| return cached;
 
+    // GOTCHA:
+    //   Cache keys are quantized, so nearby samples share the same storage
+    //   entry to match the measurement-space reuse contract.
     const input = ForwardInput.configuredForwardInput(
         scene,
         route,
@@ -274,6 +342,11 @@ pub fn cachedForwardAtWavelength(
     return sample;
 }
 
+/// Purpose:
+///   Cache and return a solar irradiance sample at one wavelength.
+///
+/// Vendor:
+///   `measurement spectral evaluation`
 fn cachedIrradianceAtWavelength(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,

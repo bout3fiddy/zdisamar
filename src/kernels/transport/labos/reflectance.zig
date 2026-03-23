@@ -35,6 +35,8 @@ fn sourceInterfaceAtLevel(
     return common.sourceInterfaceFromLayers(layers, ilevel);
 }
 
+/// Purpose:
+///   Resolve the highest Fourier index required by the phase coefficients.
 fn maxPhaseCoefficientIndex(phase_coefficients: [basis.max_phase_coef]f64) usize {
     var max_index: usize = 0;
     for (1..basis.max_phase_coef) |idx| {
@@ -57,6 +59,8 @@ fn maxInterfacePhaseCoefficientIndex(
     return @max(above_max, below_max);
 }
 
+/// Purpose:
+///   Compute TOA reflectance from the resolved LABOS internal radiation field.
 pub fn calcReflectance(
     ud: []const basis.UDField,
     end_level: usize,
@@ -67,6 +71,31 @@ pub fn calcReflectance(
     return ud[end_level].U.col[solar_col].get(view_idx);
 }
 
+/// Purpose:
+///   Compute the integrated reflectance using source-interface or quadrature
+///   carriers.
+///
+/// Physics:
+///   Integrates the local source term against the LABOS upwelling and
+///   downwelling fields, including the zero-Fourier direct term.
+///
+/// Vendor:
+///   `LABOS reflectance extraction`
+///
+/// Inputs:
+///   `layers` and `source_interfaces` describe the transport grid, `ud`
+///   carries the internal radiation field, and `i_fourier` selects the phase
+///   term.
+///
+/// Outputs:
+///   Returns the total reflectance contribution for the requested Fourier term.
+///
+/// Assumptions:
+///   The carrier arrays are aligned with the transport grid and any quadrature
+///   grid is already normalized to that layout.
+///
+/// Validation:
+///   `tests/unit/transport_labos_test.zig`
 pub fn calcIntegratedReflectance(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -84,6 +113,9 @@ pub fn calcIntegratedReflectance(
     const use_rtm_quadrature = rtm_quadrature.isValidFor(layers.len);
 
     for (0..end_level + 1) |ilevel| {
+        // DECISION:
+        //   Prefer the quadrature carrier when it is aligned with the layer
+        //   grid; otherwise fall back to the source-interface contract.
         const source_interface = if (use_rtm_quadrature)
             common.SourceInterfaceInput{}
         else
@@ -102,6 +134,9 @@ pub fn calcIntegratedReflectance(
         else
             maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel))
         {
+            // PARITY:
+            //   Higher Fourier orders are skipped when the active phase
+            //   coefficients cannot support them.
             continue;
         }
 
@@ -127,12 +162,16 @@ pub fn calcIntegratedReflectance(
     }
 
     if (i_fourier == 0) {
+        // PARITY:
+        //   Keep the vendor scalar direct term in the zero-Fourier closure.
         reflectance += ud[0].E.get(view_idx) * ud[0].U.col[solar_col].get(view_idx);
     }
 
     return reflectance;
 }
 
+/// Purpose:
+///   Return the total non-negative scattering optical depth of the layer set.
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     var total: f64 = 0.0;
     for (layers) |layer| total += @max(layer.scattering_optical_depth, 0.0);
@@ -164,9 +203,23 @@ fn maxFourierIndexQuadrature(rtm_quadrature: common.RtmQuadratureGrid) usize {
     return max_index;
 }
 
+/// Purpose:
+///   Resolve the highest Fourier term needed by the active transport input.
+///
+/// Vendor:
+///   `LABOS reflectance extraction`
+///
+/// Assumptions:
+///   The route has already resolved its layer and source-interface contract.
+///
+/// Validation:
+///   `tests/unit/transport_labos_test.zig`
 pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RtmControls) usize {
     _ = controls;
     if (input.layers.len == 0) return 0;
+    // PARITY:
+    //   Near-nadir and near-normal geometries collapse to the scalar Fourier
+    //   term in the vendor path.
     if ((1.0 - input.muv) < 1.0e-5 or (1.0 - input.mu0) < 1.0e-5) return 0;
     if (input.rtm_quadrature.isValidFor(input.layers.len)) {
         return maxFourierIndexQuadrature(input.rtm_quadrature);

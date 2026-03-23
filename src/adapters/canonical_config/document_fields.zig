@@ -1,3 +1,27 @@
+//! Purpose:
+//!   Define the typed vendor-config vocabulary used by the canonical document
+//!   adapter.
+//!
+//! Physics:
+//!   This module does not model atmospheric physics directly. It names the
+//!   vendor control surfaces that later resolve into plan, scene, and runtime
+//!   behavior.
+//!
+//! Vendor:
+//!   Vendor section, subsection, and key inventory for canonical YAML.
+//!
+//! Design:
+//!   Keep the vendor key identity layer separate from document parsing so the
+//!   adapter can validate coverage without stringly lookups in the resolver.
+//!
+//! Invariants:
+//!   The section and subsection enums must remain exhaustive for the vendor
+//!   matrix supported by the canonical adapter.
+//!
+//! Validation:
+//!   Canonical config tests exercise the vendor key inventory and field
+//!   parsing helpers.
+
 const std = @import("std");
 const SolverMode = @import("../../core/Plan.zig").SolverMode;
 const GeometryModel = @import("../../model/Geometry.zig").Model;
@@ -187,6 +211,8 @@ pub const VendorKeyId = struct {
 /// Section-level default fidelity classification derived from the vendor config
 /// surface matrix. Individual keys may override this with a finer status, but
 /// this gives the dominant picture per section.
+/// Purpose:
+///   Return the default fidelity classification for a vendor section.
 pub fn sectionDefaultStatus(section: VendorSection) VendorCompatStatus {
     return switch (section) {
         // Sections with majority exact support
@@ -216,6 +242,8 @@ pub fn sectionDefaultStatus(section: VendorSection) VendorCompatStatus {
 /// Parse a vendor section name string (case-sensitive, underscore-delimited)
 /// into the typed enum. Accepts both the Zig enum field name and the vendor
 /// UPPER_CASE form used in the matrix JSON.
+/// Purpose:
+///   Parse a vendor section name into the typed enum.
 pub fn parseVendorSection(value: []const u8) Error!VendorSection {
     // Zig-style lowercase names
     const fields = @typeInfo(VendorSection).@"enum".fields;
@@ -250,6 +278,8 @@ pub fn parseVendorSection(value: []const u8) Error!VendorSection {
 }
 
 /// Parse a vendor subsection name string into the typed enum.
+/// Purpose:
+///   Parse a vendor subsection name into the typed enum.
 pub fn parseVendorSubsection(value: []const u8) Error!VendorSubsection {
     const fields = @typeInfo(VendorSubsection).@"enum".fields;
     inline for (fields) |f| {

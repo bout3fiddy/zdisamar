@@ -76,6 +76,9 @@ fn transportToOtherLevels(
 }
 
 /// Dot product over the first n_gauss elements of a matrix row and a vector column.
+///
+/// Physics:
+///   Computes the Gauss-point-only contraction used by the LABOS recursion.
 pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_gauss: usize) f64 {
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
@@ -84,6 +87,28 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
     return s;
 }
 
+/// Purpose:
+///   Propagate scattered radiation through the LABOS order recursion.
+///
+/// Physics:
+///   Accumulates successive scattering orders across the level grid while
+///   applying the configured convergence thresholds.
+///
+/// Vendor:
+///   `LABOS orders-of-scattering`
+///
+/// Inputs:
+///   `rt` holds the layer reflection/transmission operators, `atten` holds the
+///   inter-level attenuation grid, and `controls` governs truncation.
+///
+/// Outputs:
+///   Returns the accumulated diffuse field and local source summaries.
+///
+/// Assumptions:
+///   The transport grid is already resolved and `start_level <= end_level`.
+///
+/// Validation:
+///   `tests/unit/transport_labos_test.zig`
 pub fn ordersScat(
     allocator: Allocator,
     start_level: usize,
@@ -247,6 +272,9 @@ pub fn ordersScat(
             }
 
             if (num_orders >= num_orders_max) {
+                // DECISION:
+                //   Preserve the vendor truncation fallback by scaling the
+                //   final unresolved order with the observed growth ratio.
                 for (0..2) |imu0| {
                     var eigenvalue: f64 = 0.0;
                     if (sum_int_field_prev[imu0] > 1.0e-10) {

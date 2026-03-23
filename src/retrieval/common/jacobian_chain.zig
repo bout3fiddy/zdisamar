@@ -1,3 +1,27 @@
+//! Purpose:
+//!   Apply state transforms to Jacobians and assemble normal-equation terms
+//!   for retrieval solvers.
+//!
+//! Physics:
+//!   The helpers here scale Jacobian columns by transform derivatives and
+//!   accumulate the weighted normal matrix and gradient used in nonlinear
+//!   least-squares retrievals.
+//!
+//! Vendor:
+//!   Jacobian chaining and normal-equation accumulation stages.
+//!
+//! Design:
+//!   Keep these routines low-level and explicit so solver modules can choose
+//!   between diagonal and dense inverse measurement covariance paths.
+//!
+//! Invariants:
+//!   Row/column dimensions must agree exactly and every dense output must be
+//!   fully initialized before use.
+//!
+//! Validation:
+//!   Retrieval Jacobian-chain tests exercise the transform scaling and
+//!   weighted accumulation helpers.
+
 const std = @import("std");
 const dense = @import("../../kernels/linalg/small_dense.zig");
 

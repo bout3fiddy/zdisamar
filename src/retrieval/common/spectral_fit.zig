@@ -1,3 +1,27 @@
+//! Purpose:
+//!   Implement the shared spectral-fit retrieval loop used by DOAS and
+//!   DISMAS.
+//!
+//! Physics:
+//!   This module performs the nonlinear solve, spectral selection, proxy
+//!   transforms, and fit diagnostics for retrievals that operate in either
+//!   radiance or differential optical depth space.
+//!
+//! Vendor:
+//!   Classic DOAS and direct-intensity retrieval solve stages.
+//!
+//! Design:
+//!   Factor the method policy into small helpers so the numerical iterations
+//!   remain shared while the selection and fit-space rules stay method-specific.
+//!
+//! Invariants:
+//!   The observed and candidate measurements must remain shape-compatible
+//!   through selection, transforms, and backtracking.
+//!
+//! Validation:
+//!   DOAS and DISMAS solver tests exercise this module through their public
+//!   entrypoints.
+
 const std = @import("std");
 const common = @import("contracts.zig");
 const diagnostics = @import("diagnostics.zig");
@@ -113,6 +137,8 @@ const BacktrackContext = struct {
     }
 };
 
+/// Purpose:
+///   Solve a retrieval using the method-specific spectral-fit policy.
 pub fn solveMethod(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -329,6 +355,9 @@ pub fn solveMethod(
     return outcome;
 }
 
+/// Purpose:
+///   Compute the residual cost for a pair of observed and candidate spectra
+///   under the active retrieval method.
 pub fn fitResidualCost(
     allocator: Allocator,
     method: common.Method,
@@ -352,6 +381,10 @@ pub fn fitResidualCost(
 }
 
 fn policyForMethod(method: common.Method) Policy {
+    // DECISION:
+    //   Method policy remains explicit here so DOAS and DISMAS can diverge in
+    //   fit space, selection strategy, and damping without duplicating the
+    //   nonlinear solver loop.
     return switch (method) {
         .doas => .{
             .selection_strategy = .all_samples,
@@ -457,6 +490,8 @@ fn linearizeState(
     };
 }
 
+/// Purpose:
+///   Select the spectral samples that participate in the fit.
 fn buildSelectionIndices(
     allocator: Allocator,
     measurement: forward_model.SpectralMeasurement,
@@ -506,6 +541,8 @@ fn buildSelectionIndices(
     };
 }
 
+/// Purpose:
+///   Find approximate differential-optical-depth zero crossings.
 fn differentialZeroCrossingIndices(
     allocator: Allocator,
     measurement: forward_model.SpectralMeasurement,
@@ -553,6 +590,10 @@ fn transformMeasurement(
     policy: Policy,
     selection_indices: []const usize,
 ) common.Error!TransformedMeasurement {
+    // UNITS:
+    //   Differential-optical-depth space uses a log-reflectance proxy and
+    //   radiance-normalized sigma, while radiance space keeps the raw
+    //   measurement units.
     const wavelengths = try allocator.alloc(f64, selection_indices.len);
     errdefer allocator.free(wavelengths);
     const values = try allocator.alloc(f64, selection_indices.len);
@@ -601,6 +642,9 @@ fn opticalDepthProxyForIndex(measurement: forward_model.SpectralMeasurement, ind
         measurement.reflectance[index]
     else
         (measurement.radiance[index] * std.math.pi) / @max(measurement.irradiance[index], 1.0e-12);
+    // PARITY:
+    //   The proxy preserves the vendor-style log-reflectance transform used
+    //   for DOAS fit space.
     return -std.math.log(f64, std.math.e, @max(reflectance, 1.0e-12));
 }
 
@@ -726,6 +770,9 @@ fn accumulateWeightedNormalEquation(
         return error.ShapeMismatch;
     }
 
+    // DECISION:
+    //   Form the full symmetric normal matrix explicitly so the solver can
+    //   reuse the same accumulation path for diagonal and dense weighting.
     @memset(measurement_normal, 0.0);
     @memset(gradient, 0.0);
     for (0..measurement_count) |row| {
@@ -751,6 +798,9 @@ fn candidateMeasurementCost(
     selection: SelectionResult,
     policy: Policy,
 ) common.Error!f64 {
+    // DECISION:
+    //   Re-evaluate the candidate scene through the same transformed fit-space
+    //   path rather than trying to shortcut cost evaluation from raw states.
     const normalized_state = try allocator.dupe(f64, candidate_state);
     defer allocator.free(normalized_state);
     const physical_state = try allocator.alloc(f64, candidate_state.len);

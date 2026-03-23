@@ -1,6 +1,31 @@
+//! Purpose:
+//!   Track reusable scratch-capacity reservations for one workspace or thread context.
+//!
+//! Physics:
+//!   This module stores capacity hints only. It does not own numerical buffers, but it preserves
+//!   the largest spectral/layer/state/measurement requirements seen so repeated evaluations can
+//!   reuse the same scratch strategy.
+//!
+//! Vendor:
+//!   `scratch-capacity reservation`
+//!
+//! Design:
+//!   Keep scratch reuse lightweight by storing only counts derived from prepared layouts rather
+//!   than allocating typed buffers here.
+//!
+//! Invariants:
+//!   Reserved capacities are monotonic maxima until the workspace/thread is destroyed. `reset`
+//!   records lifecycle transitions but does not shrink capacities.
+//!
+//! Validation:
+//!   Scratch-arena tests in this file and workspace/batch-runner tests that reuse prepared
+//!   layouts across repeated execution.
+
 const std = @import("std");
 const PreparedLayout = @import("../cache/PreparedLayout.zig").PreparedLayout;
 
+/// Purpose:
+///   Store reusable capacity hints derived from prepared layouts.
 pub const ScratchArena = struct {
     spectral_capacity: usize = 0,
     layer_capacity: usize = 0,
@@ -9,6 +34,8 @@ pub const ScratchArena = struct {
     reserve_count: u64 = 0,
     reset_count: u64 = 0,
 
+    /// Purpose:
+    ///   Expand the stored capacity hints to cover the given prepared layout.
     pub fn reserveFromLayout(self: *ScratchArena, prepared_layout: *const PreparedLayout) void {
         self.spectral_capacity = @max(self.spectral_capacity, prepared_layout.layout_requirements.spectral_sample_count);
         self.layer_capacity = @max(self.layer_capacity, prepared_layout.layout_requirements.layer_count);
@@ -17,6 +44,8 @@ pub const ScratchArena = struct {
         self.reserve_count += 1;
     }
 
+    /// Purpose:
+    ///   Record a scratch reset without discarding the already reserved capacity maxima.
     pub fn reset(self: *ScratchArena) void {
         self.reset_count += 1;
     }

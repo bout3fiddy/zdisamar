@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Own the top-level engine lifecycle, catalog/bootstrap state, and prepared-plan execution
+//!   entrypoints.
+//!
+//! Physics:
+//!   Coordinates typed scene preparation, transport execution, retrieval execution, and
+//!   provenance capture without owning any numerical kernels directly.
+//!
+//! Vendor:
+//!   `engine lifecycle orchestration`
+//!
+//! Design:
+//!   The engine keeps orchestration explicit and allocation-aware while delegating transport,
+//!   optics, retrieval, cache, and plugin behavior to typed subsystem modules.
+//!
+//! Invariants:
+//!   Catalog bootstrap happens before plan preparation, cache ownership stays engine-local, and
+//!   execution always flows through typed `PreparedPlan`, `Workspace`, and `Request` values.
+//!
+//! Validation:
+//!   Root-surface tests and the execution-path tests that prepare plans and execute typed
+//!   requests through the public engine API.
+
 const std = @import("std");
 
 const Catalog = @import("Catalog.zig").Catalog;
@@ -28,6 +51,13 @@ pub const EngineOptions = struct {
     log_policy: Logging.Policy = .{},
 };
 
+/// Purpose:
+///   Own the catalog, plugin registry, runtime caches, and execution entrypoints used by the
+///   typed engine surface.
+///
+/// Design:
+///   The engine stays as an orchestration owner only. Numerical state lives in prepared plans,
+///   workspaces, and provider-managed subsystems.
 pub const Engine = struct {
     allocator: std.mem.Allocator,
     options: EngineOptions,
@@ -124,6 +154,9 @@ pub const Engine = struct {
         try ForwardExecution.initializeResult(self.allocator, plan, workspace, request, &result);
         errdefer result.deinit(self.allocator);
 
+        // DECISION:
+        //   Forward products are always materialized before retrieval so retrieval providers see
+        //   the same typed measurement-space preparation path as direct forward requests.
         try ForwardExecution.executeForwardProducts(self.allocator, plan, request, &result);
         try RetrievalExecution.execute(self.allocator, plan, request, &result);
         result.diagnostics = plan.providers.diagnostics.materialize(

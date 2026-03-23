@@ -1,15 +1,42 @@
+//! Purpose:
+//!   Store operational solar spectrum controls and interpolation helpers.
+//!
+//! Physics:
+//!   Represents wavelength-aligned irradiance samples and supports interpolation onto target grids.
+//!
+//! Vendor:
+//!   `solar spectrum controls`
+//!
+//! Design:
+//!   The spectrum stays as explicit owned slices so callers can clone, correct, and free it deterministically.
+//!
+//! Invariants:
+//!   Wavelengths are strictly increasing, irradiance is non-negative, and empty spectra disable the helper.
+//!
+//! Validation:
+//!   Tests cover interpolation and measured-spectrum correction.
+
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const Allocator = std.mem.Allocator;
 
+/// Purpose:
+///   Store an operational solar spectrum with wavelengths and irradiance.
 pub const OperationalSolarSpectrum = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     irradiance: []const f64 = &[_]f64{},
 
+    /// Purpose:
+    ///   Report whether the solar spectrum is active.
     pub fn enabled(self: *const OperationalSolarSpectrum) bool {
         return self.wavelengths_nm.len > 0;
     }
 
+    /// Purpose:
+    ///   Validate the solar spectrum.
+    ///
+    /// Physics:
+    ///   Requires monotonic wavelengths and non-negative irradiance samples.
     pub fn validate(self: *const OperationalSolarSpectrum) errors.Error!void {
         if (!self.enabled()) {
             if (self.irradiance.len != 0) return errors.Error.InvalidRequest;
@@ -29,6 +56,8 @@ pub const OperationalSolarSpectrum = struct {
         }
     }
 
+    /// Purpose:
+    ///   Clone the spectrum into owned storage.
     pub fn clone(self: OperationalSolarSpectrum, allocator: Allocator) !OperationalSolarSpectrum {
         return .{
             .wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm),
@@ -36,12 +65,19 @@ pub const OperationalSolarSpectrum = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release owned spectrum storage.
     pub fn deinitOwned(self: *OperationalSolarSpectrum, allocator: Allocator) void {
         allocator.free(self.wavelengths_nm);
         allocator.free(self.irradiance);
         self.* = .{};
     }
 
+    /// Purpose:
+    ///   Interpolate irradiance at a wavelength.
+    ///
+    /// Physics:
+    ///   Uses linear interpolation between adjacent monotonic samples.
     pub fn interpolateIrradiance(self: *const OperationalSolarSpectrum, wavelength_nm: f64) f64 {
         if (!self.enabled()) return 0.0;
         if (wavelength_nm <= self.wavelengths_nm[0]) return self.irradiance[0];
@@ -56,6 +92,8 @@ pub const OperationalSolarSpectrum = struct {
         return self.irradiance[self.irradiance.len - 1];
     }
 
+    /// Purpose:
+    ///   Interpolate the solar spectrum onto a target wavelength grid.
     pub fn interpolateOnto(
         self: *const OperationalSolarSpectrum,
         allocator: Allocator,
@@ -70,6 +108,11 @@ pub const OperationalSolarSpectrum = struct {
         return irradiance;
     }
 
+    /// Purpose:
+    ///   Correct measured values onto a target grid using the solar spectrum ratio.
+    ///
+    /// Physics:
+    ///   Scales measured radiance by target-to-source solar irradiance.
     pub fn correctMeasuredSpectrumOnto(
         self: *const OperationalSolarSpectrum,
         allocator: Allocator,

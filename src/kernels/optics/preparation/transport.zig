@@ -1,3 +1,27 @@
+//! Purpose:
+//!   Convert prepared optical state into transport-ready layer, source, and
+//!   pseudo-spherical carriers.
+//!
+//! Physics:
+//!   Evaluates wavelength-dependent optical-depth breakdowns and builds the
+//!   RTM quadrature and pseudo-spherical geometry used by the transport
+//!   executors.
+//!
+//! Vendor:
+//!   `optics preparation transport`
+//!
+//! Design:
+//!   Keeps the transport-facing preparation logic separate from the layer and
+//!   spectroscopy state builders so the solver can reuse the same prepared
+//!   state for multiple routes.
+//!
+//! Invariants:
+//!   Prepared layers, quadrature nodes, and pseudo-spherical samples must stay
+//!   aligned with the scene's transport grid.
+//!
+//! Validation:
+//!   Optics-preparation transport tests and transport integration suites.
+
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const ReferenceData = @import("../../../model/ReferenceData.zig");
@@ -16,6 +40,8 @@ const PreparedOpticalState = State.PreparedOpticalState;
 const PreparedSublayer = State.PreparedSublayer;
 const OpticalDepthBreakdown = State.OpticalDepthBreakdown;
 
+/// Purpose:
+///   Convert the prepared state into a forward-input carrier.
 pub fn toForwardInput(
     prepared: *const PreparedOpticalState,
     scene: *const Scene,
@@ -23,6 +49,9 @@ pub fn toForwardInput(
     return toForwardInputWithLayers(prepared, scene, null);
 }
 
+/// Purpose:
+///   Convert the prepared state into a forward-input carrier using explicit
+///   layer inputs.
 pub fn toForwardInputWithLayers(
     prepared: *const PreparedOpticalState,
     scene: *const Scene,
@@ -36,6 +65,8 @@ pub fn toForwardInputWithLayers(
     );
 }
 
+/// Purpose:
+///   Convert the prepared state into a forward-input carrier at one wavelength.
 pub fn toForwardInputAtWavelength(
     prepared: *const PreparedOpticalState,
     scene: *const Scene,
@@ -44,6 +75,9 @@ pub fn toForwardInputAtWavelength(
     return toForwardInputAtWavelengthWithLayers(prepared, scene, wavelength_nm, null);
 }
 
+/// Purpose:
+///   Convert the prepared state into a wavelength-specific forward-input
+///   carrier using explicit layer inputs.
 pub fn toForwardInputAtWavelengthWithLayers(
     prepared: *const PreparedOpticalState,
     scene: *const Scene,
@@ -85,6 +119,8 @@ pub fn toForwardInputAtWavelengthWithLayers(
     };
 }
 
+/// Purpose:
+///   Materialize transport layer inputs at one wavelength.
 pub fn fillForwardLayersAtWavelength(
     self: *const PreparedOpticalState,
     scene: *const Scene,
@@ -202,6 +238,8 @@ pub fn fillForwardLayersAtWavelength(
     return totals;
 }
 
+/// Purpose:
+///   Materialize source-interface carriers at one wavelength.
 pub fn fillSourceInterfacesAtWavelengthWithLayers(
     self: *const PreparedOpticalState,
     _: f64,
@@ -215,6 +253,9 @@ pub fn fillSourceInterfacesAtWavelengthWithLayers(
     if (self.sublayers) |sublayers| {
         if (layer_inputs.len == sublayers.len) {
             for (1..layer_inputs.len) |ilevel| {
+                // UNITS:
+                //   `path_length_cm` is converted back to kilometers before it
+                //   is used as the RTM quadrature weight.
                 const sublayer = sublayers[ilevel];
                 const scattering_optical_depth = @max(layer_inputs[ilevel].scattering_optical_depth, 0.0);
                 const rtm_weight = @max(sublayer.path_length_cm / centimeters_per_kilometer, 0.0);
@@ -576,6 +617,8 @@ fn pseudoSphericalCarrierAtAltitude(
     };
 }
 
+/// Purpose:
+///   Materialize RTM quadrature levels at one wavelength.
 pub fn fillRtmQuadratureAtWavelengthWithLayers(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -617,6 +660,9 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
         }
         if (total_span_km <= 0.0) continue;
 
+        // DECISION:
+        //   Quadrature nodes are normalized to the layer span, then the
+        //   scattering weights are renormalized back to the transport grid.
         var raw_scattering_sum: f64 = 0.0;
         for (0..active_count) |node_index| {
             const level = start + 1 + node_index;
@@ -659,6 +705,8 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
     return has_active_quadrature;
 }
 
+/// Purpose:
+///   Materialize pseudo-spherical samples at one wavelength.
 pub fn fillPseudoSphericalGridAtWavelength(
     self: *const PreparedOpticalState,
     scene: *const Scene,

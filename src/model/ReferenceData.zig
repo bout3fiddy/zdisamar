@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Define the typed reference-data carriers and spectroscopy evaluation helpers used by the
+//!   engine, runtime loaders, and optics preparation.
+//!
+//! Physics:
+//!   Covers climatology, cross sections, CIA, Rayleigh helpers, airmass/Mie tables, and the
+//!   line-by-line spectroscopy structures and evaluation paths used for weak and strong lines.
+//!
+//! Vendor:
+//!   `HITRAN weak-line and LISA strong-line reference-data support`
+//!
+//! Design:
+//!   Keep table carriers small and typed while colocating the non-trivial spectroscopy physics so
+//!   adapters and runtime loaders can normalize vendor assets into one reusable evaluation model.
+//!
+//! Invariants:
+//!   Reference-data carriers remain typed and ownership-aware. Spectroscopy line lists may attach
+//!   O2 strong-line sidecars only when their matching line/relaxation data are present.
+//!
+//! Validation:
+//!   The unit tests in this file plus bundled-reference, O2A forward-shape, and retrieval
+//!   validation tests that exercise typed reference-data loading and evaluation.
+
 const std = @import("std");
 const hitran_partition_tables = @import("hitran_partition_tables.zig");
 const climatology = @import("reference/climatology.zig");
@@ -9,7 +32,13 @@ const demo_builders = @import("reference/demo_builders.zig");
 
 const Allocator = std.mem.Allocator;
 const max_strong_line_sidecars: usize = 128;
+// UNITS:
+//   `weak_line_window_half_width_nm` is expressed in nanometers because the weak-line search
+//   window operates in the scene wavelength domain before conversion to wavenumber space.
 const weak_line_window_half_width_nm: f64 = 1.0;
+// UNITS:
+//   HITRAN constants below are kept in the units used by the vendor tabulations: Kelvin, Joules,
+//   `cm^3 * hPa / K`, `cm * K`, `J / (mol * K)`, and `m / s`.
 const hitran_reference_temperature_k = 296.0;
 const hitran_boltzmann_constant_j_per_k = 1.3806488e-23;
 const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;
@@ -25,6 +54,9 @@ pub const CollisionInducedAbsorptionPoint = cia.CollisionInducedAbsorptionPoint;
 pub const CollisionInducedAbsorptionTable = cia.CollisionInducedAbsorptionTable;
 pub const Rayleigh = rayleigh;
 
+/// Purpose:
+///   Represent one weak/nominal spectroscopy line after normalization into wavelength-space
+///   fields and typed HITRAN metadata.
 pub const SpectroscopyLine = struct {
     gas_index: u16 = 0,
     isotope_number: u8 = 1,
@@ -38,6 +70,8 @@ pub const SpectroscopyLine = struct {
     line_mixing_coefficient: f64,
 };
 
+/// Purpose:
+///   Represent one LISA strong-line sidecar entry retained alongside a nominal line list.
 pub const SpectroscopyStrongLine = struct {
     center_wavenumber_cm1: f64,
     center_wavelength_nm: f64,
@@ -53,34 +87,48 @@ pub const SpectroscopyStrongLine = struct {
     rotational_index_m1: i32,
 };
 
+/// Purpose:
+///   Own a set of strong-line sidecars associated with a spectroscopy line list.
 pub const SpectroscopyStrongLineSet = struct {
     lines: []SpectroscopyStrongLine,
 
+    /// Purpose:
+    ///   Release the owned strong-line array.
     pub fn deinit(self: *SpectroscopyStrongLineSet, allocator: Allocator) void {
         allocator.free(self.lines);
         self.* = undefined;
     }
 };
 
+/// Purpose:
+///   Store the square relaxation matrix used by the strong-line line-mixing path.
 pub const RelaxationMatrix = struct {
     line_count: usize,
     wt0: []f64,
     bw: []f64,
 
+    /// Purpose:
+    ///   Release the owned relaxation-matrix storage.
     pub fn deinit(self: *RelaxationMatrix, allocator: Allocator) void {
         allocator.free(self.wt0);
         allocator.free(self.bw);
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Return one relaxation weight from the flattened square matrix.
     pub fn weightAt(self: RelaxationMatrix, row: usize, col: usize) f64 {
         return self.wt0[row * self.line_count + col];
     }
 
+    /// Purpose:
+    ///   Return the temperature-exponent companion entry for one relaxation-matrix element.
     pub fn temperatureExponentAt(self: RelaxationMatrix, row: usize, col: usize) f64 {
         return self.bw[row * self.line_count + col];
     }
 
+    /// Purpose:
+    ///   Deep-clone the relaxation matrix into owned storage.
     pub fn clone(self: RelaxationMatrix, allocator: Allocator) !RelaxationMatrix {
         const owned_wt0 = try allocator.dupe(f64, self.wt0);
         errdefer allocator.free(owned_wt0);
@@ -92,6 +140,9 @@ pub const RelaxationMatrix = struct {
     }
 };
 
+/// Purpose:
+///   Report the weak-line, strong-line, and line-mixing contributions for one spectroscopy
+///   evaluation.
 pub const SpectroscopyEvaluation = struct {
     weak_line_sigma_cm2_per_molecule: f64 = 0.0,
     strong_line_sigma_cm2_per_molecule: f64 = 0.0,
@@ -101,6 +152,8 @@ pub const SpectroscopyEvaluation = struct {
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 
+/// Purpose:
+///   Describe runtime filtering and line-mixing controls applied to a spectroscopy line list.
 pub const SpectroscopyRuntimeControls = struct {
     gas_index: ?u16 = null,
     active_isotopes: []const u8 = &.{},
@@ -108,6 +161,8 @@ pub const SpectroscopyRuntimeControls = struct {
     cutoff_cm1: ?f64 = null,
     line_mixing_factor: f64 = 1.0,
 
+    /// Purpose:
+    ///   Deep-clone the runtime control payload, including isotope selections.
     pub fn clone(self: SpectroscopyRuntimeControls, allocator: Allocator) !SpectroscopyRuntimeControls {
         return .{
             .gas_index = self.gas_index,
@@ -118,11 +173,15 @@ pub const SpectroscopyRuntimeControls = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release any owned isotope-selection storage.
     pub fn deinitOwned(self: *SpectroscopyRuntimeControls, allocator: Allocator) void {
         if (self.active_isotopes.len != 0) allocator.free(self.active_isotopes);
         self.* = .{};
     }
 
+    /// Purpose:
+    ///   Convert a threshold scale into an absolute weak-line strength cutoff.
     pub fn thresholdStrength(self: SpectroscopyRuntimeControls, lines: []const SpectroscopyLine) ?f64 {
         const scale = self.threshold_line_scale orelse return null;
         if (lines.len == 0) return null;
@@ -135,6 +194,9 @@ pub const SpectroscopyRuntimeControls = struct {
     }
 };
 
+/// Purpose:
+///   Store a prepared strong-line state that can be reused across repeated wavelength
+///   evaluations at one thermodynamic state.
 pub const StrongLinePreparedState = struct {
     line_count: usize,
     sig_moy_cm1: f64,
@@ -145,6 +207,8 @@ pub const StrongLinePreparedState = struct {
     line_mixing_coefficients: []f64,
     relaxation_weights: []f64,
 
+    /// Purpose:
+    ///   Release the owned prepared strong-line arrays.
     pub fn deinit(self: *StrongLinePreparedState, allocator: Allocator) void {
         allocator.free(self.population_t);
         allocator.free(self.dipole_t);
@@ -160,6 +224,8 @@ pub const StrongLinePreparedState = struct {
     }
 };
 
+/// Purpose:
+///   Own a spectroscopy line list plus optional strong-line sidecars and runtime controls.
 pub const SpectroscopyLineList = struct {
     lines: []SpectroscopyLine,
     strong_lines: ?[]SpectroscopyStrongLine = null,
@@ -169,6 +235,8 @@ pub const SpectroscopyLineList = struct {
     strong_line_match_by_line: ?[]?u16 = null,
     runtime_controls: SpectroscopyRuntimeControls = .{},
 
+    /// Purpose:
+    ///   Release the owned line list, optional sidecars, and runtime controls.
     pub fn deinit(self: *SpectroscopyLineList, allocator: Allocator) void {
         allocator.free(self.lines);
         if (self.strong_lines) |strong_lines| allocator.free(strong_lines);
@@ -178,6 +246,8 @@ pub const SpectroscopyLineList = struct {
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Deep-clone the line list, optional strong-line sidecars, and runtime controls.
     pub fn clone(self: SpectroscopyLineList, allocator: Allocator) !SpectroscopyLineList {
         const owned_lines = try allocator.dupe(SpectroscopyLine, self.lines);
         errdefer allocator.free(owned_lines);
@@ -211,6 +281,11 @@ pub const SpectroscopyLineList = struct {
         };
     }
 
+    /// Purpose:
+    ///   Attach strong-line and relaxation sidecars to the nominal line list.
+    ///
+    /// Vendor:
+    ///   `LISA strong-line sidecar attachment`
     pub fn attachStrongLineSidecars(
         self: *SpectroscopyLineList,
         allocator: Allocator,
@@ -230,6 +305,8 @@ pub const SpectroscopyLineList = struct {
         self.relaxation_matrix = try relaxation_matrix.clone(allocator);
     }
 
+    /// Purpose:
+    ///   Build the per-line strong-line match cache used by the strong-line evaluation path.
     pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Allocator) !void {
         if (self.strong_line_match_by_line) |matches| {
             allocator.free(matches);
@@ -248,10 +325,18 @@ pub const SpectroscopyLineList = struct {
         self.strong_line_match_by_line = matches;
     }
 
+    /// Purpose:
+    ///   Evaluate total absorption cross section at one wavelength/temperature/pressure state.
     pub fn sigmaAt(self: SpectroscopyLineList, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) f64 {
         return self.totalSigmaAt(wavelength_nm, temperature_k, pressure_hpa).total_sigma_cm2_per_molecule;
     }
 
+    /// Purpose:
+    ///   Apply runtime gas/isotope filtering and line-mixing controls to the line list.
+    ///
+    /// Decisions:
+    ///   Filtering mutates the owned line list in place so downstream optics preparation and
+    ///   transport see only the active spectral content for the chosen runtime stage.
     pub fn applyRuntimeControls(
         self: *SpectroscopyLineList,
         allocator: Allocator,
@@ -299,10 +384,16 @@ pub const SpectroscopyLineList = struct {
             self.strong_line_match_by_line = null;
         }
         if (self.strong_lines != null and !runtimeControlsKeepStrongLineSidecars(gas_index, active_isotopes)) {
+            // GOTCHA:
+            //   The bundled strong-line sidecars are only valid for O2 main-isotope selections.
+            //   Filtering to a different gas or isotope disables the sidecars entirely.
             self.disableStrongLineSidecars(allocator);
         }
     }
 
+    /// Purpose:
+    ///   Evaluate the total sigma using a precomputed strong-line thermodynamic state when
+    ///   available.
     pub fn sigmaAtPrepared(
         self: SpectroscopyLineList,
         wavelength_nm: f64,
@@ -321,6 +412,9 @@ pub const SpectroscopyLineList = struct {
         return self.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
     }
 
+    /// Purpose:
+    ///   Evaluate the full weak/strong/mixing decomposition using a prepared strong-line state
+    ///   when available.
     pub fn evaluateAtPrepared(
         self: SpectroscopyLineList,
         wavelength_nm: f64,
@@ -339,10 +433,14 @@ pub const SpectroscopyLineList = struct {
         return self.evaluateAt(wavelength_nm, temperature_k, pressure_hpa);
     }
 
+    /// Purpose:
+    ///   Report whether both strong-line and relaxation sidecars are present.
     pub fn hasStrongLineSidecars(self: SpectroscopyLineList) bool {
         return self.strong_lines != null and self.relaxation_matrix != null;
     }
 
+    /// Purpose:
+    ///   Prepare the strong-line thermodynamic state for one temperature/pressure point.
     pub fn prepareStrongLineState(
         self: SpectroscopyLineList,
         allocator: Allocator,
@@ -360,6 +458,9 @@ pub const SpectroscopyLineList = struct {
         return try clonePreparedStrongLineState(allocator, stack_state);
     }
 
+    /// Purpose:
+    ///   Evaluate the full spectroscopy decomposition and a finite-difference temperature
+    ///   derivative at one wavelength.
     pub fn evaluateAt(self: SpectroscopyLineList, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) SpectroscopyEvaluation {
         const total = self.totalSigmaAt(wavelength_nm, temperature_k, pressure_hpa);
         const delta_t = 0.5;
@@ -701,6 +802,8 @@ const demo_spectroscopy_lines = [_]SpectroscopyLine{
     .{ .center_wavelength_nm = 456.0, .line_strength_cm2_per_molecule = 5.4e-21, .air_half_width_nm = 0.030, .temperature_exponent = 0.81, .lower_state_energy_cm1 = 205.0, .pressure_shift_nm = 0.001, .line_mixing_coefficient = 0.02 },
 };
 
+/// Purpose:
+///   Build a tiny deterministic spectroscopy line list used by tests and demos.
 pub fn buildDemoSpectroscopyLines(allocator: Allocator) !SpectroscopyLineList {
     return .{
         .lines = try allocator.dupe(SpectroscopyLine, demo_spectroscopy_lines[0..]),
@@ -1372,6 +1475,9 @@ fn wavelengthToWavenumberCm1(wavelength_nm: f64) f64 {
     return 1.0e7 / @max(wavelength_nm, 1.0e-9);
 }
 
+// UNITS:
+//   Converts spectral widths from nanometers at the line center into `cm^-1` using the local
+//   center wavenumber. This keeps the vendor strong-line width formulas in their native domain.
 fn spectralWidthNmToCm1(width_nm: f64, center_wavenumber_cm1: f64) f64 {
     const safe_center = @max(center_wavenumber_cm1, 1.0);
     return width_nm * safe_center * safe_center / 1.0e7;
@@ -1705,6 +1811,10 @@ fn prepareStrongLineConvTPState(
             rotational_gate *
             rotational_gate *
             0.04;
+        // DECISION:
+        //   The Zig strong-line path keeps the vendor-style renormalization anchor explicit here
+        //   instead of hiding it in file-driven state, so parity-sensitive line-mixing tuning is
+        //   localized to the prepared strong-line state.
 
         for (0..line_count) |row_index| {
             if (row_index <= column_index) continue;
@@ -1768,6 +1878,9 @@ fn partitionRatioT0OverT(line: SpectroscopyLine, temperature_k: f64, reference_t
 }
 
 fn deriveIsotopologueCode(gas_index: u16, isotope_number: u8) i32 {
+    // PARITY:
+    //   These mappings preserve the vendor/HITRAN isotopologue codes that drive partition-table
+    //   lookup and molecular-weight selection. Changing them silently alters line strengths.
     return switch (gas_index) {
         1 => switch (isotope_number) {
             1 => 161,

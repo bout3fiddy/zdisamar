@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Prepare a typed execution plan from a public template.
+//!
+//! Physics:
+//!   Resolves transport routing, plugin/provider selection, prepared-layout reuse metadata, and
+//!   plugin runtime hooks before any scene execution occurs.
+//!
+//! Vendor:
+//!   `plan preparation`
+//!
+//! Design:
+//!   Keep provider resolution, transport-route preparation, and plugin snapshot/runtime assembly
+//!   explicit so preparation failures remain typed and plan-time state stays inspectable.
+//!
+//! Invariants:
+//!   Catalog bootstrap must precede preparation. Prepared layout, plugin snapshot, runtime, and
+//!   transport route must all describe the same plan id when returned.
+//!
+//! Validation:
+//!   Engine preparation tests and the execution tests that reuse prepared plans across requests.
+
 const std = @import("std");
 
 const Catalog = @import("../Catalog.zig").Catalog;
@@ -22,6 +43,8 @@ pub const Context = struct {
     next_plan_id: *u64,
 };
 
+/// Purpose:
+///   Materialize a prepared plan from a validated template and the current engine state.
 pub fn preparePlan(
     ctx: *Context,
     template: PlanModule.Template,
@@ -45,6 +68,10 @@ pub fn preparePlan(
         plugin_state.snapshot.datasetHashes().len,
         ctx.dataset_cache.count(),
     );
+    // DECISION:
+    //   Prepared layout sizing uses the larger of the snapshot dataset count and the engine's
+    //   dataset-cache coverage so workspace reuse remains conservative when builtins and plugin
+    //   datasets are both present.
     const prepared_layout = try PreparedLayout.initFromBlueprint(
         template.scene_blueprint,
         @intCast(dataset_hash_count),
@@ -61,6 +88,9 @@ pub fn preparePlan(
     );
     errdefer plan.deinit();
     plugin_state = .{};
+    // DECISION:
+    //   The plan cache stores only layout reuse hints, not execution state, so plan preparation
+    //   commits the prepared layout immediately after the plan record has been constructed.
     ctx.plan_cache.put(plan.id, prepared_layout) catch |err| switch (err) {
         error.PlanCacheDisabled => return errors.PreparationError.PreparedPlanLimitExceeded,
         error.OutOfMemory => return errors.PreparationError.OutOfMemory,
@@ -80,12 +110,16 @@ const PluginPreparation = struct {
     }
 };
 
+/// Purpose:
+///   Resolve the typed provider set requested by the template.
 fn resolvePlanProviders(template: PlanModule.Template) errors.PreparationError!PluginProviders.PreparedProviders {
     return PluginProviders.PreparedProviders.resolve(template.providers) catch {
         return errors.PreparationError.UnsupportedCapability;
     };
 }
 
+/// Purpose:
+///   Resolve the transport route implied by the template's observation regime and solver mode.
 fn prepareTransportRoute(
     template: PlanModule.Template,
     providers: PluginProviders.PreparedProviders,
@@ -105,6 +139,8 @@ fn prepareTransportRoute(
     };
 }
 
+/// Purpose:
+///   Snapshot plugin selection and prepare any native-plugin runtime state for the new plan.
 fn preparePluginState(
     ctx: *Context,
     template: PlanModule.Template,
@@ -141,6 +177,8 @@ fn preparePluginState(
     };
 }
 
+/// Purpose:
+///   Map public solver modes onto the transport execution-mode enum used by kernel providers.
 fn transportExecutionMode(solver_mode: PlanModule.SolverMode) TransportCommon.ExecutionMode {
     return switch (solver_mode) {
         .polarized => .polarized,

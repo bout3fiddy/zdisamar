@@ -179,6 +179,9 @@ fn layerResolvedLabos(
     const end_level: usize = nlayer;
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
+    // DECISION:
+    //   Only use the integrated source-function carrier when the route
+    //   supplies the aligned source interfaces or RTM quadrature grid.
     const use_integrated_source =
         controls.integrate_source_function and
         nlayer > 1 and
@@ -195,6 +198,9 @@ fn layerResolvedLabos(
             calcIntegratedReflectance(input.layers, input.source_interfaces, input.rtm_quadrature, orders_result.ud, end_level, i_fourier, &geo)
         else
             calcReflectance(orders_result.ud, end_level, &geo);
+        // PARITY:
+        //   Fourier-0 carries the direct term; higher Fourier orders are
+        //   weighted by the cosine of the relative azimuth.
         const fourier_weight = if (i_fourier == 0)
             1.0
         else

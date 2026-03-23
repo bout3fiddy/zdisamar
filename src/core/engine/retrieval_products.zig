@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Materialize owned retrieval products from a solver outcome.
+//!
+//! Physics:
+//!   Converts solver-space state, Jacobian, averaging-kernel, and posterior products into
+//!   result-owned measurement/state products derived from the fitted scene.
+//!
+//! Vendor:
+//!   `retrieval product materialization`
+//!
+//! Design:
+//!   Keep the solver outcome generic and build result-facing owned products here so retrieval
+//!   providers do not need to duplicate output-shaping and fitted-measurement logic.
+//!
+//! Invariants:
+//!   Fitted products are materialized from the fitted scene using the prepared plan's provider
+//!   set. OE results must expose Jacobian, averaging-kernel, and posterior covariance products.
+//!
+//! Validation:
+//!   Retrieval integration tests and golden/parity tests that inspect fitted measurements and
+//!   solver-derived matrix outputs.
+
 const std = @import("std");
 
 const errors = @import("../errors.zig");
@@ -10,6 +32,8 @@ const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
 const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const shared = @import("shared.zig");
 
+/// Purpose:
+///   Convert a solver outcome into the owned retrieval products attached to a result.
 pub fn materialize(
     allocator: std.mem.Allocator,
     plan: *const PreparedPlan,
@@ -45,6 +69,9 @@ pub fn materialize(
     const jacobian = if (outcome.jacobian) |matrix|
         try materializeMatrixProduct(allocator, problem, matrix)
     else if (outcome.method.classification() == .surrogate and outcome.jacobians_used)
+        // DECISION:
+        //   Surrogate methods that report Jacobian usage but do not expose an explicit matrix are
+        //   materialized through a typed finite-difference fallback on the fitted scene.
         try materializeSurrogateJacobianProduct(
             allocator,
             plan,
@@ -92,6 +119,8 @@ pub fn materialize(
     };
 }
 
+/// Purpose:
+///   Duplicate the solver state estimate into a result-owned state-vector product.
 fn materializeStateVectorProduct(
     allocator: std.mem.Allocator,
     problem: RetrievalContracts.RetrievalProblem,
@@ -109,6 +138,8 @@ fn materializeStateVectorProduct(
     };
 }
 
+/// Purpose:
+///   Duplicate a solver matrix into a result-owned retrieval matrix product.
 fn materializeMatrixProduct(
     allocator: std.mem.Allocator,
     problem: RetrievalContracts.RetrievalProblem,
@@ -128,6 +159,9 @@ fn materializeMatrixProduct(
     };
 }
 
+/// Purpose:
+///   Materialize a fitted-scene Jacobian when the solver used surrogate Jacobians internally but
+///   did not return an explicit matrix.
 fn materializeSurrogateJacobianProduct(
     allocator: std.mem.Allocator,
     plan: *const PreparedPlan,
@@ -188,6 +222,8 @@ fn materializeSurrogateJacobianProduct(
     };
 }
 
+/// Purpose:
+///   Duplicate the retrieval parameter names into owned result storage.
 fn duplicateParameterNames(
     allocator: std.mem.Allocator,
     problem: RetrievalContracts.RetrievalProblem,
@@ -209,16 +245,22 @@ fn duplicateParameterNames(
     return names;
 }
 
+/// Purpose:
+///   Free an owned slice of owned strings.
 fn freeStringSlice(allocator: std.mem.Allocator, values: []const []const u8) void {
     if (values.len == 0) return;
     for (values) |value| allocator.free(value);
     allocator.free(values);
 }
 
+/// Purpose:
+///   Return the observable used to interpret a fitted measurement-space product for this problem.
 fn measurementObservable(problem: RetrievalContracts.RetrievalProblem) MeasurementQuantity {
     return problem.inverse_problem.measurements.observable;
 }
 
+/// Purpose:
+///   Read one observable value from a measurement-space product by sample index.
 fn measurementValue(product: MeasurementSpaceProduct, observable: MeasurementQuantity, index: usize) errors.Error!f64 {
     return switch (observable) {
         .radiance => product.radiance[index],
@@ -228,6 +270,9 @@ fn measurementValue(product: MeasurementSpaceProduct, observable: MeasurementQua
     };
 }
 
+/// Purpose:
+///   Choose a finite-difference step for surrogate Jacobian materialization in physical state
+///   space.
 fn jacobianStep(value: f64) f64 {
     return if (@abs(value) > 1.0e-6) 1.0e-3 * @abs(value) else 1.0e-3;
 }

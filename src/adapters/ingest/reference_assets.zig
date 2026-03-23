@@ -1,7 +1,29 @@
+//! Purpose:
+//!   Load reference assets from bundled manifests or explicit external files.
+//!
+//! Physics:
+//!   Hydrate climatology, spectroscopy, CIA, LUT, and Mie tables into typed inputs that preserve
+//!   the original scientific provenance and units.
+//!
+//! Vendor:
+//!   `reference asset ingest`
+//!
+//! Design:
+//!   Keep the manifest resolution and table materialization in this adapter layer so the core and
+//!   kernels only see typed data.
+//!
+//! Invariants:
+//!   Bundle-derived assets validate their hashes and column layouts before reaching the engine.
+//!
+//! Validation:
+//!   Reference-asset loader tests and the bundled optics validation helpers.
+
 const std = @import("std");
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const formats = @import("reference_assets_formats.zig");
 
+/// Purpose:
+///   Describe the supported hydrated asset kinds.
 pub const AssetKind = enum {
     climatology_profile,
     cross_section_table,
@@ -13,11 +35,18 @@ pub const AssetKind = enum {
     mie_phase_table,
 };
 
+/// Purpose:
+///   Describe an embedded asset blob keyed by manifest path.
 pub const EmbeddedAsset = struct {
     path: []const u8,
     contents: []const u8,
 };
 
+/// Purpose:
+///   Hold a fully hydrated and validated reference asset.
+///
+/// Physics:
+///   Preserve the manifest metadata, dataset identity, and numeric table rows used by the engine.
 pub const LoadedAsset = struct {
     kind: AssetKind,
     bundle_manifest_path: []const u8,
@@ -31,6 +60,11 @@ pub const LoadedAsset = struct {
     values: []f64,
     row_count: u32,
 
+    /// Purpose:
+    ///   Release all owned strings and numeric buffers for a loaded asset.
+    ///
+    /// Invariants:
+    ///   Every allocation in the asset must be freed exactly once before the struct is reused.
     pub fn deinit(self: *LoadedAsset, allocator: std.mem.Allocator) void {
         allocator.free(self.bundle_manifest_path);
         allocator.free(self.bundle_id);
@@ -45,14 +79,23 @@ pub const LoadedAsset = struct {
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Report how many numeric columns the asset contains.
     pub fn columnCount(self: LoadedAsset) usize {
         return self.column_names.len;
     }
 
+    /// Purpose:
+    ///   Read one numeric cell from the loaded table.
     pub fn value(self: LoadedAsset, row_index: usize, column_index: usize) f64 {
         return self.values[row_index * self.column_names.len + column_index];
     }
 
+    /// Purpose:
+    ///   Register the loaded asset with the engine caches.
+    ///
+    /// Physics:
+    ///   Publish the dataset hash and, for LUTs, the derived shape metadata.
     pub fn registerWithEngine(self: LoadedAsset, engine: anytype) !void {
         try engine.registerDatasetArtifact(self.dataset_id, self.dataset_hash);
         if (self.kind == .lookup_table) {
@@ -64,6 +107,11 @@ pub const LoadedAsset = struct {
         }
     }
 
+    /// Purpose:
+    ///   Materialize a climatology profile from the generic loaded table.
+    ///
+    /// Physics:
+    ///   Convert the table rows into typed atmospheric profile points.
     pub fn toClimatologyProfile(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.ClimatologyProfile {
         if (self.kind != .climatology_profile or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -88,6 +136,11 @@ pub const LoadedAsset = struct {
         return .{ .rows = rows };
     }
 
+    /// Purpose:
+    ///   Materialize a cross-section table from the generic loaded table.
+    ///
+    /// Physics:
+    ///   Convert wavelength and cross-section columns into typed interpolation points.
     pub fn toCrossSectionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CrossSectionTable {
         if (self.kind != .cross_section_table or self.columnCount() != 2) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -108,6 +161,11 @@ pub const LoadedAsset = struct {
         return .{ .points = points };
     }
 
+    /// Purpose:
+    ///   Materialize a CIA table from the generic loaded table.
+    ///
+    /// Physics:
+    ///   Convert the fixed CIA polynomial coefficients into typed absorption points.
     pub fn toCollisionInducedAbsorptionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CollisionInducedAbsorptionTable {
         if (self.kind != .collision_induced_absorption_table or self.columnCount() != 5) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -136,6 +194,12 @@ pub const LoadedAsset = struct {
         };
     }
 
+    /// Purpose:
+    ///   Materialize a spectroscopy line list from a HITRAN-style table.
+    ///
+    /// Physics:
+    ///   Preserve the line-center, width, energy, and mixing fields used by the spectroscopy
+    ///   kernels and their parity checks.
     pub fn toSpectroscopyLineList(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLineList {
         const extended_columns = [_][]const u8{
             "gas_index",
@@ -188,6 +252,11 @@ pub const LoadedAsset = struct {
         return .{ .lines = lines };
     }
 
+    /// Purpose:
+    ///   Materialize a strong-line sidecar table from the loaded asset.
+    ///
+    /// Physics:
+    ///   Preserve the LISA strong-line fields used by the O2A sidecar augmentation path.
     pub fn toSpectroscopyStrongLineSet(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyStrongLineSet {
         if (self.kind != .spectroscopy_strong_line_set or self.columnCount() != 12) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -228,6 +297,11 @@ pub const LoadedAsset = struct {
         return .{ .lines = lines };
     }
 
+    /// Purpose:
+    ///   Materialize a relaxation matrix from the loaded asset.
+    ///
+    /// Physics:
+    ///   Rebuild the square LISA sidecar matrix used by the strong-line relaxation path.
     pub fn toSpectroscopyRelaxationMatrix(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.RelaxationMatrix {
         if (self.kind != .spectroscopy_relaxation_matrix or self.columnCount() != 2) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -253,6 +327,8 @@ pub const LoadedAsset = struct {
         };
     }
 
+    /// Purpose:
+    ///   Materialize the airmass-factor LUT from the loaded asset.
     pub fn toAirmassFactorLut(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.AirmassFactorLut {
         if (self.kind != .lookup_table or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -277,6 +353,8 @@ pub const LoadedAsset = struct {
         return .{ .points = points };
     }
 
+    /// Purpose:
+    ///   Materialize the Mie phase table from the loaded asset.
     pub fn toMiePhaseTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.MiePhaseTable {
         if (self.kind != .mie_phase_table or self.columnCount() != 7) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -310,6 +388,11 @@ pub const LoadedAsset = struct {
     }
 };
 
+/// Purpose:
+///   Load a bundle asset by manifest path and asset id.
+///
+/// Physics:
+///   Verify the manifest and asset bytes before converting the payload into typed rows.
 pub fn loadBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -334,6 +417,8 @@ pub fn loadBundleAsset(
     return initLoadedAsset(allocator, kind, bundle_manifest_path, manifest, manifest_asset, asset_bytes);
 }
 
+/// Purpose:
+///   Load a CSV-backed bundle asset.
 pub fn loadCsvBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -343,6 +428,11 @@ pub fn loadCsvBundleAsset(
     return loadBundleAsset(allocator, kind, bundle_manifest_path, asset_id);
 }
 
+/// Purpose:
+///   Load and parse an externally supplied asset file.
+///
+/// Physics:
+///   Use the explicit file path and declared format instead of a bundle manifest.
 pub fn loadExternalAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -365,6 +455,9 @@ pub fn loadExternalAsset(
 
     return .{
         .kind = kind,
+        // DECISION:
+        //   External assets still carry manifest-style metadata so the engine can treat them like
+        //   other hydrated reference assets.
         .bundle_manifest_path = try allocator.dupe(u8, asset_path),
         .bundle_id = try allocator.dupe(u8, "external_asset"),
         .owner_package = try allocator.dupe(u8, "canonical_config"),
@@ -378,6 +471,8 @@ pub fn loadExternalAsset(
     };
 }
 
+/// Purpose:
+///   Load a bundle asset from embedded manifest and asset bytes.
 pub fn loadEmbeddedBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -401,6 +496,8 @@ pub fn loadEmbeddedBundleAsset(
 
 const ParsedTable = formats.ParsedTable;
 
+/// Purpose:
+///   Resolve the format-specific column contract for one asset kind.
 fn externalAssetSpec(kind: AssetKind, asset_format: []const u8) formats.AssetSpec {
     if (std.mem.eql(u8, asset_format, "profile_csv")) {
         return .{
@@ -537,6 +634,8 @@ fn externalAssetSpec(kind: AssetKind, asset_format: []const u8) formats.AssetSpe
     };
 }
 
+/// Purpose:
+///   Describe the bundle manifest shape used by the reference-asset loader.
 const BundleManifest = struct {
     version: u32,
     bundle_id: []const u8,
@@ -560,6 +659,8 @@ const BundleManifest = struct {
     };
 };
 
+/// Purpose:
+///   Find a manifest asset by id.
 fn findAsset(assets: []const BundleManifest.Asset, asset_id: []const u8) ?BundleManifest.Asset {
     for (assets) |asset| {
         if (std.mem.eql(u8, asset.id, asset_id)) return asset;
@@ -567,6 +668,8 @@ fn findAsset(assets: []const BundleManifest.Asset, asset_id: []const u8) ?Bundle
     return null;
 }
 
+/// Purpose:
+///   Find embedded asset bytes by manifest path.
 fn findEmbeddedAssetBytes(embedded_assets: []const EmbeddedAsset, path: []const u8) ?[]const u8 {
     for (embedded_assets) |asset| {
         if (std.mem.eql(u8, asset.path, path)) return asset.contents;
@@ -574,6 +677,11 @@ fn findEmbeddedAssetBytes(embedded_assets: []const EmbeddedAsset, path: []const 
     return null;
 }
 
+/// Purpose:
+///   Convert a manifest asset and raw bytes into a fully hydrated loaded asset.
+///
+/// Physics:
+///   Verify the dataset hash, parse the numeric payload, and attach the manifest provenance.
 fn initLoadedAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -585,6 +693,9 @@ fn initLoadedAsset(
     const dataset_hash = try renderSha256(allocator, asset_bytes);
     errdefer allocator.free(dataset_hash);
     if (!std.mem.eql(u8, dataset_hash, manifest_asset.sha256)) return error.HashMismatch;
+    // DECISION:
+    //   Hash validation happens before numeric parsing so broken assets fail fast at the
+    //   provenance boundary, not after partially materializing typed rows.
 
     const parsed_table = try formats.parseAssetTable(allocator, .{
         .format = manifest_asset.format,
@@ -629,6 +740,8 @@ fn initLoadedAsset(
     };
 }
 
+/// Purpose:
+///   Render the canonical dataset hash prefix used by the loader.
 fn renderSha256(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(contents, &digest, .{});
@@ -636,6 +749,8 @@ fn renderSha256(allocator: std.mem.Allocator, contents: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, "sha256:{s}", .{digest_hex[0..]});
 }
 
+/// Purpose:
+///   Verify that a parsed table's columns match the manifest contract.
 fn expectColumns(actual: []const []const u8, expected: []const []const u8) !void {
     if (actual.len != expected.len) return error.ColumnMismatch;
     for (actual, expected) |actual_name, expected_name| {
@@ -643,6 +758,8 @@ fn expectColumns(actual: []const []const u8, expected: []const []const u8) !void
     }
 }
 
+/// Purpose:
+///   Check that the number of rows forms a square matrix.
 fn inferSquareDimension(row_count: u32) !usize {
     const dimension_float = std.math.sqrt(@as(f64, @floatFromInt(row_count)));
     const dimension: usize = @intFromFloat(@round(dimension_float));

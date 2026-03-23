@@ -135,6 +135,12 @@ fn doDouble(
     }
 }
 
+/// Purpose:
+///   Build the layer reflection and transmission operators in place.
+///
+/// Physics:
+///   Turns each transport layer into its Fourier-specific single-scatter or
+///   doubled response on the LABOS grid.
 pub fn calcRTlayersInto(
     rt: []LayerRT,
     layers: []const common.LayerInput,
@@ -177,6 +183,9 @@ pub fn calcRTlayersInto(
         var ndouble: usize = 0;
 
         if (controls.scattering == .multiple and a_eff * b > controls.threshold_doubl) {
+            // DECISION:
+            //   Trigger doubling only when the scaled optical thickness crosses
+            //   the configured threshold.
             use_doubling = true;
             var bd = b;
             for (0..60) |_| {
@@ -204,6 +213,8 @@ pub fn calcRTlayersInto(
     }
 }
 
+/// Purpose:
+///   Build all layer reflection and transmission operators for one Fourier term.
 pub fn calcRTlayers(
     layers: []const common.LayerInput,
     i_fourier: usize,
@@ -215,6 +226,8 @@ pub fn calcRTlayers(
     return rt;
 }
 
+/// Purpose:
+///   Materialize the zero-Fourier surface Lambertian response.
 pub fn fillSurface(
     i_fourier: usize,
     albedo: f64,

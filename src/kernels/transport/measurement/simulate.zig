@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Materialize measurement-space radiance, irradiance, reflectance, and
+//!   optional Jacobian products from prepared transport input.
+//!
+//! Physics:
+//!   Runs the transport executor across the resolved spectral grid, applies
+//!   instrument integration and slit convolution, and reduces the results into
+//!   summary and product-level outputs.
+//!
+//! Vendor:
+//!   `measurement simulation` stage
+//!
+//! Design:
+//!   The transport executor is kept separate from the measurement reduction so
+//!   the same prepared state can feed summary and full-product materialization.
+//!
+//! Invariants:
+//!   The transport workspace must be shape-compatible with the scene's sample
+//!   count and the resolved transport layer count.
+//!
+//! Validation:
+//!   Measurement-space summary and product tests.
+
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
@@ -12,6 +35,24 @@ const Workspace = @import("workspace.zig");
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
 
+/// Purpose:
+///   Execute the transport solver across the scene spectral grid.
+///
+/// Physics:
+///   Materializes radiance, irradiance, reflectance, and optional Jacobian
+///   arrays after route-specific integration and calibration.
+///
+/// Inputs:
+///   `scene` defines the resolved spectral grid, `route` selects the transport
+///   family, `prepared` carries the optical state, and `buffers` provides the
+///   reusable scratch slices.
+///
+/// Outputs:
+///   Returns measurement-space summary statistics and fills the product
+///   buffers in place.
+///
+/// Validation:
+///   Measurement-space summary and product tests.
 pub fn simulate(
     allocator: Allocator,
     scene: *const Scene,
@@ -90,6 +131,9 @@ pub fn simulate(
         if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
     }
     if (uses_integrated_sampling) {
+        // DECISION:
+        //   Integrated sampling bypasses slit convolution because the
+        //   instrument already performed the spectral integration.
         @memcpy(buffers.radiance, buffers.scratch);
     } else {
         try convolution.apply(buffers.scratch, slit_kernel[0..], buffers.radiance);
@@ -160,6 +204,8 @@ pub fn simulate(
     };
 }
 
+/// Purpose:
+///   Materialize a summary-only measurement-space product.
 pub fn simulateSummary(
     allocator: Allocator,
     scene: *const Scene,
@@ -172,6 +218,8 @@ pub fn simulateSummary(
     return simulateSummaryWithWorkspace(allocator, &workspace, scene, route, prepared, providers);
 }
 
+/// Purpose:
+///   Materialize a summary-only measurement-space product with reusable buffers.
 pub fn simulateSummaryWithWorkspace(
     allocator: Allocator,
     workspace: *Workspace.SummaryWorkspace,
@@ -181,6 +229,9 @@ pub fn simulateSummaryWithWorkspace(
     providers: Types.ProviderBindings,
 ) Workspace.Error!Types.MeasurementSpaceSummary {
     var summary_scene = scene.*;
+    // GOTCHA:
+    //   Summary mode truncates very long spectral grids so it can stay
+    //   lightweight while preserving the full-product path for complete runs.
     if (summary_scene.spectral_grid.sample_count > max_summary_samples) {
         summary_scene.spectral_grid.sample_count = max_summary_samples;
     }
@@ -194,6 +245,8 @@ pub fn simulateSummaryWithWorkspace(
     );
 }
 
+/// Purpose:
+///   Materialize the full measurement-space product arrays.
 pub fn simulateProduct(
     allocator: Allocator,
     scene: *const Scene,

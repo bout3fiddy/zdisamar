@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Parse and normalize spectral ASCII metadata sidecars.
+//!
+//! Physics:
+//!   The metadata captures operational viewing geometry, instrument response,
+//!   and cross-section lookup data that accompany the measured spectra.
+//!
+//! Vendor:
+//!   Spectral ASCII metadata parsing and operational sidecar hydration.
+//!
+//! Design:
+//!   Keep the metadata builders separate from the main file parser so the
+//!   structured sidecars can be assembled incrementally from flat key-value
+//!   records.
+//!
+//! Invariants:
+//!   Operational LUT dimensions and wavelength indices must remain dense and
+//!   self-consistent once materialized.
+//!
+//! Validation:
+//!   Spectral ASCII ingest tests cover metadata parsing, LUT assembly, and
+//!   operational sidecar hydration.
+
 const std = @import("std");
 const InstrumentLineShape = @import("../../model/Instrument.zig").InstrumentLineShape;
 const InstrumentLineShapeTable = @import("../../model/Instrument.zig").InstrumentLineShapeTable;
@@ -263,26 +286,38 @@ pub const OperationalMetadata = struct {
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
 
+    /// Purpose:
+    ///   Report whether cloud metadata indicates cloud presence.
     pub fn hasClouds(self: OperationalMetadata) bool {
         return if (self.cloud_optical_thickness) |value| value > 0.0 else false;
     }
 
+    /// Purpose:
+    ///   Report whether aerosol metadata indicates aerosol presence.
     pub fn hasAerosols(self: OperationalMetadata) bool {
         return if (self.aerosol_optical_depth) |value| value > 0.0 else false;
     }
 
+    /// Purpose:
+    ///   Report whether the metadata includes an instrument line shape.
     pub fn hasInstrumentLineShape(self: OperationalMetadata) bool {
         return self.instrument_line_shape.sample_count > 0;
     }
 
+    /// Purpose:
+    ///   Report whether the metadata includes an instrument line-shape table.
     pub fn hasInstrumentLineShapeTable(self: OperationalMetadata) bool {
         return self.instrument_line_shape_table.nominal_count > 0 and self.instrument_line_shape_table.sample_count > 0;
     }
 
+    /// Purpose:
+    ///   Report whether either operational LUT sidecar is present.
     pub fn hasOperationalLuts(self: OperationalMetadata) bool {
         return self.o2_operational_lut.enabled() or self.o2o2_operational_lut.enabled();
     }
 
+    /// Purpose:
+    ///   Release any owned metadata sidecar buffers.
     pub fn deinitOwned(self: *OperationalMetadata, allocator: std.mem.Allocator) void {
         self.instrument_line_shape.deinitOwned(allocator);
         self.instrument_line_shape_table.deinitOwned(allocator);
@@ -301,6 +336,8 @@ pub const ParseState = struct {
     o2_operational_lut_builder: OperationalLutBuilder = .{},
     o2o2_operational_lut_builder: OperationalLutBuilder = .{},
 
+    /// Purpose:
+    ///   Release the parse state and any partially built sidecars.
     pub fn deinit(self: *ParseState, allocator: std.mem.Allocator) void {
         self.metadata.deinitOwned(allocator);
         self.operational_refspec_grid_builder.deinit(allocator);
@@ -310,6 +347,8 @@ pub const ParseState = struct {
         self.* = .{};
     }
 
+    /// Purpose:
+    ///   Parse one metadata line from the spectral ASCII sidecar.
     pub fn parseLine(self: *ParseState, allocator: std.mem.Allocator, line: []const u8) Error!void {
         var tokens = std.mem.tokenizeAny(u8, line, " \t");
         _ = tokens.next() orelse return Error.InvalidLine;
@@ -330,6 +369,8 @@ pub const ParseState = struct {
         );
     }
 
+    /// Purpose:
+    ///   Materialize the accumulated metadata into an owned record.
     pub fn intoOwned(self: *ParseState, allocator: std.mem.Allocator) !OperationalMetadata {
         self.metadata.operational_refspec_grid = try self.operational_refspec_grid_builder.intoOwned(allocator);
         errdefer self.metadata.operational_refspec_grid.deinitOwned(allocator);
@@ -486,6 +527,9 @@ fn parseOperationalLutField(
 ) Error!bool {
     if (!std.mem.startsWith(u8, key, prefix)) return false;
     const suffix = key[prefix.len..];
+    // PARITY:
+    //   O2 and O2-O2 LUT payloads share the same dense layout rules once the
+    //   vendor-specific prefix is stripped.
 
     if (std.mem.eql(u8, suffix, "npressure")) {
         if (value <= 0.0 or value != @floor(value)) return Error.InvalidLine;

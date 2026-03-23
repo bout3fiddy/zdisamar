@@ -1,3 +1,21 @@
+//! Purpose:
+//!   Store state vectors in a structure-of-arrays layout.
+//!
+//! Physics:
+//!   Keeps parameter names and values aligned for typed retrieval state handling.
+//!
+//! Vendor:
+//!   `state vector SoA`
+//!
+//! Design:
+//!   The layout exposes indexed reads and in-place scaling without hiding the parameter axis.
+//!
+//! Invariants:
+//!   Parameter names and values must match the declared axis length.
+//!
+//! Validation:
+//!   Tests cover indexed access and in-place scaling.
+
 const std = @import("std");
 const Axes = @import("Axes.zig");
 
@@ -6,11 +24,15 @@ pub const Error = error{
     IndexOutOfRange,
 } || Axes.Error;
 
+/// Purpose:
+///   Store a typed state vector in SoA form.
 pub const StateVectorSoA = struct {
     axis: Axes.StateAxis,
     parameter_names: []const []const u8,
     values: []f64,
 
+    /// Purpose:
+    ///   Construct a state-vector SoA after validating shape alignment.
     pub fn init(
         axis: Axes.StateAxis,
         parameter_names: []const []const u8,
@@ -28,11 +50,15 @@ pub const StateVectorSoA = struct {
         };
     }
 
+    /// Purpose:
+    ///   Read a state-vector value by axis index.
     pub fn value(self: StateVectorSoA, index: u32) Error!f64 {
         if (index >= self.axis.parameter_count) return Error.IndexOutOfRange;
         return self.values[index];
     }
 
+    /// Purpose:
+    ///   Scale all state-vector values in place.
     pub fn scale(self: StateVectorSoA, factor: f64) void {
         for (self.values) |*entry| {
             entry.* *= factor;

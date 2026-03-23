@@ -1,12 +1,40 @@
+//! Purpose:
+//!   Share small dense indexing and direct-solve helpers across linear-algebra kernels.
+//!
+//! Physics:
+//!   Operates on tiny row-major matrices used by the spectral fitting and inversion code paths.
+//!
+//! Vendor:
+//!   `small dense linear algebra`
+//!
+//! Design:
+//!   These helpers stay low-level and allocation-free so callers can reuse them in hot loops and tests.
+//!
+//! Invariants:
+//!   Matrix slices are row-major and square whenever a dimension argument is supplied.
+//!
+//! Validation:
+//!   Tests cover indexing, identity construction, traces, and direct 2x2/3x3 solves.
+
 pub const Error = error{
     SingularMatrix,
     ShapeMismatch,
 };
 
+/// Purpose:
+///   Convert a row and column into a row-major linear index.
+///
+/// Physics:
+///   Preserves the storage layout used by the other small dense kernels.
 pub fn index(row: usize, column: usize, column_count: usize) usize {
     return row * column_count + column;
 }
 
+/// Purpose:
+///   Write an identity matrix into a row-major dense buffer.
+///
+/// Physics:
+///   Produces the canonical unit matrix used as a baseline in small-system tests.
 pub fn setIdentity(matrix: []f64, dimension: usize) Error!void {
     if (matrix.len != dimension * dimension) return Error.ShapeMismatch;
     @memset(matrix, 0.0);
@@ -15,6 +43,11 @@ pub fn setIdentity(matrix: []f64, dimension: usize) Error!void {
     }
 }
 
+/// Purpose:
+///   Compute the trace of a square dense matrix.
+///
+/// Physics:
+///   Sums the diagonal entries of a row-major matrix.
 pub fn trace(matrix: []const f64, dimension: usize) Error!f64 {
     if (matrix.len != dimension * dimension) return Error.ShapeMismatch;
     var total: f64 = 0.0;
@@ -24,6 +57,11 @@ pub fn trace(matrix: []const f64, dimension: usize) Error!f64 {
     return total;
 }
 
+/// Purpose:
+///   Solve a 2x2 dense linear system analytically.
+///
+/// Physics:
+///   Uses a closed-form determinant-based solution for a tiny system.
 pub fn solve2x2(matrix: [2][2]f64, rhs: [2]f64) Error![2]f64 {
     const det = matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
     if (@abs(det) < 1e-12) return Error.SingularMatrix;
@@ -34,6 +72,11 @@ pub fn solve2x2(matrix: [2][2]f64, rhs: [2]f64) Error![2]f64 {
     };
 }
 
+/// Purpose:
+///   Solve a 3x3 dense linear system with partial pivoting.
+///
+/// Physics:
+///   Applies elimination with row swaps to avoid zero or tiny pivots.
 pub fn solve3x3(matrix: [3][3]f64, rhs: [3]f64) Error![3]f64 {
     var a = matrix;
     var b = rhs;

@@ -1,3 +1,28 @@
+//! Purpose:
+//!   Compile canonical configuration documents into executable engine
+//!   programs.
+//!
+//! Physics:
+//!   This adapter wires typed experiment stages into the engine, then runs
+//!   them to produce result objects and exports without altering the
+//!   scientific meaning of the configured scenes.
+//!
+//! Vendor:
+//!   Canonical execution / stage compilation adapter surface.
+//!
+//! Design:
+//!   Separate program compilation from execution so stage validation and
+//!   runtime binding happen before the engine is invoked.
+//!
+//! Invariants:
+//!   Stage products must remain unique, retrieval stages must have valid
+//!   bindings, and execution output targets must resolve to registered
+//!   products.
+//!
+//! Validation:
+//!   Canonical execution tests cover stage compilation, binding resolution,
+//!   and export generation.
+
 const std = @import("std");
 const core_errors = @import("../../core/errors.zig");
 const Engine = @import("../../core/Engine.zig").Engine;
@@ -71,6 +96,8 @@ pub const ExecutionOutcome = struct {
     stage_outcomes: []StageOutcome,
     outputs: []ExecutedOutput,
 
+    /// Purpose:
+    ///   Release the owned stage outcomes and exporter reports.
     pub fn deinit(self: *ExecutionOutcome) void {
         for (self.stage_outcomes) |*stage_outcome| {
             stage_outcome.result.deinit(self.allocator);
@@ -80,6 +107,8 @@ pub const ExecutionOutcome = struct {
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Return the result for a stage kind if it was executed.
     pub fn stageResult(self: *const ExecutionOutcome, kind: StageKind) ?*const Result {
         for (self.stage_outcomes) |*stage_outcome| {
             if (stage_outcome.kind == kind) return &stage_outcome.result;
@@ -95,6 +124,8 @@ pub const ExecutionProgram = struct {
     products: []ProductRef,
     outputs: []ExportJob,
 
+    /// Purpose:
+    ///   Compile a resolved experiment into an execution program.
     pub fn init(allocator: Allocator, experiment: *ResolvedExperiment) !ExecutionProgram {
         var stage_count: usize = 0;
         if (experiment.simulation != null) stage_count += 1;
@@ -112,7 +143,9 @@ pub const ExecutionProgram = struct {
         const outputs = try allocator.alloc(ExportJob, experiment.outputs.len);
         errdefer allocator.free(outputs);
 
-        // Gate: reject configs with unsupported vendor controls before compiling stages.
+        // DECISION:
+        //   Reject unsupported vendor controls before stage compilation so the
+        //   runtime never sees a partially accepted experiment.
         try validateVendorControls(experiment);
 
         var stage_index: usize = 0;
@@ -192,6 +225,8 @@ pub const ExecutionProgram = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release the compiled stage plan and experiment ownership.
     pub fn deinit(self: *ExecutionProgram) void {
         for (self.stages) |stage| {
             if (stage.product_requests.len != 0) self.allocator.free(stage.product_requests);
@@ -203,6 +238,9 @@ pub const ExecutionProgram = struct {
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Execute the compiled program against the engine and return stage and
+    ///   export outcomes.
     pub fn execute(self: *const ExecutionProgram, allocator: Allocator, engine: *Engine) !ExecutionOutcome {
         const workspace_label = if (self.experiment.metadata.workspace.len != 0)
             self.experiment.metadata.workspace
@@ -322,10 +360,14 @@ pub const ExecutionProgram = struct {
     }
 };
 
+/// Purpose:
+///   Compile a resolved experiment without executing it.
 pub fn compileResolved(allocator: Allocator, experiment: *ResolvedExperiment) !ExecutionProgram {
     return ExecutionProgram.init(allocator, experiment);
 }
 
+/// Purpose:
+///   Resolve a canonical document, compile it, and execute it in one step.
 pub fn resolveCompileAndExecute(
     allocator: Allocator,
     engine: *Engine,

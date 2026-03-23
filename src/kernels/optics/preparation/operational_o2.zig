@@ -1,6 +1,30 @@
+//! Purpose:
+//!   Provide the operational O2 cross-section evaluation hook used during
+//!   optics preparation.
+//!
+//! Physics:
+//!   Converts the operational O2 lookup table into the spectroscopy evaluation
+//!   shape expected by the transport kernels.
+//!
+//! Vendor:
+//!   `operational O2` lookup path
+//!
+//! Design:
+//!   Keeps the operational O2 shortcut isolated so the generic spectroscopy
+//!   path stays unchanged when the lookup is disabled.
+//!
+//! Invariants:
+//!   The O2 lookup must populate the same spectroscopy fields as the generic
+//!   evaluation path.
+//!
+//! Validation:
+//!   Optics-preparation transport tests.
+
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;
 
+/// Purpose:
+///   Evaluate the operational O2 lookup at one wavelength and state.
 pub fn operationalO2EvaluationAtWavelength(
     operational_o2_lut: OperationalCrossSectionLut,
     wavelength_nm: f64,

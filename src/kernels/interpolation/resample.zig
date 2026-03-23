@@ -1,12 +1,40 @@
+//! Purpose:
+//!   Resample spectral values onto a target wavelength grid with selectable interpolation methods.
+//!
+//! Physics:
+//!   Rebuilds spectra on a new coordinate basis using either linear or spline interpolation.
+//!
+//! Vendor:
+//!   `spectral resampling`
+//!
+//! Design:
+//!   The spline path reuses the uniform-axis coordinates once so the interpolation loop stays explicit.
+//!
+//! Invariants:
+//!   Target and output lengths must match, and the spline path is limited by the fixed scratch size of the spline helper.
+//!
+//! Validation:
+//!   Tests cover both linear and spline resampling on the same axis.
+
 const linear = @import("linear.zig");
 const spline = @import("spline.zig");
 const layout = @import("model_layout");
 
+/// Purpose:
+///   Select the interpolation method for resampling.
 pub const Method = enum {
     linear,
     spline,
 };
 
+/// Purpose:
+///   Resample a uniform spectrum onto a new set of target wavelengths.
+///
+/// Physics:
+///   Chooses linear or spline interpolation to evaluate the source spectrum on the target axis.
+///
+/// Vendor:
+///   `spectral resample`
 pub fn resampleUniform(
     axis: layout.Axes.SpectralAxis,
     values: []const f64,

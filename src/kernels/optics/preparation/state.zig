@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Define the prepared optical-state carriers produced by optics
+//!   preparation.
+//!
+//! Physics:
+//!   Stores layer, sublayer, spectroscopy, and optical-depth breakdown data
+//!   that feed transport execution and measurement-space evaluation.
+//!
+//! Vendor:
+//!   `optics preparation state`
+//!
+//! Design:
+//!   Keeps the prepared state typed and reusable so transport execution does
+//!   not rebuild scientific intermediates on every sample.
+//!
+//! Invariants:
+//!   Prepared layers, sublayers, and sidecar arrays must stay aligned with the
+//!   scene grid and any optional strong-line state.
+//!
+//! Validation:
+//!   Optics-preparation transport tests and measurement-space tests.
+
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
@@ -14,12 +36,14 @@ const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const oxygen_volume_mixing_ratio = 0.2095;
 const centimeters_per_kilometer = 1.0e5;
 
+/// Active line absorber resolved from the scene's absorber set.
 pub const ActiveLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     controls: AbsorberModel.LineGasControls,
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
 };
 
+/// Prepared line absorber with runtime controls and stored number densities.
 pub const PreparedLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -29,6 +53,8 @@ pub const PreparedLineAbsorber = struct {
     strong_line_state_count: usize = 0,
     column_density_factor: f64 = 0.0,
 
+    /// Purpose:
+    ///   Release the owned line-list and sidecar buffers.
     pub fn deinit(self: *PreparedLineAbsorber, allocator: Allocator) void {
         self.line_list.deinit(allocator);
         allocator.free(self.number_densities_cm3);
@@ -48,6 +74,7 @@ pub const PreparedLineAbsorber = struct {
     }
 };
 
+/// Prepared layer state on the transport grid.
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,
@@ -70,6 +97,7 @@ pub const PreparedLayer = struct {
     optical_depth: f64,
 };
 
+/// Prepared sublayer state on the fine transport grid.
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
     sublayer_index: u32,
@@ -101,6 +129,7 @@ pub const PreparedSublayer = struct {
     combined_phase_coefficients: [phase_coefficient_count]f64,
 };
 
+/// Accumulated optical-depth contributions for one transport layer.
 pub const OpticalDepthBreakdown = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,
@@ -135,6 +164,7 @@ pub const OpticalDepthBreakdown = struct {
     }
 };
 
+/// Evaluated layer state used to derive transport layer inputs.
 pub const EvaluatedLayer = struct {
     breakdown: OpticalDepthBreakdown = .{},
     phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.gasPhaseCoefficients(),
@@ -142,6 +172,7 @@ pub const EvaluatedLayer = struct {
     view_mu: f64 = 1.0,
 };
 
+/// Prepared optical state consumed by transport and measurement evaluation.
 pub const PreparedOpticalState = struct {
     layers: []PreparedLayer,
     sublayers: ?[]PreparedSublayer = null,
@@ -179,6 +210,8 @@ pub const PreparedOpticalState = struct {
     depolarization_factor: f64,
     total_optical_depth: f64,
 
+    /// Purpose:
+    ///   Release the prepared optical state and all owned substructures.
     pub fn deinit(self: *PreparedOpticalState, allocator: Allocator) void {
         allocator.free(self.layers);
         if (self.sublayers) |sublayers| allocator.free(sublayers);
@@ -205,15 +238,22 @@ pub const PreparedOpticalState = struct {
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Report the resolved transport layer count for this prepared state.
     pub fn transportLayerCount(self: *const PreparedOpticalState) usize {
         if (self.sublayers) |sublayers| return sublayers.len;
         return self.layers.len;
     }
 
+    /// Purpose:
+    ///   Convert the prepared state into a forward-input carrier.
     pub fn toForwardInput(self: *const PreparedOpticalState, scene: *const Scene) transport_common.ForwardInput {
         return @import("transport.zig").toForwardInput(self, scene);
     }
 
+    /// Purpose:
+    ///   Convert the prepared state into a forward-input carrier with explicit
+    ///   layer inputs.
     pub fn toForwardInputWithLayers(
         self: *const PreparedOpticalState,
         scene: *const Scene,
@@ -222,6 +262,8 @@ pub const PreparedOpticalState = struct {
         return @import("transport.zig").toForwardInputWithLayers(self, scene, layer_inputs);
     }
 
+    /// Purpose:
+    ///   Convert the prepared state into a wavelength-specific forward input.
     pub fn toForwardInputAtWavelength(
         self: *const PreparedOpticalState,
         scene: *const Scene,
@@ -230,6 +272,9 @@ pub const PreparedOpticalState = struct {
         return @import("transport.zig").toForwardInputAtWavelength(self, scene, wavelength_nm);
     }
 
+    /// Purpose:
+    ///   Convert the prepared state into a wavelength-specific forward input
+    ///   with explicit layer inputs.
     pub fn toForwardInputAtWavelengthWithLayers(
         self: *const PreparedOpticalState,
         scene: *const Scene,
@@ -244,6 +289,8 @@ pub const PreparedOpticalState = struct {
         );
     }
 
+    /// Purpose:
+    ///   Materialize transport layer inputs at one wavelength.
     pub fn fillForwardLayersAtWavelength(
         self: *const PreparedOpticalState,
         scene: *const Scene,
@@ -258,6 +305,8 @@ pub const PreparedOpticalState = struct {
         );
     }
 
+    /// Purpose:
+    ///   Materialize source-interface carriers at one wavelength.
     pub fn fillSourceInterfacesAtWavelengthWithLayers(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
@@ -272,6 +321,8 @@ pub const PreparedOpticalState = struct {
         );
     }
 
+    /// Purpose:
+    ///   Materialize RTM quadrature carriers at one wavelength.
     pub fn fillRtmQuadratureAtWavelengthWithLayers(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
@@ -286,6 +337,8 @@ pub const PreparedOpticalState = struct {
         );
     }
 
+    /// Purpose:
+    ///   Materialize the pseudo-spherical grid at one wavelength.
     pub fn fillPseudoSphericalGridAtWavelength(
         self: *const PreparedOpticalState,
         scene: *const Scene,

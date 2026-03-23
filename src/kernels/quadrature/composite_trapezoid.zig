@@ -1,3 +1,21 @@
+//! Purpose:
+//!   Integrate uniformly sampled spectra with the composite trapezoid rule.
+//!
+//! Physics:
+//!   Approximates the integral of a uniformly spaced spectral profile.
+//!
+//! Vendor:
+//!   `composite trapezoid`
+//!
+//! Design:
+//!   The implementation uses the axis type so the sample spacing is derived from the validated layout contract.
+//!
+//! Invariants:
+//!   The values slice must match the axis sample count and the axis must be monotonic.
+//!
+//! Validation:
+//!   Tests cover a linear profile whose trapezoid integral is exact.
+
 const std = @import("std");
 const layout = @import("model_layout");
 
@@ -5,6 +23,14 @@ pub const Error = error{
     ShapeMismatch,
 } || layout.Axes.Error;
 
+/// Purpose:
+///   Integrate a uniformly sampled spectral profile using the trapezoid rule.
+///
+/// Physics:
+///   Returns the approximate area under the spectrum in the same units as `values * nanometers`.
+///
+/// Vendor:
+///   `uniform trapezoid integration`
 pub fn integrateUniform(axis: layout.Axes.SpectralAxis, values: []const f64) Error!f64 {
     try axis.validate();
     if (values.len != axis.sample_count) return Error.ShapeMismatch;

@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Own the reusable measurement-space buffers and capacity planning.
+//!
+//! Physics:
+//!   Allocates the transport, pseudo-spherical, quadrature, and optional
+//!   derivative buffers required to materialize measurement-space outputs.
+//!
+//! Vendor:
+//!   `measurement workspace`
+//!
+//! Design:
+//!   Reuses typed buffers across sweeps instead of rebuilding them for every
+//!   spectral sample.
+//!
+//! Invariants:
+//!   Buffer shapes must match the scene sample count and the resolved transport
+//!   layer count.
+//!
+//! Validation:
+//!   Measurement-space workspace tests and transport integration suites.
+
 const std = @import("std");
 const core_errors = @import("../../../core/errors.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
@@ -38,6 +59,7 @@ pub const Buffers = struct {
     noise_sigma: ?[]f64 = null,
 };
 
+/// Reusable measurement-space workspace that owns the backing storage.
 pub const SummaryWorkspace = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -54,6 +76,8 @@ pub const SummaryWorkspace = struct {
     jacobian: []f64 = &.{},
     noise_sigma: []f64 = &.{},
 
+    /// Purpose:
+    ///   Release every owned buffer held by the measurement workspace.
     pub fn deinit(self: *SummaryWorkspace, allocator: Allocator) void {
         freeBuffer(allocator, self.wavelengths);
         freeBuffer(allocator, self.radiance);
@@ -72,6 +96,12 @@ pub const SummaryWorkspace = struct {
         self.* = .{};
     }
 
+    /// Purpose:
+    ///   Materialize the live slices used by one measurement-space sweep.
+    ///
+    /// Physics:
+    ///   Resizes the reusable buffers to the scene and route shapes without
+    ///   changing the solver-side transport contract.
     pub fn buffers(
         self: *SummaryWorkspace,
         allocator: Allocator,
@@ -123,22 +153,30 @@ pub const SummaryWorkspace = struct {
     }
 };
 
+/// Purpose:
+///   Estimate the transport-layer count needed for one measurement sweep.
 pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
     _ = route;
     const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
     return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
+/// Purpose:
+///   Estimate the pseudo-spherical sample count needed for one sweep.
 pub fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usize {
     const layer_count = transportLayerCountHint(scene, route);
     return layer_count * pseudoSphericalSubgridDivisions(scene);
 }
 
+/// Purpose:
+///   Resolve the transport layer count from the prepared optical state.
 pub fn resolvedTransportLayerCount(route: common.Route, prepared: *const OpticsPreparation.PreparedOpticalState) usize {
     _ = route;
     return prepared.transportLayerCount();
 }
 
+/// Purpose:
+///   Resolve the pseudo-spherical sample count from the prepared optical state.
 pub fn resolvedPseudoSphericalSampleCount(
     scene: *const Scene,
     route: common.Route,
@@ -152,6 +190,9 @@ fn pseudoSphericalSubgridDivisions(scene: *const Scene) usize {
 }
 
 pub fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
+    // INVARIANT:
+    //   The summary buffers, transport-layer buffers, and quadrature carriers
+    //   must stay shape-compatible for a single sweep.
     if (sample_count == 0 or
         buffers.wavelengths.len != sample_count or
         buffers.radiance.len != sample_count or
@@ -233,6 +274,8 @@ fn ensureIndexBufferCapacity(allocator: Allocator, buffer: *[]usize, capacity: u
     buffer.* = replacement;
 }
 
+/// Purpose:
+///   Release the standalone buffer slice if it owns storage.
 fn freeBuffer(allocator: Allocator, buffer: []f64) void {
     if (buffer.len != 0) allocator.free(buffer);
 }

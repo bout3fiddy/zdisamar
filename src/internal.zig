@@ -1,3 +1,4 @@
+//! Internal test-support re-exports for the repository's white-box test suites.
 const zdisamar = @import("zdisamar");
 
 pub const runtime = zdisamar.test_support.runtime;

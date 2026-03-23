@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Assemble retrieval prior mean and covariance terms in solver space.
+//!
+//! Physics:
+//!   Priors define the regularization state of the retrieval, including the
+//!   solver-space mean and the dense covariance matrix used in the Bayesian
+//!   penalty term.
+//!
+//! Vendor:
+//!   Prior-mean transformation and covariance assembly in retrieval setup.
+//!
+//! Design:
+//!   Build the prior mean once in solver space and keep the covariance
+//!   explicit so the linear algebra helpers can invert it deterministically.
+//!
+//! Invariants:
+//!   The prior dimension must match the state-vector length and the resulting
+//!   covariance must remain positive definite.
+//!
+//! Validation:
+//!   Retrieval prior assembly tests cover correlated covariance construction
+//!   and inversion.
+
 const std = @import("std");
 const dense = @import("../../kernels/linalg/small_dense.zig");
 const cholesky = @import("../../kernels/linalg/cholesky.zig");
@@ -9,6 +32,8 @@ pub const Assembly = struct {
     covariance: []f64,
     inverse_covariance: []f64,
 
+    /// Purpose:
+    ///   Release the owned prior buffers.
     pub fn deinit(self: *Assembly, allocator: std.mem.Allocator) void {
         if (self.mean_solver.len != 0) allocator.free(self.mean_solver);
         if (self.covariance.len != 0) allocator.free(self.covariance);
@@ -17,6 +42,13 @@ pub const Assembly = struct {
     }
 };
 
+/// Purpose:
+///   Assemble the prior mean, covariance, and inverse covariance for a
+///   retrieval problem.
+///
+/// Units:
+///   Prior sigmas are interpreted in physical parameter units before the
+///   solver-space transform is applied to the mean.
 pub fn assemble(allocator: std.mem.Allocator, problem: common.RetrievalProblem) common.Error!Assembly {
     const parameters = problem.inverse_problem.state_vector.parameters;
     if (parameters.len == 0) return common.Error.InvalidRequest;

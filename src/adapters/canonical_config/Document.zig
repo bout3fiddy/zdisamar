@@ -1,3 +1,27 @@
+//! Purpose:
+//!   Decode canonical YAML documents into typed plan, scene, and execution
+//!   records.
+//!
+//! Physics:
+//!   The document adapter maps vendor-style configuration into typed runtime
+//!   controls without changing the underlying radiative-transfer semantics.
+//!
+//! Vendor:
+//!   Canonical document resolution and typed vendor-config mapping.
+//!
+//! Design:
+//!   Keep parsing, validation, and resolution in one module so the adapter can
+//!   preserve provenance and source-path ownership through the entire import
+//!   pipeline.
+//!
+//! Invariants:
+//!   Canonical documents must preserve source ownership, and resolved stages
+//!   must stay consistent with their plan templates and scene blueprints.
+//!
+//! Validation:
+//!   Canonical config tests cover document parsing, path resolution, and
+//!   stage compilation.
+
 const std = @import("std");
 const yaml = @import("yaml.zig");
 const fields = @import("document_fields.zig");
@@ -449,6 +473,9 @@ pub const Document = struct {
     source_bytes: []const u8,
     root: yaml.Value,
 
+    /// Purpose:
+    ///   Parse a canonical YAML document from disk and retain owned source
+    ///   metadata.
     pub fn parseFile(allocator: Allocator, path: []const u8) !Document {
         const arena_state = try allocator.create(std.heap.ArenaAllocator);
         errdefer allocator.destroy(arena_state);
@@ -473,6 +500,8 @@ pub const Document = struct {
         };
     }
 
+    /// Purpose:
+    ///   Parse a canonical YAML document from an in-memory buffer.
     pub fn parse(allocator: Allocator, source_name: []const u8, base_dir: []const u8, source_bytes: []const u8) !Document {
         const arena_state = try allocator.create(std.heap.ArenaAllocator);
         errdefer allocator.destroy(arena_state);
@@ -493,12 +522,16 @@ pub const Document = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release the arena-backed document state.
     pub fn deinit(self: *Document) void {
         self.arena_state.deinit();
         self.owner_allocator.destroy(self.arena_state);
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Resolve the parsed document into a typed experiment.
     pub fn resolve(self: *const Document, allocator: Allocator) !*ResolvedExperiment {
         const resolved = try allocator.create(ResolvedExperiment);
         errdefer allocator.destroy(resolved);
@@ -618,6 +651,8 @@ pub const ResolvedExperiment = struct {
     }
 };
 
+/// Purpose:
+///   Parse and resolve a canonical experiment file from disk.
 pub fn resolveFile(allocator: Allocator, path: []const u8) !*ResolvedExperiment {
     var document = try Document.parseFile(allocator, path);
     defer document.deinit();

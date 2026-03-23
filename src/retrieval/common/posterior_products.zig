@@ -22,6 +22,9 @@
 const common = @import("contracts.zig");
 const dense = @import("../../kernels/linalg/small_dense.zig");
 
+/// Purpose:
+///   Multiply posterior covariance by the measurement normal matrix to form
+///   the averaging kernel.
 pub fn buildAveragingKernel(
     posterior_covariance: []const f64,
     measurement_normal: []const f64,
