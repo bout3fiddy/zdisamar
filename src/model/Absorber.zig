@@ -77,7 +77,7 @@ pub const LineGasControls = struct {
         return switch (self.active_stage) {
             .simulation => self.isotopes_sim,
             .retrieval => self.isotopes_retr,
-            .none => &.{},
+            .none => if (self.isotopes_sim.len != 0) self.isotopes_sim else self.isotopes_retr,
         };
     }
 
@@ -85,7 +85,7 @@ pub const LineGasControls = struct {
         return switch (self.active_stage) {
             .simulation => self.threshold_line_sim,
             .retrieval => self.threshold_line_retr,
-            .none => null,
+            .none => self.threshold_line_sim orelse self.threshold_line_retr,
         };
     }
 
@@ -93,7 +93,7 @@ pub const LineGasControls = struct {
         return switch (self.active_stage) {
             .simulation => self.cutoff_sim_cm1,
             .retrieval => self.cutoff_retr_cm1,
-            .none => null,
+            .none => self.cutoff_sim_cm1 orelse self.cutoff_retr_cm1,
         };
     }
 
@@ -374,6 +374,8 @@ fn validateIsotopeSelection(isotopes: []const u8) errors.Error!void {
 }
 
 fn validateVolumeMixingRatioProfile(profile_ppmv: []const [2]f64) errors.Error!void {
+    var previous_pressure_hpa: ?f64 = null;
+    var descending: ?bool = null;
     for (profile_ppmv) |entry| {
         if (!std.math.isFinite(entry[0]) or !std.math.isFinite(entry[1])) {
             return errors.Error.InvalidRequest;
@@ -381,6 +383,16 @@ fn validateVolumeMixingRatioProfile(profile_ppmv: []const [2]f64) errors.Error!v
         if (entry[0] <= 0.0 or entry[1] < 0.0) {
             return errors.Error.InvalidRequest;
         }
+        if (previous_pressure_hpa) |previous| {
+            if (entry[0] == previous) return errors.Error.InvalidRequest;
+            const entry_descending = entry[0] < previous;
+            if (descending) |expected_descending| {
+                if (entry_descending != expected_descending) return errors.Error.InvalidRequest;
+            } else {
+                descending = entry_descending;
+            }
+        }
+        previous_pressure_hpa = entry[0];
     }
 }
 
@@ -408,6 +420,19 @@ test "line-gas controls validate stage-specific isotope and cutoff selections" {
         &.{ 1, 2 },
         (LineGasControls{ .isotopes_retr = &.{ 1, 2 }, .active_stage = .retrieval }).activeIsotopes(),
     );
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 2, 4 },
+        (LineGasControls{ .isotopes_sim = &.{ 2, 4 } }).activeIsotopes(),
+    );
+    try std.testing.expectEqual(
+        @as(?f64, 0.05),
+        (LineGasControls{ .threshold_line_sim = 0.05 }).activeThresholdLine(),
+    );
+    try std.testing.expectEqual(
+        @as(?f64, 12.0),
+        (LineGasControls{ .cutoff_sim_cm1 = 12.0 }).activeCutoffCm1(),
+    );
 
     try std.testing.expectError(
         errors.Error.InvalidRequest,
@@ -416,5 +441,34 @@ test "line-gas controls validate stage-specific isotope and cutoff selections" {
     try std.testing.expectError(
         errors.Error.InvalidRequest,
         (LineGasControls{ .cutoff_retr_cm1 = 0.0 }).validate(),
+    );
+}
+
+test "volume mixing ratio profiles must be strictly monotonic in pressure" {
+    try validateVolumeMixingRatioProfile(&.{
+        .{ 1000.0, 400.0 },
+        .{ 700.0, 250.0 },
+        .{ 430.0, 200.0 },
+    });
+    try validateVolumeMixingRatioProfile(&.{
+        .{ 430.0, 200.0 },
+        .{ 700.0, 250.0 },
+        .{ 1000.0, 400.0 },
+    });
+
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        validateVolumeMixingRatioProfile(&.{
+            .{ 1000.0, 400.0 },
+            .{ 430.0, 200.0 },
+            .{ 700.0, 250.0 },
+        }),
+    );
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        validateVolumeMixingRatioProfile(&.{
+            .{ 1000.0, 400.0 },
+            .{ 1000.0, 350.0 },
+        }),
     );
 }
