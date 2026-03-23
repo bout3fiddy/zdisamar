@@ -2112,11 +2112,21 @@ pub fn prepareWithParticleTables(
                 };
             };
             const o2_density_cm3 = density * oxygen_mixing_ratio;
+            const continuum_density_cm3 = if (owned_line_absorbers.len != 0) blk: {
+                const owner_species = continuum_owner_species orelse break :blk 0.0;
+                if (operational_o2_lut.enabled() and owner_species == .o2) break :blk o2_density_cm3;
+                for (owned_line_absorbers) |line_absorber| {
+                    if (line_absorber.species != owner_species) continue;
+                    break :blk line_absorber.number_densities_cm3[sublayer_write_index];
+                }
+                break :blk 0.0;
+            } else absorber_density_cm3;
             const sublayer_path_length_cm = layer_span_km * centimeters_per_kilometer * sublayer_weight;
             const gas_column_density_cm2 = absorber_density_cm3 * sublayer_path_length_cm;
+            const continuum_column_density_cm2 = continuum_density_cm3 * sublayer_path_length_cm;
             const molecular_gas_optical_depth =
-                (midpoint_continuum_sigma + spectroscopy_eval.total_sigma_cm2_per_molecule) *
-                gas_column_density_cm2;
+                midpoint_continuum_sigma * continuum_column_density_cm2 +
+                spectroscopy_eval.total_sigma_cm2_per_molecule * gas_column_density_cm2;
             const cia_sigma_cm5_per_molecule2 = if (operational_o2o2_lut.enabled())
                 operational_o2o2_lut.sigmaAt(midpoint_nm, temperature, pressure)
             else if (collision_induced_absorption) |cia_table|

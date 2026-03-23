@@ -1200,6 +1200,25 @@ test "operational O2 LUT keeps continuum scoped to oxygen in mixed-gas preparati
         line_prepared.totalOpticalDepthAtWavelength(761.0),
         1.0e-12,
     );
+    try std.testing.expectApproxEqAbs(
+        base_prepared.gas_optical_depth,
+        line_prepared.gas_optical_depth,
+        1.0e-12,
+    );
+    for (base_prepared.layers, line_prepared.layers) |base_layer, line_layer| {
+        try std.testing.expectApproxEqAbs(
+            base_layer.gas_optical_depth,
+            line_layer.gas_optical_depth,
+            1.0e-12,
+        );
+    }
+    for (base_prepared.sublayers.?, line_prepared.sublayers.?) |base_sublayer, line_sublayer| {
+        try std.testing.expectApproxEqAbs(
+            base_sublayer.gas_absorption_optical_depth,
+            line_sublayer.gas_absorption_optical_depth,
+            1.0e-12,
+        );
+    }
 }
 
 test "optical preparation materializes RTM-style gas sublayers with stable parent aggregation" {
