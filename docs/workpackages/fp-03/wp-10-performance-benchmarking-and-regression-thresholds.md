@@ -3,7 +3,7 @@
 ## Metadata
 
 - Created: 2026-03-18
-- Scope: add performance baselines and regression thresholds for the scientifically correct direct and LUT-backed execution paths
+- Scope: add performance baselines, regression thresholds, and a shared execution-telemetry substrate for the scientifically correct direct and LUT-backed execution paths
 - Input sources:
   - vendor runtime structure in `DISAMARModule.f90`
   - vendor heavy-path modules such as `radianceIrradianceModule.f90`, `LabosModule.f90`, `addingToolsModule.f90`, `propAtmosphere.f90`
@@ -23,6 +23,7 @@ Scientific correctness comes first, but the final system also needs predictable 
 - Measure the cost of the major execution stages on representative parity cases.
 - Catch performance regressions without encouraging premature optimization.
 - Distinguish direct, LUT-backed, and measured-input execution costs.
+- Introduce a reusable execution-telemetry substrate at the core and runtime boundary instead of package-local timing or logging hooks.
 
 ## Non-goals
 
@@ -37,24 +38,26 @@ The repo has some perf scaffolding, but there is not yet a parity-aware performa
 
 Needs:
 - case-family benchmarks
+- shared execution telemetry at the core/runtime boundary
 - stage-level timing breakdowns
 - regression thresholds linked to validated modes
 - clear separation of direct vs LUT-backed vs measured-input costs
 
 How:
 1. Use the validation case matrix as the source of benchmark scenarios.
-2. Time HR grid setup, optics preparation, transport, instrument convolution, retrieval, and export separately.
-3. Record direct and LUT-backed performance separately.
-4. Add regression thresholds that are strict enough to catch breakage but loose enough for CI variability.
+2. Add typed telemetry request and result primitives so timing and execution traces are requested and returned explicitly rather than emitted through ad hoc logs.
+3. Time HR grid setup, optics preparation, transport, instrument convolution, retrieval, and export separately.
+4. Record direct and LUT-backed performance separately.
+5. Add regression thresholds that are strict enough to catch breakage but loose enough for CI variability.
 
 Why this approach:
-Performance only matters in context. Benchmarking the same validated cases that support scientific parity prevents the team from optimizing irrelevant micro-paths while missing real bottlenecks.
+Performance only matters in context. Benchmarking the same validated cases that support scientific parity prevents the team from optimizing irrelevant micro-paths while missing real bottlenecks, while a shared telemetry substrate keeps those timings reusable for later retrieval and export work instead of trapped inside the perf harness.
 
 Recommendation rationale:
 This follows the validation harness because you need stable scientifically correct cases before performance numbers are meaningful.
 
 Desired outcome:
-For each major case family, the repo can answer: how long did setup take, how long did the forward pass take, how long did retrieval take, and did a change cause a regression beyond the accepted threshold?
+For each major case family, the repo can answer: how long did setup take, how long did the forward pass take, how long did retrieval take, and did a change cause a regression beyond the accepted threshold, all through a typed execution-telemetry path rather than incidental logging.
 
 Non-destructive tests:
 - `zig build test-perf --summary all`
@@ -67,10 +70,15 @@ Files by type:
   - `tests/perf/dispatch_smoke_test.zig`
   - `tests/perf/main.zig`
 - Runtime/engine targets:
+  - `src/core/Request.zig`
+  - `src/core/Result.zig`
+  - `src/core/Workspace.zig`
+  - `src/core/telemetry.zig` (new)
   - `src/core/Engine.zig`
   - `src/runtime/cache/LUTCache.zig`
   - `src/runtime/cache/PlanCache.zig`
   - `src/runtime/scheduler/BatchRunner.zig`
+  - `src/runtime/scheduler/ThreadContext.zig`
   - `src/kernels/transport/measurement_space.zig`
   - `src/kernels/optics/prepare.zig`
 - Validation/case assets:
@@ -83,7 +91,12 @@ Files by type:
   - Required families: O2A direct, O2A LUT-backed, NO2/O3 UV/Vis, cloud/cirrus, and one operational measured-input case.
   - Record stage timings for grid setup, optics prep, transport, convolution, retrieval, and export.
 
+- [ ] `src/core/Request.zig`, `src/core/Result.zig`, `src/core/Workspace.zig`, `src/core/telemetry.zig` (new), and `src/runtime/scheduler/ThreadContext.zig`: add typed execution-telemetry request and result primitives plus a recorder owned by the execution context.
+  - Keep telemetry separate from structural provenance and from scientific diagnostic products.
+  - The execution path should be able to request no telemetry, summary telemetry, or detailed stage telemetry without changing solver math.
+
 - [ ] `src/core/Engine.zig`: expose stable timing hooks around major execution stages.
+  - Route timing hooks through the shared telemetry substrate rather than standalone benchmark-only timers.
   - Keep instrumentation low overhead and build-flag-controlled.
   - Do not add pervasive logging side effects; capture timings in a structured benchmark result.
 
@@ -93,6 +106,7 @@ Files by type:
 
 - [ ] `src/kernels/optics/prepare.zig` and `src/kernels/transport/measurement_space.zig`: add optional internal timing scopes for hotspot decomposition.
   - The benchmark output should show whether time is dominated by spectroscopy, transport, convolution, or retrieval.
+  - Use the shared telemetry recorder only at coarse optional scope boundaries; do not push sink logic or plugin dispatch into hot kernels.
   - Use these timings to guide optimization only after correctness and acceptance tests pass.
 
 - [ ] `tests/perf/dispatch_smoke_test.zig`: add mode-sensitive smoke benchmarks.
@@ -107,7 +121,9 @@ Files by type:
 - [ ] How to test section is reproducible
 - [ ] `overview.md` rollup row updated
 - [ ] Benchmarks cover direct, LUT-backed, and measured-input modes
+- [ ] A shared execution-telemetry substrate exists at the core/runtime boundary
 - [ ] Stage-level timing breakdowns are available for major case families
+- [ ] Stage-level timings flow through typed telemetry results rather than ad hoc log output
 - [ ] Regression thresholds are documented and enforced in perf tests
 
 ## Implementation Status (2026-03-18)
@@ -116,7 +132,7 @@ Planning only. No code changes yet.
 
 ## Why This Works
 
-Because the benchmarks are tied to real validated cases, performance regressions are caught where users actually care about them, and performance work stays subordinate to scientific correctness instead of replacing it.
+Because the benchmarks are tied to real validated cases, performance regressions are caught where users actually care about them, performance work stays subordinate to scientific correctness instead of replacing it, and later work can reuse the same telemetry substrate instead of inventing new timing paths.
 
 ## Proof / Validation
 

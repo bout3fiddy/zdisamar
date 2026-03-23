@@ -38,16 +38,18 @@ Needs:
 - smaller public surfaces
 - experimental gating for native-plugin/ABI paths that are not yet first-class
 - split adapter/config monoliths
+- consolidation of leftover ad hoc runtime logging and instrumentation paths onto the shared telemetry substrate
 - removal of runtime-facing `unreachable`/panic hazards and non-idiomatic style leftovers
 
 How:
 1. Keep the provider seam, trim or gate the native-plugin path.
 2. Split oversized config/ingest/export files into focused modules.
 3. Remove runtime-facing `unreachable`, `catch unreachable`, and panic-on-user-input patterns.
-4. Collapse umbrella files to zero-logic re-export modules only.
+4. Collapse ad hoc runtime logging and instrumentation paths onto the shared telemetry substrate introduced earlier.
+5. Collapse umbrella files to zero-logic re-export modules only.
 
 Why this approach:
-Cleanup after scientific parity avoids refactoring the same files repeatedly while the core algorithms are still changing. It also keeps the architecture work grounded in real needs rather than speculation.
+Cleanup after scientific parity avoids refactoring the same files repeatedly while the core algorithms are still changing. It also keeps the architecture work grounded in real needs rather than speculation, including which runtime instrumentation paths actually earned a first-class place.
 
 Recommendation rationale:
 This is intentionally last. It becomes valuable once the parity-critical code paths are stable enough that cleanup will stick.
@@ -65,6 +67,7 @@ Non-destructive tests:
 
 Files by type:
 - Plugin/runtime targets:
+  - `src/core/logging.zig`
   - `src/plugins/providers/root.zig`
   - `src/plugins/providers/transport.zig`
   - `src/plugins/providers/instrument.zig`
@@ -116,6 +119,10 @@ Files by type:
   - Replace panic-on-user-input or panic-on-ABI-conversion with typed errors.
   - Move imports to the top and normalize file style once behavior is stable.
 
+- [ ] `src/core/logging.zig`, `src/plugins/loader/resolver.zig`, `src/plugins/loader/runtime.zig`, and `src/plugins/abi/host_api.zig`: collapse or gate leftover ad hoc runtime instrumentation paths so they do not compete with the shared telemetry substrate.
+  - Keep host-owned native-plugin logging only where it is required for ABI-safe diagnostics.
+  - Do not let plugin or resolver logging become a second execution-telemetry system alongside the typed core/runtime path.
+
 - [ ] `tests/unit/plugin_native_resolution_test.zig`, `tests/unit/canonical_config_test.zig`, `tests/integration/cli_integration_test.zig`: update tests to reflect the cleaned and gated architecture.
   - Confirm that builtin provider resolution remains stable.
   - Confirm that experimental native-plugin paths are clearly gated and tested only when enabled.
@@ -130,6 +137,7 @@ Files by type:
 - [ ] `overview.md` rollup row updated
 - [ ] Typed provider seams remain intact while unstable native-plugin paths are clearly gated
 - [ ] Oversized adapters are split without regrowing new monoliths
+- [ ] Leftover ad hoc runtime logging and instrumentation paths are collapsed onto the shared telemetry substrate or clearly gated
 - [ ] Runtime-facing panic/unreachable hazards are removed from real user/provider boundaries
 
 ## Implementation Status (2026-03-18)
@@ -138,7 +146,7 @@ Planning only. No code changes yet.
 
 ## Why This Works
 
-By deferring hygiene work until parity-critical code is stable, the cleanup can be decisive instead of provisional. The result should be a smaller, safer, more idiomatic Zig surface without sacrificing the architecture that already helps the scientific core.
+By deferring hygiene work until parity-critical code is stable, the cleanup can be decisive instead of provisional. The result should be a smaller, safer, more idiomatic Zig surface without sacrificing the architecture that already helps the scientific core, including a single intentional telemetry seam instead of multiple competing logging paths.
 
 ## Proof / Validation
 

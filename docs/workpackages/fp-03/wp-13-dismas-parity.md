@@ -41,12 +41,13 @@ Needs:
 - instrument-level direct-intensity residuals
 - method-specific wavelength and baseline handling
 - shared but method-aware state/update infrastructure
+- method-specific diagnostics layered cleanly on top of the shared execution-telemetry substrate
 - validation on DISMAS-specific example cases
 
 How:
 1. Reuse the spectral forward model and typed state access from OE.
 2. Implement DISMAS-specific residual assembly and wavelength controls.
-3. Add method-specific diagnostics and outputs.
+3. Add method-specific diagnostics and outputs while reusing the shared execution-telemetry substrate for timing and iteration traces.
 4. Validate on at least one vendor DISMAS example.
 
 Why this approach:
@@ -102,6 +103,11 @@ Files by type:
 - [ ] `src/core/Engine.zig` and `src/plugins/providers/retrieval.zig`: route to DISMAS as a distinct method family.
   - The engine should not force DISMAS through OE or DOAS-specific product assumptions.
   - Result/provenance should name the actual family executed.
+  - Execution timing and iteration traces should flow through the shared telemetry substrate from `WP-10`, not through DISMAS-local logging or side-channel counters.
+
+- [ ] `src/retrieval/common/diagnostics.zig`: keep DISMAS scientific diagnostics and fit summaries distinct from execution telemetry.
+  - Residual and fit-window diagnostics are part of the scientific result surface.
+  - Timing, route, and iteration-span reporting should use the shared telemetry substrate instead of widening scientific diagnostic structs with runtime-only fields.
 
 - [ ] `tests/validation/dismas_parity_test.zig`, `tests/integration/retrieval_solver_integration_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: add DISMAS parity cases.
   - Required case: `Config_O3_profile_SO2_column_DISMAS_5.in` or equivalent vendor DISMAS example.
@@ -116,6 +122,7 @@ Files by type:
 - [ ] `overview.md` rollup row updated
 - [ ] DISMAS is a distinct direct-intensity family in config, engine routing, and outputs
 - [ ] Instrument-level spectral residuals drive the fit
+- [ ] DISMAS scientific diagnostics remain separate from shared execution telemetry
 - [ ] At least one vendor DISMAS case validates end-to-end
 
 ## Implementation Status (2026-03-18)
@@ -124,7 +131,7 @@ Planning only. No code changes yet.
 
 ## Why This Works
 
-DISMAS can share the repaired spectral forward machinery without being collapsed into another family’s math. That preserves method identity while avoiding duplicate plumbing.
+DISMAS can share the repaired spectral forward machinery and the shared execution-telemetry substrate without being collapsed into another family’s math. That preserves method identity while avoiding duplicate plumbing.
 
 ## Proof / Validation
 
