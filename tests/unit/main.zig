@@ -5,6 +5,7 @@ comptime {
     _ = @import("canonical_config_test.zig");
     _ = @import("canonical_config_execution_test.zig");
     _ = @import("contracts_test.zig");
+    _ = @import("engine_split_regression_test.zig");
     _ = @import("exporters_catalog_link_test.zig");
     _ = @import("legacy_config_import_test.zig");
     _ = @import("bundled_optics_test.zig");
