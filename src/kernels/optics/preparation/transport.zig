@@ -129,6 +129,17 @@ pub fn fillForwardLayersAtWavelength(
         return totals;
     }
 
+    const aerosol_single_scatter_albedo = if (scene.atmosphere.has_aerosols and
+        scene.aerosol.enabled and scene.aerosol.optical_depth > 0.0)
+        std.math.clamp(scene.aerosol.single_scatter_albedo, 0.0, 1.0)
+    else
+        0.0;
+    const cloud_single_scatter_albedo = if (scene.atmosphere.has_clouds and
+        scene.cloud.enabled and scene.cloud.optical_thickness > 0.0)
+        std.math.clamp(scene.cloud.single_scatter_albedo, 0.0, 1.0)
+    else
+        0.0;
+
     var totals: OpticalDepthBreakdown = .{};
     for (self.layers, layer_inputs) |layer, *layer_input| {
         const aerosol_optical_depth = ParticleProfiles.scaleOpticalDepth(
@@ -144,21 +155,34 @@ pub fn fillForwardLayersAtWavelength(
             wavelength_nm,
         );
         const gas_scattering_optical_depth = layer.gas_scattering_optical_depth;
+        const aerosol_scattering_optical_depth =
+            aerosol_optical_depth * aerosol_single_scatter_albedo;
+        const cloud_scattering_optical_depth =
+            cloud_optical_depth * cloud_single_scatter_albedo;
+        const optical_depth =
+            layer.gas_optical_depth +
+            gas_scattering_optical_depth +
+            layer.cia_optical_depth +
+            aerosol_optical_depth +
+            cloud_optical_depth;
         const scattering_optical_depth =
             gas_scattering_optical_depth +
-            aerosol_optical_depth * layer.layer_single_scatter_albedo +
-            cloud_optical_depth * layer.layer_single_scatter_albedo;
+            aerosol_scattering_optical_depth +
+            cloud_scattering_optical_depth;
         layer_input.* = .{
             .gas_absorption_optical_depth = layer.gas_optical_depth,
             .gas_scattering_optical_depth = gas_scattering_optical_depth,
             .cia_optical_depth = layer.cia_optical_depth,
             .aerosol_optical_depth = aerosol_optical_depth,
-            .aerosol_scattering_optical_depth = aerosol_optical_depth * layer.layer_single_scatter_albedo,
+            .aerosol_scattering_optical_depth = aerosol_scattering_optical_depth,
             .cloud_optical_depth = cloud_optical_depth,
-            .cloud_scattering_optical_depth = cloud_optical_depth * layer.layer_single_scatter_albedo,
-            .optical_depth = layer.gas_optical_depth + gas_scattering_optical_depth + layer.cia_optical_depth + aerosol_optical_depth + cloud_optical_depth,
+            .cloud_scattering_optical_depth = cloud_scattering_optical_depth,
+            .optical_depth = optical_depth,
             .scattering_optical_depth = scattering_optical_depth,
-            .single_scatter_albedo = layer.layer_single_scatter_albedo,
+            .single_scatter_albedo = if (optical_depth > 0.0)
+                std.math.clamp(scattering_optical_depth / optical_depth, 0.0, 1.0)
+            else
+                0.0,
             .solar_mu = scene.geometry.solarCosineAtAltitude(layer.altitude_km),
             .view_mu = scene.geometry.viewingCosineAtAltitude(layer.altitude_km),
             .phase_coefficients = PhaseFunctions.hgPhaseCoefficients(scene.aerosol.asymmetry_factor),
@@ -167,9 +191,9 @@ pub fn fillForwardLayersAtWavelength(
         totals.gas_scattering_optical_depth += gas_scattering_optical_depth;
         totals.cia_optical_depth += layer.cia_optical_depth;
         totals.aerosol_optical_depth += aerosol_optical_depth;
-        totals.aerosol_scattering_optical_depth += aerosol_optical_depth * layer.layer_single_scatter_albedo;
+        totals.aerosol_scattering_optical_depth += aerosol_scattering_optical_depth;
         totals.cloud_optical_depth += cloud_optical_depth;
-        totals.cloud_scattering_optical_depth += cloud_optical_depth * layer.layer_single_scatter_albedo;
+        totals.cloud_scattering_optical_depth += cloud_scattering_optical_depth;
     }
     return totals;
 }

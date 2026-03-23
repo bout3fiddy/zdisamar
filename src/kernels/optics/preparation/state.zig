@@ -4,6 +4,8 @@ const Scene = @import("../../../model/Scene.zig").Scene;
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");
+const transport_common = @import("../../transport/common.zig");
+const OperationalO2 = @import("operational_o2.zig");
 const ParticleProfiles = @import("../prepare/particle_profiles.zig");
 const PhaseFunctions = @import("../prepare/phase_functions.zig");
 
@@ -204,6 +206,104 @@ pub const PreparedOpticalState = struct {
     pub fn transportLayerCount(self: *const PreparedOpticalState) usize {
         if (self.sublayers) |sublayers| return sublayers.len;
         return self.layers.len;
+    }
+
+    pub fn toForwardInput(self: *const PreparedOpticalState, scene: *const Scene) transport_common.ForwardInput {
+        return @import("transport.zig").toForwardInput(self, scene);
+    }
+
+    pub fn toForwardInputWithLayers(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        layer_inputs: ?[]transport_common.LayerInput,
+    ) transport_common.ForwardInput {
+        return @import("transport.zig").toForwardInputWithLayers(self, scene, layer_inputs);
+    }
+
+    pub fn toForwardInputAtWavelength(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        wavelength_nm: f64,
+    ) transport_common.ForwardInput {
+        return @import("transport.zig").toForwardInputAtWavelength(self, scene, wavelength_nm);
+    }
+
+    pub fn toForwardInputAtWavelengthWithLayers(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        wavelength_nm: f64,
+        layer_inputs: ?[]transport_common.LayerInput,
+    ) transport_common.ForwardInput {
+        return @import("transport.zig").toForwardInputAtWavelengthWithLayers(
+            self,
+            scene,
+            wavelength_nm,
+            layer_inputs,
+        );
+    }
+
+    pub fn fillForwardLayersAtWavelength(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        wavelength_nm: f64,
+        layer_inputs: []transport_common.LayerInput,
+    ) OpticalDepthBreakdown {
+        return @import("transport.zig").fillForwardLayersAtWavelength(
+            self,
+            scene,
+            wavelength_nm,
+            layer_inputs,
+        );
+    }
+
+    pub fn fillSourceInterfacesAtWavelengthWithLayers(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        layer_inputs: []const transport_common.LayerInput,
+        source_interfaces: []transport_common.SourceInterfaceInput,
+    ) void {
+        @import("transport.zig").fillSourceInterfacesAtWavelengthWithLayers(
+            self,
+            wavelength_nm,
+            layer_inputs,
+            source_interfaces,
+        );
+    }
+
+    pub fn fillRtmQuadratureAtWavelengthWithLayers(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        layer_inputs: []const transport_common.LayerInput,
+        rtm_levels: []transport_common.RtmQuadratureLevel,
+    ) bool {
+        return @import("transport.zig").fillRtmQuadratureAtWavelengthWithLayers(
+            self,
+            wavelength_nm,
+            layer_inputs,
+            rtm_levels,
+        );
+    }
+
+    pub fn fillPseudoSphericalGridAtWavelength(
+        self: *const PreparedOpticalState,
+        scene: *const Scene,
+        wavelength_nm: f64,
+        solver_layer_count: usize,
+        attenuation_layers: []transport_common.LayerInput,
+        attenuation_samples: []transport_common.PseudoSphericalSample,
+        level_sample_starts: []usize,
+        level_altitudes_km: []f64,
+    ) bool {
+        return @import("transport.zig").fillPseudoSphericalGridAtWavelength(
+            self,
+            scene,
+            wavelength_nm,
+            solver_layer_count,
+            attenuation_layers,
+            attenuation_samples,
+            level_sample_starts,
+            level_altitudes_km,
+        );
     }
 
     pub fn totalCrossSectionAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
@@ -567,7 +667,12 @@ pub const PreparedOpticalState = struct {
             );
         }
         if (self.operational_o2_lut.enabled()) {
-            return operationalO2EvaluationAtWavelength(self.operational_o2_lut, wavelength_nm, temperature_k, pressure_hpa);
+            return OperationalO2.operationalO2EvaluationAtWavelength(
+                self.operational_o2_lut,
+                wavelength_nm,
+                temperature_k,
+                pressure_hpa,
+            );
         }
         if (self.spectroscopy_lines) |line_list| {
             return line_list.evaluateAt(wavelength_nm, temperature_k, pressure_hpa);
@@ -652,27 +757,6 @@ pub const PreparedOpticalState = struct {
         return &states[states.len - 1];
     }
 
-    fn operationalO2EvaluationAtWavelength(
-        operational_o2_lut: OperationalCrossSectionLut,
-        wavelength_nm: f64,
-        temperature_k: f64,
-        pressure_hpa: f64,
-    ) ReferenceData.SpectroscopyEvaluation {
-        const sigma = operational_o2_lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
-        return .{
-            .weak_line_sigma_cm2_per_molecule = sigma,
-            .strong_line_sigma_cm2_per_molecule = 0.0,
-            .line_sigma_cm2_per_molecule = sigma,
-            .line_mixing_sigma_cm2_per_molecule = 0.0,
-            .total_sigma_cm2_per_molecule = sigma,
-            .d_sigma_d_temperature_cm2_per_molecule_per_k = operational_o2_lut.dSigmaDTemperatureAt(
-                wavelength_nm,
-                temperature_k,
-                pressure_hpa,
-            ),
-        };
-    }
-
     fn weightedSpectroscopyEvaluationAtWavelength(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
@@ -690,7 +774,7 @@ pub const PreparedOpticalState = struct {
         };
 
         if (self.operational_o2_lut.enabled() and self.oxygen_column_density_factor > 0.0) {
-            const o2_evaluation = operationalO2EvaluationAtWavelength(
+            const o2_evaluation = OperationalO2.operationalO2EvaluationAtWavelength(
                 self.operational_o2_lut,
                 wavelength_nm,
                 temperature_k,
@@ -772,7 +856,7 @@ pub const PreparedOpticalState = struct {
         };
 
         if (self.operational_o2_lut.enabled() and oxygen_density_cm3 > 0.0) {
-            const o2_evaluation = operationalO2EvaluationAtWavelength(
+            const o2_evaluation = OperationalO2.operationalO2EvaluationAtWavelength(
                 self.operational_o2_lut,
                 wavelength_nm,
                 temperature_k,
@@ -852,3 +936,14 @@ pub const PreparedOpticalState = struct {
         return 0.0;
     }
 };
+
+test "PreparedOpticalState preserves legacy transport-facing methods" {
+    try std.testing.expect(@hasDecl(PreparedOpticalState, "toForwardInput"));
+    try std.testing.expect(@hasDecl(PreparedOpticalState, "toForwardInputWithLayers"));
+    try std.testing.expect(@hasDecl(PreparedOpticalState, "toForwardInputAtWavelength"));
+    try std.testing.expect(@hasDecl(PreparedOpticalState, "toForwardInputAtWavelengthWithLayers"));
+    try std.testing.expect(@hasDecl(PreparedOpticalState, "fillForwardLayersAtWavelength"));
+    try std.testing.expect(@hasDecl(PreparedOpticalState, "fillSourceInterfacesAtWavelengthWithLayers"));
+    try std.testing.expect(@hasDecl(PreparedOpticalState, "fillRtmQuadratureAtWavelengthWithLayers"));
+    try std.testing.expect(@hasDecl(PreparedOpticalState, "fillPseudoSphericalGridAtWavelength"));
+}

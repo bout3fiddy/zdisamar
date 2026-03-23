@@ -3,6 +3,7 @@ const AbsorberModel = @import("../../../model/Absorber.zig");
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;
 const Scene = @import("../../../model/Scene.zig").Scene;
+const OperationalO2 = @import("operational_o2.zig");
 const State = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
@@ -67,19 +68,12 @@ pub fn operationalO2EvaluationAtWavelength(
     temperature_k: f64,
     pressure_hpa: f64,
 ) ReferenceData.SpectroscopyEvaluation {
-    const sigma = operational_o2_lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
-    return .{
-        .weak_line_sigma_cm2_per_molecule = sigma,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = sigma,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = sigma,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = operational_o2_lut.dSigmaDTemperatureAt(
-            wavelength_nm,
-            temperature_k,
-            pressure_hpa,
-        ),
-    };
+    return OperationalO2.operationalO2EvaluationAtWavelength(
+        operational_o2_lut,
+        wavelength_nm,
+        temperature_k,
+        pressure_hpa,
+    );
 }
 
 pub fn speciesMixingRatioAtPressure(
