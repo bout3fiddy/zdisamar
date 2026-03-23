@@ -151,6 +151,7 @@ pub const PreparedOpticalState = struct {
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
     line_absorbers: []PreparedLineAbsorber = &.{},
+    continuum_owner_species: ?AbsorberModel.AbsorberSpecies = null,
     operational_o2_lut: OperationalCrossSectionLut = .{},
     operational_o2o2_lut: OperationalCrossSectionLut = .{},
     mean_cross_section_cm2_per_molecule: f64,
@@ -783,6 +784,71 @@ pub const PreparedOpticalState = struct {
         return preparedScalarForSublayer(values, last);
     }
 
+    fn lineAbsorberDensityForSpeciesAtSublayer(
+        self: *const PreparedOpticalState,
+        species: AbsorberModel.AbsorberSpecies,
+        global_sublayer_index: usize,
+    ) f64 {
+        for (self.line_absorbers) |line_absorber| {
+            if (line_absorber.species != species) continue;
+            if (global_sublayer_index >= line_absorber.number_densities_cm3.len) return 0.0;
+            return line_absorber.number_densities_cm3[global_sublayer_index];
+        }
+        return 0.0;
+    }
+
+    fn lineAbsorberDensityForSpeciesAtAltitude(
+        self: *const PreparedOpticalState,
+        species: AbsorberModel.AbsorberSpecies,
+        sublayers: []const PreparedSublayer,
+        altitude_km: f64,
+    ) f64 {
+        for (self.line_absorbers) |line_absorber| {
+            if (line_absorber.species != species) continue;
+            return interpolatePreparedScalarAtAltitude(
+                sublayers,
+                line_absorber.number_densities_cm3,
+                altitude_km,
+            );
+        }
+        return 0.0;
+    }
+
+    fn continuumCarrierDensityAtSublayer(
+        self: *const PreparedOpticalState,
+        sublayer: PreparedSublayer,
+        global_sublayer_index: usize,
+    ) f64 {
+        if (self.line_absorbers.len == 0) return sublayer.absorber_number_density_cm3;
+
+        const owner_species = self.continuum_owner_species orelse return 0.0;
+        // DECISION:
+        //   A single continuum table cannot be safely applied to the summed density of
+        //   multiple active line gases. When preparation cannot identify which gas owns
+        //   the continuum, prefer the conservative zero contribution over inflating every
+        //   absorber with the same table.
+        if (self.operational_o2_lut.enabled() and owner_species == .o2) {
+            return sublayer.oxygen_number_density_cm3;
+        }
+        return self.lineAbsorberDensityForSpeciesAtSublayer(owner_species, global_sublayer_index);
+    }
+
+    fn continuumCarrierDensityAtAltitude(
+        self: *const PreparedOpticalState,
+        sublayers: []const PreparedSublayer,
+        altitude_km: f64,
+        absorber_density_cm3: f64,
+        oxygen_density_cm3: f64,
+    ) f64 {
+        if (self.line_absorbers.len == 0) return absorber_density_cm3;
+
+        const owner_species = self.continuum_owner_species orelse return 0.0;
+        if (self.operational_o2_lut.enabled() and owner_species == .o2) {
+            return oxygen_density_cm3;
+        }
+        return self.lineAbsorberDensityForSpeciesAtAltitude(owner_species, sublayers, altitude_km);
+    }
+
     fn quadratureCarrierAtAltitude(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
@@ -858,10 +924,19 @@ pub const PreparedOpticalState = struct {
                 state.pressure_hpa,
                 prepared_state,
             );
+        const continuum_density_cm3 = self.continuumCarrierDensityAtAltitude(
+            sublayers,
+            altitude_km,
+            state.absorber_number_density_cm3,
+            state.oxygen_number_density_cm3,
+        );
         const gas_absorption_optical_depth_per_km =
-            (continuum_sigma + spectroscopy_sigma) *
-            state.absorber_number_density_cm3 *
-            centimeters_per_kilometer;
+            continuum_sigma *
+            continuum_density_cm3 *
+            centimeters_per_kilometer +
+            spectroscopy_sigma *
+                state.absorber_number_density_cm3 *
+                centimeters_per_kilometer;
         const gas_scattering_optical_depth_per_km =
             Rayleigh.crossSectionCm2(wavelength_nm) *
             state.number_density_cm3 *
@@ -1193,14 +1268,18 @@ pub const PreparedOpticalState = struct {
         const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
 
         for (sublayers, 0..) |sublayer, sublayer_index| {
+            const global_sublayer_index = sublayer_start_index + sublayer_index;
             const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
             const gas_absorption_optical_depth = blk: {
+                const continuum_density_cm3 = self.continuumCarrierDensityAtSublayer(
+                    sublayer,
+                    global_sublayer_index,
+                );
                 const continuum_optical_depth =
                     continuum_sigma *
-                    sublayer.absorber_number_density_cm3 *
+                    continuum_density_cm3 *
                     sublayer.path_length_cm;
                 if (self.line_absorbers.len != 0) {
-                    const global_sublayer_index = sublayer_start_index + sublayer_index;
                     var line_optical_depth: f64 = 0.0;
                     for (self.line_absorbers) |line_absorber| {
                         if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
@@ -1361,6 +1440,8 @@ pub const PreparedOpticalState = struct {
     ) ReferenceData.SpectroscopyEvaluation {
         var total_weight: f64 = 0.0;
         var weighted: ReferenceData.SpectroscopyEvaluation = .{
+            .weak_line_sigma_cm2_per_molecule = 0.0,
+            .strong_line_sigma_cm2_per_molecule = 0.0,
             .line_sigma_cm2_per_molecule = 0.0,
             .line_mixing_sigma_cm2_per_molecule = 0.0,
             .total_sigma_cm2_per_molecule = 0.0,
@@ -1412,6 +1493,8 @@ pub const PreparedOpticalState = struct {
 
         if (total_weight <= 0.0) {
             return .{
+                .weak_line_sigma_cm2_per_molecule = 0.0,
+                .strong_line_sigma_cm2_per_molecule = 0.0,
                 .line_sigma_cm2_per_molecule = 0.0,
                 .line_mixing_sigma_cm2_per_molecule = 0.0,
                 .total_sigma_cm2_per_molecule = 0.0,
@@ -1439,6 +1522,8 @@ pub const PreparedOpticalState = struct {
     ) ReferenceData.SpectroscopyEvaluation {
         var total_weight: f64 = 0.0;
         var weighted: ReferenceData.SpectroscopyEvaluation = .{
+            .weak_line_sigma_cm2_per_molecule = 0.0,
+            .strong_line_sigma_cm2_per_molecule = 0.0,
             .line_sigma_cm2_per_molecule = 0.0,
             .line_mixing_sigma_cm2_per_molecule = 0.0,
             .total_sigma_cm2_per_molecule = 0.0,
@@ -1488,6 +1573,8 @@ pub const PreparedOpticalState = struct {
 
         if (total_weight <= 0.0) {
             return .{
+                .weak_line_sigma_cm2_per_molecule = 0.0,
+                .strong_line_sigma_cm2_per_molecule = 0.0,
                 .line_sigma_cm2_per_molecule = 0.0,
                 .line_mixing_sigma_cm2_per_molecule = 0.0,
                 .total_sigma_cm2_per_molecule = 0.0,
@@ -1757,6 +1844,11 @@ pub fn prepareWithParticleTables(
         resolveActiveLineSpecies(single_active_line_absorber, owned_lines, operational_o2_lut)
     else
         null;
+    const continuum_owner_species = resolveContinuumOwnerSpecies(
+        active_line_species,
+        owned_line_absorbers,
+        operational_o2_lut,
+    );
     const mean_sigma = cross_sections.meanSigmaInRange(
         scene.spectral_grid.start_nm,
         scene.spectral_grid.end_nm,
@@ -2219,6 +2311,7 @@ pub fn prepareWithParticleTables(
         .collision_induced_absorption = owned_cia,
         .spectroscopy_lines = owned_lines,
         .line_absorbers = owned_line_absorbers,
+        .continuum_owner_species = continuum_owner_species,
         .operational_o2_lut = operational_o2_lut,
         .operational_o2o2_lut = operational_o2o2_lut,
         .mean_cross_section_cm2_per_molecule = mean_sigma + line_means.line_mean_cross_section_cm2_per_molecule + line_means.line_mixing_mean_cross_section_cm2_per_molecule,
@@ -2279,6 +2372,20 @@ fn resolveActiveLineSpecies(
         return speciesForHitranIndex(gas_index);
     }
     return inferLineSpecies(spectroscopy_lines.lines);
+}
+
+fn resolveContinuumOwnerSpecies(
+    active_line_species: ?AbsorberModel.AbsorberSpecies,
+    line_absorbers: []const PreparedLineAbsorber,
+    operational_o2_lut: OperationalCrossSectionLut,
+) ?AbsorberModel.AbsorberSpecies {
+    if (operational_o2_lut.enabled()) return .o2;
+    if (active_line_species) |species| return species;
+    if (line_absorbers.len == 1) return line_absorbers[0].species;
+    for (line_absorbers) |line_absorber| {
+        if (line_absorber.species == .o2) return .o2;
+    }
+    return null;
 }
 
 fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) ?AbsorberModel.AbsorberSpecies {

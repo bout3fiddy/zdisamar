@@ -930,9 +930,9 @@ test "operational O2 LUT keeps non-O2 line absorbers in total and pseudo-spheric
     const o2_lut: zdisamar.OperationalCrossSectionLut = .{
         .wavelengths_nm = &[_]f64{ 760.8, 761.0, 761.2 },
         .coefficients = &[_]f64{
-            2.0e-24, 0.30e-24, 0.20e-24, 0.05e-24,
-            2.6e-24, 0.35e-24, 0.25e-24, 0.06e-24,
-            2.2e-24, 0.32e-24, 0.22e-24, 0.05e-24,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
         },
         .temperature_coefficient_count = 2,
         .pressure_coefficient_count = 2,
@@ -1071,6 +1071,135 @@ test "operational O2 LUT keeps non-O2 line absorbers in total and pseudo-spheric
     }
 
     try std.testing.expect(line_optical_depth_sum > base_optical_depth_sum);
+}
+
+test "operational O2 LUT keeps continuum scoped to oxygen in mixed-gas preparation" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 8.0, .pressure_hpa = 600.0, .temperature_k = 255.0, .air_number_density_cm3 = 1.2e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.8, .sigma_cm2_per_molecule = 4.0e-26 },
+            .{ .wavelength_nm = 761.0, .sigma_cm2_per_molecule = 4.5e-26 },
+            .{ .wavelength_nm = 761.2, .sigma_cm2_per_molecule = 4.0e-26 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+
+    var line_list = ReferenceData.SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+            .{
+                .gas_index = 1,
+                .isotope_number = 1,
+                .center_wavelength_nm = 761.0,
+                .line_strength_cm2_per_molecule = 0.0,
+                .air_half_width_nm = 0.0010,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 100.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+        }),
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const o2_lut: zdisamar.OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{ 760.8, 761.0, 761.2 },
+        .coefficients = &[_]f64{
+            2.0e-24, 0.30e-24, 0.20e-24, 0.05e-24,
+            2.6e-24, 0.35e-24, 0.25e-24, 0.06e-24,
+            2.2e-24, 0.32e-24, 0.22e-24, 0.05e-24,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 150.0,
+        .max_pressure_hpa = 1000.0,
+    };
+
+    const base_scene: zdisamar.Scene = .{
+        .id = "o2-lut-continuum-base",
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 15.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 761.2,
+            .sample_count = 9,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .sampling = .operational,
+            .noise_model = .shot_noise,
+            .o2_operational_lut = o2_lut,
+        },
+    };
+
+    var base_prepared = try OpticsPrepare.prepareWithSpectroscopy(
+        std.testing.allocator,
+        &base_scene,
+        &profile,
+        &cross_sections,
+        null,
+        &lut,
+    );
+    defer base_prepared.deinit(std.testing.allocator);
+
+    var line_scene = base_scene;
+    line_scene.id = "o2-lut-continuum-h2o";
+    line_scene.absorbers = .{
+        .items = &.{
+            zdisamar.Absorber{
+                .id = "h2o",
+                .species = "h2o",
+                .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "h2o").?,
+                .profile_source = .atmosphere,
+                .volume_mixing_ratio_profile_ppmv = &.{
+                    .{ 1000.0, 12000.0 },
+                    .{ 600.0, 3500.0 },
+                },
+                .spectroscopy = .{
+                    .mode = .line_by_line,
+                    .line_gas_controls = .{
+                        .active_stage = .simulation,
+                    },
+                },
+            },
+        },
+    };
+
+    var line_prepared = try OpticsPrepare.prepareWithSpectroscopy(
+        std.testing.allocator,
+        &line_scene,
+        &profile,
+        &cross_sections,
+        &line_list,
+        &lut,
+    );
+    defer line_prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), line_prepared.line_absorbers.len);
+    try std.testing.expectApproxEqAbs(
+        base_prepared.totalOpticalDepthAtWavelength(761.0),
+        line_prepared.totalOpticalDepthAtWavelength(761.0),
+        1.0e-12,
+    );
 }
 
 test "optical preparation materializes RTM-style gas sublayers with stable parent aggregation" {

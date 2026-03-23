@@ -558,6 +558,76 @@ test "canonical config keeps profile_sim scoped to the simulation stage" {
     try std.testing.expectEqual(@as(usize, 0), retr_stage.scene.absorbers.items[0].volume_mixing_ratio_profile_ppmv.len);
 }
 
+test "canonical config overwrites duplicate HITRAN gas controls without leaking owned isotope slices" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: absorbing-gas-hitran-duplicate-species
+        \\experiment:
+        \\  simulation:
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      id: absorbing_gas_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        o2a:
+        \\          start_nm: 760.8
+        \\          end_nm: 771.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: line_by_line
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: tropomi
+        \\    absorbing_gas:
+        \\      gases:
+        \\        - species: o2
+        \\          hitran:
+        \\            isotopes_sim: [1, 2]
+        \\        - species: o2
+        \\          hitran:
+        \\            factor_lm_sim: 0.45
+        \\            isotopes_sim: [7]
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const sim_stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), sim_stage.scene.absorbers.items.len);
+    const controls = sim_stage.scene.absorbers.items[0].spectroscopy.line_gas_controls;
+    try std.testing.expectApproxEqAbs(@as(f64, 0.45), controls.factor_lm_sim.?, 1.0e-12);
+    try std.testing.expectEqualSlices(u8, &.{7}, controls.isotopes_sim);
+}
+
 test "canonical config rejects table spectral responses without a table binding" {
     const source =
         \\schema_version: 1

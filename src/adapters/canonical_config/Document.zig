@@ -2346,6 +2346,7 @@ fn applyAbsorbingGasConfigToScene(
         const isotopes_retr = if (hitran.isotopes_retr) |values| try allocator.dupe(u8, values) else &.{};
         errdefer if (hitran.isotopes_retr != null) allocator.free(isotopes_retr);
 
+        absorber.spectroscopy.line_gas_controls.deinitOwned(allocator);
         absorber.spectroscopy.line_gas_controls = LineGasControls{
             .factor_lm_sim = hitran.factor_lm_sim,
             .factor_lm_retr = hitran.factor_lm_retr,
