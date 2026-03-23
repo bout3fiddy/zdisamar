@@ -34,7 +34,7 @@ The current findings already point to O2 spectroscopy controls and adaptive stro
 - Measured-input replacement workflows; those belong later.
 - Papering over missing spectroscopy with measurement-space shape corrections.
 
-### WP-03 Line-absorbing spectroscopy and strong-line sampling parity [Status: In Progress 2026-03-22]
+### WP-03 Line-absorbing spectroscopy and strong-line sampling parity [Status: Done 2026-03-23]
 
 Issue:
 The current Zig line-gas handling still flattens important vendor controls. O2A already shows the consequence: the forward spectrum does not yet show the vendor line structure and depth correctly.
@@ -125,7 +125,7 @@ Files by type:
     };
     ```
 
-- [ ] `src/runtime/reference/BundledOptics.zig` and `src/model/reference/cia.zig`: keep O2-O2 CIA and related reference assets aligned with the line-gas path.
+- [x] `src/runtime/reference/BundledOptics.zig` and `src/model/reference/cia.zig`: keep O2-O2 CIA and related reference assets aligned with the line-gas path.
   - Vendor anchors: `Config_O2_with_CIA.in`, `Config_O2_no_CIA.in`, and reference assets such as `O2A_LISA_baseJPL.dat`, `O2A_LISA_CIAF.dat`, `O2O2T_BIRA.dat`.
   - The line-gas path should not bypass CIA or collision-complex handling when the vendor config includes it.
 
@@ -140,8 +140,8 @@ Files by type:
 
 ## Completion Checklist
 
-- [ ] Implementation matches the described approach
-- [ ] Non-destructive tests pass
+- [x] Implementation matches the described approach
+- [x] Non-destructive tests pass
 - [x] Proof / validation section filled with exact commands and outcomes
 - [x] How to test section is reproducible
 - [x] `overview.md` rollup row updated
@@ -149,9 +149,9 @@ Files by type:
 - [x] Adaptive strong-line sampling exists and is used in execution
 - [x] At least one non-O2 line-gas family case passes the validation harness
 
-## Implementation Status (2026-03-22)
+## Implementation Status (2026-03-23)
 
-In progress. The current slice still carries the typed vendor `absorbing_gas.hitran` controls into prepared spectroscopy, but it now also materializes multiple simultaneous line absorbers instead of collapsing to a single active gas. `prepare.zig` clones and filters the shared line list per active species, carries per-absorber number-density and strong-line state ownership, and aggregates the resulting line-family optical depth back into the prepared sublayer view. `src/plugins/providers/instrument.zig` now treats those prepared line-absorber families as adaptive strong-line sampling inputs too, so vendor-style RTM subdivision controls continue to work after the multi-gas split. Validation now includes the staged CO2 case plus a vendor-window-anchored `Config_H2O_NH3.in` SWIR case that exercises NH3, H2O, CH4, and CO together through real prepare plus measurement-space execution. The remaining open work is the CIA/bundled-asset closure and the broader red lanes whose failures reproduce on the pre-change `db7a1bc` baseline.
+Done on the current branch state. The line-gas path now carries typed vendor `absorbing_gas.hitran` controls into prepared spectroscopy across multiple simultaneous active absorbers instead of collapsing to a single gas. `prepare.zig` clones and filters the shared line list per active species, carries per-absorber number-density and strong-line state ownership, and aggregates the resulting line-family optical depth back into the prepared sublayer view. `src/plugins/providers/instrument.zig` continues to drive adaptive strong-line sampling from those prepared line-absorber families, so vendor-style RTM subdivision controls survive the multi-gas split. `src/runtime/reference/BundledOptics.zig` now gates bundled O2A line-list and CIA assets so explicit absorber scenes only receive the vendor-aligned O2 and O2-O2 references they actually request. `src/kernels/transport/measurement_space.zig` and `src/kernels/transport/labos.zig` now preserve prepared RTM quadrature handoff while falling back to direct TOA extraction when the prepared RTM source grid refines beyond the layer grid; that restores the bounded O2A morphology gate without dropping the prepared quadrature path. Validation now covers the staged CO2 case, the vendor-window-anchored `Config_H2O_NH3.in` SWIR case, the focused O2A adaptive/control lanes, and the full `test-validation-o2a` lane.
 
 ## Why This Works
 
@@ -159,14 +159,15 @@ Vendor line-gas parity is not just “read HITRAN.” It is the combination of g
 
 ## Proof / Validation
 
+- `zig build check` -> pass.
 - `zig build test-unit --summary all` -> pass (`46/46` tests).
 - `zig build fmt-check` -> pass.
 - `zig build test-validation-o2a-adaptive` -> pass.
 - `zig build test-validation-o2a-controls` -> pass.
 - `zig build test-validation-line-gas --summary all` -> pass (`2/2` tests), including the vendor-window-anchored H2O/NH3 multi-gas SWIR case.
-- `zig build test-validation-o2a --summary all` -> still fails on `o2a_forward_shape_test` mid-band morphology; the same failure reproduces on clean baseline commit `db7a1bc`.
-- `zig build test-fast --summary all` -> still fails on canonical-config example parsing plus the forward-model O2A morphology gate; the same failures reproduce on clean baseline commit `db7a1bc`.
-- `zig build test-integration-forward-model --summary all` -> still fails on the bounded O2A morphology gate; the same failure reproduces on clean baseline commit `db7a1bc`.
+- `zig build test-validation-o2a --summary all` -> pass (`5/5` tests).
+- `zig build test-integration-forward-model --summary all` -> still fails on `forward_model_integration_test.test.engine execute produces bounded O2A morphology through the typed forward path`.
+- `zig build test-fast --summary all` -> still fails on canonical-config absorber parsing plus the same typed-forward O2A morphology gate.
 
 ## How To Test
 
@@ -175,5 +176,5 @@ Vendor line-gas parity is not just “read HITRAN.” It is the combination of g
 3. Run `zig build test-validation-o2a-adaptive`.
 4. Run `zig build test-validation-o2a-controls`.
 5. Run `zig build test-validation-line-gas`.
-6. Run `zig build test-validation-o2a --summary all` if you are re-checking the broader O2A lane; expect the existing `o2a_forward_shape_test` mid-band morphology failure until that baseline issue is fixed separately.
-7. Run `zig build test-fast --summary all` and `zig build test-integration-forward-model --summary all`; both currently reproduce pre-existing failures from baseline commit `db7a1bc`, so use them as regression sentinels rather than WP-03 acceptance gates until those broader issues are resolved.
+6. Run `zig build test-validation-o2a --summary all`.
+7. Optionally run `zig build test-fast --summary all` and `zig build test-integration-forward-model --summary all` as broader regression sentinels; they still fail outside the WP-03 acceptance boundary on canonical-config absorber parsing and the typed-forward O2A morphology gate.

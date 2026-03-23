@@ -181,11 +181,11 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | --- | --- | --- |
 | `src/kernels/transport/common.zig` | `WP-01`, `WP-02` | Route and control typing. |
 | `src/kernels/transport/dispatcher.zig` | `WP-02` | Forward route dispatch. |
-| `src/kernels/transport/labos.zig` | `WP-02`, `WP-11` | Transport and later weighting-function parity hotspot. |
+| `src/kernels/transport/labos.zig` | `WP-02`, `WP-03`, `WP-11` | Transport hotspot, later weighting-function parity hotspot, and the prepared-RTM source-function fallback that keeps the O2A line-gas acceptance lane stable. |
 | `src/kernels/transport/adding.zig` | `WP-02` | Adding-route parity hotspot. |
 | `src/kernels/transport/doubling.zig` | `WP-02` | Auxiliary propagation or removal decision. |
 | `src/kernels/transport/derivatives.zig` | `WP-11` | Retrieval/weighting-function support. |
-| `src/kernels/transport/measurement_space.zig` | `WP-02`, `WP-06`, `WP-07`, `WP-09`, `WP-11`, `WP-12`, `WP-13` | Central forward-model hotspot. |
+| `src/kernels/transport/measurement_space.zig` | `WP-02`, `WP-03`, `WP-06`, `WP-07`, `WP-09`, `WP-11`, `WP-12`, `WP-13` | Central forward-model hotspot, including prepared RTM quadrature handoff for O2A and multi-gas line-absorber validation. |
 | `src/kernels/optics/prepare.zig` | `WP-03`, `WP-04`, `WP-05`, `WP-08` | Prepared optics and layering bridge. |
 | `src/kernels/optics/prepare/band_means.zig` | `WP-03`, `WP-04` | Band and mean treatment in spectroscopy pathways. |
 | `src/kernels/optics/prepare/particle_profiles.zig` | `WP-05` | Particle vertical distributions. |
@@ -296,7 +296,7 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | `src/plugins/builtin/exporters/netcdf_cf.plugin.json` | `WP-15` | Same. |
 | `src/plugins/builtin/exporters/zarr.plugin.json` | `WP-15` | Same. |
 | `src/plugins/root.zig` | `WP-15` | Plugin public surface cleanup. |
-| `src/runtime/reference/BundledOptics.zig` | `WP-03`, `WP-04`, `WP-08`, `WP-09` | Bundled science-data path and validation. |
+| `src/runtime/reference/BundledOptics.zig` | `WP-03`, `WP-04`, `WP-08`, `WP-09` | Bundled science-data path, O2A line/CIA asset gating, and validation. |
 | `src/runtime/cache/DatasetCache.zig` | `WP-08`, `WP-10`, `WP-15` | Dataset and LUT/cache support. |
 | `src/runtime/cache/LUTCache.zig` | `WP-08`, `WP-10`, `WP-15` | LUT cache parity and later performance work. |
 | `src/runtime/cache/PlanCache.zig` | `WP-10`, `WP-15` | Runtime cache/performance and later cleanup. |

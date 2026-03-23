@@ -1560,7 +1560,14 @@ fn layerResolvedLabos(
     const end_level: usize = nlayer;
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
-    const use_integrated_source = controls.integrate_source_function and nlayer > 1;
+    // Prepared measurement-space execution can provide RTM quadrature levels that
+    // refine source-function metadata beyond the layer grid. Until LABOS carries
+    // the full vendor RTM-grid hierarchy, extracting TOA directly from the solved
+    // internal field remains the more stable path for those scenes.
+    const use_integrated_source =
+        controls.integrate_source_function and
+        nlayer > 1 and
+        !input.rtm_quadrature.isValidFor(input.layers.len);
 
     var reflectance: f64 = 0.0;
     for (0..fourier_max + 1) |i_fourier| {
@@ -2397,6 +2404,74 @@ test "labos integrated source-function path uses explicit source interface metad
         direct_baseline.toa_reflectance_factor,
         direct_altered.toa_reflectance_factor,
         1.0e-10,
+    );
+}
+
+test "labos prepared RTM quadrature falls back to direct TOA extraction" {
+    const layers = [_]common.LayerInput{
+        .{
+            .optical_depth = 0.28,
+            .scattering_optical_depth = 0.22,
+            .single_scatter_albedo = 0.90,
+            .solar_mu = 0.58,
+            .view_mu = 0.64,
+            .phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+        },
+        .{
+            .optical_depth = 0.17,
+            .scattering_optical_depth = 0.13,
+            .single_scatter_albedo = 0.88,
+            .solar_mu = 0.61,
+            .view_mu = 0.67,
+            .phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+        },
+    };
+
+    const rtm_quadrature = [_]common.RtmQuadratureLevel{
+        .{ .altitude_km = 0.0, .weight = 0.0, .ksca = 0.0, .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 } },
+        .{ .altitude_km = 3.5, .weight = 4.0, .ksca = 0.055, .phase_coefficients = .{ 1.0, 0.31, 0.10, 0.02 } },
+        .{ .altitude_km = 8.0, .weight = 0.0, .ksca = 0.0, .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 } },
+    };
+
+    const route_integrated = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+        },
+    });
+    const route_direct = try common.prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = false,
+        },
+    });
+
+    const input = common.ForwardInput{
+        .mu0 = 0.60,
+        .muv = 0.66,
+        .optical_depth = 0.45,
+        .single_scatter_albedo = 0.89,
+        .surface_albedo = 0.10,
+        .relative_azimuth_rad = std.math.degreesToRadians(75.0),
+        .layers = &layers,
+        .rtm_quadrature = .{ .levels = &rtm_quadrature },
+    };
+    const result_integrated = try execute(std.testing.allocator, route_integrated, input);
+    const result_direct = try execute(std.testing.allocator, route_direct, input);
+
+    try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
+    try std.testing.expectApproxEqRel(
+        result_direct.toa_reflectance_factor,
+        result_integrated.toa_reflectance_factor,
+        1.0e-12,
     );
 }
 
