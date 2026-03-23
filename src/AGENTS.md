@@ -17,7 +17,7 @@
 ## Scientific Port Commenting Contract
 
 - When refactoring vendor-derived scientific logic into Zig, comments are part of the implementation contract. The goal is not just to describe what the code does, but also what physics it encodes, what vendor routine or phase it comes from, and why the Zig shape differs from the vendor shape.
-- Prefer verbose, structured comments over sparse cleverness for vendor-refactor code. Another engineer or agent should be able to recover the scientific intent and refactor rationale without reopening the Fortran sources.
+- Prefer verbose, structured comments over sparse cleverness for file headers, public APIs, vendor-divergence blocks, and non-obvious physics. Do not repeat the full template on thin arithmetic helpers when surrounding section comments already establish the scientific stage and invariants.
 - Use searchable section labels and tags consistently. Do not invent one-off phrasing when a standard label applies.
 
 ### Scope
@@ -31,6 +31,7 @@
 - Use `//!` for file headers and module-level contracts.
 - Use `///` for public types, public functions, and internal functions with nontrivial scientific behavior.
 - Use `//` for local phase comments, decision notes, parity notes, gotchas, and unresolved issues inside implementations.
+- Prefer section-level provenance comments for clusters of related helpers that share the same vendor stage, physics, or invariants.
 
 ### Required File Header
 
@@ -44,7 +45,10 @@
 
 ### Required Function Comment
 
-- Every nontrivial scientific function should document the applicable subset of:
+- Apply the full structured function template to public functions, vendor-divergence blocks, and internal functions whose physics, parity role, or invariants are not obvious from surrounding context.
+- Smaller mechanical helpers may use a short comment or no comment when the enclosing section already documents the relevant physics and validation context.
+- When a helper cluster belongs to the same vendor phase, prefer one section-level provenance comment over repeating the full template for every helper.
+- Covered functions should document the applicable subset of:
 - `Purpose:` what the function computes or prepares.
 - `Physics:` the scientific meaning of the computation.
 - `Vendor:` the vendor routine, phase, or concept this corresponds to.
