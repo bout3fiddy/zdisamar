@@ -1750,6 +1750,9 @@ pub fn prepareWithParticleTables(
                     else
                         0.0,
                 );
+                if (!use_operational_o2_lut and filtered.lines.len == 0) {
+                    return error.InvalidRequest;
+                }
                 std.sort.pdq(
                     ReferenceData.SpectroscopyLine,
                     filtered.lines,
@@ -1807,6 +1810,9 @@ pub fn prepareWithParticleTables(
                     else
                         0.0,
                 );
+                if (!operational_o2_lut.enabled() and line_list.lines.len == 0) {
+                    return error.InvalidRequest;
+                }
             }
             std.sort.pdq(
                 ReferenceData.SpectroscopyLine,

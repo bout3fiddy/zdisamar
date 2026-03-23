@@ -1221,6 +1221,151 @@ test "operational O2 LUT keeps continuum scoped to oxygen in mixed-gas preparati
     }
 }
 
+test "preparation rejects line-gas absorbers whose filtered line lists are empty" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 8.0, .pressure_hpa = 600.0, .temperature_k = 255.0, .air_number_density_cm3 = 1.2e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.8, .sigma_cm2_per_molecule = 4.0e-26 },
+            .{ .wavelength_nm = 761.0, .sigma_cm2_per_molecule = 4.5e-26 },
+            .{ .wavelength_nm = 761.2, .sigma_cm2_per_molecule = 4.0e-26 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+
+    var line_list = ReferenceData.SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+            .{
+                .gas_index = 1,
+                .isotope_number = 1,
+                .center_wavelength_nm = 761.0,
+                .line_strength_cm2_per_molecule = 1.0e-24,
+                .air_half_width_nm = 0.0010,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 100.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+        }),
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const multi_scene: zdisamar.Scene = .{
+        .id = "empty-filtered-lines-multi",
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 15.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 761.2,
+            .sample_count = 9,
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "h2o",
+                    .species = "h2o",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "h2o").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 12000.0 },
+                        .{ 600.0, 3500.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+                zdisamar.Absorber{
+                    .id = "nh3",
+                    .species = "nh3",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "nh3").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 50.0 },
+                        .{ 600.0, 20.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    try std.testing.expectError(
+        error.InvalidRequest,
+        OpticsPrepare.prepareWithSpectroscopy(
+            std.testing.allocator,
+            &multi_scene,
+            &profile,
+            &cross_sections,
+            &line_list,
+            &lut,
+        ),
+    );
+
+    const single_scene: zdisamar.Scene = .{
+        .id = "empty-filtered-lines-single",
+        .atmosphere = multi_scene.atmosphere,
+        .geometry = multi_scene.geometry,
+        .spectral_grid = multi_scene.spectral_grid,
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "nh3",
+                    .species = "nh3",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "nh3").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 50.0 },
+                        .{ 600.0, 20.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    try std.testing.expectError(
+        error.InvalidRequest,
+        OpticsPrepare.prepareWithSpectroscopy(
+            std.testing.allocator,
+            &single_scene,
+            &profile,
+            &cross_sections,
+            &line_list,
+            &lut,
+        ),
+    );
+}
+
 test "optical preparation materializes RTM-style gas sublayers with stable parent aggregation" {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         std.testing.allocator,
