@@ -59,10 +59,10 @@ fn simulateSceneProduct(
     allocator: std.mem.Allocator,
     plan: *const zdisamar.PreparedPlan,
     scene: zdisamar.Scene,
-) !internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
+) !internal.kernels.transport.measurement.MeasurementSpaceProduct {
     var prepared_optics = try plan.providers.optics.prepareForScene(allocator, &scene);
     defer prepared_optics.deinit(allocator);
-    return internal.kernels.transport.measurement_space.simulateProduct(
+    return internal.kernels.transport.measurement.simulateProduct(
         allocator,
         &scene,
         plan.transport_route,

@@ -5,7 +5,7 @@ const retrieval = @import("zdisamar_internal").retrieval;
 
 const StateParameter = zdisamar.StateParameter;
 
-fn testObservedProduct() internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
+fn testObservedProduct() internal.kernels.transport.measurement.MeasurementSpaceProduct {
     return .{
         .summary = .{
             .sample_count = 4,

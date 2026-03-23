@@ -2,7 +2,7 @@ const std = @import("std");
 const Scene = @import("../../model/Scene.zig").Scene;
 const AbsorberModel = @import("../../model/Absorber.zig");
 const ReferenceData = @import("../../model/ReferenceData.zig");
-const OpticsPrepare = @import("../../kernels/optics/prepare.zig");
+const OpticsPrepare = @import("../../kernels/optics/preparation.zig");
 const reference_assets = @import("../../adapters/ingest/reference_assets.zig");
 
 const Allocator = std.mem.Allocator;
@@ -71,17 +71,14 @@ pub fn prepareForScene(allocator: Allocator, scene: *const Scene) !OpticsPrepare
     const line_list_ptr: ?*const ReferenceData.SpectroscopyLineList = if (line_list) |*table| table else null;
     const aerosol_mie_ptr: ?*const ReferenceData.MiePhaseTable = if (aerosol_mie) |*table| table else null;
 
-    return OpticsPrepare.prepareWithParticleTables(
-        allocator,
-        scene,
-        &profile,
-        &cross_sections,
-        cia_ptr,
-        line_list_ptr,
-        &lut,
-        aerosol_mie_ptr,
-        null,
-    );
+    return OpticsPrepare.prepare(allocator, scene, .{
+        .profile = &profile,
+        .cross_sections = &cross_sections,
+        .collision_induced_absorption = cia_ptr,
+        .spectroscopy_lines = line_list_ptr,
+        .lut = &lut,
+        .aerosol_mie = aerosol_mie_ptr,
+    });
 }
 
 fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {

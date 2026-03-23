@@ -2,10 +2,67 @@ const std = @import("std");
 const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
 const ReferenceData = internal.reference_data;
-const OpticsPrepare = internal.kernels.optics.prepare;
+const OpticsPrepare = internal.kernels.optics.preparation;
+const PreparationTransport = OpticsPrepare.transport;
 const TransportDispatcher = internal.kernels.transport.dispatcher;
 const centimeters_per_kilometer = 1.0e5;
 const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
+
+fn prepareWithSpectroscopy(
+    allocator: std.mem.Allocator,
+    scene: *const zdisamar.Scene,
+    profile: *const ReferenceData.ClimatologyProfile,
+    cross_sections: *const ReferenceData.CrossSectionTable,
+    spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList,
+    lut: *const ReferenceData.AirmassFactorLut,
+) !OpticsPrepare.PreparedOpticalState {
+    return OpticsPrepare.prepare(allocator, scene, .{
+        .profile = profile,
+        .cross_sections = cross_sections,
+        .spectroscopy_lines = spectroscopy_lines,
+        .lut = lut,
+    });
+}
+
+fn prepareWithSpectroscopyAndCollisionInducedAbsorption(
+    allocator: std.mem.Allocator,
+    scene: *const zdisamar.Scene,
+    profile: *const ReferenceData.ClimatologyProfile,
+    cross_sections: *const ReferenceData.CrossSectionTable,
+    collision_induced_absorption: ?*const ReferenceData.CollisionInducedAbsorptionTable,
+    spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList,
+    lut: *const ReferenceData.AirmassFactorLut,
+) !OpticsPrepare.PreparedOpticalState {
+    return OpticsPrepare.prepare(allocator, scene, .{
+        .profile = profile,
+        .cross_sections = cross_sections,
+        .collision_induced_absorption = collision_induced_absorption,
+        .spectroscopy_lines = spectroscopy_lines,
+        .lut = lut,
+    });
+}
+
+fn prepareWithParticleTables(
+    allocator: std.mem.Allocator,
+    scene: *const zdisamar.Scene,
+    profile: *const ReferenceData.ClimatologyProfile,
+    cross_sections: *const ReferenceData.CrossSectionTable,
+    collision_induced_absorption: ?*const ReferenceData.CollisionInducedAbsorptionTable,
+    spectroscopy_lines: ?*const ReferenceData.SpectroscopyLineList,
+    lut: *const ReferenceData.AirmassFactorLut,
+    aerosol_mie: ?*const ReferenceData.MiePhaseTable,
+    cloud_mie: ?*const ReferenceData.MiePhaseTable,
+) !OpticsPrepare.PreparedOpticalState {
+    return OpticsPrepare.prepare(allocator, scene, .{
+        .profile = profile,
+        .cross_sections = cross_sections,
+        .collision_induced_absorption = collision_induced_absorption,
+        .spectroscopy_lines = spectroscopy_lines,
+        .lut = lut,
+        .aerosol_mie = aerosol_mie,
+        .cloud_mie = cloud_mie,
+    });
+}
 
 fn prepareVendorAnchoredSwirMultiGasCase(
     allocator: std.mem.Allocator,
@@ -164,7 +221,7 @@ fn prepareVendorAnchoredSwirMultiGasCase(
         },
     };
 
-    return OpticsPrepare.prepareWithSpectroscopy(
+    return prepareWithSpectroscopy(
         allocator,
         &scene,
         &profile,
@@ -254,7 +311,7 @@ test "optical preparation bridges tracked assets into transport-ready state" {
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &scene,
         &profile,
@@ -293,7 +350,7 @@ test "optical preparation bridges tracked assets into transport-ready state" {
     const result = try TransportDispatcher.executePrepared(
         std.testing.allocator,
         route,
-        prepared.toForwardInput(&scene),
+        PreparationTransport.toForwardInput(&prepared, &scene),
     );
 
     try std.testing.expect(result.toa_reflectance_factor >= 0.0);
@@ -380,7 +437,7 @@ test "optical preparation uses staged non-o2 line-gas profiles instead of O2 den
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &scene,
         &profile,
@@ -537,7 +594,7 @@ test "optical preparation consumes vendor-shaped strong-line sidecars for bounde
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
+    var prepared = try prepareWithSpectroscopyAndCollisionInducedAbsorption(
         std.testing.allocator,
         &scene,
         &profile,
@@ -651,7 +708,7 @@ test "pseudo-spherical prepared carriers preserve strong-line prepared states" {
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
+    var prepared = try prepareWithSpectroscopyAndCollisionInducedAbsorption(
         std.testing.allocator,
         &scene,
         &profile,
@@ -692,7 +749,8 @@ test "pseudo-spherical prepared carriers preserve strong-line prepared states" {
     }
     try std.testing.expect(selected_index != null);
 
-    try std.testing.expect(prepared.fillPseudoSphericalGridAtWavelength(
+    try std.testing.expect(PreparationTransport.fillPseudoSphericalGridAtWavelength(
+        &prepared,
         &scene,
         wavelength_nm,
         solver_layer_count,
@@ -850,7 +908,7 @@ test "optical preparation applies operational O2 and O2-O2 LUT replacements for 
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
+    var prepared = try prepareWithSpectroscopyAndCollisionInducedAbsorption(
         std.testing.allocator,
         &scene,
         &profile,
@@ -967,7 +1025,7 @@ test "operational O2 LUT keeps non-O2 line absorbers in total and pseudo-spheric
         },
     };
 
-    var base_prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var base_prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &base_scene,
         &profile,
@@ -1000,7 +1058,7 @@ test "operational O2 LUT keeps non-O2 line absorbers in total and pseudo-spheric
         },
     };
 
-    var line_prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var line_prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &line_scene,
         &profile,
@@ -1042,7 +1100,8 @@ test "operational O2 LUT keeps non-O2 line absorbers in total and pseudo-spheric
     const line_altitudes = try std.testing.allocator.alloc(f64, solver_layer_count + 1);
     defer std.testing.allocator.free(line_altitudes);
 
-    try std.testing.expect(base_prepared.fillPseudoSphericalGridAtWavelength(
+    try std.testing.expect(PreparationTransport.fillPseudoSphericalGridAtWavelength(
+        &base_prepared,
         &base_scene,
         wavelength_nm,
         solver_layer_count,
@@ -1051,7 +1110,8 @@ test "operational O2 LUT keeps non-O2 line absorbers in total and pseudo-spheric
         base_starts,
         base_altitudes,
     ));
-    try std.testing.expect(line_prepared.fillPseudoSphericalGridAtWavelength(
+    try std.testing.expect(PreparationTransport.fillPseudoSphericalGridAtWavelength(
+        &line_prepared,
         &line_scene,
         wavelength_nm,
         solver_layer_count,
@@ -1151,7 +1211,7 @@ test "operational O2 LUT keeps continuum scoped to oxygen in mixed-gas preparati
         },
     };
 
-    var base_prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var base_prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &base_scene,
         &profile,
@@ -1184,7 +1244,7 @@ test "operational O2 LUT keeps continuum scoped to oxygen in mixed-gas preparati
         },
     };
 
-    var line_prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var line_prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &line_scene,
         &profile,
@@ -1316,7 +1376,7 @@ test "preparation rejects line-gas absorbers whose filtered line lists are empty
 
     try std.testing.expectError(
         error.InvalidRequest,
-        OpticsPrepare.prepareWithSpectroscopy(
+        prepareWithSpectroscopy(
             std.testing.allocator,
             &multi_scene,
             &profile,
@@ -1355,7 +1415,7 @@ test "preparation rejects line-gas absorbers whose filtered line lists are empty
 
     try std.testing.expectError(
         error.InvalidRequest,
-        OpticsPrepare.prepareWithSpectroscopy(
+        prepareWithSpectroscopy(
             std.testing.allocator,
             &single_scene,
             &profile,
@@ -1470,7 +1530,7 @@ test "mixed non-o2 line-gas preparation preserves continuum when owner is unknow
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &scene,
         &profile,
@@ -1547,7 +1607,7 @@ test "optical preparation materializes RTM-style gas sublayers with stable paren
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &scene,
         &profile,
@@ -1636,7 +1696,7 @@ test "optical preparation builds sublayer-informed source interfaces for prepare
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
+    var prepared = try prepareWithSpectroscopy(
         std.testing.allocator,
         &scene,
         &profile,
@@ -1647,10 +1707,10 @@ test "optical preparation builds sublayer-informed source interfaces for prepare
     defer prepared.deinit(std.testing.allocator);
 
     var layer_inputs: [4]internal.kernels.transport.common.LayerInput = undefined;
-    _ = prepared.fillForwardLayersAtWavelength(&scene, 434.6, &layer_inputs);
+    _ = PreparationTransport.fillForwardLayersAtWavelength(&prepared, &scene, 434.6, &layer_inputs);
 
     var source_interfaces: [5]internal.kernels.transport.common.SourceInterfaceInput = undefined;
-    prepared.fillSourceInterfacesAtWavelengthWithLayers(434.6, &layer_inputs, &source_interfaces);
+    PreparationTransport.fillSourceInterfacesAtWavelengthWithLayers(&prepared, 434.6, &layer_inputs, &source_interfaces);
 
     try std.testing.expectApproxEqRel(
         layer_inputs[0].scattering_optical_depth,
@@ -1700,10 +1760,10 @@ test "optical preparation builds sublayer-informed source interfaces for prepare
     }
 
     var fine_layer_inputs: [16]internal.kernels.transport.common.LayerInput = undefined;
-    _ = prepared.fillForwardLayersAtWavelength(&scene, 434.6, &fine_layer_inputs);
+    _ = PreparationTransport.fillForwardLayersAtWavelength(&prepared, &scene, 434.6, &fine_layer_inputs);
 
     var fine_source_interfaces: [17]internal.kernels.transport.common.SourceInterfaceInput = undefined;
-    prepared.fillSourceInterfacesAtWavelengthWithLayers(434.6, &fine_layer_inputs, &fine_source_interfaces);
+    PreparationTransport.fillSourceInterfacesAtWavelengthWithLayers(&prepared, 434.6, &fine_layer_inputs, &fine_source_interfaces);
 
     try std.testing.expectApproxEqRel(
         fine_layer_inputs[0].scattering_optical_depth,
@@ -1822,9 +1882,11 @@ test "optical preparation recomputes layer phase mixing with wavelength-specific
     var prepared = try OpticsPrepare.prepare(
         std.testing.allocator,
         &scene,
-        &profile,
-        &cross_sections,
-        &lut,
+        .{
+            .profile = &profile,
+            .cross_sections = &cross_sections,
+            .lut = &lut,
+        },
     );
     defer prepared.deinit(std.testing.allocator);
 
@@ -1834,8 +1896,8 @@ test "optical preparation recomputes layer phase mixing with wavelength-specific
     const aerosol_phase_l1 = prepared.sublayers.?[0].aerosol_phase_coefficients[1];
     var layers_405: [4]internal.kernels.transport.common.LayerInput = undefined;
     var layers_465: [4]internal.kernels.transport.common.LayerInput = undefined;
-    _ = prepared.fillForwardLayersAtWavelength(&scene, 405.0, &layers_405);
-    _ = prepared.fillForwardLayersAtWavelength(&scene, 465.0, &layers_465);
+    _ = PreparationTransport.fillForwardLayersAtWavelength(&prepared, &scene, 405.0, &layers_405);
+    _ = PreparationTransport.fillForwardLayersAtWavelength(&prepared, &scene, 465.0, &layers_465);
 
     for (&[_][]const internal.kernels.transport.common.LayerInput{ &layers_405, &layers_465 }) |layer_set| {
         const layer = layer_set[0];
@@ -1923,9 +1985,11 @@ test "optical preparation distributes aerosol and cloud optical depth across HG-
     var prepared = try OpticsPrepare.prepare(
         std.testing.allocator,
         &scene,
-        &profile,
-        &cross_sections,
-        &lut,
+        .{
+            .profile = &profile,
+            .cross_sections = &cross_sections,
+            .lut = &lut,
+        },
     );
     defer prepared.deinit(std.testing.allocator);
 
@@ -2016,7 +2080,7 @@ test "optical preparation interpolates bounded Mie coefficient subsets when prov
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithParticleTables(
+    var prepared = try prepareWithParticleTables(
         std.testing.allocator,
         &scene,
         &profile,
@@ -2037,4 +2101,174 @@ test "optical preparation interpolates bounded Mie coefficient subsets when prov
     try std.testing.expectApproxEqAbs(@as(f64, 0.878231386), first.aerosol_single_scatter_albedo, 1e-9);
     try std.testing.expectApproxEqAbs(@as(f64, 2.3337024), first.aerosol_phase_coefficients[1], 1e-6);
     try std.testing.expect(first.combined_phase_coefficients[1] > scene.aerosol.asymmetry_factor);
+}
+
+test "optical preparation derives deterministic layer optical depths from typed assets" {
+    const scene: zdisamar.Scene = .{
+        .id = "optical-scene",
+        .atmosphere = .{
+            .layer_count = 4,
+            .has_clouds = true,
+            .has_aerosols = false,
+        },
+        .geometry = .{
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 30.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 121,
+        },
+    };
+
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1013.25, .temperature_k = 288.15, .air_number_density_cm3 = 2.547e19 },
+            .{ .altitude_km = 20.0, .pressure_hpa = 54.75, .temperature_k = 216.65, .air_number_density_cm3 = 1.095e18 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 6.21e-19 },
+            .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 4.17e-19 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+    const spectroscopy = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+        .{ .center_wavelength_nm = 434.6, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.041, .temperature_exponent = 0.69, .lower_state_energy_cm1 = 140.0, .pressure_shift_nm = 0.003, .line_mixing_coefficient = 0.07 },
+    });
+    var line_list = ReferenceData.SpectroscopyLineList{ .lines = spectroscopy };
+    defer line_list.deinit(std.testing.allocator);
+
+    var lut = ReferenceData.AirmassFactorLut{
+        .points = try std.testing.allocator.dupe(ReferenceData.AirmassFactorPoint, &.{
+            .{ .solar_zenith_deg = 40.0, .view_zenith_deg = 10.0, .relative_azimuth_deg = 30.0, .airmass_factor = 1.241 },
+        }),
+    };
+    defer lut.deinit(std.testing.allocator);
+
+    var prepared = try prepareWithSpectroscopy(std.testing.allocator, &scene, &profile, &cross_sections, &line_list, &lut);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 4), prepared.layers.len);
+    try std.testing.expect(prepared.total_optical_depth > 0.0);
+    try std.testing.expect(prepared.layers[0].optical_depth > prepared.layers[3].optical_depth);
+    try std.testing.expect(prepared.column_density_factor > 1.0e24);
+    try std.testing.expectEqual(@as(f64, 0.0), prepared.line_mixing_mean_cross_section_cm2_per_molecule);
+    try std.testing.expect(prepared.gas_optical_depth > 0.0);
+    try std.testing.expect(prepared.d_optical_depth_d_temperature != 0.0);
+
+    const input = PreparationTransport.toForwardInput(&prepared, &scene);
+    try std.testing.expect(input.optical_depth > 0.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.241), input.air_mass_factor, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), input.spectral_weight, 1e-9);
+    try std.testing.expect(prepared.totalCrossSectionAtWavelength(434.6) > prepared.totalCrossSectionAtWavelength(465.0));
+
+    try std.testing.expect(prepared.sublayers != null);
+    try std.testing.expectEqual(prepared.sublayers.?.len, prepared.transportLayerCount());
+    var transport_layers: [12]internal.kernels.transport.common.LayerInput = undefined;
+    _ = PreparationTransport.fillForwardLayersAtWavelength(&prepared, &scene, 434.6, &transport_layers);
+    try std.testing.expect(transport_layers[0].optical_depth > 0.0);
+    try std.testing.expect(transport_layers[11].optical_depth > 0.0);
+}
+
+fn testPreparedSublayer(
+    parent_layer_index: u32,
+    sublayer_index: u32,
+    global_sublayer_index: u32,
+    altitude_km: f64,
+    pressure_hpa: f64,
+    temperature_k: f64,
+    number_density_cm3: f64,
+    oxygen_number_density_cm3: f64,
+    absorber_number_density_cm3: f64,
+) OpticsPrepare.PreparedSublayer {
+    return .{
+        .parent_layer_index = parent_layer_index,
+        .sublayer_index = sublayer_index,
+        .global_sublayer_index = global_sublayer_index,
+        .altitude_km = altitude_km,
+        .pressure_hpa = pressure_hpa,
+        .temperature_k = temperature_k,
+        .number_density_cm3 = number_density_cm3,
+        .oxygen_number_density_cm3 = oxygen_number_density_cm3,
+        .absorber_number_density_cm3 = absorber_number_density_cm3,
+        .path_length_cm = 1.0,
+        .continuum_cross_section_cm2_per_molecule = 0.0,
+        .line_cross_section_cm2_per_molecule = 0.0,
+        .line_mixing_cross_section_cm2_per_molecule = 0.0,
+        .cia_sigma_cm5_per_molecule2 = 0.0,
+        .cia_optical_depth = 0.0,
+        .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+        .gas_absorption_optical_depth = 0.0,
+        .gas_scattering_optical_depth = 0.0,
+        .gas_extinction_optical_depth = 0.0,
+        .d_gas_optical_depth_d_temperature = 0.0,
+        .d_cia_optical_depth_d_temperature = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .aerosol_single_scatter_albedo = 0.0,
+        .cloud_single_scatter_albedo = 0.0,
+        .aerosol_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .combined_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+    };
+}
+
+test "prepared scalar helpers use global sublayer slots across later layers" {
+    const sublayers = [_]OpticsPrepare.PreparedSublayer{
+        testPreparedSublayer(0, 0, 0, 0.5, 900.0, 285.0, 2.0e19, 4.0e18, 2.0e15),
+        testPreparedSublayer(0, 1, 1, 1.5, 820.0, 280.0, 1.8e19, 3.6e18, 4.0e15),
+        testPreparedSublayer(1, 0, 2, 2.5, 700.0, 270.0, 1.4e19, 2.8e18, 6.0e15),
+        testPreparedSublayer(1, 1, 3, 3.5, 620.0, 265.0, 1.1e19, 2.2e18, 8.0e15),
+    };
+    const values = [_]f64{ 2.0, 4.0, 6.0, 8.0 };
+
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 6.0),
+        OpticsPrepare.PreparedOpticalState.preparedScalarForSublayer(&values, sublayers[2]),
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 7.0),
+        OpticsPrepare.PreparedOpticalState.interpolatePreparedScalarAtAltitude(&sublayers, &values, 3.0),
+        1.0e-12,
+    );
+}
+
+test "collect active line absorbers resolves public species strings" {
+    const scene: zdisamar.Scene = .{
+        .id = "string-species-line-absorber",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 761.2,
+            .sample_count = 9,
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "o2",
+                    .species = "o2",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                            .threshold_line_sim = 1.0e-23,
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    const active = try OpticsPrepare.spectroscopy.collectActiveLineAbsorbers(std.testing.allocator, &scene);
+    defer std.testing.allocator.free(active);
+
+    try std.testing.expectEqual(@as(usize, 1), active.len);
+    try std.testing.expectEqual(AbsorberSpecies.o2, active[0].species);
 }

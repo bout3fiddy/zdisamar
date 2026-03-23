@@ -1,8 +1,8 @@
 const Diagnostics = @import("diagnostics.zig").Diagnostics;
 const Provenance = @import("provenance.zig").Provenance;
 const std = @import("std");
-const MeasurementSpaceSummary = @import("../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
-const MeasurementSpaceProduct = @import("../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
+const MeasurementSpaceSummary = @import("../kernels/transport/measurement.zig").MeasurementSpaceSummary;
+const MeasurementSpaceProduct = @import("../kernels/transport/measurement.zig").MeasurementSpaceProduct;
 const RetrievalOutcome = @import("../retrieval/common/contracts.zig").SolverOutcome;
 
 const Allocator = std.mem.Allocator;

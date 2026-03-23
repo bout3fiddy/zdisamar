@@ -3,7 +3,7 @@ const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
 const retrieval = @import("zdisamar_internal").retrieval;
 
-const MeasurementSpace = internal.kernels.transport.measurement_space;
+const MeasurementSpace = internal.kernels.transport.measurement;
 const StateParameter = zdisamar.StateParameter;
 
 const RealEvaluatorContext = struct {

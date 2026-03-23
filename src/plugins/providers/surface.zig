@@ -1,6 +1,6 @@
 const std = @import("std");
 const Scene = @import("../../model/Scene.zig").Scene;
-const PreparedOpticalState = @import("../../kernels/optics/prepare.zig").PreparedOpticalState;
+const PreparedOpticalState = @import("../../kernels/optics/preparation.zig").PreparedOpticalState;
 const ForwardResult = @import("../../kernels/transport/common.zig").ForwardResult;
 
 pub const EvaluationContext = struct {

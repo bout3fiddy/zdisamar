@@ -3,7 +3,7 @@ const ExportFormat = @import("format.zig").ExportFormat;
 const Result = @import("../../core/Result.zig").Result;
 const Provenance = @import("../../core/provenance.zig").Provenance;
 const Diagnostics = @import("../../core/diagnostics.zig").Diagnostics;
-const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
+const MeasurementSpaceProduct = @import("../../kernels/transport/measurement.zig").MeasurementSpaceProduct;
 const RetrievalOutcome = @import("../../retrieval/common/contracts.zig").SolverOutcome;
 
 pub const Compression = struct {

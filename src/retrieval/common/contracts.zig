@@ -6,8 +6,8 @@ const LayoutRequirements = @import("../../model/Scene.zig").LayoutRequirements;
 const Measurement = @import("../../model/Scene.zig").Measurement;
 const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const Scene = @import("../../model/Scene.zig").Scene;
-const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
-const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
+const MeasurementSpaceProduct = @import("../../kernels/transport/measurement.zig").MeasurementSpaceProduct;
+const MeasurementSpaceSummary = @import("../../kernels/transport/measurement.zig").MeasurementSpaceSummary;
 const Allocator = std.mem.Allocator;
 
 pub const Method = enum {

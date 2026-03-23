@@ -3,8 +3,8 @@ const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
 const retrieval = @import("zdisamar_internal").retrieval;
 const ReferenceData = internal.reference_data;
-const OpticsPrepare = internal.kernels.optics.prepare;
-const MeasurementSpace = internal.kernels.transport.measurement_space;
+const OpticsPrepare = internal.kernels.optics.preparation;
+const MeasurementSpace = internal.kernels.transport.measurement;
 
 const RuntimeProfile = struct {
     observation_regime: []const u8,
@@ -603,17 +603,14 @@ fn prepareOpticalStateForCase(
         mie_table = try mie_asset.toMiePhaseTable(allocator);
     }
 
-    return OpticsPrepare.prepareWithParticleTables(
-        allocator,
-        &scene,
-        &profile,
-        &cross_sections,
-        if (collision_induced_absorption) |*table| table else null,
-        if (line_list) |*table| table else null,
-        &lut,
-        if (mie_table) |*table| table else null,
-        null,
-    );
+    return OpticsPrepare.prepare(allocator, &scene, .{
+        .profile = &profile,
+        .cross_sections = &cross_sections,
+        .collision_induced_absorption = if (collision_induced_absorption) |*table| table else null,
+        .spectroscopy_lines = if (line_list) |*table| table else null,
+        .lut = &lut,
+        .aerosol_mie = if (mie_table) |*table| table else null,
+    });
 }
 
 fn makeOeTruthScene(scene: zdisamar.Scene) zdisamar.Scene {

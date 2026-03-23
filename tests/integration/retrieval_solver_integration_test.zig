@@ -23,14 +23,14 @@ fn realObservedProduct(
     allocator: std.mem.Allocator,
     context: *const RealEvaluatorContext,
     scene: zdisamar.Scene,
-) !internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
+) !internal.kernels.transport.measurement.MeasurementSpaceProduct {
     return evaluateProduct(allocator, context, scene);
 }
 
 fn evaluateSummary(
     context_ptr: *const anyopaque,
     scene: zdisamar.Scene,
-) anyerror!internal.kernels.transport.measurement_space.MeasurementSpaceSummary {
+) anyerror!internal.kernels.transport.measurement.MeasurementSpaceSummary {
     const context: *const RealEvaluatorContext = @ptrCast(@alignCast(context_ptr));
     var measurement = try evaluateProduct(context.allocator, context_ptr, scene);
     defer measurement.deinit(context.allocator);
@@ -41,11 +41,11 @@ fn evaluateProduct(
     allocator: std.mem.Allocator,
     context_ptr: *const anyopaque,
     scene: zdisamar.Scene,
-) anyerror!internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
+) anyerror!internal.kernels.transport.measurement.MeasurementSpaceProduct {
     const context: *const RealEvaluatorContext = @ptrCast(@alignCast(context_ptr));
     var prepared_optics = try context.plan.providers.optics.prepareForScene(allocator, &scene);
     defer prepared_optics.deinit(allocator);
-    return internal.kernels.transport.measurement_space.simulateProduct(
+    return internal.kernels.transport.measurement.simulateProduct(
         allocator,
         &scene,
         context.plan.transport_route,

@@ -12,4 +12,5 @@ comptime {
     _ = @import("plugin_native_resolution_test.zig");
     _ = @import("retrieval_contracts_test.zig");
     _ = @import("runtime_cache_scheduler_test.zig");
+    _ = @import("transport_measurement_test.zig");
 }

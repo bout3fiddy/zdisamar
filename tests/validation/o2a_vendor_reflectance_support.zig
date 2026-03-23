@@ -3,8 +3,8 @@ const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
 
 const ReferenceData = internal.reference_data;
-const OpticsPrepare = internal.kernels.optics.prepare;
-const MeasurementSpace = internal.kernels.transport.measurement_space;
+const OpticsPrepare = internal.kernels.optics.preparation;
+const MeasurementSpace = internal.kernels.transport.measurement;
 const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
 
 pub const ReferenceSample = struct {
@@ -672,15 +672,13 @@ pub fn runConfiguredVendorO2AReflectanceCase(
         .irradiance = reference_irradiance,
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopyAndCollisionInducedAbsorption(
-        allocator,
-        &scene,
-        &profile,
-        &cross_sections,
-        if (cia_table) |*table| table else null,
-        &line_list,
-        &lut,
-    );
+    var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
+        .profile = &profile,
+        .cross_sections = &cross_sections,
+        .collision_induced_absorption = if (cia_table) |*table| table else null,
+        .spectroscopy_lines = &line_list,
+        .lut = &lut,
+    });
     errdefer prepared.deinit(allocator);
 
     var engine = zdisamar.Engine.init(allocator, .{});

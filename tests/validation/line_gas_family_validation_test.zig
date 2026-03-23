@@ -3,8 +3,8 @@ const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
 
 const ReferenceData = internal.reference_data;
-const OpticsPrepare = internal.kernels.optics.prepare;
-const MeasurementSpace = internal.kernels.transport.measurement_space;
+const OpticsPrepare = internal.kernels.optics.preparation;
+const MeasurementSpace = internal.kernels.transport.measurement;
 const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
 
 const SimulatedCase = struct {
@@ -160,14 +160,12 @@ fn simulateCo2LineGasCase(
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
-        allocator,
-        &scene,
-        &profile,
-        &cross_sections,
-        &line_list,
-        &lut,
-    );
+    var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
+        .profile = &profile,
+        .cross_sections = &cross_sections,
+        .spectroscopy_lines = &line_list,
+        .lut = &lut,
+    });
     errdefer prepared.deinit(allocator);
 
     var engine = zdisamar.Engine.init(allocator, .{});
@@ -358,14 +356,12 @@ fn simulateVendorAnchoredH2ONH3Case(
         },
     };
 
-    var prepared = try OpticsPrepare.prepareWithSpectroscopy(
-        allocator,
-        &scene,
-        &profile,
-        &cross_sections,
-        &line_list,
-        &lut,
-    );
+    var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
+        .profile = &profile,
+        .cross_sections = &cross_sections,
+        .spectroscopy_lines = &line_list,
+        .lut = &lut,
+    });
     errdefer prepared.deinit(allocator);
 
     var engine = zdisamar.Engine.init(allocator, .{});
