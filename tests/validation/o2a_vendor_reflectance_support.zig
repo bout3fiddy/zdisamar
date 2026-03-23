@@ -5,6 +5,7 @@ const internal = @import("zdisamar_internal");
 const ReferenceData = internal.reference_data;
 const OpticsPrepare = internal.kernels.optics.preparation;
 const MeasurementSpace = internal.kernels.transport.measurement;
+const bundled_optics = internal.runtime.reference.bundled_optics_assets;
 const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
 
 pub const ReferenceSample = struct {
@@ -110,21 +111,6 @@ pub const VendorO2AExecutionConfig = struct {
     adaptive_strong_line_max_divisions: u16 = 0,
     include_cia: bool = true,
 };
-
-pub fn zeroContinuumTable(
-    allocator: std.mem.Allocator,
-    start_nm: f64,
-    end_nm: f64,
-) !ReferenceData.CrossSectionTable {
-    const midpoint_nm = (start_nm + end_nm) * 0.5;
-    return .{
-        .points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
-            .{ .wavelength_nm = start_nm, .sigma_cm2_per_molecule = 0.0 },
-            .{ .wavelength_nm = midpoint_nm, .sigma_cm2_per_molecule = 0.0 },
-            .{ .wavelength_nm = end_nm, .sigma_cm2_per_molecule = 0.0 },
-        }),
-    };
-}
 
 pub fn meanOpticalDepthInRange(
     prepared: *const OpticsPrepare.PreparedOpticalState,
@@ -525,67 +511,18 @@ pub fn runConfiguredVendorO2AReflectanceCase(
     allocator: std.mem.Allocator,
     config: VendorO2AExecutionConfig,
 ) !VendorO2AReflectanceCase {
-    var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .climatology_profile,
-        "data/climatologies/bundle_manifest.json",
-        "us_standard_1976_profile",
-    );
-    defer climatology_asset.deinit(allocator);
-
-    var line_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .spectroscopy_line_list,
-        "data/cross_sections/bundle_manifest.json",
-        "o2a_hitran_07_hit08_tropomi",
-    );
-    defer line_asset.deinit(allocator);
-    var strong_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .spectroscopy_strong_line_set,
-        "data/cross_sections/bundle_manifest.json",
-        "o2a_lisa_sdf",
-    );
-    defer strong_asset.deinit(allocator);
-    var rmf_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .spectroscopy_relaxation_matrix,
-        "data/cross_sections/bundle_manifest.json",
-        "o2a_lisa_rmf",
-    );
-    defer rmf_asset.deinit(allocator);
-    var cia_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .collision_induced_absorption_table,
-        "data/cross_sections/bundle_manifest.json",
-        "o2o2_bira_o2a",
-    );
-    defer cia_asset.deinit(allocator);
-    var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .lookup_table,
-        "data/luts/bundle_manifest.json",
-        "airmass_factor_nadir_demo",
-    );
-    defer lut_asset.deinit(allocator);
-
-    var profile = try climatology_asset.toClimatologyProfile(allocator);
+    var profile = try bundled_optics.loadStandardClimatologyProfile(allocator);
     defer profile.deinit(allocator);
-    var cross_sections = try zeroContinuumTable(allocator, 758.0, 771.0);
+    var cross_sections = try bundled_optics.zeroContinuumTable(allocator, 758.0, 771.0);
     defer cross_sections.deinit(allocator);
-    var line_list = try line_asset.toSpectroscopyLineList(allocator);
+    var line_list = try bundled_optics.loadO2aSpectroscopyLineList(allocator);
     defer line_list.deinit(allocator);
-    var strong_lines = try strong_asset.toSpectroscopyStrongLineSet(allocator);
-    defer strong_lines.deinit(allocator);
-    var relaxation_matrix = try rmf_asset.toSpectroscopyRelaxationMatrix(allocator);
-    defer relaxation_matrix.deinit(allocator);
-    try line_list.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
     var cia_table: ?ReferenceData.CollisionInducedAbsorptionTable = null;
     defer if (cia_table) |*table| table.deinit(allocator);
     if (config.include_cia) {
-        cia_table = try cia_asset.toCollisionInducedAbsorptionTable(allocator);
+        cia_table = try bundled_optics.loadO2ACollisionInducedAbsorptionTable(allocator);
     }
-    var lut = try lut_asset.toAirmassFactorLut(allocator);
+    var lut = try bundled_optics.loadAirmassFactorLut(allocator);
     defer lut.deinit(allocator);
 
     const reference = try loadReferenceSamples(

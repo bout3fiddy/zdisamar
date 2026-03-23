@@ -552,6 +552,9 @@ pub fn parseSurfaceType(value: []const u8) Error!SurfaceType {
 }
 
 pub fn parseAbsorberSpecies(value: []const u8) Error!AbsorberSpecies {
+    if (std.ascii.eqlIgnoreCase(value, "o2o2") or std.ascii.eqlIgnoreCase(value, "o2-o2")) {
+        return .o2_o2;
+    }
     return AbsorberSpecies.fromVendorName(value) orelse
         std.meta.stringToEnum(AbsorberSpecies, value) orelse
         error.InvalidValue;

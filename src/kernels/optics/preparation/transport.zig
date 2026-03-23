@@ -1,8 +1,6 @@
 const std = @import("std");
-const AbsorberModel = @import("../../../model/Absorber.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const ReferenceData = @import("../../../model/ReferenceData.zig");
-const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const gauss_legendre = @import("../../quadrature/gauss_legendre.zig");
 const transport_common = @import("../../transport/common.zig");
@@ -423,156 +421,6 @@ fn interpolateQuadratureStateAtAltitude(
     return null;
 }
 
-fn preparedStrongLineStateAtAltitude(
-    sublayers: []const PreparedSublayer,
-    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
-    altitude_km: f64,
-) ?*const ReferenceData.StrongLinePreparedState {
-    const states = strong_line_states orelse return null;
-    if (states.len == 0 or states.len != sublayers.len) return null;
-    if (states.len == 1) return &states[0];
-
-    if (altitude_km <= sublayers[0].altitude_km) return &states[0];
-    if (altitude_km >= sublayers[sublayers.len - 1].altitude_km) return &states[states.len - 1];
-
-    for (sublayers[0 .. sublayers.len - 1], sublayers[1..], 0..) |left, right, index| {
-        if (altitude_km > right.altitude_km) continue;
-        const left_distance = @abs(altitude_km - left.altitude_km);
-        const right_distance = @abs(right.altitude_km - altitude_km);
-        return if (left_distance <= right_distance) &states[index] else &states[index + 1];
-    }
-
-    return &states[states.len - 1];
-}
-
-fn operationalO2EvaluationAtWavelength(
-    operational_o2_lut: OperationalCrossSectionLut,
-    wavelength_nm: f64,
-    temperature_k: f64,
-    pressure_hpa: f64,
-) ReferenceData.SpectroscopyEvaluation {
-    const sigma = operational_o2_lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa);
-    return .{
-        .weak_line_sigma_cm2_per_molecule = sigma,
-        .strong_line_sigma_cm2_per_molecule = 0.0,
-        .line_sigma_cm2_per_molecule = sigma,
-        .line_mixing_sigma_cm2_per_molecule = 0.0,
-        .total_sigma_cm2_per_molecule = sigma,
-        .d_sigma_d_temperature_cm2_per_molecule_per_k = operational_o2_lut.dSigmaDTemperatureAt(
-            wavelength_nm,
-            temperature_k,
-            pressure_hpa,
-        ),
-    };
-}
-
-fn preparedScalarForSublayer(values: []const f64, sublayer: PreparedSublayer) f64 {
-    const index: usize = @intCast(sublayer.global_sublayer_index);
-    if (index >= values.len) return 0.0;
-    return values[index];
-}
-
-fn interpolatePreparedScalarBetweenSublayers(
-    left: PreparedSublayer,
-    right: PreparedSublayer,
-    values: []const f64,
-    altitude_km: f64,
-) f64 {
-    const left_value = preparedScalarForSublayer(values, left);
-    const right_value = preparedScalarForSublayer(values, right);
-    const span = right.altitude_km - left.altitude_km;
-    if (span <= 0.0) return right_value;
-    const fraction = std.math.clamp((altitude_km - left.altitude_km) / span, 0.0, 1.0);
-    return left_value + (right_value - left_value) * fraction;
-}
-
-fn interpolatePreparedScalarAtAltitude(
-    sublayers: []const PreparedSublayer,
-    values: []const f64,
-    altitude_km: f64,
-) f64 {
-    if (sublayers.len == 0) return 0.0;
-    if (sublayers.len == 1) return preparedScalarForSublayer(values, sublayers[0]);
-
-    const first = sublayers[0];
-    const last = sublayers[sublayers.len - 1];
-    if (altitude_km <= first.altitude_km) {
-        return interpolatePreparedScalarBetweenSublayers(first, sublayers[1], values, altitude_km);
-    }
-    if (altitude_km >= last.altitude_km) {
-        return interpolatePreparedScalarBetweenSublayers(sublayers[sublayers.len - 2], last, values, altitude_km);
-    }
-    for (sublayers[0 .. sublayers.len - 1], sublayers[1..]) |left, right| {
-        if (altitude_km > right.altitude_km) continue;
-        return interpolatePreparedScalarBetweenSublayers(left, right, values, altitude_km);
-    }
-    return preparedScalarForSublayer(values, last);
-}
-
-fn lineAbsorberDensityForSpeciesAtSublayer(
-    self: *const PreparedOpticalState,
-    species: AbsorberModel.AbsorberSpecies,
-    global_sublayer_index: usize,
-) f64 {
-    for (self.line_absorbers) |line_absorber| {
-        if (line_absorber.species != species) continue;
-        if (global_sublayer_index >= line_absorber.number_densities_cm3.len) return 0.0;
-        return line_absorber.number_densities_cm3[global_sublayer_index];
-    }
-    return 0.0;
-}
-
-fn lineAbsorberDensityForSpeciesAtAltitude(
-    self: *const PreparedOpticalState,
-    species: AbsorberModel.AbsorberSpecies,
-    sublayers: []const PreparedSublayer,
-    altitude_km: f64,
-) f64 {
-    for (self.line_absorbers) |line_absorber| {
-        if (line_absorber.species != species) continue;
-        return interpolatePreparedScalarAtAltitude(
-            sublayers,
-            line_absorber.number_densities_cm3,
-            altitude_km,
-        );
-    }
-    return 0.0;
-}
-
-fn continuumCarrierDensityAtSublayer(
-    self: *const PreparedOpticalState,
-    sublayer: PreparedSublayer,
-    global_sublayer_index: usize,
-) f64 {
-    if (self.line_absorbers.len == 0) return sublayer.absorber_number_density_cm3;
-
-    const owner_species = self.continuum_owner_species orelse return sublayer.absorber_number_density_cm3;
-    // DECISION:
-    //   When preparation can identify a continuum owner, scope the continuum to that
-    //   gas only. If ownership is unknown, preserve the prior summed-density behavior
-    //   rather than dropping continuum absorption entirely for mixed non-O2 families.
-    if (self.operational_o2_lut.enabled() and owner_species == .o2) {
-        return sublayer.oxygen_number_density_cm3;
-    }
-    return self.lineAbsorberDensityForSpeciesAtSublayer(owner_species, global_sublayer_index);
-}
-
-fn continuumCarrierDensityAtAltitude(
-    self: *const PreparedOpticalState,
-    sublayers: []const PreparedSublayer,
-    altitude_km: f64,
-    absorber_density_cm3: f64,
-    oxygen_density_cm3: f64,
-) f64 {
-    if (self.line_absorbers.len == 0) return absorber_density_cm3;
-
-    const owner_species = self.continuum_owner_species orelse return absorber_density_cm3;
-    if (self.operational_o2_lut.enabled() and owner_species == .o2) {
-        return oxygen_density_cm3;
-    }
-    return self.lineAbsorberDensityForSpeciesAtAltitude(owner_species, sublayers, altitude_km);
-}
-
 fn quadratureCarrierAtAltitude(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -631,7 +479,11 @@ fn pseudoSphericalCarrierAtAltitude(
     const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{ .optical_depth = 0.0 };
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
     const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
-    const prepared_state = preparedStrongLineStateAtAltitude(sublayers, strong_line_states, altitude_km);
+    const prepared_state = State.PreparedOpticalState.preparedStrongLineStateAtAltitude(
+        sublayers,
+        strong_line_states,
+        altitude_km,
+    );
     const spectroscopy_sigma = if (self.line_absorbers.len != 0)
         self.weightedSpectroscopyEvaluationAtAltitude(
             wavelength_nm,

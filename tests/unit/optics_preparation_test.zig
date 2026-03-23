@@ -2272,3 +2272,45 @@ test "collect active line absorbers resolves public species strings" {
     try std.testing.expectEqual(@as(usize, 1), active.len);
     try std.testing.expectEqual(AbsorberSpecies.o2, active[0].species);
 }
+
+test "resolve active line species maps HITRAN NO2 runtime controls" {
+    var line_list = ReferenceData.SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+            .{
+                .gas_index = 10,
+                .isotope_number = 1,
+                .center_wavelength_nm = 435.0,
+                .line_strength_cm2_per_molecule = 1.0e-20,
+                .air_half_width_nm = 0.001,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 0.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+        }),
+        .runtime_controls = .{ .gas_index = 10 },
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(
+        AbsorberSpecies.no2,
+        OpticsPrepare.spectroscopy.resolveActiveLineSpecies(null, line_list, .{}).?,
+    );
+}
+
+test "species mixing ratio falls back to demo NO2 trace loading when scene omits absorber profiles" {
+    const scene: zdisamar.Scene = .{
+        .id = "default-no2-trace-loading",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 9,
+        },
+    };
+
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 5.0e-8),
+        OpticsPrepare.spectroscopy.speciesMixingRatioAtPressure(&scene, .no2, &.{}, 700.0, null).?,
+        1.0e-18,
+    );
+}

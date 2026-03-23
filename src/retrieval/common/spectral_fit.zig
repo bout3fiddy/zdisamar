@@ -3,6 +3,8 @@ const common = @import("contracts.zig");
 const diagnostics = @import("diagnostics.zig");
 const forward_model = @import("forward_model.zig");
 const priors = @import("priors.zig");
+const posterior_products = @import("posterior_products.zig");
+const solver_support = @import("solver_support.zig");
 const state_access = @import("state_access.zig");
 const transforms = @import("transforms.zig");
 const cholesky = @import("../../kernels/linalg/cholesky.zig");
@@ -82,6 +84,35 @@ const Linearization = struct {
     }
 };
 
+const BacktrackContext = struct {
+    allocator: Allocator,
+    problem: common.RetrievalProblem,
+    evaluator: forward_model.Evaluator,
+    layout: state_access.ResolvedStateLayout,
+    observed: TransformedMeasurement,
+    selection: SelectionResult,
+    policy: Policy,
+    prior: priors.Assembly,
+
+    fn evaluate(self: @This(), candidate_state: []const f64) common.Error!solver_support.TrialCosts {
+        const measurement_cost = try candidateMeasurementCost(
+            self.allocator,
+            self.problem,
+            self.evaluator,
+            self.layout,
+            candidate_state,
+            self.observed,
+            self.selection,
+            self.policy,
+        );
+        const prior_cost = solver_support.priorCost(self.prior.inverse_covariance, candidate_state, self.prior.mean_solver);
+        return .{
+            .measurement_cost = measurement_cost,
+            .prior_cost = prior_cost,
+        };
+    }
+};
+
 pub fn solveMethod(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -106,7 +137,7 @@ pub fn solveMethod(
 
     const solver_state = try allocator.alloc(f64, state_count);
     defer allocator.free(solver_state);
-    try seedSolverState(allocator, problem, layout, prior.mean_solver, solver_state);
+    try solver_support.seedSolverState(allocator, problem, layout, prior.mean_solver, solver_state);
 
     const max_iterations: u32 = if (problem.inverse_problem.fit_controls.max_iterations != 0)
         problem.inverse_problem.fit_controls.max_iterations
@@ -117,6 +148,18 @@ pub fn solveMethod(
     var iterations: u32 = 0;
     var converged = false;
     var last_step_norm: f64 = std.math.inf(f64);
+    const backtrack_context = BacktrackContext{
+        .allocator = allocator,
+        .problem = problem,
+        .evaluator = evaluator,
+        .layout = layout,
+        .observed = observed_transformed,
+        .selection = selection,
+        .policy = policy,
+        .prior = prior,
+    };
+    const candidate_state = try allocator.alloc(f64, state_count);
+    defer allocator.free(candidate_state);
 
     while (iterations < max_iterations) : (iterations += 1) {
         var linearization = try linearizeState(
@@ -134,7 +177,7 @@ pub fn solveMethod(
 
         const step = try allocator.alloc(f64, state_count);
         defer allocator.free(step);
-        try solveSymmetricSystem(
+        try solver_support.solveSymmetricSystem(
             allocator,
             linearization.hessian,
             state_count,
@@ -143,39 +186,17 @@ pub fn solveMethod(
             step,
         );
 
-        const candidate_state = try allocator.dupe(f64, solver_state);
-        defer allocator.free(candidate_state);
-        var accepted_measurement_cost = linearization.measurement_cost;
-        var accepted_prior_cost = linearization.prior_cost;
-        var accepted_scale: f64 = 0.0;
-        var accepted = false;
-        var scale: f64 = 1.0;
-        while (scale >= 1.0 / 64.0) : (scale *= 0.5) {
-            try vector_ops.copy(solver_state, candidate_state);
-            for (candidate_state, step) |*slot, value| {
-                slot.* += scale * value;
-            }
+        const accepted = try solver_support.backtrackAcceptedStep(
+            solver_state,
+            step,
+            1.0 / 64.0,
+            linearization.measurement_cost + linearization.prior_cost,
+            candidate_state,
+            backtrack_context,
+            BacktrackContext.evaluate,
+        );
 
-            accepted_measurement_cost = try candidateMeasurementCost(
-                allocator,
-                problem,
-                evaluator,
-                layout,
-                candidate_state,
-                observed_transformed,
-                selection,
-                policy,
-            );
-            accepted_prior_cost = priorCost(prior.inverse_covariance, candidate_state, prior.mean_solver);
-            const current_total = linearization.measurement_cost + linearization.prior_cost;
-            if (accepted_measurement_cost + accepted_prior_cost <= current_total) {
-                accepted = true;
-                accepted_scale = scale;
-                break;
-            }
-        }
-
-        if (!accepted) {
+        if (accepted == null) {
             last_step_norm = 0.0;
             previous_total_cost = linearization.measurement_cost + linearization.prior_cost;
             iterations += 1;
@@ -185,13 +206,14 @@ pub fn solveMethod(
         try vector_ops.copy(candidate_state, solver_state);
         const scaled_step = try allocator.alloc(f64, state_count);
         defer allocator.free(scaled_step);
-        for (scaled_step, step) |*slot, value| slot.* = accepted_scale * value;
+        const accepted_step = accepted.?;
+        for (scaled_step, step) |*slot, value| slot.* = accepted_step.scale * value;
 
         const fit_summary = switch (method) {
             .doas => diagnostics.assessDifferential(
                 previous_total_cost,
-                accepted_measurement_cost,
-                accepted_prior_cost,
+                accepted_step.measurement_cost,
+                accepted_step.prior_cost,
                 scaled_step,
                 solver_state,
                 problem.inverse_problem.convergence,
@@ -205,8 +227,8 @@ pub fn solveMethod(
             ).common,
             .dismas => diagnostics.assessDirectIntensity(
                 previous_total_cost,
-                accepted_measurement_cost,
-                accepted_prior_cost,
+                accepted_step.measurement_cost,
+                accepted_step.prior_cost,
                 scaled_step,
                 solver_state,
                 problem.inverse_problem.convergence,
@@ -243,7 +265,7 @@ pub fn solveMethod(
     );
     errdefer final_context.deinit(allocator);
 
-    const posterior_covariance = try invertHessian(
+    const posterior_covariance = try solver_support.invertHessian(
         allocator,
         final_context.hessian,
         state_count,
@@ -253,7 +275,7 @@ pub fn solveMethod(
 
     const averaging_kernel = try allocator.alloc(f64, state_count * state_count);
     errdefer allocator.free(averaging_kernel);
-    try buildAveragingKernel(
+    try posterior_products.buildAveragingKernel(
         posterior_covariance,
         final_context.measurement_normal,
         state_count,
@@ -263,7 +285,7 @@ pub fn solveMethod(
     const dfs = try dense.trace(averaging_kernel, state_count);
     const final_values = try allocator.dupe(f64, final_context.physical_state);
     errdefer allocator.free(final_values);
-    const parameter_names = try parameterNames(allocator, problem);
+    const parameter_names = try solver_support.parameterNames(allocator, problem);
     defer allocator.free(parameter_names);
     const final_jacobian = final_context.jacobian;
     final_context.jacobian = &[_]f64{};
@@ -369,7 +391,7 @@ fn linearizeState(
     errdefer allocator.free(normalized_state);
     const physical_state = try allocator.alloc(f64, state_count);
     errdefer allocator.free(physical_state);
-    try normalizeSolverState(problem, normalized_state, physical_state);
+    try solver_support.normalizeSolverState(problem, normalized_state, physical_state);
 
     const scene = try state_access.sceneForStateWithLayout(problem, physical_state, layout);
     var measurement = try forward_model.evaluateMeasurement(allocator, problem, evaluator, scene);
@@ -407,11 +429,11 @@ fn linearizeState(
     errdefer allocator.free(gradient);
     try accumulateWeightedNormalEquation(jacobian, observed.sigma, measurement_count, state_count, measurement_normal, gradient, residual);
     @memcpy(hessian, measurement_normal);
-    addMatrixInPlace(hessian, prior.inverse_covariance);
-    subtractMatVec(gradient, prior.inverse_covariance, normalized_state, prior.mean_solver);
+    solver_support.addMatrixInPlace(hessian, prior.inverse_covariance);
+    solver_support.subtractMatVec(gradient, prior.inverse_covariance, normalized_state, prior.mean_solver);
 
     const measurement_cost_value = weightedResidualCost(residual, observed.sigma);
-    const prior_cost_value = priorCost(prior.inverse_covariance, normalized_state, prior.mean_solver);
+    const prior_cost_value = solver_support.priorCost(prior.inverse_covariance, normalized_state, prior.mean_solver);
     allocator.free(normalized_state);
 
     var fit_diagnostics = buildFitDiagnostics(allocator, policy, transformed, jacobian, state_count, selection);
@@ -641,14 +663,14 @@ fn buildNumericalJacobian(
     const state_count = physical_state.len;
 
     for (problem.inverse_problem.state_vector.parameters, 0..) |parameter, column| {
-        const step_physical = finiteDifferenceStep(parameter, physical_state[column]);
+        const step_physical = solver_support.finiteDifferenceStep(parameter, physical_state[column]);
         const perturbed_physical = try allocator.dupe(f64, physical_state);
         defer allocator.free(perturbed_physical);
         const perturbed_solver = try allocator.dupe(f64, solver_state);
         defer allocator.free(perturbed_solver);
 
-        perturbed_physical[column] = clampPhysical(parameter, physical_state[column] + step_physical);
-        perturbed_solver[column] = safeSolverValue(parameter, perturbed_physical[column]) catch return common.Error.InvalidRequest;
+        perturbed_physical[column] = solver_support.clampPhysical(parameter, physical_state[column] + step_physical);
+        perturbed_solver[column] = solver_support.safeSolverValue(parameter, perturbed_physical[column]) catch return common.Error.InvalidRequest;
         const delta_solver = perturbed_solver[column] - solver_state[column];
         if (@abs(delta_solver) <= 1.0e-15) continue;
 
@@ -724,7 +746,7 @@ fn candidateMeasurementCost(
     problem: common.RetrievalProblem,
     evaluator: forward_model.Evaluator,
     layout: state_access.ResolvedStateLayout,
-    candidate_state: []f64,
+    candidate_state: []const f64,
     observed: TransformedMeasurement,
     selection: SelectionResult,
     policy: Policy,
@@ -733,7 +755,7 @@ fn candidateMeasurementCost(
     defer allocator.free(normalized_state);
     const physical_state = try allocator.alloc(f64, candidate_state.len);
     defer allocator.free(physical_state);
-    try normalizeSolverState(problem, normalized_state, physical_state);
+    try solver_support.normalizeSolverState(problem, normalized_state, physical_state);
 
     const candidate_scene = try state_access.sceneForStateWithLayout(problem, physical_state, layout);
     var candidate_measurement = try forward_model.evaluateMeasurement(allocator, problem, evaluator, candidate_scene);

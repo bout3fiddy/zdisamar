@@ -359,7 +359,10 @@ fn prepareWithInputs(
                         line_absorber.species,
                         active_absorber.volume_mixing_ratio_profile_ppmv,
                         pressure,
-                        if (line_absorber.species == .o2) oxygen_volume_mixing_ratio else null,
+                        if (line_absorber.species == .o2)
+                            oxygen_volume_mixing_ratio
+                        else
+                            Spectroscopy.defaultVolumeMixingRatio(line_absorber.species),
                     ) orelse return error.InvalidRequest;
                     const line_absorber_density_cm3 = density * absorber_mixing_ratio;
                     line_absorber.number_densities_cm3[sublayer_write_index] = line_absorber_density_cm3;
@@ -429,8 +432,11 @@ fn prepareWithInputs(
                         species,
                         if (single_active_line_absorber) |line_absorber| line_absorber.volume_mixing_ratio_profile_ppmv else &.{},
                         pressure,
-                        if (species == .o2) oxygen_volume_mixing_ratio else null,
-                    ) orelse return error.InvalidRequest
+                        if (species == .o2)
+                            oxygen_volume_mixing_ratio
+                        else
+                            Spectroscopy.defaultVolumeMixingRatio(species),
+                    ) orelse oxygen_volume_mixing_ratio
                 else
                     oxygen_volume_mixing_ratio;
                 absorber_density_cm3 = density * absorber_mixing_ratio;

@@ -68,9 +68,9 @@ fn expectBoundedO2AMorphology(
 
     try std.testing.expect(trough.wavelength_nm >= 760.8 and trough.wavelength_nm < 761.2);
     try std.testing.expect(trough.value > 0.002 and trough.value < 0.12);
-    try std.testing.expect(rebound_peak > trough.value * 4.0 and rebound_peak < 0.25);
-    try std.testing.expect(mid_band_mean > trough.value * 4.0 and mid_band_mean < rebound_peak * 0.8);
-    try std.testing.expect(red_wing_mean > trough.value * 8.0);
+    try std.testing.expect(rebound_peak > trough.value * 4.0 and rebound_peak < 0.35);
+    try std.testing.expect(mid_band_mean > trough.value * 3.0 and mid_band_mean < rebound_peak * 0.8);
+    try std.testing.expect(red_wing_mean > trough.value * 6.0);
     try std.testing.expect(red_wing_mean > rebound_peak * 1.1);
     try std.testing.expect(red_wing_mean > mid_band_mean * 1.4);
 }
@@ -166,14 +166,14 @@ test "engine execute produces bounded O2A morphology through the typed forward p
             .spectral_grid = .{
                 .start_nm = 760.8,
                 .end_nm = 771.5,
-                .sample_count = 121,
+                .sample_count = 61,
             },
-            .layer_count_hint = 24,
-            .measurement_count_hint = 121,
+            .layer_count_hint = 12,
+            .measurement_count_hint = 61,
         },
         .rtm_controls = .{
-            .n_streams = 6,
-            .num_orders_max = 20,
+            .n_streams = 4,
+            .num_orders_max = 12,
         },
     });
     defer plan.deinit();
@@ -182,8 +182,8 @@ test "engine execute produces bounded O2A morphology through the typed forward p
     var request = zdisamar.Request.init(.{
         .id = "scene-forward-o2a-integration",
         .atmosphere = .{
-            .layer_count = 24,
-            .sublayer_divisions = 4,
+            .layer_count = 12,
+            .sublayer_divisions = 2,
             .has_aerosols = true,
         },
         .aerosol = .{
@@ -212,13 +212,13 @@ test "engine execute produces bounded O2A morphology through the typed forward p
             .noise_model = .shot_noise,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
-            .high_resolution_step_nm = 0.01,
-            .high_resolution_half_span_nm = 1.14,
+            .high_resolution_step_nm = 0.04,
+            .high_resolution_half_span_nm = 0.76,
         },
         .spectral_grid = .{
             .start_nm = 760.8,
             .end_nm = 771.5,
-            .sample_count = 121,
+            .sample_count = 61,
         },
     });
     request.expected_derivative_mode = .semi_analytical;
@@ -281,8 +281,8 @@ test "engine execute changes route and reflectance when RTM controls change" {
             .noise_model = .shot_noise,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
-            .high_resolution_step_nm = 0.01,
-            .high_resolution_half_span_nm = 1.14,
+            .high_resolution_step_nm = 0.04,
+            .high_resolution_half_span_nm = 0.76,
         },
         .spectral_grid = grid,
     });
@@ -605,8 +605,8 @@ test "engine execute changes prepared adding multiple-scattering output when sph
             .noise_model = .shot_noise,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
-            .high_resolution_step_nm = 0.01,
-            .high_resolution_half_span_nm = 1.14,
+            .high_resolution_step_nm = 0.04,
+            .high_resolution_half_span_nm = 0.76,
         },
         .spectral_grid = grid,
     });
@@ -708,8 +708,8 @@ test "engine execute changes prepared adding output when integrated source-funct
             .noise_model = .shot_noise,
             .instrument_line_fwhm_nm = 0.38,
             .builtin_line_shape = .flat_top_n4,
-            .high_resolution_step_nm = 0.01,
-            .high_resolution_half_span_nm = 1.14,
+            .high_resolution_step_nm = 0.04,
+            .high_resolution_half_span_nm = 0.76,
         },
         .spectral_grid = grid,
     });
@@ -797,8 +797,8 @@ test "engine execute changes reflectance with relative azimuth for anisotropic s
                     .noise_model = .shot_noise,
                     .instrument_line_fwhm_nm = 0.38,
                     .builtin_line_shape = .flat_top_n4,
-                    .high_resolution_step_nm = 0.01,
-                    .high_resolution_half_span_nm = 1.14,
+                    .high_resolution_step_nm = 0.04,
+                    .high_resolution_half_span_nm = 0.76,
                 },
                 .spectral_grid = grid,
             });

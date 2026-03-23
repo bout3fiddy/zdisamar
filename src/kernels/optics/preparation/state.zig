@@ -605,7 +605,32 @@ pub const PreparedOpticalState = struct {
         return 0.0;
     }
 
-    fn preparedStrongLineStateAtAltitude(
+    /// Purpose:
+    ///   Select the nearest prepared strong-line sidecar for an altitude sample.
+    ///
+    /// Physics:
+    ///   Strong-line sidecars are prepared per sublayer and then reused by
+    ///   interpolation-heavy transport paths that need a stable prepared state
+    ///   representative for a specific altitude.
+    ///
+    /// Vendor:
+    ///   `prepared strong-line state selection`
+    ///
+    /// Inputs:
+    ///   `sublayers` and `strong_line_states` must describe the same prepared
+    ///   vertical grid when sidecars are present.
+    ///
+    /// Outputs:
+    ///   Returns the closest prepared strong-line state for `altitude_km`, or
+    ///   `null` when no aligned sidecars exist.
+    ///
+    /// Assumptions:
+    ///   `strong_line_states` must be aligned with `sublayers` when present.
+    ///
+    /// Validation:
+    ///   Exercised by the optics-preparation transport tests that sample strong-
+    ///   line prepared states at quadrature and pseudo-spherical altitudes.
+    pub fn preparedStrongLineStateAtAltitude(
         sublayers: []const PreparedSublayer,
         strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
         altitude_km: f64,

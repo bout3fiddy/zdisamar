@@ -5,6 +5,7 @@ const retrieval = @import("zdisamar_internal").retrieval;
 const ReferenceData = internal.reference_data;
 const OpticsPrepare = internal.kernels.optics.preparation;
 const MeasurementSpace = internal.kernels.transport.measurement;
+const bundled_optics = internal.runtime.reference.bundled_optics_assets;
 
 const RuntimeProfile = struct {
     observation_regime: []const u8,
@@ -475,63 +476,16 @@ test "compatibility harness execution honors RTM controls in prepared routes" {
     try expectPreparedRouteRtmControls();
 }
 
-fn buildZeroContinuumTable(
-    allocator: std.mem.Allocator,
-    start_nm: f64,
-    end_nm: f64,
-) !ReferenceData.CrossSectionTable {
-    const midpoint_nm = (start_nm + end_nm) * 0.5;
-    return .{
-        .points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
-            .{ .wavelength_nm = start_nm, .sigma_cm2_per_molecule = 0.0 },
-            .{ .wavelength_nm = midpoint_nm, .sigma_cm2_per_molecule = 0.0 },
-            .{ .wavelength_nm = end_nm, .sigma_cm2_per_molecule = 0.0 },
-        }),
-    };
-}
-
 fn prepareOpticalStateForCase(
     allocator: std.mem.Allocator,
     case: ParityCase,
     scene: zdisamar.Scene,
 ) !OpticsPrepare.PreparedOpticalState {
-    var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .climatology_profile,
-        "data/climatologies/bundle_manifest.json",
-        "us_standard_1976_profile",
-    );
-    defer climatology_asset.deinit(allocator);
-
-    var cross_section_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .cross_section_table,
-        "data/cross_sections/bundle_manifest.json",
-        "no2_405_465_demo",
-    );
-    defer cross_section_asset.deinit(allocator);
-
-    var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-        allocator,
-        .lookup_table,
-        "data/luts/bundle_manifest.json",
-        "airmass_factor_nadir_demo",
-    );
-    defer lut_asset.deinit(allocator);
-
-    var profile = try climatology_asset.toClimatologyProfile(allocator);
+    var profile = try bundled_optics.loadStandardClimatologyProfile(allocator);
     defer profile.deinit(allocator);
-    var cross_sections = try cross_section_asset.toCrossSectionTable(allocator);
+    var cross_sections = try bundled_optics.loadVisibleBandContinuumTable(allocator);
     defer cross_sections.deinit(allocator);
-    if (case.use_o2a_spectroscopy) {
-        cross_sections.deinit(allocator);
-        cross_sections = try buildZeroContinuumTable(
-            allocator,
-            scene.spectral_grid.start_nm,
-            scene.spectral_grid.end_nm,
-        );
-    }
-    var lut = try lut_asset.toAirmassFactorLut(allocator);
+    var lut = try bundled_optics.loadAirmassFactorLut(allocator);
     defer lut.deinit(allocator);
 
     var line_list: ?ReferenceData.SpectroscopyLineList = null;
@@ -546,44 +500,14 @@ fn prepareOpticalStateForCase(
     };
 
     if (case.use_o2a_spectroscopy) {
-        var line_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        cross_sections.deinit(allocator);
+        cross_sections = try bundled_optics.zeroContinuumTable(
             allocator,
-            .spectroscopy_line_list,
-            "data/cross_sections/bundle_manifest.json",
-            "o2a_hitran_07_hit08_tropomi",
+            scene.spectral_grid.start_nm,
+            scene.spectral_grid.end_nm,
         );
-        defer line_asset.deinit(allocator);
-        var strong_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-            allocator,
-            .spectroscopy_strong_line_set,
-            "data/cross_sections/bundle_manifest.json",
-            "o2a_lisa_sdf",
-        );
-        defer strong_asset.deinit(allocator);
-        var rmf_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-            allocator,
-            .spectroscopy_relaxation_matrix,
-            "data/cross_sections/bundle_manifest.json",
-            "o2a_lisa_rmf",
-        );
-        defer rmf_asset.deinit(allocator);
-
-        var prepared_lines = try line_asset.toSpectroscopyLineList(allocator);
-        var strong_lines = try strong_asset.toSpectroscopyStrongLineSet(allocator);
-        defer strong_lines.deinit(allocator);
-        var relaxation_matrix = try rmf_asset.toSpectroscopyRelaxationMatrix(allocator);
-        defer relaxation_matrix.deinit(allocator);
-        try prepared_lines.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
-        line_list = prepared_lines;
-
-        var cia_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-            allocator,
-            .collision_induced_absorption_table,
-            "data/cross_sections/bundle_manifest.json",
-            "o2o2_bira_o2a",
-        );
-        defer cia_asset.deinit(allocator);
-        collision_induced_absorption = try cia_asset.toCollisionInducedAbsorptionTable(allocator);
+        line_list = try bundled_optics.loadO2aSpectroscopyLineList(allocator);
+        collision_induced_absorption = try bundled_optics.loadO2ACollisionInducedAbsorptionTable(allocator);
     }
 
     var mie_table: ?ReferenceData.MiePhaseTable = null;
@@ -593,14 +517,7 @@ fn prepareOpticalStateForCase(
     };
 
     if (case.use_mie_phase_table) {
-        var mie_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
-            allocator,
-            .mie_phase_table,
-            "data/luts/bundle_manifest.json",
-            "mie_dust_phase_subset",
-        );
-        defer mie_asset.deinit(allocator);
-        mie_table = try mie_asset.toMiePhaseTable(allocator);
+        mie_table = try bundled_optics.loadMiePhaseTable(allocator);
     }
 
     return OpticsPrepare.prepare(allocator, &scene, .{

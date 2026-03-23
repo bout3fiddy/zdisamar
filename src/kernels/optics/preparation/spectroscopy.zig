@@ -6,6 +6,7 @@ const Scene = @import("../../../model/Scene.zig").Scene;
 const State = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
+const default_no2_volume_mixing_ratio = 5.0e-8;
 
 pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
     var active = std.ArrayList(State.ActiveLineAbsorber).empty;
@@ -97,7 +98,14 @@ pub fn speciesMixingRatioAtPressure(
     if (profile_ppmv.len != 0) {
         return interpolateMixingRatioProfileFraction(profile_ppmv, pressure_hpa);
     }
-    return default_fraction;
+    return default_fraction orelse defaultVolumeMixingRatio(species);
+}
+
+pub fn defaultVolumeMixingRatio(species: AbsorberModel.AbsorberSpecies) ?f64 {
+    return switch (species) {
+        .no2, .trop_no2, .strat_no2 => default_no2_volume_mixing_ratio,
+        else => null,
+    };
 }
 
 fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) ?AbsorberModel.AbsorberSpecies {
@@ -117,6 +125,7 @@ fn speciesForHitranIndex(gas_index: u16) ?AbsorberModel.AbsorberSpecies {
         5 => .co,
         6 => .ch4,
         7 => .o2,
+        10 => .no2,
         11 => .nh3,
         else => null,
     };
