@@ -2335,8 +2335,10 @@ fn applyAbsorbingGasConfigToScene(
         if (!species.isLineAbsorbing()) continue;
 
         const absorber = findAbsorberForSpecies(scene.absorbers, species) orelse return Error.InvalidValue;
-        if (entry.profile_sim) |profile_ppmv| {
-            absorber.volume_mixing_ratio_profile_ppmv = try allocator.dupe([2]f64, profile_ppmv);
+        if (active_stage == .simulation) {
+            if (entry.profile_sim) |profile_ppmv| {
+                absorber.volume_mixing_ratio_profile_ppmv = try allocator.dupe([2]f64, profile_ppmv);
+            }
         }
         const hitran = entry.hitran orelse continue;
         const isotopes_sim = if (hitran.isotopes_sim) |values| try allocator.dupe(u8, values) else &.{};

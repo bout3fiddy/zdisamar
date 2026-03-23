@@ -106,7 +106,7 @@ pub const SpectroscopyRuntimeControls = struct {
     active_isotopes: []const u8 = &.{},
     threshold_line_scale: ?f64 = null,
     cutoff_cm1: ?f64 = null,
-    line_mixing_factor: f64 = 0.0,
+    line_mixing_factor: f64 = 1.0,
 
     pub fn clone(self: SpectroscopyRuntimeControls, allocator: Allocator) !SpectroscopyRuntimeControls {
         return .{
@@ -911,7 +911,7 @@ test "runtime controls filter gas and isotope selections and disable O2-only sid
     try std.testing.expectEqual(@as(u8, 2), lines.lines[0].isotope_number);
     try std.testing.expect(lines.strong_lines == null);
     try std.testing.expect(lines.relaxation_matrix == null);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.02), lines.runtime_controls.thresholdStrength(lines.lines).?, 6.0e-23);
+    try std.testing.expectApproxEqAbs(@as(f64, 6.0e-23), lines.runtime_controls.thresholdStrength(lines.lines).?, 1.0e-30);
     try std.testing.expectApproxEqAbs(@as(f64, 8.0), lines.runtime_controls.cutoff_cm1.?, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.4), lines.runtime_controls.line_mixing_factor, 1.0e-12);
 }

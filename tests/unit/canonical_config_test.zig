@@ -465,6 +465,99 @@ test "canonical config compiles absorbing-gas HITRAN controls onto line absorber
     try std.testing.expectApproxEqAbs(@as(f64, 6.0), controls.cutoff_retr_cm1.?, 1.0e-12);
 }
 
+test "canonical config keeps profile_sim scoped to the simulation stage" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: absorbing-gas-profile-stage-scope
+        \\experiment:
+        \\  simulation:
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      id: sim_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        o2a:
+        \\          start_nm: 760.8
+        \\          end_nm: 771.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: line_by_line
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: tropomi
+        \\    absorbing_gas:
+        \\      gases:
+        \\        - species: o2
+        \\          profile_sim:
+        \\            - [1000.0, 209500.0]
+        \\            - [500.0, 209500.0]
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\  retrieval:
+        \\    from: experiment.simulation
+        \\    scene:
+        \\      id: retr_scene
+        \\    absorbing_gas:
+        \\      gases:
+        \\        - species: o2
+        \\          profile_sim:
+        \\            - [1000.0, 209500.0]
+        \\            - [500.0, 209500.0]
+        \\    inverse:
+        \\      algorithm:
+        \\        name: oe
+        \\      measurement:
+        \\        source: truth_radiance
+        \\        observable: radiance
+        \\      state:
+        \\        surface_albedo:
+        \\          target: scene.surface.albedo
+        \\          prior:
+        \\            mean: 0.04
+        \\            sigma: 0.02
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const sim_stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    const retr_stage = resolved.retrieval orelse return error.TestUnexpectedResult;
+
+    try std.testing.expectEqual(@as(usize, 2), sim_stage.scene.absorbers.items[0].volume_mixing_ratio_profile_ppmv.len);
+    try std.testing.expectEqual(@as(usize, 0), retr_stage.scene.absorbers.items[0].volume_mixing_ratio_profile_ppmv.len);
+}
+
 test "canonical config rejects table spectral responses without a table binding" {
     const source =
         \\schema_version: 1

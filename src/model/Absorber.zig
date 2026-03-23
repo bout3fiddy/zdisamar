@@ -67,9 +67,9 @@ pub const LineGasControls = struct {
 
     pub fn activeLineMixingFactor(self: LineGasControls) f64 {
         return switch (self.active_stage) {
-            .simulation => self.factor_lm_sim orelse 0.0,
-            .retrieval => self.factor_lm_retr orelse 0.0,
-            .none => 0.0,
+            .simulation => self.factor_lm_sim orelse 1.0,
+            .retrieval => self.factor_lm_retr orelse 1.0,
+            .none => self.factor_lm_sim orelse self.factor_lm_retr orelse 1.0,
         };
     }
 
@@ -396,6 +396,11 @@ test "line-gas controls validate stage-specific isotope and cutoff selections" {
     try std.testing.expectApproxEqAbs(
         @as(f64, 1.0),
         (LineGasControls{ .factor_lm_sim = 1.0, .active_stage = .simulation }).activeLineMixingFactor(),
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 1.0),
+        (LineGasControls{ .active_stage = .simulation }).activeLineMixingFactor(),
         1.0e-12,
     );
     try std.testing.expectEqualSlices(
