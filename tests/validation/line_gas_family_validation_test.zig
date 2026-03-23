@@ -51,7 +51,7 @@ fn buildCo2LineList(allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLin
                 .gas_index = 2,
                 .isotope_number = 1,
                 .center_wavelength_nm = 1600.14,
-                .line_strength_cm2_per_molecule = 2.5e-16,
+                .line_strength_cm2_per_molecule = 2.5e-20,
                 .air_half_width_nm = 0.001,
                 .temperature_exponent = 0.72,
                 .lower_state_energy_cm1 = 90.0,
@@ -62,7 +62,7 @@ fn buildCo2LineList(allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLin
                 .gas_index = 2,
                 .isotope_number = 1,
                 .center_wavelength_nm = 1600.22,
-                .line_strength_cm2_per_molecule = 1.2e-16,
+                .line_strength_cm2_per_molecule = 1.2e-20,
                 .air_half_width_nm = 0.001,
                 .temperature_exponent = 0.70,
                 .lower_state_energy_cm1 = 120.0,
@@ -437,6 +437,9 @@ test "validation non-o2 staged line-gas profiles change prepared optics and down
         1600.24,
     );
     try std.testing.expect(high_trough < low_trough);
+    try std.testing.expect(
+        meanAbsoluteDifference(low_case.product.reflectance, high_case.product.reflectance) > 1.0e-6,
+    );
 }
 
 test "validation vendor-anchored h2o_nh3 swir line-gas family combines nh3 h2o ch4 and co contributions" {

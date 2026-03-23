@@ -75,6 +75,7 @@ pub const PreparedLayer = struct {
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
     sublayer_index: u32,
+    global_sublayer_index: u32 = 0,
     altitude_km: f64,
     pressure_hpa: f64,
     temperature_k: f64,
@@ -742,7 +743,7 @@ pub const PreparedOpticalState = struct {
     }
 
     fn preparedScalarForSublayer(values: []const f64, sublayer: PreparedSublayer) f64 {
-        const index: usize = @intCast(sublayer.sublayer_index);
+        const index: usize = @intCast(sublayer.global_sublayer_index);
         if (index >= values.len) return 0.0;
         return values[index];
     }
@@ -2151,6 +2152,7 @@ pub fn prepareWithParticleTables(
             sublayers[sublayer_write_index] = .{
                 .parent_layer_index = @intCast(index),
                 .sublayer_index = @intCast(sublayer_index),
+                .global_sublayer_index = @intCast(sublayer_write_index),
                 .altitude_km = altitude_km,
                 .pressure_hpa = pressure,
                 .temperature_k = temperature,
@@ -2348,7 +2350,7 @@ fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]Acti
     defer active.deinit(allocator);
 
     for (scene.absorbers.items) |absorber| {
-        const species = absorber.resolved_species orelse continue;
+        const species = resolvedAbsorberSpecies(absorber) orelse continue;
         if (!species.isLineAbsorbing()) continue;
         if (absorber.spectroscopy.mode != .line_by_line) continue;
         try active.append(allocator, .{
@@ -2358,6 +2360,14 @@ fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]Acti
         });
     }
     return active.toOwnedSlice(allocator);
+}
+
+fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberModel.AbsorberSpecies {
+    if (absorber.resolved_species) |species| return species;
+    if (std.meta.stringToEnum(AbsorberModel.AbsorberSpecies, absorber.species)) |species| return species;
+    if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
+    return null;
 }
 
 fn resolveActiveLineSpecies(
@@ -2434,7 +2444,7 @@ fn findAbsorberBySpecies(
     species: AbsorberModel.AbsorberSpecies,
 ) ?*const AbsorberModel.Absorber {
     for (scene.absorbers.items) |*absorber| {
-        if (absorber.resolved_species == species) return absorber;
+        if (resolvedAbsorberSpecies(absorber.*) == species) return absorber;
     }
     return null;
 }
@@ -2549,4 +2559,102 @@ test "optical preparation derives deterministic layer optical depths from typed 
     _ = prepared.fillForwardLayersAtWavelength(&scene, 434.6, &transport_layers);
     try std.testing.expect(transport_layers[0].optical_depth > 0.0);
     try std.testing.expect(transport_layers[11].optical_depth > 0.0);
+}
+
+fn testPreparedSublayer(
+    parent_layer_index: u32,
+    sublayer_index: u32,
+    global_sublayer_index: u32,
+    altitude_km: f64,
+    pressure_hpa: f64,
+    temperature_k: f64,
+    number_density_cm3: f64,
+    oxygen_number_density_cm3: f64,
+    absorber_number_density_cm3: f64,
+) PreparedSublayer {
+    return .{
+        .parent_layer_index = parent_layer_index,
+        .sublayer_index = sublayer_index,
+        .global_sublayer_index = global_sublayer_index,
+        .altitude_km = altitude_km,
+        .pressure_hpa = pressure_hpa,
+        .temperature_k = temperature_k,
+        .number_density_cm3 = number_density_cm3,
+        .oxygen_number_density_cm3 = oxygen_number_density_cm3,
+        .absorber_number_density_cm3 = absorber_number_density_cm3,
+        .path_length_cm = 1.0,
+        .continuum_cross_section_cm2_per_molecule = 0.0,
+        .line_cross_section_cm2_per_molecule = 0.0,
+        .line_mixing_cross_section_cm2_per_molecule = 0.0,
+        .cia_sigma_cm5_per_molecule2 = 0.0,
+        .cia_optical_depth = 0.0,
+        .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+        .gas_absorption_optical_depth = 0.0,
+        .gas_scattering_optical_depth = 0.0,
+        .gas_extinction_optical_depth = 0.0,
+        .d_gas_optical_depth_d_temperature = 0.0,
+        .d_cia_optical_depth_d_temperature = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .aerosol_single_scatter_albedo = 0.0,
+        .cloud_single_scatter_albedo = 0.0,
+        .aerosol_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .combined_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+    };
+}
+
+test "prepared scalar helpers use global sublayer slots across later layers" {
+    const sublayers = [_]PreparedSublayer{
+        testPreparedSublayer(0, 0, 0, 0.5, 900.0, 285.0, 2.0e19, 4.0e18, 2.0e15),
+        testPreparedSublayer(0, 1, 1, 1.5, 820.0, 280.0, 1.8e19, 3.6e18, 4.0e15),
+        testPreparedSublayer(1, 0, 2, 2.5, 700.0, 270.0, 1.4e19, 2.8e18, 6.0e15),
+        testPreparedSublayer(1, 1, 3, 3.5, 620.0, 265.0, 1.1e19, 2.2e18, 8.0e15),
+    };
+    const values = [_]f64{ 2.0, 4.0, 6.0, 8.0 };
+
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 6.0),
+        PreparedOpticalState.preparedScalarForSublayer(&values, sublayers[2]),
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 7.0),
+        PreparedOpticalState.interpolatePreparedScalarAtAltitude(&sublayers, &values, 3.0),
+        1.0e-12,
+    );
+}
+
+test "collect active line absorbers resolves public species strings" {
+    const scene: Scene = .{
+        .id = "string-species-line-absorber",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 761.2,
+            .sample_count = 9,
+        },
+        .absorbers = .{
+            .items = &.{
+                AbsorberModel.Absorber{
+                    .id = "o2",
+                    .species = "o2",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                            .threshold_line_sim = 1.0e-23,
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    const active = try collectActiveLineAbsorbers(std.testing.allocator, &scene);
+    defer std.testing.allocator.free(active);
+
+    try std.testing.expectEqual(@as(usize, 1), active.len);
+    try std.testing.expectEqual(AbsorberModel.AbsorberSpecies.o2, active[0].species);
+    try std.testing.expectEqual(@as(f64, 1.0e-23), active[0].controls.threshold_line_sim.?);
 }
