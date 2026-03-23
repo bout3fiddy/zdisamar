@@ -181,11 +181,11 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | --- | --- | --- |
 | `src/kernels/transport/common.zig` | `WP-01`, `WP-02` | Route and control typing. |
 | `src/kernels/transport/dispatcher.zig` | `WP-02` | Forward route dispatch. |
-| `src/kernels/transport/labos.zig` | `WP-02`, `WP-11` | Transport and later weighting-function parity hotspot. |
+| `src/kernels/transport/labos.zig` | `WP-02`, `WP-03`, `WP-11` | Transport hotspot, later weighting-function parity hotspot, and the prepared-RTM source-function fallback that keeps the O2A line-gas acceptance lane stable. |
 | `src/kernels/transport/adding.zig` | `WP-02` | Adding-route parity hotspot. |
 | `src/kernels/transport/doubling.zig` | `WP-02` | Auxiliary propagation or removal decision. |
 | `src/kernels/transport/derivatives.zig` | `WP-11` | Retrieval/weighting-function support. |
-| `src/kernels/transport/measurement_space.zig` | `WP-02`, `WP-06`, `WP-07`, `WP-09`, `WP-11`, `WP-12`, `WP-13` | Central forward-model hotspot. |
+| `src/kernels/transport/measurement_space.zig` | `WP-02`, `WP-03`, `WP-06`, `WP-07`, `WP-09`, `WP-11`, `WP-12`, `WP-13` | Central forward-model hotspot, including prepared RTM quadrature handoff for O2A and multi-gas line-absorber validation. |
 | `src/kernels/optics/prepare.zig` | `WP-03`, `WP-04`, `WP-05`, `WP-08` | Prepared optics and layering bridge. |
 | `src/kernels/optics/prepare/band_means.zig` | `WP-03`, `WP-04` | Band and mean treatment in spectroscopy pathways. |
 | `src/kernels/optics/prepare/particle_profiles.zig` | `WP-05` | Particle vertical distributions. |
@@ -266,7 +266,7 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | --- | --- | --- |
 | `src/plugins/providers/transport.zig` | `WP-02` | Typed transport-provider seam. |
 | `src/plugins/providers/optics.zig` | `WP-03`, `WP-04`, `WP-08` | Optics provider seam. |
-| `src/plugins/providers/instrument.zig` | `WP-06`, `WP-07`, `WP-08` | Instrument/integration provider seam. |
+| `src/plugins/providers/instrument.zig` | `WP-03`, `WP-06`, `WP-07`, `WP-08` | Instrument/integration provider seam, including adaptive strong-line sampling over prepared line-gas families. |
 | `src/plugins/providers/noise.zig` | `WP-06`, `WP-07`, `WP-11`, `WP-12`, `WP-13` | Noise and measured-input semantics. |
 | `src/plugins/providers/surface.zig` | `WP-05`, `WP-06` | Surface semantics. |
 | `src/plugins/providers/retrieval.zig` | `WP-11`, `WP-12`, `WP-13`, `WP-15` | Retrieval-family exposure and later cleanup. |
@@ -296,7 +296,7 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | `src/plugins/builtin/exporters/netcdf_cf.plugin.json` | `WP-15` | Same. |
 | `src/plugins/builtin/exporters/zarr.plugin.json` | `WP-15` | Same. |
 | `src/plugins/root.zig` | `WP-15` | Plugin public surface cleanup. |
-| `src/runtime/reference/BundledOptics.zig` | `WP-03`, `WP-04`, `WP-08`, `WP-09` | Bundled science-data path and validation. |
+| `src/runtime/reference/BundledOptics.zig` | `WP-03`, `WP-04`, `WP-08`, `WP-09` | Bundled science-data path, O2A line/CIA asset gating, and validation. |
 | `src/runtime/cache/DatasetCache.zig` | `WP-08`, `WP-10`, `WP-15` | Dataset and LUT/cache support. |
 | `src/runtime/cache/LUTCache.zig` | `WP-08`, `WP-10`, `WP-15` | LUT cache parity and later performance work. |
 | `src/runtime/cache/PlanCache.zig` | `WP-10`, `WP-15` | Runtime cache/performance and later cleanup. |
@@ -304,6 +304,16 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | `src/runtime/scheduler/ScratchArena.zig` | `WP-10`, `WP-15` | Execution scratch/perf support. |
 | `src/runtime/scheduler/ThreadContext.zig` | `WP-10`, `WP-15` | Execution-context cleanup. |
 | `src/runtime/scheduler/BatchRunner.zig` | `WP-10`, `WP-15` | Benchmark and later simplification. |
+
+## Current Zig Validation Files
+
+| File | Assignment | Why |
+| --- | --- | --- |
+| `tests/validation/main.zig` | `WP-03`, `WP-09` | Validation-suite entrypoint now includes the focused line-gas family lane. |
+| `tests/validation/o2a_vendor_reflectance_support.zig` | `WP-02`, `WP-03`, `WP-09` | Shared O2A validation harness for vendor reference comparison plus line-gas control/adaptive execution toggles. |
+| `tests/validation/o2a_forward_shape_test.zig` | `WP-02`, `WP-03`, `WP-09` | O2A morphology, RTM-control, adaptive sampling, and line-gas control/CIA sensitivity checks. |
+| `tests/validation/line_gas_family_validation_test.zig` | `WP-03`, `WP-09` | Focused non-O2 staged line-gas validation through the real prepare and measurement-space path, now including the vendor-window-anchored H2O/NH3 SWIR multi-gas case. |
+| `tests/validation/disamar_compatibility_harness_test.zig` | `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-07`, `WP-08`, `WP-09`, `WP-14` | Shared compatibility harness that still needs broader non-O2 vendor-corpus line-gas coverage. |
 
 ## Preserve / No Immediate Patch
 

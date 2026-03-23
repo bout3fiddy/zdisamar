@@ -282,7 +282,7 @@ pub fn simulate(
         buffers.wavelengths[index] = nominal_wavelength_nm;
 
         var integration: OperationalInstrumentIntegration = undefined;
-        providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
+        providers.instrument.integrationForWavelength(scene, prepared, nominal_wavelength_nm, &integration);
 
         const integrated = try integrateForwardAtNominal(
             allocator,
@@ -319,7 +319,7 @@ pub fn simulate(
             nominal_wavelength_nm,
         );
         var integration: OperationalInstrumentIntegration = undefined;
-        providers.instrument.integrationForWavelength(scene, nominal_wavelength_nm, &integration);
+        providers.instrument.integrationForWavelength(scene, prepared, nominal_wavelength_nm, &integration);
         buffers.scratch[index] = try integrateIrradianceAtNominal(
             scene,
             prepared,
@@ -650,7 +650,7 @@ fn configuredForwardInput(
         source_interfaces[0 .. input.layers.len + 1],
     );
     input.source_interfaces = source_interfaces[0 .. input.layers.len + 1];
-    if (route.family == .adding and route.rtm_controls.integrate_source_function) {
+    if (route.rtm_controls.integrate_source_function) {
         if (prepared.fillRtmQuadratureAtWavelengthWithLayers(
             wavelength_nm,
             input.layers,
@@ -2077,6 +2077,67 @@ test "configured forward input builds prepared adding RTM quadrature on sublayer
         input.rtm_quadrature.levels[3].weightedScattering(),
         1.0e-12,
     );
+}
+
+test "configured forward input builds prepared labos RTM quadrature on sublayer grids" {
+    const scene: Scene = .{
+        .id = "measurement-labos-direct-grid",
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .integrate_source_function = true,
+        },
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [4]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    var pseudo_spherical_level_altitudes: [5]f64 = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+        &pseudo_spherical_level_altitudes,
+    );
+
+    try std.testing.expectEqual(common.TransportFamily.labos, route.family);
+    try std.testing.expect(input.rtm_controls.integrate_source_function);
+    try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[0].weight, 1.0e-12);
+    try std.testing.expect(input.rtm_quadrature.levels[1].weight > 0.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[2].weight, 1.0e-12);
+    try std.testing.expect(input.rtm_quadrature.levels[3].weight > 0.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[4].weight, 1.0e-12);
 }
 
 test "configured forward input builds prepared adding RTM quadrature from nonuniform sublayer intervals" {

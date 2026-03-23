@@ -61,6 +61,29 @@ pub const OperationalReferenceGrid = struct {
     }
 };
 
+pub const AdaptiveReferenceGrid = struct {
+    points_per_fwhm: u16 = 0,
+    strong_line_min_divisions: u16 = 0,
+    strong_line_max_divisions: u16 = 0,
+
+    pub fn enabled(self: AdaptiveReferenceGrid) bool {
+        return self.points_per_fwhm != 0 or
+            self.strong_line_min_divisions != 0 or
+            self.strong_line_max_divisions != 0;
+    }
+
+    pub fn validate(self: AdaptiveReferenceGrid) errors.Error!void {
+        if (!self.enabled()) return;
+        if (self.points_per_fwhm == 0 or
+            self.strong_line_min_divisions == 0 or
+            self.strong_line_max_divisions == 0 or
+            self.strong_line_max_divisions < self.strong_line_min_divisions)
+        {
+            return errors.Error.InvalidRequest;
+        }
+    }
+};
+
 test "operational reference grid reports a weighted effective spacing" {
     const grid: OperationalReferenceGrid = .{
         .wavelengths_nm = &.{ 760.8, 761.0, 761.3 },
@@ -68,4 +91,21 @@ test "operational reference grid reports a weighted effective spacing" {
     };
 
     try std.testing.expectApproxEqAbs(@as(f64, 0.25), grid.effectiveSpacingNm(), 1.0e-12);
+}
+
+test "adaptive reference grid validates vendor-like strong-line division ranges" {
+    try (AdaptiveReferenceGrid{
+        .points_per_fwhm = 5,
+        .strong_line_min_divisions = 3,
+        .strong_line_max_divisions = 8,
+    }).validate();
+
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (AdaptiveReferenceGrid{
+            .points_per_fwhm = 5,
+            .strong_line_min_divisions = 8,
+            .strong_line_max_divisions = 3,
+        }).validate(),
+    );
 }

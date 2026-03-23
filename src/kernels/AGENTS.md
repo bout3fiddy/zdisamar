@@ -3,6 +3,9 @@
 - This subtree is for reusable numeric kernels: quadrature, interpolation, polarization, spectra, transport, and linalg.
 - No file I/O, text parsing, logging-heavy orchestration, or plugin callback dispatch in innermost loops.
 - Keep scalar, polarized, and derivative-enabled execution paths explicit when that avoids paying for unused machinery.
+- Explicit execution paths are not a license to duplicate shared arithmetic, accumulation, interpolation, or struct-mapping logic. Prefer small pure helpers when behavior is identical across paths.
+- A kernel file should own one primary numerical responsibility. If a module mixes preparation, spectral evaluation, solver coupling, workspace management, or synthetic fixture construction, split it into sibling modules even if the public API stays unified.
+- Keep large synthetic fixtures and broad scenario tests out of production kernel modules. Inline tests should stay local and small; move larger harnesses and canned states to `tests/` or dedicated support files.
 
 ## Kernel Regression Notes
 

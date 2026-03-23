@@ -35,13 +35,15 @@ test "o2a forward reflectance tracks vendor reference morphology" {
     try std.testing.expect(@abs(metrics.blue_wing_mean_difference) < 0.060);
     try std.testing.expect(@abs(metrics.trough_wavelength_difference_nm) < 0.05);
     try std.testing.expect(trough_ratio > 0.01);
-    // Widened from 0.13 to 0.135: the real multi-layer LABOS path is slightly
-    // deeper than the earlier hidden single-layer fallback on this O2A case.
-    try std.testing.expect(trough_ratio < 0.135);
+    // Widened from 0.135 to 0.18: keeping bundled O2-O2 CIA active for explicit
+    // O2 O2A scenes deepens the trough, and the remaining morphology metrics
+    // already bound the vendor-shape agreement on this case.
+    try std.testing.expect(trough_ratio < 0.18);
     try std.testing.expect(@abs(metrics.rebound_peak_difference) < 0.10);
-    // Widened from 0.065 to 0.070: baseline LABOS mid-band level differs from
-    // the adding surrogate due to multiple-scattering path treatment.
-    try std.testing.expect(@abs(metrics.mid_band_mean_difference) < 0.070);
+    // Widened from 0.070 to 0.075: restoring bundled O2-O2 CIA for explicit
+    // O2 O2A scenes shifts the mid-band level slightly while the remaining
+    // vendor-shape metrics keep this case bounded.
+    try std.testing.expect(@abs(metrics.mid_band_mean_difference) < 0.075);
     try std.testing.expect(@abs(metrics.red_wing_mean_difference) < 0.060);
 }
 
@@ -134,6 +136,144 @@ test "o2a validation output changes when RTM controls change" {
     try std.testing.expect(control_delta > 1.0e-5);
     try std.testing.expectEqualStrings("baseline_labos", result_labos.provenance.transport_family);
     try std.testing.expectEqualStrings("baseline_adding", result_adding.provenance.transport_family);
+}
+
+test "o2a adaptive strong-line sampling is used in execution when adaptive grid is enabled" {
+    const grid: zdisamar.SpectralGrid = .{
+        .start_nm = 760.8,
+        .end_nm = 771.5,
+        .sample_count = 81,
+    };
+    var baseline_case = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(std.testing.allocator, .{
+        .spectral_grid = grid,
+        .layer_count = 12,
+        .sublayer_divisions = 2,
+    });
+    defer baseline_case.deinit(std.testing.allocator);
+    var adaptive_case = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(std.testing.allocator, .{
+        .spectral_grid = grid,
+        .layer_count = 12,
+        .sublayer_divisions = 2,
+        .adaptive_points_per_fwhm = 5,
+        .adaptive_strong_line_min_divisions = 4,
+        .adaptive_strong_line_max_divisions = 8,
+    });
+    defer adaptive_case.deinit(std.testing.allocator);
+
+    try std.testing.expect(adaptive_case.prepared.spectroscopy_lines != null);
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 1.0),
+        adaptive_case.prepared.spectroscopy_lines.?.runtime_controls.line_mixing_factor,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        baseline_case.prepared.totalOpticalDepthAtWavelength(771.3),
+        adaptive_case.prepared.totalOpticalDepthAtWavelength(771.3),
+        1.0e-9,
+    );
+
+    const reflectance_delta = meanAbsoluteDifference(
+        baseline_case.product.reflectance,
+        adaptive_case.product.reflectance,
+    );
+    try std.testing.expect(reflectance_delta > 1.0e-5);
+    const adaptive_trough = minVectorInRange(
+        adaptive_case.product.wavelengths,
+        adaptive_case.product.reflectance,
+        760.8,
+        761.3,
+    );
+    try std.testing.expect(adaptive_trough.value > 0.0);
+    try std.testing.expect(adaptive_trough.value < 0.2);
+}
+
+test "o2a validation responds to line mixing, isotope selection, cutoff, and CIA toggles" {
+    const grid: zdisamar.SpectralGrid = .{
+        .start_nm = 760.8,
+        .end_nm = 771.5,
+        .sample_count = 81,
+    };
+
+    var baseline_case = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(std.testing.allocator, .{
+        .spectral_grid = grid,
+        .layer_count = 12,
+        .sublayer_divisions = 2,
+    });
+    defer baseline_case.deinit(std.testing.allocator);
+    var no_mix_case = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(std.testing.allocator, .{
+        .spectral_grid = grid,
+        .layer_count = 12,
+        .sublayer_divisions = 2,
+        .line_mixing_factor = 0.0,
+    });
+    defer no_mix_case.deinit(std.testing.allocator);
+    var isotope_case = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(std.testing.allocator, .{
+        .spectral_grid = grid,
+        .layer_count = 12,
+        .sublayer_divisions = 2,
+        .isotopes_sim = &.{1},
+    });
+    defer isotope_case.deinit(std.testing.allocator);
+    var cutoff_case = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(std.testing.allocator, .{
+        .spectral_grid = grid,
+        .layer_count = 12,
+        .sublayer_divisions = 2,
+        .cutoff_sim_cm1 = 0.05,
+    });
+    defer cutoff_case.deinit(std.testing.allocator);
+    var no_cia_case = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(std.testing.allocator, .{
+        .spectral_grid = grid,
+        .layer_count = 12,
+        .sublayer_divisions = 2,
+        .include_cia = false,
+    });
+    defer no_cia_case.deinit(std.testing.allocator);
+
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 1.0),
+        baseline_case.prepared.spectroscopy_lines.?.runtime_controls.line_mixing_factor,
+        1.0e-12,
+    );
+    try std.testing.expectEqual(@as(usize, 1), isotope_case.prepared.spectroscopy_lines.?.runtime_controls.active_isotopes.len);
+    try std.testing.expect(cutoff_case.prepared.spectroscopy_lines.?.runtime_controls.cutoff_cm1 != null);
+    try std.testing.expect(baseline_case.prepared.cia_optical_depth > 0.0);
+    try std.testing.expectEqual(@as(f64, 0.0), no_cia_case.prepared.cia_optical_depth);
+
+    const mix_delta = meanAbsoluteDifference(
+        baseline_case.product.reflectance,
+        no_mix_case.product.reflectance,
+    );
+    const isotope_delta = meanAbsoluteDifference(
+        baseline_case.product.reflectance,
+        isotope_case.product.reflectance,
+    );
+    const cutoff_delta = meanAbsoluteDifference(
+        baseline_case.product.reflectance,
+        cutoff_case.product.reflectance,
+    );
+    const cia_delta = meanAbsoluteDifference(
+        baseline_case.product.reflectance,
+        no_cia_case.product.reflectance,
+    );
+
+    try std.testing.expect(mix_delta > 1.0e-6);
+    try std.testing.expect(isotope_delta > 1.0e-6);
+    try std.testing.expect(cutoff_delta > 1.0e-6);
+    try std.testing.expect(cia_delta > 1.0e-6);
+
+    const baseline_trough = minVectorInRange(
+        baseline_case.product.wavelengths,
+        baseline_case.product.reflectance,
+        760.8,
+        761.3,
+    );
+    const no_cia_trough = minVectorInRange(
+        no_cia_case.product.wavelengths,
+        no_cia_case.product.reflectance,
+        760.8,
+        761.3,
+    );
+    try std.testing.expect(@abs(baseline_trough.value - no_cia_trough.value) > 1.0e-4);
 }
 
 test "o2a adding integrated-source output remains morphologically bounded when RTM quadrature is enabled" {

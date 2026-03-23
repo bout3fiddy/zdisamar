@@ -42,16 +42,18 @@ Needs:
 - typed additional-output request representation
 - result carriers for internal fields, contributions, Ring products, and column/property diagnostics
 - exporters that can serialize those products consistently
+- explicit separation between scientific diagnostic products and execution telemetry
 - validation that the runtime only advertises outputs it can actually compute
 
 How:
 1. Parse additional-output requests into typed product descriptors.
 2. Add typed result carriers for the corresponding forward/retrieval diagnostics.
 3. Extend exporters to write those products where they exist.
-4. Validate on cases that explicitly request additional outputs.
+4. Keep scientific diagnostic outputs separate from provenance and execution telemetry.
+5. Validate on cases that explicitly request additional outputs.
 
 Why this approach:
-Vendor output breadth is part of the product surface, not an afterthought. If Zig ignores these outputs, it cannot honestly claim full config parity.
+Vendor output breadth is part of the product surface, not an afterthought. If Zig ignores these outputs, it cannot honestly claim full config parity. Keeping them separate from execution telemetry also prevents timing and route data from leaking into the scientific result model.
 
 Recommendation rationale:
 This comes after the science WPs because output parity depends on the underlying forward and retrieval products actually existing.
@@ -96,6 +98,7 @@ Files by type:
   - Vendor anchors: `writeModule.f90::{writeRingSpec,writeDiffRingSpec,writeFillingInSpec,writeContribRad_Refl,writeInternalField,writeAltResolvedAMF,writeColumnProperties}` and `DISAMARModule.f90::getOutput`.
   - Add result families for internal fields, Ring spectra, contribution terms, alt-resolved AMFs, and column properties where the underlying physics path exists.
   - Do not fake unsupported outputs with empty arrays.
+  - Do not overload these typed scientific result carriers with execution timings or runtime trace records; those belong to the shared telemetry substrate.
 
 - [ ] `src/adapters/exporters/spec.zig`, `diagnostic.zig`, `netcdf_cf.zig`, `zarr.zig`, `writer.zig`: serialize the new typed outputs coherently.
   - Use typed product IDs from `Result.zig`; do not duplicate output-shape logic in each exporter.
@@ -104,6 +107,7 @@ Files by type:
 - [ ] `src/core/Engine.zig`: wire additional-output requests into execution planning.
   - Requesting an internal field or alt-resolved AMF may require retaining intermediate state that ordinary forward output does not.
   - The plan should know which extra products are needed so execution can prepare the right intermediates once.
+  - Additional-output planning should remain orthogonal to execution telemetry selection so callers can ask for scientific diagnostics, runtime telemetry, or both independently.
 
 - [ ] `tests/unit/contracts_test.zig`, `tests/unit/exporters_catalog_link_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: add additional-output coverage.
   - Required cases: at least one forward case requesting internal or contribution outputs, and one retrieval case requesting profile/column diagnostics.
@@ -118,6 +122,7 @@ Files by type:
 - [ ] `overview.md` rollup row updated
 - [ ] Additional-output requests are parsed into typed descriptors
 - [ ] Supported additional outputs have typed result carriers and exporter support
+- [ ] Scientific diagnostic products remain distinct from provenance and execution telemetry
 - [ ] Unsupported additional outputs fail explicitly rather than disappearing silently
 
 ## Implementation Status (2026-03-18)
@@ -126,7 +131,7 @@ Planning only. No code changes yet.
 
 ## Why This Works
 
-By moving additional outputs into typed result and export layers, Zig can cover the vendor config surface honestly: supported outputs become first-class products, unsupported ones become explicit compatibility gaps, and nothing is hidden in exporter-specific logic.
+By moving additional outputs into typed result and export layers, Zig can cover the vendor config surface honestly: supported outputs become first-class scientific products, unsupported ones become explicit compatibility gaps, and execution telemetry stays on its own path instead of being smuggled into exporter-specific logic.
 
 ## Proof / Validation
 

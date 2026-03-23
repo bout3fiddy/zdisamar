@@ -9,6 +9,7 @@ pub const max_operational_refspec_temperature_coefficients = constants.max_opera
 pub const max_operational_refspec_pressure_coefficients = constants.max_operational_refspec_pressure_coefficients;
 
 pub const OperationalReferenceGrid = @import("instrument/reference_grid.zig").OperationalReferenceGrid;
+pub const AdaptiveReferenceGrid = @import("instrument/reference_grid.zig").AdaptiveReferenceGrid;
 pub const OperationalSolarSpectrum = @import("instrument/solar_spectrum.zig").OperationalSolarSpectrum;
 pub const OperationalCrossSectionLut = @import("instrument/cross_section_lut.zig").OperationalCrossSectionLut;
 pub const InstrumentLineShape = @import("instrument/line_shape.zig").InstrumentLineShape;

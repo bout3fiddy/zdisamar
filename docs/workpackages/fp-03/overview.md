@@ -115,6 +115,14 @@ This plan therefore adds or expands dedicated work for:
 
 This plan is intentionally staged.
 
+## Cross-Cutting Rule: Execution Telemetry Vs Scientific Diagnostics
+
+- Structural provenance remains a core concern and stays on the typed `Result`/`Provenance` path.
+- Scientific diagnostics remain typed forward/retrieval products and solver summaries; they are not a generic logging stream.
+- Execution telemetry is a separate shared substrate for timings, cache-hit and cache-miss reporting, route decisions, and iteration or stage traces when requested.
+- The telemetry substrate should land at the core and runtime boundary so later workpackages can consume it without inventing package-local timer or logging side channels.
+- `WP-10` owns the shared telemetry substrate, `WP-13` consumes it for DISMAS-specific stage and iteration visibility, `WP-14` keeps scientific diagnostic products distinct from telemetry, and `WP-15` removes or gates any leftover ad hoc runtime instrumentation paths.
+
 ### Stage A — Control surface and forward-core parity
 - `WP-01` full config surface and canonical YAML parity
 - `WP-02` forward transport solver parity
@@ -162,19 +170,19 @@ This plan is intentionally staged.
 | --- | --- | --- | --- | --- |
 | [WP-01](./wp-01-full-config-surface-and-canonical-yaml-parity.md) | Done | 2026-03-18 | 34/34 unit, 35/35 validation; 415-entry matrix fully classified; 13 typed sub-doc structs | Start `WP-02` |
 | [WP-02](./wp-02-forward-transport-solver-parity.md) | Done | 2026-03-21 | Typed RTM controls, scalar LABOS/adding route split, source-harness adding proofs, prepared-route RTM quadrature proofs, pseudo-spherical prepared-shell handoff, targeted RTM-sensitive integration, compatibility-harness route check, and the O2A morphology gate are all green on the completed scalar forward-core slice; the latest local revalidation added the promoted prepared-adding RTM subgrid-node slice plus direct `transport_source_tests`, O2A morphology, and compatibility-harness checks on the current head | Start `WP-03` |
-| [WP-03](./wp-03-line-absorbing-spectroscopy-and-strong-line-sampling-parity.md) | Todo | 2026-03-18 | Line-by-line / strong-line acceptance in `WP-09` | Wait for `WP-02` |
-| [WP-04](./wp-04-cross-section-gas-and-effective-xsec-parity.md) | Todo | 2026-03-18 | NO2 / O3 / SO2 / HCHO-style cross-section case acceptance in `WP-09` | Wait for `WP-03` |
-| [WP-05](./wp-05-atmospheric-intervals-aerosol-cloud-fraction-and-subcolumns-parity.md) | Todo | 2026-03-18 | Interval and fraction semantic checks in `WP-09` | Wait for `WP-04` |
+| [WP-03](./wp-03-line-absorbing-spectroscopy-and-strong-line-sampling-parity.md) | Done | 2026-03-23 | Multi-gas line-absorber prep, adaptive strong-line sampling, bundled O2A CIA/line-asset gating, and prepared-RTM quadrature stabilization are now in place; `zig build check`, `zig build test-unit --summary all` -> `46/46`, `zig build test-validation-line-gas --summary all` -> `2/2`, and `zig build test-validation-o2a --summary all` -> `5/5` are green on the current branch state | Start `WP-04`; keep the broader canonical-config and typed-forward O2A red lanes tracked outside WP-03 acceptance |
+| [WP-04](./wp-04-cross-section-gas-and-effective-xsec-parity.md) | Todo | 2026-03-18 | NO2 / O3 / SO2 / HCHO-style cross-section case acceptance in `WP-09` | Start `WP-04` |
+| [WP-05](./wp-05-atmospheric-intervals-aerosol-cloud-fraction-and-subcolumns-parity.md) | Todo | 2026-03-23 | Interval, aerosol/cloud fraction, and subcolumn semantic checks in `WP-09` | Wait for `WP-04` |
 | [WP-06](./wp-06-instrument-radiance-irradiance-slit-calibration-corrections-and-ring-parity.md) | Todo | 2026-03-18 | Radiance / irradiance / Ring / correction acceptance in `WP-09` | Wait for `WP-05` |
 | [WP-07](./wp-07-operational-measured-input-and-s5p-interface-parity.md) | Todo | 2026-03-18 | Measured-input and S5P operational path acceptance in `WP-09` | Wait for `WP-06` |
 | [WP-08](./wp-08-lut-and-xseclut-generation-consumption-and-cache-parity.md) | Todo | 2026-03-18 | LUT/XsecLUT regeneration and runtime use acceptance in `WP-09` | Wait for `WP-07` |
 | [WP-09](./wp-09-vendor-vs-zig-multi-case-validation-and-scientific-acceptance.md) | Todo | 2026-03-18 | Multi-case artifact manifest, metrics, overlays, and review notes | Wait for `WP-08` |
-| [WP-10](./wp-10-performance-benchmarking-and-regression-thresholds.md) | Todo | 2026-03-18 | Forward / retrieval benchmark report | Wait for `WP-09` |
-| [WP-11](./wp-11-optimal-estimation-jacobian-and-weighting-function-parity.md) | Todo | 2026-03-18 | OEM convergence, posterior, AK, DFS, weighting-function report | Wait for `WP-09` |
+| [WP-10](./wp-10-performance-benchmarking-and-regression-thresholds.md) | Todo | 2026-03-23 | Shared execution-telemetry substrate plus forward / retrieval benchmark report | Wait for `WP-09`, then land the core/runtime telemetry substrate before case-family thresholds |
+| [WP-11](./wp-11-optimal-estimation-jacobian-and-weighting-function-parity.md) | Todo | 2026-03-23 | OEM convergence, posterior, gain, AK, DFS, weighting-function, and iteration-telemetry report | Wait for `WP-10` after the shared telemetry substrate is in place |
 | [WP-12](./wp-12-doas-classic-doas-and-domino-parity.md) | Todo | 2026-03-18 | Differential residuals and DOMINO-style case acceptance | Wait for `WP-11` |
-| [WP-13](./wp-13-dismas-parity.md) | Todo | 2026-03-18 | Direct-intensity fit acceptance report | Wait for `WP-11` |
-| [WP-14](./wp-14-additional-output-diagnostics-and-export-parity.md) | Todo | 2026-03-18 | Additional-output comparison matrix and exporter acceptance | Wait for `WP-13` |
-| [WP-15](./wp-15-plugin-adapter-and-hygiene-after-scientific-parity.md) | Todo | 2026-03-18 | Build / test / export stability after cleanup | Wait for `WP-14` |
+| [WP-13](./wp-13-dismas-parity.md) | Todo | 2026-03-23 | Direct-intensity fit acceptance report with DISMAS stage and iteration telemetry | Wait for `WP-11` and reuse the shared telemetry substrate from `WP-10` |
+| [WP-14](./wp-14-additional-output-diagnostics-and-export-parity.md) | Todo | 2026-03-23 | Additional-output comparison matrix, scientific diagnostic product inventory, and exporter acceptance | Wait for `WP-13`; keep scientific outputs separate from execution telemetry |
+| [WP-15](./wp-15-plugin-adapter-and-hygiene-after-scientific-parity.md) | Todo | 2026-03-23 | Build / test / export stability after cleanup and telemetry/logging seam cleanup | Wait for `WP-14` and collapse leftover ad hoc instrumentation paths |
 
 ## Acceptance Doctrine
 

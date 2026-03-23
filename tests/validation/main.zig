@@ -6,4 +6,5 @@ comptime {
     _ = @import("doas_parity_test.zig");
     _ = @import("dismas_parity_test.zig");
     _ = @import("o2a_forward_shape_test.zig");
+    _ = @import("line_gas_family_validation_test.zig");
 }

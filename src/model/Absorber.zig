@@ -14,6 +14,110 @@ pub const SpectroscopyMode = enum {
     cross_sections,
 };
 
+pub const SpectroscopyStage = enum {
+    none,
+    simulation,
+    retrieval,
+};
+
+pub const LineGasControls = struct {
+    factor_lm_sim: ?f64 = null,
+    factor_lm_retr: ?f64 = null,
+    isotopes_sim: []const u8 = &.{},
+    isotopes_retr: []const u8 = &.{},
+    threshold_line_sim: ?f64 = null,
+    threshold_line_retr: ?f64 = null,
+    cutoff_sim_cm1: ?f64 = null,
+    cutoff_retr_cm1: ?f64 = null,
+    active_stage: SpectroscopyStage = .none,
+
+    pub fn validate(self: LineGasControls) errors.Error!void {
+        if (self.factor_lm_sim) |value| {
+            if (!std.math.isFinite(value)) return errors.Error.InvalidRequest;
+        }
+        if (self.factor_lm_retr) |value| {
+            if (!std.math.isFinite(value)) return errors.Error.InvalidRequest;
+        }
+        if (self.threshold_line_sim) |value| {
+            if (!std.math.isFinite(value) or value < 0.0) return errors.Error.InvalidRequest;
+        }
+        if (self.threshold_line_retr) |value| {
+            if (!std.math.isFinite(value) or value < 0.0) return errors.Error.InvalidRequest;
+        }
+        if (self.cutoff_sim_cm1) |value| {
+            if (!std.math.isFinite(value) or value <= 0.0) return errors.Error.InvalidRequest;
+        }
+        if (self.cutoff_retr_cm1) |value| {
+            if (!std.math.isFinite(value) or value <= 0.0) return errors.Error.InvalidRequest;
+        }
+        try validateIsotopeSelection(self.isotopes_sim);
+        try validateIsotopeSelection(self.isotopes_retr);
+    }
+
+    pub fn configured(self: LineGasControls) bool {
+        return self.factor_lm_sim != null or
+            self.factor_lm_retr != null or
+            self.isotopes_sim.len != 0 or
+            self.isotopes_retr.len != 0 or
+            self.threshold_line_sim != null or
+            self.threshold_line_retr != null or
+            self.cutoff_sim_cm1 != null or
+            self.cutoff_retr_cm1 != null;
+    }
+
+    pub fn activeLineMixingFactor(self: LineGasControls) f64 {
+        return switch (self.active_stage) {
+            .simulation => self.factor_lm_sim orelse 1.0,
+            .retrieval => self.factor_lm_retr orelse 1.0,
+            .none => self.factor_lm_sim orelse self.factor_lm_retr orelse 1.0,
+        };
+    }
+
+    pub fn activeIsotopes(self: LineGasControls) []const u8 {
+        return switch (self.active_stage) {
+            .simulation => self.isotopes_sim,
+            .retrieval => self.isotopes_retr,
+            .none => if (self.isotopes_sim.len != 0) self.isotopes_sim else self.isotopes_retr,
+        };
+    }
+
+    pub fn activeThresholdLine(self: LineGasControls) ?f64 {
+        return switch (self.active_stage) {
+            .simulation => self.threshold_line_sim,
+            .retrieval => self.threshold_line_retr,
+            .none => self.threshold_line_sim orelse self.threshold_line_retr,
+        };
+    }
+
+    pub fn activeCutoffCm1(self: LineGasControls) ?f64 {
+        return switch (self.active_stage) {
+            .simulation => self.cutoff_sim_cm1,
+            .retrieval => self.cutoff_retr_cm1,
+            .none => self.cutoff_sim_cm1 orelse self.cutoff_retr_cm1,
+        };
+    }
+
+    pub fn clone(self: LineGasControls, allocator: Allocator) !LineGasControls {
+        return .{
+            .factor_lm_sim = self.factor_lm_sim,
+            .factor_lm_retr = self.factor_lm_retr,
+            .isotopes_sim = if (self.isotopes_sim.len != 0) try allocator.dupe(u8, self.isotopes_sim) else &.{},
+            .isotopes_retr = if (self.isotopes_retr.len != 0) try allocator.dupe(u8, self.isotopes_retr) else &.{},
+            .threshold_line_sim = self.threshold_line_sim,
+            .threshold_line_retr = self.threshold_line_retr,
+            .cutoff_sim_cm1 = self.cutoff_sim_cm1,
+            .cutoff_retr_cm1 = self.cutoff_retr_cm1,
+            .active_stage = self.active_stage,
+        };
+    }
+
+    pub fn deinitOwned(self: *LineGasControls, allocator: Allocator) void {
+        if (self.isotopes_sim.len != 0) allocator.free(self.isotopes_sim);
+        if (self.isotopes_retr.len != 0) allocator.free(self.isotopes_retr);
+        self.* = .{};
+    }
+};
+
 pub const Spectroscopy = struct {
     mode: SpectroscopyMode = .none,
     provider: []const u8 = "",
@@ -22,6 +126,7 @@ pub const Spectroscopy = struct {
     strong_lines: Binding = .none,
     cia_table: Binding = .none,
     operational_lut: Binding = .none,
+    line_gas_controls: LineGasControls = .{},
     resolved_line_list: ?ReferenceData.SpectroscopyLineList = null,
     resolved_cia_table: ?ReferenceData.CollisionInducedAbsorptionTable = null,
 
@@ -31,6 +136,7 @@ pub const Spectroscopy = struct {
         try self.strong_lines.validate();
         try self.cia_table.validate();
         try self.operational_lut.validate();
+        try self.line_gas_controls.validate();
 
         if (self.mode == .none and
             (self.provider.len != 0 or
@@ -39,6 +145,7 @@ pub const Spectroscopy = struct {
                 self.strong_lines.enabled() or
                 self.cia_table.enabled() or
                 self.operational_lut.enabled() or
+                self.line_gas_controls.configured() or
                 self.resolved_line_list != null or
                 self.resolved_cia_table != null))
         {
@@ -77,6 +184,11 @@ pub const Spectroscopy = struct {
             var owned = operational_lut;
             owned.deinitOwned(allocator);
         }
+        const line_gas_controls = try self.line_gas_controls.clone(allocator);
+        errdefer {
+            var owned = line_gas_controls;
+            owned.deinitOwned(allocator);
+        }
 
         const resolved_line_list = if (self.resolved_line_list) |line_list_data|
             try line_list_data.clone(allocator)
@@ -104,6 +216,7 @@ pub const Spectroscopy = struct {
             .strong_lines = strong_lines,
             .cia_table = cia_table,
             .operational_lut = operational_lut,
+            .line_gas_controls = line_gas_controls,
             .resolved_line_list = resolved_line_list,
             .resolved_cia_table = resolved_cia_table,
         };
@@ -116,6 +229,7 @@ pub const Spectroscopy = struct {
         self.strong_lines.deinitOwned(allocator);
         self.cia_table.deinitOwned(allocator);
         self.operational_lut.deinitOwned(allocator);
+        self.line_gas_controls.deinitOwned(allocator);
         if (self.resolved_line_list) |*line_list_data| {
             var owned = line_list_data.*;
             owned.deinit(allocator);
@@ -136,6 +250,7 @@ pub const Absorber = struct {
     /// vendor species catalogue.
     resolved_species: ?AbsorberSpecies = null,
     profile_source: Binding = .none,
+    volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
     spectroscopy: Spectroscopy = .{},
 
     pub fn validate(self: Absorber) errors.Error!void {
@@ -143,6 +258,7 @@ pub const Absorber = struct {
             return errors.Error.InvalidRequest;
         }
         try self.profile_source.validate();
+        try validateVolumeMixingRatioProfile(self.volume_mixing_ratio_profile_ppmv);
         try self.spectroscopy.validate();
     }
 
@@ -152,6 +268,10 @@ pub const Absorber = struct {
             .species = try allocator.dupe(u8, self.species),
             .resolved_species = self.resolved_species,
             .profile_source = try self.profile_source.clone(allocator),
+            .volume_mixing_ratio_profile_ppmv = if (self.volume_mixing_ratio_profile_ppmv.len != 0)
+                try allocator.dupe([2]f64, self.volume_mixing_ratio_profile_ppmv)
+            else
+                &.{},
             .spectroscopy = try self.spectroscopy.clone(allocator),
         };
     }
@@ -160,6 +280,7 @@ pub const Absorber = struct {
         allocator.free(self.id);
         allocator.free(self.species);
         self.profile_source.deinitOwned(allocator);
+        if (self.volume_mixing_ratio_profile_ppmv.len != 0) allocator.free(self.volume_mixing_ratio_profile_ppmv);
         self.spectroscopy.deinitOwned(allocator);
         self.* = undefined;
     }
@@ -240,5 +361,114 @@ test "absorber set validates explicit spectroscopy bindings" {
                 },
             },
         }).validate(),
+    );
+}
+
+fn validateIsotopeSelection(isotopes: []const u8) errors.Error!void {
+    for (isotopes, 0..) |isotope, index| {
+        if (isotope == 0) return errors.Error.InvalidRequest;
+        for (isotopes[index + 1 ..]) |other| {
+            if (isotope == other) return errors.Error.InvalidRequest;
+        }
+    }
+}
+
+fn validateVolumeMixingRatioProfile(profile_ppmv: []const [2]f64) errors.Error!void {
+    var previous_pressure_hpa: ?f64 = null;
+    var descending: ?bool = null;
+    for (profile_ppmv) |entry| {
+        if (!std.math.isFinite(entry[0]) or !std.math.isFinite(entry[1])) {
+            return errors.Error.InvalidRequest;
+        }
+        if (entry[0] <= 0.0 or entry[1] < 0.0) {
+            return errors.Error.InvalidRequest;
+        }
+        if (previous_pressure_hpa) |previous| {
+            if (entry[0] == previous) return errors.Error.InvalidRequest;
+            const entry_descending = entry[0] < previous;
+            if (descending) |expected_descending| {
+                if (entry_descending != expected_descending) return errors.Error.InvalidRequest;
+            } else {
+                descending = entry_descending;
+            }
+        }
+        previous_pressure_hpa = entry[0];
+    }
+}
+
+test "line-gas controls validate stage-specific isotope and cutoff selections" {
+    try (LineGasControls{
+        .factor_lm_sim = 1.0,
+        .isotopes_sim = &.{ 1, 2 },
+        .threshold_line_sim = 0.05,
+        .cutoff_sim_cm1 = 12.0,
+        .active_stage = .simulation,
+    }).validate();
+
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 1.0),
+        (LineGasControls{ .factor_lm_sim = 1.0, .active_stage = .simulation }).activeLineMixingFactor(),
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 1.0),
+        (LineGasControls{ .active_stage = .simulation }).activeLineMixingFactor(),
+        1.0e-12,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 1, 2 },
+        (LineGasControls{ .isotopes_retr = &.{ 1, 2 }, .active_stage = .retrieval }).activeIsotopes(),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 2, 4 },
+        (LineGasControls{ .isotopes_sim = &.{ 2, 4 } }).activeIsotopes(),
+    );
+    try std.testing.expectEqual(
+        @as(?f64, 0.05),
+        (LineGasControls{ .threshold_line_sim = 0.05 }).activeThresholdLine(),
+    );
+    try std.testing.expectEqual(
+        @as(?f64, 12.0),
+        (LineGasControls{ .cutoff_sim_cm1 = 12.0 }).activeCutoffCm1(),
+    );
+
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (LineGasControls{ .isotopes_sim = &.{ 1, 1 } }).validate(),
+    );
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (LineGasControls{ .cutoff_retr_cm1 = 0.0 }).validate(),
+    );
+}
+
+test "volume mixing ratio profiles must be strictly monotonic in pressure" {
+    try validateVolumeMixingRatioProfile(&.{
+        .{ 1000.0, 400.0 },
+        .{ 700.0, 250.0 },
+        .{ 430.0, 200.0 },
+    });
+    try validateVolumeMixingRatioProfile(&.{
+        .{ 430.0, 200.0 },
+        .{ 700.0, 250.0 },
+        .{ 1000.0, 400.0 },
+    });
+
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        validateVolumeMixingRatioProfile(&.{
+            .{ 1000.0, 400.0 },
+            .{ 430.0, 200.0 },
+            .{ 700.0, 250.0 },
+        }),
+    );
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        validateVolumeMixingRatioProfile(&.{
+            .{ 1000.0, 400.0 },
+            .{ 1000.0, 350.0 },
+        }),
     );
 }

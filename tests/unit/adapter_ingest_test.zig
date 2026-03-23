@@ -165,6 +165,7 @@ test "reference asset ingest assembles vendor-shaped spectroscopy sidecars into 
     defer relaxation_matrix.deinit(std.testing.allocator);
 
     try line_list.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
+    try line_list.applyRuntimeControls(std.testing.allocator, 7, &.{}, null, null, 1.0);
 
     const evaluation = line_list.evaluateAt(771.3, 255.0, 820.0);
     try std.testing.expect(evaluation.weak_line_sigma_cm2_per_molecule > 0.0);

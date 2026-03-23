@@ -1,10 +1,12 @@
 const std = @import("std");
 const Scene = @import("../../model/Scene.zig").Scene;
+const AbsorberModel = @import("../../model/Absorber.zig");
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const OpticsPrepare = @import("../../kernels/optics/prepare.zig");
 const reference_assets = @import("../../adapters/ingest/reference_assets.zig");
 
 const Allocator = std.mem.Allocator;
+const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
 const climatology_manifest_path = "data/climatologies/bundle_manifest.json";
 const cross_section_manifest_path = "data/cross_sections/bundle_manifest.json";
@@ -111,7 +113,9 @@ fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Referen
         return error.UnresolvedSpectroscopyBinding;
     }
 
-    if (overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 760.8, 771.5)) {
+    if (overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 760.8, 771.5) and
+        shouldLoadBundledO2ALineList(scene))
+    {
         var line_asset = try reference_assets.loadCsvBundleAsset(
             allocator,
             .spectroscopy_line_list,
@@ -172,8 +176,13 @@ fn loadCollisionInducedAbsorptionForScene(
     if (hasExplicitCiaBindings(scene)) {
         return error.UnresolvedCollisionInducedAbsorptionBinding;
     }
+    if (scene.observation_model.o2o2_operational_lut.enabled()) {
+        return null;
+    }
 
-    if (!overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 760.8, 771.5)) {
+    if (!overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 760.8, 771.5) or
+        !shouldLoadBundledO2ACia(scene))
+    {
         return null;
     }
 
@@ -189,6 +198,38 @@ fn loadCollisionInducedAbsorptionForScene(
 
 fn overlapsRange(start_nm: f64, end_nm: f64, range_start_nm: f64, range_end_nm: f64) bool {
     return end_nm >= range_start_nm and start_nm <= range_end_nm;
+}
+
+fn shouldLoadBundledO2ALineList(scene: *const Scene) bool {
+    if (scene.absorbers.items.len == 0) return true;
+    return sceneRequestsSpectroscopyMode(scene, .o2, .line_by_line);
+}
+
+fn shouldLoadBundledO2ACia(scene: *const Scene) bool {
+    if (scene.absorbers.items.len == 0) return true;
+    return sceneRequestsSpectroscopyMode(scene, .o2, .line_by_line) or
+        sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
+}
+
+fn sceneRequestsSpectroscopyMode(
+    scene: *const Scene,
+    species: AbsorberSpecies,
+    mode: AbsorberModel.SpectroscopyMode,
+) bool {
+    for (scene.absorbers.items) |absorber| {
+        if (absorber.spectroscopy.mode != mode) continue;
+        const absorber_species = resolvedAbsorberSpecies(absorber) orelse continue;
+        if (absorber_species == species) return true;
+    }
+    return false;
+}
+
+fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberSpecies {
+    if (absorber.resolved_species) |species| return species;
+    if (std.meta.stringToEnum(AbsorberSpecies, absorber.species)) |species| return species;
+    if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
+    return null;
 }
 
 fn resolvedSpectroscopyLineList(scene: *const Scene) ?*const ReferenceData.SpectroscopyLineList {
@@ -294,6 +335,92 @@ test "runtime bundled optics uses O2A sidecars and aerosol Mie tables when reque
     try std.testing.expect(prepared.cia_optical_depth > 0.0);
     try std.testing.expect(prepared.sublayers != null);
     try std.testing.expect(prepared.sublayers.?[0].aerosol_phase_coefficients[1] > scene.aerosol.asymmetry_factor);
+}
+
+test "runtime bundled optics keeps bundled O2A CIA for explicit o2-only scenes" {
+    const scene: Scene = .{
+        .id = "runtime-o2a-o2-only",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 771.5,
+            .sample_count = 64,
+        },
+        .absorbers = .{
+            .items = &[_]AbsorberModel.Absorber{
+                .{
+                    .id = "o2",
+                    .species = "o2",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 16,
+            .sublayer_divisions = 2,
+        },
+    };
+
+    var prepared = try prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(prepared.spectroscopy_lines != null);
+    try std.testing.expect(prepared.collision_induced_absorption != null);
+    try std.testing.expect(prepared.cia_optical_depth > 0.0);
+}
+
+test "runtime bundled optics loads bundled O2A CIA when explicit o2o2 absorber is present" {
+    const scene: Scene = .{
+        .id = "runtime-o2a-with-explicit-cia-absorber",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 771.5,
+            .sample_count = 64,
+        },
+        .absorbers = .{
+            .items = &[_]AbsorberModel.Absorber{
+                .{
+                    .id = "o2",
+                    .species = "o2",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                    },
+                },
+                .{
+                    .id = "o2o2",
+                    .species = "o2o2",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .cia,
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 16,
+            .sublayer_divisions = 2,
+        },
+    };
+
+    var prepared = try prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(prepared.spectroscopy_lines != null);
+    try std.testing.expect(prepared.collision_induced_absorption != null);
+    try std.testing.expect(prepared.cia_optical_depth > 0.0);
 }
 
 test "runtime bundled optics honors resolved scene spectroscopy assets before range defaults" {
