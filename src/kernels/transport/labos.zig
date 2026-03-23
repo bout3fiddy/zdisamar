@@ -1560,14 +1560,14 @@ fn layerResolvedLabos(
     const end_level: usize = nlayer;
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
-    // Prepared measurement-space execution can provide RTM quadrature levels that
-    // refine source-function metadata beyond the layer grid. Until LABOS carries
-    // the full vendor RTM-grid hierarchy, extracting TOA directly from the solved
-    // internal field remains the more stable path for those scenes.
+    // Prepared execution can carry either legacy source-interface metadata or
+    // explicit RTM quadrature weights. Use the integrated-source path whenever
+    // either representation is available on multi-layer scenes.
     const use_integrated_source =
         controls.integrate_source_function and
         nlayer > 1 and
-        !input.rtm_quadrature.isValidFor(input.layers.len);
+        (input.source_interfaces.len == nlevel or
+            input.rtm_quadrature.isValidFor(input.layers.len));
 
     var reflectance: f64 = 0.0;
     for (0..fourier_max + 1) |i_fourier| {
@@ -2407,7 +2407,7 @@ test "labos integrated source-function path uses explicit source interface metad
     );
 }
 
-test "labos prepared RTM quadrature falls back to direct TOA extraction" {
+test "labos prepared RTM quadrature participates in integrated source-function reflectance" {
     const layers = [_]common.LayerInput{
         .{
             .optical_depth = 0.28,
@@ -2464,14 +2464,41 @@ test "labos prepared RTM quadrature falls back to direct TOA extraction" {
         .layers = &layers,
         .rtm_quadrature = .{ .levels = &rtm_quadrature },
     };
-    const result_integrated = try execute(std.testing.allocator, route_integrated, input);
-    const result_direct = try execute(std.testing.allocator, route_direct, input);
+    const baseline = try execute(std.testing.allocator, route_integrated, input);
+    const direct_baseline = try execute(std.testing.allocator, route_direct, input);
+
+    var altered_rtm_quadrature = rtm_quadrature;
+    altered_rtm_quadrature[1].ksca *= 1.8;
+    altered_rtm_quadrature[1].phase_coefficients[1] = 0.60;
+    const altered = try execute(std.testing.allocator, route_integrated, .{
+        .mu0 = input.mu0,
+        .muv = input.muv,
+        .optical_depth = input.optical_depth,
+        .single_scatter_albedo = input.single_scatter_albedo,
+        .surface_albedo = input.surface_albedo,
+        .relative_azimuth_rad = input.relative_azimuth_rad,
+        .layers = input.layers,
+        .rtm_quadrature = .{ .levels = &altered_rtm_quadrature },
+    });
+    const direct_altered = try execute(std.testing.allocator, route_direct, .{
+        .mu0 = input.mu0,
+        .muv = input.muv,
+        .optical_depth = input.optical_depth,
+        .single_scatter_albedo = input.single_scatter_albedo,
+        .surface_albedo = input.surface_albedo,
+        .relative_azimuth_rad = input.relative_azimuth_rad,
+        .layers = input.layers,
+        .rtm_quadrature = .{ .levels = &altered_rtm_quadrature },
+    });
 
     try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
-    try std.testing.expectApproxEqRel(
-        result_direct.toa_reflectance_factor,
-        result_integrated.toa_reflectance_factor,
-        1.0e-12,
+    try std.testing.expect(@abs(
+        baseline.toa_reflectance_factor - altered.toa_reflectance_factor,
+    ) > 1.0e-5);
+    try std.testing.expectApproxEqAbs(
+        direct_baseline.toa_reflectance_factor,
+        direct_altered.toa_reflectance_factor,
+        1.0e-10,
     );
 }
 

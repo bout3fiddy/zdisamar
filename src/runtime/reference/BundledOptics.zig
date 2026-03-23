@@ -207,7 +207,8 @@ fn shouldLoadBundledO2ALineList(scene: *const Scene) bool {
 
 fn shouldLoadBundledO2ACia(scene: *const Scene) bool {
     if (scene.absorbers.items.len == 0) return true;
-    return sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
+    return sceneRequestsSpectroscopyMode(scene, .o2, .line_by_line) or
+        sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
 }
 
 fn sceneRequestsSpectroscopyMode(
@@ -336,7 +337,7 @@ test "runtime bundled optics uses O2A sidecars and aerosol Mie tables when reque
     try std.testing.expect(prepared.sublayers.?[0].aerosol_phase_coefficients[1] > scene.aerosol.asymmetry_factor);
 }
 
-test "runtime bundled optics does not inject bundled O2A CIA into explicit o2-only scenes" {
+test "runtime bundled optics keeps bundled O2A CIA for explicit o2-only scenes" {
     const scene: Scene = .{
         .id = "runtime-o2a-o2-only",
         .spectral_grid = .{
@@ -371,8 +372,8 @@ test "runtime bundled optics does not inject bundled O2A CIA into explicit o2-on
     defer prepared.deinit(std.testing.allocator);
 
     try std.testing.expect(prepared.spectroscopy_lines != null);
-    try std.testing.expect(prepared.collision_induced_absorption == null);
-    try std.testing.expectEqual(@as(f64, 0.0), prepared.cia_optical_depth);
+    try std.testing.expect(prepared.collision_induced_absorption != null);
+    try std.testing.expect(prepared.cia_optical_depth > 0.0);
 }
 
 test "runtime bundled optics loads bundled O2A CIA when explicit o2o2 absorber is present" {
