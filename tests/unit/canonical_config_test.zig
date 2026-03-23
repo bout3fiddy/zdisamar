@@ -750,6 +750,65 @@ test "canonical config rejects unsupported radiative transfer controls that cann
     );
 }
 
+test "canonical config rejects oversized adaptive reference grid controls" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: oversized-adaptive-grid
+        \\experiment:
+        \\  simulation:
+        \\    radiative_transfer:
+        \\      num_div_points_fwhm_sim: 70000
+        \\      num_div_points_min_sim: 3
+        \\      num_div_points_max_sim: 8
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      id: oversized_adaptive_grid_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        band_1:
+        \\          start_nm: 758.0
+        \\          end_nm: 771.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.InvalidValue,
+        document.resolve(std.testing.allocator),
+    );
+}
+
 test "canonical execution rejects multiple measurement-space products in one stage" {
     const source =
         \\schema_version: 1

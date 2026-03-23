@@ -1881,6 +1881,12 @@ fn applyAdaptiveReferenceGrid(
     if (points_per_fwhm == null or strong_line_min_divisions == null or strong_line_max_divisions == null) {
         return Error.InvalidValue;
     }
+    if (points_per_fwhm.? > std.math.maxInt(u16) or
+        strong_line_min_divisions.? > std.math.maxInt(u16) or
+        strong_line_max_divisions.? > std.math.maxInt(u16))
+    {
+        return Error.InvalidValue;
+    }
 
     observation_model.adaptive_reference_grid = .{
         .points_per_fwhm = @intCast(points_per_fwhm.?),

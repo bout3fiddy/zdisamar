@@ -261,10 +261,14 @@ pub const SpectroscopyLineList = struct {
         cutoff_cm1: ?f64,
         line_mixing_factor: f64,
     ) !void {
+        const replacement_active_isotopes = if (active_isotopes.len != 0)
+            try allocator.dupe(u8, active_isotopes)
+        else
+            &.{};
         if (self.runtime_controls.active_isotopes.len != 0) allocator.free(self.runtime_controls.active_isotopes);
         self.runtime_controls = .{
             .gas_index = gas_index,
-            .active_isotopes = if (active_isotopes.len != 0) try allocator.dupe(u8, active_isotopes) else &.{},
+            .active_isotopes = replacement_active_isotopes,
             .threshold_line_scale = threshold_line_scale,
             .cutoff_cm1 = cutoff_cm1,
             .line_mixing_factor = line_mixing_factor,
@@ -914,6 +918,27 @@ test "runtime controls filter gas and isotope selections and disable O2-only sid
     try std.testing.expectApproxEqAbs(@as(f64, 6.0e-23), lines.runtime_controls.thresholdStrength(lines.lines).?, 1.0e-30);
     try std.testing.expectApproxEqAbs(@as(f64, 8.0), lines.runtime_controls.cutoff_cm1.?, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.4), lines.runtime_controls.line_mixing_factor, 1.0e-12);
+}
+
+fn applyRuntimeControlsRetryWithAllocator(allocator: Allocator) !void {
+    var lines = SpectroscopyLineList{
+        .lines = try allocator.dupe(SpectroscopyLine, &.{
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 760.0, .line_strength_cm2_per_molecule = 4.0e-21, .air_half_width_nm = 0.001, .temperature_exponent = 0.7, .lower_state_energy_cm1 = 100.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.05 },
+            .{ .gas_index = 7, .isotope_number = 2, .center_wavelength_nm = 760.1, .line_strength_cm2_per_molecule = 3.0e-21, .air_half_width_nm = 0.001, .temperature_exponent = 0.7, .lower_state_energy_cm1 = 100.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.05 },
+        }),
+    };
+    defer lines.deinit(allocator);
+
+    try lines.applyRuntimeControls(allocator, 7, &.{1}, 0.02, 8.0, 0.4);
+    try lines.applyRuntimeControls(allocator, 7, &.{2}, 0.02, 8.0, 0.4);
+}
+
+test "runtime controls preserve prior isotope storage across allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        applyRuntimeControlsRetryWithAllocator,
+        .{},
+    );
 }
 
 test "spectroscopy line list partitions strong and weak lanes when sidecars are attached" {
