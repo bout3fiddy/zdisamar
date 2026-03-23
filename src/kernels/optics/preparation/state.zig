@@ -306,6 +306,33 @@ pub const PreparedOpticalState = struct {
     }
 
     /// Purpose:
+    ///   Resolve per-particle single-scatter albedos with compatibility
+    ///   fallbacks for hand-built prepared states.
+    pub fn resolvedParticleSingleScatterAlbedos(self: *const PreparedOpticalState) struct {
+        aerosol: f64,
+        cloud: f64,
+    } {
+        return .{
+            .aerosol = std.math.clamp(
+                if (self.aerosol_single_scatter_albedo >= 0.0)
+                    self.aerosol_single_scatter_albedo
+                else
+                    self.effective_single_scatter_albedo,
+                0.0,
+                1.0,
+            ),
+            .cloud = std.math.clamp(
+                if (self.cloud_single_scatter_albedo >= 0.0)
+                    self.cloud_single_scatter_albedo
+                else
+                    self.effective_single_scatter_albedo,
+                0.0,
+                1.0,
+            ),
+        };
+    }
+
+    /// Purpose:
     ///   Materialize source-interface carriers at one wavelength.
     pub fn fillSourceInterfacesAtWavelengthWithLayers(
         self: *const PreparedOpticalState,
@@ -570,33 +597,15 @@ pub const PreparedOpticalState = struct {
             self.cloud_angstrom_exponent,
             wavelength_nm,
         );
-        // Hand-built test states may omit particle-specific SSA; preserve the
-        // legacy aggregate fallback for those fixtures, but prefer the explicit
-        // per-particle values produced by preparation.
-        const aerosol_single_scatter_albedo = std.math.clamp(
-            if (self.aerosol_single_scatter_albedo >= 0.0)
-                self.aerosol_single_scatter_albedo
-            else
-                self.effective_single_scatter_albedo,
-            0.0,
-            1.0,
-        );
-        const cloud_single_scatter_albedo = std.math.clamp(
-            if (self.cloud_single_scatter_albedo >= 0.0)
-                self.cloud_single_scatter_albedo
-            else
-                self.effective_single_scatter_albedo,
-            0.0,
-            1.0,
-        );
+        const particle_single_scatter_albedos = self.resolvedParticleSingleScatterAlbedos();
         return .{
             .gas_absorption_optical_depth = gas_absorption_optical_depth,
             .gas_scattering_optical_depth = gas_scattering_optical_depth,
             .cia_optical_depth = cia_optical_depth,
             .aerosol_optical_depth = aerosol_optical_depth,
-            .aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo,
+            .aerosol_scattering_optical_depth = aerosol_optical_depth * particle_single_scatter_albedos.aerosol,
             .cloud_optical_depth = cloud_optical_depth,
-            .cloud_scattering_optical_depth = cloud_optical_depth * cloud_single_scatter_albedo,
+            .cloud_scattering_optical_depth = cloud_optical_depth * particle_single_scatter_albedos.cloud,
         };
     }
 

@@ -2214,6 +2214,98 @@ test "optical preparation preserves particle-specific scattering without prepare
     try std.testing.expectApproxEqAbs(@as(f64, 0.06), breakdown.cloud_scattering_optical_depth, 1.0e-12);
 }
 
+test "optical preparation uses prepared particle SSA in non-sublayer transport fallback" {
+    const scene: zdisamar.Scene = .{
+        .id = "non-sublayer-prepared-particle-ssa",
+        .atmosphere = .{
+            .layer_count = 1,
+            .has_aerosols = true,
+            .has_clouds = true,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.2,
+            .single_scatter_albedo = 0.1,
+            .reference_wavelength_nm = 435.0,
+            .angstrom_exponent = 0.0,
+        },
+        .cloud = .{
+            .enabled = true,
+            .optical_thickness = 0.1,
+            .single_scatter_albedo = 0.2,
+            .reference_wavelength_nm = 435.0,
+            .angstrom_exponent = 0.0,
+        },
+    };
+
+    var prepared: OpticsPrepare.PreparedOpticalState = .{
+        .layers = try std.testing.allocator.dupe(OpticsPrepare.PreparedLayer, &.{
+            .{
+                .layer_index = 0,
+                .altitude_km = 1.0,
+                .pressure_hpa = 850.0,
+                .temperature_k = 280.0,
+                .number_density_cm3 = 2.0e19,
+                .continuum_cross_section_cm2_per_molecule = 0.0,
+                .line_cross_section_cm2_per_molecule = 0.0,
+                .line_mixing_cross_section_cm2_per_molecule = 0.0,
+                .cia_optical_depth = 0.0,
+                .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+                .gas_optical_depth = 0.0,
+                .gas_scattering_optical_depth = 0.0,
+                .aerosol_optical_depth = 0.2,
+                .cloud_optical_depth = 0.1,
+                .layer_single_scatter_albedo = 0.55,
+                .depolarization_factor = 0.0,
+                .optical_depth = 0.3,
+            },
+        }),
+        .continuum_points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+        .mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
+        .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 0.25,
+        .aerosol_single_scatter_albedo = 0.8,
+        .cloud_single_scatter_albedo = 0.6,
+        .effective_temperature_k = 280.0,
+        .effective_pressure_hpa = 850.0,
+        .column_density_factor = 0.0,
+        .cia_pair_path_factor_cm5 = 0.0,
+        .aerosol_reference_wavelength_nm = 435.0,
+        .aerosol_angstrom_exponent = 0.0,
+        .cloud_reference_wavelength_nm = 435.0,
+        .cloud_angstrom_exponent = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.2,
+        .cloud_optical_depth = 0.1,
+        .d_optical_depth_d_temperature = 0.0,
+        .depolarization_factor = 0.0,
+        .total_optical_depth = 0.3,
+    };
+    defer prepared.deinit(std.testing.allocator);
+
+    var layer_inputs: [1]internal.kernels.transport.common.LayerInput = undefined;
+    const totals = PreparationTransport.fillForwardLayersAtWavelength(
+        &prepared,
+        &scene,
+        435.0,
+        &layer_inputs,
+    );
+    const breakdown = prepared.opticalDepthBreakdownAtWavelength(435.0);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.16), layer_inputs[0].aerosol_scattering_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.06), layer_inputs[0].cloud_scattering_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(breakdown.aerosol_scattering_optical_depth, layer_inputs[0].aerosol_scattering_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(breakdown.cloud_scattering_optical_depth, layer_inputs[0].cloud_scattering_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(breakdown.aerosol_scattering_optical_depth, totals.aerosol_scattering_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(breakdown.cloud_scattering_optical_depth, totals.cloud_scattering_optical_depth, 1.0e-12);
+}
+
 test "optical preparation avoids double-counting gas scattering in non-sublayer transport fallback" {
     const scene: zdisamar.Scene = .{
         .id = "non-sublayer-gas-scattering-fallback",

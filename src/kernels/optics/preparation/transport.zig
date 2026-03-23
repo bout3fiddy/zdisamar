@@ -165,16 +165,7 @@ pub fn fillForwardLayersAtWavelength(
         return totals;
     }
 
-    const aerosol_single_scatter_albedo = if (scene.atmosphere.has_aerosols and
-        scene.aerosol.enabled and scene.aerosol.optical_depth > 0.0)
-        std.math.clamp(scene.aerosol.single_scatter_albedo, 0.0, 1.0)
-    else
-        0.0;
-    const cloud_single_scatter_albedo = if (scene.atmosphere.has_clouds and
-        scene.cloud.enabled and scene.cloud.optical_thickness > 0.0)
-        std.math.clamp(scene.cloud.single_scatter_albedo, 0.0, 1.0)
-    else
-        0.0;
+    const particle_single_scatter_albedos = self.resolvedParticleSingleScatterAlbedos();
 
     var totals: OpticalDepthBreakdown = .{};
     for (self.layers, layer_inputs) |layer, *layer_input| {
@@ -196,9 +187,9 @@ pub fn fillForwardLayersAtWavelength(
             0.0,
         );
         const aerosol_scattering_optical_depth =
-            aerosol_optical_depth * aerosol_single_scatter_albedo;
+            aerosol_optical_depth * particle_single_scatter_albedos.aerosol;
         const cloud_scattering_optical_depth =
-            cloud_optical_depth * cloud_single_scatter_albedo;
+            cloud_optical_depth * particle_single_scatter_albedos.cloud;
         const optical_depth =
             gas_absorption_optical_depth +
             gas_scattering_optical_depth +
