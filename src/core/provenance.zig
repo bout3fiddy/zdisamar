@@ -1,6 +1,29 @@
+//! Purpose:
+//!   Materialize the owned provenance record returned with execution results.
+//!
+//! Physics:
+//!   Captures the model family, transport/retrieval maturity, derivative semantics, plugin
+//!   inventory, and dataset hashes that define how a request was evaluated.
+//!
+//! Vendor:
+//!   `result provenance assembly`
+//!
+//! Design:
+//!   Provenance is derived from the prepared plan snapshot and duplicated into owned storage so
+//!   result lifetimes do not depend on engine or plugin internals.
+//!
+//! Invariants:
+//!   All plugin-version, dataset-hash, and native-capability slices refer to the same plan
+//!   snapshot generation. Owned provenance must be deinitialized as one unit.
+//!
+//! Validation:
+//!   Provenance ownership tests and the validation/golden result-provenance checks.
+
 const std = @import("std");
 const PreparedPlan = @import("Plan.zig").PreparedPlan;
 
+/// Purpose:
+///   Store the owned execution provenance reported alongside a result.
 pub const Provenance = struct {
     engine_version: []const u8 = "0.1.0-dev",
     model_family: []const u8 = "disamar_standard",
@@ -22,6 +45,8 @@ pub const Provenance = struct {
     native_library_paths: []const []const u8 = &.{},
     owns_entries: bool = false,
 
+    /// Purpose:
+    ///   Duplicate the plan snapshot and execution labels into owned provenance storage.
     pub fn fromPlanOwned(
         self: *Provenance,
         allocator: std.mem.Allocator,
@@ -30,6 +55,10 @@ pub const Provenance = struct {
         scene_id: []const u8,
         numerical_mode: []const u8,
     ) !void {
+        // DECISION:
+        //   Provenance records the larger of the plugin-snapshot dataset count and the engine's
+        //   dataset cache coverage elsewhere in plan preparation so result metadata always speaks
+        //   in terms of the resolved prepared-plan snapshot, not a borrowed runtime view.
         const plugin_version_entries = try dupeSnapshotVersionLabels(allocator, plan.plugin_snapshot.capabilities);
         errdefer freeStringSlice(allocator, plugin_version_entries);
         const dataset_hashes = try dupeStringSlice(allocator, plan.plugin_snapshot.datasetHashes());
@@ -108,6 +137,8 @@ pub const Provenance = struct {
         return provenance;
     }
 
+    /// Purpose:
+    ///   Release any strings and string slices owned by this provenance record.
     pub fn deinit(self: *Provenance, allocator: std.mem.Allocator) void {
         if (!self.owns_entries) {
             self.* = .{};

@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Import legacy Config.in files into canonical YAML documents.
+//!
+//! Physics:
+//!   This adapter preserves the legacy flat configuration intent while
+//!   emitting typed canonical YAML that the modern pipeline can resolve.
+//!
+//! Vendor:
+//!   Legacy Config.in to canonical YAML conversion stage.
+//!
+//! Design:
+//!   Preserve the legacy import as a translation step with explicit warnings
+//!   for approximated or unmapped fields.
+//!
+//! Invariants:
+//!   Imported documents must keep the source path and surfaced warnings so the
+//!   caller can review any approximations.
+//!
+//! Validation:
+//!   Legacy import tests cover file import, buffer import, and warning output.
+
 const std = @import("std");
 const zdisamar = @import("zdisamar");
 const Importer = @import("config_in_importer.zig");
@@ -14,6 +35,8 @@ pub const ImportedDocument = struct {
     yaml: []u8,
     warnings: []const ImportWarning,
 
+    /// Purpose:
+    ///   Release the imported YAML document and any warning strings.
     pub fn deinit(self: *ImportedDocument, allocator: Allocator) void {
         for (self.warnings) |warning| allocator.free(warning.message);
         if (self.warnings.len != 0) allocator.free(self.warnings);
@@ -22,6 +45,8 @@ pub const ImportedDocument = struct {
     }
 };
 
+/// Purpose:
+///   Import a legacy Config.in file from disk.
 pub fn importFile(allocator: Allocator, path: []const u8) !ImportedDocument {
     const source_path = try std.fs.cwd().realpathAlloc(allocator, path);
     defer allocator.free(source_path);
@@ -32,12 +57,16 @@ pub fn importFile(allocator: Allocator, path: []const u8) !ImportedDocument {
     return importSource(allocator, source_path, contents);
 }
 
+/// Purpose:
+///   Import a legacy Config.in buffer and produce canonical YAML.
 pub fn importSource(allocator: Allocator, source_path: []const u8, contents: []const u8) !ImportedDocument {
     var prepared = try Importer.parse(allocator, contents);
     defer prepared.deinit(allocator);
     return renderPrepared(allocator, source_path, prepared);
 }
 
+/// Purpose:
+///   Render the prepared legacy run as canonical YAML with warnings.
 fn renderPrepared(allocator: Allocator, source_path: []const u8, prepared: PreparedRun) !ImportedDocument {
     var warnings = std.ArrayList(ImportWarning).empty;
     errdefer freeWarnings(allocator, warnings.items);

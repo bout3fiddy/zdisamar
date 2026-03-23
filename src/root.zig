@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Public Zig entrypoint for the typed radiative-transfer scaffold.
+//!
+//! Physics:
+//!   Re-exports the canonical scene, request/result, retrieval, and measurement-domain types
+//!   that make up the engine-facing scientific API.
+//!
+//! Vendor:
+//!   `public scaffold surface`
+//!
+//! Design:
+//!   Keep the stable public surface here while runtime internals, plugin ABI details, and test
+//!   helpers stay behind explicit opt-in imports.
+//!
+//! Invariants:
+//!   Public consumers see typed `Engine -> Plan -> Workspace -> Request -> Result` contracts and
+//!   do not gain implicit access to runtime or native-plugin internals.
+//!
+//! Validation:
+//!   The root-level import tests in this file verify the intended public/exported surface.
+
 const std = @import("std");
 const build_options = @import("build_options");
 

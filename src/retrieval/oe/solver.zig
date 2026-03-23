@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Provide the optimal-estimation retrieval entrypoint.
+//!
+//! Physics:
+//!   OE solves the full inverse problem against the bound measurement product
+//!   and produces the posterior covariance and averaging-kernel outputs.
+//!
+//! Vendor:
+//!   Rodgers OE retrieval stage.
+//!
+//! Design:
+//!   Keep the OE entrypoint thin so the shared spectral-fit and common
+//!   retrieval helpers own the core mechanics.
+//!
+//! Invariants:
+//!   OE requires an observed measurement binding and a derivative-compatible
+//!   state vector.
+//!
+//! Validation:
+//!   OE solver tests cover the evaluator path and posterior product outputs.
+
 const std = @import("std");
 const common = @import("../common/contracts.zig");
 const covariance = @import("../common/covariance.zig");
@@ -5,16 +26,20 @@ const diagnostics = @import("../common/diagnostics.zig");
 const forward_model = @import("../common/forward_model.zig");
 const jacobian_chain = @import("../common/jacobian_chain.zig");
 const priors = @import("../common/priors.zig");
+const posterior_products = @import("../common/posterior_products.zig");
 const state_access = @import("../common/state_access.zig");
+const solver_support = @import("../common/solver_support.zig");
 const transforms = @import("../common/transforms.zig");
 const cholesky = @import("../../kernels/linalg/cholesky.zig");
 const dense = @import("../../kernels/linalg/small_dense.zig");
-const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
+const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 const svd_fallback = @import("../../kernels/linalg/svd_fallback.zig");
 const vector_ops = @import("../../kernels/linalg/vector_ops.zig");
 const Allocator = std.mem.Allocator;
 const StateParameter = @import("../../model/Scene.zig").StateParameter;
 
+/// Purpose:
+///   Solve an OE retrieval using the supplied evaluator.
 pub fn solveWithEvaluator(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -34,7 +59,7 @@ pub fn solveWithEvaluator(
 
     const solver_state = try allocator.alloc(f64, state_count);
     defer allocator.free(solver_state);
-    try seedSolverState(allocator, problem, layout, prior.mean_solver, solver_state);
+    try solver_support.seedSolverState(allocator, problem, layout, prior.mean_solver, solver_state);
 
     const max_iterations: u32 = if (problem.inverse_problem.fit_controls.max_iterations != 0)
         problem.inverse_problem.fit_controls.max_iterations
@@ -46,14 +71,28 @@ pub fn solveWithEvaluator(
     var iterations: u32 = 0;
     var converged = false;
     var last_step_norm: f64 = std.math.inf(f64);
+    const candidate_state = try allocator.alloc(f64, state_count);
+    defer allocator.free(candidate_state);
+    const accepted_physical_state = try allocator.alloc(f64, state_count);
+    defer allocator.free(accepted_physical_state);
     while (iterations < max_iterations) : (iterations += 1) {
         var iteration_context = try linearizeState(allocator, problem, evaluator, layout, solver_state, observed);
         defer iteration_context.deinit(allocator);
 
+        const backtrack_context = BacktrackContext{
+            .allocator = allocator,
+            .problem = problem,
+            .evaluator = evaluator,
+            .layout = layout,
+            .observed = observed,
+            .measurement_inverse_covariance = iteration_context.measurement_inverse_covariance,
+            .prior = prior,
+        };
+
         const current_total_cost = iteration_context.measurement_cost + iteration_context.prior_cost;
         const step = try allocator.alloc(f64, state_count);
         defer allocator.free(step);
-        try solveSymmetricSystem(
+        try solver_support.solveSymmetricSystem(
             allocator,
             iteration_context.hessian,
             state_count,
@@ -62,59 +101,34 @@ pub fn solveWithEvaluator(
             step,
         );
 
-        const candidate_state = try allocator.dupe(f64, solver_state);
-        defer allocator.free(candidate_state);
+        const accepted = try solver_support.backtrackAcceptedStep(
+            solver_state,
+            step,
+            1.0 / 64.0,
+            current_total_cost,
+            candidate_state,
+            backtrack_context,
+            BacktrackContext.evaluate,
+        );
 
-        var accepted_measurement_cost = current_total_cost;
-        var accepted_prior_cost = iteration_context.prior_cost;
-        var accepted_scale: f64 = 0.0;
-        var accepted = false;
-        var scale: f64 = 1.0;
-
-        while (scale >= 1.0 / 64.0) : (scale *= 0.5) {
-            try vector_ops.copy(solver_state, candidate_state);
-            for (candidate_state, step) |*candidate_value, step_value| {
-                candidate_value.* += scale * step_value;
-            }
-
-            const normalized_physical = try allocator.alloc(f64, state_count);
-            defer allocator.free(normalized_physical);
-            try normalizeSolverState(problem, candidate_state, normalized_physical);
-            const candidate_scene = try state_access.sceneForStateWithLayout(problem, normalized_physical, layout);
-            var candidate_measurement = try forward_model.evaluateMeasurement(allocator, problem, evaluator, candidate_scene);
-            defer candidate_measurement.deinit(allocator);
-
-            const candidate_measurement_cost = measurementCostFromValues(
-                iteration_context.measurement_inverse_covariance,
-                observed.values,
-                candidate_measurement.values,
-            ) catch return common.Error.InvalidRequest;
-            const candidate_prior_cost = priorCost(prior.inverse_covariance, candidate_state, prior.mean_solver);
-            if (candidate_measurement_cost + candidate_prior_cost <= current_total_cost) {
-                accepted_measurement_cost = candidate_measurement_cost;
-                accepted_prior_cost = candidate_prior_cost;
-                accepted_scale = scale;
-                accepted = true;
-                break;
-            }
-        }
-
-        if (!accepted) {
+        if (accepted == null) {
             last_step_norm = 0.0;
             previous_total_cost = current_total_cost;
             iterations += 1;
             break;
         }
 
+        try solver_support.normalizeSolverState(problem, candidate_state, accepted_physical_state);
         try vector_ops.copy(candidate_state, solver_state);
         const scaled_step = try allocator.alloc(f64, state_count);
         defer allocator.free(scaled_step);
-        for (scaled_step, step) |*slot, value| slot.* = accepted_scale * value;
+        const accepted_step = accepted.?;
+        for (scaled_step, step) |*slot, value| slot.* = accepted_step.scale * value;
 
         const summary = diagnostics.assess(
             previous_total_cost,
-            accepted_measurement_cost,
-            accepted_prior_cost,
+            accepted_step.measurement_cost,
+            accepted_step.prior_cost,
             scaled_step,
             solver_state,
             problem.inverse_problem.convergence,
@@ -133,7 +147,7 @@ pub fn solveWithEvaluator(
     var final_context = try linearizeState(allocator, problem, evaluator, layout, solver_state, observed);
     errdefer final_context.deinit(allocator);
 
-    const posterior_covariance = try invertHessian(
+    const posterior_covariance = try solver_support.invertHessian(
         allocator,
         final_context.hessian,
         state_count,
@@ -141,27 +155,20 @@ pub fn solveWithEvaluator(
     );
     errdefer allocator.free(posterior_covariance);
 
-    const gain_matrix = try allocator.alloc(f64, state_count * measurement_count);
-    defer allocator.free(gain_matrix);
-    try buildGainMatrix(
-        allocator,
-        posterior_covariance,
-        state_count,
-        final_context.jacobian,
-        measurement_count,
-        final_context.measurement_inverse_covariance,
-        gain_matrix,
-    );
-
     const averaging_kernel = try allocator.alloc(f64, state_count * state_count);
     errdefer allocator.free(averaging_kernel);
-    try buildAveragingKernelFromGain(gain_matrix, state_count, final_context.jacobian, measurement_count, averaging_kernel);
+    try posterior_products.buildAveragingKernel(
+        posterior_covariance,
+        final_context.measurement_normal,
+        state_count,
+        averaging_kernel,
+    );
 
     const dfs = try dense.trace(averaging_kernel, state_count);
     const final_physical_values = try allocator.dupe(f64, final_context.physical_state);
     errdefer allocator.free(final_physical_values);
 
-    const parameter_names = try parameterNames(allocator, problem);
+    const parameter_names = try solver_support.parameterNames(allocator, problem);
     defer allocator.free(parameter_names);
     const final_jacobian = final_context.jacobian;
     final_context.jacobian = &[_]f64{};
@@ -209,6 +216,7 @@ const Linearization = struct {
     measurement: forward_model.SpectralMeasurement,
     residual: []f64,
     measurement_inverse_covariance: []f64,
+    measurement_normal: []f64,
     jacobian: []f64,
     hessian: []f64,
     gradient: []f64,
@@ -221,11 +229,45 @@ const Linearization = struct {
         self.measurement.deinit(allocator);
         if (self.residual.len != 0) allocator.free(self.residual);
         if (self.measurement_inverse_covariance.len != 0) allocator.free(self.measurement_inverse_covariance);
+        if (self.measurement_normal.len != 0) allocator.free(self.measurement_normal);
         if (self.jacobian.len != 0) allocator.free(self.jacobian);
         if (self.hessian.len != 0) allocator.free(self.hessian);
         if (self.gradient.len != 0) allocator.free(self.gradient);
         if (self.physical_state.len != 0) allocator.free(self.physical_state);
         self.* = undefined;
+    }
+};
+
+const BacktrackContext = struct {
+    allocator: Allocator,
+    problem: common.RetrievalProblem,
+    evaluator: forward_model.Evaluator,
+    layout: state_access.ResolvedStateLayout,
+    observed: forward_model.SpectralMeasurement,
+    measurement_inverse_covariance: []const f64,
+    prior: priors.Assembly,
+
+    fn evaluate(self: @This(), candidate_state: []const f64) common.Error!solver_support.TrialCosts {
+        const normalized_state = try self.allocator.dupe(f64, candidate_state);
+        defer self.allocator.free(normalized_state);
+        const physical_state = try self.allocator.alloc(f64, candidate_state.len);
+        defer self.allocator.free(physical_state);
+        try solver_support.normalizeSolverState(self.problem, normalized_state, physical_state);
+
+        const candidate_scene = try state_access.sceneForStateWithLayout(self.problem, physical_state, self.layout);
+        var candidate_measurement = try forward_model.evaluateMeasurement(self.allocator, self.problem, self.evaluator, candidate_scene);
+        defer candidate_measurement.deinit(self.allocator);
+
+        const candidate_measurement_cost = try measurementCostFromValues(
+            self.measurement_inverse_covariance,
+            self.observed.values,
+            candidate_measurement.values,
+        );
+        const candidate_prior_cost = solver_support.priorCost(self.prior.inverse_covariance, normalized_state, self.prior.mean_solver);
+        return .{
+            .measurement_cost = candidate_measurement_cost,
+            .prior_cost = candidate_prior_cost,
+        };
     }
 };
 
@@ -244,7 +286,7 @@ fn linearizeState(
     errdefer allocator.free(normalized_state);
     const physical_state = try allocator.alloc(f64, state_count);
     errdefer allocator.free(physical_state);
-    try normalizeSolverState(problem, normalized_state, physical_state);
+    try solver_support.normalizeSolverState(problem, normalized_state, physical_state);
 
     const scene = try state_access.sceneForStateWithLayout(problem, physical_state, layout);
     var measurement = try forward_model.evaluateMeasurement(allocator, problem, evaluator, scene);
@@ -291,9 +333,18 @@ fn linearizeState(
 
     const hessian = try allocator.alloc(f64, state_count * state_count);
     errdefer allocator.free(hessian);
+    const measurement_normal = try allocator.alloc(f64, state_count * state_count);
+    errdefer allocator.free(measurement_normal);
     const gradient = try allocator.alloc(f64, state_count);
     errdefer allocator.free(gradient);
 
+    try jacobian_chain.accumulateNormalMatrixWithInverseCovariance(
+        jacobian_solver,
+        measurement_count,
+        state_count,
+        measurement_inverse_covariance,
+        measurement_normal,
+    );
     try jacobian_chain.accumulateNormalMatrixWithInverseCovariance(
         jacobian_solver,
         measurement_count,
@@ -312,17 +363,18 @@ fn linearizeState(
 
     var prior = try priors.assemble(allocator, problem);
     defer prior.deinit(allocator);
-    addMatrixInPlace(hessian, prior.inverse_covariance);
-    subtractMatVec(gradient, prior.inverse_covariance, normalized_state, prior.mean_solver);
+    solver_support.addMatrixInPlace(hessian, prior.inverse_covariance);
+    solver_support.subtractMatVec(gradient, prior.inverse_covariance, normalized_state, prior.mean_solver);
 
     const measurement_cost_value = measurementCost(measurement_inverse_covariance, residual) catch return common.Error.InvalidRequest;
-    const prior_cost_value = priorCost(prior.inverse_covariance, normalized_state, prior.mean_solver);
+    const prior_cost_value = solver_support.priorCost(prior.inverse_covariance, normalized_state, prior.mean_solver);
 
     allocator.free(normalized_state);
     return .{
         .measurement = measurement,
         .residual = residual,
         .measurement_inverse_covariance = measurement_inverse_covariance,
+        .measurement_normal = measurement_normal,
         .jacobian = jacobian_solver,
         .hessian = hessian,
         .gradient = gradient,
@@ -349,7 +401,7 @@ fn buildPhysicalJacobian(
     @memset(jacobian_physical, 0.0);
 
     for (problem.inverse_problem.state_vector.parameters, 0..) |parameter, column| {
-        column_scales[column] = transformScale(parameter, solver_state[column], physical_state[column]);
+        column_scales[column] = solver_support.transformScale(parameter, solver_state[column], physical_state[column]);
         if (@abs(column_scales[column]) <= 1.0e-15) continue;
 
         if (try fillProviderJacobianColumnIfSupported(
@@ -363,7 +415,7 @@ fn buildPhysicalJacobian(
             continue;
         }
 
-        const step = finiteDifferenceStep(parameter, physical_state[column]);
+        const step = solver_support.finiteDifferenceStep(parameter, physical_state[column]);
         const lower_allowed = if (parameter.bounds.enabled) parameter.bounds.min else -std.math.inf(f64);
         const upper_allowed = if (parameter.bounds.enabled) parameter.bounds.max else std.math.inf(f64);
         const can_step_backward = physical_state[column] - step > lower_allowed;
@@ -725,289 +777,4 @@ fn transformScale(parameter: StateParameter, solver_value: f64, physical_value: 
         return 0.0;
     }
     return derivative;
-}
-
-fn finiteDifferenceStep(parameter: StateParameter, physical_value: f64) f64 {
-    var step = @max(@abs(physical_value) * 1.0e-3, 1.0e-6);
-    if (parameter.bounds.enabled) {
-        step = @min(step, 0.25 * @max(parameter.bounds.max - parameter.bounds.min, 1.0e-6));
-    }
-    return step;
-}
-
-test "oe retrieval converges on a real spectral residual with posterior products" {
-    const evaluator = testSpectralEvaluator();
-    var observed_product = try evaluator.evaluateProduct(std.testing.allocator, evaluator.context, .{
-        .id = "truth-scene",
-        .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 48 },
-        .surface = .{ .albedo = 0.18 },
-        .aerosol = .{ .enabled = true, .optical_depth = 0.12, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-        .observation_model = .{
-            .instrument = .synthetic,
-            .wavelength_shift_nm = 0.015,
-        },
-    });
-    defer observed_product.deinit(std.testing.allocator);
-
-    const problem: common.RetrievalProblem = .{
-        .scene = .{
-            .id = "scene-oe",
-            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 48 },
-            .surface = .{ .albedo = 0.08 },
-            .aerosol = .{ .enabled = true, .optical_depth = 0.05, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-            .observation_model = .{ .instrument = .synthetic },
-        },
-        .inverse_problem = .{
-            .id = "inverse-oe",
-            .state_vector = .{
-                .parameters = &[_]StateParameter{
-                    .{ .name = "surface_albedo", .target = .surface_albedo, .transform = .logit, .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.04 }, .bounds = .{ .enabled = true, .min = 0.0, .max = 1.0 } },
-                    .{ .name = "aerosol_tau", .target = .aerosol_optical_depth_550_nm, .transform = .log, .prior = .{ .enabled = true, .mean = 0.08, .sigma = 0.05 }, .bounds = .{ .enabled = true, .min = 1.0e-4, .max = 3.0 } },
-                    .{ .name = "wavelength_shift", .target = .wavelength_shift_nm, .prior = .{ .enabled = true, .mean = 0.0, .sigma = 0.05 }, .bounds = .{ .enabled = true, .min = -0.2, .max = 0.2 } },
-                },
-            },
-            .measurements = .{
-                .product_name = "radiance",
-                .observable = .radiance,
-                .sample_count = 48,
-                .source = .{ .external_observation = .{ .name = "truth_radiance" } },
-                .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
-            },
-        },
-        .derivative_mode = .semi_analytical,
-        .jacobians_requested = true,
-        .observed_measurement = .{
-            .source_name = "truth_radiance",
-            .observable = .radiance,
-            .product_name = "radiance",
-            .sample_count = 48,
-            .product = .init(&observed_product),
-        },
-    };
-
-    const result = try solveWithEvaluator(std.testing.allocator, problem, evaluator);
-    defer {
-        var owned = result;
-        owned.deinit(std.testing.allocator);
-    }
-
-    try std.testing.expectEqual(common.Method.oe, result.method);
-    try std.testing.expect(result.jacobians_used);
-    try std.testing.expect(result.fitted_scene != null);
-    try std.testing.expect(result.fitted_measurement != null);
-    try std.testing.expect(result.jacobian != null);
-    try std.testing.expect(result.averaging_kernel != null);
-    try std.testing.expect(result.posterior_covariance != null);
-    try std.testing.expect(result.dfs > 0.0);
-    try std.testing.expect(result.state_estimate.values.len == 3);
-}
-
-test "oe retrieval reports non-convergence when iteration budget is exhausted" {
-    const evaluator = testSpectralEvaluator();
-    var observed_product = try evaluator.evaluateProduct(std.testing.allocator, evaluator.context, .{
-        .id = "truth-scene-limited",
-        .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 40 },
-        .surface = .{ .albedo = 0.25 },
-        .aerosol = .{ .enabled = true, .optical_depth = 0.20, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-        .observation_model = .{ .instrument = .synthetic, .wavelength_shift_nm = 0.02 },
-    });
-    defer observed_product.deinit(std.testing.allocator);
-
-    const problem: common.RetrievalProblem = .{
-        .scene = .{
-            .id = "scene-oe-limited",
-            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 40 },
-            .surface = .{ .albedo = 0.02 },
-            .aerosol = .{ .enabled = true, .optical_depth = 0.02, .layer_center_km = 3.0, .layer_width_km = 1.0 },
-            .observation_model = .{ .instrument = .synthetic },
-        },
-        .inverse_problem = .{
-            .id = "inverse-oe-limited",
-            .state_vector = .{
-                .parameters = &[_]StateParameter{
-                    .{ .name = "surface_albedo", .target = .surface_albedo, .transform = .logit, .prior = .{ .enabled = true, .mean = 0.02, .sigma = 0.01 }, .bounds = .{ .enabled = true, .min = 0.0, .max = 1.0 } },
-                },
-            },
-            .measurements = .{
-                .product_name = "radiance",
-                .observable = .radiance,
-                .sample_count = 40,
-                .source = .{ .external_observation = .{ .name = "truth_radiance" } },
-                .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
-            },
-            .fit_controls = .{
-                .max_iterations = 1,
-            },
-        },
-        .derivative_mode = .semi_analytical,
-        .jacobians_requested = true,
-        .observed_measurement = .{
-            .source_name = "truth_radiance",
-            .observable = .radiance,
-            .product_name = "radiance",
-            .sample_count = 40,
-            .product = .init(&observed_product),
-        },
-    };
-
-    const result = try solveWithEvaluator(std.testing.allocator, problem, evaluator);
-    defer {
-        var owned = result;
-        owned.deinit(std.testing.allocator);
-    }
-
-    try std.testing.expect(!result.converged);
-    try std.testing.expectEqual(@as(u32, 1), result.iterations);
-}
-
-const TestEvaluatorContext = struct {};
-
-var test_evaluator_context: TestEvaluatorContext = .{};
-
-fn testSpectralEvaluator() forward_model.Evaluator {
-    return .{
-        .context = &test_evaluator_context,
-        .evaluateSummary = testEvaluateSummary,
-        .evaluateProduct = testEvaluateProduct,
-    };
-}
-
-fn testEvaluateSummary(_: *const anyopaque, scene: @import("../../model/Scene.zig").Scene) anyerror!MeasurementSpace.MeasurementSpaceSummary {
-    const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    if (sample_count == 0) return error.InvalidRequest;
-
-    const irradiance = testIrradiance();
-    var radiance_sum: f64 = 0.0;
-    var reflectance_sum: f64 = 0.0;
-    for (0..sample_count) |index| {
-        const wavelength_nm = testWavelength(scene, index);
-        const radiance = testRadiance(scene, wavelength_nm);
-        radiance_sum += radiance;
-        reflectance_sum += radiance / irradiance;
-    }
-
-    return .{
-        .sample_count = @intCast(sample_count),
-        .wavelength_start_nm = testWavelength(scene, 0),
-        .wavelength_end_nm = testWavelength(scene, sample_count - 1),
-        .mean_radiance = radiance_sum / @as(f64, @floatFromInt(sample_count)),
-        .mean_irradiance = irradiance,
-        .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(sample_count)),
-        .mean_noise_sigma = 0.02,
-    };
-}
-
-fn testEvaluateProduct(
-    allocator: Allocator,
-    _: *const anyopaque,
-    scene: @import("../../model/Scene.zig").Scene,
-) anyerror!MeasurementSpace.MeasurementSpaceProduct {
-    const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    if (sample_count == 0) return error.InvalidRequest;
-
-    const wavelengths = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(wavelengths);
-    const radiance = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(radiance);
-    const irradiance = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(irradiance);
-    const reflectance = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(reflectance);
-    const noise_sigma = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(noise_sigma);
-    const jacobian = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(jacobian);
-
-    const irradiance_level = testIrradiance();
-    var radiance_sum: f64 = 0.0;
-    var reflectance_sum: f64 = 0.0;
-    var jacobian_sum: f64 = 0.0;
-    for (0..sample_count) |index| {
-        const wavelength_nm = testWavelength(scene, index);
-        const radiance_value = testRadiance(scene, wavelength_nm);
-        const jacobian_value = testAerosolJacobian(scene, wavelength_nm);
-
-        wavelengths[index] = wavelength_nm;
-        radiance[index] = radiance_value;
-        irradiance[index] = irradiance_level;
-        reflectance[index] = radiance_value / irradiance_level;
-        noise_sigma[index] = 0.02;
-        jacobian[index] = jacobian_value;
-
-        radiance_sum += radiance_value;
-        reflectance_sum += reflectance[index];
-        jacobian_sum += jacobian_value;
-    }
-
-    return .{
-        .summary = .{
-            .sample_count = @intCast(sample_count),
-            .wavelength_start_nm = wavelengths[0],
-            .wavelength_end_nm = wavelengths[sample_count - 1],
-            .mean_radiance = radiance_sum / @as(f64, @floatFromInt(sample_count)),
-            .mean_irradiance = irradiance_level,
-            .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(sample_count)),
-            .mean_noise_sigma = 0.02,
-            .mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count)),
-        },
-        .wavelengths = wavelengths,
-        .radiance = radiance,
-        .irradiance = irradiance,
-        .reflectance = reflectance,
-        .noise_sigma = noise_sigma,
-        .jacobian = jacobian,
-        .effective_air_mass_factor = 1.0,
-        .effective_single_scatter_albedo = 0.93,
-        .effective_temperature_k = 270.0,
-        .effective_pressure_hpa = 800.0,
-        .gas_optical_depth = 0.1,
-        .cia_optical_depth = 0.02,
-        .aerosol_optical_depth = scene.aerosol.optical_depth,
-        .cloud_optical_depth = 0.0,
-        .total_optical_depth = 0.12 + scene.aerosol.optical_depth,
-        .depolarization_factor = 0.0,
-        .d_optical_depth_d_temperature = 0.0,
-    };
-}
-
-fn testWavelength(scene: @import("../../model/Scene.zig").Scene, index: usize) f64 {
-    if (scene.spectral_grid.sample_count <= 1) return scene.spectral_grid.start_nm;
-    const step = (scene.spectral_grid.end_nm - scene.spectral_grid.start_nm) /
-        @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
-    return scene.spectral_grid.start_nm + step * @as(f64, @floatFromInt(index));
-}
-
-fn testIrradiance() f64 {
-    return 2.0;
-}
-
-fn testRadiance(scene: @import("../../model/Scene.zig").Scene, wavelength_nm: f64) f64 {
-    const shifted_wavelength = wavelength_nm - scene.observation_model.wavelength_shift_nm;
-    const profile = testAbsorptionProfile(scene, shifted_wavelength);
-    const continuum = 0.55 + 2.6 * scene.surface.albedo + 0.008 * (shifted_wavelength - scene.spectral_grid.start_nm);
-    const radiance = continuum - scene.aerosol.optical_depth * profile;
-    return @max(radiance, 1.0e-3);
-}
-
-fn testAerosolJacobian(scene: @import("../../model/Scene.zig").Scene, wavelength_nm: f64) f64 {
-    const shifted_wavelength = wavelength_nm - scene.observation_model.wavelength_shift_nm;
-    return -testAbsorptionProfile(scene, shifted_wavelength);
-}
-
-fn testAbsorptionProfile(scene: @import("../../model/Scene.zig").Scene, wavelength_nm: f64) f64 {
-    const height_shift = 0.03 * (scene.aerosol.layer_center_km - 3.0);
-    const broad = 0.42 * testGaussian(wavelength_nm, 762.7 + height_shift, 1.35);
-    const narrow =
-        0.18 * testGaussian(wavelength_nm, 760.55 + height_shift, 0.12) +
-        0.24 * testGaussian(wavelength_nm, 761.15 + height_shift, 0.10) +
-        0.33 * testGaussian(wavelength_nm, 761.95 + height_shift, 0.11) +
-        0.41 * testGaussian(wavelength_nm, 762.95 + height_shift, 0.10) +
-        0.47 * testGaussian(wavelength_nm, 763.75 + height_shift, 0.09) +
-        0.52 * testGaussian(wavelength_nm, 764.55 + height_shift, 0.08);
-    return broad + narrow;
-}
-
-fn testGaussian(x: f64, center: f64, sigma: f64) f64 {
-    const normalized = (x - center) / sigma;
-    return std.math.exp(-0.5 * normalized * normalized);
 }

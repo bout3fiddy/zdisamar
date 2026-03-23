@@ -1,14 +1,39 @@
+//! Purpose:
+//!   Store instrument line-shape kernels and nominal kernel tables.
+//!
+//! Physics:
+//!   Represents sampled instrument response functions in wavelength offset space.
+//!
+//! Vendor:
+//!   `instrument line-shape`
+//!
+//! Design:
+//!   The direct kernel and nominal table are separate so owned storage and lookup rules stay explicit.
+//!
+//! Invariants:
+//!   Sample counts are bounded by the fixed constants, weights remain non-negative, and nominal wavelengths are monotonic.
+//!
+//! Validation:
+//!   Tests cover normalization for both direct and table-driven kernels.
+
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const constants = @import("constants.zig");
 const max_line_shape_samples = constants.max_line_shape_samples;
 const max_line_shape_nominals = constants.max_line_shape_nominals;
 
+/// Purpose:
+///   Select one of the built-in line-shape families.
 pub const BuiltinLineShapeKind = enum {
     gaussian,
     flat_top_n4,
     triple_flat_top_n4,
 
+    /// Purpose:
+    ///   Parse a built-in line-shape name into a typed kind.
+    ///
+    /// Physics:
+    ///   Selects the desired instrument response profile without altering the kernel itself.
     pub fn parse(name: []const u8) errors.Error!BuiltinLineShapeKind {
         if (name.len == 0 or std.mem.eql(u8, name, "gaussian")) return .gaussian;
         if (std.mem.eql(u8, name, "flat_top") or
@@ -28,12 +53,19 @@ pub const BuiltinLineShapeKind = enum {
     }
 };
 
+/// Purpose:
+///   Store a direct sampled line-shape kernel.
 pub const InstrumentLineShape = struct {
     sample_count: u8 = 0,
     offsets_nm: []const f64 = &.{},
     weights: []const f64 = &.{},
     owns_memory: bool = false,
 
+    /// Purpose:
+    ///   Validate the direct line-shape kernel.
+    ///
+    /// Physics:
+    ///   Ensures the kernel sample count, offsets, and weights are self-consistent.
     pub fn validate(self: *const InstrumentLineShape) errors.Error!void {
         if (self.sample_count > max_line_shape_samples) {
             return errors.Error.InvalidRequest;
@@ -53,6 +85,8 @@ pub const InstrumentLineShape = struct {
         }
     }
 
+    /// Purpose:
+    ///   Promote the line-shape kernel into owned storage.
     pub fn ensureOwnedStorage(self: *InstrumentLineShape, allocator: std.mem.Allocator) !void {
         if (self.owns_memory) return;
 
@@ -71,6 +105,8 @@ pub const InstrumentLineShape = struct {
         self.owns_memory = true;
     }
 
+    /// Purpose:
+    ///   Clone the line-shape kernel into owned storage.
     pub fn clone(self: InstrumentLineShape, allocator: std.mem.Allocator) !InstrumentLineShape {
         if (self.sample_count == 0) return .{};
 
@@ -86,6 +122,8 @@ pub const InstrumentLineShape = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release owned kernel storage.
     pub fn deinitOwned(self: *InstrumentLineShape, allocator: std.mem.Allocator) void {
         if (self.owns_memory) {
             if (self.offsets_nm.len != 0) allocator.free(@constCast(self.offsets_nm));
@@ -94,6 +132,11 @@ pub const InstrumentLineShape = struct {
         self.* = .{};
     }
 
+    /// Purpose:
+    ///   Copy the kernel into caller-provided buffers and normalize the weights.
+    ///
+    /// Physics:
+    ///   Returns the effective sampled line-spread function as a unit-sum kernel.
     pub fn writeNormalizedKernel(
         self: *const InstrumentLineShape,
         offsets_out: []f64,
@@ -114,6 +157,8 @@ pub const InstrumentLineShape = struct {
     }
 };
 
+/// Purpose:
+///   Store a table of nominal line-shape kernels.
 pub const InstrumentLineShapeTable = struct {
     nominal_count: u16 = 0,
     sample_count: u8 = 0,
@@ -122,6 +167,11 @@ pub const InstrumentLineShapeTable = struct {
     weights: []const f64 = &.{},
     owns_memory: bool = false,
 
+    /// Purpose:
+    ///   Validate the nominal line-shape table.
+    ///
+    /// Physics:
+    ///   Ensures each nominal kernel row has finite, non-negative weights and monotonic nominal wavelengths.
     pub fn validate(self: *const InstrumentLineShapeTable) errors.Error!void {
         if (self.nominal_count > max_line_shape_nominals or self.sample_count > max_line_shape_samples) {
             return errors.Error.InvalidRequest;
@@ -156,6 +206,8 @@ pub const InstrumentLineShapeTable = struct {
         }
     }
 
+    /// Purpose:
+    ///   Clone the nominal table into owned storage.
     pub fn clone(self: InstrumentLineShapeTable, allocator: std.mem.Allocator) !InstrumentLineShapeTable {
         if (self.nominal_count == 0 or self.sample_count == 0) return .{};
 
@@ -176,6 +228,8 @@ pub const InstrumentLineShapeTable = struct {
         };
     }
 
+    /// Purpose:
+    ///   Promote the nominal table into owned storage.
     pub fn ensureOwnedStorage(self: *InstrumentLineShapeTable, allocator: std.mem.Allocator) !void {
         if (self.owns_memory) return;
 
@@ -199,14 +253,23 @@ pub const InstrumentLineShapeTable = struct {
         self.owns_memory = true;
     }
 
+    /// Purpose:
+    ///   Read a kernel weight from the flattened nominal/sample table.
+    ///
+    /// Physics:
+    ///   Uses row-major nominal-major indexing over the table.
     pub fn weightAt(self: *const InstrumentLineShapeTable, nominal_index: usize, sample_index: usize) f64 {
         return self.weights[nominal_index * @as(usize, self.sample_count) + sample_index];
     }
 
+    /// Purpose:
+    ///   Write a kernel weight into the flattened nominal/sample table.
     pub fn setWeight(self: *InstrumentLineShapeTable, nominal_index: usize, sample_index: usize, value: f64) void {
         @constCast(self.weights)[nominal_index * @as(usize, self.sample_count) + sample_index] = value;
     }
 
+    /// Purpose:
+    ///   Find the nearest nominal wavelength in the table.
     pub fn nearestNominalIndex(self: *const InstrumentLineShapeTable, wavelength_nm: f64) ?usize {
         if (self.nominal_count == 0) return null;
 
@@ -222,6 +285,8 @@ pub const InstrumentLineShapeTable = struct {
         return best_index;
     }
 
+    /// Purpose:
+    ///   Write the normalized kernel nearest to a nominal wavelength.
     pub fn writeNormalizedKernelForNominal(
         self: *const InstrumentLineShapeTable,
         nominal_wavelength_nm: f64,
@@ -243,6 +308,8 @@ pub const InstrumentLineShapeTable = struct {
         return sample_count;
     }
 
+    /// Purpose:
+    ///   Release owned table storage.
     pub fn deinitOwned(self: *InstrumentLineShapeTable, allocator: std.mem.Allocator) void {
         if (self.owns_memory) {
             if (self.nominal_wavelengths_nm.len != 0) allocator.free(@constCast(self.nominal_wavelengths_nm));

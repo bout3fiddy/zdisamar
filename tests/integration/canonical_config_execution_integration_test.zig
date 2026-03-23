@@ -29,6 +29,19 @@ fn replaceAllAlloc(
     return output.toOwnedSlice(allocator);
 }
 
+fn coarsenTwinExampleYaml(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+) ![]u8 {
+    // Keep the twin-example routing coverage in `test-fast`, but avoid running
+    // the full-resolution scientific example under DebugAllocator.
+    const fewer_layers = try replaceAllAlloc(allocator, source, "layer_count: 48", "layer_count: 6");
+    defer allocator.free(fewer_layers);
+    const fewer_samples = try replaceAllAlloc(allocator, fewer_layers, "step_nm: 0.01", "step_nm: 0.50");
+    defer allocator.free(fewer_samples);
+    return replaceAllAlloc(allocator, fewer_samples, "max_iterations: 8", "max_iterations: 2");
+}
+
 fn executeResolvedSource(
     source_name: []const u8,
     base_dir: []const u8,
@@ -59,10 +72,10 @@ fn simulateSceneProduct(
     allocator: std.mem.Allocator,
     plan: *const zdisamar.PreparedPlan,
     scene: zdisamar.Scene,
-) !internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
+) !internal.kernels.transport.measurement.MeasurementSpaceProduct {
     var prepared_optics = try plan.providers.optics.prepareForScene(allocator, &scene);
     defer prepared_optics.deinit(allocator);
-    return internal.kernels.transport.measurement_space.simulateProduct(
+    return internal.kernels.transport.measurement.simulateProduct(
         allocator,
         &scene,
         plan.transport_route,
@@ -650,7 +663,9 @@ test "canonical execution runs revised twin examples with routed outputs" {
     defer std.testing.allocator.free(common_bytes);
     const common_replacement = try std.fmt.allocPrint(std.testing.allocator, "file://{s}/", .{common_root});
     defer std.testing.allocator.free(common_replacement);
-    const common_yaml = try replaceAllAlloc(std.testing.allocator, common_bytes, "file://out/", common_replacement);
+    const common_rooted_yaml = try replaceAllAlloc(std.testing.allocator, common_bytes, "file://out/", common_replacement);
+    defer std.testing.allocator.free(common_rooted_yaml);
+    const common_yaml = try coarsenTwinExampleYaml(std.testing.allocator, common_rooted_yaml);
     defer std.testing.allocator.free(common_yaml);
 
     const expert_bytes = try std.fs.cwd().readFileAlloc(
@@ -661,7 +676,9 @@ test "canonical execution runs revised twin examples with routed outputs" {
     defer std.testing.allocator.free(expert_bytes);
     const expert_replacement = try std.fmt.allocPrint(std.testing.allocator, "file://{s}/", .{expert_root});
     defer std.testing.allocator.free(expert_replacement);
-    const expert_yaml = try replaceAllAlloc(std.testing.allocator, expert_bytes, "file://out/", expert_replacement);
+    const expert_rooted_yaml = try replaceAllAlloc(std.testing.allocator, expert_bytes, "file://out/", expert_replacement);
+    defer std.testing.allocator.free(expert_rooted_yaml);
+    const expert_yaml = try coarsenTwinExampleYaml(std.testing.allocator, expert_rooted_yaml);
     defer std.testing.allocator.free(expert_yaml);
 
     var common_document = try zdisamar.canonical_config.Document.parse(

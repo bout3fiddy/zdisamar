@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Provide a lightweight, test-only forward evaluator for retrieval
+//!   coverage.
+//!
+//! Physics:
+//!   The synthetic evaluator approximates observable spectra and summaries so
+//!   retrieval logic can be exercised without the production transport stack.
+//!
+//! Vendor:
+//!   Surrogate forward-model evaluation and anchoring stages.
+//!
+//! Design:
+//!   Keep this evaluator explicitly test-only so production paths continue to
+//!   use the real engine evaluator.
+//!
+//! Invariants:
+//!   The surrogate must preserve the expected observable ordering and
+//!   measurement shapes used by the retrieval helpers.
+//!
+//! Validation:
+//!   Retrieval unit tests use this module as their lightweight evaluator.
+
 const std = @import("std");
 const common = @import("contracts.zig");
 const forward_model = @import("forward_model.zig");
@@ -7,7 +29,7 @@ const StateTarget = @import("../../model/Scene.zig").StateTarget;
 const ResolvedAxis = @import("../../kernels/spectra/grid.zig").ResolvedAxis;
 const SpectralGrid = @import("../../kernels/spectra/grid.zig").SpectralGrid;
 const ExecutionMode = @import("../../kernels/transport/common.zig").ExecutionMode;
-const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
+const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
 const MeasurementSpaceSummary = MeasurementSpace.MeasurementSpaceSummary;
 const Allocator = std.mem.Allocator;
@@ -23,8 +45,9 @@ pub const FeatureVector = struct {
     len: usize,
 };
 
-/// Test-only evaluator used by unit and lightweight integration coverage.
-/// Engine/provider execution uses the real evaluator supplied via `solveWithEvaluator`.
+/// Purpose:
+///   Return the test-only evaluator used by unit and lightweight integration
+///   coverage.
 pub fn testEvaluator() forward_model.Evaluator {
     return .{
         .context = undefined,
@@ -33,6 +56,9 @@ pub fn testEvaluator() forward_model.Evaluator {
     };
 }
 
+/// Purpose:
+///   Build an initial solver-state anchor from an observed measurement
+///   summary.
 pub fn anchorState(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -43,6 +69,8 @@ pub fn anchorState(
     return anchorStateWithLayout(allocator, problem, method, observed, layout);
 }
 
+/// Purpose:
+///   Build an anchored state using a pre-resolved layout.
 pub fn anchorStateWithLayout(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -67,6 +95,9 @@ pub fn anchorStateWithLayout(
     return anchored;
 }
 
+/// Purpose:
+///   Return the observed measurement summary if the problem already carries
+///   one, otherwise evaluate the surrogate summary.
 pub fn observedSummary(
     problem: common.RetrievalProblem,
     evaluator: forward_model.Evaluator,
@@ -80,6 +111,8 @@ pub fn observedSummary(
     };
 }
 
+/// Purpose:
+///   Summarize a candidate solver state through the surrogate evaluator.
 pub fn summarizeState(
     problem: common.RetrievalProblem,
     method: common.Method,
@@ -90,6 +123,9 @@ pub fn summarizeState(
     return summarizeStateWithLayout(problem, method, state, evaluator, layout);
 }
 
+/// Purpose:
+///   Summarize a candidate solver state through the surrogate evaluator and a
+///   pre-resolved layout.
 pub fn summarizeStateWithLayout(
     problem: common.RetrievalProblem,
     method: common.Method,
@@ -106,6 +142,8 @@ pub fn summarizeStateWithLayout(
     };
 }
 
+/// Purpose:
+///   Produce the compact feature vector used by surrogate residual norms.
 pub fn featureVector(
     summary: MeasurementSpaceSummary,
     method: common.Method,
@@ -202,6 +240,9 @@ fn anchorForAccessor(
 }
 
 fn executionMode(problem: common.RetrievalProblem, method: common.Method) ExecutionMode {
+    // DECISION:
+    //   DISMAS always uses polarized transport in the surrogate so the test
+    //   path tracks the real solver's higher-order dependence.
     return switch (method) {
         .dismas => .polarized,
         .oe, .doas => switch (problem.scene.observation_model.regime) {

@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Define the typed observation-model contract attached to a canonical scene.
+//!
+//! Physics:
+//!   Captures instrument regime, calibration offsets, line-shape/reference carriers, solar
+//!   spectra, operational LUTs, and optional measured-channel supporting data.
+//!
+//! Vendor:
+//!   `observation-model and instrument-support contract`
+//!
+//! Design:
+//!   Keep instrument/observation configuration typed and self-contained so adapters can hydrate
+//!   operational metadata without leaking file-format policy into kernels.
+//!
+//! Invariants:
+//!   Calibration fields must be finite, optional measured channels must be strictly increasing,
+//!   and noise/support arrays must stay shape-consistent with their associated wavelengths.
+//!
+//! Validation:
+//!   Observation-model validation tests in this file and the execution tests that hydrate
+//!   measured-channel and operational observation metadata.
+
 const std = @import("std");
 const errors = @import("../core/errors.zig");
 const Binding = @import("Binding.zig").Binding;
@@ -18,6 +40,8 @@ pub const ObservationRegime = enum {
     occultation,
 };
 
+/// Purpose:
+///   Store the observation-side configuration and supporting data required to evaluate a scene.
 pub const ObservationModel = struct {
     instrument: InstrumentId = .generic,
     regime: ObservationRegime = .nadir,
@@ -45,6 +69,8 @@ pub const ObservationModel = struct {
     owns_reference_radiance: bool = false,
     ingested_noise_sigma: []const f64 = &.{},
 
+    /// Purpose:
+    ///   Validate calibration, measured-channel, and operational-support metadata.
     pub fn validate(self: *const ObservationModel) errors.Error!void {
         try self.solar_spectrum_source.validate();
         try self.weighted_reference_grid_source.validate();
@@ -67,6 +93,9 @@ pub const ObservationModel = struct {
         }
         switch (self.noise_model) {
             .snr_from_input, .s5p_operational => {
+                // INVARIANT:
+                //   Input-driven noise models require an explicit sigma vector so transport and
+                //   retrieval code can treat the noise contract as already materialized.
                 if (self.ingested_noise_sigma.len == 0) return errors.Error.InvalidRequest;
             },
             .none, .shot_noise => {},
@@ -94,6 +123,9 @@ pub const ObservationModel = struct {
             return errors.Error.InvalidRequest;
         }
         if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
+            // GOTCHA:
+            //   High-resolution sampling is an all-or-nothing contract. A single nonzero field
+            //   would under-specify the convolution support grid.
             return errors.Error.InvalidRequest;
         }
         try self.adaptive_reference_grid.validate();
@@ -105,6 +137,8 @@ pub const ObservationModel = struct {
         try self.o2o2_operational_lut.validate();
     }
 
+    /// Purpose:
+    ///   Release any owned line-shape, grid, solar-spectrum, LUT, and measured-channel storage.
     pub fn deinitOwned(self: *ObservationModel, allocator: Allocator) void {
         self.instrument_line_shape.deinitOwned(allocator);
         self.instrument_line_shape_table.deinitOwned(allocator);

@@ -1,23 +1,58 @@
+//! Purpose:
+//!   Cache dataset fingerprints by logical dataset id for repeated reuse checks.
+//!
+//! Physics:
+//!   Preserve dataset provenance metadata used to keep reference and retrieval inputs aligned.
+//!
+//! Vendor:
+//!   `dataset cache`
+//!
+//! Design:
+//!   Key entries by dataset id and keep the hash string owned by the cache.
+//!
+//! Invariants:
+//!   Dataset ids are unique within the cache, and each entry owns its stored strings.
+//!
+//! Validation:
+//!   Cache package unit tests.
+
 const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
+/// Purpose:
+///   Store one dataset fingerprint entry.
+///
+/// Physics:
+///   Track the logical dataset identity and the hash that validates its contents.
 pub const Entry = struct {
     id: []const u8,
     dataset_hash: []const u8,
     revision: u64 = 0,
 };
 
+/// Purpose:
+///   Retain dataset fingerprints for repeated engine and loader checks.
+///
+/// Physics:
+///   Keep the provenance of loaded datasets available across requests.
+///
+/// Invariants:
+///   Id lookups are unique and overwrite updates preserve the entry slot.
 pub const DatasetCache = struct {
     allocator: Allocator,
     entries: std.ArrayListUnmanaged(Entry) = .{},
     generation: u64 = 0,
     owned_bytes: usize = 0,
 
+    /// Purpose:
+    ///   Construct an empty dataset cache.
     pub fn init(allocator: Allocator) DatasetCache {
         return .{ .allocator = allocator };
     }
 
+    /// Purpose:
+    ///   Release all owned dataset ids and hashes.
     pub fn deinit(self: *DatasetCache) void {
         for (self.entries.items) |entry| {
             self.allocator.free(entry.id);
@@ -26,6 +61,11 @@ pub const DatasetCache = struct {
         self.entries.deinit(self.allocator);
     }
 
+    /// Purpose:
+    ///   Insert or refresh one dataset fingerprint.
+    ///
+    /// Physics:
+    ///   Keep the cache keyed by logical dataset id while updating the stored hash in place.
     pub fn upsert(self: *DatasetCache, id: []const u8, dataset_hash: []const u8) !void {
         if (id.len == 0 or dataset_hash.len == 0) {
             return error.InvalidDatasetRecord;
@@ -52,10 +92,15 @@ pub const DatasetCache = struct {
             .id = id_copy,
             .dataset_hash = hash_copy,
         });
+        // ISSUE:
+        //   `owned_bytes` is a watermark for inserted storage only; overwrite paths replace the
+        //   hash in place and do not currently decrement the previous allocation.
         self.owned_bytes += id_copy.len + hash_copy.len;
         self.generation += 1;
     }
 
+    /// Purpose:
+    ///   Return the cached fingerprint for a dataset id, if present.
     pub fn get(self: *const DatasetCache, id: []const u8) ?Entry {
         for (self.entries.items) |entry| {
             if (std.mem.eql(u8, entry.id, id)) {
@@ -65,6 +110,8 @@ pub const DatasetCache = struct {
         return null;
     }
 
+    /// Purpose:
+    ///   Report how many dataset fingerprints are cached.
     pub fn count(self: *const DatasetCache) usize {
         return self.entries.items.len;
     }

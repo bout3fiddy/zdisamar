@@ -1,3 +1,27 @@
+//! Purpose:
+//!   Compute solver convergence and fit-quality diagnostics for retrieval
+//!   outputs.
+//!
+//! Physics:
+//!   These metrics summarize the cost, reduced chi-square, step size, and
+//!   degrees of freedom used to judge whether a retrieval has converged.
+//!
+//! Vendor:
+//!   Rodgers-style and method-specific fit assessment stages.
+//!
+//! Design:
+//!   Keep the common convergence test separate from method-specific
+//!   diagnostic payloads so OE, DOAS, and DISMAS can share the same core
+//!   summary.
+//!
+//! Invariants:
+//!   Fit statistics must stay numerically stable even when the previous cost
+//!   is missing.
+//!
+//! Validation:
+//!   Retrieval diagnostics tests cover the common and method-specific summary
+//!   paths.
+
 const std = @import("std");
 const Convergence = @import("../../model/InverseProblem.zig").Convergence;
 const vector_ops = @import("../../kernels/linalg/vector_ops.zig");
@@ -35,6 +59,8 @@ pub const DirectIntensitySummary = struct {
     selection_zero_crossing_count: u32,
 };
 
+/// Purpose:
+///   Compute the method-agnostic convergence summary.
 pub fn assess(
     previous_total_cost: ?f64,
     measurement_cost: f64,
@@ -54,6 +80,9 @@ pub fn assess(
         std.math.inf(f64);
     const reduced_chi_square = measurement_cost / @max(@as(f64, @floatFromInt(measurement_count)), 1.0);
 
+    // DECISION:
+    //   Fall back to conservative default thresholds when the inverse problem
+    //   does not specify explicit convergence limits.
     const cost_threshold = if (convergence.cost_relative > 0.0) convergence.cost_relative else 1.0e-4;
     const state_threshold = if (convergence.state_relative > 0.0) convergence.state_relative else 1.0e-4;
 
@@ -70,6 +99,8 @@ pub fn assess(
     };
 }
 
+/// Purpose:
+///   Compute the differential-optical-depth diagnostic payload.
 pub fn assessDifferential(
     previous_total_cost: ?f64,
     measurement_cost: f64,
@@ -108,6 +139,8 @@ pub fn assessDifferential(
     };
 }
 
+/// Purpose:
+///   Compute the direct-intensity diagnostic payload.
 pub fn assessDirectIntensity(
     previous_total_cost: ?f64,
     measurement_cost: f64,

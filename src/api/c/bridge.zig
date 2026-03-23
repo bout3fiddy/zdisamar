@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Bridge the typed engine lifecycle into a stable C-facing ABI surface.
+//!
+//! Physics:
+//!   No new physics is introduced here; the file translates request, plan, and
+//!   result metadata across the boundary.
+//!
+//! Vendor:
+//!   `bridge`
+//!
+//! Design:
+//!   Keep the C ABI thin and explicit. The bridge validates descriptor sizes,
+//!   converts nullable C strings into typed Zig values, and keeps result-owned
+//!   strings isolated from the engine workspace lifetime.
+//!
+//! Invariants:
+//!   ABI descriptors must match `struct_size` and `abi_version`; result strings
+//!   captured from the typed result must be cleared before the workspace handle
+//!   is destroyed.
+//!
+//! Validation:
+//!   Exercised by the C ABI lifecycle tests at the bottom of this file.
 const std = @import("std");
 const CoreEngine = @import("../../core/Engine.zig").Engine;
 const CoreEngineOptions = @import("../../core/Engine.zig").EngineOptions;
@@ -8,26 +30,34 @@ const Result = @import("../../core/Result.zig").Result;
 const Workspace = @import("../../core/Workspace.zig").Workspace;
 const errors = @import("../../core/errors.zig");
 
+/// ABI revision exported by this bridge.
 pub const abi_version: u32 = 1;
+/// DECISION:
+///   Keep the exported C entrypoints disabled until the declarative ABI is
+///   treated as stable for external consumers.
 pub const c_abi_enabled = false;
 
+/// Status codes returned by the C ABI bridge.
 pub const StatusCode = enum(u32) {
     ok = 0,
     invalid_argument = 1,
     internal = 2,
 };
 
+/// Solver mode requested by the C ABI plan descriptor.
 pub const SolverMode = enum(u32) {
     scalar = 0,
     polarized = 1,
 };
 
+/// Descriptor for engine-level ABI options.
 pub const EngineOptionsDesc = extern struct {
     struct_size: u32,
     abi_version: u32,
     max_prepared_plans: u32,
 };
 
+/// Descriptor for the scene portion of a C ABI request.
 pub const SceneDesc = extern struct {
     scene_id: ?[*:0]const u8,
     spectral_start_nm: f64,
@@ -35,11 +65,13 @@ pub const SceneDesc = extern struct {
     spectral_samples: u32,
 };
 
+/// Descriptor for a full C ABI request.
 pub const RequestDesc = extern struct {
     scene: SceneDesc,
     diagnostics_flags: u32 = diagnostics_provenance,
 };
 
+/// Descriptor for the plan portion of the C ABI.
 pub const PlanDesc = extern struct {
     model_family: [*:0]const u8,
     transport_solver: [*:0]const u8,
@@ -47,6 +79,7 @@ pub const PlanDesc = extern struct {
     solver_mode: SolverMode = .scalar,
 };
 
+/// Descriptor for the C ABI result.
 pub const ResultDesc = extern struct {
     plan_id: u64,
     scene_id: ?[*:0]const u8 = null,
@@ -89,6 +122,9 @@ const WorkspaceHandle = struct {
     }
 
     fn captureResultStrings(self: *WorkspaceHandle, result: Result) !void {
+        // GOTCHA:
+        //   Copy the strings before clearing the previous result cache; the
+        //   workspace result teardown is independent from the typed result.
         const scene_id = if (result.scene_id.len > 0)
             try std.heap.c_allocator.dupeZ(u8, result.scene_id)
         else
@@ -107,6 +143,33 @@ const WorkspaceHandle = struct {
     }
 };
 
+/// Purpose:
+///   Build the default bridge-level engine options descriptor.
+///
+/// Physics:
+///   None.
+///
+/// Vendor:
+///   `bridge::defaultEngineOptions`
+///
+/// Inputs:
+///   `max_prepared_plans` is the plan-cache capacity exported to C callers.
+///
+/// Outputs:
+///   Returns the ABI descriptor with the current version and struct size.
+///
+/// Units:
+///   Prepared-plan count.
+///
+/// Assumptions:
+///   The ABI version constant in this file is authoritative.
+///
+/// Decisions:
+///   Mirror the typed engine options through one helper so the C ABI stays
+///   consistent.
+///
+/// Validation:
+///   Covered by the default engine options test in this file.
 pub fn defaultEngineOptions(max_prepared_plans: u32) EngineOptionsDesc {
     return .{
         .struct_size = @sizeOf(EngineOptionsDesc),
@@ -115,6 +178,32 @@ pub fn defaultEngineOptions(max_prepared_plans: u32) EngineOptionsDesc {
     };
 }
 
+/// Purpose:
+///   Convert the typed solver mode into the C ABI enum.
+///
+/// Physics:
+///   None.
+///
+/// Vendor:
+///   `bridge::toSolverMode`
+///
+/// Inputs:
+///   `mode` is the typed solver mode from the plan template.
+///
+/// Outputs:
+///   Returns the ABI enum variant.
+///
+/// Units:
+///   N/A.
+///
+/// Assumptions:
+///   The typed solver mode enum stays in lockstep with the ABI enum.
+///
+/// Decisions:
+///   Use a direct switch so any future solver mode expansion fails loudly.
+///
+/// Validation:
+///   Covered implicitly by plan preparation tests.
 pub fn toSolverMode(mode: PlanModule.SolverMode) SolverMode {
     return switch (mode) {
         .scalar => .scalar,
@@ -122,6 +211,33 @@ pub fn toSolverMode(mode: PlanModule.SolverMode) SolverMode {
     };
 }
 
+/// Purpose:
+///   Convert a typed result into the default C ABI result descriptor.
+///
+/// Physics:
+///   No new physics; this is the default pointer-free result summary.
+///
+/// Vendor:
+///   `bridge::describeResult`
+///
+/// Inputs:
+///   `result` is the typed engine result.
+///
+/// Outputs:
+///   Returns a descriptor without copied provenance pointers.
+///
+/// Units:
+///   N/A.
+///
+/// Assumptions:
+///   The caller only needs the raw status and provenance count.
+///
+/// Decisions:
+///   Delegate to the pointer-aware helper with null provenance pointers so the
+///   default path stays centralized.
+///
+/// Validation:
+///   Covered by the result-description test in this file.
 pub fn describeResult(result: Result) ResultDesc {
     return describeResultWithPointers(result, null, null);
 }
@@ -147,6 +263,9 @@ fn describeResultWithPointers(
 fn toEngineOptions(desc: ?*const EngineOptionsDesc) BridgeError!CoreEngineOptions {
     if (desc == null) return .{};
     const value = desc.?;
+    // INVARIANT:
+    //   ABI callers must pass the exact descriptor size and revision expected
+    //   by this bridge.
     if (value.struct_size != @sizeOf(EngineOptionsDesc) or value.abi_version != abi_version) {
         return error.InvalidArgument;
     }
@@ -177,6 +296,9 @@ fn toPlanTemplate(desc: *const PlanDesc) BridgeError!PlanModule.Template {
 
 fn toRequest(desc: *const RequestDesc) BridgeError!Request {
     const scene_id = desc.scene.scene_id orelse return error.InvalidArgument;
+    // INVARIANT:
+    //   The C ABI request must carry a scene identifier and at least one
+    //   spectral sample before it can reach the typed engine.
     if (std.mem.len(scene_id) == 0 or desc.scene.spectral_samples == 0) {
         return error.InvalidArgument;
     }
@@ -233,6 +355,33 @@ pub fn zdisamar_engine_create(out_engine: *?*CEngine) StatusCode {
     return zdisamar_engine_create_with_options(null, out_engine);
 }
 
+/// Purpose:
+///   Allocate and bootstrap a typed engine behind the C ABI.
+///
+/// Physics:
+///   None; this is lifecycle plumbing for the exported host entrypoint.
+///
+/// Vendor:
+///   `bridge::zdisamar_engine_create_with_options`
+///
+/// Inputs:
+///   `options` may be null; `out_engine` receives the opaque handle.
+///
+/// Outputs:
+///   Returns `ok` when the engine is initialized and bootstrapped.
+///
+/// Units:
+///   N/A.
+///
+/// Assumptions:
+///   `out_engine` is writable.
+///
+/// Decisions:
+///   The bridge rejects mismatched descriptor sizes instead of guessing at
+///   layout compatibility.
+///
+/// Validation:
+///   Covered by the ABI lifecycle test in this file.
 pub fn zdisamar_engine_create_with_options(
     options: ?*const EngineOptionsDesc,
     out_engine: *?*CEngine,
@@ -258,6 +407,34 @@ pub fn zdisamar_engine_destroy(engine: ?*CEngine) void {
     std.heap.c_allocator.destroy(handle);
 }
 
+/// Purpose:
+///   Prepare a typed plan from a C ABI plan descriptor.
+///
+/// Physics:
+///   No direct physics; this converts solver and model-family labels into the
+///   typed planning surface.
+///
+/// Vendor:
+///   `bridge::zdisamar_plan_prepare`
+///
+/// Inputs:
+///   `plan_desc` carries the model family, transport solver, and solver mode.
+///
+/// Outputs:
+///   Returns an opaque prepared-plan handle on success.
+///
+/// Units:
+///   N/A.
+///
+/// Assumptions:
+///   The plan descriptor uses non-empty C strings.
+///
+/// Decisions:
+///   The plan is prepared through the typed engine first so validation stays in
+///   one place.
+///
+/// Validation:
+///   Covered by the ABI lifecycle test in this file.
 pub fn zdisamar_plan_prepare(
     engine: ?*CEngine,
     plan_desc: ?*const PlanDesc,
@@ -285,6 +462,33 @@ pub fn zdisamar_plan_destroy(plan: ?*CPlan) void {
     std.heap.c_allocator.destroy(handle);
 }
 
+/// Purpose:
+///   Create a workspace bound to the typed engine for later execution.
+///
+/// Physics:
+///   No direct physics; this allocates the per-request execution container.
+///
+/// Vendor:
+///   `bridge::zdisamar_workspace_create`
+///
+/// Inputs:
+///   `out_workspace` receives the opaque workspace handle.
+///
+/// Outputs:
+///   Returns `ok` when the workspace is created.
+///
+/// Units:
+///   N/A.
+///
+/// Assumptions:
+///   `engine` is a valid opaque handle.
+///
+/// Decisions:
+///   The workspace label is fixed here so the ABI side does not invent a new
+///   public naming scheme.
+///
+/// Validation:
+///   Covered by the ABI lifecycle test in this file.
 pub fn zdisamar_workspace_create(
     engine: ?*CEngine,
     out_workspace: *?*CWorkspace,
@@ -306,6 +510,34 @@ pub fn zdisamar_workspace_destroy(workspace: ?*CWorkspace) void {
     std.heap.c_allocator.destroy(handle);
 }
 
+/// Purpose:
+///   Execute a prepared plan against a C ABI request and write a result.
+///
+/// Physics:
+///   The typed engine performs the actual retrieval and forward-model work;
+///   this function only translates descriptors and returned provenance.
+///
+/// Vendor:
+///   `bridge::zdisamar_execute`
+///
+/// Inputs:
+///   `plan`, `workspace`, and `request_desc` must all be valid handles.
+///
+/// Outputs:
+///   Writes a translated result descriptor and returns a bridge status code.
+///
+/// Units:
+///   Spectral values use nanometers via the C descriptor.
+///
+/// Assumptions:
+///   The workspace outlives the call and can own copied provenance strings.
+///
+/// Decisions:
+///   The bridge copies result strings so the C caller can inspect them after
+///   the typed result is deinitialized.
+///
+/// Validation:
+///   Covered by the ABI lifecycle test in this file.
 pub fn zdisamar_execute(
     engine: ?*CEngine,
     plan: ?*const CPlan,

@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Map legacy Config.in keys into typed canonical run inputs.
+//!
+//! Physics:
+//!   This mapper translates the flat legacy configuration into scene and plan
+//!   values without altering the underlying simulation semantics.
+//!
+//! Vendor:
+//!   Legacy Config.in schema-mapping stage.
+//!
+//! Design:
+//!   Keep the parsed run state separate from the importer so later emission to
+//!   canonical YAML can be deterministic and reviewable.
+//!
+//! Invariants:
+//!   All parsed values must remain owned by the prepared run until it is
+//!   explicitly deinitialized.
+//!
+//! Validation:
+//!   Legacy config import tests cover field mapping and request synthesis.
+
 const std = @import("std");
 const zdisamar = @import("zdisamar");
 
@@ -22,12 +43,16 @@ pub const PreparedRun = struct {
     diagnostics: zdisamar.DiagnosticsSpec = .{},
     requested_products: std.ArrayListUnmanaged(zdisamar.Request.RequestedProduct) = .{},
 
+    /// Purpose:
+    ///   Release the prepared legacy run and its owned source contents.
     pub fn deinit(self: *PreparedRun, allocator: std.mem.Allocator) void {
         self.requested_products.deinit(allocator);
         if (self.owned_contents) |contents| allocator.free(contents);
         self.* = .{};
     }
 
+    /// Purpose:
+    ///   Convert the prepared legacy run into a typed request.
     pub fn toRequest(self: *const PreparedRun) zdisamar.Request {
         var request = zdisamar.Request.init(self.scene);
         request.expected_derivative_mode = self.plan_template.scene_blueprint.derivative_mode;
@@ -38,10 +63,15 @@ pub const PreparedRun = struct {
 };
 
 pub fn finalize(prepared: *PreparedRun) void {
+    // DECISION:
+    //   Finalize the scene blueprint late so the legacy flat keys can be
+    //   applied without having to duplicate the scene-to-plan wiring.
     prepared.plan_template.scene_blueprint.id = prepared.scene.id;
     prepared.plan_template.scene_blueprint.spectral_grid = prepared.scene.spectral_grid;
 }
 
+/// Purpose:
+///   Apply one legacy Config.in key-value pair to the prepared run.
 pub fn applyValue(
     allocator: std.mem.Allocator,
     prepared: *PreparedRun,
@@ -64,6 +94,10 @@ pub fn applyValue(
     }
 
     if (std.mem.eql(u8, key, "retrieval")) {
+        // DECISION:
+        //   Treat `none` as the absence of a retrieval provider so the
+        //   canonical output can remain typed instead of preserving a magic
+        //   string sentinel.
         prepared.plan_template.providers.retrieval_algorithm = if (std.mem.eql(u8, value, "none")) null else value;
         return;
     }

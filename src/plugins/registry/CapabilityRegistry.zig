@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Store plugin manifests, derive capability views, and materialize snapshot
+//!   selections for the runtime.
+//!
+//! Physics:
+//!   No physics is introduced here; this is registry and provenance plumbing
+//!   for plugin selection.
+//!
+//! Vendor:
+//!   `CapabilityRegistry`
+//!
+//! Design:
+//!   Keep the registry immutable to callers once a snapshot is materialized.
+//!   The registry owns cloned manifest data, and snapshot views are flattened
+//!   for downstream runtime consumption.
+//!
+//! Invariants:
+//!   Manifest ownership must be duplicated into the registry, snapshot views
+//!   must be consistent with the selected capabilities, and native manifests
+//!   may only appear when policy allows them.
+//!
+//! Validation:
+//!   Covered by the registry unit tests in this file.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const BuiltinPlugins = @import("../builtin/root.zig");
@@ -5,11 +28,13 @@ const Manifest = @import("../loader/manifest.zig");
 const Selection = @import("../selection.zig");
 const Slots = @import("../slots.zig");
 
+/// Registry lane classification for stored capabilities.
 pub const Lane = enum {
     declarative,
     native,
 };
 
+/// Capability entry stored in the registry index.
 pub const Capability = struct {
     manifest_index: usize,
     capability_index: usize,
@@ -21,9 +46,37 @@ pub const Capability = struct {
     lane: Lane,
 };
 
+/// Registry-owned manifest copy with duplicated string storage.
 pub const OwnedManifest = struct {
     manifest: Manifest.PluginManifest,
 
+    /// Purpose:
+    ///   Clone a manifest into registry-owned storage.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::OwnedManifest.clone`
+    ///
+    /// Inputs:
+    ///   `manifest` is the declarative plugin manifest to copy.
+    ///
+    /// Outputs:
+    ///   Returns a manifest clone with all owned strings duplicated.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   The manifest is already validated before cloning.
+    ///
+    /// Decisions:
+    ///   Duplicate the manifest instead of borrowing it so registry snapshots
+    ///   remain stable after the caller mutates its input structures.
+    ///
+    /// Validation:
+    ///   Covered by the registry tests that mutate manifests after snapshotting.
     pub fn clone(allocator: Allocator, manifest: Manifest.PluginManifest) !OwnedManifest {
         const id = try allocator.dupe(u8, manifest.id);
         errdefer allocator.free(id);
@@ -100,6 +153,32 @@ pub const OwnedManifest = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release the registry-owned manifest storage.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::OwnedManifest.deinit`
+    ///
+    /// Inputs:
+    ///   The manifest stored on `self`.
+    ///
+    /// Outputs:
+    ///   Frees all duplicated manifest storage.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   The manifest was cloned by this registry.
+    ///
+    /// Decisions:
+    ///   Tear down nested strings before clearing the wrapper.
+    ///
+    /// Validation:
+    ///   Covered indirectly by registry teardown tests.
     pub fn deinit(self: *OwnedManifest, allocator: Allocator) void {
         allocator.free(self.manifest.id);
         if (self.manifest.package) |value| allocator.free(value);
@@ -119,6 +198,7 @@ pub const OwnedManifest = struct {
     }
 };
 
+/// Snapshot-time capability view derived from the registry.
 pub const SnapshotCapability = struct {
     slot: []const u8,
     provider: []const u8,
@@ -130,12 +210,40 @@ pub const SnapshotCapability = struct {
     native_library_path: ?[]const u8,
     version_label: []const u8,
 
+    /// Purpose:
+    ///   Release the derived version label for a snapshot capability.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::SnapshotCapability.deinit`
+    ///
+    /// Inputs:
+    ///   The snapshot capability stored on `self`.
+    ///
+    /// Outputs:
+    ///   Frees the derived version label and poisons the wrapper.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   `version_label` was allocated by the registry.
+    ///
+    /// Decisions:
+    ///   Keep the snapshot capability lightweight and derive the label only
+    ///   once per snapshot build.
+    ///
+    /// Validation:
+    ///   Covered indirectly by snapshot teardown tests.
     pub fn deinit(self: *SnapshotCapability, allocator: Allocator) void {
         allocator.free(self.version_label);
         self.* = undefined;
     }
 };
 
+/// Flattened snapshot view consumed by the runtime.
 pub const PluginSnapshot = struct {
     generation: u64 = 0,
     manifests: []OwnedManifest = &.{},
@@ -145,6 +253,33 @@ pub const PluginSnapshot = struct {
     native_entry_symbol_entries: [][]const u8 = &.{},
     native_library_path_entries: [][]const u8 = &.{},
 
+    /// Purpose:
+    ///   Tear down a plugin snapshot and its flattened view tables.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::PluginSnapshot.deinit`
+    ///
+    /// Inputs:
+    ///   The materialized snapshot data on `self`.
+    ///
+    /// Outputs:
+    ///   Frees all owned manifest and view storage.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   Snapshot view arrays were allocated by the registry helpers below.
+    ///
+    /// Decisions:
+    ///   Free snapshot capabilities before manifests so derived labels are
+    ///   released before the manifest clones they reference.
+    ///
+    /// Validation:
+    ///   Covered indirectly by snapshot teardown tests.
     pub fn deinit(self: *PluginSnapshot, allocator: Allocator) void {
         for (self.capabilities) |*capability| capability.deinit(allocator);
         if (self.capabilities.len != 0) allocator.free(self.capabilities);
@@ -159,10 +294,63 @@ pub const PluginSnapshot = struct {
         self.* = .{};
     }
 
+    /// Purpose:
+    ///   Return the number of rendered plugin-version labels in the snapshot.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::PluginSnapshot.pluginVersionCount`
+    ///
+    /// Inputs:
+    ///   The materialized snapshot view.
+    ///
+    /// Outputs:
+    ///   Returns the number of derived version labels.
+    ///
+    /// Units:
+    ///   Count.
+    ///
+    /// Assumptions:
+    ///   The capability array and version-label array stay aligned.
+    ///
+    /// Decisions:
+    ///   Expose a narrow view instead of the whole snapshot internals.
+    ///
+    /// Validation:
+    ///   Covered by the registry snapshot tests.
     pub fn pluginVersionCount(self: *const PluginSnapshot) usize {
         return self.capabilities.len;
     }
 
+    /// Purpose:
+    ///   Read a derived plugin-version label from the snapshot.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::PluginSnapshot.pluginVersionAt`
+    ///
+    /// Inputs:
+    ///   `index` selects a materialized capability version label.
+    ///
+    /// Outputs:
+    ///   Returns the derived label at `index`.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   `index` is in bounds.
+    ///
+    /// Decisions:
+    ///   Assert on out-of-bounds access because this is an internal snapshot
+    ///   view.
+    ///
+    /// Validation:
+    ///   Covered by the registry snapshot tests.
     pub fn pluginVersionAt(self: *const PluginSnapshot, index: usize) []const u8 {
         std.debug.assert(index < self.capabilities.len);
         return self.capabilities[index].version_label;
@@ -185,12 +373,41 @@ pub const PluginSnapshot = struct {
     }
 };
 
+/// Registry of manifests and capabilities.
 pub const CapabilityRegistry = struct {
     manifests: std.ArrayListUnmanaged(OwnedManifest) = .{},
     capabilities: std.ArrayListUnmanaged(Capability) = .{},
     generation: u64 = 0,
     bootstrapped: bool = false,
 
+    /// Purpose:
+    ///   Register a validated manifest in the capability index.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::registerManifest`
+    ///
+    /// Inputs:
+    ///   `manifest` is the validated plugin contract and `allow_native_plugins`
+    ///   gates native lane registration.
+    ///
+    /// Outputs:
+    ///   Stores the manifest and appends its capability entries.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   The manifest has already passed policy validation.
+    ///
+    /// Decisions:
+    ///   Clone the manifest before indexing it so later snapshots do not borrow
+    ///   caller-owned data.
+    ///
+    /// Validation:
+    ///   Covered by the registry opt-in tests in this file.
     pub fn registerManifest(
         self: *CapabilityRegistry,
         allocator: Allocator,
@@ -233,6 +450,33 @@ pub const CapabilityRegistry = struct {
         self.generation += 1;
     }
 
+    /// Purpose:
+    ///   Materialize the selected capabilities into a runtime snapshot.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::snapshotSelection`
+    ///
+    /// Inputs:
+    ///   `provider_selection` names the providers used by the current plan.
+    ///
+    /// Outputs:
+    ///   Returns a flattened snapshot of the selected manifests and capabilities.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   The provider selection uses registered capability names.
+    ///
+    /// Decisions:
+    ///   Collapse the selection into snapshot-owned view tables so runtime code
+    ///   does not have to re-scan the registry.
+    ///
+    /// Validation:
+    ///   Covered by the snapshot selection tests in this file.
     pub fn snapshotSelection(
         self: *const CapabilityRegistry,
         allocator: Allocator,
@@ -259,6 +503,35 @@ pub const CapabilityRegistry = struct {
         return snapshot;
     }
 
+    /// Purpose:
+    ///   Seed the registry with builtin manifests.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::bootstrapBuiltin`
+    ///
+    /// Inputs:
+    ///   `allow_native_plugins` controls whether builtin native manifests retain
+    ///   their native lane.
+    ///
+    /// Outputs:
+    ///   Registers the builtin declarative and native manifests exactly once.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   The builtin manifest catalog is static for the process lifetime.
+    ///
+    /// Decisions:
+    ///   Downgrade builtin native manifests to declarative-only copies when
+    ///   native loading is disallowed so the registry still exposes their
+    ///   capability metadata.
+    ///
+    /// Validation:
+    ///   Covered by the bootstrap policy tests in this file.
     pub fn bootstrapBuiltin(
         self: *CapabilityRegistry,
         allocator: Allocator,
@@ -280,6 +553,9 @@ pub const CapabilityRegistry = struct {
                 try self.registerManifest(allocator, manifest, true);
             }
         } else {
+            // DECISION:
+            //   Preserve builtin capability metadata while stripping the native
+            //   lane so declarative-only policy still sees the same slot names.
             inline for (BuiltinPlugins.manifests.native_runtime) |manifest| {
                 try self.registerManifest(allocator, manifestWithoutNativeLane(manifest), false);
             }
@@ -288,6 +564,33 @@ pub const CapabilityRegistry = struct {
         self.bootstrapped = true;
     }
 
+    /// Purpose:
+    ///   Materialize a complete inventory snapshot.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::snapshotInventory`
+    ///
+    /// Inputs:
+    ///   No additional inputs beyond the registry state.
+    ///
+    /// Outputs:
+    ///   Returns a snapshot containing every registered manifest and capability.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   The caller needs a full inventory rather than a plan-specific slice.
+    ///
+    /// Decisions:
+    ///   Use the same snapshot materialization path as selection so the runtime
+    ///   sees a consistent view layout.
+    ///
+    /// Validation:
+    ///   Covered by the registry snapshot tests.
     pub fn snapshotInventory(self: *const CapabilityRegistry, allocator: Allocator) !PluginSnapshot {
         var snapshot: PluginSnapshot = .{ .generation = self.generation };
         errdefer snapshot.deinit(allocator);
@@ -309,6 +612,33 @@ pub const CapabilityRegistry = struct {
         return snapshot;
     }
 
+    /// Purpose:
+    ///   Release the registry and all cloned manifest storage.
+    ///
+    /// Physics:
+    ///   None.
+    ///
+    /// Vendor:
+    ///   `CapabilityRegistry::deinit`
+    ///
+    /// Inputs:
+    ///   The registry state on `self`.
+    ///
+    /// Outputs:
+    ///   Frees all registry-owned storage and resets the wrapper.
+    ///
+    /// Units:
+    ///   N/A.
+    ///
+    /// Assumptions:
+    ///   The registry owns every stored manifest clone.
+    ///
+    /// Decisions:
+    ///   Tear down manifests before array lists so nested strings are released
+    ///   while indices are still valid.
+    ///
+    /// Validation:
+    ///   Covered indirectly by registry teardown tests.
     pub fn deinit(self: *CapabilityRegistry, allocator: Allocator) void {
         for (self.manifests.items) |*manifest| manifest.deinit(allocator);
         self.manifests.deinit(allocator);
@@ -348,6 +678,9 @@ fn appendSelection(
 }
 
 fn manifestWithoutNativeLane(manifest: Manifest.PluginManifest) Manifest.PluginManifest {
+    // INVARIANT:
+    //   The copied manifest keeps the original capability metadata but clears
+    //   the native contract so declarative-only bootstraps can still register it.
     return .{
         .schema_version = manifest.schema_version,
         .id = manifest.id,
@@ -450,6 +783,9 @@ fn materializeSnapshotViews(allocator: Allocator, snapshot: *PluginSnapshot) !vo
     for (snapshot.manifests) |manifest| {
         dataset_hash_count += manifest.manifest.provenance.dataset_hashes.len;
     }
+    // DECISION:
+    //   Flatten dataset hashes into one contiguous view so the runtime can
+    //   inspect provenance without walking every manifest clone.
     snapshot.dataset_hash_entries = try allocator.alloc([]const u8, dataset_hash_count);
     var dataset_hash_index: usize = 0;
     for (snapshot.manifests) |manifest| {
@@ -463,6 +799,9 @@ fn materializeSnapshotViews(allocator: Allocator, snapshot: *PluginSnapshot) !vo
     for (snapshot.capabilities) |capability| {
         if (capability.lane == .native) native_count += 1;
     }
+    // INVARIANT:
+    //   Native view tables remain aligned by index across slot, entry symbol,
+    //   and library-path arrays.
     snapshot.native_slot_entries = try allocator.alloc([]const u8, native_count);
     snapshot.native_entry_symbol_entries = try allocator.alloc([]const u8, native_count);
     snapshot.native_library_path_entries = try allocator.alloc([]const u8, native_count);

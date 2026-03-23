@@ -1,3 +1,27 @@
+//! Purpose:
+//!   Parse vendor-style spectral ASCII files into typed measurement products
+//!   and requests.
+//!
+//! Physics:
+//!   This adapter hydrates measured radiance and irradiance samples, plus the
+//!   ancillary metadata needed to reproduce the operational observation
+//!   conditions.
+//!
+//! Vendor:
+//!   Spectral ASCII ingest and fit-window legacy compatibility stages.
+//!
+//! Design:
+//!   Keep the file parser separate from the runtime helpers so the ASCII
+//!   format can evolve without forcing the selection logic to change.
+//!
+//! Invariants:
+//!   Radiance and irradiance channel kinds must not be mixed, and the loaded
+//!   sample counts must remain consistent with the derived measurement views.
+//!
+//! Validation:
+//!   Spectral ASCII ingest tests cover channel parsing, measurement binding,
+//!   and request generation.
+
 const std = @import("std");
 const Request = @import("../../core/Request.zig").Request;
 const OperationalSolarSpectrum = @import("../../model/Instrument.zig").OperationalSolarSpectrum;
@@ -30,6 +54,8 @@ pub const LoadedSpectra = struct {
     metadata: OperationalMetadata = .{},
     legacy_fit_window_mode: bool = false,
 
+    /// Purpose:
+    ///   Release the loaded channels and metadata.
     pub fn deinit(self: *LoadedSpectra, allocator: std.mem.Allocator) void {
         for (self.channels) |channel| allocator.free(channel.samples);
         allocator.free(self.channels);
@@ -41,22 +67,32 @@ pub const LoadedSpectra = struct {
         };
     }
 
+    /// Purpose:
+    ///   Count channels of a given kind.
     pub fn channelCount(self: LoadedSpectra, kind: ChannelKind) usize {
         return runtime_helpers.channelCount(self, kind);
     }
 
+    /// Purpose:
+    ///   Count samples of a given channel kind.
     pub fn sampleCount(self: LoadedSpectra, kind: ChannelKind) u32 {
         return runtime_helpers.sampleCount(self, kind);
     }
 
+    /// Purpose:
+    ///   Build a measurement descriptor for the selected spectral product.
     pub fn measurement(self: LoadedSpectra, product: []const u8) Measurement {
         return runtime_helpers.measurement(self, product, ChannelKind.radiance, ChannelKind.irradiance);
     }
 
+    /// Purpose:
+    ///   Derive a spectral grid from the loaded channels.
     pub fn spectralGrid(self: LoadedSpectra) ?SpectralGrid {
         return runtime_helpers.spectralGrid(self, ChannelKind.radiance, ChannelKind.irradiance);
     }
 
+    /// Purpose:
+    ///   Convert the loaded spectra into a typed retrieval request.
     pub fn toRequest(
         self: LoadedSpectra,
         allocator: std.mem.Allocator,
@@ -73,6 +109,8 @@ pub const LoadedSpectra = struct {
         );
     }
 
+    /// Purpose:
+    ///   Collect the wavelengths for a given channel kind.
     pub fn wavelengthsForKind(
         self: LoadedSpectra,
         allocator: std.mem.Allocator,
@@ -81,6 +119,8 @@ pub const LoadedSpectra = struct {
         return runtime_helpers.wavelengthsForKind(allocator, self, kind);
     }
 
+    /// Purpose:
+    ///   Collect an operational solar spectrum for a given channel kind.
     pub fn solarSpectrumForKind(
         self: LoadedSpectra,
         allocator: std.mem.Allocator,
@@ -89,6 +129,12 @@ pub const LoadedSpectra = struct {
         return runtime_helpers.solarSpectrumForKind(allocator, self, kind);
     }
 
+    /// Purpose:
+    ///   Derive per-sample noise sigma values from the loaded channel SNR.
+    ///
+    /// Units:
+    ///   SNR is dimensionless, so the returned sigma is in the same units as
+    ///   the measured values.
     pub fn noiseSigmaForKind(
         self: LoadedSpectra,
         allocator: std.mem.Allocator,
@@ -98,6 +144,8 @@ pub const LoadedSpectra = struct {
     }
 };
 
+/// Purpose:
+///   Parse a spectral ASCII file into a loaded channel bundle.
 pub fn parse(allocator: std.mem.Allocator, contents: []const u8) !LoadedSpectra {
     const Builder = struct {
         kind: ChannelKind,
@@ -141,6 +189,9 @@ pub fn parse(allocator: std.mem.Allocator, contents: []const u8) !LoadedSpectra 
             continue;
         }
         if (std.mem.eql(u8, line, "start_fit_window")) {
+            // DECISION:
+            //   Preserve the legacy fit-window compatibility path even though
+            //   the canonical format prefers explicit channel delimiters.
             legacy_mode = true;
             used_legacy_mode = true;
             current_builder_index = null;
@@ -204,6 +255,8 @@ pub fn parse(allocator: std.mem.Allocator, contents: []const u8) !LoadedSpectra 
     };
 }
 
+/// Purpose:
+///   Parse a spectral ASCII file from disk.
 pub fn parseFile(allocator: std.mem.Allocator, path: []const u8) !LoadedSpectra {
     const contents = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
     defer allocator.free(contents);

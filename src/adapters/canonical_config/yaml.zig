@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Parse and merge the small YAML dialect used by canonical configuration
+//!   files.
+//!
+//! Physics:
+//!   This parser is purely structural; it resolves mappings, sequences, and
+//!   scalars so higher-level adapter code can build typed plan and scene
+//!   records.
+//!
+//! Vendor:
+//!   Canonical YAML parsing and merge behavior.
+//!
+//! Design:
+//!   Keep the parser compact and allocation-aware so document resolution can
+//!   clone or overlay configuration trees deterministically.
+//!
+//! Invariants:
+//!   Duplicate keys and malformed indentation remain hard parse errors.
+//!
+//! Validation:
+//!   YAML parser tests cover parsing, merging, and indentation failure cases.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -24,6 +46,8 @@ pub const Value = union(enum) {
     map: []const Entry,
     seq: []const Value,
 
+    /// Purpose:
+    ///   Return a human-readable type name for the active YAML variant.
     pub fn kindName(self: Value) []const u8 {
         return switch (self) {
             .null => "null",
@@ -36,6 +60,8 @@ pub const Value = union(enum) {
         };
     }
 
+    /// Purpose:
+    ///   Look up a mapping entry by key.
     pub fn get(self: Value, key: []const u8) ?Value {
         return switch (self) {
             .map => |entries| for (entries) |entry| {
@@ -45,6 +71,8 @@ pub const Value = union(enum) {
         };
     }
 
+    /// Purpose:
+    ///   Deep-clone the YAML value into caller-owned storage.
     pub fn clone(self: Value, allocator: Allocator) ParseError!Value {
         return switch (self) {
             .null => .null,
@@ -72,6 +100,8 @@ pub const Value = union(enum) {
         };
     }
 
+    /// Purpose:
+    ///   Compare two YAML values structurally.
     pub fn eql(lhs: Value, rhs: Value) bool {
         if (std.meta.activeTag(lhs) != std.meta.activeTag(rhs)) return false;
 
@@ -102,6 +132,8 @@ pub const Value = union(enum) {
     }
 };
 
+/// Purpose:
+///   Merge an overlay YAML tree onto a base YAML tree.
 pub fn merge(base: Value, overlay: Value, allocator: Allocator) ParseError!Value {
     if (base == .map and overlay == .map) {
         return mergeMaps(base.map, overlay.map, allocator);
@@ -109,6 +141,8 @@ pub fn merge(base: Value, overlay: Value, allocator: Allocator) ParseError!Value
     return overlay.clone(allocator);
 }
 
+/// Purpose:
+///   Parse the canonical YAML dialect into a typed tree of YAML values.
 pub fn parse(allocator: Allocator, source: []const u8) ParseError!Value {
     var lines = std.ArrayListUnmanaged(RawLine){};
     defer lines.deinit(allocator);

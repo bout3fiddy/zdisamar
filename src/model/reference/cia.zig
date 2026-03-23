@@ -1,3 +1,21 @@
+//! Purpose:
+//!   Store and evaluate collision-induced absorption tables.
+//!
+//! Physics:
+//!   Interpolates wavelength-dependent coefficients and evaluates temperature-dependent absorption cross sections.
+//!
+//! Vendor:
+//!   `collision-induced absorption`
+//!
+//! Design:
+//!   The coefficients are kept explicit so the temperature polynomial and wavelength interpolation remain visible.
+//!
+//! Invariants:
+//!   Wavelength tables are monotonic, temperature values are finite, and the scale factor is in cm^5 / molecule^2.
+//!
+//! Validation:
+//!   Tests cover projection of sigma onto the differential-fit space.
+
 const std = @import("std");
 const cross_sections = @import("cross_sections.zig");
 const Allocator = std.mem.Allocator;
@@ -9,15 +27,21 @@ pub const CollisionInducedAbsorptionPoint = struct {
     a2: f64,
 };
 
+/// Purpose:
+///   Own a collision-induced absorption table.
 pub const CollisionInducedAbsorptionTable = struct {
     scale_factor_cm5_per_molecule2: f64,
     points: []const CollisionInducedAbsorptionPoint,
 
+    /// Purpose:
+    ///   Release the owned CIA points.
     pub fn deinit(self: *CollisionInducedAbsorptionTable, allocator: Allocator) void {
         allocator.free(self.points);
         self.* = undefined;
     }
 
+    /// Purpose:
+    ///   Clone the table into new owned storage.
     pub fn clone(self: CollisionInducedAbsorptionTable, allocator: Allocator) !CollisionInducedAbsorptionTable {
         return .{
             .scale_factor_cm5_per_molecule2 = self.scale_factor_cm5_per_molecule2,
@@ -25,6 +49,14 @@ pub const CollisionInducedAbsorptionTable = struct {
         };
     }
 
+    /// Purpose:
+    ///   Evaluate the CIA cross section at a wavelength and temperature.
+    ///
+    /// Physics:
+    ///   Uses a quadratic temperature polynomial in degrees Celsius and clamps negative absorption to zero.
+    ///
+    /// Units:
+    ///   `scale_factor_cm5_per_molecule2` is a scale factor in cm^5 / molecule^2.
     pub fn sigmaAt(self: CollisionInducedAbsorptionTable, wavelength_nm: f64, temperature_k: f64) f64 {
         const coefficients = self.interpolateCoefficients(wavelength_nm);
         const temperature_c = temperature_k - 273.15;
@@ -34,6 +66,8 @@ pub const CollisionInducedAbsorptionTable = struct {
         return self.scale_factor_cm5_per_molecule2 * @max(raw_sigma, 0.0);
     }
 
+    /// Purpose:
+    ///   Evaluate the temperature derivative of the CIA cross section.
     pub fn dSigmaDTemperatureAt(self: CollisionInducedAbsorptionTable, wavelength_nm: f64, temperature_k: f64) f64 {
         const coefficients = self.interpolateCoefficients(wavelength_nm);
         const temperature_c = temperature_k - 273.15;
@@ -45,6 +79,8 @@ pub const CollisionInducedAbsorptionTable = struct {
             (coefficients.a1 + 2.0 * coefficients.a2 * temperature_c);
     }
 
+    /// Purpose:
+    ///   Compute a mean CIA cross section across a wavelength window.
     pub fn meanSigmaInRange(
         self: CollisionInducedAbsorptionTable,
         start_nm: f64,
@@ -63,6 +99,8 @@ pub const CollisionInducedAbsorptionTable = struct {
         return self.sigmaAt((start_nm + end_nm) * 0.5, temperature_k);
     }
 
+    /// Purpose:
+    ///   Interpolate CIA coefficients at a wavelength.
     fn interpolateCoefficients(self: CollisionInducedAbsorptionTable, wavelength_nm: f64) CollisionInducedAbsorptionPoint {
         if (self.points.len == 0) {
             return .{
@@ -90,6 +128,8 @@ pub const CollisionInducedAbsorptionTable = struct {
     }
 };
 
+/// Purpose:
+///   Find the first CIA sample whose wavelength is not less than the target.
 fn lowerBoundPointIndex(points: []const CollisionInducedAbsorptionPoint, wavelength_nm: f64) usize {
     var low: usize = 0;
     var high: usize = points.len;
@@ -104,6 +144,11 @@ fn lowerBoundPointIndex(points: []const CollisionInducedAbsorptionPoint, wavelen
     return low;
 }
 
+/// Purpose:
+///   Project CIA sigma samples into the same differential-fit space as cross sections.
+///
+/// Physics:
+///   Evaluates CIA at the given wavelengths and removes the weighted polynomial baseline.
 pub fn effectiveSigmaAtSamples(
     allocator: Allocator,
     table: CollisionInducedAbsorptionTable,

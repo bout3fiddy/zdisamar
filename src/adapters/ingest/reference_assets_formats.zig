@@ -1,10 +1,34 @@
+//! Purpose:
+//!   Parse reference-asset table formats into numeric rows.
+//!
+//! Physics:
+//!   Convert HITRAN-style lines, BIRA CIA polynomials, and LISA strong-line sidecars into typed
+//!   numeric tables with the expected scientific units.
+//!
+//! Vendor:
+//!   `reference asset format parsers`
+//!
+//! Design:
+//!   Keep format-specific parsing separate from manifest resolution so each parser can preserve
+//!   its own unit conversions and validation rules.
+//!
+//! Invariants:
+//!   Column names and row shapes must match the declared asset format before hydration succeeds.
+//!
+//! Validation:
+//!   Reference-asset loader tests and the O2A bundled optics tests.
+
 const std = @import("std");
 
+/// Purpose:
+///   Describe the expected format and column contract for one asset.
 pub const AssetSpec = struct {
     format: []const u8,
     columns: []const []const u8,
 };
 
+/// Purpose:
+///   Hold the parsed numeric table and its header names.
 pub const ParsedTable = struct {
     column_names: []const []const u8,
     values: []f64,
@@ -19,6 +43,11 @@ pub const Error = error{
     OutOfMemory,
 };
 
+/// Purpose:
+///   Parse one asset payload according to its declared format.
+///
+/// Physics:
+///   Dispatch to the format-specific parser while preserving the declared scientific units.
 pub fn parseAssetTable(
     allocator: std.mem.Allocator,
     asset: AssetSpec,
@@ -42,6 +71,8 @@ pub fn parseAssetTable(
     return error.UnsupportedFormat;
 }
 
+/// Purpose:
+///   Parse a plain numeric CSV payload.
 fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!ParsedTable {
     var line_iter = std.mem.splitScalar(u8, contents, '\n');
 
@@ -108,6 +139,11 @@ fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!Par
     };
 }
 
+/// Purpose:
+///   Parse a fixed-width HITRAN-style spectroscopy table.
+///
+/// Units:
+///   Wavenumbers are read in cm^-1 and converted to wavelengths in nm.
 fn parseHitran160(
     allocator: std.mem.Allocator,
     contents: []const u8,
@@ -136,6 +172,9 @@ fn parseHitran160(
         const temperature_exponent = try parseFixedFloat(line[55..59]);
         const pressure_shift_cm1 = try parseFixedFloat(line[59..67]);
 
+        // UNITS:
+        //   The fixed-width cm^-1 fields are converted to the nm values expected by the typed
+        //   spectroscopy loader.
         const center_wavelength_nm = wavenumberToWavelengthNm(center_wavenumber_cm1);
         const air_half_width_nm = spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
         const pressure_shift_nm = -spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
@@ -164,6 +203,11 @@ fn parseHitran160(
     };
 }
 
+/// Purpose:
+///   Parse a BIRA CIA polynomial table.
+///
+/// Units:
+///   The scale factor is stored in cm^5/molecule^2 and remains attached to the whole table.
 fn parseBiraCiaPolynomial(
     allocator: std.mem.Allocator,
     contents: []const u8,
@@ -207,6 +251,8 @@ fn parseBiraCiaPolynomial(
         const a1 = std.fmt.parseFloat(f64, token_iter.next() orelse return error.InvalidAssetFormat) catch return error.InvalidNumber;
         const a2 = std.fmt.parseFloat(f64, token_iter.next() orelse return error.InvalidAssetFormat) catch return error.InvalidNumber;
 
+        // DECISION:
+        //   Preserve the vendor row layout exactly so the scale factor stays table-scoped.
         try values.appendSlice(allocator, &.{
             wavelength_nm,
             a0,
@@ -229,6 +275,11 @@ fn parseBiraCiaPolynomial(
     };
 }
 
+/// Purpose:
+///   Parse a LISA strong-line sidecar table.
+///
+/// Physics:
+///   Preserve the sidecar fields that augment the O2A strong-line path.
 fn parseLisaSdf(
     allocator: std.mem.Allocator,
     contents: []const u8,
@@ -261,6 +312,9 @@ fn parseLisaSdf(
             trimWhitespace(line[84..87]),
         ) catch return error.InvalidAssetFormat;
 
+        // UNITS:
+        //   Strong-line fields are stored in cm^-1 and converted to nm where the typed loader
+        //   expects wavelength-like values.
         const center_wavelength_nm = wavenumberToWavelengthNm(center_wavenumber_cm1);
         const air_half_width_nm = spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
         const pressure_shift_nm = -spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
@@ -290,6 +344,8 @@ fn parseLisaSdf(
     };
 }
 
+/// Purpose:
+///   Parse a LISA relaxation matrix table.
 fn parseLisaRmf(
     allocator: std.mem.Allocator,
     contents: []const u8,
@@ -322,6 +378,8 @@ fn parseLisaRmf(
     };
 }
 
+/// Purpose:
+///   Duplicate the declared columns into owned storage.
 fn dupColumns(allocator: std.mem.Allocator, columns: []const []const u8) Error![]const []const u8 {
     const owned_columns = try allocator.alloc([]const u8, columns.len);
     errdefer allocator.free(owned_columns);
@@ -334,36 +392,58 @@ fn dupColumns(allocator: std.mem.Allocator, columns: []const []const u8) Error![
     return owned_columns;
 }
 
+/// Purpose:
+///   Release an owned column-name array.
 fn freeColumns(allocator: std.mem.Allocator, columns: []const []const u8) void {
     for (columns) |column| allocator.free(column);
     allocator.free(columns);
 }
 
+/// Purpose:
+///   Parse one numeric field from a fixed-width slice.
 fn parseFixedFloat(slice: []const u8) Error!f64 {
     return std.fmt.parseFloat(f64, trimWhitespace(slice)) catch error.InvalidNumber;
 }
 
+/// Purpose:
+///   Parse one integer field from a fixed-width slice.
 fn parseFixedInt(slice: []const u8) Error!u16 {
     return std.fmt.parseInt(u16, trimWhitespace(slice), 10) catch error.InvalidNumber;
 }
 
+/// Purpose:
+///   Trim the whitespace used by the reference asset formats.
 fn trimWhitespace(value: []const u8) []const u8 {
     return std.mem.trim(u8, value, " \t\r");
 }
 
+/// Purpose:
+///   Trim the line ending used by the reference asset formats.
 fn trimLineEnding(value: []const u8) []const u8 {
     return std.mem.trimRight(u8, value, "\r");
 }
 
+/// Purpose:
+///   Convert a wavenumber in cm^-1 into a wavelength in nm.
+///
+/// Units:
+///   Input is cm^-1; output is nm.
 fn wavenumberToWavelengthNm(wavenumber_cm1: f64) f64 {
     return 1.0e7 / @max(wavenumber_cm1, 1.0);
 }
 
+/// Purpose:
+///   Convert a cm^-1 width into an approximate wavelength width in nm.
+///
+/// Units:
+///   Input width is cm^-1 and the center wavenumber is cm^-1; output is nm.
 fn spectralWidthCm1ToNm(width_cm1: f64, center_wavenumber_cm1: f64) f64 {
     const safe_center = @max(center_wavenumber_cm1, 1.0);
     return width_cm1 * 1.0e7 / (safe_center * safe_center);
 }
 
+/// Purpose:
+///   Derive a bounded line-mixing coefficient from width and shift terms.
 fn deriveLineMixingCoefficient(air_half_width_cm1: f64, pressure_shift_cm1: f64) f64 {
     return std.math.clamp(
         @abs(pressure_shift_cm1) / @max(@abs(air_half_width_cm1), 1.0e-6),
@@ -372,6 +452,8 @@ fn deriveLineMixingCoefficient(air_half_width_cm1: f64, pressure_shift_cm1: f64)
     );
 }
 
+/// Purpose:
+///   Derive an isotopic abundance fraction for common HITRAN gas/isotope combinations.
 fn deriveIsotopicAbundanceFraction(gas_index: u16, isotope_number: u16) f64 {
     return switch (gas_index) {
         1 => switch (isotope_number) {
@@ -428,6 +510,8 @@ fn deriveIsotopicAbundanceFraction(gas_index: u16, isotope_number: u16) f64 {
     };
 }
 
+/// Purpose:
+///   Convert the LISA branch notation into a signed rotational index.
 fn rotationalIndexFromLisaBranch(branch_token: []const u8, nf_token: []const u8) !i32 {
     if (branch_token.len != 1) return error.InvalidAssetFormat;
     const nf = std.fmt.parseInt(i32, nf_token, 10) catch return error.InvalidNumber;

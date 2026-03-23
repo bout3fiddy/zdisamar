@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Provide the DOAS retrieval entrypoint.
+//!
+//! Physics:
+//!   DOAS fits the logarithmic differential-optical-depth representation of
+//!   the bound measurement product.
+//!
+//! Vendor:
+//!   Classic DOAS solver stage.
+//!
+//! Design:
+//!   Keep the entrypoint thin and route all method policy through the shared
+//!   spectral-fit module.
+//!
+//! Invariants:
+//!   DOAS requires an observed measurement and a derivative-compatible state
+//!   vector.
+//!
+//! Validation:
+//!   DOAS solver tests exercise the public evaluator path.
+
 const std = @import("std");
 const common = @import("../common/contracts.zig");
 const forward_model = @import("../common/forward_model.zig");
@@ -5,6 +26,9 @@ const spectral_fit = @import("../common/spectral_fit.zig");
 const surrogate_forward = @import("../common/surrogate_forward.zig");
 const Allocator = std.mem.Allocator;
 
+/// Purpose:
+///   Report that the legacy no-evaluator convenience entrypoint is not used
+///   by the current adapter surface.
 pub fn solve(allocator: Allocator, problem: common.RetrievalProblem) common.Error!common.SolverOutcome {
     _ = allocator;
     _ = problem;
@@ -18,6 +42,8 @@ pub fn solveWithTestEvaluator(
     return solveWithEvaluator(allocator, problem, surrogate_forward.testEvaluator());
 }
 
+/// Purpose:
+///   Solve a DOAS retrieval using the supplied evaluator.
 pub fn solveWithEvaluator(
     allocator: Allocator,
     problem: common.RetrievalProblem,

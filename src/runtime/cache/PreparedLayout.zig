@@ -1,7 +1,36 @@
+//! Purpose:
+//!   Capture the reusable layout hints derived from a prepared scene blueprint.
+//!
+//! Physics:
+//!   Record the scene dimensions that matter for repeated optics and retrieval execution.
+//!
+//! Vendor:
+//!   `prepared layout cache`
+//!
+//! Design:
+//!   Derive layout metadata once from the blueprint and keep the cached shape typed.
+//!
+//! Invariants:
+//!   The derived axes must stay consistent with the source blueprint.
+//!
+//! Validation:
+//!   Cache package unit tests.
+
 const std = @import("std");
 const SceneModel = @import("../../model/Scene.zig");
 const layout = @import("../../model/layout/root.zig");
 
+/// Purpose:
+///   Store the reusable layout hints for a prepared scene.
+///
+/// Physics:
+///   Preserve the spectral, layer, and state axes needed to allocate downstream arrays.
+///
+/// Vendor:
+///   `prepared layout snapshot`
+///
+/// Invariants:
+///   Axes either match the blueprint-derived requirements or remain `null` when unused.
 pub const PreparedLayout = struct {
     layout_requirements: SceneModel.LayoutRequirements = .{},
     spectral_axis: ?layout.Axes.SpectralAxis = null,
@@ -10,6 +39,24 @@ pub const PreparedLayout = struct {
     measurement_capacity: u32 = 0,
     dataset_hash_count: u32 = 0,
 
+    /// Purpose:
+    ///   Build a cached layout snapshot from a scene blueprint.
+    ///
+    /// Physics:
+    ///   Convert scene dimensions into reusable axes and capacity hints for later execution.
+    ///
+    /// Vendor:
+    ///   `prepared layout derivation`
+    ///
+    /// Inputs:
+    ///   `blueprint` supplies the scene geometry and state sizing hints; `dataset_hash_count`
+    ///   records how many dataset fingerprints the prepared layout must track.
+    ///
+    /// Outputs:
+    ///   A typed layout summary suitable for reuse by the runtime caches.
+    ///
+    /// Assumptions:
+    ///   Blueprint counts already reflect the canonical scene model.
     pub fn initFromBlueprint(
         blueprint: SceneModel.Blueprint,
         dataset_hash_count: u32,

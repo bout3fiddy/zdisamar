@@ -1,14 +1,41 @@
+//! Purpose:
+//!   Define the canonical cloud-layer parameters that transport preparation converts into
+//!   particulate optical properties.
+//!
+//! Physics:
+//!   Clouds are represented by optical thickness, single-scatter albedo, asymmetry,
+//!   Angstrom scaling, and geometric extent on the scene altitude grid.
+//!
+//! Vendor:
+//!   `cloud optical property configuration stage`
+//!
+//! Design:
+//!   The Zig model records cloud intent as a typed value so adapters can map vendor or
+//!   mission-specific controls into one canonical representation before optics kernels run.
+//!
+//! Invariants:
+//!   Optical thickness stays non-negative, single-scatter albedo stays within `[0, 1]`,
+//!   asymmetry stays within `[-1, 1]`, and the geometric extent remains positive.
+//!
+//! Validation:
+//!   Validation is enforced locally before cloud settings are handed to optics
+//!   preparation or provider layers.
 const std = @import("std");
 const errors = @import("../core/errors.zig");
 const document_fields = @import("../adapters/canonical_config/document_fields.zig");
 
 pub const CloudType = document_fields.CloudType;
 
+/// Purpose:
+///   Describe one cloud layer in canonical scene coordinates.
 pub const Cloud = struct {
     id: []const u8 = "",
     cloud_type: CloudType = .none,
     provider: []const u8 = "",
     enabled: bool = false,
+    // UNITS:
+    //   Optical thickness is dimensionless, the Angstrom reference wavelength is in
+    //   nanometers, and altitude/thickness are in kilometers.
     optical_thickness: f64 = 0.0,
     single_scatter_albedo: f64 = 0.999,
     asymmetry_factor: f64 = 0.85,
@@ -17,6 +44,8 @@ pub const Cloud = struct {
     top_altitude_km: f64 = 6.0,
     thickness_km: f64 = 1.5,
 
+    /// Purpose:
+    ///   Ensure the cloud optical and geometric parameters remain physically meaningful.
     pub fn validate(self: Cloud) errors.Error!void {
         if (self.optical_thickness < 0.0) {
             return errors.Error.InvalidRequest;

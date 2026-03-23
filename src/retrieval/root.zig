@@ -1,3 +1,4 @@
+//! Retrieval entrypoints layered on the canonical scene and measurement model.
 const std = @import("std");
 
 pub const common = struct {

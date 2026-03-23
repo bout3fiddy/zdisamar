@@ -1,7 +1,7 @@
 const std = @import("std");
 const Spec = @import("spec.zig");
 const io = @import("io.zig");
-const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
+const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 
 const NC_DIMENSION: u32 = 10;
 const NC_VARIABLE: u32 = 11;

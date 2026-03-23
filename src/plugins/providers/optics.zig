@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Scene = @import("../../model/Scene.zig").Scene;
-const PreparedOpticalState = @import("../../kernels/optics/prepare.zig").PreparedOpticalState;
+const PreparedOpticalState = @import("../../kernels/optics/preparation.zig").PreparedOpticalState;
 const BundledOptics = @import("../../runtime/reference/BundledOptics.zig");
 
 pub const Provider = struct {

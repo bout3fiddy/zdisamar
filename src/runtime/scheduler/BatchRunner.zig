@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Execute queued scene jobs against prepared-plan layout metadata using one reusable thread
+//!   context.
+//!
+//! Physics:
+//!   This is runtime orchestration only: it reuses prepared-layout hints and thread scratch while
+//!   dispatching scene jobs to a caller-provided execution callback.
+//!
+//! Vendor:
+//!   `batch scheduling and prepared-plan reuse`
+//!
+//! Design:
+//!   Keep the scheduler generic by queueing only `(plan_id, scene_id)` jobs and delegating the
+//!   actual execution to a typed callback.
+//!
+//! Invariants:
+//!   Jobs execute against prepared plans already present in the plan cache. A thread context may
+//!   be rebound only by resetting between differing plan ids.
+//!
+//! Validation:
+//!   Batch runner tests in this file and the engine-side batch execution paths that reuse thread
+//!   workspaces across plan ids.
+
 const std = @import("std");
 const PlanCache = @import("../cache/PlanCache.zig").PlanCache;
 const PreparedLayout = @import("../cache/PreparedLayout.zig").PreparedLayout;
@@ -17,6 +40,8 @@ pub const ExecuteFn = *const fn (
     prepared_layout: *const PreparedLayout,
 ) anyerror!void;
 
+/// Purpose:
+///   Hold a queue of plan/scene jobs and execute them against cached prepared-layout metadata.
 pub const BatchRunner = struct {
     allocator: Allocator,
     queue: std.ArrayListUnmanaged(BatchJob) = .{},
@@ -31,17 +56,23 @@ pub const BatchRunner = struct {
         self.queue.deinit(self.allocator);
     }
 
+    /// Purpose:
+    ///   Enqueue one plan/scene job for later execution.
     pub fn enqueue(self: *BatchRunner, job: BatchJob) !void {
         if (job.scene_id.len == 0) return error.InvalidBatchJob;
         try self.queue.append(self.allocator, job);
     }
 
+    /// Purpose:
+    ///   Clear the queue and reset the completed/failed counters.
     pub fn clear(self: *BatchRunner) void {
         self.queue.clearRetainingCapacity();
         self.completed_jobs = 0;
         self.failed_jobs = 0;
     }
 
+    /// Purpose:
+    ///   Execute all queued jobs against the plan cache using one reusable thread context.
     pub fn run(
         self: *BatchRunner,
         thread: *ThreadContext,
@@ -54,8 +85,9 @@ pub const BatchRunner = struct {
 
             if (thread.bound_plan_id) |bound| {
                 if (bound != job.plan_id) {
-                    // A batch may include multiple prepared plans; reset scratch
-                    // and binding before transitioning to another plan id.
+                    // DECISION:
+                    //   A batch may mix plan ids, so the thread context resets before rebinding to
+                    //   another prepared plan instead of trying to share scratch state implicitly.
                     thread.reset();
                 }
             }

@@ -1,3 +1,4 @@
+//! Typed plugin provider and runtime-internal entrypoints for the engine.
 pub const slots = @import("slots.zig");
 pub const selection = @import("selection.zig");
 pub const providers = @import("providers/root.zig");

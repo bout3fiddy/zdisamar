@@ -1,10 +1,34 @@
+//! Purpose:
+//!   Adapt measurement-space products into retrieval-friendly spectra and
+//!   summaries.
+//!
+//! Physics:
+//!   This module selects the observable vector, uncertainty vector, and
+//!   metadata that the retrieval solver uses to compare a scene against bound
+//!   measurements.
+//!
+//! Vendor:
+//!   Measurement selection and product-to-spectrum adaptation stages.
+//!
+//! Design:
+//!   Keep the selection and summary logic in one place so OE, DOAS, and DISMAS
+//!   all interpret the same bound measurement product identically.
+//!
+//! Invariants:
+//!   Selected samples must exactly match the requested measurement mask, and
+//!   any bound jacobian must have the same sample count as the source product.
+//!
+//! Validation:
+//!   Retrieval forward-model tests cover measurement selection, sigma
+//!   synthesis, and observable-specific behavior.
+
 const std = @import("std");
 const common = @import("contracts.zig");
 const Request = @import("../../core/Request.zig").Request;
 const Measurement = @import("../../model/Measurement.zig").Measurement;
 const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const Scene = @import("../../model/Scene.zig").Scene;
-const MeasurementSpace = @import("../../kernels/transport/measurement_space.zig");
+const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 const MeasurementSpaceProduct = MeasurementSpace.MeasurementSpaceProduct;
 const MeasurementSpaceSummary = MeasurementSpace.MeasurementSpaceSummary;
 const Allocator = std.mem.Allocator;
@@ -15,6 +39,9 @@ pub const Evaluator = struct {
     evaluateProduct: *const fn (allocator: Allocator, context: *const anyopaque, scene: Scene) anyerror!MeasurementSpaceProduct,
 };
 
+/// Purpose:
+///   Capture the ancillary scalars copied from a measurement-space product
+///   into retrieval diagnostics.
 pub const MeasurementMetadata = struct {
     effective_air_mass_factor: f64 = 0.0,
     effective_single_scatter_albedo: f64 = 0.0,
@@ -40,6 +67,9 @@ pub const SpectralMeasurement = struct {
     summary: MeasurementSpaceSummary,
     metadata: MeasurementMetadata = .{},
 
+    /// Purpose:
+    ///   Release the selected spectral arrays and reset the view to an empty
+    ///   state.
     pub fn deinit(self: *SpectralMeasurement, allocator: Allocator) void {
         if (self.wavelengths_nm.len != 0) allocator.free(self.wavelengths_nm);
         if (self.values.len != 0) allocator.free(self.values);
@@ -63,6 +93,8 @@ pub const SpectralMeasurement = struct {
     }
 };
 
+/// Purpose:
+///   Extract the observed measurement vector from a retrieval problem.
 pub fn observedMeasurement(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -76,6 +108,8 @@ pub fn observedMeasurement(
     );
 }
 
+/// Purpose:
+///   Repackage a measurement-space product into the retrieval spectrum format.
 pub fn measurementFromProduct(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -89,6 +123,9 @@ pub fn measurementFromProduct(
     );
 }
 
+/// Purpose:
+///   Evaluate the forward model and then project the result into the retrieval
+///   measurement format.
 pub fn evaluateMeasurement(
     allocator: Allocator,
     problem: common.RetrievalProblem,
@@ -109,6 +146,8 @@ pub fn evaluateMeasurement(
     );
 }
 
+/// Purpose:
+///   Report the observable encoded by the retrieval problem.
 pub fn measurementObservable(problem: common.RetrievalProblem) MeasurementQuantity {
     return problem.inverse_problem.measurements.observable;
 }
@@ -245,6 +284,9 @@ fn sampleSigma(
         if (index >= product.noise_sigma.len or product.noise_sigma.len == 0) {
             return error.InvalidRequest;
         }
+        // UNITS:
+        //   Noise values are stored as per-sample sigma, so the combined
+        //   variance is assembled in squared measurement units here.
         const source_sigma = product.noise_sigma[index];
         if (!std.math.isFinite(source_sigma) or source_sigma < 0.0) return error.InvalidRequest;
         variance += source_sigma * source_sigma;

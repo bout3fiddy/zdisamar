@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Build Sentinel-5P mission-specific runs and operational imports.
+//!
+//! Physics:
+//!   This wiring selects the mission's spectral windows, observation geometry,
+//!   and ingest defaults for NO2 and HCHO nadir workflows.
+//!
+//! Vendor:
+//!   S5P mission wiring and operational ingest stage.
+//!
+//! Design:
+//!   Keep the mission root focused on product presets and ingest translation
+//!   so the broader adapter surface can remain mission-agnostic.
+//!
+//! Invariants:
+//!   Mission presets must keep the expected wavelength windows and derivative
+//!   modes consistent with the selected product.
+//!
+//! Validation:
+//!   S5P mission tests cover both synthetic builds and operational ingest
+//!   builds.
+
 const std = @import("std");
 const PlanTemplate = @import("../../../core/Plan.zig").Template;
 const Request = @import("../../../core/Request.zig").Request;
@@ -7,7 +29,7 @@ const DerivativeMode = @import("../../../model/Scene.zig").DerivativeMode;
 const Instrument = @import("../../../model/Instrument.zig").Instrument;
 const InstrumentId = @import("../../../model/Instrument.zig").Id;
 const Measurement = @import("../../../model/Measurement.zig").Measurement;
-const MeasurementSpaceProduct = @import("../../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
+const MeasurementSpaceProduct = @import("../../../kernels/transport/measurement.zig").MeasurementSpaceProduct;
 const ExportFormat = @import("../../exporters/format.zig").ExportFormat;
 const ExportSpec = @import("../../exporters/spec.zig");
 const SpectralAscii = @import("../../ingest/spectral_ascii.zig");
@@ -38,6 +60,8 @@ pub const MissionRun = struct {
     measurement_summary: ?Measurement = null,
     observed_measurement_product: ?*MeasurementSpaceProduct = null,
 
+    /// Purpose:
+    ///   Release any owned mission resources and observed products.
     pub fn deinit(self: *MissionRun, allocator: std.mem.Allocator) void {
         if (self.observed_measurement_product) |product| {
             product.deinit(allocator);
@@ -65,7 +89,12 @@ pub const OperationalOptions = struct {
     noise_model: Instrument.NoiseModelKind = .snr_from_input,
 };
 
+/// Purpose:
+///   Build a synthetic S5P mission run from preset options.
 pub fn build(options: BuildOptions) MissionRun {
+    // UNITS:
+    //   Mission presets use nanometer spectral windows tuned to the S5P nadir
+    //   products.
     const spectral_grid = switch (options.product) {
         .no2_nadir => SpectralGrid{
             .start_nm = 405.0,
@@ -134,6 +163,8 @@ pub fn build(options: BuildOptions) MissionRun {
     };
 }
 
+/// Purpose:
+///   Build an operational S5P mission run from spectral ASCII input.
 pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOptions) !MissionRun {
     var loaded = try SpectralAscii.parseFile(allocator, options.spectral_input_path);
     defer loaded.deinit(allocator);

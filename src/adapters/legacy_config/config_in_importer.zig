@@ -1,9 +1,34 @@
+//! Purpose:
+//!   Parse flat legacy Config.in key-value files into a prepared legacy run.
+//!
+//! Physics:
+//!   This loader only interprets the historical flat configuration syntax; the
+//!   scientific meaning is preserved later by the schema mapper and canonical
+//!   exporter.
+//!
+//! Vendor:
+//!   Legacy Config.in parsing stage.
+//!
+//! Design:
+//!   Keep the parser small and line-oriented so the importer can tolerate the
+//!   legacy format's minimal structure.
+//!
+//! Invariants:
+//!   Every parsed key must be routed through the typed schema mapper before
+//!   the run is finalized.
+//!
+//! Validation:
+//!   Legacy config parser tests cover field mapping and backing-storage
+//!   ownership.
+
 const std = @import("std");
 const SchemaMapper = @import("schema_mapper.zig");
 
 pub const ParseError = SchemaMapper.ParseError;
 pub const PreparedRun = SchemaMapper.PreparedRun;
 
+/// Purpose:
+///   Parse a flat Config.in buffer into a prepared legacy run.
 pub fn parse(allocator: std.mem.Allocator, contents: []const u8) !PreparedRun {
     var prepared = PreparedRun{};
     errdefer prepared.deinit(allocator);

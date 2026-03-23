@@ -1,9 +1,38 @@
+//! Purpose:
+//!   Solve tiny full-rank least-squares systems with an explicit QR-style projection.
+//!
+//! Physics:
+//!   Computes the minimum-residual solution for a 2x2 system using orthonormal columns.
+//!
+//! Vendor:
+//!   `least-squares QR`
+//!
+//! Design:
+//!   The implementation is specialized for the 2x2 case so it remains easy to validate and branch-free in hot paths.
+//!
+//! Invariants:
+//!   Column norms must stay above the rank threshold or the system is treated as singular.
+//!
+//! Validation:
+//!   Tests cover both full-rank and rank-deficient 2x2 systems.
+
 const std = @import("std");
 
 pub const Error = error{
     SingularMatrix,
 };
 
+/// Purpose:
+///   Solve a 2x2 least-squares problem using an explicit orthonormal basis.
+///
+/// Physics:
+///   Returns the minimum-residual solution for a full-rank small dense system.
+///
+/// Vendor:
+///   `2x2 least squares`
+///
+/// Assumptions:
+///   The matrix columns must be linearly independent above the configured rank threshold.
 pub fn leastSquares2x2(matrix: [2][2]f64, rhs: [2]f64) Error![2]f64 {
     const a0_norm = std.math.sqrt(matrix[0][0] * matrix[0][0] + matrix[1][0] * matrix[1][0]);
     if (a0_norm <= 1.0e-12) return error.SingularMatrix;

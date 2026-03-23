@@ -1,3 +1,24 @@
+//! Purpose:
+//!   Convert state parameters between physical and solver space.
+//!
+//! Physics:
+//!   Retrieval parameters may be linear, log, or logit transformed so the
+//!   solver operates on an unconstrained or gently constrained axis while the
+//!   scene keeps physical values.
+//!
+//! Vendor:
+//!   State-transform stage used by retrieval normalization.
+//!
+//! Design:
+//!   Centralize the transform math so state-access, prior assembly, and
+//!   Jacobian scaling all use identical conversions.
+//!
+//! Invariants:
+//!   Log and logit transforms only accept valid physical domains.
+//!
+//! Validation:
+//!   Transform tests cover round-trips and derivative positivity.
+
 const std = @import("std");
 const Transform = @import("../../model/StateVector.zig").Transform;
 
@@ -5,6 +26,8 @@ pub const Error = error{
     InvalidStateValue,
 };
 
+/// Purpose:
+///   Convert a physical parameter value into solver space.
 pub fn toSolverSpace(transform: Transform, physical_value: f64) Error!f64 {
     return switch (transform) {
         .none => physical_value,
@@ -19,6 +42,8 @@ pub fn toSolverSpace(transform: Transform, physical_value: f64) Error!f64 {
     };
 }
 
+/// Purpose:
+///   Convert a solver-space value back into physical space.
 pub fn toPhysicalSpace(transform: Transform, solver_value: f64) f64 {
     return switch (transform) {
         .none => solver_value,
@@ -30,6 +55,9 @@ pub fn toPhysicalSpace(transform: Transform, solver_value: f64) f64 {
     };
 }
 
+/// Purpose:
+///   Return the derivative of the physical parameter with respect to solver
+///   space.
 pub fn dPhysicalDsolver(transform: Transform, solver_value: f64) f64 {
     return switch (transform) {
         .none => 1.0,

@@ -4,6 +4,8 @@ const internal = @import("zdisamar_internal");
 const retrieval = @import("zdisamar_internal").retrieval;
 
 const StateParameter = zdisamar.StateParameter;
+const oe_sample_count: u32 = 24;
+const doas_sample_count: u32 = 12;
 const dismas_sample_count: u32 = 128;
 
 const RealEvaluatorContext = struct {
@@ -23,14 +25,14 @@ fn realObservedProduct(
     allocator: std.mem.Allocator,
     context: *const RealEvaluatorContext,
     scene: zdisamar.Scene,
-) !internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
+) !internal.kernels.transport.measurement.MeasurementSpaceProduct {
     return evaluateProduct(allocator, context, scene);
 }
 
 fn evaluateSummary(
     context_ptr: *const anyopaque,
     scene: zdisamar.Scene,
-) anyerror!internal.kernels.transport.measurement_space.MeasurementSpaceSummary {
+) anyerror!internal.kernels.transport.measurement.MeasurementSpaceSummary {
     const context: *const RealEvaluatorContext = @ptrCast(@alignCast(context_ptr));
     var measurement = try evaluateProduct(context.allocator, context_ptr, scene);
     defer measurement.deinit(context.allocator);
@@ -41,11 +43,11 @@ fn evaluateProduct(
     allocator: std.mem.Allocator,
     context_ptr: *const anyopaque,
     scene: zdisamar.Scene,
-) anyerror!internal.kernels.transport.measurement_space.MeasurementSpaceProduct {
+) anyerror!internal.kernels.transport.measurement.MeasurementSpaceProduct {
     const context: *const RealEvaluatorContext = @ptrCast(@alignCast(context_ptr));
     var prepared_optics = try context.plan.providers.optics.prepareForScene(allocator, &scene);
     defer prepared_optics.deinit(allocator);
-    return internal.kernels.transport.measurement_space.simulateProduct(
+    return internal.kernels.transport.measurement.simulateProduct(
         allocator,
         &scene,
         context.plan.transport_route,
@@ -78,8 +80,8 @@ test "retrieval solvers share canonical problem model with oe spectral products 
         .scene_blueprint = .{
             .observation_regime = .nadir,
             .derivative_mode = .semi_analytical,
-            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 48 },
-            .measurement_count_hint = 48,
+            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = oe_sample_count },
+            .measurement_count_hint = oe_sample_count,
         },
     });
     defer plan.deinit();
@@ -92,7 +94,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
 
     var observed_product = try realObservedProduct(std.testing.allocator, &context, .{
         .id = "truth-scene-oe",
-        .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 48 },
+        .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = oe_sample_count },
         .surface = .{ .albedo = 0.16 },
         .aerosol = .{ .enabled = true, .optical_depth = 0.10, .layer_center_km = 3.0, .layer_width_km = 1.0 },
         .observation_model = .{ .instrument = .synthetic, .wavelength_shift_nm = 0.012 },
@@ -102,7 +104,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
     const oe_problem: retrieval.common.contracts.RetrievalProblem = .{
         .scene = .{
             .id = "scene-retrieval-integration",
-            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 48 },
+            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = oe_sample_count },
             .surface = .{ .albedo = 0.08 },
             .aerosol = .{ .enabled = true, .optical_depth = 0.05, .layer_center_km = 3.0, .layer_width_km = 1.0 },
             .observation_model = .{ .instrument = .synthetic },
@@ -119,7 +121,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
             .measurements = .{
                 .product_name = "radiance",
                 .observable = .radiance,
-                .sample_count = 48,
+                .sample_count = oe_sample_count,
                 .source = .{ .external_observation = .{ .name = "truth_radiance" } },
                 .error_model = .{ .from_source_noise = false, .floor = 1.0e-4 },
             },
@@ -130,7 +132,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
             .source_name = "truth_radiance",
             .observable = .radiance,
             .product_name = "radiance",
-            .sample_count = 48,
+            .sample_count = oe_sample_count,
             .product = .init(&observed_product),
         },
     };
@@ -147,7 +149,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
     try std.testing.expect(oe_result.averaging_kernel != null);
     try std.testing.expect(oe_result.posterior_covariance != null);
     try std.testing.expect(oe_result.dfs > 0.0);
-    try std.testing.expectEqual(@as(u32, 48), oe_result.jacobian.?.row_count);
+    try std.testing.expectEqual(oe_sample_count, oe_result.jacobian.?.row_count);
     try std.testing.expectEqual(@as(u32, 3), oe_result.jacobian.?.column_count);
     try std.testing.expect(oe_result.fitted_scene != null);
 
@@ -164,7 +166,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
     const doas_problem: retrieval.common.contracts.RetrievalProblem = .{
         .scene = .{
             .id = "scene-retrieval-doas",
-            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 24 },
+            .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = doas_sample_count },
             .surface = .{ .albedo = 0.09 },
             .aerosol = .{ .enabled = true, .optical_depth = 0.06, .layer_center_km = 3.0, .layer_width_km = 1.0 },
             .observation_model = .{ .instrument = .synthetic, .noise_model = .shot_noise },
@@ -181,7 +183,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
             .measurements = .{
                 .product_name = "radiance",
                 .observable = .radiance,
-                .sample_count = 24,
+                .sample_count = doas_sample_count,
                 .source = .{ .external_observation = .{ .name = "truth_radiance_doas" } },
                 .error_model = .{ .from_source_noise = true, .floor = 1.0e-5 },
             },
@@ -192,7 +194,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
     };
     var doas_observed_product = try realObservedProduct(std.testing.allocator, &context, .{
         .id = "truth-scene-doas",
-        .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = 24 },
+        .spectral_grid = .{ .start_nm = 759.5, .end_nm = 765.5, .sample_count = doas_sample_count },
         .surface = .{ .albedo = 0.15 },
         .aerosol = .{ .enabled = true, .optical_depth = 0.10, .layer_center_km = 3.0, .layer_width_km = 1.0 },
         .observation_model = .{ .instrument = .synthetic, .noise_model = .shot_noise, .wavelength_shift_nm = 0.011 },
@@ -207,7 +209,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
             .source_name = "truth_radiance_doas",
             .observable = .radiance,
             .product_name = "radiance",
-            .sample_count = 24,
+            .sample_count = doas_sample_count,
             .product = .init(&doas_observed_product),
         },
     };

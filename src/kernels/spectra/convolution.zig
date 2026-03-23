@@ -1,7 +1,33 @@
+//! Purpose:
+//!   Apply normalized spectral convolution kernels to sampled radiance or irradiance vectors.
+//!
+//! Physics:
+//!   Produces a locally weighted spectral smoothing over the supplied line-spread function.
+//!
+//! Vendor:
+//!   `spectral convolution`
+//!
+//! Design:
+//!   The kernel is normalized on the fly so edge truncation does not silently change total weight.
+//!
+//! Invariants:
+//!   Output length must match the input signal length and the kernel must be non-empty.
+//!
+//! Validation:
+//!   Unit tests cover symmetric-kernel smoothing behavior.
+
 pub const Error = error{
     KernelShapeMismatch,
 };
 
+/// Purpose:
+///   Convolve a sampled signal with a finite kernel while renormalizing at the boundaries.
+///
+/// Physics:
+///   Implements a discrete line-spread convolution on the wavelength grid.
+///
+/// Vendor:
+///   `spectral convolution`
 pub fn apply(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
     if (signal.len != output.len or kernel.len == 0) return Error.KernelShapeMismatch;
 

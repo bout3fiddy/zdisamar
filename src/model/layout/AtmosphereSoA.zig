@@ -1,3 +1,21 @@
+//! Purpose:
+//!   Store atmospheric state in a structure-of-arrays layout.
+//!
+//! Physics:
+//!   Separates hot numeric layer columns from cold metadata so transport code can index layers efficiently.
+//!
+//! Vendor:
+//!   `atmosphere SoA`
+//!
+//! Design:
+//!   The SoA keeps layer-major numeric columns contiguous while metadata remains an independent record.
+//!
+//! Invariants:
+//!   All hot columns must match the layer count, and layer indices are zero-based.
+//!
+//! Validation:
+//!   Tests cover aligned hot columns and cold metadata retention.
+
 const std = @import("std");
 const Axes = @import("Axes.zig");
 
@@ -6,29 +24,39 @@ pub const Error = error{
     IndexOutOfRange,
 } || Axes.Error;
 
+/// Purpose:
+///   Store the hot numeric columns of the atmosphere.
 pub const HotColumns = struct {
     temperature_k: []const f64,
     pressure_pa: []const f64,
     absorber_density: []const f64,
 };
 
+/// Purpose:
+///   Store the cold metadata attached to an atmospheric layout.
 pub const ColdMetadata = struct {
     has_clouds: bool = false,
     has_aerosols: bool = false,
     climatology_tag: []const u8 = "none",
 };
 
+/// Purpose:
+///   Present one atmospheric layer as a compact view.
 pub const LayerView = struct {
     temperature_k: f64,
     pressure_pa: f64,
     absorber_density: f64,
 };
 
+/// Purpose:
+///   Own an atmospheric structure-of-arrays layout.
 pub const AtmosphereSoA = struct {
     axis: Axes.LayerAxis,
     hot: HotColumns,
     cold: ColdMetadata = .{},
 
+    /// Purpose:
+    ///   Construct an atmosphere SoA after validating shape alignment.
     pub fn init(axis: Axes.LayerAxis, hot: HotColumns, cold: ColdMetadata) Error!AtmosphereSoA {
         try axis.validate();
         const expected = axis.layer_count;
@@ -44,6 +72,8 @@ pub const AtmosphereSoA = struct {
         };
     }
 
+    /// Purpose:
+    ///   Load one atmospheric layer as a view.
     pub fn layer(self: AtmosphereSoA, layer_index: u32) Error!LayerView {
         try self.axis.validate();
         if (layer_index >= self.axis.layer_count) return Error.IndexOutOfRange;

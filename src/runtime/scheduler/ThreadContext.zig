@@ -1,7 +1,31 @@
+//! Purpose:
+//!   Expose the runtime thread-context type used by batch execution.
+//!
+//! Physics:
+//!   A thread context is the same execution-reuse contract as a workspace: plan binding, scratch
+//!   reservation, and reset semantics all remain identical.
+//!
+//! Vendor:
+//!   `thread/workspace execution context`
+//!
+//! Design:
+//!   Alias `Workspace` directly instead of duplicating the lifecycle type so thread and
+//!   single-request execution stay behaviorally identical.
+//!
+//! Invariants:
+//!   Thread contexts and workspaces share the same binding and reset rules.
+//!
+//! Validation:
+//!   The aliasing test in this file plus batch-runner tests that reuse the thread context across
+//!   multiple plan ids.
+
 const std = @import("std");
 const PreparedLayout = @import("../cache/PreparedLayout.zig").PreparedLayout;
 const Workspace = @import("../../core/Workspace.zig").Workspace;
 
+// DECISION:
+//   Thread execution reuses the exact `Workspace` semantics rather than introducing a parallel
+//   thread-specific lifecycle type.
 pub const ThreadContext = Workspace;
 
 test "thread context aliases the shared workspace execution semantics" {

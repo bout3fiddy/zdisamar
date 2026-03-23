@@ -1,3 +1,26 @@
+//! Purpose:
+//!   Define the typed instrument contract and re-export the instrument-carrier modules.
+//!
+//! Physics:
+//!   Captures sampling mode, noise model, calibration/high-resolution controls, and the
+//!   operational/reference carriers needed by instrument-response handling.
+//!
+//! Vendor:
+//!   `instrument contract`
+//!
+//! Design:
+//!   Keep the scene-facing instrument surface lightweight while line shapes, reference grids,
+//!   solar spectra, and operational LUTs live in dedicated carrier modules under
+//!   `src/model/instrument/`.
+//!
+//! Invariants:
+//!   Instrument ids must validate, high-resolution controls are configured as pairs, and owned
+//!   carrier storage is released only through `deinitOwned`.
+//!
+//! Validation:
+//!   Instrument validation tests in this file plus the instrument-carrier unit tests and
+//!   operational sampling paths exercised by transport/retrieval integration tests.
+
 const std = @import("std");
 const errors = @import("../core/errors.zig");
 const Allocator = std.mem.Allocator;
@@ -16,6 +39,8 @@ pub const InstrumentLineShape = @import("instrument/line_shape.zig").InstrumentL
 pub const InstrumentLineShapeTable = @import("instrument/line_shape.zig").InstrumentLineShapeTable;
 pub const BuiltinLineShapeKind = @import("instrument/line_shape.zig").BuiltinLineShapeKind;
 
+/// Purpose:
+///   Identify the instrument family associated with an observation model.
 pub const Id = union(enum) {
     unset,
     generic,
@@ -23,6 +48,8 @@ pub const Id = union(enum) {
     synthetic,
     custom: []const u8,
 
+    /// Purpose:
+    ///   Parse a public-facing instrument id into the typed instrument enum.
     pub fn parse(value: []const u8) Id {
         if (value.len == 0) return .unset;
         if (std.mem.eql(u8, value, "generic")) return .generic;
@@ -31,6 +58,8 @@ pub const Id = union(enum) {
         return .{ .custom = value };
     }
 
+    /// Purpose:
+    ///   Return the stable label used for public-facing instrument ids.
     pub fn label(self: Id) []const u8 {
         return switch (self) {
             .unset => "",
@@ -41,6 +70,8 @@ pub const Id = union(enum) {
         };
     }
 
+    /// Purpose:
+    ///   Reject unset or malformed instrument ids.
     pub fn validate(self: Id) errors.Error!void {
         switch (self) {
             .unset => return errors.Error.MissingObservationInstrument,
@@ -50,6 +81,8 @@ pub const Id = union(enum) {
     }
 };
 
+/// Purpose:
+///   Store typed instrument settings and carrier data for a canonical observation model.
 pub const Instrument = struct {
     pub const SamplingMode = enum {
         native,
@@ -57,6 +90,8 @@ pub const Instrument = struct {
         measured_channels,
         synthetic,
 
+        /// Purpose:
+        ///   Parse a public-facing sampling mode label into the typed enum.
         pub fn parse(value: []const u8) errors.Error!SamplingMode {
             if (std.mem.eql(u8, value, "native")) return .native;
             if (std.mem.eql(u8, value, "operational")) return .operational;
@@ -65,6 +100,8 @@ pub const Instrument = struct {
             return errors.Error.InvalidRequest;
         }
 
+        /// Purpose:
+        ///   Return the stable label used for the sampling mode.
         pub fn label(self: SamplingMode) []const u8 {
             return @tagName(self);
         }
@@ -76,6 +113,8 @@ pub const Instrument = struct {
         s5p_operational,
         snr_from_input,
 
+        /// Purpose:
+        ///   Parse a public-facing noise-model label into the typed enum.
         pub fn parse(value: []const u8) errors.Error!NoiseModelKind {
             if (std.mem.eql(u8, value, "none")) return .none;
             if (std.mem.eql(u8, value, "shot_noise")) return .shot_noise;
@@ -84,6 +123,8 @@ pub const Instrument = struct {
             return errors.Error.InvalidRequest;
         }
 
+        /// Purpose:
+        ///   Return the stable label used for the noise model.
         pub fn label(self: NoiseModelKind) []const u8 {
             return @tagName(self);
         }
@@ -104,6 +145,8 @@ pub const Instrument = struct {
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
 
+    /// Purpose:
+    ///   Validate instrument id, high-resolution controls, and any attached operational carriers.
     pub fn validate(self: *const Instrument) errors.Error!void {
         try self.id.validate();
         if (self.instrument_line_fwhm_nm < 0.0) {
@@ -113,6 +156,9 @@ pub const Instrument = struct {
             return errors.Error.InvalidRequest;
         }
         if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
+            // GOTCHA:
+            //   The high-resolution support grid is defined by both its spacing and half-span, so
+            //   partial configuration would under-specify the convolution domain.
             return errors.Error.InvalidRequest;
         }
         try self.instrument_line_shape.validate();
@@ -123,6 +169,8 @@ pub const Instrument = struct {
         try self.o2o2_operational_lut.validate();
     }
 
+    /// Purpose:
+    ///   Release any owned line-shape, grid, solar-spectrum, and LUT storage.
     pub fn deinitOwned(self: *Instrument, allocator: Allocator) void {
         self.instrument_line_shape.deinitOwned(allocator);
         self.instrument_line_shape_table.deinitOwned(allocator);

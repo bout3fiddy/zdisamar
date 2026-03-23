@@ -1,13 +1,36 @@
+//! Purpose:
+//!   Cache lookup-table metadata by dataset id and LUT id.
+//!
+//! Physics:
+//!   Preserve the reusable shape information for reference LUTs without changing the table
+//!   values themselves.
+//!
+//! Vendor:
+//!   `lookup-table cache`
+//!
+//! Design:
+//!   Key entries by the composite `(dataset_id, lut_id)` pair and refresh revisions in place.
+//!
+//! Invariants:
+//!   The dataset/LUT pair uniquely identifies each cached entry.
+//!
+//! Validation:
+//!   Cache package unit tests.
+
 const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
+/// Purpose:
+///   Store the reusable LUT shape summary.
 pub const LUTShape = struct {
     spectral_bins: u32 = 0,
     layer_count: u32 = 0,
     coefficient_count: u32 = 0,
 };
 
+/// Purpose:
+///   Store one cached LUT entry.
 pub const Entry = struct {
     dataset_id: []const u8,
     lut_id: []const u8,
@@ -15,6 +38,11 @@ pub const Entry = struct {
     revision: u64 = 0,
 };
 
+/// Purpose:
+///   Retain LUT metadata for repeated execution.
+///
+/// Invariants:
+///   The same `(dataset_id, lut_id)` pair always resolves to the same cache slot.
 pub const LUTCache = struct {
     pub const Shape = LUTShape;
 
@@ -22,10 +50,14 @@ pub const LUTCache = struct {
     entries: std.ArrayListUnmanaged(Entry) = .{},
     generation: u64 = 0,
 
+    /// Purpose:
+    ///   Construct an empty LUT cache.
     pub fn init(allocator: Allocator) LUTCache {
         return .{ .allocator = allocator };
     }
 
+    /// Purpose:
+    ///   Release all owned LUT identifiers.
     pub fn deinit(self: *LUTCache) void {
         for (self.entries.items) |entry| {
             self.allocator.free(entry.dataset_id);
@@ -34,6 +66,8 @@ pub const LUTCache = struct {
         self.entries.deinit(self.allocator);
     }
 
+    /// Purpose:
+    ///   Insert or refresh one LUT metadata entry.
     pub fn upsert(self: *LUTCache, dataset_id: []const u8, lut_id: []const u8, shape: LUTShape) !void {
         if (dataset_id.len == 0 or lut_id.len == 0) {
             return error.InvalidLUTRecord;
@@ -61,6 +95,8 @@ pub const LUTCache = struct {
         self.generation += 1;
     }
 
+    /// Purpose:
+    ///   Look up the cached LUT metadata for a dataset/LUT pair.
     pub fn get(self: *const LUTCache, dataset_id: []const u8, lut_id: []const u8) ?Entry {
         for (self.entries.items) |entry| {
             if (std.mem.eql(u8, entry.dataset_id, dataset_id) and std.mem.eql(u8, entry.lut_id, lut_id)) {
@@ -70,6 +106,8 @@ pub const LUTCache = struct {
         return null;
     }
 
+    /// Purpose:
+    ///   Report how many LUT entries are cached.
     pub fn count(self: *const LUTCache) usize {
         return self.entries.items.len;
     }

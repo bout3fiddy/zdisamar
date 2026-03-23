@@ -1,3 +1,25 @@
+//! Purpose:
+//!   Shared runtime helpers for spectral ASCII ingest.
+//!
+//! Physics:
+//!   These helpers normalize loaded channel data into measurement vectors,
+//!   solar spectra, and auxiliary metadata used by the canonical adapters.
+//!
+//! Vendor:
+//!   Spectral ASCII ingest runtime and wavelength-alignment rules.
+//!
+//! Design:
+//!   Keep the channel extraction and wavelength alignment logic reusable so
+//!   file parsing and mission wiring can share the same behavior.
+//!
+//! Invariants:
+//!   Radiance and irradiance channels must remain aligned within the declared
+//!   wavelength thresholds before a measured spectrum is reused directly.
+//!
+//! Validation:
+//!   Spectral ASCII ingest tests cover channel counts, wavelength alignment,
+//!   and irradiance correction behavior.
+
 const std = @import("std");
 const Request = @import("../../core/Request.zig").Request;
 const Scene = @import("../../model/Scene.zig").Scene;
@@ -10,6 +32,12 @@ pub const ParseError = @import("spectral_ascii_metadata.zig").Error;
 pub const wavelength_alignment_threshold_nm: f64 = 1.0e-3;
 pub const wavelength_alignment_error_threshold_nm: f64 = 0.06;
 
+// UNITS:
+//   Wavelength thresholds are in nanometers and gate whether a measured
+//   irradiance grid may be reused directly or must be regridded.
+
+/// Purpose:
+///   Count channels of a given kind in a loaded ingest bundle.
 pub fn channelCount(loaded: anytype, kind: anytype) usize {
     var count: usize = 0;
     for (loaded.channels) |channel| {
@@ -18,6 +46,8 @@ pub fn channelCount(loaded: anytype, kind: anytype) usize {
     return count;
 }
 
+/// Purpose:
+///   Count samples of a given kind in a loaded ingest bundle.
 pub fn sampleCount(loaded: anytype, kind: anytype) u32 {
     var count: u32 = 0;
     for (loaded.channels) |channel| {
@@ -26,6 +56,8 @@ pub fn sampleCount(loaded: anytype, kind: anytype) u32 {
     return count;
 }
 
+/// Purpose:
+///   Build a measurement descriptor from the loaded channels.
 pub fn measurement(loaded: anytype, product: []const u8, radiance_kind: anytype, irradiance_kind: anytype) Measurement {
     const radiance_count = sampleCount(loaded, radiance_kind);
     const total_samples = if (radiance_count > 0) radiance_count else sampleCount(loaded, irradiance_kind);
@@ -36,6 +68,8 @@ pub fn measurement(loaded: anytype, product: []const u8, radiance_kind: anytype,
     };
 }
 
+/// Purpose:
+///   Derive a spectral grid from the loaded channels.
 pub fn spectralGrid(loaded: anytype, radiance_kind: anytype, irradiance_kind: anytype) ?SpectralGrid {
     const preferred_kind = if (channelCount(loaded, radiance_kind) > 0) radiance_kind else irradiance_kind;
 
@@ -62,6 +96,8 @@ pub fn spectralGrid(loaded: anytype, radiance_kind: anytype, irradiance_kind: an
     };
 }
 
+/// Purpose:
+///   Collect wavelengths for a given channel kind.
 pub fn wavelengthsForKind(
     allocator: std.mem.Allocator,
     loaded: anytype,
@@ -84,6 +120,8 @@ pub fn wavelengthsForKind(
     return wavelengths;
 }
 
+/// Purpose:
+///   Collect channel values for a given kind.
 pub fn channelValuesForKind(
     allocator: std.mem.Allocator,
     loaded: anytype,
@@ -106,6 +144,8 @@ pub fn channelValuesForKind(
     return values;
 }
 
+/// Purpose:
+///   Build an operational solar spectrum from loaded channels.
 pub fn solarSpectrumForKind(
     allocator: std.mem.Allocator,
     loaded: anytype,
@@ -127,6 +167,8 @@ pub fn solarSpectrumForKind(
     };
 }
 
+/// Purpose:
+///   Derive sigma values from loaded radiance-channel SNR data.
 pub fn noiseSigmaForKind(
     allocator: std.mem.Allocator,
     loaded: anytype,
@@ -150,6 +192,8 @@ pub fn noiseSigmaForKind(
     return sigma;
 }
 
+/// Purpose:
+///   Correct or interpolate irradiance onto a target wavelength grid.
 pub fn correctedIrradianceOnWavelengthGrid(
     allocator: std.mem.Allocator,
     loaded: anytype,
@@ -188,6 +232,8 @@ pub fn correctedIrradianceOnWavelengthGrid(
     return source_solar.interpolateOnto(allocator, target_wavelengths_nm);
 }
 
+/// Purpose:
+///   Return the mean spacing between adjacent wavelength samples.
 pub fn meanSpacingNm(wavelengths_nm: []const f64) f64 {
     if (wavelengths_nm.len < 2) return 1.0;
 
@@ -198,6 +244,8 @@ pub fn meanSpacingNm(wavelengths_nm: []const f64) f64 {
     return spacing_sum / @as(f64, @floatFromInt(wavelengths_nm.len - 1));
 }
 
+/// Purpose:
+///   Convert a loaded ingest bundle into a canonical retrieval request.
 pub fn toRequest(
     allocator: std.mem.Allocator,
     loaded: anytype,

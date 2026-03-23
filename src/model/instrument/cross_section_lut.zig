@@ -1,3 +1,21 @@
+//! Purpose:
+//!   Store operational cross-section lookup tables for wavelength, temperature, and pressure.
+//!
+//! Physics:
+//!   Evaluates wavelength-indexed Legendre coefficient tables over scaled logarithmic temperature and pressure coordinates.
+//!
+//! Vendor:
+//!   `operational cross-section LUT`
+//!
+//! Design:
+//!   The coefficient layout is explicit so the flattened indexing and polynomial basis remain easy to audit.
+//!
+//! Invariants:
+//!   Wavelengths are monotonic, coefficient counts stay within the fixed caps, and the coefficient tensor shape matches the table metadata.
+//!
+//! Validation:
+//!   Tests cover interpolation and temperature/pressure dependence through the LUT evaluator.
+
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const constants = @import("constants.zig");
@@ -5,6 +23,11 @@ const max_operational_refspec_temperature_coefficients = constants.max_operation
 const max_operational_refspec_pressure_coefficients = constants.max_operational_refspec_pressure_coefficients;
 const Allocator = std.mem.Allocator;
 
+/// Purpose:
+///   Store an operational cross-section lookup table.
+///
+/// Physics:
+///   Evaluates wavelength-indexed coefficients over scaled temperature and pressure coordinates.
 pub const OperationalCrossSectionLut = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     coefficients: []const f64 = &[_]f64{},
@@ -15,10 +38,17 @@ pub const OperationalCrossSectionLut = struct {
     min_pressure_hpa: f64 = 0.0,
     max_pressure_hpa: f64 = 0.0,
 
+    /// Purpose:
+    ///   Report whether the LUT is active.
     pub fn enabled(self: *const OperationalCrossSectionLut) bool {
         return self.wavelengths_nm.len > 0;
     }
 
+    /// Purpose:
+    ///   Validate the operational cross-section LUT.
+    ///
+    /// Physics:
+    ///   Ensures monotonic wavelengths, finite coefficient values, and compatible temperature/pressure ranges.
     pub fn validate(self: *const OperationalCrossSectionLut) errors.Error!void {
         if (!self.enabled()) {
             if (self.coefficients.len != 0 or
@@ -72,6 +102,8 @@ pub const OperationalCrossSectionLut = struct {
         }
     }
 
+    /// Purpose:
+    ///   Clone the LUT into owned storage.
     pub fn clone(self: OperationalCrossSectionLut, allocator: Allocator) !OperationalCrossSectionLut {
         return .{
             .wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm),
@@ -85,12 +117,19 @@ pub const OperationalCrossSectionLut = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release owned LUT storage.
     pub fn deinitOwned(self: *OperationalCrossSectionLut, allocator: Allocator) void {
         allocator.free(self.wavelengths_nm);
         allocator.free(self.coefficients);
         self.* = .{};
     }
 
+    /// Purpose:
+    ///   Evaluate the LUT sigma at a wavelength, temperature, and pressure.
+    ///
+    /// Physics:
+    ///   Interpolates wavelength samples after evaluating the Legendre basis in scaled log coordinates.
     pub fn sigmaAt(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
@@ -100,6 +139,8 @@ pub const OperationalCrossSectionLut = struct {
         return self.evaluate(wavelength_nm, temperature_k, pressure_hpa).sigma;
     }
 
+    /// Purpose:
+    ///   Evaluate the LUT temperature derivative at a wavelength, temperature, and pressure.
     pub fn dSigmaDTemperatureAt(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
@@ -109,6 +150,8 @@ pub const OperationalCrossSectionLut = struct {
         return self.evaluate(wavelength_nm, temperature_k, pressure_hpa).d_sigma_d_temperature;
     }
 
+    /// Purpose:
+    ///   Evaluate the LUT at a point and return sigma plus temperature derivative.
     fn evaluate(
         self: *const OperationalCrossSectionLut,
         wavelength_nm: f64,
@@ -185,6 +228,8 @@ pub const OperationalCrossSectionLut = struct {
         };
     }
 
+    /// Purpose:
+    ///   Evaluate one wavelength slice of the coefficient table.
     fn evaluateAtIndex(
         self: OperationalCrossSectionLut,
         wavelength_index: usize,
@@ -202,6 +247,8 @@ pub const OperationalCrossSectionLut = struct {
         return sigma;
     }
 
+    /// Purpose:
+    ///   Read a coefficient from the flattened wavelength/pressure/temperature tensor.
     fn coefficientAt(
         self: OperationalCrossSectionLut,
         temperature_index: usize,
@@ -217,6 +264,11 @@ pub const OperationalCrossSectionLut = struct {
         return self.coefficients[offset];
     }
 
+    /// Purpose:
+    ///   Map a positive physical coordinate into scaled log space.
+    ///
+    /// Units:
+    ///   `value`, `minimum`, and `maximum` are temperatures in kelvin or pressures in hPa depending on the caller.
     fn scaledLogCoordinate(
         self: OperationalCrossSectionLut,
         value: f64,
@@ -232,6 +284,8 @@ pub const OperationalCrossSectionLut = struct {
         return -((ln_max + ln_min) / scale) + (2.0 * @log(clamped) / scale);
     }
 
+    /// Purpose:
+    ///   Find the wavelength bracket used for linear interpolation.
     fn wavelengthBracket(
         self: OperationalCrossSectionLut,
         wavelength_nm: f64,
@@ -271,6 +325,9 @@ pub const OperationalCrossSectionLut = struct {
     }
 };
 
+// VENDOR:
+//   `Legendre basis expansion`
+//   These helpers assemble the polynomial basis and its temperature derivative for the flattened coefficient tensor.
 fn fillLegendreValues(values: []f64, scaled_coordinate: f64) void {
     if (values.len == 0) return;
     values[0] = 1.0;

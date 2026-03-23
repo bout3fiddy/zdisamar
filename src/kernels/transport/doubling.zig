@@ -1,7 +1,30 @@
+//! Purpose:
+//!   Propagate homogeneous layers and surface boundaries through the
+//!   delta-Eddington doubling scheme used by the transport kernels.
+//!
+//! Physics:
+//!   Applies the two-stream-style doubling recurrence to layer reflectance,
+//!   transmittance, and source terms after delta-Eddington scaling.
+//!
+//! Vendor:
+//!   `transport doubling` stage
+//!
+//! Design:
+//!   Keeps the homogeneous-layer propagation isolated from route selection and
+//!   field reconstruction so the recurrence can be reasoned about in one file.
+//!
+//! Invariants:
+//!   Doubling denominators must remain non-singular and the scaled layer must
+//!   preserve bounded reflectance/transmittance.
+//!
+//! Validation:
+//!   `tests/unit/transport_doubling_test.zig` and transport integration suites.
+
 const std = @import("std");
 const common = @import("common.zig");
 const phase_functions = @import("../optics/prepare/phase_functions.zig");
 
+/// Layer-level reflectance and source-function response after propagation.
 pub const LayerResponse = struct {
     reflectance: f64,
     transmittance: f64,
@@ -21,6 +44,12 @@ const DeltaEddingtonScaledLayer = struct {
     backscatter_fraction: f64,
 };
 
+/// Purpose:
+///   Propagate a homogeneous layer through repeated doubling steps.
+///
+/// Physics:
+///   Starts from a subdivided homogeneous slab and recursively doubles the
+///   optical thickness to recover the full-layer response.
 pub fn propagateHomogeneous(
     optical_depth: f64,
     single_scatter_albedo: f64,
@@ -29,6 +58,9 @@ pub fn propagateHomogeneous(
     view_mu: f64,
     doublings: u32,
 ) Error!LayerResponse {
+    // UNITS:
+    //   `solar_mu` and `view_mu` are direction cosines, so the attenuation
+    //   exponent stays dimensionless.
     const subdivisions = std.math.pow(f64, 2.0, @as(f64, @floatFromInt(doublings)));
     const base_transmittance = std.math.exp(-optical_depth / subdivisions);
     const base_reflectance = (1.0 - base_transmittance) * single_scatter_albedo * backscatter_fraction;
@@ -43,6 +75,9 @@ pub fn propagateHomogeneous(
         (1.0 - backscatter_fraction) *
         half_layer_diffuse_escape;
 
+    // DECISION:
+    //   Preserve the direct-beam source terms while only the diffuse
+    //   reflectance/transmittance participate in the doubling recurrence.
     var response = LayerResponse{
         .reflectance = base_reflectance,
         .transmittance = base_transmittance,
@@ -72,6 +107,9 @@ pub fn propagateHomogeneous(
 }
 
 pub fn propagateLayer(layer: common.LayerInput, doublings: u32) Error!LayerResponse {
+    // DECISION:
+    //   Apply delta-Eddington scaling before the homogeneous propagation so
+    //   strong forward peaks are normalized into the recurrence domain.
     const scaled = deltaEddingtonScale(layer);
     return propagateHomogeneous(
         scaled.optical_depth,
@@ -83,6 +121,8 @@ pub fn propagateLayer(layer: common.LayerInput, doublings: u32) Error!LayerRespo
     );
 }
 
+/// Purpose:
+///   Materialize the lower boundary as a surface reflectance response.
 pub fn surfaceBoundary(albedo: f64) LayerResponse {
     const clamped_albedo = std.math.clamp(albedo, 0.0, 1.0);
     return .{
@@ -95,6 +135,8 @@ pub fn surfaceBoundary(albedo: f64) LayerResponse {
     };
 }
 
+/// Purpose:
+///   Combine two layer responses using the doubling recurrence.
 pub fn addUpperOverLower(upper: LayerResponse, lower: LayerResponse) Error!LayerResponse {
     const denominator = 1.0 - upper.reflectance * lower.reflectance;
     if (@abs(denominator) <= 1.0e-9) {
@@ -116,6 +158,9 @@ pub fn addUpperOverLower(upper: LayerResponse, lower: LayerResponse) Error!Layer
 
 fn deltaEddingtonScale(layer: common.LayerInput) DeltaEddingtonScaledLayer {
     const asymmetry_factor = std.math.clamp(layer.phase_coefficients[1], -0.95, 0.95);
+    // DECISION:
+    //   Use the asymmetry factor to derive the forward-peak fraction so the
+    //   rescaled layer keeps the vendor's delta-Eddington behavior.
     const forward_peak_fraction = std.math.clamp(asymmetry_factor * asymmetry_factor, 0.0, 0.95);
     const extinction_scale = @max(1.0 - layer.single_scatter_albedo * forward_peak_fraction, 1.0e-6);
     const scaled_single_scatter_albedo = std.math.clamp(

@@ -1,8 +1,32 @@
+//! Purpose:
+//!   Cache prepared plan layouts keyed by plan id for repeated execution.
+//!
+//! Physics:
+//!   Preserve the reused measurement and layout sizing hints that do not alter the underlying
+//!   retrieval or transport calculations.
+//!
+//! Vendor:
+//!   `prepared plan cache`
+//!
+//! Design:
+//!   Keep the cache keyed by plan id and evict the oldest entry when capacity is reached.
+//!
+//! Invariants:
+//!   Each cached entry owns a single prepared layout snapshot for its plan id.
+//!
+//! Validation:
+//!   Cache package unit tests.
+
 const std = @import("std");
 const PreparedLayout = @import("PreparedLayout.zig").PreparedLayout;
 
 const Allocator = std.mem.Allocator;
 
+/// Purpose:
+///   Store the prepared layout and usage counters for one plan.
+///
+/// Physics:
+///   Keep the reusable execution shape and revision state together.
 pub const Entry = struct {
     plan_id: u64,
     prepared_layout: PreparedLayout,
@@ -10,17 +34,32 @@ pub const Entry = struct {
     revision: u64 = 0,
 };
 
+/// Purpose:
+///   Configure the reuse cap for the prepared-plan cache.
+///
+/// Physics:
+///   Limit how many prepared layouts remain resident at once.
 pub const Options = struct {
     // Maximum prepared plans retained for reuse before oldest entries are evicted.
     max_entries: usize = 64,
 };
 
+/// Purpose:
+///   Retain prepared plans for repeated execution.
+///
+/// Physics:
+///   Cache the derived layout state so repeated requests can skip recomputation.
+///
+/// Invariants:
+///   Entries are keyed by plan id and updates refresh the stored layout in place.
 pub const PlanCache = struct {
     allocator: Allocator,
     options: Options,
     entries: std.ArrayListUnmanaged(Entry) = .{},
     generation: u64 = 0,
 
+    /// Purpose:
+    ///   Construct an empty prepared-plan cache.
     pub fn init(allocator: Allocator, options: Options) PlanCache {
         return .{
             .allocator = allocator,
@@ -28,10 +67,17 @@ pub const PlanCache = struct {
         };
     }
 
+    /// Purpose:
+    ///   Release all cached prepared layouts.
     pub fn deinit(self: *PlanCache) void {
         self.entries.deinit(self.allocator);
     }
 
+    /// Purpose:
+    ///   Insert or refresh a prepared layout for one plan id.
+    ///
+    /// Physics:
+    ///   Update the cached execution shape without changing the downstream scientific result.
     pub fn put(self: *PlanCache, plan_id: u64, prepared_layout: PreparedLayout) !void {
         if (self.options.max_entries == 0) {
             return error.PlanCacheDisabled;
@@ -57,6 +103,11 @@ pub const PlanCache = struct {
         self.generation += 1;
     }
 
+    /// Purpose:
+    ///   Look up a cached prepared layout by plan id.
+    ///
+    /// Physics:
+    ///   Retrieve the reusable execution shape for repeated work.
     pub fn get(self: *PlanCache, plan_id: u64) ?*Entry {
         for (self.entries.items) |*entry| {
             if (entry.plan_id == plan_id) {
@@ -66,12 +117,19 @@ pub const PlanCache = struct {
         return null;
     }
 
+    /// Purpose:
+    ///   Record one reuse of a cached prepared layout.
+    ///
+    /// Physics:
+    ///   Track repeated execution without modifying the scientific payload.
     pub fn markRun(self: *PlanCache, plan_id: u64) bool {
         const entry = self.get(plan_id) orelse return false;
         entry.run_count += 1;
         return true;
     }
 
+    /// Purpose:
+    ///   Report how many prepared layouts are currently cached.
     pub fn count(self: *const PlanCache) usize {
         return self.entries.items.len;
     }

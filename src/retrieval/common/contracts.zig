@@ -1,3 +1,30 @@
+//! Purpose:
+//!   Define the canonical retrieval problem, fit-space, and solver outcome
+//!   contracts shared by the retrieval methods.
+//!
+//! Physics:
+//!   This module carries the typed scene, inverse-problem, measurement, and
+//!   output structures that describe the state of a spectral retrieval and
+//!   the diagnostics used to judge convergence.
+//!
+//! Vendor:
+//!   Retrieval problem assembly, method classification, and solver-result
+//!   shaping stages.
+//!
+//! Design:
+//!   Encode the retrieval surface as typed records instead of stringly
+//!   configuration, so solver modules can validate shape and provenance before
+//!   iterating.
+//!
+//! Invariants:
+//!   Retrieval problems must remain scene-compatible, measurement counts must
+//!   match their bound products, and solver outcomes must preserve teardown
+//!   ownership for all duplicated strings and buffers.
+//!
+//! Validation:
+//!   Retrieval solver tests and canonical-config integration tests cover the
+//!   request-to-problem and problem-to-outcome conversions.
+
 const std = @import("std");
 const Request = @import("../../core/Request.zig").Request;
 const DerivativeMode = @import("../../model/Scene.zig").DerivativeMode;
@@ -6,8 +33,8 @@ const LayoutRequirements = @import("../../model/Scene.zig").LayoutRequirements;
 const Measurement = @import("../../model/Scene.zig").Measurement;
 const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const Scene = @import("../../model/Scene.zig").Scene;
-const MeasurementSpaceProduct = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceProduct;
-const MeasurementSpaceSummary = @import("../../kernels/transport/measurement_space.zig").MeasurementSpaceSummary;
+const MeasurementSpaceProduct = @import("../../kernels/transport/measurement.zig").MeasurementSpaceProduct;
+const MeasurementSpaceSummary = @import("../../kernels/transport/measurement.zig").MeasurementSpaceSummary;
 const Allocator = std.mem.Allocator;
 
 pub const Method = enum {
@@ -15,12 +42,20 @@ pub const Method = enum {
     doas,
     dismas,
 
+    /// Purpose:
+    ///   Classify the solver method into surrogate or real implementation
+    ///   families.
+    ///
+    /// Vendor:
+    ///   Retrieval method family tagging in the solver-selection stage.
     pub fn classification(self: Method) ImplementationClass {
         return switch (self) {
             .oe, .doas, .dismas => .real,
         };
     }
 
+    /// Purpose:
+    ///   Provide the stable vendor-style label for the solver method.
     pub fn implementationLabel(self: Method) []const u8 {
         return switch (self) {
             .oe => "rodgers_oe",
@@ -68,6 +103,9 @@ pub const RetrievalProblem = struct {
         sample_count: u32 = 0,
         product: Request.BorrowedMeasurementProduct,
 
+        /// Purpose:
+        ///   Return the measurement-space summary associated with the bound
+        ///   observed product.
         pub fn summary(self: ObservedMeasurement) MeasurementSpaceSummary {
             return self.product.product.summary;
         }
@@ -79,6 +117,9 @@ pub const RetrievalProblem = struct {
     jacobians_requested: bool = false,
     observed_measurement: ?ObservedMeasurement = null,
 
+    /// Purpose:
+    ///   Validate and normalize a request into a retrieval-ready problem
+    ///   record.
     pub fn fromRequest(request: *const Request) Error!RetrievalProblem {
         validateScene(request.scene) catch |err| return err;
 
@@ -127,6 +168,9 @@ pub const RetrievalProblem = struct {
         };
     }
 
+    /// Purpose:
+    ///   Validate the canonical problem invariants expected by every solver
+    ///   entrypoint.
     pub fn validate(self: RetrievalProblem) Error!void {
         try validateScene(self.scene);
 
@@ -136,6 +180,9 @@ pub const RetrievalProblem = struct {
         if (self.jacobians_requested and self.derivative_mode == .none) return Error.DerivativeModeRequired;
     }
 
+    /// Purpose:
+    ///   Derive workspace sizing from the canonical scene and inverse
+    ///   problem.
     pub fn layoutRequirements(self: RetrievalProblem) LayoutRequirements {
         var requirements = self.scene.layoutRequirements();
         requirements.state_parameter_count = self.inverse_problem.state_vector.count();
@@ -143,6 +190,9 @@ pub const RetrievalProblem = struct {
         return requirements;
     }
 
+    /// Purpose:
+    ///   Validate the problem against method-specific derivative and
+    ///   measurement requirements.
     pub fn validateForMethod(self: RetrievalProblem, method: Method) Error!void {
         try self.validate();
         if (derivativeRequirement(method) == .required and self.derivative_mode == .none) {
@@ -177,6 +227,8 @@ pub const SolverOutcome = struct {
         parameter_names: []const []const u8 = &[_][]const u8{},
         values: []f64 = &[_]f64{},
 
+        /// Purpose:
+        ///   Release duplicated state-estimate labels and values.
         pub fn deinit(self: *StateEstimate, allocator: Allocator) void {
             if (self.parameter_names.len != 0) {
                 for (self.parameter_names) |name| allocator.free(name);
@@ -192,6 +244,8 @@ pub const SolverOutcome = struct {
         column_count: u32 = 0,
         values: []f64 = &[_]f64{},
 
+        /// Purpose:
+        ///   Release the owned dense matrix buffer.
         pub fn deinit(self: *Matrix, allocator: Allocator) void {
             if (self.values.len != 0) allocator.free(self.values);
             self.* = .{};
@@ -205,6 +259,9 @@ pub const SolverOutcome = struct {
         sample_count: u32 = 0,
         summary: MeasurementSpaceSummary,
 
+        /// Purpose:
+        ///   Release duplicated source and product labels owned by the solver
+        ///   outcome.
         pub fn deinitOwned(self: *ObservedMeasurementSummary, allocator: Allocator) void {
             if (self.source_name.len != 0) allocator.free(self.source_name);
             if (self.product_name.len != 0) allocator.free(self.product_name);
@@ -232,6 +289,8 @@ pub const SolverOutcome = struct {
     averaging_kernel: ?Matrix = null,
     posterior_covariance: ?Matrix = null,
 
+    /// Purpose:
+    ///   Tear down every owned buffer attached to the solver result.
     pub fn deinit(self: *SolverOutcome, allocator: Allocator) void {
         if (self.scene_id.len != 0) allocator.free(self.scene_id);
         if (self.inverse_problem_id.len != 0) allocator.free(self.inverse_problem_id);
@@ -264,6 +323,9 @@ pub fn derivativeRequirement(method: Method) DerivativeRequirement {
     };
 }
 
+/// Purpose:
+///   Assemble the final solver outcome with duplicated identifiers and owned
+///   summaries.
 pub fn outcome(
     allocator: Allocator,
     problem: RetrievalProblem,

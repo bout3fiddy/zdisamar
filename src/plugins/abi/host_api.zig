@@ -1,6 +1,27 @@
+//! Purpose:
+//!   Adapt typed host logging into the ABI-facing callback table.
+//!
+//! Physics:
+//!   No physics is introduced here; the file moves log messages across the
+//!   plugin ABI boundary.
+//!
+//! Vendor:
+//!   `host_api`
+//!
+//! Design:
+//!   Keep a typed logger context in front of the ABI struct so the host can
+//!   supply closures without exposing them to the plugin side.
+//!
+//! Invariants:
+//!   The ABI struct must always advertise the current host API version and
+//!   valid user-data pointer when logging is enabled.
+//!
+//! Validation:
+//!   Covered by the host API tests in this file.
 const std = @import("std");
 const Abi = @import("abi_types.zig");
 
+/// Log levels visible to native plugins.
 pub const LogLevel = enum(i32) {
     debug = 0,
     info = 1,
@@ -8,6 +29,7 @@ pub const LogLevel = enum(i32) {
     err = 3,
 };
 
+/// Function signature used by typed host log sinks.
 pub const LoggerFn = *const fn (user_data: ?*anyopaque, level: LogLevel, message: []const u8) void;
 
 const HostLogContext = struct {
@@ -15,6 +37,7 @@ const HostLogContext = struct {
     logger_user_data: ?*anyopaque,
 };
 
+/// Host-side wrapper around the ABI callback table.
 pub const HostApiRef = struct {
     context: HostLogContext = .{
         .logger = noopLogger,
@@ -51,6 +74,7 @@ pub const HostApiRef = struct {
     }
 };
 
+/// No-op ABI host API used when logging is disabled.
 pub const noop_host_api: Abi.HostApi = .{
     .struct_size = @sizeOf(Abi.HostApi),
     .host_api_version = Abi.host_api_version,
@@ -64,6 +88,9 @@ fn cLogMessage(level: i32, message: ?[*:0]const u8, user_data: ?*anyopaque) call
     const context_ptr = user_data orelse return;
     const context: *HostLogContext = @ptrCast(@alignCast(context_ptr));
     const text = if (message) |value| std.mem.span(value) else "";
+    // DECISION:
+    //   Map unexpected integers to `.err` so the host log sink still receives a
+    //   typed severity even when a plugin misbehaves.
     const mapped_level = std.meta.intToEnum(LogLevel, level) catch .err;
     context.logger(context.logger_user_data, mapped_level, text);
 }

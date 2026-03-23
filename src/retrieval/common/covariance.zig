@@ -1,3 +1,27 @@
+//! Purpose:
+//!   Assemble and apply measurement covariance representations for retrieval
+//!   cost terms.
+//!
+//! Physics:
+//!   Measurement uncertainty enters the retrieval either as diagonal sigma
+//!   vectors or as dense covariance matrices that are inverted for whitening
+//!   and quadratic-cost evaluation.
+//!
+//! Vendor:
+//!   Measurement-error covariance handling in retrieval cost assembly.
+//!
+//! Design:
+//!   Keep the diagonal and dense forms explicit so solver modules can choose
+//!   the lightest representation that still matches the bound measurement.
+//!
+//! Invariants:
+//!   Variances must stay positive and matrix dimensions must align exactly
+//!   with the residual or state vector they act on.
+//!
+//! Validation:
+//!   Covariance unit tests cover whitening, sigma-to-covariance conversion,
+//!   and quadratic-form evaluation.
+
 const std = @import("std");
 const dense = @import("../../kernels/linalg/small_dense.zig");
 const Allocator = std.mem.Allocator;
@@ -11,6 +35,8 @@ pub const Error = error{
 pub const DiagonalCovariance = struct {
     variances: []const f64,
 
+    /// Purpose:
+    ///   Whiten a residual vector with diagonal variances.
     pub fn whiten(self: DiagonalCovariance, residual: []const f64, output: []f64) Error!void {
         if (self.variances.len != residual.len or output.len != residual.len) {
             return error.ShapeMismatch;
@@ -29,6 +55,8 @@ pub const DenseCovariance = struct {
     values: []f64,
     inverse_values: []f64,
 
+    /// Purpose:
+    ///   Release the covariance and inverse-covariance buffers.
     pub fn deinit(self: *DenseCovariance, allocator: Allocator) void {
         if (self.values.len != 0) allocator.free(self.values);
         if (self.inverse_values.len != 0) allocator.free(self.inverse_values);
@@ -36,6 +64,13 @@ pub const DenseCovariance = struct {
     }
 };
 
+/// Purpose:
+///   Materialize a dense diagonal covariance matrix from sigma values.
+///
+/// Units:
+///   Sigma values are in measurement units; the stored covariance and
+///   inverse-covariance entries are in squared measurement units and reciprocal
+///   squared measurement units respectively.
 pub fn diagonalFromSigma(allocator: Allocator, sigma: []const f64) Error!DenseCovariance {
     const dimension = sigma.len;
     const values = allocator.alloc(f64, dimension * dimension) catch return error.OutOfMemory;
@@ -62,6 +97,8 @@ pub fn diagonalFromSigma(allocator: Allocator, sigma: []const f64) Error!DenseCo
     };
 }
 
+/// Purpose:
+///   Evaluate v^T C^-1 v for a dense inverse covariance.
 pub fn quadraticForm(inverse_covariance: []const f64, vector: []const f64) Error!f64 {
     const dimension = vector.len;
     if (inverse_covariance.len != dimension * dimension) return error.ShapeMismatch;

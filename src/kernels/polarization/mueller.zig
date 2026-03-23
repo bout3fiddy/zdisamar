@@ -1,7 +1,35 @@
+//! Purpose:
+//!   Apply Mueller matrices to Stokes vectors.
+//!
+//! Physics:
+//!   Transforms a polarized state through a 4x4 linear optical operator.
+//!
+//! Vendor:
+//!   `Mueller matrix application`
+//!
+//! Design:
+//!   The matrix multiplication is explicit so the component ordering stays obvious.
+//!
+//! Invariants:
+//!   The matrix is always 4x4 and the input/output state order is `I, Q, U, V`.
+//!
+//! Validation:
+//!   Tests cover a simple basis swap through the matrix.
+
 const StokesVector = @import("stokes.zig").StokesVector;
 
+/// Purpose:
+///   Represent a Mueller matrix in row-major form.
 pub const Matrix = [4][4]f64;
 
+/// Purpose:
+///   Apply a Mueller matrix to a Stokes vector.
+///
+/// Physics:
+///   Computes the transformed polarized state after an optical element.
+///
+/// Vendor:
+///   `Mueller transform`
 pub fn apply(matrix: Matrix, vector: StokesVector) StokesVector {
     const input = [_]f64{ vector.i, vector.q, vector.u, vector.v };
     var output = [_]f64{ 0.0, 0.0, 0.0, 0.0 };
