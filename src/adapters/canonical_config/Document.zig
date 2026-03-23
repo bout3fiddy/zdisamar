@@ -2364,8 +2364,16 @@ fn applyAbsorbingGasConfigToScene(
 fn findAbsorberForSpecies(absorbers: AbsorberSet, species: fields.AbsorberSpecies) ?*Absorber {
     for (0..absorbers.items.len) |index| {
         const absorber = @constCast(&absorbers.items[index]);
-        if (absorber.resolved_species == species) return absorber;
+        if (resolvedAbsorberSpecies(absorber.*) == species) return absorber;
     }
+    return null;
+}
+
+fn resolvedAbsorberSpecies(absorber: Absorber) ?fields.AbsorberSpecies {
+    if (absorber.resolved_species) |species| return species;
+    if (std.meta.stringToEnum(fields.AbsorberSpecies, absorber.species)) |species| return species;
+    if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
     return null;
 }
 
@@ -2763,6 +2771,20 @@ fn inferSpectralGrid(bands: SpectralBandSet) !SpectralGrid {
         .end_nm = end_nm,
         .sample_count = sample_count,
     };
+}
+
+test "document finds absorbers by public species string when resolved species is unset" {
+    const absorbers: AbsorberSet = .{
+        .items = &.{
+            Absorber{
+                .id = "nh3",
+                .species = "nh3",
+            },
+        },
+    };
+
+    const absorber = findAbsorberForSpecies(absorbers, .nh3) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("nh3", absorber.species);
 }
 
 test "document resolves revised common example" {

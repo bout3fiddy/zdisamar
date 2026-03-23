@@ -822,12 +822,11 @@ pub const PreparedOpticalState = struct {
     ) f64 {
         if (self.line_absorbers.len == 0) return sublayer.absorber_number_density_cm3;
 
-        const owner_species = self.continuum_owner_species orelse return 0.0;
+        const owner_species = self.continuum_owner_species orelse return sublayer.absorber_number_density_cm3;
         // DECISION:
-        //   A single continuum table cannot be safely applied to the summed density of
-        //   multiple active line gases. When preparation cannot identify which gas owns
-        //   the continuum, prefer the conservative zero contribution over inflating every
-        //   absorber with the same table.
+        //   When preparation can identify a continuum owner, scope the continuum to that
+        //   gas only. If ownership is unknown, preserve the prior summed-density behavior
+        //   rather than dropping continuum absorption entirely for mixed non-O2 families.
         if (self.operational_o2_lut.enabled() and owner_species == .o2) {
             return sublayer.oxygen_number_density_cm3;
         }
@@ -843,7 +842,7 @@ pub const PreparedOpticalState = struct {
     ) f64 {
         if (self.line_absorbers.len == 0) return absorber_density_cm3;
 
-        const owner_species = self.continuum_owner_species orelse return 0.0;
+        const owner_species = self.continuum_owner_species orelse return absorber_density_cm3;
         if (self.operational_o2_lut.enabled() and owner_species == .o2) {
             return oxygen_density_cm3;
         }
@@ -1557,10 +1556,15 @@ pub const PreparedOpticalState = struct {
             );
             if (weight <= 0.0) continue;
 
-            const evaluation = line_absorber.line_list.evaluateAt(
+            const evaluation = line_absorber.line_list.evaluateAtPrepared(
                 wavelength_nm,
                 temperature_k,
                 pressure_hpa,
+                preparedStrongLineStateAtAltitude(
+                    sublayers,
+                    line_absorber.strong_line_states,
+                    altitude_km,
+                ),
             );
             total_weight += weight;
             weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * weight;
@@ -2119,13 +2123,13 @@ pub fn prepareWithParticleTables(
             };
             const o2_density_cm3 = density * oxygen_mixing_ratio;
             const continuum_density_cm3 = if (owned_line_absorbers.len != 0) blk: {
-                const owner_species = continuum_owner_species orelse break :blk 0.0;
+                const owner_species = continuum_owner_species orelse break :blk absorber_density_cm3;
                 if (operational_o2_lut.enabled() and owner_species == .o2) break :blk o2_density_cm3;
                 for (owned_line_absorbers) |line_absorber| {
                     if (line_absorber.species != owner_species) continue;
                     break :blk line_absorber.number_densities_cm3[sublayer_write_index];
                 }
-                break :blk 0.0;
+                break :blk absorber_density_cm3;
             } else absorber_density_cm3;
             const sublayer_path_length_cm = layer_span_km * centimeters_per_kilometer * sublayer_weight;
             const gas_column_density_cm2 = absorber_density_cm3 * sublayer_path_length_cm;
