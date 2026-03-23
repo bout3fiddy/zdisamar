@@ -92,13 +92,26 @@ pub fn speciesMixingRatioAtPressure(
     if (profile_ppmv.len != 0) {
         return interpolateMixingRatioProfileFraction(profile_ppmv, pressure_hpa);
     }
-    return default_fraction orelse defaultVolumeMixingRatio(species);
+    return default_fraction orelse defaultVolumeMixingRatioForScene(scene, species);
 }
 
 pub fn defaultVolumeMixingRatio(species: AbsorberModel.AbsorberSpecies) ?f64 {
     return switch (species) {
         .no2, .trop_no2, .strat_no2 => default_no2_volume_mixing_ratio,
         else => null,
+    };
+}
+
+fn defaultVolumeMixingRatioForScene(
+    scene: *const Scene,
+    species: AbsorberModel.AbsorberSpecies,
+) ?f64 {
+    return switch (species) {
+        .trop_no2, .strat_no2 => if (usesSplitNo2PartitionFallback(scene))
+            default_no2_volume_mixing_ratio * 0.5
+        else
+            default_no2_volume_mixing_ratio,
+        else => defaultVolumeMixingRatio(species),
     };
 }
 
@@ -133,6 +146,13 @@ fn findAbsorberBySpecies(
         if (resolvedAbsorberSpecies(absorber.*) == species) return absorber;
     }
     return null;
+}
+
+fn usesSplitNo2PartitionFallback(scene: *const Scene) bool {
+    const trop = findAbsorberBySpecies(scene, .trop_no2) orelse return false;
+    const strat = findAbsorberBySpecies(scene, .strat_no2) orelse return false;
+    return trop.volume_mixing_ratio_profile_ppmv.len == 0 and
+        strat.volume_mixing_ratio_profile_ppmv.len == 0;
 }
 
 fn interpolateMixingRatioProfileFraction(profile_ppmv: []const [2]f64, pressure_hpa: f64) f64 {

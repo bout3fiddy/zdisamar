@@ -2314,3 +2314,39 @@ test "species mixing ratio falls back to demo NO2 trace loading when scene omits
         1.0e-18,
     );
 }
+
+test "species mixing ratio splits demo NO2 trace loading across partition absorbers" {
+    const scene: zdisamar.Scene = .{
+        .id = "split-default-no2-trace-loading",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 9,
+        },
+        .absorbers = .{
+            .items = &.{
+                .{
+                    .id = "trop-no2",
+                    .species = "trop_NO2",
+                    .resolved_species = .trop_no2,
+                },
+                .{
+                    .id = "strat-no2",
+                    .species = "strat_NO2",
+                    .resolved_species = .strat_no2,
+                },
+            },
+        },
+    };
+
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 2.5e-8),
+        OpticsPrepare.spectroscopy.speciesMixingRatioAtPressure(&scene, .trop_no2, &.{}, 700.0, null).?,
+        1.0e-18,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 2.5e-8),
+        OpticsPrepare.spectroscopy.speciesMixingRatioAtPressure(&scene, .strat_no2, &.{}, 700.0, null).?,
+        1.0e-18,
+    );
+}

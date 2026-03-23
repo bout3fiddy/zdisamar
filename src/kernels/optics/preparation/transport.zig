@@ -668,7 +668,6 @@ pub fn fillPseudoSphericalGridAtWavelength(
     const sublayers = self.sublayers orelse return false;
     const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
     const sample_count = solver_layer_count * subgrid_divisions;
-    _ = attenuation_layers;
     if (attenuation_samples.len < sample_count or
         level_sample_starts.len != solver_layer_count + 1 or
         level_altitudes_km.len != solver_layer_count + 1)
@@ -731,18 +730,22 @@ pub fn fillPseudoSphericalGridAtWavelength(
                 interval.lower_altitude_km + 0.5 * altitude_span_km
             else
                 interval.lower_altitude_km;
+            const optical_depth = pseudoSphericalCarrierAtAltitude(
+                self,
+                wavelength_nm,
+                interval.support_sublayers,
+                interval.strong_line_states,
+                sample_altitude_km,
+                altitude_span_km,
+            ).optical_depth;
             attenuation_samples[sample_index] = .{
                 .altitude_km = sample_altitude_km,
                 .thickness_km = altitude_span_km,
-                .optical_depth = pseudoSphericalCarrierAtAltitude(
-                    self,
-                    wavelength_nm,
-                    interval.support_sublayers,
-                    interval.strong_line_states,
-                    sample_altitude_km,
-                    altitude_span_km,
-                ).optical_depth,
+                .optical_depth = optical_depth,
             };
+            if (sample_index < attenuation_layers.len) {
+                attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+            }
             sample_index += 1;
             continue;
         }
@@ -752,6 +755,11 @@ pub fn fillPseudoSphericalGridAtWavelength(
             .thickness_km = 0.0,
             .optical_depth = 0.0,
         };
+        // Keep the retained layer scratch deterministic even though the
+        // pseudo-spherical contract is carried by the sample grid below.
+        if (sample_index < attenuation_layers.len) {
+            attenuation_layers[sample_index] = .{};
+        }
         sample_index += 1;
 
         if (altitude_span_km <= 0.0) {
@@ -761,6 +769,9 @@ pub fn fillPseudoSphericalGridAtWavelength(
                     .thickness_km = 0.0,
                     .optical_depth = 0.0,
                 };
+                if (sample_index < attenuation_layers.len) {
+                    attenuation_layers[sample_index] = .{};
+                }
                 sample_index += 1;
             }
             continue;
@@ -771,18 +782,22 @@ pub fn fillPseudoSphericalGridAtWavelength(
             const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
             const node_altitude_km = interval.lower_altitude_km + normalized_position * altitude_span_km;
             const weight_km = 0.5 * rule.weights[node_index] * altitude_span_km;
+            const optical_depth = pseudoSphericalCarrierAtAltitude(
+                self,
+                wavelength_nm,
+                interval.support_sublayers,
+                interval.strong_line_states,
+                node_altitude_km,
+                weight_km,
+            ).optical_depth;
             attenuation_samples[sample_index] = .{
                 .altitude_km = node_altitude_km,
                 .thickness_km = weight_km,
-                .optical_depth = pseudoSphericalCarrierAtAltitude(
-                    self,
-                    wavelength_nm,
-                    interval.support_sublayers,
-                    interval.strong_line_states,
-                    node_altitude_km,
-                    weight_km,
-                ).optical_depth,
+                .optical_depth = optical_depth,
             };
+            if (sample_index < attenuation_layers.len) {
+                attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+            }
             sample_index += 1;
         }
     }

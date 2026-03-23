@@ -362,7 +362,7 @@ fn prepareWithInputs(
                         if (line_absorber.species == .o2)
                             oxygen_volume_mixing_ratio
                         else
-                            Spectroscopy.defaultVolumeMixingRatio(line_absorber.species),
+                            null,
                     ) orelse return error.InvalidRequest;
                     const line_absorber_density_cm3 = density * absorber_mixing_ratio;
                     line_absorber.number_densities_cm3[sublayer_write_index] = line_absorber_density_cm3;
@@ -435,7 +435,7 @@ fn prepareWithInputs(
                         if (species == .o2)
                             oxygen_volume_mixing_ratio
                         else
-                            Spectroscopy.defaultVolumeMixingRatio(species),
+                            null,
                     ) orelse oxygen_volume_mixing_ratio
                 else
                     oxygen_volume_mixing_ratio;
