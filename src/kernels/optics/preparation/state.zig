@@ -159,6 +159,8 @@ pub const PreparedOpticalState = struct {
     cia_mean_cross_section_cm5_per_molecule2: f64,
     effective_air_mass_factor: f64,
     effective_single_scatter_albedo: f64,
+    aerosol_single_scatter_albedo: f64 = -1.0,
+    cloud_single_scatter_albedo: f64 = -1.0,
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
     air_column_density_factor: f64 = 0.0,
@@ -515,14 +517,33 @@ pub const PreparedOpticalState = struct {
             self.cloud_angstrom_exponent,
             wavelength_nm,
         );
+        // Hand-built test states may omit particle-specific SSA; preserve the
+        // legacy aggregate fallback for those fixtures, but prefer the explicit
+        // per-particle values produced by preparation.
+        const aerosol_single_scatter_albedo = std.math.clamp(
+            if (self.aerosol_single_scatter_albedo >= 0.0)
+                self.aerosol_single_scatter_albedo
+            else
+                self.effective_single_scatter_albedo,
+            0.0,
+            1.0,
+        );
+        const cloud_single_scatter_albedo = std.math.clamp(
+            if (self.cloud_single_scatter_albedo >= 0.0)
+                self.cloud_single_scatter_albedo
+            else
+                self.effective_single_scatter_albedo,
+            0.0,
+            1.0,
+        );
         return .{
             .gas_absorption_optical_depth = gas_absorption_optical_depth,
             .gas_scattering_optical_depth = gas_scattering_optical_depth,
             .cia_optical_depth = cia_optical_depth,
             .aerosol_optical_depth = aerosol_optical_depth,
-            .aerosol_scattering_optical_depth = aerosol_optical_depth * self.effective_single_scatter_albedo,
+            .aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo,
             .cloud_optical_depth = cloud_optical_depth,
-            .cloud_scattering_optical_depth = cloud_optical_depth * self.effective_single_scatter_albedo,
+            .cloud_scattering_optical_depth = cloud_optical_depth * cloud_single_scatter_albedo,
         };
     }
 

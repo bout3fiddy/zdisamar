@@ -715,6 +715,8 @@ fn prepareWithInputs(
             base_single_scatter_albedo
         else
             total_scattering_optical_depth / total_optical_depth,
+        .aerosol_single_scatter_albedo = aerosol_single_scatter_albedo,
+        .cloud_single_scatter_albedo = cloud_single_scatter_albedo,
         .effective_temperature_k = effective_temperature,
         .effective_pressure_hpa = effective_pressure,
         .air_column_density_factor = air_column_density_factor,

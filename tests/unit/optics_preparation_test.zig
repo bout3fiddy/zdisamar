@@ -2176,6 +2176,44 @@ test "optical preparation derives deterministic layer optical depths from typed 
     try std.testing.expect(transport_layers[11].optical_depth > 0.0);
 }
 
+test "optical preparation preserves particle-specific scattering without prepared sublayers" {
+    var prepared: OpticsPrepare.PreparedOpticalState = .{
+        .layers = try std.testing.allocator.alloc(OpticsPrepare.PreparedLayer, 0),
+        .continuum_points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+        .mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
+        .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 0.25,
+        .aerosol_single_scatter_albedo = 0.8,
+        .cloud_single_scatter_albedo = 0.6,
+        .effective_temperature_k = 260.0,
+        .effective_pressure_hpa = 700.0,
+        .column_density_factor = 0.0,
+        .cia_pair_path_factor_cm5 = 0.0,
+        .aerosol_reference_wavelength_nm = 435.0,
+        .aerosol_angstrom_exponent = 0.0,
+        .cloud_reference_wavelength_nm = 435.0,
+        .cloud_angstrom_exponent = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.2,
+        .cloud_optical_depth = 0.1,
+        .d_optical_depth_d_temperature = 0.0,
+        .depolarization_factor = 0.0,
+        .total_optical_depth = 0.3,
+    };
+    defer prepared.deinit(std.testing.allocator);
+
+    const breakdown = prepared.opticalDepthBreakdownAtWavelength(435.0);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.16), breakdown.aerosol_scattering_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.06), breakdown.cloud_scattering_optical_depth, 1.0e-12);
+}
+
 fn testPreparedSublayer(
     parent_layer_index: u32,
     sublayer_index: u32,
