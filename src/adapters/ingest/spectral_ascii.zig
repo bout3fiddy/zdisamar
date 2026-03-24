@@ -499,3 +499,45 @@ test "spectral ascii loader parses named non-o2 operational LUT metadata" {
     try std.testing.expect(o3_lut.sigmaAt(431.0, 260.0, 700.0) > 0.0);
     try std.testing.expect(o3_lut.sigmaAt(431.0, 290.0, 700.0) > o3_lut.sigmaAt(431.0, 240.0, 700.0));
 }
+
+test "spectral ascii loader routes o2_o2 operational LUT aliases to the dedicated slot" {
+    const fixture =
+        \\meta o2_o2_refspec_ntemperature 2
+        \\meta o2_o2_refspec_npressure 2
+        \\meta o2_o2_refspec_temperature_min 220.0
+        \\meta o2_o2_refspec_temperature_max 320.0
+        \\meta o2_o2_refspec_pressure_min 150.0
+        \\meta o2_o2_refspec_pressure_max 1000.0
+        \\meta o2_o2_refspec_wavelength_1 760.8
+        \\meta o2_o2_refspec_wavelength_2 761.0
+        \\meta o2_o2_refspec_wavelength_3 761.2
+        \\meta o2_o2_refspec_coeff_1_1_1 1.2e-46
+        \\meta o2_o2_refspec_coeff_2_1_1 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_1 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_1 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_2 1.5e-46
+        \\meta o2_o2_refspec_coeff_2_1_2 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_2 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_2 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_3 1.1e-46
+        \\meta o2_o2_refspec_coeff_2_1_3 0.18e-46
+        \\meta o2_o2_refspec_coeff_1_2_3 0.08e-46
+        \\meta o2_o2_refspec_coeff_2_2_3 0.02e-46
+        \\start_channel_rad
+        \\rad 760.8 1485.0 1.116153E+13
+        \\rad 761.0 1465.0 1.106153E+13
+        \\rad 761.2 1445.0 1.096153E+13
+        \\end_channel_rad
+    ;
+
+    var loaded = try parse(std.testing.allocator, fixture);
+    defer loaded.deinit(std.testing.allocator);
+
+    try std.testing.expect(loaded.metadata.hasOperationalLuts());
+    try std.testing.expect(!loaded.metadata.o2_operational_lut.enabled());
+    try std.testing.expect(loaded.metadata.o2o2_operational_lut.enabled());
+    try std.testing.expectEqual(@as(usize, 0), loaded.metadata.cross_section_operational_luts.len);
+    const o2o2_lut = loaded.metadata.operationalLut("o2_o2_operational_lut") orelse unreachable;
+    try std.testing.expectEqual(&loaded.metadata.o2o2_operational_lut, o2o2_lut);
+    try std.testing.expect(o2o2_lut.sigmaAt(761.0, 260.0, 700.0) > 0.0);
+}

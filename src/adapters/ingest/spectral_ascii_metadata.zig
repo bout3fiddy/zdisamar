@@ -351,7 +351,9 @@ pub const OperationalMetadata = struct {
         if (std.mem.eql(u8, output_name, "o2_operational_lut")) {
             return if (self.o2_operational_lut.enabled()) &self.o2_operational_lut else null;
         }
-        if (std.mem.eql(u8, output_name, "o2o2_operational_lut")) {
+        if (std.mem.eql(u8, output_name, "o2o2_operational_lut") or
+            std.mem.eql(u8, output_name, "o2_o2_operational_lut"))
+        {
             return if (self.o2o2_operational_lut.enabled()) &self.o2o2_operational_lut else null;
         }
         for (self.cross_section_operational_luts) |*entry| {
@@ -445,7 +447,9 @@ pub const ParseState = struct {
                 allocator.free(output_name);
                 continue;
             }
-            if (std.mem.eql(u8, output_name, "o2o2_operational_lut")) {
+            if (std.mem.eql(u8, output_name, "o2o2_operational_lut") or
+                std.mem.eql(u8, output_name, "o2_o2_operational_lut"))
+            {
                 self.metadata.o2o2_operational_lut = lut;
                 allocator.free(output_name);
                 continue;
