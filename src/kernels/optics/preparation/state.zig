@@ -661,6 +661,38 @@ pub const PreparedOpticalState = struct {
         return self.lineAbsorberDensityForSpeciesAtSublayer(owner_species, global_sublayer_index);
     }
 
+    fn crossSectionCarrierDensityAtSublayer(
+        self: *const PreparedOpticalState,
+        global_sublayer_index: usize,
+    ) f64 {
+        var density_cm3: f64 = 0.0;
+        for (self.cross_section_absorbers) |cross_section_absorber| {
+            if (global_sublayer_index >= cross_section_absorber.number_densities_cm3.len) continue;
+            density_cm3 += cross_section_absorber.number_densities_cm3[global_sublayer_index];
+        }
+        return density_cm3;
+    }
+
+    fn lineSpectroscopyCarrierDensityAtSublayer(
+        self: *const PreparedOpticalState,
+        sublayer: PreparedSublayer,
+        global_sublayer_index: usize,
+    ) f64 {
+        if (self.operational_o2_lut.enabled()) return sublayer.oxygen_number_density_cm3;
+        if (self.cross_section_absorbers.len == 0) return sublayer.absorber_number_density_cm3;
+
+        // DECISION:
+        //   Prepared sublayers store total gas density so midpoint preparation can
+        //   retain mixed line/cross-section bookkeeping. The single-line
+        //   re-evaluation path must subtract the explicit cross-section carriers
+        //   back out before applying a line-by-line sigma.
+        return @max(
+            @as(f64, 0.0),
+            sublayer.absorber_number_density_cm3 -
+                self.crossSectionCarrierDensityAtSublayer(global_sublayer_index),
+        );
+    }
+
     pub fn continuumCarrierDensityAtAltitude(
         self: *const PreparedOpticalState,
         sublayers: []const PreparedSublayer,
@@ -822,10 +854,10 @@ pub const PreparedOpticalState = struct {
                     sublayer.pressure_hpa,
                     if (strong_line_states) |states| &states[sublayer_index] else null,
                 );
-                const spectroscopy_carrier_density_cm3 = if (self.operational_o2_lut.enabled())
-                    sublayer.oxygen_number_density_cm3
-                else
-                    sublayer.absorber_number_density_cm3;
+                const spectroscopy_carrier_density_cm3 = self.lineSpectroscopyCarrierDensityAtSublayer(
+                    sublayer,
+                    global_sublayer_index,
+                );
                 const gas_column_density_cm2 = spectroscopy_carrier_density_cm3 * sublayer.path_length_cm;
                 break :blk continuum_optical_depth + cross_section_optical_depth + spectroscopy_sigma * gas_column_density_cm2;
             };

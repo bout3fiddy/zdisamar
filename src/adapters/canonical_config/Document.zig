@@ -1104,9 +1104,9 @@ const ResolveContext = struct {
                     var resolved_lut = try resolveOperationalLut(self.allocator, self.ingests, binding);
                     errdefer resolved_lut.deinitOwned(self.allocator);
 
-                    const species_is_o2 = std.ascii.eqlIgnoreCase(absorber.species, "o2");
-                    const species_is_o2o2 = std.ascii.eqlIgnoreCase(absorber.species, "o2o2") or
-                        std.ascii.eqlIgnoreCase(absorber.species, "o2-o2");
+                    const resolved_species = resolvedAbsorberSpecies(absorber);
+                    const species_is_o2 = resolved_species == .o2;
+                    const species_is_o2o2 = resolved_species == .o2_o2;
                     if (species_is_o2) {
                         if (!std.mem.eql(u8, ingest_ref.output_name, "o2_operational_lut")) {
                             return Error.MissingIngestOutput;
@@ -2516,6 +2516,7 @@ fn findAbsorberForSpecies(absorbers: AbsorberSet, species: fields.AbsorberSpecie
 fn resolvedAbsorberSpecies(absorber: Absorber) ?fields.AbsorberSpecies {
     if (absorber.resolved_species) |species| return species;
     if (std.meta.stringToEnum(fields.AbsorberSpecies, absorber.species)) |species| return species;
+    if (std.ascii.eqlIgnoreCase(absorber.species, "o2_o2")) return .o2_o2;
     if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
     if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
     return null;
