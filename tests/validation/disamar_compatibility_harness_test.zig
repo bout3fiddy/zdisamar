@@ -27,6 +27,7 @@ const ParityCase = struct {
     expected_derivative_semantics: ?[]const u8 = null,
     expected_jacobians_used: ?bool = null,
     status: []const u8,
+    scene_fixture: []const u8 = "",
     spectral_start_nm: f64 = 405.0,
     spectral_end_nm: f64 = 465.0,
     has_aerosols: bool = false,
@@ -34,6 +35,10 @@ const ParityCase = struct {
     use_o2a_spectroscopy: bool = false,
     use_mie_phase_table: bool = false,
     sublayer_divisions: u8 = 3,
+    expected_cross_section_absorber_count: ?u32 = null,
+    expected_line_absorber_count: ?u32 = null,
+    expected_cia_present: ?bool = null,
+    expected_spectroscopy_lines_present: ?bool = null,
     tolerances: struct {
         absolute: f64,
         relative: f64,
@@ -217,6 +222,225 @@ const VendorRetrievalAnchor = struct {
     dfs: f64,
 };
 
+const no2_fixture_points = [_]ReferenceData.CrossSectionPoint{
+    .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.9e-19 },
+    .{ .wavelength_nm = 420.0, .sigma_cm2_per_molecule = 3.5e-19 },
+    .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 2.4e-19 },
+    .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 1.8e-19 },
+    .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.2e-19 },
+};
+const no2_fixture_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 0.12 },
+    .{ 450.0, 0.05 },
+};
+const no2_domino_fixture_absorbers = [_]zdisamar.Absorber{
+    .{
+        .id = "no2",
+        .species = "no2",
+        .resolved_species = .no2,
+        .profile_source = .atmosphere,
+        .volume_mixing_ratio_profile_ppmv = no2_fixture_profile_ppmv[0..],
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .resolved_cross_section_table = .{ .points = @constCast(no2_fixture_points[0..]) },
+        },
+    },
+};
+const no2_domino_fixture_bands = [_]zdisamar.SpectralBand{
+    .{
+        .id = "vis-no2-domino",
+        .start_nm = 405.0,
+        .end_nm = 465.0,
+        .step_nm = 1.25,
+    },
+};
+const no2_domino_fixture_strong_absorption = [_]bool{true};
+const no2_domino_fixture_polynomial_degree = [_]u32{6};
+
+const o3_fixture_points = [_]ReferenceData.CrossSectionPoint{
+    .{ .wavelength_nm = 310.0, .sigma_cm2_per_molecule = 5.2e-19 },
+    .{ .wavelength_nm = 320.0, .sigma_cm2_per_molecule = 4.1e-19 },
+    .{ .wavelength_nm = 330.0, .sigma_cm2_per_molecule = 3.0e-19 },
+    .{ .wavelength_nm = 340.0, .sigma_cm2_per_molecule = 2.2e-19 },
+};
+const o3_fixture_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 6.0 },
+    .{ 450.0, 11.5 },
+};
+const o3_profile_fixture_absorbers = [_]zdisamar.Absorber{
+    .{
+        .id = "o3",
+        .species = "o3",
+        .resolved_species = .o3,
+        .profile_source = .atmosphere,
+        .volume_mixing_ratio_profile_ppmv = o3_fixture_profile_ppmv[0..],
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .resolved_cross_section_table = .{ .points = @constCast(o3_fixture_points[0..]) },
+        },
+    },
+};
+const o3_profile_fixture_bands = [_]zdisamar.SpectralBand{
+    .{
+        .id = "uv-o3-profile",
+        .start_nm = 310.0,
+        .end_nm = 340.0,
+        .step_nm = 0.5,
+    },
+};
+const o3_profile_fixture_strong_absorption = [_]bool{true};
+const o3_profile_fixture_polynomial_degree = [_]u32{4};
+
+const mixed_o3_points = [_]ReferenceData.CrossSectionPoint{
+    .{ .wavelength_nm = 325.0, .sigma_cm2_per_molecule = 4.9e-19 },
+    .{ .wavelength_nm = 338.0, .sigma_cm2_per_molecule = 3.7e-19 },
+    .{ .wavelength_nm = 350.0, .sigma_cm2_per_molecule = 2.8e-19 },
+    .{ .wavelength_nm = 360.0, .sigma_cm2_per_molecule = 2.1e-19 },
+};
+const mixed_hcho_points = [_]ReferenceData.CrossSectionPoint{
+    .{ .wavelength_nm = 325.0, .sigma_cm2_per_molecule = 1.8e-19 },
+    .{ .wavelength_nm = 338.0, .sigma_cm2_per_molecule = 1.4e-19 },
+    .{ .wavelength_nm = 350.0, .sigma_cm2_per_molecule = 1.1e-19 },
+    .{ .wavelength_nm = 360.0, .sigma_cm2_per_molecule = 0.9e-19 },
+};
+const mixed_bro_points = [_]ReferenceData.CrossSectionPoint{
+    .{ .wavelength_nm = 325.0, .sigma_cm2_per_molecule = 1.3e-19 },
+    .{ .wavelength_nm = 338.0, .sigma_cm2_per_molecule = 1.0e-19 },
+    .{ .wavelength_nm = 350.0, .sigma_cm2_per_molecule = 0.8e-19 },
+    .{ .wavelength_nm = 360.0, .sigma_cm2_per_molecule = 0.6e-19 },
+};
+const mixed_no2_points = [_]ReferenceData.CrossSectionPoint{
+    .{ .wavelength_nm = 325.0, .sigma_cm2_per_molecule = 2.4e-19 },
+    .{ .wavelength_nm = 338.0, .sigma_cm2_per_molecule = 2.0e-19 },
+    .{ .wavelength_nm = 350.0, .sigma_cm2_per_molecule = 1.6e-19 },
+    .{ .wavelength_nm = 360.0, .sigma_cm2_per_molecule = 1.2e-19 },
+};
+const mixed_o3_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 5.6 },
+    .{ 450.0, 10.8 },
+};
+const mixed_hcho_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 0.020 },
+    .{ 450.0, 0.008 },
+};
+const mixed_bro_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 0.0045 },
+    .{ 450.0, 0.0018 },
+};
+const mixed_no2_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 0.030 },
+    .{ 450.0, 0.012 },
+};
+const mixed_uv_fixture_absorbers = [_]zdisamar.Absorber{
+    .{
+        .id = "o3",
+        .species = "o3",
+        .resolved_species = .o3,
+        .profile_source = .atmosphere,
+        .volume_mixing_ratio_profile_ppmv = mixed_o3_profile_ppmv[0..],
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .resolved_cross_section_table = .{ .points = @constCast(mixed_o3_points[0..]) },
+        },
+    },
+    .{
+        .id = "hcho",
+        .species = "hcho",
+        .resolved_species = .hcho,
+        .profile_source = .atmosphere,
+        .volume_mixing_ratio_profile_ppmv = mixed_hcho_profile_ppmv[0..],
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .resolved_cross_section_table = .{ .points = @constCast(mixed_hcho_points[0..]) },
+        },
+    },
+    .{
+        .id = "bro",
+        .species = "bro",
+        .resolved_species = .bro,
+        .profile_source = .atmosphere,
+        .volume_mixing_ratio_profile_ppmv = mixed_bro_profile_ppmv[0..],
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .resolved_cross_section_table = .{ .points = @constCast(mixed_bro_points[0..]) },
+        },
+    },
+    .{
+        .id = "no2",
+        .species = "no2",
+        .resolved_species = .no2,
+        .profile_source = .atmosphere,
+        .volume_mixing_ratio_profile_ppmv = mixed_no2_profile_ppmv[0..],
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .resolved_cross_section_table = .{ .points = @constCast(mixed_no2_points[0..]) },
+        },
+    },
+};
+const mixed_uv_fixture_bands = [_]zdisamar.SpectralBand{
+    .{
+        .id = "uv-multi-gas",
+        .start_nm = 325.0,
+        .end_nm = 360.0,
+        .step_nm = 0.5,
+    },
+};
+const mixed_uv_fixture_strong_absorption = [_]bool{true};
+const mixed_uv_fixture_polynomial_degree = [_]u32{5};
+
+const so2_fixture_o3_points = [_]ReferenceData.CrossSectionPoint{
+    .{ .wavelength_nm = 310.0, .sigma_cm2_per_molecule = 5.1e-19 },
+    .{ .wavelength_nm = 320.0, .sigma_cm2_per_molecule = 4.0e-19 },
+    .{ .wavelength_nm = 330.0, .sigma_cm2_per_molecule = 3.1e-19 },
+};
+const so2_fixture_so2_points = [_]ReferenceData.CrossSectionPoint{
+    .{ .wavelength_nm = 310.0, .sigma_cm2_per_molecule = 2.7e-19 },
+    .{ .wavelength_nm = 320.0, .sigma_cm2_per_molecule = 2.2e-19 },
+    .{ .wavelength_nm = 330.0, .sigma_cm2_per_molecule = 1.8e-19 },
+};
+const so2_fixture_o3_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 5.4 },
+    .{ 450.0, 10.0 },
+};
+const so2_fixture_so2_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 0.010 },
+    .{ 450.0, 0.004 },
+};
+const o3_so2_fixture_absorbers = [_]zdisamar.Absorber{
+    .{
+        .id = "o3",
+        .species = "o3",
+        .resolved_species = .o3,
+        .profile_source = .atmosphere,
+        .volume_mixing_ratio_profile_ppmv = so2_fixture_o3_profile_ppmv[0..],
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .resolved_cross_section_table = .{ .points = @constCast(so2_fixture_o3_points[0..]) },
+        },
+    },
+    .{
+        .id = "so2",
+        .species = "so2",
+        .resolved_species = .so2,
+        .profile_source = .atmosphere,
+        .volume_mixing_ratio_profile_ppmv = so2_fixture_so2_profile_ppmv[0..],
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .resolved_cross_section_table = .{ .points = @constCast(so2_fixture_so2_points[0..]) },
+        },
+    },
+};
+const o3_so2_fixture_bands = [_]zdisamar.SpectralBand{
+    .{
+        .id = "uv-o3-so2",
+        .start_nm = 310.0,
+        .end_nm = 330.0,
+        .step_nm = 0.5,
+    },
+};
+const o3_so2_fixture_strong_absorption = [_]bool{true};
+const o3_so2_fixture_polynomial_degree = [_]u32{4};
+
 fn parseRetrievalMethod(value: []const u8) !retrieval.common.contracts.Method {
     if (std.mem.eql(u8, value, "oe")) return .oe;
     if (std.mem.eql(u8, value, "doas")) return .doas;
@@ -319,6 +543,59 @@ fn makeRetrievalRequest(
     };
 }
 
+fn applySceneFixture(scene: *zdisamar.Scene, case: ParityCase) !void {
+    if (case.scene_fixture.len == 0) return;
+
+    scene.geometry = .{
+        .model = .plane_parallel,
+        .solar_zenith_deg = 30.0,
+        .viewing_zenith_deg = 12.0,
+        .relative_azimuth_deg = 40.0,
+    };
+    scene.surface = .{
+        .kind = .lambertian,
+        .albedo = 0.12,
+    };
+    scene.observation_model.instrument = .synthetic;
+    scene.observation_model.sampling = .native;
+    scene.observation_model.noise_model = .shot_noise;
+    scene.observation_model.cross_section_fit = .{
+        .use_effective_cross_section_oe = true,
+        .use_polynomial_expansion = true,
+    };
+
+    if (std.mem.eql(u8, case.scene_fixture, "no2_domino_cross_sections")) {
+        scene.bands.items = no2_domino_fixture_bands[0..];
+        scene.absorbers.items = no2_domino_fixture_absorbers[0..];
+        scene.observation_model.cross_section_fit.xsec_strong_absorption_bands = no2_domino_fixture_strong_absorption[0..];
+        scene.observation_model.cross_section_fit.polynomial_degree_bands = no2_domino_fixture_polynomial_degree[0..];
+        return;
+    }
+    if (std.mem.eql(u8, case.scene_fixture, "o3_profile_cross_sections")) {
+        scene.bands.items = o3_profile_fixture_bands[0..];
+        scene.absorbers.items = o3_profile_fixture_absorbers[0..];
+        scene.observation_model.cross_section_fit.xsec_strong_absorption_bands = o3_profile_fixture_strong_absorption[0..];
+        scene.observation_model.cross_section_fit.polynomial_degree_bands = o3_profile_fixture_polynomial_degree[0..];
+        return;
+    }
+    if (std.mem.eql(u8, case.scene_fixture, "uv_multi_gas_cross_sections")) {
+        scene.bands.items = mixed_uv_fixture_bands[0..];
+        scene.absorbers.items = mixed_uv_fixture_absorbers[0..];
+        scene.observation_model.cross_section_fit.xsec_strong_absorption_bands = mixed_uv_fixture_strong_absorption[0..];
+        scene.observation_model.cross_section_fit.polynomial_degree_bands = mixed_uv_fixture_polynomial_degree[0..];
+        return;
+    }
+    if (std.mem.eql(u8, case.scene_fixture, "o3_so2_cross_sections")) {
+        scene.bands.items = o3_so2_fixture_bands[0..];
+        scene.absorbers.items = o3_so2_fixture_absorbers[0..];
+        scene.observation_model.cross_section_fit.xsec_strong_absorption_bands = o3_so2_fixture_strong_absorption[0..];
+        scene.observation_model.cross_section_fit.polynomial_degree_bands = o3_so2_fixture_polynomial_degree[0..];
+        return;
+    }
+
+    return error.UnknownSceneFixture;
+}
+
 fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisamar.Scene {
     var scene: zdisamar.Scene = .{
         .id = case.id,
@@ -395,6 +672,8 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
             scene.aerosol.layer_width_km = 0.4;
         }
     }
+
+    applySceneFixture(&scene, case) catch unreachable;
 
     return scene;
 }
@@ -474,6 +753,151 @@ fn expectPreparedRouteRtmControls() !void {
 
 test "compatibility harness execution honors RTM controls in prepared routes" {
     try expectPreparedRouteRtmControls();
+}
+
+fn expectExplicitCrossSectionFixtureRoute(
+    engine: *zdisamar.Engine,
+    case: ParityCase,
+) !void {
+    const regime = try parseObservationRegime(case.runtime_profile.observation_regime);
+    const derivative_mode = try parseDerivativeMode(case.runtime_profile.derivative_mode);
+    const scene = makeSceneForCase(case, regime);
+
+    var plan = try engine.preparePlan(.{
+        .solver_mode = try parseSolverMode(case.runtime_profile.solver_mode),
+        .scene_blueprint = .{
+            .id = case.id,
+            .observation_regime = regime,
+            .derivative_mode = derivative_mode,
+            .spectral_grid = scene.spectral_grid,
+            .measurement_count_hint = case.runtime_profile.spectral_samples,
+        },
+        .rtm_controls = .{
+            .n_streams = 6,
+            .num_orders_max = 4,
+        },
+    });
+    defer plan.deinit();
+
+    var prepared = try plan.providers.optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(
+        @as(usize, @intCast(case.expected_cross_section_absorber_count.?)),
+        prepared.cross_section_absorbers.len,
+    );
+    try std.testing.expectEqual(
+        @as(usize, @intCast(case.expected_line_absorber_count.?)),
+        prepared.line_absorbers.len,
+    );
+    try std.testing.expectEqual(case.expected_cia_present.?, prepared.collision_induced_absorption != null);
+    try std.testing.expectEqual(case.expected_spectroscopy_lines_present.?, prepared.spectroscopy_lines != null);
+    try std.testing.expect(prepared.gas_optical_depth > 0.0);
+}
+
+test "compatibility harness routes explicit cross-section fixtures away from O2A defaults" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const cases = [_]ParityCase{
+        .{
+            .id = "compat-no2-cross-sections",
+            .component = "optics",
+            .upstream_case = "InputFiles/Config_NO2_DOMINO.in",
+            .status = "optics_prepared_contract",
+            .scene_fixture = "no2_domino_cross_sections",
+            .runtime_profile = .{
+                .observation_regime = "nadir",
+                .solver_mode = "scalar",
+                .derivative_mode = "none",
+                .spectral_samples = 48,
+            },
+            .expected_route_family = "baseline_labos",
+            .expected_derivative_mode = "none",
+            .expected_derivative_semantics = "none",
+            .spectral_start_nm = 405.0,
+            .spectral_end_nm = 465.0,
+            .expected_cross_section_absorber_count = 1,
+            .expected_line_absorber_count = 0,
+            .expected_cia_present = false,
+            .expected_spectroscopy_lines_present = false,
+            .tolerances = .{ .absolute = 0.0, .relative = 0.0 },
+        },
+        .{
+            .id = "compat-o3-profile-cross-sections",
+            .component = "optics",
+            .upstream_case = "InputFiles/Config_O3_profile_1band.in",
+            .status = "optics_prepared_contract",
+            .scene_fixture = "o3_profile_cross_sections",
+            .runtime_profile = .{
+                .observation_regime = "nadir",
+                .solver_mode = "scalar",
+                .derivative_mode = "none",
+                .spectral_samples = 61,
+            },
+            .expected_route_family = "baseline_labos",
+            .expected_derivative_mode = "none",
+            .expected_derivative_semantics = "none",
+            .spectral_start_nm = 310.0,
+            .spectral_end_nm = 340.0,
+            .expected_cross_section_absorber_count = 1,
+            .expected_line_absorber_count = 0,
+            .expected_cia_present = false,
+            .expected_spectroscopy_lines_present = false,
+            .tolerances = .{ .absolute = 0.0, .relative = 0.0 },
+        },
+        .{
+            .id = "compat-uv-multi-gas-cross-sections",
+            .component = "optics",
+            .upstream_case = "InputFiles/Config_columns_O3_HCHO_BrO_NO2.in",
+            .status = "optics_prepared_contract",
+            .scene_fixture = "uv_multi_gas_cross_sections",
+            .runtime_profile = .{
+                .observation_regime = "nadir",
+                .solver_mode = "scalar",
+                .derivative_mode = "none",
+                .spectral_samples = 71,
+            },
+            .expected_route_family = "baseline_labos",
+            .expected_derivative_mode = "none",
+            .expected_derivative_semantics = "none",
+            .spectral_start_nm = 325.0,
+            .spectral_end_nm = 360.0,
+            .expected_cross_section_absorber_count = 4,
+            .expected_line_absorber_count = 0,
+            .expected_cia_present = false,
+            .expected_spectroscopy_lines_present = false,
+            .tolerances = .{ .absolute = 0.0, .relative = 0.0 },
+        },
+        .{
+            .id = "compat-o3-so2-cross-sections",
+            .component = "optics",
+            .upstream_case = "InputFiles/Config_O3_profile+SO2_column.in",
+            .status = "optics_prepared_contract",
+            .scene_fixture = "o3_so2_cross_sections",
+            .runtime_profile = .{
+                .observation_regime = "nadir",
+                .solver_mode = "scalar",
+                .derivative_mode = "none",
+                .spectral_samples = 41,
+            },
+            .expected_route_family = "baseline_labos",
+            .expected_derivative_mode = "none",
+            .expected_derivative_semantics = "none",
+            .spectral_start_nm = 310.0,
+            .spectral_end_nm = 330.0,
+            .expected_cross_section_absorber_count = 2,
+            .expected_line_absorber_count = 0,
+            .expected_cia_present = false,
+            .expected_spectroscopy_lines_present = false,
+            .tolerances = .{ .absolute = 0.0, .relative = 0.0 },
+        },
+    };
+
+    for (cases) |case| {
+        try expectExplicitCrossSectionFixtureRoute(&engine, case);
+    }
 }
 
 fn prepareOpticalStateForCase(
@@ -816,11 +1240,27 @@ fn runParityCases(
                 );
             }
         } else if (std.mem.eql(u8, case.component, "optics")) {
-            var prepared = try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);
+            var prepared = if (case.scene_fixture.len != 0)
+                try plan.providers.optics.prepareForScene(std.testing.allocator, &case_scene)
+            else
+                try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);
             defer prepared.deinit(std.testing.allocator);
 
             try std.testing.expect(prepared.sublayers != null);
             try std.testing.expect(prepared.sublayers.?.len > prepared.layers.len);
+            if (case.expected_cross_section_absorber_count) |count| {
+                try std.testing.expectEqual(@as(usize, @intCast(count)), prepared.cross_section_absorbers.len);
+                try std.testing.expect(prepared.gas_optical_depth > 0.0);
+            }
+            if (case.expected_line_absorber_count) |count| {
+                try std.testing.expectEqual(@as(usize, @intCast(count)), prepared.line_absorbers.len);
+            }
+            if (case.expected_cia_present) |expected_present| {
+                try std.testing.expectEqual(expected_present, prepared.collision_induced_absorption != null);
+            }
+            if (case.expected_spectroscopy_lines_present) |expected_present| {
+                try std.testing.expectEqual(expected_present, prepared.spectroscopy_lines != null);
+            }
             if (case.use_o2a_spectroscopy) {
                 try std.testing.expect(@abs(prepared.spectroscopy_lines.?.evaluateAt(771.3, prepared.effective_temperature_k, prepared.effective_pressure_hpa).line_mixing_sigma_cm2_per_molecule) > 0.0);
                 try std.testing.expect(prepared.collision_induced_absorption != null);
