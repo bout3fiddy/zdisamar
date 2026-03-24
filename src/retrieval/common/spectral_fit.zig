@@ -411,9 +411,8 @@ fn policyForMethod(method: common.Method) Policy {
 fn policyForScene(method: common.Method, scene: @import("../../model/Scene.zig").Scene) Policy {
     var policy = policyForMethod(method);
     const cross_section_fit = scene.observation_model.cross_section_fit;
-    const configured_polynomial_order = cross_section_fit.maximumPolynomialOrder();
-    if (configured_polynomial_order != 0) {
-        policy.polynomial_order = configured_polynomial_order;
+    if (cross_section_fit.polynomial_degree_bands.len != 0) {
+        policy.polynomial_order = cross_section_fit.maximumPolynomialOrder();
     }
 
     var any_strong_absorption_band = false;
@@ -1191,4 +1190,27 @@ test "scene policy uses the highest configured polynomial degree across bands" {
 
     const policy = policyForScene(.doas, scene);
     try std.testing.expectEqual(@as(u32, 6), policy.polynomial_order);
+}
+
+test "scene policy honors explicit zero polynomial degree" {
+    const scene: Scene = .{
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "band-a",
+                    .start_nm = 405.0,
+                    .end_nm = 430.0,
+                    .step_nm = 0.5,
+                },
+            },
+        },
+        .observation_model = .{
+            .cross_section_fit = .{
+                .polynomial_degree_bands = &.{0},
+            },
+        },
+    };
+
+    const policy = policyForScene(.doas, scene);
+    try std.testing.expectEqual(@as(u32, 0), policy.polynomial_order);
 }
