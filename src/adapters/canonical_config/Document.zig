@@ -1111,12 +1111,16 @@ const ResolveContext = struct {
                         if (!std.mem.eql(u8, ingest_ref.output_name, "o2_operational_lut")) {
                             return Error.MissingIngestOutput;
                         }
-                        observation_model.o2_operational_lut = try resolved_lut.clone(self.allocator);
+                        if (absorber.spectroscopy.mode == .line_by_line) {
+                            observation_model.o2_operational_lut = try resolved_lut.clone(self.allocator);
+                        }
                     } else if (species_is_o2o2) {
                         if (!std.mem.eql(u8, ingest_ref.output_name, "o2o2_operational_lut")) {
                             return Error.MissingIngestOutput;
                         }
-                        observation_model.o2o2_operational_lut = try resolved_lut.clone(self.allocator);
+                        if (absorber.spectroscopy.mode == .cia) {
+                            observation_model.o2o2_operational_lut = try resolved_lut.clone(self.allocator);
+                        }
                     }
                     absorber.spectroscopy.resolved_cross_section_lut = resolved_lut;
                 }
