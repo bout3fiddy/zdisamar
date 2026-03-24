@@ -1154,27 +1154,27 @@ test "canonical config wires O2-O2 operational LUTs for o2_o2 CIA aliases" {
     try std.fs.cwd().writeFile(.{
         .sub_path = path,
         .data =
-        \\meta o2o2_refspec_ntemperature 2
-        \\meta o2o2_refspec_npressure 2
-        \\meta o2o2_refspec_temperature_min 220.0
-        \\meta o2o2_refspec_temperature_max 320.0
-        \\meta o2o2_refspec_pressure_min 150.0
-        \\meta o2o2_refspec_pressure_max 1000.0
-        \\meta o2o2_refspec_wavelength_1 760.8
-        \\meta o2o2_refspec_wavelength_2 761.0
-        \\meta o2o2_refspec_wavelength_3 761.2
-        \\meta o2o2_refspec_coeff_1_1_1 1.2e-46
-        \\meta o2o2_refspec_coeff_2_1_1 0.2e-46
-        \\meta o2o2_refspec_coeff_1_2_1 0.1e-46
-        \\meta o2o2_refspec_coeff_2_2_1 0.03e-46
-        \\meta o2o2_refspec_coeff_1_1_2 1.5e-46
-        \\meta o2o2_refspec_coeff_2_1_2 0.2e-46
-        \\meta o2o2_refspec_coeff_1_2_2 0.1e-46
-        \\meta o2o2_refspec_coeff_2_2_2 0.03e-46
-        \\meta o2o2_refspec_coeff_1_1_3 1.1e-46
-        \\meta o2o2_refspec_coeff_2_1_3 0.18e-46
-        \\meta o2o2_refspec_coeff_1_2_3 0.08e-46
-        \\meta o2o2_refspec_coeff_2_2_3 0.02e-46
+        \\meta o2_o2_refspec_ntemperature 2
+        \\meta o2_o2_refspec_npressure 2
+        \\meta o2_o2_refspec_temperature_min 220.0
+        \\meta o2_o2_refspec_temperature_max 320.0
+        \\meta o2_o2_refspec_pressure_min 150.0
+        \\meta o2_o2_refspec_pressure_max 1000.0
+        \\meta o2_o2_refspec_wavelength_1 760.8
+        \\meta o2_o2_refspec_wavelength_2 761.0
+        \\meta o2_o2_refspec_wavelength_3 761.2
+        \\meta o2_o2_refspec_coeff_1_1_1 1.2e-46
+        \\meta o2_o2_refspec_coeff_2_1_1 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_1 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_1 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_2 1.5e-46
+        \\meta o2_o2_refspec_coeff_2_1_2 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_2 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_2 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_3 1.1e-46
+        \\meta o2_o2_refspec_coeff_2_1_3 0.18e-46
+        \\meta o2_o2_refspec_coeff_1_2_3 0.08e-46
+        \\meta o2_o2_refspec_coeff_2_2_3 0.02e-46
         \\start_channel_rad
         \\rad 760.8 1485.0 1.116153E+13
         \\rad 761.0 1445.0 1.096153E+13
@@ -1221,7 +1221,7 @@ test "canonical config wires O2-O2 operational LUTs for o2_o2 CIA aliases" {
         \\          spectroscopy:
         \\            model: cia
         \\            operational_lut:
-        \\              from_ingest: demo.o2o2_operational_lut
+        \\              from_ingest: demo.o2_o2_operational_lut
         \\      surface:
         \\        model: lambertian
         \\        albedo: 0.05

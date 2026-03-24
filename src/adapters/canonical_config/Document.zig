@@ -1115,7 +1115,9 @@ const ResolveContext = struct {
                             observation_model.o2_operational_lut = try resolved_lut.clone(self.allocator);
                         }
                     } else if (species_is_o2o2) {
-                        if (!std.mem.eql(u8, ingest_ref.output_name, "o2o2_operational_lut")) {
+                        if (!std.mem.eql(u8, ingest_ref.output_name, "o2o2_operational_lut") and
+                            !std.mem.eql(u8, ingest_ref.output_name, "o2_o2_operational_lut"))
+                        {
                             return Error.MissingIngestOutput;
                         }
                         if (absorber.spectroscopy.mode == .cia) {

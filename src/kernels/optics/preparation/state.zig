@@ -673,22 +673,34 @@ pub const PreparedOpticalState = struct {
         return density_cm3;
     }
 
+    pub fn lineSpectroscopyCarrierDensity(
+        self: *const PreparedOpticalState,
+        absorber_density_cm3: f64,
+        oxygen_density_cm3: f64,
+        cross_section_density_cm3: f64,
+    ) f64 {
+        if (self.operational_o2_lut.enabled()) return oxygen_density_cm3;
+        if (cross_section_density_cm3 <= 0.0) return absorber_density_cm3;
+
+        // DECISION:
+        //   Prepared sublayers store total gas density so midpoint preparation can
+        //   retain mixed line/cross-section bookkeeping. Every single-line
+        //   re-evaluation path must subtract the explicit cross-section carriers
+        //   back out before applying a line-by-line sigma.
+        return @max(@as(f64, 0.0), absorber_density_cm3 - cross_section_density_cm3);
+    }
+
     fn lineSpectroscopyCarrierDensityAtSublayer(
         self: *const PreparedOpticalState,
         sublayer: PreparedSublayer,
         global_sublayer_index: usize,
     ) f64 {
-        if (self.operational_o2_lut.enabled()) return sublayer.oxygen_number_density_cm3;
-        if (self.cross_section_absorbers.len == 0) return sublayer.absorber_number_density_cm3;
-
-        // DECISION:
-        //   Prepared sublayers store total gas density so midpoint preparation can
-        //   retain mixed line/cross-section bookkeeping. The single-line
-        //   re-evaluation path must subtract the explicit cross-section carriers
-        //   back out before applying a line-by-line sigma.
-        return @max(
-            @as(f64, 0.0),
-            sublayer.absorber_number_density_cm3 -
+        return self.lineSpectroscopyCarrierDensity(
+            sublayer.absorber_number_density_cm3,
+            sublayer.oxygen_number_density_cm3,
+            if (self.cross_section_absorbers.len == 0)
+                0.0
+            else
                 self.crossSectionCarrierDensityAtSublayer(global_sublayer_index),
         );
     }

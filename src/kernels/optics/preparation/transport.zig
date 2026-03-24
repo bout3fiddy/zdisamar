@@ -582,7 +582,11 @@ fn pseudoSphericalCarrierAtAltitude(
             absorber_density_cm3 *
             centimeters_per_kilometer;
     }
-    const line_absorber_density_cm3 = @max(state.absorber_number_density_cm3 - cross_section_density_cm3, 0.0);
+    const line_absorber_density_cm3 = self.lineSpectroscopyCarrierDensity(
+        state.absorber_number_density_cm3,
+        state.oxygen_number_density_cm3,
+        cross_section_density_cm3,
+    );
     const continuum_density_cm3 = if (self.cross_section_absorbers.len == 0)
         self.continuumCarrierDensityAtAltitude(
             sublayers,
