@@ -591,7 +591,7 @@ fn pseudoSphericalCarrierAtAltitude(
         self.continuumCarrierDensityAtAltitude(
             sublayers,
             altitude_km,
-            line_absorber_density_cm3,
+            state.absorber_number_density_cm3,
             state.oxygen_number_density_cm3,
         )
     else
