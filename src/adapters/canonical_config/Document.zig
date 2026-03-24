@@ -2475,6 +2475,18 @@ fn applyGeneralConfigToObservationModel(
         .retrieval => general.degree_poly_retr,
     };
 
+    const owned_strong_absorption_bands = if (strong_absorption_bands) |values|
+        try allocator.dupe(bool, values)
+    else
+        &.{};
+    errdefer if (owned_strong_absorption_bands.len != 0) allocator.free(owned_strong_absorption_bands);
+
+    const owned_polynomial_degree_bands = if (polynomial_degree_bands) |values|
+        try allocator.dupe(u32, values)
+    else
+        &.{};
+    errdefer if (owned_polynomial_degree_bands.len != 0) allocator.free(owned_polynomial_degree_bands);
+
     scene.observation_model.cross_section_fit = CrossSectionFitControls{
         .use_effective_cross_section_oe = switch (kind) {
             .simulation => general.use_eff_xsec_oe_sim,
@@ -2484,14 +2496,8 @@ fn applyGeneralConfigToObservationModel(
             .simulation => general.use_poly_exp_xsec_sim,
             .retrieval => general.use_poly_exp_xsec_retr,
         },
-        .xsec_strong_absorption_bands = if (strong_absorption_bands) |values|
-            try allocator.dupe(bool, values)
-        else
-            &.{},
-        .polynomial_degree_bands = if (polynomial_degree_bands) |values|
-            try allocator.dupe(u32, values)
-        else
-            &.{},
+        .xsec_strong_absorption_bands = owned_strong_absorption_bands,
+        .polynomial_degree_bands = owned_polynomial_degree_bands,
     };
 }
 
@@ -2987,4 +2993,32 @@ test "document rejects unknown fields in strict mode" {
     defer document.deinit();
 
     try std.testing.expectError(Error.UnknownField, document.resolve(std.testing.allocator));
+}
+
+fn applyCrossSectionFitGeneralConfigWithAllocator(allocator: Allocator) !void {
+    var scene: Scene = .{};
+    defer scene.observation_model.deinitOwned(allocator);
+
+    try applyGeneralConfigToObservationModel(
+        allocator,
+        .simulation,
+        .{
+            .use_eff_xsec_oe_sim = true,
+            .use_poly_exp_xsec_sim = true,
+            .xsec_strong_abs_sim = &.{ true, false },
+            .degree_poly_sim = &.{ 5, 3 },
+        },
+        &scene,
+    );
+
+    try std.testing.expect(scene.observation_model.cross_section_fit.strongAbsorptionForBand(0));
+    try std.testing.expectEqual(@as(u32, 3), scene.observation_model.cross_section_fit.polynomialOrderForBand(1));
+}
+
+test "document applies cross-section fit controls without leaks across allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        applyCrossSectionFitGeneralConfigWithAllocator,
+        .{},
+    );
 }

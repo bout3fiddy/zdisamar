@@ -71,17 +71,23 @@ pub const CrossSectionFitControls = struct {
     /// Purpose:
     ///   Deep-clone the per-band control vectors into owned storage.
     pub fn clone(self: CrossSectionFitControls, allocator: Allocator) !CrossSectionFitControls {
+        const strong_absorption_bands = if (self.xsec_strong_absorption_bands.len != 0)
+            try allocator.dupe(bool, self.xsec_strong_absorption_bands)
+        else
+            &.{};
+        errdefer if (strong_absorption_bands.len != 0) allocator.free(strong_absorption_bands);
+
+        const polynomial_degree_bands = if (self.polynomial_degree_bands.len != 0)
+            try allocator.dupe(u32, self.polynomial_degree_bands)
+        else
+            &.{};
+        errdefer if (polynomial_degree_bands.len != 0) allocator.free(polynomial_degree_bands);
+
         return .{
             .use_effective_cross_section_oe = self.use_effective_cross_section_oe,
             .use_polynomial_expansion = self.use_polynomial_expansion,
-            .xsec_strong_absorption_bands = if (self.xsec_strong_absorption_bands.len != 0)
-                try allocator.dupe(bool, self.xsec_strong_absorption_bands)
-            else
-                &.{},
-            .polynomial_degree_bands = if (self.polynomial_degree_bands.len != 0)
-                try allocator.dupe(u32, self.polynomial_degree_bands)
-            else
-                &.{},
+            .xsec_strong_absorption_bands = strong_absorption_bands,
+            .polynomial_degree_bands = polynomial_degree_bands,
         };
     }
 
@@ -297,5 +303,25 @@ test "cross-section fit controls validate band-scoped settings" {
         (CrossSectionFitControls{
             .polynomial_degree_bands = &.{ 4, 2 },
         }).validateForBandCount(1),
+    );
+}
+
+fn cloneCrossSectionFitControlsWithAllocator(allocator: Allocator) !void {
+    const controls: CrossSectionFitControls = .{
+        .use_effective_cross_section_oe = true,
+        .use_polynomial_expansion = true,
+        .xsec_strong_absorption_bands = &.{ true, false },
+        .polynomial_degree_bands = &.{ 5, 3 },
+    };
+
+    var cloned = try controls.clone(allocator);
+    defer cloned.deinitOwned(allocator);
+}
+
+test "cross-section fit controls clone cleans up across allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        cloneCrossSectionFitControlsWithAllocator,
+        .{},
     );
 }
