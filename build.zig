@@ -455,6 +455,7 @@ pub fn build(b: *std.Build) void {
     run_validation_cross_section_parity.dependOn(run_validation_cross_section_oe.run_step);
     const validation_step = b.step("test-validation", "Run compatibility and validation asset suite");
     validation_step.dependOn(run_validation_asset_suite.run_step);
+    validation_step.dependOn(run_validation_cross_section_parity);
     validation_step.dependOn(run_validation_compatibility_full.run_step);
     const run_validation_o2a = addSuiteRunStep(
         b,

@@ -552,28 +552,33 @@ test "spectroscopy resolves explicit absorption representation tags" {
         .max_pressure_hpa = 1100.0,
     };
 
+    var line_spectroscopy = Spectroscopy{ .resolved_line_list = line_list };
     try std.testing.expectEqual(
-        AbsorptionRepresentation{ .line_abs = &line_list },
-        (Spectroscopy{ .resolved_line_list = line_list }).resolvedAbsorptionRepresentation(),
+        AbsorptionRepresentation{ .line_abs = &line_spectroscopy.resolved_line_list.? },
+        line_spectroscopy.resolvedAbsorptionRepresentation(),
     );
+
+    var cross_section_spectroscopy = Spectroscopy{
+        .mode = .cross_sections,
+        .resolved_cross_section_table = cross_section_table,
+    };
     try std.testing.expectEqual(
-        AbsorptionRepresentation{ .xsec_table = &cross_section_table },
-        (Spectroscopy{
-            .mode = .cross_sections,
-            .resolved_cross_section_table = cross_section_table,
-        }).resolvedAbsorptionRepresentation(),
+        AbsorptionRepresentation{ .xsec_table = &cross_section_spectroscopy.resolved_cross_section_table.? },
+        cross_section_spectroscopy.resolvedAbsorptionRepresentation(),
     );
+
+    var operational_lut_spectroscopy = Spectroscopy{
+        .mode = .line_by_line,
+        .operational_lut = .{ .ingest = .{
+            .full_name = "demo.o2_operational_lut",
+            .ingest_name = "demo",
+            .output_name = "o2_operational_lut",
+        } },
+        .resolved_cross_section_lut = lut,
+    };
     try std.testing.expectEqual(
-        AbsorptionRepresentation{ .xsec_lut = &lut },
-        (Spectroscopy{
-            .mode = .line_by_line,
-            .operational_lut = .{ .ingest = .{
-                .full_name = "demo.o2_operational_lut",
-                .ingest_name = "demo",
-                .output_name = "o2_operational_lut",
-            } },
-            .resolved_cross_section_lut = lut,
-        }).resolvedAbsorptionRepresentation(),
+        AbsorptionRepresentation{ .xsec_lut = &operational_lut_spectroscopy.resolved_cross_section_lut.? },
+        operational_lut_spectroscopy.resolvedAbsorptionRepresentation(),
     );
 }
 
