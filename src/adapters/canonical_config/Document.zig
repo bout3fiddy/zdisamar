@@ -29,6 +29,7 @@ const yaml_helpers = @import("document_yaml_helpers.zig");
 const PlanTemplate = @import("../../core/Plan.zig").Template;
 const SolverMode = @import("../../core/Plan.zig").SolverMode;
 const DiagnosticsSpec = @import("../../core/diagnostics.zig").DiagnosticsSpec;
+const AbsorberModel = @import("../../model/Absorber.zig");
 const Binding = @import("../../model/Binding.zig").Binding;
 const BindingKind = @import("../../model/Binding.zig").BindingKind;
 const SpectralGrid = @import("../../model/Spectrum.zig").SpectralGrid;
@@ -1044,6 +1045,11 @@ const ResolveContext = struct {
     fn decodeAbsorbers(self: *const ResolveContext, value: ?yaml.Value, observation_model: *ObservationModel) !AbsorberSet {
         const absorber_map = try expectMap(value orelse return Error.MissingField);
         const absorbers = try self.allocator.alloc(Absorber, absorber_map.len);
+        var initialized: usize = 0;
+        errdefer {
+            for (absorbers[0..initialized]) |*absorber| absorber.deinitOwned(self.allocator);
+            self.allocator.free(absorbers);
+        }
 
         for (absorber_map, 0..) |entry, index| {
             const item_map = try expectMap(entry.value);
@@ -1054,6 +1060,7 @@ const ResolveContext = struct {
                 .species = try self.allocator.dupe(u8, try expectString(requiredField(item_map, "species"))),
                 .resolved_species = try fields.parseAbsorberSpecies(try expectString(requiredField(item_map, "species"))),
             };
+            errdefer absorber.deinitOwned(self.allocator);
 
             if (mapGet(item_map, "profile")) |profile_value| {
                 const profile_map = try expectMap(profile_value);
@@ -1154,6 +1161,7 @@ const ResolveContext = struct {
             }
 
             absorbers[index] = absorber;
+            initialized += 1;
         }
 
         return .{ .items = absorbers };
@@ -2526,12 +2534,7 @@ fn findAbsorberForSpecies(absorbers: AbsorberSet, species: fields.AbsorberSpecie
 }
 
 fn resolvedAbsorberSpecies(absorber: Absorber) ?fields.AbsorberSpecies {
-    if (absorber.resolved_species) |species| return species;
-    if (std.meta.stringToEnum(fields.AbsorberSpecies, absorber.species)) |species| return species;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2_o2")) return .o2_o2;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
-    return null;
+    return AbsorberModel.resolvedAbsorberSpecies(absorber);
 }
 
 fn decodeMeasurementMask(allocator: Allocator, value: yaml.Value, strict: bool) !MeasurementMask {
@@ -3139,4 +3142,106 @@ test "document resolves operational LUT observation-model clones without leaks a
         resolveOperationalLutWithAllocator,
         .{},
     );
+}
+
+fn resolveOperationalLutFollowOnFailureWithAllocator(allocator: Allocator) !void {
+    const path = "zig-cache/test-o2-operational-lut-follow-on-failure.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o2_refspec_ntemperature 2
+        \\meta o2_refspec_npressure 2
+        \\meta o2_refspec_temperature_min 220.0
+        \\meta o2_refspec_temperature_max 320.0
+        \\meta o2_refspec_pressure_min 150.0
+        \\meta o2_refspec_pressure_max 1000.0
+        \\meta o2_refspec_wavelength_1 760.8
+        \\meta o2_refspec_wavelength_2 761.0
+        \\meta o2_refspec_wavelength_3 761.2
+        \\meta o2_refspec_coeff_1_1_1 2.0e-24
+        \\meta o2_refspec_coeff_2_1_1 0.3e-24
+        \\meta o2_refspec_coeff_1_2_1 0.2e-24
+        \\meta o2_refspec_coeff_2_2_1 0.05e-24
+        \\meta o2_refspec_coeff_1_1_2 2.6e-24
+        \\meta o2_refspec_coeff_2_1_2 0.35e-24
+        \\meta o2_refspec_coeff_1_2_2 0.25e-24
+        \\meta o2_refspec_coeff_2_2_2 0.06e-24
+        \\meta o2_refspec_coeff_1_1_3 2.2e-24
+        \\meta o2_refspec_coeff_2_1_3 0.32e-24
+        \\meta o2_refspec_coeff_1_2_3 0.22e-24
+        \\meta o2_refspec_coeff_2_2_3 0.05e-24
+        \\start_channel_rad
+        \\rad 760.8 1485.0 1.116153E+13
+        \\rad 761.0 1445.0 1.096153E+13
+        \\rad 761.2 1405.0 1.076153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o2-operational-lut-follow-on-failure
+        \\inputs:
+        \\  assets:
+        \\    o2_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o2-operational-lut-follow-on-failure.txt
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o2_metadata
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o2-line-by-line-follow-on-failure
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: line_by_line
+        \\            line_list_asset: missing_o2_lines
+        \\            operational_lut:
+        \\              from_ingest: demo.o2_operational_lut
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try Document.parse(allocator, "inline.yaml", ".", source);
+    defer document.deinit();
+
+    try std.testing.expectError(Error.MissingAsset, document.resolve(allocator));
+}
+
+test "document frees absorber LUT state when later spectroscopy resolution fails" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const status = gpa.deinit();
+        std.testing.expectEqual(std.heap.Check.ok, status) catch unreachable;
+    }
+
+    try resolveOperationalLutFollowOnFailureWithAllocator(gpa.allocator());
 }

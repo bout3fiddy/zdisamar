@@ -97,15 +97,7 @@ pub fn collectActiveCrossSectionAbsorbers(
 /// Purpose:
 ///   Resolve an absorber's canonical species identifier.
 pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberModel.AbsorberSpecies {
-    if (absorber.resolved_species) |species| return species;
-    if (std.meta.stringToEnum(AbsorberModel.AbsorberSpecies, absorber.species)) |species| return species;
-    // PARITY:
-    //   Preserve vendor-style `o2_o2`, `o2o2`, and `o2-o2` aliases by
-    //   normalizing them to the typed dimer species.
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2_o2")) return .o2_o2;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
-    return null;
+    return AbsorberModel.resolvedAbsorberSpecies(absorber);
 }
 
 /// Purpose:

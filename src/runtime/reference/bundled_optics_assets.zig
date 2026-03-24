@@ -383,15 +383,7 @@ pub fn hasExplicitCiaBindings(scene: *const Scene) bool {
 ///   Normalize legacy spellings so the bundled asset selectors and vendor-style requests agree on
 ///   the absorber identity.
 pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberSpecies {
-    if (absorber.resolved_species) |species| return species;
-    if (std.meta.stringToEnum(AbsorberSpecies, absorber.species)) |species| return species;
-    // GOTCHA:
-    //   Legacy configs still spell O2-O2 as `o2_o2`, `o2o2`, or `o2-o2`; all must normalize to
-    //   the same canonical species so selector logic stays stable.
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2_o2")) return .o2_o2;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
-    return null;
+    return AbsorberModel.resolvedAbsorberSpecies(absorber);
 }
 
 /// Purpose:

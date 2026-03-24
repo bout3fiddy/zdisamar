@@ -51,6 +51,23 @@ pub const AbsorptionRepresentation = union(enum) {
 };
 
 /// Purpose:
+///   Resolve a species string into the canonical typed absorber species.
+pub fn resolveAbsorberSpeciesName(species_name: []const u8) ?AbsorberSpecies {
+    if (std.meta.stringToEnum(AbsorberSpecies, species_name)) |species| return species;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2_o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2-o2")) return .o2_o2;
+    return null;
+}
+
+/// Purpose:
+///   Resolve an absorber's canonical typed species, preferring any pre-parsed field.
+pub fn resolvedAbsorberSpecies(absorber: Absorber) ?AbsorberSpecies {
+    if (absorber.resolved_species) |species| return species;
+    return resolveAbsorberSpeciesName(absorber.species);
+}
+
+/// Purpose:
 ///   Store stage-specific vendor-style controls for line mixing, isotope selection, thresholds,
 ///   and cutoffs.
 pub const LineGasControls = struct {
@@ -531,6 +548,21 @@ test "absorber set validates explicit spectroscopy bindings" {
                 },
             },
         }).validate(),
+    );
+}
+
+test "resolvedAbsorberSpecies normalizes legacy O2-O2 aliases" {
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        resolvedAbsorberSpecies(.{ .id = "o2_o2", .species = "o2_o2" }).?,
+    );
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        resolvedAbsorberSpecies(.{ .id = "o2o2", .species = "o2o2" }).?,
+    );
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        resolvedAbsorberSpecies(.{ .id = "o2-o2", .species = "o2-o2" }).?,
     );
 }
 
