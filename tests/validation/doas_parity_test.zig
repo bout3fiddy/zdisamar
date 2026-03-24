@@ -232,6 +232,7 @@ test "doas validation recovers an O2A differential fit on real spectra" {
     const initial_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .doas,
+        problem.scene,
         observed_measurement,
         initial_measurement,
     );
@@ -257,6 +258,7 @@ test "doas validation recovers an O2A differential fit on real spectra" {
         try retrieval.common.spectral_fit.fitResidualCost(
             std.testing.allocator,
             .doas,
+            problem.scene,
             observed_measurement,
             fitted_measurement,
         ) < initial_residual,
@@ -344,6 +346,7 @@ test "doas validation exercises engine provider dispatch on real spectra" {
     const initial_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .doas,
+        bound_problem.scene,
         observed_measurement,
         initial_measurement,
     );
@@ -368,6 +371,7 @@ test "doas validation exercises engine provider dispatch on real spectra" {
         try retrieval.common.spectral_fit.fitResidualCost(
             std.testing.allocator,
             .doas,
+            bound_problem.scene,
             observed_measurement,
             fitted_measurement,
         ) < initial_residual,
@@ -459,6 +463,7 @@ test "doas validation routes a NO2 cross-section scene through explicit effectiv
     const initial_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .doas,
+        problem.scene,
         observed_measurement,
         initial_measurement,
     );
@@ -488,6 +493,7 @@ test "doas validation routes a NO2 cross-section scene through explicit effectiv
         try retrieval.common.spectral_fit.fitResidualCost(
             std.testing.allocator,
             .doas,
+            problem.scene,
             observed_measurement,
             fitted_measurement,
         ) < initial_residual,

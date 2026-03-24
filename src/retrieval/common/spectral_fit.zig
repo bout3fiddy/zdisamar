@@ -38,6 +38,7 @@ const vector_ops = @import("../../kernels/linalg/vector_ops.zig");
 const airmass_phase = @import("../../model/reference/airmass_phase.zig");
 const cross_sections = @import("../../model/reference/cross_sections.zig");
 const Allocator = std.mem.Allocator;
+const Scene = @import("../../model/Scene.zig").Scene;
 const StateParameter = @import("../../model/Scene.zig").StateParameter;
 
 const SelectionStrategy = enum {
@@ -361,10 +362,11 @@ pub fn solveMethod(
 pub fn fitResidualCost(
     allocator: Allocator,
     method: common.Method,
+    scene: Scene,
     observed: forward_model.SpectralMeasurement,
     candidate: forward_model.SpectralMeasurement,
 ) common.Error!f64 {
-    const policy = policyForMethod(method);
+    const policy = policyForScene(method, scene);
     var selection = try buildSelectionIndices(allocator, observed, policy);
     defer selection.deinit(allocator);
 
