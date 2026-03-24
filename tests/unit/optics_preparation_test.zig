@@ -2848,3 +2848,158 @@ test "cross-section scenes add operational O2 LUT once with oxygen carrier densi
         expected_gas_absorption_optical_depth * 1.0e-12,
     );
 }
+
+test "mixed line and cross-section scenes retain line density in stored absorber totals" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 8.0, .pressure_hpa = 600.0, .temperature_k = 255.0, .air_number_density_cm3 = 1.2e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    var no2_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.2e-19 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 2.0e-19 },
+        }),
+    };
+    defer no2_cross_sections.deinit(std.testing.allocator);
+
+    var line_list = ReferenceData.SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+            .{
+                .gas_index = 1,
+                .isotope_number = 1,
+                .center_wavelength_nm = 431.0,
+                .line_strength_cm2_per_molecule = 1.0e-20,
+                .air_half_width_nm = 0.0010,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 100.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+            .{
+                .gas_index = 11,
+                .isotope_number = 1,
+                .center_wavelength_nm = 431.1,
+                .line_strength_cm2_per_molecule = 8.0e-21,
+                .air_half_width_nm = 0.0010,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 90.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+        }),
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "mixed-line-cross-section-densities",
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 15.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 432.0,
+            .sample_count = 5,
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "h2o",
+                    .species = "h2o",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "h2o").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 8000.0 },
+                        .{ 600.0, 3000.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+                zdisamar.Absorber{
+                    .id = "nh3",
+                    .species = "nh3",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "nh3").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 15.0 },
+                        .{ 600.0, 6.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+                zdisamar.Absorber{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.12 },
+                        .{ 600.0, 0.06 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{ .points = no2_cross_sections.points },
+                    },
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        &line_list,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), prepared.line_absorbers.len);
+    try std.testing.expectEqual(@as(usize, 1), prepared.cross_section_absorbers.len);
+
+    const expected_total_density =
+        prepared.line_absorbers[0].number_densities_cm3[0] +
+        prepared.line_absorbers[1].number_densities_cm3[0] +
+        prepared.cross_section_absorbers[0].number_densities_cm3[0];
+    try std.testing.expectApproxEqAbs(
+        expected_total_density,
+        prepared.sublayers.?[0].absorber_number_density_cm3,
+        expected_total_density * 1.0e-12,
+    );
+}

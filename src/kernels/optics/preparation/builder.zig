@@ -339,6 +339,7 @@ fn prepareWithInputs(
     };
 
     const midpoint_nm = (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm) * 0.5;
+    const has_line_absorbers = single_active_line_absorber != null or owned_line_absorbers.len != 0;
     const active_line_species = if (owned_line_absorbers.len == 0)
         Spectroscopy.resolveActiveLineSpecies(single_active_line_absorber, owned_lines, operational_o2_lut)
     else
@@ -660,7 +661,7 @@ fn prepareWithInputs(
                 }
                 break :blk absorber_density_cm3;
             } else absorber_density_cm3;
-            const total_gas_density_cm3 = if (owned_cross_section_absorbers.len != 0 and active_line_species == null)
+            const total_gas_density_cm3 = if (owned_cross_section_absorbers.len != 0 and !has_line_absorbers)
                 cross_section_absorber_density_cm3
             else
                 absorber_density_cm3 + cross_section_absorber_density_cm3;
