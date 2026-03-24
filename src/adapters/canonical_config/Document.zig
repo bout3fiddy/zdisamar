@@ -3093,6 +3093,10 @@ fn resolveOperationalLutWithAllocator(allocator: Allocator) !void {
         \\      kind: file
         \\      format: csv
         \\      path: data/cross_sections/no2_405_465_demo.csv
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o2o2_metadata
         \\experiment:
         \\  simulation:
         \\    scene:
