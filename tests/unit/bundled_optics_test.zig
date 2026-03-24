@@ -101,6 +101,7 @@ test "runtime bundled optics skips visible line and cia defaults for explicit cr
     var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
     defer prepared.deinit(std.testing.allocator);
 
+    try std.testing.expect(prepared.spectroscopy_lines == null);
     try std.testing.expectEqual(@as(usize, 1), prepared.cross_section_absorbers.len);
     try std.testing.expectEqual(@as(usize, 0), prepared.line_absorbers.len);
     try std.testing.expect(prepared.collision_induced_absorption == null);
@@ -109,6 +110,58 @@ test "runtime bundled optics skips visible line and cia defaults for explicit cr
         prepared.cross_section_absorbers[0].representation_kind,
     );
     try std.testing.expect(prepared.gas_optical_depth > 0.0);
+}
+
+test "runtime bundled optics keeps visible bundled line fallback for implicit absorbers" {
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-implicit-absorbers",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 48,
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .profile_source = .atmosphere,
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(prepared.spectroscopy_lines != null);
+    try std.testing.expect(prepared.spectroscopy_lines.?.lines.len != 0);
+}
+
+test "bundled optics and preparation helpers accept O2_O2 species aliases" {
+    const absorber: Absorber = .{
+        .id = "o2-o2-alias",
+        .species = "O2_O2",
+        .profile_source = .atmosphere,
+        .spectroscopy = .{ .mode = .cross_sections },
+    };
+
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        bundled_optics_assets.resolvedAbsorberSpecies(absorber).?,
+    );
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        OpticsPrepare.spectroscopy.resolvedAbsorberSpecies(absorber).?,
+    );
 }
 
 test "runtime bundled optics uses O2A sidecars and aerosol Mie tables when requested" {

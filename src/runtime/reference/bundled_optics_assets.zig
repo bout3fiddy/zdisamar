@@ -291,10 +291,15 @@ pub fn shouldLoadVisibleBandLineList(scene: *const Scene) bool {
         return false;
     }
     if (scene.absorbers.items.len == 0) return true;
+    var uses_only_implicit_absorbers = true;
     for (scene.absorbers.items) |absorber| {
-        if (absorber.spectroscopy.mode == .line_by_line) return true;
+        switch (absorber.spectroscopy.mode) {
+            .line_by_line => return true,
+            .none => {},
+            .cross_sections, .cia => uses_only_implicit_absorbers = false,
+        }
     }
-    return false;
+    return uses_only_implicit_absorbers;
 }
 
 /// Purpose:
@@ -381,8 +386,9 @@ pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberSpecie
     if (absorber.resolved_species) |species| return species;
     if (std.meta.stringToEnum(AbsorberSpecies, absorber.species)) |species| return species;
     // GOTCHA:
-    //   Legacy configs still spell O2-O2 as `o2o2` or `o2-o2`; both must normalize to the same
-    //   canonical species so selector logic stays stable.
+    //   Legacy configs still spell O2-O2 as `o2_o2`, `o2o2`, or `o2-o2`; all must normalize to
+    //   the same canonical species so selector logic stays stable.
+    if (std.ascii.eqlIgnoreCase(absorber.species, "o2_o2")) return .o2_o2;
     if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
     if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
     return null;
