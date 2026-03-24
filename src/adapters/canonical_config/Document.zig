@@ -49,6 +49,7 @@ const SurfaceParameter = @import("../../model/Surface.zig").Parameter;
 const Cloud = @import("../../model/Cloud.zig").Cloud;
 const Aerosol = @import("../../model/Aerosol.zig").Aerosol;
 const ObservationModel = @import("../../model/ObservationModel.zig").ObservationModel;
+const CrossSectionFitControls = @import("../../model/ObservationModel.zig").CrossSectionFitControls;
 const ObservationRegime = @import("../../model/ObservationModel.zig").ObservationRegime;
 const InstrumentId = @import("../../model/Instrument.zig").Id;
 const BuiltinLineShapeKind = @import("../../model/Instrument.zig").BuiltinLineShapeKind;
@@ -301,6 +302,14 @@ pub const GeneralConfig = struct {
     fit_temperature_offset: bool = false,
     fit_ln_cld_tau: bool = false,
     num_interval_fit: ?u32 = null,
+    use_eff_xsec_oe_sim: bool = false,
+    use_eff_xsec_oe_retr: bool = false,
+    use_poly_exp_xsec_sim: bool = false,
+    use_poly_exp_xsec_retr: bool = false,
+    xsec_strong_abs_sim: ?[]const bool = null,
+    xsec_strong_abs_retr: ?[]const bool = null,
+    degree_poly_sim: ?[]const u32 = null,
+    degree_poly_retr: ?[]const u32 = null,
     // Method codes
     simulation_method: ?fields.SimulationMethod = null,
     retrieval_method: ?fields.RetrievalMethod = null,
@@ -837,6 +846,7 @@ const ResolveContext = struct {
         stage.rrs_ring = try decodeRrsRingConfig(self.allocator, mapGet(stage_map, "rrs_ring"), self.strict_unknown_fields);
         stage.additional_output = try decodeAdditionalOutputConfig(mapGet(stage_map, "additional_output"), self.strict_unknown_fields);
         stage.general = try decodeGeneralConfig(self.allocator, mapGet(stage_map, "general"), self.strict_unknown_fields);
+        try applyGeneralConfigToObservationModel(self.allocator, kind, stage.general, &stage.scene);
         stage.instrument = try decodeInstrumentConfig(self.allocator, mapGet(stage_map, "instrument"), self.strict_unknown_fields);
         stage.geometry = try decodeGeometryConfig(mapGet(stage_map, "geometry"), self.strict_unknown_fields);
         stage.pressure_temperature = try decodePressureTemperatureConfig(self.allocator, mapGet(stage_map, "pressure_temperature"), self.strict_unknown_fields);
@@ -1064,6 +1074,7 @@ const ResolveContext = struct {
                     "line_mixing_asset",
                     "strong_lines_asset",
                     "cia_asset",
+                    "cross_section_asset",
                     "operational_lut",
                 }, self.strict_unknown_fields);
 
@@ -1083,13 +1094,18 @@ const ResolveContext = struct {
                 if (mapGet(spectroscopy_map, "cia_asset")) |cia_asset| {
                     absorber.spectroscopy.cia_table = try self.decodeAssetBinding(cia_asset);
                 }
+                if (mapGet(spectroscopy_map, "cross_section_asset")) |cross_section_asset| {
+                    absorber.spectroscopy.cross_section_table = try self.decodeAssetBinding(cross_section_asset);
+                }
                 if (mapGet(spectroscopy_map, "operational_lut")) |operational_lut| {
                     const binding = try self.decodeIngestBinding(operational_lut);
                     absorber.spectroscopy.operational_lut = binding;
                     if (std.mem.eql(u8, absorber.id, "o2")) {
                         observation_model.o2_operational_lut = try resolveOperationalLut(self.allocator, self.ingests, binding, "o2_operational_lut");
+                        absorber.spectroscopy.resolved_cross_section_lut = try observation_model.o2_operational_lut.clone(self.allocator);
                     } else if (std.mem.eql(u8, absorber.id, "o2o2")) {
                         observation_model.o2o2_operational_lut = try resolveOperationalLut(self.allocator, self.ingests, binding, "o2o2_operational_lut");
+                        absorber.spectroscopy.resolved_cross_section_lut = try observation_model.o2o2_operational_lut.clone(self.allocator);
                     }
                 }
                 absorber.spectroscopy.resolved_line_list = try resolveSpectroscopyLineList(
@@ -1101,6 +1117,11 @@ const ResolveContext = struct {
                     self.allocator,
                     self.assets,
                     absorber.spectroscopy.cia_table,
+                );
+                absorber.spectroscopy.resolved_cross_section_table = try resolveCrossSectionTable(
+                    self.allocator,
+                    self.assets,
+                    absorber.spectroscopy.cross_section_table,
                 );
             }
 
@@ -2014,7 +2035,6 @@ fn decodeAdditionalOutputConfig(value: ?yaml.Value, strict: bool) !?AdditionalOu
 }
 
 fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?GeneralConfig {
-    _ = allocator;
     const gc_value = value orelse return null;
     const gc_map = try expectMap(gc_value);
     try ensureKnownFields(gc_map, &.{
@@ -2030,6 +2050,14 @@ fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !
         "fit_temperature_offset",
         "fit_ln_cld_tau",
         "num_interval_fit",
+        "useEffXsec_OE_sim",
+        "useEffXsec_OE_retr",
+        "usePolyExpXsecSim",
+        "usePolyExpXsecRetr",
+        "XsecStrongAbsSim",
+        "XsecStrongAbsRetr",
+        "degreePolySim",
+        "degreePolyRetr",
         "simulation_method",
         "retrieval_method",
         "solar_irr_file_sim",
@@ -2051,6 +2079,14 @@ fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !
     if (mapGet(gc_map, "fit_temperature_offset")) |v| gc.fit_temperature_offset = try expectBool(v);
     if (mapGet(gc_map, "fit_ln_cld_tau")) |v| gc.fit_ln_cld_tau = try expectBool(v);
     if (mapGet(gc_map, "num_interval_fit")) |v| gc.num_interval_fit = @intCast(try expectU64(v));
+    if (mapGet(gc_map, "useEffXsec_OE_sim")) |v| gc.use_eff_xsec_oe_sim = try expectBool(v);
+    if (mapGet(gc_map, "useEffXsec_OE_retr")) |v| gc.use_eff_xsec_oe_retr = try expectBool(v);
+    if (mapGet(gc_map, "usePolyExpXsecSim")) |v| gc.use_poly_exp_xsec_sim = try expectBool(v);
+    if (mapGet(gc_map, "usePolyExpXsecRetr")) |v| gc.use_poly_exp_xsec_retr = try expectBool(v);
+    if (mapGet(gc_map, "XsecStrongAbsSim")) |v| gc.xsec_strong_abs_sim = try decodeBoolSequence(allocator, v);
+    if (mapGet(gc_map, "XsecStrongAbsRetr")) |v| gc.xsec_strong_abs_retr = try decodeBoolSequence(allocator, v);
+    if (mapGet(gc_map, "degreePolySim")) |v| gc.degree_poly_sim = try decodeU32Sequence(allocator, v);
+    if (mapGet(gc_map, "degreePolyRetr")) |v| gc.degree_poly_retr = try decodeU32Sequence(allocator, v);
     if (mapGet(gc_map, "simulation_method")) |v| gc.simulation_method = try fields.parseSimulationMethod(try expectString(v));
     if (mapGet(gc_map, "retrieval_method")) |v| gc.retrieval_method = try fields.parseRetrievalMethod(try expectString(v));
     if (mapGet(gc_map, "solar_irr_file_sim")) |v| gc.solar_irr_file_sim = try expectString(v);
@@ -2337,6 +2373,15 @@ fn decodeU32Sequence(allocator: Allocator, value: yaml.Value) ![]const u32 {
     return result;
 }
 
+fn decodeBoolSequence(allocator: Allocator, value: yaml.Value) ![]const bool {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc(bool, seq.len);
+    for (seq, 0..) |entry, index| {
+        result[index] = try expectBool(entry);
+    }
+    return result;
+}
+
 fn decodeU8Sequence(allocator: Allocator, value: yaml.Value) ![]const u8 {
     const seq = try expectSeq(value);
     const result = try allocator.alloc(u8, seq.len);
@@ -2400,6 +2445,42 @@ fn applyAbsorbingGasConfigToScene(
             .active_stage = active_stage,
         };
     }
+}
+
+fn applyGeneralConfigToObservationModel(
+    allocator: Allocator,
+    kind: StageKind,
+    config: ?GeneralConfig,
+    scene: *Scene,
+) !void {
+    const general = config orelse return;
+    const strong_absorption_bands = switch (kind) {
+        .simulation => general.xsec_strong_abs_sim,
+        .retrieval => general.xsec_strong_abs_retr,
+    };
+    const polynomial_degree_bands = switch (kind) {
+        .simulation => general.degree_poly_sim,
+        .retrieval => general.degree_poly_retr,
+    };
+
+    scene.observation_model.cross_section_fit = CrossSectionFitControls{
+        .use_effective_cross_section_oe = switch (kind) {
+            .simulation => general.use_eff_xsec_oe_sim,
+            .retrieval => general.use_eff_xsec_oe_retr,
+        },
+        .use_polynomial_expansion = switch (kind) {
+            .simulation => general.use_poly_exp_xsec_sim,
+            .retrieval => general.use_poly_exp_xsec_retr,
+        },
+        .xsec_strong_absorption_bands = if (strong_absorption_bands) |values|
+            try allocator.dupe(bool, values)
+        else
+            &.{},
+        .polynomial_degree_bands = if (polynomial_degree_bands) |values|
+            try allocator.dupe(u32, values)
+        else
+            &.{},
+    };
 }
 
 fn findAbsorberForSpecies(absorbers: AbsorberSet, species: fields.AbsorberSpecies) ?*Absorber {
@@ -2709,6 +2790,24 @@ fn resolveCollisionInducedAbsorptionTable(
     );
     defer loaded.deinit(allocator);
     const table = try loaded.toCollisionInducedAbsorptionTable(allocator);
+    return table;
+}
+
+fn resolveCrossSectionTable(
+    allocator: Allocator,
+    assets: []const Asset,
+    binding: Binding,
+) !?ReferenceData.CrossSectionTable {
+    if (binding.kind() != .asset) return null;
+
+    var loaded = try loadResolvedAsset(
+        allocator,
+        assets,
+        binding,
+        .cross_section_table,
+    );
+    defer loaded.deinit(allocator);
+    const table = try loaded.toCrossSectionTable(allocator);
     return table;
 }
 

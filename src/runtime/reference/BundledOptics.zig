@@ -162,10 +162,14 @@ fn loadCollisionInducedAbsorptionForScene(
     allocator: Allocator,
     scene: *const Scene,
 ) !?ReferenceData.CollisionInducedAbsorptionTable {
-    if (assets.resolvedCollisionInducedAbsorptionTable(scene)) |table| {
-        return try table.clone(allocator);
+    const requests_explicit_cia = assets.sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
+    const has_explicit_cia_bindings = assets.hasExplicitCiaBindings(scene);
+    if (requests_explicit_cia) {
+        if (assets.resolvedCollisionInducedAbsorptionTable(scene)) |table| {
+            return try table.clone(allocator);
+        }
     }
-    if (assets.hasExplicitCiaBindings(scene)) {
+    if (has_explicit_cia_bindings) {
         // GOTCHA:
         //   Explicit CIA bindings must be materialized or the scene configuration is incomplete.
         return error.UnresolvedCollisionInducedAbsorptionBinding;

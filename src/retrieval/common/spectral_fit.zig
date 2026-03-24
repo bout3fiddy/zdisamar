@@ -146,7 +146,7 @@ pub fn solveMethod(
     method: common.Method,
 ) common.Error!common.SolverOutcome {
     try problem.validateForMethod(method);
-    const policy = policyForMethod(method);
+    const policy = policyForScene(method, problem.scene);
     const layout = try state_access.resolveStateLayout(problem);
     const state_count = problem.inverse_problem.state_vector.parameters.len;
 
@@ -404,6 +404,31 @@ fn policyForMethod(method: common.Method) Policy {
         },
         else => unreachable,
     };
+}
+
+fn policyForScene(method: common.Method, scene: @import("../../model/Scene.zig").Scene) Policy {
+    var policy = policyForMethod(method);
+    const cross_section_fit = scene.observation_model.cross_section_fit;
+    const configured_polynomial_order = cross_section_fit.polynomialOrderForBand(0);
+    if (configured_polynomial_order != 0) {
+        policy.polynomial_order = configured_polynomial_order;
+    }
+
+    var any_strong_absorption_band = false;
+    for (scene.bands.items, 0..) |_, band_index| {
+        if (cross_section_fit.strongAbsorptionForBand(band_index)) {
+            any_strong_absorption_band = true;
+            break;
+        }
+    }
+    if (method == .dismas and
+        (cross_section_fit.use_effective_cross_section_oe or
+            cross_section_fit.use_polynomial_expansion or
+            any_strong_absorption_band))
+    {
+        policy.selection_budget = @max(policy.selection_budget, 128);
+    }
+    return policy;
 }
 
 fn linearizeState(

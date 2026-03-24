@@ -870,3 +870,74 @@ test "canonical execution rejects multiple measurement-space products in one sta
         zdisamar.canonical_config.compileResolved(std.testing.allocator, resolved),
     );
 }
+
+test "canonical config compiles cross-section assets and effective-xsec controls into the scene" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: cross-section-controls
+        \\inputs:
+        \\  assets:
+        \\    no2_cross_section:
+        \\      kind: file
+        \\      format: csv
+        \\      path: data/cross_sections/no2_405_465_demo.csv
+        \\experiment:
+        \\  simulation:
+        \\    general:
+        \\      useEffXsec_OE_sim: true
+        \\      usePolyExpXsecSim: true
+        \\      XsecStrongAbsSim: [true]
+        \\      degreePolySim: [5]
+        \\    scene:
+        \\      id: no2-xsec-scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        uv:
+        \\          start_nm: 405.0
+        \\          end_nm: 465.0
+        \\          step_nm: 2.5
+        \\      absorbers:
+        \\        no2:
+        \\          species: no2
+        \\          spectroscopy:
+        \\            model: cross_sections
+        \\            cross_section_asset: no2_cross_section
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation.?;
+    const absorber = stage.scene.absorbers.items[0];
+    try std.testing.expectEqual(zdisamar.SpectroscopyMode.cross_sections, absorber.spectroscopy.mode);
+    try std.testing.expect(absorber.spectroscopy.resolved_cross_section_table != null);
+    try std.testing.expect(stage.scene.observation_model.cross_section_fit.use_effective_cross_section_oe);
+    try std.testing.expect(stage.scene.observation_model.cross_section_fit.use_polynomial_expansion);
+    try std.testing.expect(stage.scene.observation_model.cross_section_fit.strongAbsorptionForBand(0));
+    try std.testing.expectEqual(@as(u32, 5), stage.scene.observation_model.cross_section_fit.polynomialOrderForBand(0));
+}

@@ -143,10 +143,8 @@ pub const LoadedAsset = struct {
     ///   Convert wavelength and cross-section columns into typed interpolation points.
     pub fn toCrossSectionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CrossSectionTable {
         if (self.kind != .cross_section_table or self.columnCount() != 2) return error.InvalidAssetKind;
-        try expectColumns(self.column_names, &.{
-            "wavelength_nm",
-            "no2_sigma_cm2_per_molecule",
-        });
+        if (!std.mem.eql(u8, self.column_names[0], "wavelength_nm")) return error.InvalidColumns;
+        if (!std.mem.endsWith(u8, self.column_names[1], "_sigma_cm2_per_molecule")) return error.InvalidColumns;
 
         const points = try allocator.alloc(ReferenceData.CrossSectionPoint, self.row_count);
         errdefer allocator.free(points);

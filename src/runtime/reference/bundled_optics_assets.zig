@@ -281,12 +281,20 @@ pub fn shouldLoadVisibleBandContinuum(scene: *const Scene) bool {
 ///   Decide whether the visible-band line list should be loaded for a scene.
 ///
 /// Physics:
-///   Gate the visible-band spectroscopy on overlap with the 405-465 nm window.
+///   Gate the visible-band spectroscopy on overlap with the 405-465 nm window and require
+///   either bundled-default behavior or an explicit line-by-line request.
 ///
 /// Units:
 ///   The window boundaries are in nanometers.
 pub fn shouldLoadVisibleBandLineList(scene: *const Scene) bool {
-    return overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 405.0, 465.0);
+    if (!overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 405.0, 465.0)) {
+        return false;
+    }
+    if (scene.absorbers.items.len == 0) return true;
+    for (scene.absorbers.items) |absorber| {
+        if (absorber.spectroscopy.mode == .line_by_line) return true;
+    }
+    return false;
 }
 
 /// Purpose:

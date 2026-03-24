@@ -2572,3 +2572,149 @@ test "species mixing ratio splits demo NO2 trace loading across partition absorb
         1.0e-18,
     );
 }
+
+test "optical preparation builds explicit cross-section absorbers without reusing fallback continuum" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 3.0, .pressure_hpa = 700.0, .temperature_k = 270.0, .air_number_density_cm3 = 1.6e19 },
+            .{ .altitude_km = 6.0, .pressure_hpa = 450.0, .temperature_k = 245.0, .air_number_density_cm3 = 1.1e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 9.0e-20 },
+            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 8.5e-20 },
+            .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 8.0e-20 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+            .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 2.2e-19 },
+            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 3.5e-19 },
+            .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.8e-19 },
+        };
+    const no2_cross_sections = ReferenceData.CrossSectionTable{
+        .points = no2_points[0..],
+    };
+    const o3_lut = zdisamar.OperationalCrossSectionLut{
+        .wavelengths_nm = &.{ 405.0, 435.0, 465.0 },
+        .coefficients = &.{
+            1.0e-19,
+            0.0,
+            1.6e-19,
+            0.0,
+            1.1e-19,
+            0.0,
+        },
+        .temperature_coefficient_count = 1,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 200.0,
+        .max_pressure_hpa = 1100.0,
+    };
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "uvvis-cross-section-scene",
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 35.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 40.0,
+        },
+        .atmosphere = .{
+            .layer_count = 3,
+            .sublayer_divisions = 2,
+        },
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 25,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "uv",
+                    .start_nm = 405.0,
+                    .end_nm = 465.0,
+                    .step_nm = 2.5,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = no2_cross_sections,
+                    },
+                },
+                zdisamar.Absorber{
+                    .id = "o3",
+                    .species = "o3",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "o3").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 8.0 },
+                        .{ 450.0, 14.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .operational_lut = .{ .ingest = .{
+                            .full_name = "demo.o3_operational_lut",
+                            .ingest_name = "demo",
+                            .output_name = "o3_operational_lut",
+                        } },
+                        .resolved_cross_section_lut = o3_lut,
+                    },
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{ true },
+                .polynomial_degree_bands = &.{ 4 },
+            },
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        null,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), prepared.cross_section_absorbers.len);
+    try std.testing.expectEqual(OpticsPrepare.state.CrossSectionRepresentationKind.effective_table, prepared.cross_section_absorbers[0].representation_kind);
+    try std.testing.expectEqual(OpticsPrepare.state.CrossSectionRepresentationKind.effective_lut, prepared.cross_section_absorbers[1].representation_kind);
+    try std.testing.expectEqual(@as(u32, 4), prepared.cross_section_absorbers[0].polynomial_order);
+    try std.testing.expectEqual(@as(usize, 0), prepared.line_absorbers.len);
+    try std.testing.expectEqual(@as(f64, 0.0), prepared.sublayers.?[0].continuum_cross_section_cm2_per_molecule);
+    try std.testing.expect(prepared.totalCrossSectionAtWavelength(435.0) > fallback_cross_sections.interpolateSigma(435.0));
+    try std.testing.expect(prepared.gasOpticalDepthAtWavelength(435.0) > 0.0);
+}

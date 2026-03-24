@@ -117,6 +117,7 @@ pub const Scene = struct {
         try self.cloud.validate();
         try self.aerosol.validate();
         try self.observation_model.validate();
+        try self.observation_model.cross_section_fit.validateForBandCount(self.bands.items.len);
         if (self.observation_model.measured_wavelengths_nm.len != 0 and
             self.observation_model.measured_wavelengths_nm.len != @as(usize, self.spectral_grid.sample_count))
         {

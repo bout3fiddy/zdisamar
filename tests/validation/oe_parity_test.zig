@@ -3,8 +3,48 @@ const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
 const retrieval = @import("zdisamar_internal").retrieval;
 
+const ReferenceData = internal.reference_data;
+const OpticsPrepare = internal.kernels.optics.preparation;
 const MeasurementSpace = internal.kernels.transport.measurement;
 const StateParameter = zdisamar.StateParameter;
+const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
+
+const o3_operational_lut = zdisamar.OperationalCrossSectionLut{
+    .wavelengths_nm = &[_]f64{ 405.0, 435.0, 465.0 },
+    .coefficients = &[_]f64{
+        2.8e-19,
+        0.35e-19,
+        3.6e-19,
+        0.45e-19,
+        2.1e-19,
+        0.25e-19,
+    },
+    .temperature_coefficient_count = 1,
+    .pressure_coefficient_count = 2,
+    .min_temperature_k = 220.0,
+    .max_temperature_k = 320.0,
+    .min_pressure_hpa = 200.0,
+    .max_pressure_hpa = 1100.0,
+};
+const o3_bands = [_]zdisamar.SpectralBand{
+    .{
+        .id = "vis-o3",
+        .start_nm = 405.0,
+        .end_nm = 465.0,
+        .step_nm = 1.25,
+    },
+};
+const o3_profile_ppmv = [_][2]f64{
+    .{ 1000.0, 6.0 },
+    .{ 450.0, 12.0 },
+};
+const o3_strong_absorption_bands = [_]bool{true};
+const o3_polynomial_degree_bands = [_]u32{4};
+
+const O3SceneFixture = struct {
+    absorbers: [1]zdisamar.Absorber,
+    scene: zdisamar.Scene,
+};
 
 const RealEvaluatorContext = struct {
     allocator: std.mem.Allocator,
@@ -164,6 +204,67 @@ fn loadOeReferenceAnchor(allocator: std.mem.Allocator) !LoadedOeReferenceAnchor 
         .{ .ignore_unknown_fields = true },
     );
     return .{ .raw = raw, .parsed = parsed };
+}
+
+fn makeO3CrossSectionScene(
+    id: []const u8,
+    albedo: f64,
+    wavelength_shift_nm: f64,
+) O3SceneFixture {
+    const fixture = O3SceneFixture{
+        .absorbers = .{
+            zdisamar.Absorber{
+                .id = "o3",
+                .species = "o3",
+                .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "o3").?,
+                .profile_source = .atmosphere,
+                .volume_mixing_ratio_profile_ppmv = o3_profile_ppmv[0..],
+                .spectroscopy = .{
+                    .mode = .cross_sections,
+                    .operational_lut = .{ .ingest = .{
+                        .full_name = "demo.o3_operational_lut",
+                        .ingest_name = "demo",
+                        .output_name = "o3_operational_lut",
+                    } },
+                    .resolved_cross_section_lut = o3_operational_lut,
+                },
+            },
+        },
+        .scene = .{
+            .id = id,
+            .geometry = .{
+                .model = .pseudo_spherical,
+                .solar_zenith_deg = 32.0,
+                .viewing_zenith_deg = 10.0,
+                .relative_azimuth_deg = 45.0,
+            },
+            .atmosphere = .{
+                .layer_count = 8,
+            },
+            .spectral_grid = .{
+                .start_nm = 405.0,
+                .end_nm = 465.0,
+                .sample_count = 24,
+            },
+            .bands = .{
+                .items = o3_bands[0..],
+            },
+            .absorbers = .{},
+            .surface = .{ .albedo = albedo },
+            .observation_model = .{
+                .instrument = .synthetic,
+                .noise_model = .shot_noise,
+                .wavelength_shift_nm = wavelength_shift_nm,
+                .cross_section_fit = .{
+                    .use_effective_cross_section_oe = true,
+                    .use_polynomial_expansion = true,
+                    .xsec_strong_absorption_bands = o3_strong_absorption_bands[0..],
+                    .polynomial_degree_bands = o3_polynomial_degree_bands[0..],
+                },
+            },
+        },
+    };
+    return fixture;
 }
 
 test "oe parity executes the full expert o2a scenario and improves the masked spectral fit" {
@@ -350,4 +451,111 @@ test "oe reference scenario matches the golden spectral-fit anchor" {
     for (anchor.parsed.value.state_estimate, result.state_estimate.values) |expected, actual| {
         try std.testing.expectApproxEqAbs(expected, actual, anchor.parsed.value.tolerances.state_absolute);
     }
+}
+
+test "oe parity executes an O3 cross-section scene through the explicit LUT path" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    var plan = try engine.preparePlan(.{
+        .providers = .{ .retrieval_algorithm = "builtin.oe_solver" },
+        .scene_blueprint = .{
+            .observation_regime = .nadir,
+            .derivative_mode = .semi_analytical,
+            .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 24 },
+            .layer_count_hint = 8,
+            .measurement_count_hint = 24,
+        },
+    });
+    defer plan.deinit();
+
+    const context: RealEvaluatorContext = .{
+        .allocator = std.testing.allocator,
+        .plan = &plan,
+    };
+    const evaluator = realEvaluator(&context);
+
+    var truth_fixture = makeO3CrossSectionScene("oe-o3-truth", 0.15, 0.012);
+    truth_fixture.scene.absorbers.items = truth_fixture.absorbers[0..];
+    const truth_scene = truth_fixture.scene;
+    var retrieval_fixture = makeO3CrossSectionScene("oe-o3-retrieval", 0.08, 0.0);
+    retrieval_fixture.scene.absorbers.items = retrieval_fixture.absorbers[0..];
+    const retrieval_scene = retrieval_fixture.scene;
+
+    var prepared = try plan.providers.optics.prepareForScene(std.testing.allocator, &retrieval_scene);
+    defer prepared.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), prepared.cross_section_absorbers.len);
+    try std.testing.expectEqual(@as(usize, 0), prepared.line_absorbers.len);
+    try std.testing.expectEqual(OpticsPrepare.state.CrossSectionRepresentationKind.effective_lut, prepared.cross_section_absorbers[0].representation_kind);
+    try std.testing.expectEqual(@as(u32, 4), prepared.cross_section_absorbers[0].polynomial_order);
+    try std.testing.expect(prepared.collision_induced_absorption == null);
+    try std.testing.expect(prepared.mean_cross_section_cm2_per_molecule > 0.0);
+    try std.testing.expect(prepared.gas_optical_depth > 0.0);
+
+    var observed_product = try realObservedProduct(std.testing.allocator, &context, truth_scene);
+    defer observed_product.deinit(std.testing.allocator);
+    var initial_product = try realObservedProduct(std.testing.allocator, &context, retrieval_scene);
+    defer initial_product.deinit(std.testing.allocator);
+
+    const problem: retrieval.common.contracts.RetrievalProblem = .{
+        .scene = retrieval_scene,
+        .inverse_problem = .{
+            .id = "inverse-oe-o3-cross-section",
+            .state_vector = .{
+                .parameters = &[_]StateParameter{
+                    .{ .name = "surface_albedo", .target = .surface_albedo, .transform = .logit, .prior = .{ .enabled = true, .mean = 0.10, .sigma = 0.04 }, .bounds = .{ .enabled = true, .min = 0.0, .max = 1.0 } },
+                    .{ .name = "wavelength_shift", .target = .wavelength_shift_nm, .prior = .{ .enabled = true, .mean = 0.0, .sigma = 0.05 }, .bounds = .{ .enabled = true, .min = -0.2, .max = 0.2 } },
+                },
+            },
+            .measurements = .{
+                .product_name = "radiance",
+                .observable = .radiance,
+                .sample_count = 24,
+                .source = .{ .external_observation = .{ .name = "truth_radiance" } },
+                .error_model = .{ .from_source_noise = true, .floor = 1.0e-4 },
+            },
+            .fit_controls = .{ .max_iterations = 5 },
+        },
+        .derivative_mode = .semi_analytical,
+        .jacobians_requested = true,
+        .observed_measurement = .{
+            .source_name = "truth_radiance",
+            .observable = .radiance,
+            .product_name = "radiance",
+            .sample_count = 24,
+            .product = .init(&observed_product),
+        },
+    };
+
+    const initial_residual = maskedResidualNorm(
+        problem.inverse_problem.measurements,
+        observed_product.wavelengths,
+        observed_product.radiance,
+        initial_product.radiance,
+    );
+
+    const result = try retrieval.oe.solver.solveWithEvaluator(std.testing.allocator, problem, evaluator);
+    defer {
+        var owned = result;
+        owned.deinit(std.testing.allocator);
+    }
+
+    var fitted_product = try realObservedProduct(std.testing.allocator, &context, result.fitted_scene.?);
+    defer fitted_product.deinit(std.testing.allocator);
+    const final_residual = maskedResidualNorm(
+        problem.inverse_problem.measurements,
+        observed_product.wavelengths,
+        observed_product.radiance,
+        fitted_product.radiance,
+    );
+
+    try std.testing.expect(result.jacobians_used);
+    try std.testing.expect(result.jacobian != null);
+    try std.testing.expect(result.averaging_kernel != null);
+    try std.testing.expect(result.posterior_covariance != null);
+    try std.testing.expect(result.fitted_scene != null);
+    try std.testing.expect(result.dfs > 0.0);
+    try std.testing.expect(final_residual < initial_residual);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.012), result.state_estimate.values[1], 0.05);
 }

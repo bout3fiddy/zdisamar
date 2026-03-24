@@ -51,6 +51,50 @@ pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]
 }
 
 /// Purpose:
+///   Collect the cross-section absorbers active in the scene.
+pub fn collectActiveCrossSectionAbsorbers(
+    allocator: Allocator,
+    scene: *const Scene,
+    fallback_cross_sections: *const ReferenceData.CrossSectionTable,
+) ![]State.ActiveCrossSectionAbsorber {
+    var active = std.ArrayList(State.ActiveCrossSectionAbsorber).empty;
+    defer active.deinit(allocator);
+
+    var any_strong_absorption_band = false;
+    for (scene.bands.items, 0..) |_, band_index| {
+        if (scene.observation_model.cross_section_fit.strongAbsorptionForBand(band_index)) {
+            any_strong_absorption_band = true;
+            break;
+        }
+    }
+    const use_effective_cross_section = scene.observation_model.cross_section_fit.use_effective_cross_section_oe or
+        scene.observation_model.cross_section_fit.use_polynomial_expansion or
+        any_strong_absorption_band;
+    const polynomial_order = scene.observation_model.cross_section_fit.polynomialOrderForBand(0);
+
+    for (scene.absorbers.items) |*absorber| {
+        const species = resolvedAbsorberSpecies(absorber.*) orelse continue;
+        if (absorber.spectroscopy.mode != .cross_sections) continue;
+
+        const representation = switch (absorber.spectroscopy.resolvedAbsorptionRepresentation()) {
+            .xsec_table => |table| AbsorberModel.AbsorptionRepresentation{ .xsec_table = table },
+            .xsec_lut => |lut| AbsorberModel.AbsorptionRepresentation{ .xsec_lut = lut },
+            .line_abs, .none => AbsorberModel.AbsorptionRepresentation{ .xsec_table = fallback_cross_sections },
+        };
+
+        try active.append(allocator, .{
+            .species = species,
+            .representation = representation,
+            .volume_mixing_ratio_profile_ppmv = absorber.volume_mixing_ratio_profile_ppmv,
+            .use_effective_cross_section = use_effective_cross_section,
+            .polynomial_order = polynomial_order,
+        });
+    }
+
+    return active.toOwnedSlice(allocator);
+}
+
+/// Purpose:
 ///   Resolve an absorber's canonical species identifier.
 pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberModel.AbsorberSpecies {
     if (absorber.resolved_species) |species| return species;

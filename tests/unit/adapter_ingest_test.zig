@@ -197,3 +197,33 @@ test "reference asset ingest loads bounded Mie phase tables from vendor-derived 
     try std.testing.expectApproxEqAbs(@as(f64, 2.3337024), interpolated.phase_coefficients[1], 1e-6);
     try std.testing.expectEqual(@as(f64, 1.0), interpolated.phase_coefficients[0]);
 }
+
+test "reference asset ingest accepts generic cross-section sigma column names" {
+    const path = "zig-cache/test-o3-cross-section.csv";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+            \\wavelength_nm,o3_sigma_cm2_per_molecule
+            \\320.0,1.1e-19
+            \\325.0,1.4e-19
+            \\330.0,1.2e-19
+            \\
+        ,
+    });
+
+    var loaded = try zdisamar.ingest.reference_assets.loadExternalAsset(
+        std.testing.allocator,
+        .cross_section_table,
+        "o3_demo",
+        path,
+        "csv",
+    );
+    defer loaded.deinit(std.testing.allocator);
+
+    var cross_sections = try loaded.toCrossSectionTable(std.testing.allocator);
+    defer cross_sections.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), cross_sections.points.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.4e-19), cross_sections.points[1].sigma_cm2_per_molecule, 1.0e-30);
+}

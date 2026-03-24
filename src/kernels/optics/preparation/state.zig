@@ -43,6 +43,15 @@ pub const ActiveLineAbsorber = struct {
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
 };
 
+/// Active cross-section absorber resolved from the scene's absorber set.
+pub const ActiveCrossSectionAbsorber = struct {
+    species: AbsorberModel.AbsorberSpecies,
+    representation: AbsorberModel.AbsorptionRepresentation,
+    volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
+    use_effective_cross_section: bool = false,
+    polynomial_order: u32 = 0,
+};
+
 /// Prepared line absorber with runtime controls and stored number densities.
 pub const PreparedLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
@@ -71,6 +80,91 @@ pub const PreparedLineAbsorber = struct {
             allocator.free(states);
         }
         self.* = undefined;
+    }
+};
+
+pub const CrossSectionRepresentationKind = enum {
+    table,
+    lut,
+    effective_table,
+    effective_lut,
+};
+
+pub const PreparedCrossSectionRepresentation = union(enum) {
+    table: ReferenceData.CrossSectionTable,
+    lut: OperationalCrossSectionLut,
+};
+
+/// Prepared cross-section absorber with stored densities and typed representation metadata.
+pub const PreparedCrossSectionAbsorber = struct {
+    species: AbsorberModel.AbsorberSpecies,
+    representation_kind: CrossSectionRepresentationKind,
+    polynomial_order: u32 = 0,
+    representation: PreparedCrossSectionRepresentation,
+    number_densities_cm3: []f64,
+    column_density_factor: f64 = 0.0,
+
+    /// Purpose:
+    ///   Release the owned cross-section representation and density storage.
+    pub fn deinit(self: *PreparedCrossSectionAbsorber, allocator: Allocator) void {
+        switch (self.representation) {
+            .table => |*table| {
+                var owned = table.*;
+                owned.deinit(allocator);
+            },
+            .lut => |*lut| {
+                var owned = lut.*;
+                owned.deinitOwned(allocator);
+            },
+        }
+        allocator.free(self.number_densities_cm3);
+        self.* = undefined;
+    }
+
+    /// Purpose:
+    ///   Evaluate the prepared cross section at a wavelength.
+    pub fn sigmaAt(
+        self: *const PreparedCrossSectionAbsorber,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) f64 {
+        return switch (self.representation) {
+            .table => |table| table.interpolateSigma(wavelength_nm),
+            .lut => |lut| lut.sigmaAt(wavelength_nm, temperature_k, pressure_hpa),
+        };
+    }
+
+    /// Purpose:
+    ///   Evaluate the prepared temperature derivative at a wavelength.
+    pub fn dSigmaDTemperatureAt(
+        self: *const PreparedCrossSectionAbsorber,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) f64 {
+        return switch (self.representation) {
+            .table => 0.0,
+            .lut => |lut| lut.dSigmaDTemperatureAt(wavelength_nm, temperature_k, pressure_hpa),
+        };
+    }
+
+    /// Purpose:
+    ///   Compute a representative band mean for the prepared representation.
+    pub fn meanSigmaInRange(
+        self: *const PreparedCrossSectionAbsorber,
+        start_nm: f64,
+        end_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) f64 {
+        return switch (self.representation) {
+            .table => |table| table.meanSigmaInRange(start_nm, end_nm),
+            .lut => |lut| {
+                const midpoint_nm = (start_nm + end_nm) * 0.5;
+                return lut.sigmaAt(midpoint_nm, temperature_k, pressure_hpa);
+            },
+        };
     }
 };
 
@@ -180,6 +274,7 @@ pub const PreparedOpticalState = struct {
     continuum_points: []ReferenceData.CrossSectionPoint,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
+    cross_section_absorbers: []PreparedCrossSectionAbsorber = &.{},
     line_absorbers: []PreparedLineAbsorber = &.{},
     continuum_owner_species: ?AbsorberModel.AbsorberSpecies = null,
     operational_o2_lut: OperationalCrossSectionLut = .{},
@@ -219,6 +314,12 @@ pub const PreparedOpticalState = struct {
         if (self.collision_induced_absorption) |cia| {
             var owned_cia = cia;
             owned_cia.deinit(allocator);
+        }
+        if (self.cross_section_absorbers.len != 0) {
+            for (self.cross_section_absorbers) |*cross_section_absorber| {
+                cross_section_absorber.deinit(allocator);
+            }
+            allocator.free(self.cross_section_absorbers);
         }
         if (self.line_absorbers.len != 0) {
             for (self.line_absorbers) |*line_absorber| {
@@ -389,9 +490,16 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn totalCrossSectionAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
-        const continuum = (ReferenceData.CrossSectionTable{
-            .points = self.continuum_points,
-        }).interpolateSigma(wavelength_nm);
+        const continuum = if (self.cross_section_absorbers.len == 0)
+            (ReferenceData.CrossSectionTable{
+                .points = self.continuum_points,
+            }).interpolateSigma(wavelength_nm)
+        else
+            self.weightedCrossSectionSigmaAtWavelength(
+                wavelength_nm,
+                self.effective_temperature_k,
+                self.effective_pressure_hpa,
+            );
         const line_sigma = if (self.line_absorbers.len != 0)
             self.weightedSpectroscopyEvaluationAtWavelength(
                 wavelength_nm,
@@ -413,6 +521,32 @@ pub const PreparedOpticalState = struct {
         else
             0.0;
         return continuum + line_sigma;
+    }
+
+    fn weightedCrossSectionSigmaAtWavelength(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) f64 {
+        if (self.cross_section_absorbers.len == 0) return 0.0;
+
+        var total_weight: f64 = 0.0;
+        var weighted_sigma: f64 = 0.0;
+        for (self.cross_section_absorbers) |cross_section_absorber| {
+            const weight = if (cross_section_absorber.column_density_factor > 0.0)
+                cross_section_absorber.column_density_factor
+            else
+                1.0;
+            total_weight += weight;
+            weighted_sigma += cross_section_absorber.sigmaAt(
+                wavelength_nm,
+                temperature_k,
+                pressure_hpa,
+            ) * weight;
+        }
+        if (total_weight <= 0.0) return 0.0;
+        return weighted_sigma / total_weight;
     }
 
     pub fn collisionInducedOpticalDepthAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
@@ -625,16 +759,33 @@ pub const PreparedOpticalState = struct {
 
         for (sublayers, 0..) |sublayer, sublayer_index| {
             const global_sublayer_index = sublayer_start_index + sublayer_index;
-            const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
+            const continuum_sigma = if (self.cross_section_absorbers.len == 0)
+                continuum_table.interpolateSigma(wavelength_nm)
+            else
+                0.0;
             const gas_absorption_optical_depth = blk: {
-                const continuum_density_cm3 = self.continuumCarrierDensityAtSublayer(
-                    sublayer,
-                    global_sublayer_index,
-                );
+                const continuum_density_cm3 = if (self.cross_section_absorbers.len == 0)
+                    self.continuumCarrierDensityAtSublayer(
+                        sublayer,
+                        global_sublayer_index,
+                    )
+                else
+                    0.0;
                 const continuum_optical_depth =
                     continuum_sigma *
                     continuum_density_cm3 *
                     sublayer.path_length_cm;
+                var cross_section_optical_depth: f64 = 0.0;
+                for (self.cross_section_absorbers) |cross_section_absorber| {
+                    if (global_sublayer_index >= cross_section_absorber.number_densities_cm3.len) continue;
+                    const absorber_density_cm3 = cross_section_absorber.number_densities_cm3[global_sublayer_index];
+                    if (absorber_density_cm3 <= 0.0) continue;
+                    cross_section_optical_depth += cross_section_absorber.sigmaAt(
+                        wavelength_nm,
+                        sublayer.temperature_k,
+                        sublayer.pressure_hpa,
+                    ) * absorber_density_cm3 * sublayer.path_length_cm;
+                }
                 if (self.line_absorbers.len != 0) {
                     var line_optical_depth: f64 = 0.0;
                     for (self.line_absorbers) |line_absorber| {
@@ -662,7 +813,7 @@ pub const PreparedOpticalState = struct {
                             sublayer.oxygen_number_density_cm3 *
                             sublayer.path_length_cm;
                     }
-                    break :blk continuum_optical_depth + line_optical_depth;
+                    break :blk continuum_optical_depth + cross_section_optical_depth + line_optical_depth;
                 }
 
                 const spectroscopy_sigma = self.spectroscopySigmaAtWavelength(
@@ -672,7 +823,7 @@ pub const PreparedOpticalState = struct {
                     if (strong_line_states) |states| &states[sublayer_index] else null,
                 );
                 const gas_column_density_cm2 = sublayer.absorber_number_density_cm3 * sublayer.path_length_cm;
-                break :blk continuum_optical_depth + spectroscopy_sigma * gas_column_density_cm2;
+                break :blk continuum_optical_depth + cross_section_optical_depth + spectroscopy_sigma * gas_column_density_cm2;
             };
             const gas_scattering_optical_depth =
                 Rayleigh.crossSectionCm2(wavelength_nm) *
