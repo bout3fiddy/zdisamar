@@ -41,6 +41,90 @@ pub const ObservationRegime = enum {
 };
 
 /// Purpose:
+///   Store per-band cross-section fitting controls shared by simulation and retrieval scenes.
+pub const CrossSectionFitControls = struct {
+    use_effective_cross_section_oe: bool = false,
+    use_polynomial_expansion: bool = false,
+    xsec_strong_absorption_bands: []const bool = &.{},
+    polynomial_degree_bands: []const u32 = &.{},
+
+    /// Purpose:
+    ///   Validate the owned slices and reject obviously inconsistent control payloads.
+    pub fn validate(self: CrossSectionFitControls) errors.Error!void {
+        for (self.polynomial_degree_bands) |degree| {
+            if (degree > 7) return errors.Error.InvalidRequest;
+        }
+    }
+
+    /// Purpose:
+    ///   Ensure any configured per-band vectors match the resolved scene band count.
+    pub fn validateForBandCount(self: CrossSectionFitControls, band_count: usize) errors.Error!void {
+        try self.validate();
+        if (self.xsec_strong_absorption_bands.len != 0 and self.xsec_strong_absorption_bands.len != band_count) {
+            return errors.Error.InvalidRequest;
+        }
+        if (self.polynomial_degree_bands.len != 0 and self.polynomial_degree_bands.len != band_count) {
+            return errors.Error.InvalidRequest;
+        }
+    }
+
+    /// Purpose:
+    ///   Deep-clone the per-band control vectors into owned storage.
+    pub fn clone(self: CrossSectionFitControls, allocator: Allocator) !CrossSectionFitControls {
+        const strong_absorption_bands = if (self.xsec_strong_absorption_bands.len != 0)
+            try allocator.dupe(bool, self.xsec_strong_absorption_bands)
+        else
+            &.{};
+        errdefer if (strong_absorption_bands.len != 0) allocator.free(strong_absorption_bands);
+
+        const polynomial_degree_bands = if (self.polynomial_degree_bands.len != 0)
+            try allocator.dupe(u32, self.polynomial_degree_bands)
+        else
+            &.{};
+        errdefer if (polynomial_degree_bands.len != 0) allocator.free(polynomial_degree_bands);
+
+        return .{
+            .use_effective_cross_section_oe = self.use_effective_cross_section_oe,
+            .use_polynomial_expansion = self.use_polynomial_expansion,
+            .xsec_strong_absorption_bands = strong_absorption_bands,
+            .polynomial_degree_bands = polynomial_degree_bands,
+        };
+    }
+
+    /// Purpose:
+    ///   Release any owned per-band control storage.
+    pub fn deinitOwned(self: *CrossSectionFitControls, allocator: Allocator) void {
+        if (self.xsec_strong_absorption_bands.len != 0) allocator.free(self.xsec_strong_absorption_bands);
+        if (self.polynomial_degree_bands.len != 0) allocator.free(self.polynomial_degree_bands);
+        self.* = .{};
+    }
+
+    /// Purpose:
+    ///   Report whether a band is flagged as a strong-absorption interval.
+    pub fn strongAbsorptionForBand(self: CrossSectionFitControls, band_index: usize) bool {
+        if (band_index >= self.xsec_strong_absorption_bands.len) return false;
+        return self.xsec_strong_absorption_bands[band_index];
+    }
+
+    /// Purpose:
+    ///   Return the configured polynomial degree for a band, or zero when absent.
+    pub fn polynomialOrderForBand(self: CrossSectionFitControls, band_index: usize) u32 {
+        if (band_index >= self.polynomial_degree_bands.len) return 0;
+        return self.polynomial_degree_bands[band_index];
+    }
+
+    /// Purpose:
+    ///   Return the highest configured polynomial degree across all bands.
+    pub fn maximumPolynomialOrder(self: CrossSectionFitControls) u32 {
+        var maximum: u32 = 0;
+        for (self.polynomial_degree_bands) |degree| {
+            maximum = @max(maximum, degree);
+        }
+        return maximum;
+    }
+};
+
+/// Purpose:
 ///   Store the observation-side configuration and supporting data required to evaluate a scene.
 pub const ObservationModel = struct {
     instrument: InstrumentId = .generic,
@@ -63,6 +147,7 @@ pub const ObservationModel = struct {
     operational_solar_spectrum: OperationalSolarSpectrum = .{},
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
+    cross_section_fit: CrossSectionFitControls = .{},
     measured_wavelengths_nm: []const f64 = &.{},
     owns_measured_wavelengths: bool = false,
     reference_radiance: []const f64 = &.{},
@@ -135,6 +220,7 @@ pub const ObservationModel = struct {
         try self.operational_solar_spectrum.validate();
         try self.o2_operational_lut.validate();
         try self.o2o2_operational_lut.validate();
+        try self.cross_section_fit.validate();
     }
 
     /// Purpose:
@@ -146,6 +232,7 @@ pub const ObservationModel = struct {
         self.operational_solar_spectrum.deinitOwned(allocator);
         self.o2_operational_lut.deinitOwned(allocator);
         self.o2o2_operational_lut.deinitOwned(allocator);
+        self.cross_section_fit.deinitOwned(allocator);
         if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) allocator.free(self.measured_wavelengths_nm);
         self.measured_wavelengths_nm = &.{};
         self.owns_measured_wavelengths = false;
@@ -195,4 +282,52 @@ test "observation model carries explicit measured-channel wavelengths" {
 
     try model.validate();
     try std.testing.expectEqual(@as(f64, 761.02), model.measured_wavelengths_nm[1]);
+}
+
+test "cross-section fit controls validate band-scoped settings" {
+    const valid: CrossSectionFitControls = .{
+        .use_effective_cross_section_oe = true,
+        .use_polynomial_expansion = true,
+        .xsec_strong_absorption_bands = &.{ true, false },
+        .polynomial_degree_bands = &.{ 5, 3 },
+    };
+
+    try valid.validateForBandCount(2);
+    try std.testing.expect(valid.strongAbsorptionForBand(0));
+    try std.testing.expectEqual(@as(u32, 3), valid.polynomialOrderForBand(1));
+    try std.testing.expectEqual(@as(u32, 0), valid.polynomialOrderForBand(3));
+    try std.testing.expectEqual(@as(u32, 5), valid.maximumPolynomialOrder());
+
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (CrossSectionFitControls{
+            .polynomial_degree_bands = &.{ 4, 2 },
+        }).validateForBandCount(1),
+    );
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (CrossSectionFitControls{
+            .polynomial_degree_bands = &.{8},
+        }).validate(),
+    );
+}
+
+fn cloneCrossSectionFitControlsWithAllocator(allocator: Allocator) !void {
+    const controls: CrossSectionFitControls = .{
+        .use_effective_cross_section_oe = true,
+        .use_polynomial_expansion = true,
+        .xsec_strong_absorption_bands = &.{ true, false },
+        .polynomial_degree_bands = &.{ 5, 3 },
+    };
+
+    var cloned = try controls.clone(allocator);
+    defer cloned.deinitOwned(allocator);
+}
+
+test "cross-section fit controls clone cleans up across allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        cloneCrossSectionFitControlsWithAllocator,
+        .{},
+    );
 }

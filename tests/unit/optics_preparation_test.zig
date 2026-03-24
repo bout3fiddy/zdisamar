@@ -2572,3 +2572,838 @@ test "species mixing ratio splits demo NO2 trace loading across partition absorb
         1.0e-18,
     );
 }
+
+test "optical preparation builds explicit cross-section absorbers without reusing fallback continuum" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 3.0, .pressure_hpa = 700.0, .temperature_k = 270.0, .air_number_density_cm3 = 1.6e19 },
+            .{ .altitude_km = 6.0, .pressure_hpa = 450.0, .temperature_k = 245.0, .air_number_density_cm3 = 1.1e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 9.0e-20 },
+            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 8.5e-20 },
+            .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 8.0e-20 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 2.2e-19 },
+        .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 3.5e-19 },
+        .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.8e-19 },
+    };
+    const no2_cross_sections = ReferenceData.CrossSectionTable{
+        .points = no2_points[0..],
+    };
+    const o3_lut = zdisamar.OperationalCrossSectionLut{
+        .wavelengths_nm = &.{ 405.0, 435.0, 465.0 },
+        .coefficients = &.{
+            1.0e-19,
+            0.0,
+            1.6e-19,
+            0.0,
+            1.1e-19,
+            0.0,
+        },
+        .temperature_coefficient_count = 1,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 200.0,
+        .max_pressure_hpa = 1100.0,
+    };
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "uvvis-cross-section-scene",
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 35.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 40.0,
+        },
+        .atmosphere = .{
+            .layer_count = 3,
+            .sublayer_divisions = 2,
+        },
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 25,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "uv",
+                    .start_nm = 405.0,
+                    .end_nm = 465.0,
+                    .step_nm = 2.5,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = no2_cross_sections,
+                    },
+                },
+                zdisamar.Absorber{
+                    .id = "o3",
+                    .species = "o3",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "o3").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 8.0 },
+                        .{ 450.0, 14.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .operational_lut = .{ .ingest = .{
+                            .full_name = "demo.o3_operational_lut",
+                            .ingest_name = "demo",
+                            .output_name = "o3_operational_lut",
+                        } },
+                        .resolved_cross_section_lut = o3_lut,
+                    },
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        null,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), prepared.cross_section_absorbers.len);
+    try std.testing.expectEqual(OpticsPrepare.state.CrossSectionRepresentationKind.effective_table, prepared.cross_section_absorbers[0].representation_kind);
+    try std.testing.expectEqual(OpticsPrepare.state.CrossSectionRepresentationKind.effective_lut, prepared.cross_section_absorbers[1].representation_kind);
+    try std.testing.expectEqual(@as(u32, 4), prepared.cross_section_absorbers[0].polynomial_order);
+    try std.testing.expectEqual(@as(usize, 0), prepared.line_absorbers.len);
+    try std.testing.expectEqual(@as(f64, 0.0), prepared.sublayers.?[0].continuum_cross_section_cm2_per_molecule);
+    const expected_cross_section_density =
+        prepared.cross_section_absorbers[0].number_densities_cm3[0] +
+        prepared.cross_section_absorbers[1].number_densities_cm3[0];
+    try std.testing.expectApproxEqAbs(
+        expected_cross_section_density,
+        prepared.sublayers.?[0].absorber_number_density_cm3,
+        expected_cross_section_density * 1.0e-12,
+    );
+    try std.testing.expect(prepared.totalCrossSectionAtWavelength(435.0) > fallback_cross_sections.interpolateSigma(435.0));
+    try std.testing.expect(prepared.gasOpticalDepthAtWavelength(435.0) > 0.0);
+}
+
+test "cross-section scenes add operational O2 LUT once with oxygen carrier density" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 4.0, .pressure_hpa = 700.0, .temperature_k = 265.0, .air_number_density_cm3 = 1.5e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.0e-19 },
+        .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 2.4e-19 },
+    };
+    const o2_lut: zdisamar.OperationalCrossSectionLut = .{
+        .wavelengths_nm = &.{ 430.0, 432.0 },
+        .coefficients = &.{
+            3.0e-24,
+            0.0,
+            4.0e-24,
+            0.0,
+        },
+        .temperature_coefficient_count = 1,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 150.0,
+        .max_pressure_hpa = 1000.0,
+    };
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "cross-section-with-o2-lut",
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 35.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 40.0,
+        },
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 1,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 432.0,
+            .sample_count = 5,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "uv",
+                    .start_nm = 430.0,
+                    .end_nm = 432.0,
+                    .step_nm = 0.5,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.12 },
+                        .{ 700.0, 0.06 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{ .points = no2_points[0..] },
+                    },
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .o2_operational_lut = o2_lut,
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        null,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    const wavelength_nm = 431.0;
+    const sublayer = prepared.sublayers.?[0];
+    const cross_section_density_cm3 = prepared.cross_section_absorbers[0].number_densities_cm3[0];
+    const expected_gas_absorption_optical_depth =
+        prepared.cross_section_absorbers[0].sigmaAt(wavelength_nm, sublayer.temperature_k, sublayer.pressure_hpa) *
+        cross_section_density_cm3 *
+        sublayer.path_length_cm +
+        o2_lut.sigmaAt(wavelength_nm, sublayer.temperature_k, sublayer.pressure_hpa) *
+            sublayer.oxygen_number_density_cm3 *
+            sublayer.path_length_cm;
+
+    try std.testing.expectApproxEqAbs(
+        expected_gas_absorption_optical_depth,
+        prepared.opticalDepthBreakdownAtWavelength(wavelength_nm).gas_absorption_optical_depth,
+        expected_gas_absorption_optical_depth * 1.0e-12,
+    );
+}
+
+test "mixed line and cross-section scenes retain line density in stored absorber totals" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 8.0, .pressure_hpa = 600.0, .temperature_k = 255.0, .air_number_density_cm3 = 1.2e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    var no2_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.2e-19 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 2.0e-19 },
+        }),
+    };
+    defer no2_cross_sections.deinit(std.testing.allocator);
+
+    var line_list = ReferenceData.SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+            .{
+                .gas_index = 1,
+                .isotope_number = 1,
+                .center_wavelength_nm = 431.0,
+                .line_strength_cm2_per_molecule = 1.0e-20,
+                .air_half_width_nm = 0.0010,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 100.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+            .{
+                .gas_index = 11,
+                .isotope_number = 1,
+                .center_wavelength_nm = 431.1,
+                .line_strength_cm2_per_molecule = 8.0e-21,
+                .air_half_width_nm = 0.0010,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 90.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+        }),
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "mixed-line-cross-section-densities",
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 15.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 432.0,
+            .sample_count = 5,
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "h2o",
+                    .species = "h2o",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "h2o").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 8000.0 },
+                        .{ 600.0, 3000.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+                zdisamar.Absorber{
+                    .id = "nh3",
+                    .species = "nh3",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "nh3").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 15.0 },
+                        .{ 600.0, 6.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+                zdisamar.Absorber{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.12 },
+                        .{ 600.0, 0.06 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{ .points = no2_cross_sections.points },
+                    },
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        &line_list,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), prepared.line_absorbers.len);
+    try std.testing.expectEqual(@as(usize, 1), prepared.cross_section_absorbers.len);
+
+    const expected_total_density =
+        prepared.line_absorbers[0].number_densities_cm3[0] +
+        prepared.line_absorbers[1].number_densities_cm3[0] +
+        prepared.cross_section_absorbers[0].number_densities_cm3[0];
+    try std.testing.expectApproxEqAbs(
+        expected_total_density,
+        prepared.sublayers.?[0].absorber_number_density_cm3,
+        expected_total_density * 1.0e-12,
+    );
+}
+
+test "single-line re-evaluation excludes cross-section density from line sigma" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 8.0, .pressure_hpa = 600.0, .temperature_k = 255.0, .air_number_density_cm3 = 1.2e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    var no2_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.2e-19 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 2.0e-19 },
+        }),
+    };
+    defer no2_cross_sections.deinit(std.testing.allocator);
+
+    var line_list = ReferenceData.SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+            .{
+                .gas_index = 1,
+                .isotope_number = 1,
+                .center_wavelength_nm = 431.25,
+                .line_strength_cm2_per_molecule = 1.2e-20,
+                .air_half_width_nm = 0.01,
+                .temperature_exponent = 0.7,
+                .lower_state_energy_cm1 = 100.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+            },
+        }),
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "single-line-cross-section-reevaluation",
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 1,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 15.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 432.0,
+            .sample_count = 5,
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "h2o",
+                    .species = "h2o",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "h2o").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 8000.0 },
+                        .{ 600.0, 3000.0 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                        .line_gas_controls = .{
+                            .active_stage = .simulation,
+                        },
+                    },
+                },
+                zdisamar.Absorber{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.12 },
+                        .{ 600.0, 0.06 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{ .points = no2_cross_sections.points },
+                    },
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        &line_list,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), prepared.line_absorbers.len);
+    try std.testing.expect(prepared.spectroscopy_lines != null);
+    try std.testing.expectEqual(@as(usize, 1), prepared.cross_section_absorbers.len);
+
+    const wavelength_nm = 431.25;
+    const sublayer = prepared.sublayers.?[0];
+    const cross_section_density_cm3 = prepared.cross_section_absorbers[0].number_densities_cm3[0];
+    const line_density_cm3 = sublayer.absorber_number_density_cm3 - cross_section_density_cm3;
+    const expected_gas_absorption_optical_depth =
+        prepared.cross_section_absorbers[0].sigmaAt(wavelength_nm, sublayer.temperature_k, sublayer.pressure_hpa) *
+        cross_section_density_cm3 *
+        sublayer.path_length_cm +
+        prepared.spectroscopySigmaAtWavelength(
+            wavelength_nm,
+            sublayer.temperature_k,
+            sublayer.pressure_hpa,
+            null,
+        ) *
+            line_density_cm3 *
+            sublayer.path_length_cm;
+
+    try std.testing.expect(line_density_cm3 > 0.0);
+    try std.testing.expectApproxEqAbs(
+        expected_gas_absorption_optical_depth,
+        prepared.opticalDepthBreakdownAtWavelength(wavelength_nm).gas_absorption_optical_depth,
+        expected_gas_absorption_optical_depth * 1.0e-12 + 1.0e-24,
+    );
+}
+
+test "pseudo-spherical O2 LUT carriers match sublayer reevaluation in mixed cross-section scenes" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 8.0, .pressure_hpa = 700.0, .temperature_k = 260.0, .air_number_density_cm3 = 1.5e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    var no2_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 1.8e-19 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 1.6e-19 },
+        }),
+    };
+    defer no2_cross_sections.deinit(std.testing.allocator);
+
+    const o2_lut: zdisamar.OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{ 430.0, 431.0, 432.0 },
+        .coefficients = &[_]f64{
+            1.8e-24, 0.20e-24, 0.10e-24, 0.03e-24,
+            2.2e-24, 0.24e-24, 0.12e-24, 0.04e-24,
+            1.9e-24, 0.21e-24, 0.10e-24, 0.03e-24,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 150.0,
+        .max_pressure_hpa = 1000.0,
+    };
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "pseudo-spherical-o2-lut-cross-section",
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 35.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 40.0,
+        },
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 1,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 432.0,
+            .sample_count = 5,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "uv",
+                    .start_nm = 430.0,
+                    .end_nm = 432.0,
+                    .step_nm = 0.5,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.12 },
+                        .{ 700.0, 0.06 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{ .points = no2_cross_sections.points },
+                    },
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .o2_operational_lut = o2_lut,
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        null,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    const transport_common = internal.kernels.transport.common;
+    const solver_layer_count = prepared.sublayers.?.len;
+    const attenuation_layers = try std.testing.allocator.alloc(transport_common.LayerInput, solver_layer_count);
+    defer std.testing.allocator.free(attenuation_layers);
+    const attenuation_samples = try std.testing.allocator.alloc(
+        transport_common.PseudoSphericalSample,
+        solver_layer_count * scene.atmosphere.sublayer_divisions,
+    );
+    defer std.testing.allocator.free(attenuation_samples);
+    const level_sample_starts = try std.testing.allocator.alloc(usize, solver_layer_count + 1);
+    defer std.testing.allocator.free(level_sample_starts);
+    const level_altitudes_km = try std.testing.allocator.alloc(f64, solver_layer_count + 1);
+    defer std.testing.allocator.free(level_altitudes_km);
+
+    const wavelength_nm = 431.0;
+    const breakdown = prepared.opticalDepthBreakdownAtWavelength(wavelength_nm);
+    try std.testing.expect(PreparationTransport.fillPseudoSphericalGridAtWavelength(
+        &prepared,
+        &scene,
+        wavelength_nm,
+        solver_layer_count,
+        attenuation_layers,
+        attenuation_samples,
+        level_sample_starts,
+        level_altitudes_km,
+    ));
+
+    try std.testing.expect(prepared.operational_o2_lut.enabled());
+    try std.testing.expectEqual(@as(usize, 1), level_sample_starts[solver_layer_count]);
+    try std.testing.expectApproxEqAbs(
+        breakdown.totalOpticalDepth(),
+        attenuation_samples[0].optical_depth,
+        breakdown.totalOpticalDepth() * 1.0e-12 + 1.0e-24,
+    );
+}
+
+test "pseudo-spherical O2 LUT transport does not reuse line carrier as continuum density" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 8.0, .pressure_hpa = 700.0, .temperature_k = 260.0, .air_number_density_cm3 = 1.5e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.4e-26 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 2.1e-26 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    const o2_lut: zdisamar.OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{ 430.0, 431.0, 432.0 },
+        .coefficients = &[_]f64{
+            1.8e-24, 0.20e-24, 0.10e-24, 0.03e-24,
+            2.2e-24, 0.24e-24, 0.12e-24, 0.04e-24,
+            1.9e-24, 0.21e-24, 0.10e-24, 0.03e-24,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 150.0,
+        .max_pressure_hpa = 1000.0,
+    };
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "pseudo-spherical-o2-lut-no-line-carrier",
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 35.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 40.0,
+        },
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 1,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 432.0,
+            .sample_count = 5,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "uv",
+                    .start_nm = 430.0,
+                    .end_nm = 432.0,
+                    .step_nm = 0.5,
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .o2_operational_lut = o2_lut,
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        null,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    const transport_common = internal.kernels.transport.common;
+    const solver_layer_count = prepared.sublayers.?.len;
+    const attenuation_layers = try std.testing.allocator.alloc(transport_common.LayerInput, solver_layer_count);
+    defer std.testing.allocator.free(attenuation_layers);
+    const attenuation_samples = try std.testing.allocator.alloc(
+        transport_common.PseudoSphericalSample,
+        solver_layer_count * scene.atmosphere.sublayer_divisions,
+    );
+    defer std.testing.allocator.free(attenuation_samples);
+    const level_sample_starts = try std.testing.allocator.alloc(usize, solver_layer_count + 1);
+    defer std.testing.allocator.free(level_sample_starts);
+    const level_altitudes_km = try std.testing.allocator.alloc(f64, solver_layer_count + 1);
+    defer std.testing.allocator.free(level_altitudes_km);
+
+    const wavelength_nm = 431.0;
+    const breakdown = prepared.opticalDepthBreakdownAtWavelength(wavelength_nm);
+    try std.testing.expect(PreparationTransport.fillPseudoSphericalGridAtWavelength(
+        &prepared,
+        &scene,
+        wavelength_nm,
+        solver_layer_count,
+        attenuation_layers,
+        attenuation_samples,
+        level_sample_starts,
+        level_altitudes_km,
+    ));
+
+    try std.testing.expect(prepared.operational_o2_lut.enabled());
+    try std.testing.expect(prepared.sublayers.?[0].continuum_cross_section_cm2_per_molecule > 0.0);
+    try std.testing.expectEqual(@as(usize, 1), level_sample_starts[solver_layer_count]);
+    try std.testing.expectApproxEqAbs(
+        breakdown.totalOpticalDepth(),
+        attenuation_samples[0].optical_depth,
+        breakdown.totalOpticalDepth() * 1.0e-12 + 1.0e-24,
+    );
+}

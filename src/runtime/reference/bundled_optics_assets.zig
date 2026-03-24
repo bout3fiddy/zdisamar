@@ -281,12 +281,25 @@ pub fn shouldLoadVisibleBandContinuum(scene: *const Scene) bool {
 ///   Decide whether the visible-band line list should be loaded for a scene.
 ///
 /// Physics:
-///   Gate the visible-band spectroscopy on overlap with the 405-465 nm window.
+///   Gate the visible-band spectroscopy on overlap with the 405-465 nm window and require
+///   either bundled-default behavior or an explicit line-by-line request.
 ///
 /// Units:
 ///   The window boundaries are in nanometers.
 pub fn shouldLoadVisibleBandLineList(scene: *const Scene) bool {
-    return overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 405.0, 465.0);
+    if (!overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 405.0, 465.0)) {
+        return false;
+    }
+    if (scene.absorbers.items.len == 0) return true;
+    var uses_only_implicit_absorbers = true;
+    for (scene.absorbers.items) |absorber| {
+        switch (absorber.spectroscopy.mode) {
+            .line_by_line => return true,
+            .none => {},
+            .cross_sections, .cia => uses_only_implicit_absorbers = false,
+        }
+    }
+    return uses_only_implicit_absorbers;
 }
 
 /// Purpose:
@@ -370,14 +383,7 @@ pub fn hasExplicitCiaBindings(scene: *const Scene) bool {
 ///   Normalize legacy spellings so the bundled asset selectors and vendor-style requests agree on
 ///   the absorber identity.
 pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberSpecies {
-    if (absorber.resolved_species) |species| return species;
-    if (std.meta.stringToEnum(AbsorberSpecies, absorber.species)) |species| return species;
-    // GOTCHA:
-    //   Legacy configs still spell O2-O2 as `o2o2` or `o2-o2`; both must normalize to the same
-    //   canonical species so selector logic stays stable.
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
-    return null;
+    return AbsorberModel.resolvedAbsorberSpecies(absorber);
 }
 
 /// Purpose:

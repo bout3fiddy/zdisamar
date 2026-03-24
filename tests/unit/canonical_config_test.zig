@@ -870,3 +870,479 @@ test "canonical execution rejects multiple measurement-space products in one sta
         zdisamar.canonical_config.compileResolved(std.testing.allocator, resolved),
     );
 }
+
+test "canonical config compiles cross-section assets and effective-xsec controls into the scene" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: cross-section-controls
+        \\inputs:
+        \\  assets:
+        \\    no2_cross_section:
+        \\      kind: file
+        \\      format: csv
+        \\      path: data/cross_sections/no2_405_465_demo.csv
+        \\experiment:
+        \\  simulation:
+        \\    general:
+        \\      useEffXsec_OE_sim: true
+        \\      usePolyExpXsecSim: true
+        \\      XsecStrongAbsSim: [true]
+        \\      degreePolySim: [5]
+        \\    scene:
+        \\      id: no2-xsec-scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        uv:
+        \\          start_nm: 405.0
+        \\          end_nm: 465.0
+        \\          step_nm: 2.5
+        \\      absorbers:
+        \\        no2:
+        \\          species: no2
+        \\          spectroscopy:
+        \\            model: cross_sections
+        \\            cross_section_asset: no2_cross_section
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation.?;
+    const absorber = stage.scene.absorbers.items[0];
+    try std.testing.expectEqual(zdisamar.SpectroscopyMode.cross_sections, absorber.spectroscopy.mode);
+    try std.testing.expect(absorber.spectroscopy.resolved_cross_section_table != null);
+    try std.testing.expect(stage.scene.observation_model.cross_section_fit.use_effective_cross_section_oe);
+    try std.testing.expect(stage.scene.observation_model.cross_section_fit.use_polynomial_expansion);
+    try std.testing.expect(stage.scene.observation_model.cross_section_fit.strongAbsorptionForBand(0));
+    try std.testing.expectEqual(@as(u32, 5), stage.scene.observation_model.cross_section_fit.polynomialOrderForBand(0));
+}
+
+test "canonical config resolves non-o2 operational LUT ingests into cross-section absorbers" {
+    const path = "zig-cache/test-o3-operational-lut.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o3_refspec_ntemperature 2
+        \\meta o3_refspec_npressure 2
+        \\meta o3_refspec_temperature_min 220.0
+        \\meta o3_refspec_temperature_max 320.0
+        \\meta o3_refspec_pressure_min 150.0
+        \\meta o3_refspec_pressure_max 1000.0
+        \\meta o3_refspec_wavelength_1 430.0
+        \\meta o3_refspec_wavelength_2 432.0
+        \\meta o3_refspec_coeff_1_1_1 1.1e-19
+        \\meta o3_refspec_coeff_2_1_1 0.2e-19
+        \\meta o3_refspec_coeff_1_2_1 0.1e-19
+        \\meta o3_refspec_coeff_2_2_1 0.03e-19
+        \\meta o3_refspec_coeff_1_1_2 1.4e-19
+        \\meta o3_refspec_coeff_2_1_2 0.22e-19
+        \\meta o3_refspec_coeff_1_2_2 0.11e-19
+        \\meta o3_refspec_coeff_2_2_2 0.04e-19
+        \\start_channel_rad
+        \\rad 430.0 1485.0 1.116153E+13
+        \\rad 432.0 1445.0 1.096153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o3-operational-lut
+        \\inputs:
+        \\  assets:
+        \\    o3_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o3-operational-lut.txt
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o3_metadata
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o3-lut-scene
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        uv:
+        \\          start_nm: 405.0
+        \\          end_nm: 465.0
+        \\          step_nm: 2.5
+        \\      absorbers:
+        \\        o3:
+        \\          species: o3
+        \\          spectroscopy:
+        \\            model: cross_sections
+        \\            operational_lut:
+        \\              from_ingest: demo.o3_operational_lut
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation.?;
+    const absorber = stage.scene.absorbers.items[0];
+    try std.testing.expectEqual(zdisamar.SpectroscopyMode.cross_sections, absorber.spectroscopy.mode);
+    const lut = absorber.spectroscopy.resolved_cross_section_lut orelse unreachable;
+    try std.testing.expect(lut.enabled());
+    try std.testing.expect(lut.sigmaAt(431.0, 260.0, 700.0) > 0.0);
+    try std.testing.expect(!stage.scene.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(!stage.scene.observation_model.o2o2_operational_lut.enabled());
+}
+
+test "canonical config keeps O2 cross-section operational LUTs off the observation model" {
+    const path = "zig-cache/test-o2-cross-section-operational-lut.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o2_refspec_ntemperature 2
+        \\meta o2_refspec_npressure 2
+        \\meta o2_refspec_temperature_min 220.0
+        \\meta o2_refspec_temperature_max 320.0
+        \\meta o2_refspec_pressure_min 150.0
+        \\meta o2_refspec_pressure_max 1000.0
+        \\meta o2_refspec_wavelength_1 760.8
+        \\meta o2_refspec_wavelength_2 761.0
+        \\meta o2_refspec_wavelength_3 761.2
+        \\meta o2_refspec_coeff_1_1_1 2.0e-24
+        \\meta o2_refspec_coeff_2_1_1 0.3e-24
+        \\meta o2_refspec_coeff_1_2_1 0.2e-24
+        \\meta o2_refspec_coeff_2_2_1 0.05e-24
+        \\meta o2_refspec_coeff_1_1_2 2.6e-24
+        \\meta o2_refspec_coeff_2_1_2 0.35e-24
+        \\meta o2_refspec_coeff_1_2_2 0.25e-24
+        \\meta o2_refspec_coeff_2_2_2 0.06e-24
+        \\meta o2_refspec_coeff_1_1_3 2.2e-24
+        \\meta o2_refspec_coeff_2_1_3 0.32e-24
+        \\meta o2_refspec_coeff_1_2_3 0.22e-24
+        \\meta o2_refspec_coeff_2_2_3 0.05e-24
+        \\start_channel_rad
+        \\rad 760.8 1485.0 1.116153E+13
+        \\rad 761.0 1445.0 1.096153E+13
+        \\rad 761.2 1405.0 1.076153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o2-cross-section-operational-lut
+        \\inputs:
+        \\  assets:
+        \\    o2_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o2-cross-section-operational-lut.txt
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o2_metadata
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o2-cross-section-scene
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: cross_sections
+        \\            operational_lut:
+        \\              from_ingest: demo.o2_operational_lut
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation.?;
+    const absorber = stage.scene.absorbers.items[0];
+    try std.testing.expectEqual(zdisamar.SpectroscopyMode.cross_sections, absorber.spectroscopy.mode);
+    const lut = absorber.spectroscopy.resolved_cross_section_lut orelse unreachable;
+    try std.testing.expect(lut.enabled());
+    try std.testing.expect(lut.sigmaAt(761.0, 260.0, 700.0) > 0.0);
+    try std.testing.expect(!stage.scene.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(!stage.scene.observation_model.o2o2_operational_lut.enabled());
+}
+
+test "canonical config wires O2-O2 operational LUTs for o2_o2 CIA aliases" {
+    const path = "zig-cache/test-o2o2-operational-lut.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o2_o2_refspec_ntemperature 2
+        \\meta o2_o2_refspec_npressure 2
+        \\meta o2_o2_refspec_temperature_min 220.0
+        \\meta o2_o2_refspec_temperature_max 320.0
+        \\meta o2_o2_refspec_pressure_min 150.0
+        \\meta o2_o2_refspec_pressure_max 1000.0
+        \\meta o2_o2_refspec_wavelength_1 760.8
+        \\meta o2_o2_refspec_wavelength_2 761.0
+        \\meta o2_o2_refspec_wavelength_3 761.2
+        \\meta o2_o2_refspec_coeff_1_1_1 1.2e-46
+        \\meta o2_o2_refspec_coeff_2_1_1 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_1 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_1 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_2 1.5e-46
+        \\meta o2_o2_refspec_coeff_2_1_2 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_2 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_2 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_3 1.1e-46
+        \\meta o2_o2_refspec_coeff_2_1_3 0.18e-46
+        \\meta o2_o2_refspec_coeff_1_2_3 0.08e-46
+        \\meta o2_o2_refspec_coeff_2_2_3 0.02e-46
+        \\start_channel_rad
+        \\rad 760.8 1485.0 1.116153E+13
+        \\rad 761.0 1445.0 1.096153E+13
+        \\rad 761.2 1405.0 1.076153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o2o2-operational-lut
+        \\inputs:
+        \\  assets:
+        \\    o2o2_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o2o2-operational-lut.txt
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o2o2_metadata
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o2o2-cia-scene
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2_o2:
+        \\          species: o2_o2
+        \\          spectroscopy:
+        \\            model: cia
+        \\            operational_lut:
+        \\              from_ingest: demo.o2_o2_operational_lut
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation.?;
+    const absorber = stage.scene.absorbers.items[0];
+    try std.testing.expectEqual(zdisamar.SpectroscopyMode.cia, absorber.spectroscopy.mode);
+    const lut = absorber.spectroscopy.resolved_cross_section_lut orelse unreachable;
+    try std.testing.expect(lut.enabled());
+    try std.testing.expect(!stage.scene.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(stage.scene.observation_model.o2o2_operational_lut.enabled());
+    try std.testing.expect(stage.scene.observation_model.o2o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) > 0.0);
+}
+
+test "canonical config rejects mismatched O2 operational LUT output names" {
+    const path = "zig-cache/test-o2-mismatched-operational-lut.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o3_refspec_ntemperature 2
+        \\meta o3_refspec_npressure 2
+        \\meta o3_refspec_temperature_min 220.0
+        \\meta o3_refspec_temperature_max 320.0
+        \\meta o3_refspec_pressure_min 150.0
+        \\meta o3_refspec_pressure_max 1000.0
+        \\meta o3_refspec_wavelength_1 430.0
+        \\meta o3_refspec_wavelength_2 432.0
+        \\meta o3_refspec_coeff_1_1_1 1.1e-19
+        \\meta o3_refspec_coeff_2_1_1 0.2e-19
+        \\meta o3_refspec_coeff_1_2_1 0.1e-19
+        \\meta o3_refspec_coeff_2_2_1 0.03e-19
+        \\meta o3_refspec_coeff_1_1_2 1.4e-19
+        \\meta o3_refspec_coeff_2_1_2 0.22e-19
+        \\meta o3_refspec_coeff_1_2_2 0.11e-19
+        \\meta o3_refspec_coeff_2_2_2 0.04e-19
+        \\start_channel_rad
+        \\rad 430.0 1485.0 1.116153E+13
+        \\rad 432.0 1445.0 1.096153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o2-mismatched-operational-lut
+        \\inputs:
+        \\  assets:
+        \\    o3_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o2-mismatched-operational-lut.txt
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o3_metadata
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o2-lut-scene
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: line_by_line
+        \\            operational_lut:
+        \\              from_ingest: demo.o3_operational_lut
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.MissingIngestOutput,
+        document.resolve(std.testing.allocator),
+    );
+}

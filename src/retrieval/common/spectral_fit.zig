@@ -38,6 +38,7 @@ const vector_ops = @import("../../kernels/linalg/vector_ops.zig");
 const airmass_phase = @import("../../model/reference/airmass_phase.zig");
 const cross_sections = @import("../../model/reference/cross_sections.zig");
 const Allocator = std.mem.Allocator;
+const Scene = @import("../../model/Scene.zig").Scene;
 const StateParameter = @import("../../model/Scene.zig").StateParameter;
 
 const SelectionStrategy = enum {
@@ -146,7 +147,7 @@ pub fn solveMethod(
     method: common.Method,
 ) common.Error!common.SolverOutcome {
     try problem.validateForMethod(method);
-    const policy = policyForMethod(method);
+    const policy = policyForScene(method, problem.scene);
     const layout = try state_access.resolveStateLayout(problem);
     const state_count = problem.inverse_problem.state_vector.parameters.len;
 
@@ -361,10 +362,11 @@ pub fn solveMethod(
 pub fn fitResidualCost(
     allocator: Allocator,
     method: common.Method,
+    scene: Scene,
     observed: forward_model.SpectralMeasurement,
     candidate: forward_model.SpectralMeasurement,
 ) common.Error!f64 {
-    const policy = policyForMethod(method);
+    const policy = policyForScene(method, scene);
     var selection = try buildSelectionIndices(allocator, observed, policy);
     defer selection.deinit(allocator);
 
@@ -404,6 +406,30 @@ fn policyForMethod(method: common.Method) Policy {
         },
         else => unreachable,
     };
+}
+
+fn policyForScene(method: common.Method, scene: @import("../../model/Scene.zig").Scene) Policy {
+    var policy = policyForMethod(method);
+    const cross_section_fit = scene.observation_model.cross_section_fit;
+    if (cross_section_fit.polynomial_degree_bands.len != 0) {
+        policy.polynomial_order = cross_section_fit.maximumPolynomialOrder();
+    }
+
+    var any_strong_absorption_band = false;
+    for (scene.bands.items, 0..) |_, band_index| {
+        if (cross_section_fit.strongAbsorptionForBand(band_index)) {
+            any_strong_absorption_band = true;
+            break;
+        }
+    }
+    if (method == .dismas and
+        (cross_section_fit.use_effective_cross_section_oe or
+            cross_section_fit.use_polynomial_expansion or
+            any_strong_absorption_band))
+    {
+        policy.selection_budget = @max(policy.selection_budget, 128);
+    }
+    return policy;
 }
 
 fn linearizeState(
@@ -1135,4 +1161,56 @@ test "radiance-space transform preserves selected measurement values" {
 
     try std.testing.expectEqualSlices(f64, &.{ 0.81, 0.75 }, transformed.values);
     try std.testing.expectEqualSlices(f64, &.{ 0.01, 0.03 }, transformed.sigma);
+}
+
+test "scene policy uses the highest configured polynomial degree across bands" {
+    const scene: Scene = .{
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "band-a",
+                    .start_nm = 405.0,
+                    .end_nm = 430.0,
+                    .step_nm = 0.5,
+                },
+                .{
+                    .id = "band-b",
+                    .start_nm = 760.0,
+                    .end_nm = 762.0,
+                    .step_nm = 0.1,
+                },
+            },
+        },
+        .observation_model = .{
+            .cross_section_fit = .{
+                .polynomial_degree_bands = &.{ 2, 6 },
+            },
+        },
+    };
+
+    const policy = policyForScene(.doas, scene);
+    try std.testing.expectEqual(@as(u32, 6), policy.polynomial_order);
+}
+
+test "scene policy honors explicit zero polynomial degree" {
+    const scene: Scene = .{
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "band-a",
+                    .start_nm = 405.0,
+                    .end_nm = 430.0,
+                    .step_nm = 0.5,
+                },
+            },
+        },
+        .observation_model = .{
+            .cross_section_fit = .{
+                .polynomial_degree_bands = &.{0},
+            },
+        },
+    };
+
+    const policy = policyForScene(.doas, scene);
+    try std.testing.expectEqual(@as(u32, 0), policy.polynomial_order);
 }

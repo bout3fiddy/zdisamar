@@ -5,7 +5,9 @@ const internal = @import("zdisamar_internal");
 const bundled_optics = internal.runtime.reference.bundled_optics;
 const bundled_optics_assets = internal.runtime.reference.bundled_optics_assets;
 const ReferenceData = internal.reference_data;
+const OpticsPrepare = internal.kernels.optics.preparation;
 const Absorber = zdisamar.Absorber;
+const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
 
 test "runtime bundled optics uses NO2 assets in the visible band" {
     const scene: zdisamar.Scene = .{
@@ -31,6 +33,135 @@ test "runtime bundled optics uses NO2 assets in the visible band" {
     try std.testing.expect(prepared.spectroscopy_lines != null);
     try std.testing.expect(prepared.spectroscopy_lines.?.strong_lines == null);
     try std.testing.expect(prepared.mean_cross_section_cm2_per_molecule > 0.0);
+}
+
+test "runtime bundled optics skips visible line and cia defaults for explicit cross-section scenes" {
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.8e-19 },
+        .{ .wavelength_nm = 420.0, .sigma_cm2_per_molecule = 3.4e-19 },
+        .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 2.2e-19 },
+        .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 1.7e-19 },
+        .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.1e-19 },
+    };
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-cross-sections",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 48,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "vis-no2",
+                    .start_nm = 405.0,
+                    .end_nm = 465.0,
+                    .step_nm = 1.25,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = 2,
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(prepared.spectroscopy_lines == null);
+    try std.testing.expectEqual(@as(usize, 1), prepared.cross_section_absorbers.len);
+    try std.testing.expectEqual(@as(usize, 0), prepared.line_absorbers.len);
+    try std.testing.expect(prepared.collision_induced_absorption == null);
+    try std.testing.expectEqual(
+        OpticsPrepare.state.CrossSectionRepresentationKind.effective_table,
+        prepared.cross_section_absorbers[0].representation_kind,
+    );
+    try std.testing.expect(prepared.gas_optical_depth > 0.0);
+}
+
+test "runtime bundled optics keeps visible bundled line fallback for implicit absorbers" {
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-implicit-absorbers",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 48,
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .profile_source = .atmosphere,
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(prepared.spectroscopy_lines != null);
+    try std.testing.expect(prepared.spectroscopy_lines.?.lines.len != 0);
+}
+
+test "bundled optics and preparation helpers accept O2_O2 species aliases" {
+    const absorber: Absorber = .{
+        .id = "o2-o2-alias",
+        .species = "O2_O2",
+        .profile_source = .atmosphere,
+        .spectroscopy = .{ .mode = .cross_sections },
+    };
+
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        bundled_optics_assets.resolvedAbsorberSpecies(absorber).?,
+    );
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        OpticsPrepare.spectroscopy.resolvedAbsorberSpecies(absorber).?,
+    );
 }
 
 test "runtime bundled optics uses O2A sidecars and aerosol Mie tables when requested" {

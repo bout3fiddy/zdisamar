@@ -150,6 +150,7 @@ test "dismas validation performs a direct-intensity fit on real spectra" {
     const initial_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .dismas,
+        problem.scene,
         observed_measurement,
         initial_measurement,
     );
@@ -175,6 +176,7 @@ test "dismas validation performs a direct-intensity fit on real spectra" {
     const final_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .dismas,
+        problem.scene,
         observed_measurement,
         fitted_measurement,
     );
@@ -266,6 +268,7 @@ test "dismas validation exercises engine provider dispatch on real spectra" {
     const initial_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .dismas,
+        bound_problem.scene,
         observed_measurement,
         initial_measurement,
     );
@@ -292,6 +295,7 @@ test "dismas validation exercises engine provider dispatch on real spectra" {
     const final_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .dismas,
+        bound_problem.scene,
         observed_measurement,
         fitted_measurement,
     );

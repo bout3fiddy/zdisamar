@@ -25,6 +25,7 @@ const Allocator = std.mem.Allocator;
 const errors = @import("../core/errors.zig");
 const Binding = @import("Binding.zig").Binding;
 const ReferenceData = @import("ReferenceData.zig");
+const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
 const document_fields = @import("../adapters/canonical_config/document_fields.zig");
 
 pub const AbsorberSpecies = document_fields.AbsorberSpecies;
@@ -41,6 +42,30 @@ pub const SpectroscopyStage = enum {
     simulation,
     retrieval,
 };
+
+pub const AbsorptionRepresentation = union(enum) {
+    none,
+    line_abs: *const ReferenceData.SpectroscopyLineList,
+    xsec_table: *const ReferenceData.CrossSectionTable,
+    xsec_lut: *const OperationalCrossSectionLut,
+};
+
+/// Purpose:
+///   Resolve a species string into the canonical typed absorber species.
+pub fn resolveAbsorberSpeciesName(species_name: []const u8) ?AbsorberSpecies {
+    if (std.meta.stringToEnum(AbsorberSpecies, species_name)) |species| return species;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2_o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2o2")) return .o2_o2;
+    if (std.ascii.eqlIgnoreCase(species_name, "o2-o2")) return .o2_o2;
+    return null;
+}
+
+/// Purpose:
+///   Resolve an absorber's canonical typed species, preferring any pre-parsed field.
+pub fn resolvedAbsorberSpecies(absorber: Absorber) ?AbsorberSpecies {
+    if (absorber.resolved_species) |species| return species;
+    return resolveAbsorberSpeciesName(absorber.species);
+}
 
 /// Purpose:
 ///   Store stage-specific vendor-style controls for line mixing, isotope selection, thresholds,
@@ -165,10 +190,13 @@ pub const Spectroscopy = struct {
     line_mixing: Binding = .none,
     strong_lines: Binding = .none,
     cia_table: Binding = .none,
+    cross_section_table: Binding = .none,
     operational_lut: Binding = .none,
     line_gas_controls: LineGasControls = .{},
     resolved_line_list: ?ReferenceData.SpectroscopyLineList = null,
     resolved_cia_table: ?ReferenceData.CollisionInducedAbsorptionTable = null,
+    resolved_cross_section_table: ?ReferenceData.CrossSectionTable = null,
+    resolved_cross_section_lut: ?OperationalCrossSectionLut = null,
 
     /// Purpose:
     ///   Validate that bindings, provider ids, controls, and resolved tables agree with the
@@ -178,6 +206,7 @@ pub const Spectroscopy = struct {
         try self.line_mixing.validate();
         try self.strong_lines.validate();
         try self.cia_table.validate();
+        try self.cross_section_table.validate();
         try self.operational_lut.validate();
         try self.line_gas_controls.validate();
 
@@ -187,10 +216,13 @@ pub const Spectroscopy = struct {
                 self.line_mixing.enabled() or
                 self.strong_lines.enabled() or
                 self.cia_table.enabled() or
+                self.cross_section_table.enabled() or
                 self.operational_lut.enabled() or
                 self.line_gas_controls.configured() or
                 self.resolved_line_list != null or
-                self.resolved_cia_table != null))
+                self.resolved_cia_table != null or
+                self.resolved_cross_section_table != null or
+                self.resolved_cross_section_lut != null))
         {
             // INVARIANT:
             //   `.mode == .none` is a true disabled state. No provider, binding, control, or
@@ -202,6 +234,14 @@ pub const Spectroscopy = struct {
         //   are active. Carrying them across mode switches would silently desynchronize the scene.
         if (self.resolved_line_list != null and self.mode != .line_by_line) return errors.Error.InvalidRequest;
         if (self.resolved_cia_table != null and self.mode != .cia) return errors.Error.InvalidRequest;
+        if (self.resolved_cross_section_table != null and self.mode != .cross_sections) return errors.Error.InvalidRequest;
+        if (self.resolved_cross_section_lut != null and !self.operational_lut.enabled()) return errors.Error.InvalidRequest;
+
+        const has_cross_section_table = self.cross_section_table.enabled() or self.resolved_cross_section_table != null;
+        const has_cross_section_lut = self.operational_lut.enabled() or self.resolved_cross_section_lut != null;
+        if (self.mode == .cross_sections) {
+            if (has_cross_section_table and has_cross_section_lut) return errors.Error.InvalidRequest;
+        }
     }
 
     /// Purpose:
@@ -228,6 +268,11 @@ pub const Spectroscopy = struct {
         const cia_table = try self.cia_table.clone(allocator);
         errdefer {
             var owned = cia_table;
+            owned.deinitOwned(allocator);
+        }
+        const cross_section_table = try self.cross_section_table.clone(allocator);
+        errdefer {
+            var owned = cross_section_table;
             owned.deinitOwned(allocator);
         }
         const operational_lut = try self.operational_lut.clone(allocator);
@@ -259,6 +304,26 @@ pub const Spectroscopy = struct {
             owned.deinit(allocator);
         };
 
+        const resolved_cross_section_table = if (self.resolved_cross_section_table) |cross_section_table_data|
+            ReferenceData.CrossSectionTable{
+                .points = try allocator.dupe(ReferenceData.CrossSectionPoint, cross_section_table_data.points),
+            }
+        else
+            null;
+        errdefer if (resolved_cross_section_table) |*cross_section_table_data| {
+            var owned = cross_section_table_data.*;
+            owned.deinit(allocator);
+        };
+
+        const resolved_cross_section_lut = if (self.resolved_cross_section_lut) |lut|
+            try lut.clone(allocator)
+        else
+            null;
+        errdefer if (resolved_cross_section_lut) |*lut| {
+            var owned = lut.*;
+            owned.deinitOwned(allocator);
+        };
+
         return .{
             .mode = self.mode,
             .provider = provider,
@@ -266,10 +331,13 @@ pub const Spectroscopy = struct {
             .line_mixing = line_mixing,
             .strong_lines = strong_lines,
             .cia_table = cia_table,
+            .cross_section_table = cross_section_table,
             .operational_lut = operational_lut,
             .line_gas_controls = line_gas_controls,
             .resolved_line_list = resolved_line_list,
             .resolved_cia_table = resolved_cia_table,
+            .resolved_cross_section_table = resolved_cross_section_table,
+            .resolved_cross_section_lut = resolved_cross_section_lut,
         };
     }
 
@@ -281,6 +349,7 @@ pub const Spectroscopy = struct {
         self.line_mixing.deinitOwned(allocator);
         self.strong_lines.deinitOwned(allocator);
         self.cia_table.deinitOwned(allocator);
+        self.cross_section_table.deinitOwned(allocator);
         self.operational_lut.deinitOwned(allocator);
         self.line_gas_controls.deinitOwned(allocator);
         if (self.resolved_line_list) |*line_list_data| {
@@ -291,7 +360,24 @@ pub const Spectroscopy = struct {
             var owned = cia_table_data.*;
             owned.deinit(allocator);
         }
+        if (self.resolved_cross_section_table) |*cross_section_table_data| {
+            var owned = cross_section_table_data.*;
+            owned.deinit(allocator);
+        }
+        if (self.resolved_cross_section_lut) |*lut| {
+            var owned = lut.*;
+            owned.deinitOwned(allocator);
+        }
         self.* = .{};
+    }
+
+    /// Purpose:
+    ///   Report the active absorption representation attached to this absorber.
+    pub fn resolvedAbsorptionRepresentation(self: *const Spectroscopy) AbsorptionRepresentation {
+        if (self.resolved_cross_section_lut) |*lut| return .{ .xsec_lut = lut };
+        if (self.resolved_cross_section_table) |*table| return .{ .xsec_table = table };
+        if (self.resolved_line_list) |*line_list| return .{ .line_abs = line_list };
+        return .none;
     }
 };
 
@@ -413,6 +499,15 @@ test "absorber set validates explicit spectroscopy bindings" {
                     .cia_table = .{ .asset = .{ .name = "o2o2_cia" } },
                 },
             },
+            .{
+                .id = "no2",
+                .species = "no2",
+                .profile_source = .atmosphere,
+                .spectroscopy = .{
+                    .mode = .cross_sections,
+                    .cross_section_table = .{ .asset = .{ .name = "no2_demo" } },
+                },
+            },
         },
     };
     try valid.validate();
@@ -431,6 +526,91 @@ test "absorber set validates explicit spectroscopy bindings" {
                 },
             },
         }).validate(),
+    );
+
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (AbsorberSet{
+            .items = &[_]Absorber{
+                .{
+                    .id = "o3",
+                    .species = "o3",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .cross_section_table = .{ .asset = .{ .name = "o3_table" } },
+                        .operational_lut = .{ .ingest = .{
+                            .full_name = "demo.o3_operational_lut",
+                            .ingest_name = "demo",
+                            .output_name = "o3_operational_lut",
+                        } },
+                    },
+                },
+            },
+        }).validate(),
+    );
+}
+
+test "resolvedAbsorberSpecies normalizes legacy O2-O2 aliases" {
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        resolvedAbsorberSpecies(.{ .id = "o2_o2", .species = "o2_o2" }).?,
+    );
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        resolvedAbsorberSpecies(.{ .id = "o2o2", .species = "o2o2" }).?,
+    );
+    try std.testing.expectEqual(
+        AbsorberSpecies.o2_o2,
+        resolvedAbsorberSpecies(.{ .id = "o2-o2", .species = "o2-o2" }).?,
+    );
+}
+
+test "spectroscopy resolves explicit absorption representation tags" {
+    const line_list = ReferenceData.SpectroscopyLineList{
+        .lines = &.{},
+    };
+    const cross_section_table = ReferenceData.CrossSectionTable{
+        .points = &.{},
+    };
+    const lut: OperationalCrossSectionLut = .{
+        .wavelengths_nm = &.{ 405.0, 406.0 },
+        .coefficients = &.{ 1.0, 0.0, 1.1, 0.0 },
+        .temperature_coefficient_count = 1,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 200.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 100.0,
+        .max_pressure_hpa = 1100.0,
+    };
+
+    var line_spectroscopy = Spectroscopy{ .resolved_line_list = line_list };
+    try std.testing.expectEqual(
+        AbsorptionRepresentation{ .line_abs = &line_spectroscopy.resolved_line_list.? },
+        line_spectroscopy.resolvedAbsorptionRepresentation(),
+    );
+
+    var cross_section_spectroscopy = Spectroscopy{
+        .mode = .cross_sections,
+        .resolved_cross_section_table = cross_section_table,
+    };
+    try std.testing.expectEqual(
+        AbsorptionRepresentation{ .xsec_table = &cross_section_spectroscopy.resolved_cross_section_table.? },
+        cross_section_spectroscopy.resolvedAbsorptionRepresentation(),
+    );
+
+    var operational_lut_spectroscopy = Spectroscopy{
+        .mode = .line_by_line,
+        .operational_lut = .{ .ingest = .{
+            .full_name = "demo.o2_operational_lut",
+            .ingest_name = "demo",
+            .output_name = "o2_operational_lut",
+        } },
+        .resolved_cross_section_lut = lut,
+    };
+    try std.testing.expectEqual(
+        AbsorptionRepresentation{ .xsec_lut = &operational_lut_spectroscopy.resolved_cross_section_lut.? },
+        operational_lut_spectroscopy.resolvedAbsorptionRepresentation(),
     );
 }
 

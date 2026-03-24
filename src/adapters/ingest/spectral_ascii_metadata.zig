@@ -156,6 +156,32 @@ const OperationalLutBuilder = struct {
     }
 };
 
+pub const NamedOperationalLut = struct {
+    output_name: []const u8,
+    lut: OperationalCrossSectionLut = .{},
+
+    fn deinitOwned(self: *NamedOperationalLut, allocator: std.mem.Allocator) void {
+        allocator.free(self.output_name);
+        self.lut.deinitOwned(allocator);
+        self.* = undefined;
+    }
+};
+
+const NamedOperationalLutBuilder = struct {
+    prefix: []const u8 = "",
+    lut: OperationalLutBuilder = .{},
+
+    fn deinit(self: *NamedOperationalLutBuilder, allocator: std.mem.Allocator) void {
+        if (self.prefix.len != 0) allocator.free(self.prefix);
+        self.lut.deinit(allocator);
+        self.* = .{};
+    }
+
+    fn outputName(self: *const NamedOperationalLutBuilder, allocator: std.mem.Allocator) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "{s}_operational_lut", .{self.prefix});
+    }
+};
+
 const IndexedVectorBuilder = struct {
     values: std.ArrayList(struct { index: usize, value: f64 }) = .empty,
 
@@ -285,6 +311,7 @@ pub const OperationalMetadata = struct {
     operational_solar_spectrum: OperationalSolarSpectrum = .{},
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
+    cross_section_operational_luts: []const NamedOperationalLut = &.{},
 
     /// Purpose:
     ///   Report whether cloud metadata indicates cloud presence.
@@ -311,9 +338,30 @@ pub const OperationalMetadata = struct {
     }
 
     /// Purpose:
-    ///   Report whether either operational LUT sidecar is present.
+    ///   Report whether any operational cross-section LUT sidecar is present.
     pub fn hasOperationalLuts(self: OperationalMetadata) bool {
-        return self.o2_operational_lut.enabled() or self.o2o2_operational_lut.enabled();
+        return self.o2_operational_lut.enabled() or
+            self.o2o2_operational_lut.enabled() or
+            self.cross_section_operational_luts.len != 0;
+    }
+
+    /// Purpose:
+    ///   Locate a named operational cross-section LUT by its ingest output id.
+    pub fn operationalLut(self: *const OperationalMetadata, output_name: []const u8) ?*const OperationalCrossSectionLut {
+        if (std.mem.eql(u8, output_name, "o2_operational_lut")) {
+            return if (self.o2_operational_lut.enabled()) &self.o2_operational_lut else null;
+        }
+        if (std.mem.eql(u8, output_name, "o2o2_operational_lut") or
+            std.mem.eql(u8, output_name, "o2_o2_operational_lut"))
+        {
+            return if (self.o2o2_operational_lut.enabled()) &self.o2o2_operational_lut else null;
+        }
+        for (self.cross_section_operational_luts) |*entry| {
+            if (std.mem.eql(u8, entry.output_name, output_name)) {
+                return if (entry.lut.enabled()) &entry.lut else null;
+            }
+        }
+        return null;
     }
 
     /// Purpose:
@@ -325,6 +373,11 @@ pub const OperationalMetadata = struct {
         self.operational_solar_spectrum.deinitOwned(allocator);
         self.o2_operational_lut.deinitOwned(allocator);
         self.o2o2_operational_lut.deinitOwned(allocator);
+        for (self.cross_section_operational_luts) |entry| {
+            var owned = entry;
+            owned.deinitOwned(allocator);
+        }
+        if (self.cross_section_operational_luts.len != 0) allocator.free(self.cross_section_operational_luts);
         self.* = .{};
     }
 };
@@ -333,8 +386,7 @@ pub const ParseState = struct {
     metadata: OperationalMetadata = .{},
     operational_refspec_grid_builder: OperationalReferenceGridBuilder = .{},
     operational_solar_spectrum_builder: OperationalSolarSpectrumBuilder = .{},
-    o2_operational_lut_builder: OperationalLutBuilder = .{},
-    o2o2_operational_lut_builder: OperationalLutBuilder = .{},
+    operational_lut_builders: std.ArrayList(NamedOperationalLutBuilder) = .empty,
 
     /// Purpose:
     ///   Release the parse state and any partially built sidecars.
@@ -342,8 +394,8 @@ pub const ParseState = struct {
         self.metadata.deinitOwned(allocator);
         self.operational_refspec_grid_builder.deinit(allocator);
         self.operational_solar_spectrum_builder.deinit(allocator);
-        self.o2_operational_lut_builder.deinit(allocator);
-        self.o2o2_operational_lut_builder.deinit(allocator);
+        for (self.operational_lut_builders.items) |*builder| builder.deinit(allocator);
+        self.operational_lut_builders.deinit(allocator);
         self.* = .{};
     }
 
@@ -362,8 +414,7 @@ pub const ParseState = struct {
             &self.metadata,
             &self.operational_refspec_grid_builder,
             &self.operational_solar_spectrum_builder,
-            &self.o2_operational_lut_builder,
-            &self.o2o2_operational_lut_builder,
+            &self.operational_lut_builders,
             key,
             value,
         );
@@ -376,10 +427,40 @@ pub const ParseState = struct {
         errdefer self.metadata.operational_refspec_grid.deinitOwned(allocator);
         self.metadata.operational_solar_spectrum = try self.operational_solar_spectrum_builder.intoOwned(allocator);
         errdefer self.metadata.operational_solar_spectrum.deinitOwned(allocator);
-        self.metadata.o2_operational_lut = try self.o2_operational_lut_builder.intoOwned(allocator);
-        errdefer self.metadata.o2_operational_lut.deinitOwned(allocator);
-        self.metadata.o2o2_operational_lut = try self.o2o2_operational_lut_builder.intoOwned(allocator);
-        errdefer self.metadata.o2o2_operational_lut.deinitOwned(allocator);
+        var cross_section_operational_luts = std.ArrayList(NamedOperationalLut).empty;
+        errdefer {
+            for (cross_section_operational_luts.items) |entry| {
+                var owned = entry;
+                owned.deinitOwned(allocator);
+            }
+            cross_section_operational_luts.deinit(allocator);
+        }
+
+        for (self.operational_lut_builders.items) |*builder| {
+            const output_name = try builder.outputName(allocator);
+            errdefer allocator.free(output_name);
+            var lut = try builder.lut.intoOwned(allocator);
+            errdefer lut.deinitOwned(allocator);
+
+            if (std.mem.eql(u8, output_name, "o2_operational_lut")) {
+                self.metadata.o2_operational_lut = lut;
+                allocator.free(output_name);
+                continue;
+            }
+            if (std.mem.eql(u8, output_name, "o2o2_operational_lut") or
+                std.mem.eql(u8, output_name, "o2_o2_operational_lut"))
+            {
+                self.metadata.o2o2_operational_lut = lut;
+                allocator.free(output_name);
+                continue;
+            }
+
+            try cross_section_operational_luts.append(allocator, .{
+                .output_name = output_name,
+                .lut = lut,
+            });
+        }
+        self.metadata.cross_section_operational_luts = try cross_section_operational_luts.toOwnedSlice(allocator);
 
         const owned = self.metadata;
         self.metadata = .{};
@@ -392,8 +473,7 @@ fn parseMetadataValue(
     metadata: *OperationalMetadata,
     operational_refspec_grid_builder: *OperationalReferenceGridBuilder,
     operational_solar_spectrum_builder: *OperationalSolarSpectrumBuilder,
-    o2_operational_lut_builder: *OperationalLutBuilder,
-    o2o2_operational_lut_builder: *OperationalLutBuilder,
+    operational_lut_builders: *std.ArrayList(NamedOperationalLutBuilder),
     key: []const u8,
     value: f64,
 ) Error!void {
@@ -497,18 +577,9 @@ fn parseMetadataValue(
         value,
     )) {
         return;
-    } else if (try parseOperationalLutField(
+    } else if (try parseNamedOperationalLutField(
         allocator,
-        o2_operational_lut_builder,
-        "o2_refspec_",
-        key,
-        value,
-    )) {
-        return;
-    } else if (try parseOperationalLutField(
-        allocator,
-        o2o2_operational_lut_builder,
-        "o2o2_refspec_",
+        operational_lut_builders,
         key,
         value,
     )) {
@@ -518,18 +589,46 @@ fn parseMetadataValue(
     }
 }
 
-fn parseOperationalLutField(
+fn parseNamedOperationalLutField(
     allocator: std.mem.Allocator,
-    builder: *OperationalLutBuilder,
-    prefix: []const u8,
+    builders: *std.ArrayList(NamedOperationalLutBuilder),
     key: []const u8,
     value: f64,
 ) Error!bool {
-    if (!std.mem.startsWith(u8, key, prefix)) return false;
-    const suffix = key[prefix.len..];
+    const marker = "_refspec_";
+    const marker_index = std.mem.indexOf(u8, key, marker) orelse return false;
+    const prefix = key[0..marker_index];
+    if (prefix.len == 0) return false;
+
+    const builder = try getOrCreateOperationalLutBuilder(allocator, builders, prefix);
+    const suffix = key[marker_index + marker.len ..];
+    return parseOperationalLutSuffix(allocator, &builder.lut, suffix, value);
+}
+
+fn getOrCreateOperationalLutBuilder(
+    allocator: std.mem.Allocator,
+    builders: *std.ArrayList(NamedOperationalLutBuilder),
+    prefix: []const u8,
+) !*NamedOperationalLutBuilder {
+    for (builders.items, 0..) |*builder, index| {
+        if (std.mem.eql(u8, builder.prefix, prefix)) return &builders.items[index];
+    }
+
+    const owned_prefix = try allocator.dupe(u8, prefix);
+    errdefer allocator.free(owned_prefix);
+    try builders.append(allocator, .{ .prefix = owned_prefix });
+    return &builders.items[builders.items.len - 1];
+}
+
+fn parseOperationalLutSuffix(
+    allocator: std.mem.Allocator,
+    builder: *OperationalLutBuilder,
+    suffix: []const u8,
+    value: f64,
+) Error!bool {
     // PARITY:
-    //   O2 and O2-O2 LUT payloads share the same dense layout rules once the
-    //   vendor-specific prefix is stripped.
+    //   Operational cross-section LUT payloads share one dense layout once the
+    //   `<gas>_refspec_` prefix has been stripped from the metadata key.
 
     if (std.mem.eql(u8, suffix, "npressure")) {
         if (value <= 0.0 or value != @floor(value)) return Error.InvalidLine;

@@ -538,7 +538,10 @@ fn pseudoSphericalCarrierAtAltitude(
 ) PseudoSphericalCarrier {
     const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{ .optical_depth = 0.0 };
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
-    const continuum_sigma = continuum_table.interpolateSigma(wavelength_nm);
+    const continuum_sigma = if (self.cross_section_absorbers.len == 0)
+        continuum_table.interpolateSigma(wavelength_nm)
+    else
+        0.0;
     const prepared_state = State.PreparedOpticalState.preparedStrongLineStateAtAltitude(
         sublayers,
         strong_line_states,
@@ -560,18 +563,46 @@ fn pseudoSphericalCarrierAtAltitude(
             state.pressure_hpa,
             prepared_state,
         );
-    const continuum_density_cm3 = self.continuumCarrierDensityAtAltitude(
-        sublayers,
-        altitude_km,
+    var cross_section_density_cm3: f64 = 0.0;
+    var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
+    for (self.cross_section_absorbers) |cross_section_absorber| {
+        const absorber_density_cm3 = State.PreparedOpticalState.interpolatePreparedScalarAtAltitude(
+            sublayers,
+            cross_section_absorber.number_densities_cm3,
+            altitude_km,
+        );
+        if (absorber_density_cm3 <= 0.0) continue;
+        cross_section_density_cm3 += absorber_density_cm3;
+        cross_section_absorption_optical_depth_per_km +=
+            cross_section_absorber.sigmaAt(
+                wavelength_nm,
+                state.temperature_k,
+                state.pressure_hpa,
+            ) *
+            absorber_density_cm3 *
+            centimeters_per_kilometer;
+    }
+    const line_absorber_density_cm3 = self.lineSpectroscopyCarrierDensity(
         state.absorber_number_density_cm3,
         state.oxygen_number_density_cm3,
+        cross_section_density_cm3,
     );
+    const continuum_density_cm3 = if (self.cross_section_absorbers.len == 0)
+        self.continuumCarrierDensityAtAltitude(
+            sublayers,
+            altitude_km,
+            state.absorber_number_density_cm3,
+            state.oxygen_number_density_cm3,
+        )
+    else
+        0.0;
     const gas_absorption_optical_depth_per_km =
         continuum_sigma *
         continuum_density_cm3 *
         centimeters_per_kilometer +
+        cross_section_absorption_optical_depth_per_km +
         spectroscopy_sigma *
-            state.absorber_number_density_cm3 *
+            line_absorber_density_cm3 *
             centimeters_per_kilometer;
     const gas_scattering_optical_depth_per_km =
         Rayleigh.crossSectionCm2(wavelength_nm) *

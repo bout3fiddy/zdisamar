@@ -29,6 +29,7 @@ const yaml_helpers = @import("document_yaml_helpers.zig");
 const PlanTemplate = @import("../../core/Plan.zig").Template;
 const SolverMode = @import("../../core/Plan.zig").SolverMode;
 const DiagnosticsSpec = @import("../../core/diagnostics.zig").DiagnosticsSpec;
+const AbsorberModel = @import("../../model/Absorber.zig");
 const Binding = @import("../../model/Binding.zig").Binding;
 const BindingKind = @import("../../model/Binding.zig").BindingKind;
 const SpectralGrid = @import("../../model/Spectrum.zig").SpectralGrid;
@@ -49,6 +50,7 @@ const SurfaceParameter = @import("../../model/Surface.zig").Parameter;
 const Cloud = @import("../../model/Cloud.zig").Cloud;
 const Aerosol = @import("../../model/Aerosol.zig").Aerosol;
 const ObservationModel = @import("../../model/ObservationModel.zig").ObservationModel;
+const CrossSectionFitControls = @import("../../model/ObservationModel.zig").CrossSectionFitControls;
 const ObservationRegime = @import("../../model/ObservationModel.zig").ObservationRegime;
 const InstrumentId = @import("../../model/Instrument.zig").Id;
 const BuiltinLineShapeKind = @import("../../model/Instrument.zig").BuiltinLineShapeKind;
@@ -301,6 +303,14 @@ pub const GeneralConfig = struct {
     fit_temperature_offset: bool = false,
     fit_ln_cld_tau: bool = false,
     num_interval_fit: ?u32 = null,
+    use_eff_xsec_oe_sim: bool = false,
+    use_eff_xsec_oe_retr: bool = false,
+    use_poly_exp_xsec_sim: bool = false,
+    use_poly_exp_xsec_retr: bool = false,
+    xsec_strong_abs_sim: ?[]const bool = null,
+    xsec_strong_abs_retr: ?[]const bool = null,
+    degree_poly_sim: ?[]const u32 = null,
+    degree_poly_retr: ?[]const u32 = null,
     // Method codes
     simulation_method: ?fields.SimulationMethod = null,
     retrieval_method: ?fields.RetrievalMethod = null,
@@ -837,6 +847,7 @@ const ResolveContext = struct {
         stage.rrs_ring = try decodeRrsRingConfig(self.allocator, mapGet(stage_map, "rrs_ring"), self.strict_unknown_fields);
         stage.additional_output = try decodeAdditionalOutputConfig(mapGet(stage_map, "additional_output"), self.strict_unknown_fields);
         stage.general = try decodeGeneralConfig(self.allocator, mapGet(stage_map, "general"), self.strict_unknown_fields);
+        try applyGeneralConfigToObservationModel(self.allocator, kind, stage.general, &stage.scene);
         stage.instrument = try decodeInstrumentConfig(self.allocator, mapGet(stage_map, "instrument"), self.strict_unknown_fields);
         stage.geometry = try decodeGeometryConfig(mapGet(stage_map, "geometry"), self.strict_unknown_fields);
         stage.pressure_temperature = try decodePressureTemperatureConfig(self.allocator, mapGet(stage_map, "pressure_temperature"), self.strict_unknown_fields);
@@ -1034,6 +1045,11 @@ const ResolveContext = struct {
     fn decodeAbsorbers(self: *const ResolveContext, value: ?yaml.Value, observation_model: *ObservationModel) !AbsorberSet {
         const absorber_map = try expectMap(value orelse return Error.MissingField);
         const absorbers = try self.allocator.alloc(Absorber, absorber_map.len);
+        var initialized: usize = 0;
+        errdefer {
+            for (absorbers[0..initialized]) |*absorber| absorber.deinitOwned(self.allocator);
+            self.allocator.free(absorbers);
+        }
 
         for (absorber_map, 0..) |entry, index| {
             const item_map = try expectMap(entry.value);
@@ -1044,6 +1060,7 @@ const ResolveContext = struct {
                 .species = try self.allocator.dupe(u8, try expectString(requiredField(item_map, "species"))),
                 .resolved_species = try fields.parseAbsorberSpecies(try expectString(requiredField(item_map, "species"))),
             };
+            errdefer absorber.deinitOwned(self.allocator);
 
             if (mapGet(item_map, "profile")) |profile_value| {
                 const profile_map = try expectMap(profile_value);
@@ -1064,6 +1081,7 @@ const ResolveContext = struct {
                     "line_mixing_asset",
                     "strong_lines_asset",
                     "cia_asset",
+                    "cross_section_asset",
                     "operational_lut",
                 }, self.strict_unknown_fields);
 
@@ -1083,13 +1101,46 @@ const ResolveContext = struct {
                 if (mapGet(spectroscopy_map, "cia_asset")) |cia_asset| {
                     absorber.spectroscopy.cia_table = try self.decodeAssetBinding(cia_asset);
                 }
+                if (mapGet(spectroscopy_map, "cross_section_asset")) |cross_section_asset| {
+                    absorber.spectroscopy.cross_section_table = try self.decodeAssetBinding(cross_section_asset);
+                }
                 if (mapGet(spectroscopy_map, "operational_lut")) |operational_lut| {
                     const binding = try self.decodeIngestBinding(operational_lut);
+                    const ingest_ref = binding.ingestReference().?;
                     absorber.spectroscopy.operational_lut = binding;
-                    if (std.mem.eql(u8, absorber.id, "o2")) {
-                        observation_model.o2_operational_lut = try resolveOperationalLut(self.allocator, self.ingests, binding, "o2_operational_lut");
-                    } else if (std.mem.eql(u8, absorber.id, "o2o2")) {
-                        observation_model.o2o2_operational_lut = try resolveOperationalLut(self.allocator, self.ingests, binding, "o2o2_operational_lut");
+                    var resolved_lut = try resolveOperationalLut(self.allocator, self.ingests, binding);
+                    errdefer resolved_lut.deinitOwned(self.allocator);
+                    var pending_o2_operational_lut: ?@import("../../model/Instrument.zig").OperationalCrossSectionLut = null;
+                    errdefer if (pending_o2_operational_lut) |*lut| lut.deinitOwned(self.allocator);
+                    var pending_o2o2_operational_lut: ?@import("../../model/Instrument.zig").OperationalCrossSectionLut = null;
+                    errdefer if (pending_o2o2_operational_lut) |*lut| lut.deinitOwned(self.allocator);
+
+                    const resolved_species = resolvedAbsorberSpecies(absorber);
+                    const species_is_o2 = resolved_species == .o2;
+                    const species_is_o2o2 = resolved_species == .o2_o2;
+                    if (species_is_o2) {
+                        if (!std.mem.eql(u8, ingest_ref.output_name, "o2_operational_lut")) {
+                            return Error.MissingIngestOutput;
+                        }
+                        if (absorber.spectroscopy.mode == .line_by_line) {
+                            pending_o2_operational_lut = try resolved_lut.clone(self.allocator);
+                        }
+                    } else if (species_is_o2o2) {
+                        if (!std.mem.eql(u8, ingest_ref.output_name, "o2o2_operational_lut") and
+                            !std.mem.eql(u8, ingest_ref.output_name, "o2_o2_operational_lut"))
+                        {
+                            return Error.MissingIngestOutput;
+                        }
+                        if (absorber.spectroscopy.mode == .cia) {
+                            pending_o2o2_operational_lut = try resolved_lut.clone(self.allocator);
+                        }
+                    }
+                    absorber.spectroscopy.resolved_cross_section_lut = resolved_lut;
+                    if (pending_o2_operational_lut) |lut| {
+                        observation_model.o2_operational_lut = lut;
+                    }
+                    if (pending_o2o2_operational_lut) |lut| {
+                        observation_model.o2o2_operational_lut = lut;
                     }
                 }
                 absorber.spectroscopy.resolved_line_list = try resolveSpectroscopyLineList(
@@ -1102,9 +1153,15 @@ const ResolveContext = struct {
                     self.assets,
                     absorber.spectroscopy.cia_table,
                 );
+                absorber.spectroscopy.resolved_cross_section_table = try resolveCrossSectionTable(
+                    self.allocator,
+                    self.assets,
+                    absorber.spectroscopy.cross_section_table,
+                );
             }
 
             absorbers[index] = absorber;
+            initialized += 1;
         }
 
         return .{ .items = absorbers };
@@ -2014,7 +2071,6 @@ fn decodeAdditionalOutputConfig(value: ?yaml.Value, strict: bool) !?AdditionalOu
 }
 
 fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?GeneralConfig {
-    _ = allocator;
     const gc_value = value orelse return null;
     const gc_map = try expectMap(gc_value);
     try ensureKnownFields(gc_map, &.{
@@ -2030,6 +2086,14 @@ fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !
         "fit_temperature_offset",
         "fit_ln_cld_tau",
         "num_interval_fit",
+        "useEffXsec_OE_sim",
+        "useEffXsec_OE_retr",
+        "usePolyExpXsecSim",
+        "usePolyExpXsecRetr",
+        "XsecStrongAbsSim",
+        "XsecStrongAbsRetr",
+        "degreePolySim",
+        "degreePolyRetr",
         "simulation_method",
         "retrieval_method",
         "solar_irr_file_sim",
@@ -2051,6 +2115,14 @@ fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !
     if (mapGet(gc_map, "fit_temperature_offset")) |v| gc.fit_temperature_offset = try expectBool(v);
     if (mapGet(gc_map, "fit_ln_cld_tau")) |v| gc.fit_ln_cld_tau = try expectBool(v);
     if (mapGet(gc_map, "num_interval_fit")) |v| gc.num_interval_fit = @intCast(try expectU64(v));
+    if (mapGet(gc_map, "useEffXsec_OE_sim")) |v| gc.use_eff_xsec_oe_sim = try expectBool(v);
+    if (mapGet(gc_map, "useEffXsec_OE_retr")) |v| gc.use_eff_xsec_oe_retr = try expectBool(v);
+    if (mapGet(gc_map, "usePolyExpXsecSim")) |v| gc.use_poly_exp_xsec_sim = try expectBool(v);
+    if (mapGet(gc_map, "usePolyExpXsecRetr")) |v| gc.use_poly_exp_xsec_retr = try expectBool(v);
+    if (mapGet(gc_map, "XsecStrongAbsSim")) |v| gc.xsec_strong_abs_sim = try decodeBoolSequence(allocator, v);
+    if (mapGet(gc_map, "XsecStrongAbsRetr")) |v| gc.xsec_strong_abs_retr = try decodeBoolSequence(allocator, v);
+    if (mapGet(gc_map, "degreePolySim")) |v| gc.degree_poly_sim = try decodeU32Sequence(allocator, v);
+    if (mapGet(gc_map, "degreePolyRetr")) |v| gc.degree_poly_retr = try decodeU32Sequence(allocator, v);
     if (mapGet(gc_map, "simulation_method")) |v| gc.simulation_method = try fields.parseSimulationMethod(try expectString(v));
     if (mapGet(gc_map, "retrieval_method")) |v| gc.retrieval_method = try fields.parseRetrievalMethod(try expectString(v));
     if (mapGet(gc_map, "solar_irr_file_sim")) |v| gc.solar_irr_file_sim = try expectString(v);
@@ -2337,6 +2409,15 @@ fn decodeU32Sequence(allocator: Allocator, value: yaml.Value) ![]const u32 {
     return result;
 }
 
+fn decodeBoolSequence(allocator: Allocator, value: yaml.Value) ![]const bool {
+    const seq = try expectSeq(value);
+    const result = try allocator.alloc(bool, seq.len);
+    for (seq, 0..) |entry, index| {
+        result[index] = try expectBool(entry);
+    }
+    return result;
+}
+
 fn decodeU8Sequence(allocator: Allocator, value: yaml.Value) ![]const u8 {
     const seq = try expectSeq(value);
     const result = try allocator.alloc(u8, seq.len);
@@ -2402,6 +2483,48 @@ fn applyAbsorbingGasConfigToScene(
     }
 }
 
+fn applyGeneralConfigToObservationModel(
+    allocator: Allocator,
+    kind: StageKind,
+    config: ?GeneralConfig,
+    scene: *Scene,
+) !void {
+    const general = config orelse return;
+    const strong_absorption_bands = switch (kind) {
+        .simulation => general.xsec_strong_abs_sim,
+        .retrieval => general.xsec_strong_abs_retr,
+    };
+    const polynomial_degree_bands = switch (kind) {
+        .simulation => general.degree_poly_sim,
+        .retrieval => general.degree_poly_retr,
+    };
+
+    const owned_strong_absorption_bands = if (strong_absorption_bands) |values|
+        try allocator.dupe(bool, values)
+    else
+        &.{};
+    errdefer if (owned_strong_absorption_bands.len != 0) allocator.free(owned_strong_absorption_bands);
+
+    const owned_polynomial_degree_bands = if (polynomial_degree_bands) |values|
+        try allocator.dupe(u32, values)
+    else
+        &.{};
+    errdefer if (owned_polynomial_degree_bands.len != 0) allocator.free(owned_polynomial_degree_bands);
+
+    scene.observation_model.cross_section_fit = CrossSectionFitControls{
+        .use_effective_cross_section_oe = switch (kind) {
+            .simulation => general.use_eff_xsec_oe_sim,
+            .retrieval => general.use_eff_xsec_oe_retr,
+        },
+        .use_polynomial_expansion = switch (kind) {
+            .simulation => general.use_poly_exp_xsec_sim,
+            .retrieval => general.use_poly_exp_xsec_retr,
+        },
+        .xsec_strong_absorption_bands = owned_strong_absorption_bands,
+        .polynomial_degree_bands = owned_polynomial_degree_bands,
+    };
+}
+
 fn findAbsorberForSpecies(absorbers: AbsorberSet, species: fields.AbsorberSpecies) ?*Absorber {
     for (0..absorbers.items.len) |index| {
         const absorber = @constCast(&absorbers.items[index]);
@@ -2411,11 +2534,7 @@ fn findAbsorberForSpecies(absorbers: AbsorberSet, species: fields.AbsorberSpecie
 }
 
 fn resolvedAbsorberSpecies(absorber: Absorber) ?fields.AbsorberSpecies {
-    if (absorber.resolved_species) |species| return species;
-    if (std.meta.stringToEnum(fields.AbsorberSpecies, absorber.species)) |species| return species;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2o2")) return .o2_o2;
-    if (std.ascii.eqlIgnoreCase(absorber.species, "o2-o2")) return .o2_o2;
-    return null;
+    return AbsorberModel.resolvedAbsorberSpecies(absorber);
 }
 
 fn decodeMeasurementMask(allocator: Allocator, value: yaml.Value, strict: bool) !MeasurementMask {
@@ -2712,6 +2831,24 @@ fn resolveCollisionInducedAbsorptionTable(
     return table;
 }
 
+fn resolveCrossSectionTable(
+    allocator: Allocator,
+    assets: []const Asset,
+    binding: Binding,
+) !?ReferenceData.CrossSectionTable {
+    if (binding.kind() != .asset) return null;
+
+    var loaded = try loadResolvedAsset(
+        allocator,
+        assets,
+        binding,
+        .cross_section_table,
+    );
+    defer loaded.deinit(allocator);
+    const table = try loaded.toCrossSectionTable(allocator);
+    return table;
+}
+
 fn loadResolvedAsset(
     allocator: Allocator,
     assets: []const Asset,
@@ -2732,15 +2869,11 @@ fn resolveOperationalLut(
     allocator: Allocator,
     ingests: []const Ingest,
     binding: Binding,
-    expected_output: []const u8,
 ) !@import("../../model/Instrument.zig").OperationalCrossSectionLut {
     const ingest_ref = binding.ingestReference().?;
     const ingest = getReferencedIngest(ingests, ingest_ref);
-    if (!std.mem.eql(u8, ingest_ref.output_name, expected_output)) return Error.MissingIngestOutput;
-    return if (std.mem.eql(u8, expected_output, "o2_operational_lut"))
-        ingest.loaded_spectra.metadata.o2_operational_lut.clone(allocator)
-    else
-        ingest.loaded_spectra.metadata.o2o2_operational_lut.clone(allocator);
+    const lut = ingest.loaded_spectra.metadata.operationalLut(ingest_ref.output_name) orelse return Error.MissingIngestOutput;
+    return lut.clone(allocator);
 }
 
 fn getReferencedIngest(ingests: []const Ingest, reference: @import("../../model/Binding.zig").IngestRef) Ingest {
@@ -2880,4 +3013,239 @@ test "document rejects unknown fields in strict mode" {
     defer document.deinit();
 
     try std.testing.expectError(Error.UnknownField, document.resolve(std.testing.allocator));
+}
+
+fn applyCrossSectionFitGeneralConfigWithAllocator(allocator: Allocator) !void {
+    var scene: Scene = .{};
+    defer scene.observation_model.deinitOwned(allocator);
+
+    try applyGeneralConfigToObservationModel(
+        allocator,
+        .simulation,
+        .{
+            .use_eff_xsec_oe_sim = true,
+            .use_poly_exp_xsec_sim = true,
+            .xsec_strong_abs_sim = &.{ true, false },
+            .degree_poly_sim = &.{ 5, 3 },
+        },
+        &scene,
+    );
+
+    try std.testing.expect(scene.observation_model.cross_section_fit.strongAbsorptionForBand(0));
+    try std.testing.expectEqual(@as(u32, 3), scene.observation_model.cross_section_fit.polynomialOrderForBand(1));
+}
+
+test "document applies cross-section fit controls without leaks across allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        applyCrossSectionFitGeneralConfigWithAllocator,
+        .{},
+    );
+}
+
+fn resolveOperationalLutWithAllocator(allocator: Allocator) !void {
+    const path = "zig-cache/test-o2o2-operational-lut-allocation-failure.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o2_o2_refspec_ntemperature 2
+        \\meta o2_o2_refspec_npressure 2
+        \\meta o2_o2_refspec_temperature_min 220.0
+        \\meta o2_o2_refspec_temperature_max 320.0
+        \\meta o2_o2_refspec_pressure_min 150.0
+        \\meta o2_o2_refspec_pressure_max 1000.0
+        \\meta o2_o2_refspec_wavelength_1 760.8
+        \\meta o2_o2_refspec_wavelength_2 761.0
+        \\meta o2_o2_refspec_wavelength_3 761.2
+        \\meta o2_o2_refspec_coeff_1_1_1 1.2e-46
+        \\meta o2_o2_refspec_coeff_2_1_1 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_1 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_1 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_2 1.5e-46
+        \\meta o2_o2_refspec_coeff_2_1_2 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_2 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_2 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_3 1.1e-46
+        \\meta o2_o2_refspec_coeff_2_1_3 0.18e-46
+        \\meta o2_o2_refspec_coeff_1_2_3 0.08e-46
+        \\meta o2_o2_refspec_coeff_2_2_3 0.02e-46
+        \\start_channel_rad
+        \\rad 760.8 1485.0 1.116153E+13
+        \\rad 761.0 1445.0 1.096153E+13
+        \\rad 761.2 1405.0 1.076153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o2o2-operational-lut-allocation-failure
+        \\inputs:
+        \\  assets:
+        \\    o2o2_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o2o2-operational-lut-allocation-failure.txt
+        \\    no2_cross_section:
+        \\      kind: file
+        \\      format: csv
+        \\      path: data/cross_sections/no2_405_465_demo.csv
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o2o2_metadata
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o2o2-cia-allocation-failure
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2_o2:
+        \\          species: o2_o2
+        \\          spectroscopy:
+        \\            model: cia
+        \\            operational_lut:
+        \\              from_ingest: demo.o2_o2_operational_lut
+        \\            cross_section_asset: no2_cross_section
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try Document.parse(allocator, "inline.yaml", ".", source);
+    defer document.deinit();
+
+    var resolved = try document.resolve(allocator);
+    defer resolved.deinit();
+}
+
+test "document resolves operational LUT observation-model clones without leaks across allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        resolveOperationalLutWithAllocator,
+        .{},
+    );
+}
+
+fn resolveOperationalLutFollowOnFailureWithAllocator(allocator: Allocator) !void {
+    const path = "zig-cache/test-o2-operational-lut-follow-on-failure.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o2_refspec_ntemperature 2
+        \\meta o2_refspec_npressure 2
+        \\meta o2_refspec_temperature_min 220.0
+        \\meta o2_refspec_temperature_max 320.0
+        \\meta o2_refspec_pressure_min 150.0
+        \\meta o2_refspec_pressure_max 1000.0
+        \\meta o2_refspec_wavelength_1 760.8
+        \\meta o2_refspec_wavelength_2 761.0
+        \\meta o2_refspec_wavelength_3 761.2
+        \\meta o2_refspec_coeff_1_1_1 2.0e-24
+        \\meta o2_refspec_coeff_2_1_1 0.3e-24
+        \\meta o2_refspec_coeff_1_2_1 0.2e-24
+        \\meta o2_refspec_coeff_2_2_1 0.05e-24
+        \\meta o2_refspec_coeff_1_1_2 2.6e-24
+        \\meta o2_refspec_coeff_2_1_2 0.35e-24
+        \\meta o2_refspec_coeff_1_2_2 0.25e-24
+        \\meta o2_refspec_coeff_2_2_2 0.06e-24
+        \\meta o2_refspec_coeff_1_1_3 2.2e-24
+        \\meta o2_refspec_coeff_2_1_3 0.32e-24
+        \\meta o2_refspec_coeff_1_2_3 0.22e-24
+        \\meta o2_refspec_coeff_2_2_3 0.05e-24
+        \\start_channel_rad
+        \\rad 760.8 1485.0 1.116153E+13
+        \\rad 761.0 1445.0 1.096153E+13
+        \\rad 761.2 1405.0 1.076153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o2-operational-lut-follow-on-failure
+        \\inputs:
+        \\  assets:
+        \\    o2_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o2-operational-lut-follow-on-failure.txt
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o2_metadata
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o2-line-by-line-follow-on-failure
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: line_by_line
+        \\            line_list_asset: missing_o2_lines
+        \\            operational_lut:
+        \\              from_ingest: demo.o2_operational_lut
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try Document.parse(allocator, "inline.yaml", ".", source);
+    defer document.deinit();
+
+    try std.testing.expectError(Error.MissingAsset, document.resolve(allocator));
+}
+
+test "document frees absorber LUT state when later spectroscopy resolution fails" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const status = gpa.deinit();
+        std.testing.expectEqual(std.heap.Check.ok, status) catch unreachable;
+    }
+
+    try resolveOperationalLutFollowOnFailureWithAllocator(gpa.allocator());
 }

@@ -229,6 +229,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
     const doas_initial_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .doas,
+        doas_problem_bound.scene,
         doas_observed_measurement,
         doas_initial_measurement,
     );
@@ -253,6 +254,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
         try retrieval.common.spectral_fit.fitResidualCost(
             std.testing.allocator,
             .doas,
+            doas_problem_bound.scene,
             doas_observed_measurement,
             doas_fitted_measurement,
         ) < doas_initial_residual,
@@ -335,6 +337,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
     const dismas_initial_residual = try retrieval.common.spectral_fit.fitResidualCost(
         std.testing.allocator,
         .dismas,
+        dismas_problem_bound.scene,
         dismas_observed_measurement,
         dismas_initial_measurement,
     );
@@ -362,6 +365,7 @@ test "retrieval solvers share canonical problem model with oe spectral products 
         try retrieval.common.spectral_fit.fitResidualCost(
             std.testing.allocator,
             .dismas,
+            dismas_problem_bound.scene,
             dismas_observed_measurement,
             dismas_fitted_measurement,
         ) < dismas_initial_residual,
