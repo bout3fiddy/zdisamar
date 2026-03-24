@@ -70,7 +70,7 @@ pub fn collectActiveCrossSectionAbsorbers(
     const use_effective_cross_section = scene.observation_model.cross_section_fit.use_effective_cross_section_oe or
         scene.observation_model.cross_section_fit.use_polynomial_expansion or
         any_strong_absorption_band;
-    const polynomial_order = scene.observation_model.cross_section_fit.polynomialOrderForBand(0);
+    const polynomial_order = scene.observation_model.cross_section_fit.maximumPolynomialOrder();
 
     for (scene.absorbers.items) |*absorber| {
         const species = resolvedAbsorberSpecies(absorber.*) orelse continue;

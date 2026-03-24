@@ -660,7 +660,11 @@ fn prepareWithInputs(
                 }
                 break :blk absorber_density_cm3;
             } else absorber_density_cm3;
-            const gas_column_density_cm2 = (absorber_density_cm3 + cross_section_absorber_density_cm3) * sublayer_path_length_cm;
+            const total_gas_density_cm3 = if (owned_cross_section_absorbers.len != 0 and active_line_species == null)
+                cross_section_absorber_density_cm3
+            else
+                absorber_density_cm3 + cross_section_absorber_density_cm3;
+            const total_gas_column_density_cm2 = total_gas_density_cm3 * sublayer_path_length_cm;
             const line_gas_column_density_cm2 = absorber_density_cm3 * sublayer_path_length_cm;
             const continuum_column_density_cm2 = continuum_density_cm3 * sublayer_path_length_cm;
             const molecular_gas_optical_depth =
@@ -709,7 +713,7 @@ fn prepareWithInputs(
                 .temperature_k = temperature,
                 .number_density_cm3 = density,
                 .oxygen_number_density_cm3 = density * oxygen_mixing_ratio,
-                .absorber_number_density_cm3 = absorber_density_cm3 + cross_section_absorber_density_cm3,
+                .absorber_number_density_cm3 = total_gas_density_cm3,
                 .path_length_cm = sublayer_path_length_cm,
                 .continuum_cross_section_cm2_per_molecule = if (owned_cross_section_absorbers.len == 0)
                     midpoint_continuum_sigma
@@ -747,7 +751,7 @@ fn prepareWithInputs(
             layer_cloud_optical_depth += cloud_optical_depth;
             air_column_density_factor += density * sublayer_path_length_cm;
             oxygen_column_density_factor += o2_density_cm3 * sublayer_path_length_cm;
-            column_density_factor += gas_column_density_cm2;
+            column_density_factor += total_gas_column_density_cm2;
             cia_pair_path_factor_cm5 += o2_density_cm3 * o2_density_cm3 * sublayer_path_length_cm;
             total_d_optical_depth_d_temperature += d_gas_optical_depth_d_temperature + d_cia_optical_depth_d_temperature;
 

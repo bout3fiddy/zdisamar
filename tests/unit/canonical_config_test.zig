@@ -1041,3 +1041,96 @@ test "canonical config resolves non-o2 operational LUT ingests into cross-sectio
     try std.testing.expect(!stage.scene.observation_model.o2_operational_lut.enabled());
     try std.testing.expect(!stage.scene.observation_model.o2o2_operational_lut.enabled());
 }
+
+test "canonical config rejects mismatched O2 operational LUT output names" {
+    const path = "zig-cache/test-o2-mismatched-operational-lut.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o3_refspec_ntemperature 2
+        \\meta o3_refspec_npressure 2
+        \\meta o3_refspec_temperature_min 220.0
+        \\meta o3_refspec_temperature_max 320.0
+        \\meta o3_refspec_pressure_min 150.0
+        \\meta o3_refspec_pressure_max 1000.0
+        \\meta o3_refspec_wavelength_1 430.0
+        \\meta o3_refspec_wavelength_2 432.0
+        \\meta o3_refspec_coeff_1_1_1 1.1e-19
+        \\meta o3_refspec_coeff_2_1_1 0.2e-19
+        \\meta o3_refspec_coeff_1_2_1 0.1e-19
+        \\meta o3_refspec_coeff_2_2_1 0.03e-19
+        \\meta o3_refspec_coeff_1_1_2 1.4e-19
+        \\meta o3_refspec_coeff_2_1_2 0.22e-19
+        \\meta o3_refspec_coeff_1_2_2 0.11e-19
+        \\meta o3_refspec_coeff_2_2_2 0.04e-19
+        \\start_channel_rad
+        \\rad 430.0 1485.0 1.116153E+13
+        \\rad 432.0 1445.0 1.096153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o2-mismatched-operational-lut
+        \\inputs:
+        \\  assets:
+        \\    o3_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o2-mismatched-operational-lut.txt
+        \\  ingests:
+        \\    demo:
+        \\      adapter: spectral_ascii
+        \\      asset: o3_metadata
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o2-lut-scene
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: line_by_line
+        \\            operational_lut:
+        \\              from_ingest: demo.o3_operational_lut
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.MissingIngestOutput,
+        document.resolve(std.testing.allocator),
+    );
+}

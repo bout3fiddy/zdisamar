@@ -411,7 +411,7 @@ fn policyForMethod(method: common.Method) Policy {
 fn policyForScene(method: common.Method, scene: @import("../../model/Scene.zig").Scene) Policy {
     var policy = policyForMethod(method);
     const cross_section_fit = scene.observation_model.cross_section_fit;
-    const configured_polynomial_order = cross_section_fit.polynomialOrderForBand(0);
+    const configured_polynomial_order = cross_section_fit.maximumPolynomialOrder();
     if (configured_polynomial_order != 0) {
         policy.polynomial_order = configured_polynomial_order;
     }
@@ -1162,4 +1162,33 @@ test "radiance-space transform preserves selected measurement values" {
 
     try std.testing.expectEqualSlices(f64, &.{ 0.81, 0.75 }, transformed.values);
     try std.testing.expectEqualSlices(f64, &.{ 0.01, 0.03 }, transformed.sigma);
+}
+
+test "scene policy uses the highest configured polynomial degree across bands" {
+    const scene: Scene = .{
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "band-a",
+                    .start_nm = 405.0,
+                    .end_nm = 430.0,
+                    .step_nm = 0.5,
+                },
+                .{
+                    .id = "band-b",
+                    .start_nm = 760.0,
+                    .end_nm = 762.0,
+                    .step_nm = 0.1,
+                },
+            },
+        },
+        .observation_model = .{
+            .cross_section_fit = .{
+                .polynomial_degree_bands = &.{ 2, 6 },
+            },
+        },
+    };
+
+    const policy = policyForScene(.doas, scene);
+    try std.testing.expectEqual(@as(u32, 6), policy.polynomial_order);
 }

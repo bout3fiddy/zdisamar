@@ -1104,9 +1104,18 @@ const ResolveContext = struct {
                     var resolved_lut = try resolveOperationalLut(self.allocator, self.ingests, binding);
                     errdefer resolved_lut.deinitOwned(self.allocator);
 
-                    if (std.mem.eql(u8, absorber.id, "o2") and std.mem.eql(u8, ingest_ref.output_name, "o2_operational_lut")) {
+                    const species_is_o2 = std.ascii.eqlIgnoreCase(absorber.species, "o2");
+                    const species_is_o2o2 = std.ascii.eqlIgnoreCase(absorber.species, "o2o2") or
+                        std.ascii.eqlIgnoreCase(absorber.species, "o2-o2");
+                    if (species_is_o2) {
+                        if (!std.mem.eql(u8, ingest_ref.output_name, "o2_operational_lut")) {
+                            return Error.MissingIngestOutput;
+                        }
                         observation_model.o2_operational_lut = try resolved_lut.clone(self.allocator);
-                    } else if (std.mem.eql(u8, absorber.id, "o2o2") and std.mem.eql(u8, ingest_ref.output_name, "o2o2_operational_lut")) {
+                    } else if (species_is_o2o2) {
+                        if (!std.mem.eql(u8, ingest_ref.output_name, "o2o2_operational_lut")) {
+                            return Error.MissingIngestOutput;
+                        }
                         observation_model.o2o2_operational_lut = try resolved_lut.clone(self.allocator);
                     }
                     absorber.spectroscopy.resolved_cross_section_lut = resolved_lut;

@@ -106,6 +106,16 @@ pub const CrossSectionFitControls = struct {
         if (band_index >= self.polynomial_degree_bands.len) return 0;
         return self.polynomial_degree_bands[band_index];
     }
+
+    /// Purpose:
+    ///   Return the highest configured polynomial degree across all bands.
+    pub fn maximumPolynomialOrder(self: CrossSectionFitControls) u32 {
+        var maximum: u32 = 0;
+        for (self.polynomial_degree_bands) |degree| {
+            maximum = @max(maximum, degree);
+        }
+        return maximum;
+    }
 };
 
 /// Purpose:
@@ -280,6 +290,7 @@ test "cross-section fit controls validate band-scoped settings" {
     try std.testing.expect(valid.strongAbsorptionForBand(0));
     try std.testing.expectEqual(@as(u32, 3), valid.polynomialOrderForBand(1));
     try std.testing.expectEqual(@as(u32, 0), valid.polynomialOrderForBand(3));
+    try std.testing.expectEqual(@as(u32, 5), valid.maximumPolynomialOrder());
 
     try std.testing.expectError(
         errors.Error.InvalidRequest,

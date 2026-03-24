@@ -355,7 +355,9 @@ pub const OperationalMetadata = struct {
             return if (self.o2o2_operational_lut.enabled()) &self.o2o2_operational_lut else null;
         }
         for (self.cross_section_operational_luts) |*entry| {
-            if (std.mem.eql(u8, entry.output_name, output_name)) return &entry.lut;
+            if (std.mem.eql(u8, entry.output_name, output_name)) {
+                return if (entry.lut.enabled()) &entry.lut else null;
+            }
         }
         return null;
     }

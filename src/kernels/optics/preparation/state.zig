@@ -822,7 +822,11 @@ pub const PreparedOpticalState = struct {
                     sublayer.pressure_hpa,
                     if (strong_line_states) |states| &states[sublayer_index] else null,
                 );
-                const gas_column_density_cm2 = sublayer.absorber_number_density_cm3 * sublayer.path_length_cm;
+                const spectroscopy_carrier_density_cm3 = if (self.operational_o2_lut.enabled())
+                    sublayer.oxygen_number_density_cm3
+                else
+                    sublayer.absorber_number_density_cm3;
+                const gas_column_density_cm2 = spectroscopy_carrier_density_cm3 * sublayer.path_length_cm;
                 break :blk continuum_optical_depth + cross_section_optical_depth + spectroscopy_sigma * gas_column_density_cm2;
             };
             const gas_scattering_optical_depth =

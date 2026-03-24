@@ -219,6 +219,12 @@ pub const Spectroscopy = struct {
         if (self.resolved_cia_table != null and self.mode != .cia) return errors.Error.InvalidRequest;
         if (self.resolved_cross_section_table != null and self.mode != .cross_sections) return errors.Error.InvalidRequest;
         if (self.resolved_cross_section_lut != null and !self.operational_lut.enabled()) return errors.Error.InvalidRequest;
+
+        const has_cross_section_table = self.cross_section_table.enabled() or self.resolved_cross_section_table != null;
+        const has_cross_section_lut = self.operational_lut.enabled() or self.resolved_cross_section_lut != null;
+        if (self.mode == .cross_sections) {
+            if (has_cross_section_table and has_cross_section_lut) return errors.Error.InvalidRequest;
+        }
     }
 
     /// Purpose:
@@ -499,6 +505,28 @@ test "absorber set validates explicit spectroscopy bindings" {
                     .spectroscopy = .{
                         .mode = .none,
                         .line_list = .{ .asset = .{ .name = "unexpected" } },
+                    },
+                },
+            },
+        }).validate(),
+    );
+
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (AbsorberSet{
+            .items = &[_]Absorber{
+                .{
+                    .id = "o3",
+                    .species = "o3",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .cross_section_table = .{ .asset = .{ .name = "o3_table" } },
+                        .operational_lut = .{ .ingest = .{
+                            .full_name = "demo.o3_operational_lut",
+                            .ingest_name = "demo",
+                            .output_name = "o3_operational_lut",
+                        } },
                     },
                 },
             },

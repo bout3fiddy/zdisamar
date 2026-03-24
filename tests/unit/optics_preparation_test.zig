@@ -2593,10 +2593,10 @@ test "optical preparation builds explicit cross-section absorbers without reusin
     defer fallback_cross_sections.deinit(std.testing.allocator);
 
     var no2_points = [_]ReferenceData.CrossSectionPoint{
-            .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 2.2e-19 },
-            .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 3.5e-19 },
-            .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.8e-19 },
-        };
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 2.2e-19 },
+        .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 3.5e-19 },
+        .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.8e-19 },
+    };
     const no2_cross_sections = ReferenceData.CrossSectionTable{
         .points = no2_points[0..],
     };
@@ -2693,8 +2693,8 @@ test "optical preparation builds explicit cross-section absorbers without reusin
             .cross_section_fit = .{
                 .use_effective_cross_section_oe = true,
                 .use_polynomial_expansion = true,
-                .xsec_strong_absorption_bands = &.{ true },
-                .polynomial_degree_bands = &.{ 4 },
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
             },
         },
     };
@@ -2715,6 +2715,136 @@ test "optical preparation builds explicit cross-section absorbers without reusin
     try std.testing.expectEqual(@as(u32, 4), prepared.cross_section_absorbers[0].polynomial_order);
     try std.testing.expectEqual(@as(usize, 0), prepared.line_absorbers.len);
     try std.testing.expectEqual(@as(f64, 0.0), prepared.sublayers.?[0].continuum_cross_section_cm2_per_molecule);
+    const expected_cross_section_density =
+        prepared.cross_section_absorbers[0].number_densities_cm3[0] +
+        prepared.cross_section_absorbers[1].number_densities_cm3[0];
+    try std.testing.expectApproxEqAbs(
+        expected_cross_section_density,
+        prepared.sublayers.?[0].absorber_number_density_cm3,
+        expected_cross_section_density * 1.0e-12,
+    );
     try std.testing.expect(prepared.totalCrossSectionAtWavelength(435.0) > fallback_cross_sections.interpolateSigma(435.0));
     try std.testing.expect(prepared.gasOpticalDepthAtWavelength(435.0) > 0.0);
+}
+
+test "cross-section scenes add operational O2 LUT once with oxygen carrier density" {
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.0e19 },
+            .{ .altitude_km = 4.0, .pressure_hpa = 700.0, .temperature_k = 265.0, .air_number_density_cm3 = 1.5e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+
+    var fallback_cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer fallback_cross_sections.deinit(std.testing.allocator);
+
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.0e-19 },
+        .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 2.4e-19 },
+    };
+    const o2_lut: zdisamar.OperationalCrossSectionLut = .{
+        .wavelengths_nm = &.{ 430.0, 432.0 },
+        .coefficients = &.{
+            3.0e-24,
+            0.0,
+            4.0e-24,
+            0.0,
+        },
+        .temperature_coefficient_count = 1,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 150.0,
+        .max_pressure_hpa = 1000.0,
+    };
+
+    var lut = try ReferenceData.buildDemoAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "cross-section-with-o2-lut",
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 35.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 40.0,
+        },
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 1,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 432.0,
+            .sample_count = 5,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "uv",
+                    .start_nm = 430.0,
+                    .end_nm = 432.0,
+                    .step_nm = 0.5,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.12 },
+                        .{ 700.0, 0.06 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{ .points = no2_points[0..] },
+                    },
+                },
+            },
+        },
+        .surface = .{
+            .albedo = 0.08,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .o2_operational_lut = o2_lut,
+        },
+    };
+
+    var prepared = try prepareWithSpectroscopy(
+        std.testing.allocator,
+        &scene,
+        &profile,
+        &fallback_cross_sections,
+        null,
+        &lut,
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    const wavelength_nm = 431.0;
+    const sublayer = prepared.sublayers.?[0];
+    const cross_section_density_cm3 = prepared.cross_section_absorbers[0].number_densities_cm3[0];
+    const expected_gas_absorption_optical_depth =
+        prepared.cross_section_absorbers[0].sigmaAt(wavelength_nm, sublayer.temperature_k, sublayer.pressure_hpa) *
+        cross_section_density_cm3 *
+        sublayer.path_length_cm +
+        o2_lut.sigmaAt(wavelength_nm, sublayer.temperature_k, sublayer.pressure_hpa) *
+            sublayer.oxygen_number_density_cm3 *
+            sublayer.path_length_cm;
+
+    try std.testing.expectApproxEqAbs(
+        expected_gas_absorption_optical_depth,
+        prepared.opticalDepthBreakdownAtWavelength(wavelength_nm).gas_absorption_optical_depth,
+        expected_gas_absorption_optical_depth * 1.0e-12,
+    );
 }
