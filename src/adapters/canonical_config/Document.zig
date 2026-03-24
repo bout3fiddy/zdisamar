@@ -1103,6 +1103,10 @@ const ResolveContext = struct {
                     absorber.spectroscopy.operational_lut = binding;
                     var resolved_lut = try resolveOperationalLut(self.allocator, self.ingests, binding);
                     errdefer resolved_lut.deinitOwned(self.allocator);
+                    var pending_o2_operational_lut: ?@import("../../model/Instrument.zig").OperationalCrossSectionLut = null;
+                    errdefer if (pending_o2_operational_lut) |*lut| lut.deinitOwned(self.allocator);
+                    var pending_o2o2_operational_lut: ?@import("../../model/Instrument.zig").OperationalCrossSectionLut = null;
+                    errdefer if (pending_o2o2_operational_lut) |*lut| lut.deinitOwned(self.allocator);
 
                     const resolved_species = resolvedAbsorberSpecies(absorber);
                     const species_is_o2 = resolved_species == .o2;
@@ -1112,7 +1116,7 @@ const ResolveContext = struct {
                             return Error.MissingIngestOutput;
                         }
                         if (absorber.spectroscopy.mode == .line_by_line) {
-                            observation_model.o2_operational_lut = try resolved_lut.clone(self.allocator);
+                            pending_o2_operational_lut = try resolved_lut.clone(self.allocator);
                         }
                     } else if (species_is_o2o2) {
                         if (!std.mem.eql(u8, ingest_ref.output_name, "o2o2_operational_lut") and
@@ -1121,10 +1125,16 @@ const ResolveContext = struct {
                             return Error.MissingIngestOutput;
                         }
                         if (absorber.spectroscopy.mode == .cia) {
-                            observation_model.o2o2_operational_lut = try resolved_lut.clone(self.allocator);
+                            pending_o2o2_operational_lut = try resolved_lut.clone(self.allocator);
                         }
                     }
                     absorber.spectroscopy.resolved_cross_section_lut = resolved_lut;
+                    if (pending_o2_operational_lut) |lut| {
+                        observation_model.o2_operational_lut = lut;
+                    }
+                    if (pending_o2o2_operational_lut) |lut| {
+                        observation_model.o2o2_operational_lut = lut;
+                    }
                 }
                 absorber.spectroscopy.resolved_line_list = try resolveSpectroscopyLineList(
                     self.allocator,
@@ -3026,6 +3036,107 @@ test "document applies cross-section fit controls without leaks across allocatio
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         applyCrossSectionFitGeneralConfigWithAllocator,
+        .{},
+    );
+}
+
+fn resolveOperationalLutWithAllocator(allocator: Allocator) !void {
+    const path = "zig-cache/test-o2o2-operational-lut-allocation-failure.txt";
+    defer std.fs.cwd().deleteFile(path) catch {};
+    try std.fs.cwd().writeFile(.{
+        .sub_path = path,
+        .data =
+        \\meta o2_o2_refspec_ntemperature 2
+        \\meta o2_o2_refspec_npressure 2
+        \\meta o2_o2_refspec_temperature_min 220.0
+        \\meta o2_o2_refspec_temperature_max 320.0
+        \\meta o2_o2_refspec_pressure_min 150.0
+        \\meta o2_o2_refspec_pressure_max 1000.0
+        \\meta o2_o2_refspec_wavelength_1 760.8
+        \\meta o2_o2_refspec_wavelength_2 761.0
+        \\meta o2_o2_refspec_wavelength_3 761.2
+        \\meta o2_o2_refspec_coeff_1_1_1 1.2e-46
+        \\meta o2_o2_refspec_coeff_2_1_1 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_1 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_1 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_2 1.5e-46
+        \\meta o2_o2_refspec_coeff_2_1_2 0.2e-46
+        \\meta o2_o2_refspec_coeff_1_2_2 0.1e-46
+        \\meta o2_o2_refspec_coeff_2_2_2 0.03e-46
+        \\meta o2_o2_refspec_coeff_1_1_3 1.1e-46
+        \\meta o2_o2_refspec_coeff_2_1_3 0.18e-46
+        \\meta o2_o2_refspec_coeff_1_2_3 0.08e-46
+        \\meta o2_o2_refspec_coeff_2_2_3 0.02e-46
+        \\start_channel_rad
+        \\rad 760.8 1485.0 1.116153E+13
+        \\rad 761.0 1445.0 1.096153E+13
+        \\rad 761.2 1405.0 1.076153E+13
+        \\end_channel_rad
+        \\
+        ,
+    });
+
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: o2o2-operational-lut-allocation-failure
+        \\inputs:
+        \\  assets:
+        \\    o2o2_metadata:
+        \\      kind: file
+        \\      format: spectral_ascii
+        \\      path: zig-cache/test-o2o2-operational-lut-allocation-failure.txt
+        \\    no2_cross_section:
+        \\      kind: file
+        \\      format: csv
+        \\      path: data/cross_sections/no2_405_465_demo.csv
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: o2o2-cia-allocation-failure
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2_o2:
+        \\          species: o2_o2
+        \\          spectroscopy:
+        \\            model: cia
+        \\            operational_lut:
+        \\              from_ingest: demo.o2_o2_operational_lut
+        \\            cross_section_asset: no2_cross_section
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try Document.parse(allocator, "inline.yaml", ".", source);
+    defer document.deinit();
+
+    var resolved = try document.resolve(allocator);
+    defer resolved.deinit();
+}
+
+test "document resolves operational LUT observation-model clones without leaks across allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        resolveOperationalLutWithAllocator,
         .{},
     );
 }
