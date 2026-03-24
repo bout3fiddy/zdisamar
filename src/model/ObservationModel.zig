@@ -52,7 +52,7 @@ pub const CrossSectionFitControls = struct {
     ///   Validate the owned slices and reject obviously inconsistent control payloads.
     pub fn validate(self: CrossSectionFitControls) errors.Error!void {
         for (self.polynomial_degree_bands) |degree| {
-            if (degree > 16) return errors.Error.InvalidRequest;
+            if (degree > 7) return errors.Error.InvalidRequest;
         }
     }
 
@@ -303,6 +303,12 @@ test "cross-section fit controls validate band-scoped settings" {
         (CrossSectionFitControls{
             .polynomial_degree_bands = &.{ 4, 2 },
         }).validateForBandCount(1),
+    );
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (CrossSectionFitControls{
+            .polynomial_degree_bands = &.{8},
+        }).validate(),
     );
 }
 
