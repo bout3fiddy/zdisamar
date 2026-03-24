@@ -1099,14 +1099,17 @@ const ResolveContext = struct {
                 }
                 if (mapGet(spectroscopy_map, "operational_lut")) |operational_lut| {
                     const binding = try self.decodeIngestBinding(operational_lut);
+                    const ingest_ref = binding.ingestReference().?;
                     absorber.spectroscopy.operational_lut = binding;
-                    if (std.mem.eql(u8, absorber.id, "o2")) {
-                        observation_model.o2_operational_lut = try resolveOperationalLut(self.allocator, self.ingests, binding, "o2_operational_lut");
-                        absorber.spectroscopy.resolved_cross_section_lut = try observation_model.o2_operational_lut.clone(self.allocator);
-                    } else if (std.mem.eql(u8, absorber.id, "o2o2")) {
-                        observation_model.o2o2_operational_lut = try resolveOperationalLut(self.allocator, self.ingests, binding, "o2o2_operational_lut");
-                        absorber.spectroscopy.resolved_cross_section_lut = try observation_model.o2o2_operational_lut.clone(self.allocator);
+                    var resolved_lut = try resolveOperationalLut(self.allocator, self.ingests, binding);
+                    errdefer resolved_lut.deinitOwned(self.allocator);
+
+                    if (std.mem.eql(u8, absorber.id, "o2") and std.mem.eql(u8, ingest_ref.output_name, "o2_operational_lut")) {
+                        observation_model.o2_operational_lut = try resolved_lut.clone(self.allocator);
+                    } else if (std.mem.eql(u8, absorber.id, "o2o2") and std.mem.eql(u8, ingest_ref.output_name, "o2o2_operational_lut")) {
+                        observation_model.o2o2_operational_lut = try resolved_lut.clone(self.allocator);
                     }
+                    absorber.spectroscopy.resolved_cross_section_lut = resolved_lut;
                 }
                 absorber.spectroscopy.resolved_line_list = try resolveSpectroscopyLineList(
                     self.allocator,
@@ -2831,15 +2834,11 @@ fn resolveOperationalLut(
     allocator: Allocator,
     ingests: []const Ingest,
     binding: Binding,
-    expected_output: []const u8,
 ) !@import("../../model/Instrument.zig").OperationalCrossSectionLut {
     const ingest_ref = binding.ingestReference().?;
     const ingest = getReferencedIngest(ingests, ingest_ref);
-    if (!std.mem.eql(u8, ingest_ref.output_name, expected_output)) return Error.MissingIngestOutput;
-    return if (std.mem.eql(u8, expected_output, "o2_operational_lut"))
-        ingest.loaded_spectra.metadata.o2_operational_lut.clone(allocator)
-    else
-        ingest.loaded_spectra.metadata.o2o2_operational_lut.clone(allocator);
+    const lut = ingest.loaded_spectra.metadata.operationalLut(ingest_ref.output_name) orelse return Error.MissingIngestOutput;
+    return lut.clone(allocator);
 }
 
 fn getReferencedIngest(ingests: []const Ingest, reference: @import("../../model/Binding.zig").IngestRef) Ingest {

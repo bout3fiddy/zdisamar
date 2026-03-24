@@ -463,3 +463,39 @@ test "spectral ascii loader parses operational O2 and O2-O2 refspec LUT metadata
             loaded.metadata.o2_operational_lut.sigmaAt(761.0, 240.0, 700.0),
     );
 }
+
+test "spectral ascii loader parses named non-o2 operational LUT metadata" {
+    const fixture =
+        \\meta o3_refspec_ntemperature 2
+        \\meta o3_refspec_npressure 2
+        \\meta o3_refspec_temperature_min 220.0
+        \\meta o3_refspec_temperature_max 320.0
+        \\meta o3_refspec_pressure_min 150.0
+        \\meta o3_refspec_pressure_max 1000.0
+        \\meta o3_refspec_wavelength_1 430.0
+        \\meta o3_refspec_wavelength_2 432.0
+        \\meta o3_refspec_coeff_1_1_1 1.1e-19
+        \\meta o3_refspec_coeff_2_1_1 0.2e-19
+        \\meta o3_refspec_coeff_1_2_1 0.1e-19
+        \\meta o3_refspec_coeff_2_2_1 0.03e-19
+        \\meta o3_refspec_coeff_1_1_2 1.4e-19
+        \\meta o3_refspec_coeff_2_1_2 0.22e-19
+        \\meta o3_refspec_coeff_1_2_2 0.11e-19
+        \\meta o3_refspec_coeff_2_2_2 0.04e-19
+        \\start_channel_rad
+        \\rad 430.0 1485.0 1.116153E+13
+        \\rad 432.0 1445.0 1.096153E+13
+        \\end_channel_rad
+    ;
+
+    var loaded = try parse(std.testing.allocator, fixture);
+    defer loaded.deinit(std.testing.allocator);
+
+    try std.testing.expect(loaded.metadata.hasOperationalLuts());
+    try std.testing.expect(!loaded.metadata.o2_operational_lut.enabled());
+    const o3_lut = loaded.metadata.operationalLut("o3_operational_lut") orelse unreachable;
+    try std.testing.expect(o3_lut.enabled());
+    try std.testing.expectEqual(@as(usize, 1), loaded.metadata.cross_section_operational_luts.len);
+    try std.testing.expect(o3_lut.sigmaAt(431.0, 260.0, 700.0) > 0.0);
+    try std.testing.expect(o3_lut.sigmaAt(431.0, 290.0, 700.0) > o3_lut.sigmaAt(431.0, 240.0, 700.0));
+}

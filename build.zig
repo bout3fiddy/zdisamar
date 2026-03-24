@@ -401,6 +401,58 @@ pub fn build(b: *std.Build) void {
             "compatibility harness executes the full parity matrix against vendor anchors",
         },
     );
+    const run_validation_cross_section_routes = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-cross-section-routes",
+        "Run focused cross-section route validation proofs",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "compatibility harness routes explicit cross-section fixtures away from O2A defaults",
+        },
+    );
+    const run_validation_cross_section_doas = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-cross-section-doas",
+        "Run focused NO2 cross-section DOAS validation proof",
+        "tests/validation/main.zig",
+        &.{
+            "doas validation routes a NO2 cross-section scene through explicit effective-xsec optics",
+        },
+    );
+    const run_validation_cross_section_oe = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-cross-section-oe",
+        "Run focused O3 cross-section OE validation proof",
+        "tests/validation/main.zig",
+        &.{
+            "oe parity executes an O3 cross-section scene through the explicit LUT path",
+        },
+    );
+    const run_validation_cross_section_parity = b.step(
+        "test-validation-cross-section-parity",
+        "Run focused WP-04 cross-section parity validation proofs",
+    );
+    run_validation_cross_section_parity.dependOn(run_validation_cross_section_routes.run_step);
+    run_validation_cross_section_parity.dependOn(run_validation_cross_section_doas.run_step);
+    run_validation_cross_section_parity.dependOn(run_validation_cross_section_oe.run_step);
     const validation_step = b.step("test-validation", "Run compatibility and validation asset suite");
     validation_step.dependOn(run_validation_asset_suite.run_step);
     validation_step.dependOn(run_validation_compatibility_full.run_step);
