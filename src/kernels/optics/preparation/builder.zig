@@ -1119,6 +1119,9 @@ fn buildExplicitVerticalGrid(
             grid.sublayer_top_pressures_hpa[global_index] = top_pressure_hpa;
             grid.sublayer_bottom_pressures_hpa[global_index] = bottom_pressure_hpa;
             grid.sublayer_mid_altitudes_km[global_index] = 0.5 * (top_altitude_km + bottom_altitude_km);
+            // Explicit grids are laid out bottom-up for transport, but the interval index
+            // remains the declared vendor interval identity for fit-interval and placement
+            // matching across the prepared atmosphere and particle-distribution paths.
             grid.sublayer_interval_indices_1based[global_index] = interval.index_1based;
             grid.sublayer_subcolumn_labels[global_index] = scene.atmosphere.subcolumns.labelForAltitude(
                 grid.sublayer_mid_altitudes_km[global_index],

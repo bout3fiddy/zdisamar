@@ -2651,8 +2651,7 @@ fn applyGeometryConfigToScene(
 }
 
 fn normalizeRelativeAzimuthDeg(value_deg: f64) f64 {
-    const wrapped = @mod(value_deg, 360.0);
-    return if (wrapped < 0.0) wrapped + 360.0 else wrapped;
+    return @mod(value_deg, 360.0);
 }
 
 fn applyPressureTemperatureConfigToScene(
