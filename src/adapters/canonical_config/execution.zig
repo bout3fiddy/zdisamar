@@ -322,6 +322,7 @@ pub const ExecutionProgram = struct {
             };
             if (stageRequestsAppliedNoise(stage_execution.stage.products)) {
                 try applyNoiseToStageMeasurementProduct(
+                    allocator,
                     &stage_outcomes[index].result,
                     &stage_execution.stage.scene,
                     stageNoiseSeed(stage_execution),
@@ -465,7 +466,12 @@ fn stageNoiseSeed(stage_execution: StageExecution) u64 {
     return hasher.final();
 }
 
-fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel.Scene, seed: u64) !void {
+fn applyNoiseToStageMeasurementProduct(
+    allocator: Allocator,
+    result: *Result,
+    scene: *const SceneModel.Scene,
+    seed: u64,
+) !void {
     if (result.measurement_space_product) |*product| {
         var fallback_sigma: []f64 = &.{};
         defer if (fallback_sigma.len != 0) std.heap.page_allocator.free(fallback_sigma);
@@ -479,6 +485,9 @@ fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel
         }
         if (effective_sigma.len == 0 or effective_sigma.len != product.radiance.len) {
             return error.MissingNoiseSigma;
+        }
+        if (fallback_sigma.len != 0) {
+            try storeFallbackRadianceSigma(allocator, product, effective_sigma);
         }
         if (product.irradiance.len != product.radiance.len or product.reflectance.len != product.radiance.len) {
             return error.InvalidRequest;
@@ -496,6 +505,44 @@ fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel
         return;
     }
     return error.UnsupportedOutputTarget;
+}
+
+fn storeFallbackRadianceSigma(
+    allocator: Allocator,
+    product: *MeasurementSpaceProduct,
+    sigma: []const f64,
+) !void {
+    if (sigma.len != product.radiance.len) return error.ShapeMismatch;
+
+    const radiance_sigma_shared = product.radiance_noise_sigma.len != 0 and
+        product.radiance_noise_sigma.ptr == product.noise_sigma.ptr;
+    if (product.noise_sigma.len != product.radiance.len) {
+        allocator.free(product.noise_sigma);
+        product.noise_sigma = try allocator.alloc(f64, product.radiance.len);
+    }
+    @memcpy(product.noise_sigma, sigma);
+
+    if (product.radiance_noise_sigma.len == 0) {
+        allocator.free(product.radiance_noise_sigma);
+        product.radiance_noise_sigma = product.noise_sigma;
+    } else if (radiance_sigma_shared) {
+        product.radiance_noise_sigma = product.noise_sigma;
+    } else if (product.radiance_noise_sigma.len != product.radiance.len) {
+        allocator.free(product.radiance_noise_sigma);
+        product.radiance_noise_sigma = product.noise_sigma;
+    } else {
+        @memcpy(product.radiance_noise_sigma, sigma);
+    }
+
+    if (product.reflectance_noise_sigma.len == product.radiance.len) {
+        for (product.reflectance, product.radiance, product.reflectance_noise_sigma, sigma) |reflectance, radiance, *reflectance_sigma, radiance_sigma| {
+            const radiance_term = if (radiance > 0.0)
+                reflectance * (radiance_sigma / @max(radiance, 1.0e-12))
+            else
+                0.0;
+            reflectance_sigma.* = std.math.sqrt(reflectance_sigma.* * reflectance_sigma.* + radiance_term * radiance_term);
+        }
+    }
 }
 
 fn reflectanceForSample(scene: *const SceneModel.Scene, radiance: f64, irradiance: f64) f64 {

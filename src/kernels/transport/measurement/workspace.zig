@@ -127,7 +127,9 @@ pub const SummaryWorkspace = struct {
         const wants_jacobian = route.derivative_mode != .none;
         const wants_radiance_noise = providers.noise.materializesSigma(scene, .radiance);
         const wants_irradiance_noise = providers.noise.materializesSigma(scene, .irradiance);
-        const wants_noise = wants_radiance_noise or wants_irradiance_noise;
+        const wants_noise = wants_radiance_noise or
+            wants_irradiance_noise or
+            reflectanceCalibrationEnabled(scene);
 
         try ensureBufferCapacity(allocator, &self.wavelengths, sample_count);
         try ensureBufferCapacity(allocator, &self.radiance, sample_count);
@@ -195,6 +197,11 @@ pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
 pub fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usize {
     const layer_count = transportLayerCountHint(scene, route);
     return layer_count * pseudoSphericalSubgridDivisions(scene);
+}
+
+fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
+    const controls = scene.observation_model.resolvedReflectanceCalibration();
+    return controls.multiplicative_error.enabled() or controls.additive_error.enabled();
 }
 
 /// Purpose:

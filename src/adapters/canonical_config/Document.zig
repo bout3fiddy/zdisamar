@@ -3438,9 +3438,18 @@ fn applyInstrumentBandControls(
         controls.noise.enabled = true;
         if (controls.noise.model == .none) controls.noise.model = .shot_noise;
         if (snr_value) |value| {
-            controls.noise.snr_wavelengths_nm = try allocator.dupe(f64, &.{spectral_grid.start_nm});
-            controls.noise.snr_values = try allocator.dupe(f64, &.{value});
-            controls.noise.owns_memory = true;
+            const snr_wavelengths_nm = try allocator.dupe(f64, &.{spectral_grid.start_nm});
+            errdefer allocator.free(snr_wavelengths_nm);
+            const snr_values = try allocator.dupe(f64, &.{value});
+            errdefer allocator.free(snr_values);
+
+            if (controls.noise.owns_snr_memory) {
+                if (controls.noise.snr_wavelengths_nm.len != 0) allocator.free(@constCast(controls.noise.snr_wavelengths_nm));
+                if (controls.noise.snr_values.len != 0) allocator.free(@constCast(controls.noise.snr_values));
+            }
+            controls.noise.snr_wavelengths_nm = snr_wavelengths_nm;
+            controls.noise.snr_values = snr_values;
+            controls.noise.owns_snr_memory = true;
         }
         changed.* = true;
     }

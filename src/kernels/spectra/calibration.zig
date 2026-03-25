@@ -54,6 +54,22 @@ pub fn applySignal(calibration: Calibration, signal: []const f64, output: []f64)
 }
 
 /// Purpose:
+///   Apply only the linear detector-response terms to a signal derivative.
+pub fn applySignalDerivative(calibration: Calibration, signal: []const f64, output: []f64) !void {
+    if (signal.len != output.len) return error.ShapeMismatch;
+    if (signal.len == 0) return;
+
+    var mean_signal: f64 = 0.0;
+    for (signal) |sample| mean_signal += sample;
+    mean_signal /= @as(f64, @floatFromInt(signal.len));
+
+    for (signal, output) |sample, *slot| {
+        const stray_mixed = sample + calibration.stray_light * (mean_signal - sample);
+        slot.* = calibration.gain * stray_mixed;
+    }
+}
+
+/// Purpose:
 ///   Shift a wavelength by the configured calibration offset.
 ///
 /// Physics:
@@ -356,6 +372,21 @@ test "calibration applies gain, offset, and wavelength shift" {
     try std.testing.expectEqual(@as(f64, 3.0), output[1]);
     try std.testing.expectEqual(@as(f64, 4.0), output[2]);
     try std.testing.expectApproxEqRel(@as(f64, 410.2), shiftedWavelength(calibration, 410.0), 1e-12);
+}
+
+test "calibration applies only the linear response to signal derivatives" {
+    const calibration: Calibration = .{
+        .gain = 2.0,
+        .offset = -1.0,
+        .stray_light = 0.25,
+    };
+    const signal = [_]f64{ 1.0, 2.0, 3.0 };
+    var output: [3]f64 = undefined;
+
+    try applySignalDerivative(calibration, &signal, &output);
+    try std.testing.expectApproxEqRel(@as(f64, 2.5), output[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 4.0), output[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 5.5), output[2], 1.0e-12);
 }
 
 test "calibration helpers apply explicit correction families in sequence" {

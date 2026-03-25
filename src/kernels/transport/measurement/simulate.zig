@@ -245,14 +245,23 @@ pub fn simulate(
 
     var mean_jacobian: ?f64 = null;
     if (buffers.jacobian) |jacobian| {
-        if (uses_integrated_radiance_sampling) {
-            for (jacobian) |value| jacobian_sum += value;
-        } else {
+        if (!uses_integrated_radiance_sampling) {
             try convolution.apply(jacobian, radiance_slit_kernel[0..], buffers.scratch);
             @memcpy(jacobian, buffers.scratch);
-            try calibration.applySignal(radiance_calibration, jacobian, jacobian);
-            for (jacobian) |value| jacobian_sum += value;
         }
+        try applyChannelJacobianCorrections(
+            scene,
+            .radiance,
+            radiance_calibration,
+            prepared.depolarization_factor,
+            buffers.wavelengths,
+            jacobian,
+            buffers.scratch_aux,
+        );
+        // DECISION:
+        //   Ring synthesis uses the irradiance-only basis from the current
+        //   forward model, so it does not change the routed radiance Jacobian.
+        for (jacobian) |value| jacobian_sum += value;
         mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
     }
 
@@ -339,17 +348,20 @@ pub fn simulateProduct(
     defer allocator.free(scratch_aux);
     const wants_radiance_noise = providers.noise.materializesSigma(scene, .radiance);
     const wants_irradiance_noise = providers.noise.materializesSigma(scene, .irradiance);
-    const noise_sigma = if (wants_radiance_noise or wants_irradiance_noise)
+    const wants_noise_buffers = wants_radiance_noise or
+        wants_irradiance_noise or
+        reflectanceCalibrationEnabled(scene);
+    const noise_sigma = if (wants_noise_buffers)
         try allocator.alloc(f64, sample_count)
     else
         try allocator.alloc(f64, 0);
     errdefer allocator.free(noise_sigma);
-    const irradiance_noise_sigma = if (wants_radiance_noise or wants_irradiance_noise)
+    const irradiance_noise_sigma = if (wants_noise_buffers)
         try allocator.alloc(f64, sample_count)
     else
         try allocator.alloc(f64, 0);
     errdefer allocator.free(irradiance_noise_sigma);
-    const reflectance_noise_sigma = if (wants_radiance_noise or wants_irradiance_noise)
+    const reflectance_noise_sigma = if (wants_noise_buffers)
         try allocator.alloc(f64, sample_count)
     else
         try allocator.alloc(f64, 0);
@@ -453,6 +465,44 @@ fn applyChannelCorrections(
     }
 }
 
+fn applyChannelJacobianCorrections(
+    scene: *const Scene,
+    channel: SpectralChannel,
+    calibration_config: calibration.Calibration,
+    depolarization_factor: f64,
+    wavelengths_nm: []const f64,
+    jacobian: []f64,
+    scratch: []f64,
+) !void {
+    const controls = scene.observation_model.resolvedChannelControls(channel);
+    try calibration.applySignalDerivative(calibration_config, jacobian, jacobian);
+    try calibration.applySimpleOffsets(controls.simple_offsets, jacobian);
+    try calibration.applySpectralFeatures(controls.spectral_features, wavelengths_nm, jacobian);
+    if (controls.smear_percent != 0.0) {
+        try calibration.applySmear(controls.smear_percent, jacobian, scratch);
+    }
+    try calibration.applyMultiplicativeNodes(controls.multiplicative_nodes, wavelengths_nm, jacobian, scratch);
+
+    const external_reference = correctionReferenceSignal(scene, channel, jacobian.len);
+    if (!controls.stray_light_nodes.use_reference_spectrum or external_reference == null) {
+        try calibration.applyStrayLightNodes(
+            controls.stray_light_nodes,
+            wavelengths_nm,
+            jacobian,
+            jacobian,
+            scratch,
+        );
+    }
+    if (channel == .radiance) {
+        try calibration.applyPolarizationScramblerBias(
+            controls.use_polarization_scrambler,
+            depolarization_factor,
+            wavelengths_nm,
+            jacobian,
+        );
+    }
+}
+
 fn correctionReferenceSignal(
     scene: *const Scene,
     channel: SpectralChannel,
@@ -466,4 +516,9 @@ fn correctionReferenceSignal(
         return scene.observation_model.reference_radiance;
     }
     return null;
+}
+
+fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
+    const controls = scene.observation_model.resolvedReflectanceCalibration();
+    return controls.multiplicative_error.enabled() or controls.additive_error.enabled();
 }

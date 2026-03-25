@@ -133,17 +133,6 @@ pub fn scaleSigmaFromReference(
 }
 
 /// Purpose:
-///   Materialize sigma from a configured signal-to-noise ratio spectrum.
-pub fn sigmaFromSignalToNoise(signal: []const f64, snr: []const f64, output: []f64) Error!void {
-    if (signal.len != snr.len or signal.len != output.len) return error.ShapeMismatch;
-    for (signal, snr, output) |signal_value, snr_value, *slot| {
-        if (!std.math.isFinite(signal_value) or signal_value < 0.0) return error.InvalidReferenceSignal;
-        if (!std.math.isFinite(snr_value) or snr_value <= 0.0) return error.InvalidNoiseScaleFactor;
-        slot.* = signal_value / snr_value;
-    }
-}
-
-/// Purpose:
 ///   Interpolate a sparse SNR specification onto the current wavelengths and convert it to sigma.
 pub fn sigmaFromInterpolatedSignalToNoise(
     wavelengths_nm: []const f64,

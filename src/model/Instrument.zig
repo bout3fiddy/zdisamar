@@ -325,7 +325,8 @@ pub const Instrument = struct {
         snr_values: []const f64 = &.{},
         reference_signal: []const f64 = &.{},
         reference_sigma: []const f64 = &.{},
-        owns_memory: bool = false,
+        owns_snr_memory: bool = false,
+        owns_reference_memory: bool = false,
 
         pub fn validate(self: *const NoiseControls) errors.Error!void {
             if (!std.math.isFinite(self.electrons_per_count) or self.electrons_per_count <= 0.0) {
@@ -365,9 +366,11 @@ pub const Instrument = struct {
         }
 
         pub fn deinitOwned(self: *NoiseControls, allocator: Allocator) void {
-            if (self.owns_memory) {
+            if (self.owns_snr_memory) {
                 if (self.snr_wavelengths_nm.len != 0) allocator.free(@constCast(self.snr_wavelengths_nm));
                 if (self.snr_values.len != 0) allocator.free(@constCast(self.snr_values));
+            }
+            if (self.owns_reference_memory) {
                 if (self.reference_signal.len != 0) allocator.free(@constCast(self.reference_signal));
                 if (self.reference_sigma.len != 0) allocator.free(@constCast(self.reference_sigma));
             }

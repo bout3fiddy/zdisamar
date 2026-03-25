@@ -386,6 +386,33 @@ test "observation model rejects lab operational noise without explicit LAB coeff
     try std.testing.expectError(errors.Error.InvalidRequest, invalid_model.validate());
 }
 
+test "observation model keeps borrowed legacy noise references when SNR tables are owned" {
+    const measured_wavelengths = [_]f64{760.8};
+    const reference_radiance = [_]f64{1.2};
+    const ingested_noise_sigma = [_]f64{0.02};
+    const model: ObservationModel = .{
+        .instrument = .tropomi,
+        .noise_model = .s5p_operational,
+        .measured_wavelengths_nm = &measured_wavelengths,
+        .reference_radiance = &reference_radiance,
+        .ingested_noise_sigma = &ingested_noise_sigma,
+    };
+
+    var controls = model.resolvedChannelControls(.radiance);
+    const snr_wavelengths_nm = try std.testing.allocator.dupe(f64, &.{760.8});
+    errdefer std.testing.allocator.free(snr_wavelengths_nm);
+    const snr_values = try std.testing.allocator.dupe(f64, &.{250.0});
+    errdefer std.testing.allocator.free(snr_values);
+
+    controls.noise.snr_wavelengths_nm = snr_wavelengths_nm;
+    controls.noise.snr_values = snr_values;
+    controls.noise.owns_snr_memory = true;
+    defer controls.noise.deinitOwned(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), controls.noise.reference_signal.len);
+    try std.testing.expectEqual(@as(usize, 1), controls.noise.reference_sigma.len);
+}
+
 test "cross-section fit controls validate band-scoped settings" {
     const valid: CrossSectionFitControls = .{
         .use_effective_cross_section_oe = true,

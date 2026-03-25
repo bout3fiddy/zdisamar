@@ -312,6 +312,88 @@ test "canonical execution applies deterministic stage noise when requested" {
     try std.testing.expect(found_delta);
 }
 
+test "canonical execution stores synthesized fallback sigma when apply_noise has no source sigma" {
+    const yaml =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: fallback-noise
+        \\
+        \\templates:
+        \\  base:
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 35.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 12
+        \\      bands:
+        \\        band_1:
+        \\          start_nm: 760.8
+        \\          end_nm: 761.2
+        \\          step_nm: 0.2
+        \\      absorbers:
+        \\        o2:
+        \\          species: o2
+        \\          spectroscopy:
+        \\            model: line_by_line
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.20
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\
+        \\experiment:
+        \\  simulation:
+        \\    from: base
+        \\    scene:
+        \\      id: truth_scene
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\        apply_noise: true
+        \\
+        \\outputs: []
+        \\
+        \\validation:
+        \\  strict_unknown_fields: true
+        \\  require_resolved_stage_references: true
+    ;
+
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const execution = try executeResolvedSource("fallback-noise.yaml", ".", yaml, &engine);
+    defer {
+        var outcome = execution.outcome;
+        outcome.deinit();
+        var program = execution.program;
+        program.deinit();
+    }
+
+    const product = execution.outcome.stage_outcomes[0].result.measurement_space_product.?;
+    try std.testing.expectEqual(product.radiance.len, product.noise_sigma.len);
+    try std.testing.expectEqual(product.radiance.len, product.radiance_noise_sigma.len);
+    try std.testing.expect(product.noise_sigma[0] > 0.0);
+    try std.testing.expect(product.radiance_noise_sigma[0] > 0.0);
+    try std.testing.expect(execution.outcome.stage_outcomes[0].result.measurement_space.?.mean_noise_sigma > 0.0);
+}
+
 test "canonical execution resolves measured-channel observation config from ingest support data" {
     const yaml =
         \\schema_version: 1

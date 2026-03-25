@@ -9,6 +9,7 @@ const MeasurementForwardInput = MeasurementSpace.forward_input;
 const MeasurementSpectral = MeasurementSpace.spectral_eval;
 const MeasurementTestSupport = MeasurementSpace.test_support;
 const SummaryWorkspace = MeasurementSpace.SummaryWorkspace;
+const calibration = internal.kernels.spectra.calibration;
 const configuredForwardInput = MeasurementForwardInput.configuredForwardInput;
 const simulateSummary = MeasurementSpace.simulateSummary;
 const simulateSummaryWithWorkspace = MeasurementSpace.simulateSummaryWithWorkspace;
@@ -1808,6 +1809,158 @@ test "measurement-space applies radiance calibration after instrument integratio
     try std.testing.expect(calibrated_product.radiance[0] > base_product.radiance[0]);
     try std.testing.expectApproxEqAbs(base_product.irradiance[0], calibrated_product.irradiance[0], 1.0e-12);
     try std.testing.expect(calibrated_product.reflectance[0] > base_product.reflectance[0]);
+}
+
+test "measurement-space propagates radiance pipeline corrections into routed jacobians" {
+    const correction_wavelengths = [_]f64{405.0};
+    const multiplicative_values = [_]f64{5.0};
+    const stray_values = [_]f64{2.0};
+    const base_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = .{
+            .explicit = true,
+            .use_polarization_scrambler = true,
+        },
+    };
+    const corrected_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = .{
+            .explicit = true,
+            .simple_offsets = .{
+                .multiplicative_percent = 1.0,
+                .additive_percent_of_first = 0.5,
+            },
+            .smear_percent = 2.0,
+            .multiplicative_nodes = .{
+                .wavelengths_nm = correction_wavelengths[0..],
+                .values = multiplicative_values[0..],
+            },
+            .stray_light_nodes = .{
+                .wavelengths_nm = correction_wavelengths[0..],
+                .values = stray_values[0..],
+            },
+            .use_polarization_scrambler = false,
+        },
+    };
+    const base_scene: Scene = .{
+        .id = "measurement-jacobian-base",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 409.0,
+            .sample_count = 5,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .none,
+            .measurement_pipeline = base_pipeline,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const corrected_scene: Scene = .{
+        .id = "measurement-jacobian-corrected",
+        .spectral_grid = base_scene.spectral_grid,
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .none,
+            .measurement_pipeline = corrected_pipeline,
+        },
+        .atmosphere = base_scene.atmosphere,
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .semi_analytical,
+    });
+
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var base_product = try simulateProduct(std.testing.allocator, &base_scene, route, &prepared, testProviders());
+    defer base_product.deinit(std.testing.allocator);
+    var corrected_product = try simulateProduct(std.testing.allocator, &corrected_scene, route, &prepared, testProviders());
+    defer corrected_product.deinit(std.testing.allocator);
+
+    const base_jacobian = base_product.jacobian orelse return error.TestUnexpectedResult;
+    const corrected_jacobian = corrected_product.jacobian orelse return error.TestUnexpectedResult;
+    const expected_jacobian = try std.testing.allocator.dupe(f64, base_jacobian);
+    defer std.testing.allocator.free(expected_jacobian);
+    const scratch = try std.testing.allocator.alloc(f64, expected_jacobian.len);
+    defer std.testing.allocator.free(scratch);
+
+    try calibration.applySimpleOffsets(corrected_pipeline.radiance.simple_offsets, expected_jacobian);
+    try calibration.applySmear(corrected_pipeline.radiance.smear_percent, expected_jacobian, scratch);
+    try calibration.applyMultiplicativeNodes(
+        corrected_pipeline.radiance.multiplicative_nodes,
+        base_product.wavelengths,
+        expected_jacobian,
+        scratch,
+    );
+    try calibration.applyStrayLightNodes(
+        corrected_pipeline.radiance.stray_light_nodes,
+        base_product.wavelengths,
+        expected_jacobian,
+        expected_jacobian,
+        scratch,
+    );
+    try calibration.applyPolarizationScramblerBias(
+        corrected_pipeline.radiance.use_polarization_scrambler,
+        prepared.depolarization_factor,
+        base_product.wavelengths,
+        expected_jacobian,
+    );
+
+    for (expected_jacobian, corrected_jacobian) |expected, actual| {
+        try std.testing.expectApproxEqRel(expected, actual, 1.0e-9);
+    }
+}
+
+test "measurement-space materializes reflectance calibration sigma without channel-noise models" {
+    const correction_wavelengths = [_]f64{405.0};
+    const multiplicative_values = [_]f64{1.0};
+    const scene: Scene = .{
+        .id = "measurement-reflectance-calibration-sigma",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 409.0,
+            .sample_count = 5,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .none,
+            .measurement_pipeline = .{
+                .reflectance_calibration = .{
+                    .multiplicative_error = .{
+                        .wavelengths_nm = correction_wavelengths[0..],
+                        .values = multiplicative_values[0..],
+                    },
+                },
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    });
+
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var product = try simulateProduct(std.testing.allocator, &scene, route, &prepared, testProviders());
+    defer product.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(product.reflectance.len, product.reflectance_noise_sigma.len);
+    try std.testing.expectApproxEqRel(product.reflectance[0] * 0.01, product.reflectance_noise_sigma[0], 1.0e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), product.noise_sigma[0], 1.0e-12);
 }
 
 test "measurement-space operational integration honors explicit isrf table weights" {
