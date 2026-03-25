@@ -199,7 +199,7 @@ pub fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) 
     return layer_count * pseudoSphericalSubgridDivisions(scene);
 }
 
-fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
+pub fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
     const controls = scene.observation_model.resolvedReflectanceCalibration();
     return controls.multiplicative_error.enabled() or controls.additive_error.enabled();
 }

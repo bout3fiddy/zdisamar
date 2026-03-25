@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const Instrument = @import("../../model/Instrument.zig").Instrument;
+const sampling = @import("sampling.zig");
 
 /// Purpose:
 ///   Store simple calibration controls for detector response and wavelength shift.
@@ -202,13 +203,17 @@ pub fn applyRingSpectrum(
 
     if (ring.spectrum.len != 0 and ring.spectrum.len != radiance.len) return error.ShapeMismatch;
     const effective_coefficient = ring.coefficient * ring.fraction_raman_lines;
+    const mean_irradiance = if (ring.spectrum.len == 0 and !ring.differential)
+        spectralMean(irradiance)
+    else
+        0.0;
     for (0..radiance.len) |index| {
         const basis = if (ring.spectrum.len == radiance.len)
             ring.spectrum[index]
         else if (ring.differential)
             synthesizedDifferentialRing(irradiance, index)
         else
-            synthesizedFullRing(irradiance, index);
+            synthesizedFullRing(mean_irradiance, irradiance[index]);
         scratch[index] = radiance[index] + effective_coefficient * basis * irradiance[index];
     }
     @memcpy(radiance, scratch);
@@ -309,17 +314,7 @@ fn sampleCorrection(
 }
 
 fn sampleLinear(x: []const f64, y: []const f64, target_x: f64) !f64 {
-    if (x.len != y.len) return error.ShapeMismatch;
-    if (x.len == 0) return error.ShapeMismatch;
-    if (x.len == 1) return y[0];
-    if (target_x <= x[0]) return y[0];
-    if (target_x >= x[x.len - 1]) return y[y.len - 1];
-    for (x[0 .. x.len - 1], x[1..], y[0 .. y.len - 1], y[1..]) |left_x, right_x, left_y, right_y| {
-        if (target_x < left_x or target_x > right_x) continue;
-        const alpha = (target_x - left_x) / (right_x - left_x);
-        return (1.0 - alpha) * left_y + alpha * right_y;
-    }
-    return y[y.len - 1];
+    return sampling.sampleLinearClamped(x, y, target_x);
 }
 
 fn samplePolynomial(x: []const f64, y: []const f64, target_x: f64) !f64 {
@@ -350,11 +345,14 @@ fn synthesizedDifferentialRing(irradiance: []const f64, index: usize) f64 {
     return (left - right) / @max(irradiance[index], 1.0e-12);
 }
 
-fn synthesizedFullRing(irradiance: []const f64, index: usize) f64 {
-    var mean_irradiance: f64 = 0.0;
-    for (irradiance) |value| mean_irradiance += value;
-    mean_irradiance /= @as(f64, @floatFromInt(irradiance.len));
-    return (mean_irradiance - irradiance[index]) / @max(mean_irradiance, 1.0e-12);
+fn synthesizedFullRing(mean_irradiance: f64, irradiance: f64) f64 {
+    return (mean_irradiance - irradiance) / @max(mean_irradiance, 1.0e-12);
+}
+
+fn spectralMean(values: []const f64) f64 {
+    var mean_value: f64 = 0.0;
+    for (values) |value| mean_value += value;
+    return mean_value / @as(f64, @floatFromInt(values.len));
 }
 
 test "calibration applies gain, offset, and wavelength shift" {

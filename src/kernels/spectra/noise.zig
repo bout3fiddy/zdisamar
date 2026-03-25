@@ -17,6 +17,7 @@
 //!   Tests cover shot-noise estimation, whitening, sigma copying, and reference-bin correction.
 
 const std = @import("std");
+const sampling = @import("sampling.zig");
 
 pub const Error = error{
     ShapeMismatch,
@@ -152,7 +153,7 @@ pub fn sigmaFromInterpolatedSignalToNoise(
     }
     for (wavelengths_nm, signal, output) |wavelength_nm, signal_value, *slot| {
         if (!std.math.isFinite(signal_value) or signal_value < 0.0) return error.InvalidReferenceSignal;
-        const snr_value = interpolateLinearClamped(snr_wavelengths_nm, snr_values, wavelength_nm);
+        const snr_value = sampling.sampleLinearClampedAssumeValid(snr_wavelengths_nm, snr_values, wavelength_nm);
         if (!std.math.isFinite(snr_value) or snr_value <= 0.0) return error.InvalidNoiseScaleFactor;
         slot.* = signal_value / snr_value;
     }
@@ -233,17 +234,6 @@ fn s5OperationalCoefficients(wavelength_nm: f64) Error!S5Coefficients {
         };
     }
     return .{ .a = a_3, .b = b_3 };
-}
-
-fn interpolateLinearClamped(x: []const f64, y: []const f64, target_x: f64) f64 {
-    if (target_x <= x[0]) return y[0];
-    if (target_x >= x[x.len - 1]) return y[y.len - 1];
-    for (x[0 .. x.len - 1], x[1..], y[0 .. y.len - 1], y[1..]) |left_x, right_x, left_y, right_y| {
-        if (target_x < left_x or target_x > right_x) continue;
-        const alpha = (target_x - left_x) / (right_x - left_x);
-        return (1.0 - alpha) * left_y + alpha * right_y;
-    }
-    return y[y.len - 1];
 }
 
 test "noise helpers estimate shot-noise sigma and whiten residuals" {

@@ -350,7 +350,7 @@ pub fn simulateProduct(
     const wants_irradiance_noise = providers.noise.materializesSigma(scene, .irradiance);
     const wants_noise_buffers = wants_radiance_noise or
         wants_irradiance_noise or
-        reflectanceCalibrationEnabled(scene);
+        Workspace.reflectanceCalibrationEnabled(scene);
     const noise_sigma = if (wants_noise_buffers)
         try allocator.alloc(f64, sample_count)
     else
@@ -516,9 +516,4 @@ fn correctionReferenceSignal(
         return scene.observation_model.reference_radiance;
     }
     return null;
-}
-
-fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
-    const controls = scene.observation_model.resolvedReflectanceCalibration();
-    return controls.multiplicative_error.enabled() or controls.additive_error.enabled();
 }
