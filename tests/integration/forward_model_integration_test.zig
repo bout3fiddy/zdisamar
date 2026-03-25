@@ -154,6 +154,222 @@ test "engine execute materializes measurement-space summaries through the typed 
     try std.testing.expect(measurement_product.jacobian != null);
 }
 
+test "engine execute annotates provenance and responds to explicit interval aerosol fractions" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const grid: zdisamar.SpectralGrid = .{
+        .start_nm = 405.0,
+        .end_nm = 465.0,
+        .sample_count = 41,
+    };
+
+    var plan = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .observation_regime = .nadir,
+            .derivative_mode = .none,
+            .spectral_grid = grid,
+            .layer_count_hint = 3,
+            .measurement_count_hint = grid.sample_count,
+        },
+    });
+    defer plan.deinit();
+
+    const base_scene: zdisamar.Scene = .{
+        .id = "forward-explicit-intervals",
+        .atmosphere = .{
+            .layer_count = 3,
+            .has_clouds = true,
+            .has_aerosols = true,
+            .interval_grid = .{
+                .semantics = .explicit_pressure_bounds,
+                .fit_interval_index_1based = 2,
+                .intervals = &.{
+                    .{
+                        .index_1based = 1,
+                        .top_pressure_hpa = 120.0,
+                        .bottom_pressure_hpa = 350.0,
+                        .top_altitude_km = 16.0,
+                        .bottom_altitude_km = 8.0,
+                        .altitude_divisions = 2,
+                    },
+                    .{
+                        .index_1based = 2,
+                        .top_pressure_hpa = 350.0,
+                        .bottom_pressure_hpa = 800.0,
+                        .top_altitude_km = 8.0,
+                        .bottom_altitude_km = 2.0,
+                        .altitude_divisions = 3,
+                    },
+                    .{
+                        .index_1based = 3,
+                        .top_pressure_hpa = 800.0,
+                        .bottom_pressure_hpa = 1013.0,
+                        .top_altitude_km = 2.0,
+                        .bottom_altitude_km = 0.0,
+                        .altitude_divisions = 1,
+                    },
+                },
+            },
+            .subcolumns = .{
+                .enabled = true,
+                .boundary_layer_top_altitude_km = 2.0,
+                .tropopause_altitude_km = 8.0,
+                .subcolumns = &.{
+                    .{
+                        .index_1based = 1,
+                        .label = .boundary_layer,
+                        .bottom_altitude_km = 0.0,
+                        .top_altitude_km = 2.0,
+                    },
+                    .{
+                        .index_1based = 2,
+                        .label = .free_troposphere,
+                        .bottom_altitude_km = 2.0,
+                        .top_altitude_km = 8.0,
+                    },
+                    .{
+                        .index_1based = 3,
+                        .label = .stratosphere,
+                        .bottom_altitude_km = 8.0,
+                        .top_altitude_km = 16.0,
+                    },
+                },
+            },
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.35,
+            .single_scatter_albedo = 0.95,
+            .asymmetry_factor = 0.70,
+            .angstrom_exponent = 1.0,
+            .reference_wavelength_nm = 550.0,
+            .placement = .{
+                .semantics = .explicit_interval_bounds,
+                .interval_index_1based = 2,
+                .top_pressure_hpa = 350.0,
+                .bottom_pressure_hpa = 800.0,
+                .top_altitude_km = 8.0,
+                .bottom_altitude_km = 2.0,
+            },
+        },
+        .cloud = .{
+            .enabled = true,
+            .optical_thickness = 0.10,
+            .single_scatter_albedo = 0.998,
+            .asymmetry_factor = 0.84,
+            .angstrom_exponent = 0.25,
+            .reference_wavelength_nm = 550.0,
+            .placement = .{
+                .semantics = .explicit_interval_bounds,
+                .interval_index_1based = 3,
+                .top_pressure_hpa = 800.0,
+                .bottom_pressure_hpa = 1013.0,
+                .top_altitude_km = 2.0,
+                .bottom_altitude_km = 0.0,
+            },
+            .fraction = .{
+                .enabled = true,
+                .target = .cloud,
+                .kind = .wavel_independent,
+                .values = &.{0.50},
+            },
+        },
+        .surface = .{
+            .albedo = 0.04,
+            .pressure_hpa = 1013.0,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 45.0,
+            .viewing_zenith_deg = 12.0,
+            .relative_azimuth_deg = 35.0,
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "interval-fraction-integration" },
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .none,
+        },
+        .spectral_grid = grid,
+    };
+
+    var request_full = zdisamar.Request.init(.{
+        .id = base_scene.id,
+        .atmosphere = base_scene.atmosphere,
+        .aerosol = .{
+            .id = base_scene.aerosol.id,
+            .aerosol_type = base_scene.aerosol.aerosol_type,
+            .provider = base_scene.aerosol.provider,
+            .enabled = true,
+            .optical_depth = base_scene.aerosol.optical_depth,
+            .single_scatter_albedo = base_scene.aerosol.single_scatter_albedo,
+            .asymmetry_factor = base_scene.aerosol.asymmetry_factor,
+            .angstrom_exponent = base_scene.aerosol.angstrom_exponent,
+            .reference_wavelength_nm = base_scene.aerosol.reference_wavelength_nm,
+            .placement = base_scene.aerosol.placement,
+            .fraction = .{
+                .enabled = true,
+                .target = .aerosol,
+                .kind = .wavel_independent,
+                .values = &.{1.0},
+            },
+        },
+        .cloud = base_scene.cloud,
+        .surface = base_scene.surface,
+        .geometry = base_scene.geometry,
+        .observation_model = base_scene.observation_model,
+        .spectral_grid = base_scene.spectral_grid,
+    });
+    request_full.diagnostics = .{ .provenance = true };
+
+    var request_reduced = zdisamar.Request.init(.{
+        .id = base_scene.id,
+        .atmosphere = base_scene.atmosphere,
+        .aerosol = .{
+            .id = base_scene.aerosol.id,
+            .aerosol_type = base_scene.aerosol.aerosol_type,
+            .provider = base_scene.aerosol.provider,
+            .enabled = true,
+            .optical_depth = base_scene.aerosol.optical_depth,
+            .single_scatter_albedo = base_scene.aerosol.single_scatter_albedo,
+            .asymmetry_factor = base_scene.aerosol.asymmetry_factor,
+            .angstrom_exponent = base_scene.aerosol.angstrom_exponent,
+            .reference_wavelength_nm = base_scene.aerosol.reference_wavelength_nm,
+            .placement = base_scene.aerosol.placement,
+            .fraction = .{
+                .enabled = true,
+                .target = .aerosol,
+                .kind = .wavel_independent,
+                .values = &.{0.20},
+            },
+        },
+        .cloud = base_scene.cloud,
+        .surface = base_scene.surface,
+        .geometry = base_scene.geometry,
+        .observation_model = base_scene.observation_model,
+        .spectral_grid = base_scene.spectral_grid,
+    });
+    request_reduced.diagnostics = .{ .provenance = true };
+
+    var workspace = engine.createWorkspace("forward-explicit-intervals");
+    var result_full = try engine.execute(&plan, &workspace, &request_full);
+    defer result_full.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_reduced = try engine.execute(&plan, &workspace, &request_reduced);
+    defer result_reduced.deinit(std.testing.allocator);
+
+    try std.testing.expect(
+        result_full.measurement_space.?.mean_reflectance >
+            result_reduced.measurement_space.?.mean_reflectance,
+    );
+    try std.testing.expectEqual(.explicit_pressure_bounds, result_reduced.provenance.interval_semantics);
+    try std.testing.expectEqual(.configured_partitions, result_reduced.provenance.subcolumn_semantics);
+    try std.testing.expectEqual(.mie_table, result_reduced.provenance.aerosol_phase_support);
+    try std.testing.expectEqual(.analytic_hg, result_reduced.provenance.cloud_phase_support);
+}
+
 test "engine execute produces bounded O2A morphology through the typed forward path" {
     var engine = zdisamar.Engine.init(std.testing.allocator, .{});
     defer engine.deinit();

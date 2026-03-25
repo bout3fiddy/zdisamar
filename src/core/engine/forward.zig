@@ -95,6 +95,25 @@ pub fn executeForwardProducts(
     };
     defer prepared_optics.deinit(allocator);
 
+    result.provenance.annotateAtmosphereSemantics(
+        switch (prepared_optics.interval_semantics) {
+            .none => .none,
+            .altitude_layering_approximation => .altitude_layering_approximation,
+            .explicit_pressure_bounds => .explicit_pressure_bounds,
+        },
+        if (prepared_optics.subcolumn_semantics_enabled) .configured_partitions else .none,
+        switch (prepared_optics.aerosol_phase_support) {
+            .none => .none,
+            .analytic_hg => .analytic_hg,
+            .mie_table => .mie_table,
+        },
+        switch (prepared_optics.cloud_phase_support) {
+            .none => .none,
+            .analytic_hg => .analytic_hg,
+            .mie_table => .mie_table,
+        },
+    );
+
     const measurement_space_product = MeasurementSpace.simulateProduct(
         allocator,
         &request.scene,

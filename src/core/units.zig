@@ -51,6 +51,42 @@ pub const WavelengthRange = struct {
 };
 
 /// Purpose:
+///   Represent an altitude interval in kilometers.
+pub const AltitudeRangeKm = struct {
+    bottom_km: f64 = 0.0,
+    top_km: f64 = 0.0,
+
+    /// Purpose:
+    ///   Ensure the altitude interval is finite, non-negative, and increasing upward.
+    pub fn validate(self: AltitudeRangeKm) Error!void {
+        if (!std.math.isFinite(self.bottom_km) or !std.math.isFinite(self.top_km)) {
+            return Error.InvalidValue;
+        }
+        if (self.bottom_km < 0.0 or self.top_km < self.bottom_km) {
+            return Error.InvalidRange;
+        }
+    }
+};
+
+/// Purpose:
+///   Represent a pressure interval in hectopascals.
+pub const PressureRangeHpa = struct {
+    top_hpa: f64 = 0.0,
+    bottom_hpa: f64 = 0.0,
+
+    /// Purpose:
+    ///   Ensure the pressure interval is finite, positive, and increases downward.
+    pub fn validate(self: PressureRangeHpa) Error!void {
+        if (!std.math.isFinite(self.top_hpa) or !std.math.isFinite(self.bottom_hpa)) {
+            return Error.InvalidValue;
+        }
+        if (self.top_hpa <= 0.0 or self.bottom_hpa <= 0.0 or self.bottom_hpa < self.top_hpa) {
+            return Error.InvalidRange;
+        }
+    }
+};
+
+/// Purpose:
 ///   Represent a generic angle in degrees.
 pub const AngleDeg = struct {
     // UNITS:
@@ -101,6 +137,19 @@ test "wavelength range rejects inverted intervals" {
     try std.testing.expectError(Error.InvalidRange, (WavelengthRange{
         .start_nm = 465.0,
         .end_nm = 405.0,
+    }).validate());
+}
+
+test "altitude and pressure ranges enforce physical ordering" {
+    try (AltitudeRangeKm{ .bottom_km = 0.0, .top_km = 2.5 }).validate();
+    try (PressureRangeHpa{ .top_hpa = 150.0, .bottom_hpa = 900.0 }).validate();
+    try std.testing.expectError(Error.InvalidRange, (AltitudeRangeKm{
+        .bottom_km = 3.0,
+        .top_km = 2.0,
+    }).validate());
+    try std.testing.expectError(Error.InvalidRange, (PressureRangeHpa{
+        .top_hpa = 900.0,
+        .bottom_hpa = 150.0,
     }).validate());
 }
 

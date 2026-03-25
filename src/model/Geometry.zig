@@ -45,6 +45,11 @@ pub const Geometry = struct {
     solar_zenith_deg: f64 = 0.0,
     viewing_zenith_deg: f64 = 0.0,
     relative_azimuth_deg: f64 = 0.0,
+    // UNITS:
+    //   Optional surface altitude is stored in kilometers so interval and
+    //   subcolumn preparation can preserve the reference lower boundary used by
+    //   pseudo-spherical paths.
+    surface_altitude_km: f64 = 0.0,
 
     /// Purpose:
     ///   Ensure the geometry parameters remain within physically valid angle ranges.
@@ -52,6 +57,9 @@ pub const Geometry = struct {
         (units.ZenithAngleDeg{ .value = self.solar_zenith_deg }).validate() catch return errors.Error.InvalidRequest;
         (units.ZenithAngleDeg{ .value = self.viewing_zenith_deg }).validate() catch return errors.Error.InvalidRequest;
         (units.AzimuthAngleDeg{ .value = self.relative_azimuth_deg }).validate() catch return errors.Error.InvalidRequest;
+        if (!std.math.isFinite(self.surface_altitude_km) or self.surface_altitude_km < 0.0) {
+            return errors.Error.InvalidRequest;
+        }
     }
 
     /// Purpose:

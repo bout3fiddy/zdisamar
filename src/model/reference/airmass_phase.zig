@@ -19,6 +19,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+pub const PhaseSupportKind = enum {
+    none,
+    analytic_hg,
+    mie_table,
+};
+
 /// Purpose:
 ///   Store a geometric airmass lookup point.
 pub const AirmassFactorPoint = struct {
@@ -86,6 +92,12 @@ pub const MiePhaseTable = struct {
             }
         }
         return self.points[self.points.len - 1];
+    }
+
+    /// Purpose:
+    ///   Report the phase-support kind this table contributes.
+    pub fn supportKind(self: MiePhaseTable) PhaseSupportKind {
+        return if (self.points.len == 0) .none else .mie_table;
     }
 };
 

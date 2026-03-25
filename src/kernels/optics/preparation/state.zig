@@ -22,9 +22,11 @@
 
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
+const AtmosphereModel = @import("../../../model/Atmosphere.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;
+const PhaseSupportKind = @import("../../../model/reference/airmass_phase.zig").PhaseSupportKind;
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const transport_common = @import("../../transport/common.zig");
 const OperationalO2 = @import("operational_o2.zig");
@@ -189,6 +191,14 @@ pub const PreparedLayer = struct {
     layer_single_scatter_albedo: f64,
     depolarization_factor: f64,
     optical_depth: f64,
+    top_altitude_km: f64 = 0.0,
+    bottom_altitude_km: f64 = 0.0,
+    top_pressure_hpa: f64 = 0.0,
+    bottom_pressure_hpa: f64 = 0.0,
+    interval_index_1based: u32 = 0,
+    subcolumn_label: AtmosphereModel.PartitionLabel = .unspecified,
+    aerosol_fraction: f64 = 0.0,
+    cloud_fraction: f64 = 0.0,
 };
 
 /// Prepared sublayer state on the fine transport grid.
@@ -221,6 +231,14 @@ pub const PreparedSublayer = struct {
     aerosol_phase_coefficients: [phase_coefficient_count]f64,
     cloud_phase_coefficients: [phase_coefficient_count]f64,
     combined_phase_coefficients: [phase_coefficient_count]f64,
+    top_altitude_km: f64 = 0.0,
+    bottom_altitude_km: f64 = 0.0,
+    top_pressure_hpa: f64 = 0.0,
+    bottom_pressure_hpa: f64 = 0.0,
+    interval_index_1based: u32 = 0,
+    subcolumn_label: AtmosphereModel.PartitionLabel = .unspecified,
+    aerosol_fraction: f64 = 0.0,
+    cloud_fraction: f64 = 0.0,
 };
 
 /// Accumulated optical-depth contributions for one transport layer.
@@ -304,6 +322,11 @@ pub const PreparedOpticalState = struct {
     d_optical_depth_d_temperature: f64,
     depolarization_factor: f64,
     total_optical_depth: f64,
+    interval_semantics: AtmosphereModel.IntervalSemantics = .none,
+    fit_interval_index_1based: u32 = 0,
+    subcolumn_semantics_enabled: bool = false,
+    aerosol_phase_support: PhaseSupportKind = .none,
+    cloud_phase_support: PhaseSupportKind = .none,
 
     /// Purpose:
     ///   Release the prepared optical state and all owned substructures.

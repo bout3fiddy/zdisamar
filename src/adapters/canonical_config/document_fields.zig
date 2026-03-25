@@ -223,19 +223,19 @@ pub fn sectionDefaultStatus(section: VendorSection) VendorCompatStatus {
         // Sections with majority approximate support
         .surface => .approximate,
         .retrieval => .approximate,
+        .pressure_temperature => .approximate,
+        .atmospheric_intervals => .approximate,
+        .cloud_aerosol_fraction => .approximate,
+        .cloud => .approximate,
+        .aerosol => .approximate,
+        .subcolumns => .approximate,
         // Sections that are mostly or entirely unsupported
         .general => .unsupported,
         .instrument => .unsupported,
         .mul_offset => .unsupported,
         .stray_light => .unsupported,
         .reference_data => .unsupported,
-        .pressure_temperature => .unsupported,
         .absorbing_gas => .unsupported,
-        .atmospheric_intervals => .unsupported,
-        .cloud_aerosol_fraction => .unsupported,
-        .cloud => .unsupported,
-        .aerosol => .unsupported,
-        .subcolumns => .unsupported,
     };
 }
 
@@ -770,14 +770,18 @@ test "sectionDefaultStatus returns exact for geometry" {
 test "sectionDefaultStatus returns approximate for surface and retrieval" {
     try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.surface));
     try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.retrieval));
+    try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.pressure_temperature));
+    try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.atmospheric_intervals));
+    try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.cloud_aerosol_fraction));
+    try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.cloud));
+    try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.aerosol));
+    try std.testing.expectEqual(VendorCompatStatus.approximate, sectionDefaultStatus(.subcolumns));
 }
 
 test "sectionDefaultStatus returns unsupported for non-parity sections" {
     const unsupported_sections = [_]VendorSection{
-        .general,       .instrument,            .mul_offset,
-        .stray_light,   .reference_data,        .pressure_temperature,
-        .absorbing_gas, .atmospheric_intervals, .cloud_aerosol_fraction,
-        .cloud,         .aerosol,               .subcolumns,
+        .general,     .instrument,     .mul_offset,
+        .stray_light, .reference_data, .absorbing_gas,
     };
     for (unsupported_sections) |section| {
         try std.testing.expectEqual(VendorCompatStatus.unsupported, sectionDefaultStatus(section));

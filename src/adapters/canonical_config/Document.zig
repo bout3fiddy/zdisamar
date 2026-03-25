@@ -36,6 +36,7 @@ const SpectralGrid = @import("../../model/Spectrum.zig").SpectralGrid;
 const SpectralWindow = @import("../../model/Bands.zig").SpectralWindow;
 const SpectralBand = @import("../../model/Bands.zig").SpectralBand;
 const SpectralBandSet = @import("../../model/Bands.zig").SpectralBandSet;
+const AtmosphereModel = @import("../../model/Atmosphere.zig");
 const Atmosphere = @import("../../model/Atmosphere.zig").Atmosphere;
 const Geometry = @import("../../model/Geometry.zig").Geometry;
 const GeometryModel = @import("../../model/Geometry.zig").Model;
@@ -376,6 +377,38 @@ pub const SurfaceConfig = struct {
     surf_albedo_array_retr: ?[]const f64 = null,
 };
 
+/// Typed representation of the vendor ATMOSPHERIC_INTERVALS section.
+pub const AtmosphericIntervalsConfig = struct {
+    pub const IntervalEntry = struct {
+        top_pressure_hpa: f64,
+        bottom_pressure_hpa: f64,
+        top_altitude_km: ?f64 = null,
+        bottom_altitude_km: ?f64 = null,
+        top_pressure_variance_hpa2: ?f64 = null,
+        bottom_pressure_variance_hpa2: ?f64 = null,
+        altitude_divisions: ?u32 = null,
+    };
+
+    sim: ?[]const IntervalEntry = null,
+    retr: ?[]const IntervalEntry = null,
+};
+
+/// Typed representation of the vendor CLOUD_AEROSOL_FRACTION section.
+pub const CloudAerosolFractionConfig = struct {
+    target_sim: ?AtmosphereModel.FractionTarget = null,
+    target_retr: ?AtmosphereModel.FractionTarget = null,
+    kind_sim: AtmosphereModel.FractionKind = .none,
+    kind_retr: AtmosphereModel.FractionKind = .none,
+    values_sim: ?[]const f64 = null,
+    values_retr: ?[]const f64 = null,
+    apriori_values_retr: ?[]const f64 = null,
+    variance_values_retr: ?[]const f64 = null,
+    wavelengths_sim_nm: ?[]const f64 = null,
+    wavelengths_retr_nm: ?[]const f64 = null,
+    threshold_cloud_fraction: ?f64 = null,
+    threshold_variance: ?f64 = null,
+};
+
 /// Typed representation of the vendor CLOUD section.
 pub const CloudConfig = struct {
     cloud_type_sim: ?fields.CloudType = null,
@@ -406,6 +439,24 @@ pub const AerosolConfig = struct {
     // Mie scattering
     mie_optical_thickness_sim: ?f64 = null,
     mie_optical_thickness_retr: ?f64 = null,
+};
+
+/// Typed representation of the vendor SUBCOLUMNS section.
+pub const SubcolumnsConfig = struct {
+    pub const Entry = struct {
+        label: AtmosphereModel.PartitionLabel = .unspecified,
+        bottom_altitude_km: ?f64 = null,
+        top_altitude_km: ?f64 = null,
+        gaussian_nodes: ?[]const f64 = null,
+        gaussian_weights: ?[]const f64 = null,
+    };
+
+    enabled: bool = false,
+    boundary_layer_top_pressure_hpa: ?f64 = null,
+    boundary_layer_top_altitude_km: ?f64 = null,
+    tropopause_pressure_hpa: ?f64 = null,
+    tropopause_altitude_km: ?f64 = null,
+    entries: ?[]const Entry = null,
 };
 
 /// Typed representation of the vendor RETRIEVAL section.
@@ -469,8 +520,11 @@ pub const Stage = struct {
     geometry: ?GeometryConfig = null,
     pressure_temperature: ?PressureTemperatureConfig = null,
     surface_config: ?SurfaceConfig = null,
+    atmospheric_intervals: ?AtmosphericIntervalsConfig = null,
+    cloud_aerosol_fraction: ?CloudAerosolFractionConfig = null,
     cloud_config: ?CloudConfig = null,
     aerosol_config: ?AerosolConfig = null,
+    subcolumns: ?SubcolumnsConfig = null,
     retrieval_config: ?RetrievalConfig = null,
     absorbing_gas: ?AbsorbingGasConfig = null,
 };
@@ -788,9 +842,9 @@ const ResolveContext = struct {
     ) !void {
         const stage_map = try expectMap(merged);
         try ensureKnownFields(stage_map, if (kind == .simulation)
-            &.{ "plan", "scene", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output", "general", "instrument", "geometry", "pressure_temperature", "surface_config", "cloud_config", "aerosol_config", "retrieval_config", "absorbing_gas" }
+            &.{ "plan", "scene", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output", "general", "instrument", "geometry", "pressure_temperature", "surface_config", "atmospheric_intervals", "cloud_aerosol_fraction", "cloud_config", "aerosol_config", "subcolumns", "retrieval_config", "absorbing_gas" }
         else
-            &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output", "general", "instrument", "geometry", "pressure_temperature", "surface_config", "cloud_config", "aerosol_config", "retrieval_config", "absorbing_gas" }, self.strict_unknown_fields);
+            &.{ "plan", "scene", "inverse", "products", "diagnostics", "label", "description", "vendor_compat", "radiative_transfer", "rrs_ring", "additional_output", "general", "instrument", "geometry", "pressure_temperature", "surface_config", "atmospheric_intervals", "cloud_aerosol_fraction", "cloud_config", "aerosol_config", "subcolumns", "retrieval_config", "absorbing_gas" }, self.strict_unknown_fields);
 
         stage.* = .{
             .kind = kind,
@@ -817,7 +871,7 @@ const ResolveContext = struct {
             .spectral_grid = stage.scene.spectral_grid,
             .observation_regime = stage.scene.observation_model.regime,
             .derivative_mode = stage.plan.scene_blueprint.derivative_mode,
-            .layer_count_hint = stage.scene.atmosphere.layer_count,
+            .layer_count_hint = stage.scene.atmosphere.preparedLayerCount(),
             .measurement_count_hint = stage.scene.spectral_grid.sample_count,
         };
 
@@ -850,10 +904,29 @@ const ResolveContext = struct {
         try applyGeneralConfigToObservationModel(self.allocator, kind, stage.general, &stage.scene);
         stage.instrument = try decodeInstrumentConfig(self.allocator, mapGet(stage_map, "instrument"), self.strict_unknown_fields);
         stage.geometry = try decodeGeometryConfig(mapGet(stage_map, "geometry"), self.strict_unknown_fields);
+        try applyGeometryConfigToScene(kind, stage.geometry, &stage.scene.geometry);
         stage.pressure_temperature = try decodePressureTemperatureConfig(self.allocator, mapGet(stage_map, "pressure_temperature"), self.strict_unknown_fields);
+        try applyPressureTemperatureConfigToScene(kind, stage.pressure_temperature, &stage.scene);
         stage.surface_config = try decodeSurfaceConfig(self.allocator, mapGet(stage_map, "surface_config"), self.strict_unknown_fields);
+        try applySurfaceConfigToScene(kind, stage.surface_config, &stage.scene);
+        stage.atmospheric_intervals = try decodeAtmosphericIntervalsConfig(self.allocator, mapGet(stage_map, "atmospheric_intervals"), self.strict_unknown_fields);
+        try applyAtmosphericIntervalsConfigToScene(
+            self.allocator,
+            kind,
+            stage.general,
+            stage.radiative_transfer,
+            stage.pressure_temperature,
+            stage.atmospheric_intervals,
+            &stage.scene,
+        );
+        stage.cloud_aerosol_fraction = try decodeCloudAerosolFractionConfig(self.allocator, mapGet(stage_map, "cloud_aerosol_fraction"), self.strict_unknown_fields);
+        try applyCloudAerosolFractionConfigToScene(kind, stage.cloud_aerosol_fraction, &stage.scene);
         stage.cloud_config = try decodeCloudConfig(mapGet(stage_map, "cloud_config"), self.strict_unknown_fields);
+        try applyCloudConfigToScene(kind, stage.cloud_config, &stage.scene);
         stage.aerosol_config = try decodeAerosolConfig(mapGet(stage_map, "aerosol_config"), self.strict_unknown_fields);
+        try applyAerosolConfigToScene(kind, stage.aerosol_config, &stage.scene);
+        stage.subcolumns = try decodeSubcolumnsConfig(self.allocator, mapGet(stage_map, "subcolumns"), self.strict_unknown_fields);
+        try applySubcolumnsConfigToScene(self.allocator, stage.subcolumns, &stage.scene);
         stage.retrieval_config = try decodeRetrievalConfig(mapGet(stage_map, "retrieval_config"), self.strict_unknown_fields);
         stage.absorbing_gas = try decodeAbsorbingGasConfig(self.allocator, mapGet(stage_map, "absorbing_gas"), self.strict_unknown_fields);
         try applyAbsorbingGasConfigToScene(self.allocator, kind, stage.absorbing_gas, &stage.scene);
@@ -2247,6 +2320,80 @@ fn decodeSurfaceConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !
     return sc;
 }
 
+fn decodeAtmosphericIntervalsConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?AtmosphericIntervalsConfig {
+    const intervals_value = value orelse return null;
+    const intervals_map = try expectMap(intervals_value);
+    try ensureKnownFields(intervals_map, &.{ "sim", "retr" }, strict);
+
+    var config: AtmosphericIntervalsConfig = .{};
+    if (mapGet(intervals_map, "sim")) |sim| config.sim = try decodeAtmosphericIntervalEntrySeq(allocator, sim, strict);
+    if (mapGet(intervals_map, "retr")) |retr| config.retr = try decodeAtmosphericIntervalEntrySeq(allocator, retr, strict);
+    return config;
+}
+
+fn decodeAtmosphericIntervalEntrySeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const AtmosphericIntervalsConfig.IntervalEntry {
+    const seq = try expectSeq(value);
+    const entries = try allocator.alloc(AtmosphericIntervalsConfig.IntervalEntry, seq.len);
+    for (seq, 0..) |entry, index| {
+        const interval_map = try expectMap(entry);
+        try ensureKnownFields(interval_map, &.{
+            "top_pressure_hpa",
+            "bottom_pressure_hpa",
+            "top_altitude_km",
+            "bottom_altitude_km",
+            "top_pressure_variance_hpa2",
+            "bottom_pressure_variance_hpa2",
+            "altitude_divisions",
+        }, strict);
+
+        var interval: AtmosphericIntervalsConfig.IntervalEntry = .{
+            .top_pressure_hpa = try expectF64(requiredField(interval_map, "top_pressure_hpa")),
+            .bottom_pressure_hpa = try expectF64(requiredField(interval_map, "bottom_pressure_hpa")),
+        };
+        if (mapGet(interval_map, "top_altitude_km")) |v| interval.top_altitude_km = try expectF64(v);
+        if (mapGet(interval_map, "bottom_altitude_km")) |v| interval.bottom_altitude_km = try expectF64(v);
+        if (mapGet(interval_map, "top_pressure_variance_hpa2")) |v| interval.top_pressure_variance_hpa2 = try expectF64(v);
+        if (mapGet(interval_map, "bottom_pressure_variance_hpa2")) |v| interval.bottom_pressure_variance_hpa2 = try expectF64(v);
+        if (mapGet(interval_map, "altitude_divisions")) |v| interval.altitude_divisions = @intCast(try expectU64(v));
+        entries[index] = interval;
+    }
+    return entries;
+}
+
+fn decodeCloudAerosolFractionConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?CloudAerosolFractionConfig {
+    const fraction_value = value orelse return null;
+    const fraction_map = try expectMap(fraction_value);
+    try ensureKnownFields(fraction_map, &.{
+        "target_sim",
+        "target_retr",
+        "kind_sim",
+        "kind_retr",
+        "values_sim",
+        "values_retr",
+        "apriori_values_retr",
+        "variance_values_retr",
+        "wavelengths_sim_nm",
+        "wavelengths_retr_nm",
+        "threshold_cloud_fraction",
+        "threshold_variance",
+    }, strict);
+
+    var config: CloudAerosolFractionConfig = .{};
+    if (mapGet(fraction_map, "target_sim")) |v| config.target_sim = try parseFractionTarget(try expectString(v));
+    if (mapGet(fraction_map, "target_retr")) |v| config.target_retr = try parseFractionTarget(try expectString(v));
+    if (mapGet(fraction_map, "kind_sim")) |v| config.kind_sim = try parseFractionKind(try expectString(v));
+    if (mapGet(fraction_map, "kind_retr")) |v| config.kind_retr = try parseFractionKind(try expectString(v));
+    if (mapGet(fraction_map, "values_sim")) |v| config.values_sim = try decodeF64Sequence(allocator, v);
+    if (mapGet(fraction_map, "values_retr")) |v| config.values_retr = try decodeF64Sequence(allocator, v);
+    if (mapGet(fraction_map, "apriori_values_retr")) |v| config.apriori_values_retr = try decodeF64Sequence(allocator, v);
+    if (mapGet(fraction_map, "variance_values_retr")) |v| config.variance_values_retr = try decodeF64Sequence(allocator, v);
+    if (mapGet(fraction_map, "wavelengths_sim_nm")) |v| config.wavelengths_sim_nm = try decodeF64Sequence(allocator, v);
+    if (mapGet(fraction_map, "wavelengths_retr_nm")) |v| config.wavelengths_retr_nm = try decodeF64Sequence(allocator, v);
+    if (mapGet(fraction_map, "threshold_cloud_fraction")) |v| config.threshold_cloud_fraction = try expectF64(v);
+    if (mapGet(fraction_map, "threshold_variance")) |v| config.threshold_variance = try expectF64(v);
+    return config;
+}
+
 fn decodeCloudConfig(value: ?yaml.Value, strict: bool) !?CloudConfig {
     const cc_value = value orelse return null;
     const cc_map = try expectMap(cc_value);
@@ -2301,6 +2448,52 @@ fn decodeAerosolConfig(value: ?yaml.Value, strict: bool) !?AerosolConfig {
     if (mapGet(ac_map, "mie_optical_thickness_sim")) |v| ac.mie_optical_thickness_sim = try expectF64(v);
     if (mapGet(ac_map, "mie_optical_thickness_retr")) |v| ac.mie_optical_thickness_retr = try expectF64(v);
     return ac;
+}
+
+fn decodeSubcolumnsConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?SubcolumnsConfig {
+    const subcolumns_value = value orelse return null;
+    const subcolumns_map = try expectMap(subcolumns_value);
+    try ensureKnownFields(subcolumns_map, &.{
+        "enabled",
+        "boundary_layer_top_pressure_hpa",
+        "boundary_layer_top_altitude_km",
+        "tropopause_pressure_hpa",
+        "tropopause_altitude_km",
+        "entries",
+    }, strict);
+
+    var config: SubcolumnsConfig = .{};
+    if (mapGet(subcolumns_map, "enabled")) |v| config.enabled = try expectBool(v);
+    if (mapGet(subcolumns_map, "boundary_layer_top_pressure_hpa")) |v| config.boundary_layer_top_pressure_hpa = try expectF64(v);
+    if (mapGet(subcolumns_map, "boundary_layer_top_altitude_km")) |v| config.boundary_layer_top_altitude_km = try expectF64(v);
+    if (mapGet(subcolumns_map, "tropopause_pressure_hpa")) |v| config.tropopause_pressure_hpa = try expectF64(v);
+    if (mapGet(subcolumns_map, "tropopause_altitude_km")) |v| config.tropopause_altitude_km = try expectF64(v);
+    if (mapGet(subcolumns_map, "entries")) |v| config.entries = try decodeSubcolumnEntrySeq(allocator, v, strict);
+    return config;
+}
+
+fn decodeSubcolumnEntrySeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const SubcolumnsConfig.Entry {
+    const seq = try expectSeq(value);
+    const entries = try allocator.alloc(SubcolumnsConfig.Entry, seq.len);
+    for (seq, 0..) |entry, index| {
+        const subcolumn_map = try expectMap(entry);
+        try ensureKnownFields(subcolumn_map, &.{
+            "label",
+            "bottom_altitude_km",
+            "top_altitude_km",
+            "gaussian_nodes",
+            "gaussian_weights",
+        }, strict);
+
+        var decoded: SubcolumnsConfig.Entry = .{};
+        if (mapGet(subcolumn_map, "label")) |v| decoded.label = try parsePartitionLabel(try expectString(v));
+        if (mapGet(subcolumn_map, "bottom_altitude_km")) |v| decoded.bottom_altitude_km = try expectF64(v);
+        if (mapGet(subcolumn_map, "top_altitude_km")) |v| decoded.top_altitude_km = try expectF64(v);
+        if (mapGet(subcolumn_map, "gaussian_nodes")) |v| decoded.gaussian_nodes = try decodeF64Sequence(allocator, v);
+        if (mapGet(subcolumn_map, "gaussian_weights")) |v| decoded.gaussian_weights = try decodeF64Sequence(allocator, v);
+        entries[index] = decoded;
+    }
+    return entries;
 }
 
 fn decodeRetrievalConfig(value: ?yaml.Value, strict: bool) !?RetrievalConfig {
@@ -2427,6 +2620,311 @@ fn decodeU8Sequence(allocator: Allocator, value: yaml.Value) ![]const u8 {
     return result;
 }
 
+fn applyGeometryConfigToScene(
+    kind: StageKind,
+    config: ?GeometryConfig,
+    geometry: *Geometry,
+) !void {
+    const geo = config orelse return;
+    switch (kind) {
+        .simulation => {
+            if (geo.solar_zenith_angle_sim) |v| geometry.solar_zenith_deg = v;
+            if (geo.instrument_nadir_angle_sim) |v| geometry.viewing_zenith_deg = v;
+            if (geo.instrument_azimuth_angle_sim) |instrument_azimuth| {
+                const solar_azimuth = geo.solar_azimuth_angle_sim orelse 0.0;
+                geometry.relative_azimuth_deg = instrument_azimuth - solar_azimuth;
+            } else if (geo.solar_azimuth_angle_sim) |solar_azimuth| {
+                geometry.relative_azimuth_deg = geometry.relative_azimuth_deg - solar_azimuth;
+            }
+        },
+        .retrieval => {
+            if (geo.solar_zenith_angle_retr) |v| geometry.solar_zenith_deg = v;
+            if (geo.instrument_nadir_angle_retr) |v| geometry.viewing_zenith_deg = v;
+            if (geo.instrument_azimuth_angle_retr) |instrument_azimuth| {
+                const solar_azimuth = geo.solar_azimuth_angle_retr orelse 0.0;
+                geometry.relative_azimuth_deg = instrument_azimuth - solar_azimuth;
+            } else if (geo.solar_azimuth_angle_retr) |solar_azimuth| {
+                geometry.relative_azimuth_deg = geometry.relative_azimuth_deg - solar_azimuth;
+            }
+        },
+    }
+}
+
+fn applyPressureTemperatureConfigToScene(
+    kind: StageKind,
+    config: ?PressureTemperatureConfig,
+    scene: *Scene,
+) !void {
+    const pt = config orelse return;
+    const profile = switch (kind) {
+        .simulation => pt.pt_sim,
+        .retrieval => pt.pt_retr,
+    } orelse return;
+    if (profile.len == 0) return;
+
+    var max_pressure_hpa: f64 = 0.0;
+    for (profile) |entry| {
+        if (entry[0] > max_pressure_hpa) max_pressure_hpa = entry[0];
+    }
+    if (max_pressure_hpa > 0.0) {
+        if (scene.atmosphere.surface_pressure_hpa == 0.0) scene.atmosphere.surface_pressure_hpa = max_pressure_hpa;
+        if (scene.surface.pressure_hpa == 0.0) scene.surface.pressure_hpa = max_pressure_hpa;
+    }
+}
+
+fn applySurfaceConfigToScene(
+    kind: StageKind,
+    config: ?SurfaceConfig,
+    scene: *Scene,
+) !void {
+    const surface_config = config orelse return;
+    const surface_type = switch (kind) {
+        .simulation => surface_config.surface_type_sim,
+        .retrieval => surface_config.surface_type_retr,
+    };
+    if (surface_type) |value| {
+        scene.surface.kind = switch (value) {
+            .wavel_independent => .lambertian,
+            .wavel_dependent => .wavel_dependent,
+        };
+    }
+
+    const pressure_hpa = switch (kind) {
+        .simulation => surface_config.surf_pressure_sim,
+        .retrieval => surface_config.surf_pressure_retr,
+    };
+    if (pressure_hpa) |value| {
+        scene.surface.pressure_hpa = value;
+        scene.atmosphere.surface_pressure_hpa = value;
+    }
+
+    const albedo = switch (kind) {
+        .simulation => surface_config.surf_albedo_sim,
+        .retrieval => surface_config.surf_albedo_retr,
+    };
+    if (albedo) |value| scene.surface.albedo = value;
+}
+
+fn applyAtmosphericIntervalsConfigToScene(
+    allocator: Allocator,
+    kind: StageKind,
+    general: ?GeneralConfig,
+    radiative_transfer: ?RadiativeTransferConfig,
+    pressure_temperature: ?PressureTemperatureConfig,
+    config: ?AtmosphericIntervalsConfig,
+    scene: *Scene,
+) !void {
+    const intervals_config = config orelse return;
+    const interval_entries = switch (kind) {
+        .simulation => intervals_config.sim,
+        .retrieval => intervals_config.retr,
+    } orelse return;
+    if (interval_entries.len == 0) return;
+
+    const intervals = try allocator.alloc(AtmosphereModel.VerticalInterval, interval_entries.len);
+    for (interval_entries, 0..) |entry, index| {
+        const default_divisions = stageIntervalDivisions(kind, radiative_transfer, index, scene.atmosphere.sublayer_divisions);
+        intervals[index] = .{
+            .index_1based = @intCast(index + 1),
+            .top_pressure_hpa = entry.top_pressure_hpa,
+            .bottom_pressure_hpa = entry.bottom_pressure_hpa,
+            .top_altitude_km = entry.top_altitude_km orelse 0.0,
+            .bottom_altitude_km = entry.bottom_altitude_km orelse 0.0,
+            .top_pressure_variance_hpa2 = entry.top_pressure_variance_hpa2 orelse 0.0,
+            .bottom_pressure_variance_hpa2 = entry.bottom_pressure_variance_hpa2 orelse 0.0,
+            .altitude_divisions = entry.altitude_divisions orelse default_divisions,
+        };
+    }
+
+    scene.atmosphere.interval_grid = .{
+        .semantics = .explicit_pressure_bounds,
+        .fit_interval_index_1based = if (general) |resolved_general| resolved_general.num_interval_fit orelse 0 else 0,
+        .intervals = intervals,
+        .owns_intervals = true,
+    };
+    scene.atmosphere.layer_count = @intCast(intervals.len);
+
+    if (scene.atmosphere.surface_pressure_hpa == 0.0) {
+        scene.atmosphere.surface_pressure_hpa = intervals[intervals.len - 1].bottom_pressure_hpa;
+    }
+    if (scene.surface.pressure_hpa == 0.0 and scene.atmosphere.surface_pressure_hpa > 0.0) {
+        scene.surface.pressure_hpa = scene.atmosphere.surface_pressure_hpa;
+    }
+    if (scene.geometry.surface_altitude_km == 0.0 and intervals[intervals.len - 1].bottom_altitude_km > 0.0) {
+        scene.geometry.surface_altitude_km = intervals[intervals.len - 1].bottom_altitude_km;
+    }
+
+    try applyPressureTemperatureConfigToScene(kind, pressure_temperature, scene);
+}
+
+fn applyCloudAerosolFractionConfigToScene(
+    kind: StageKind,
+    config: ?CloudAerosolFractionConfig,
+    scene: *Scene,
+) !void {
+    const fraction_config = config orelse return;
+    const target = switch (kind) {
+        .simulation => fraction_config.target_sim,
+        .retrieval => fraction_config.target_retr,
+    } orelse return;
+    const fraction_kind = switch (kind) {
+        .simulation => fraction_config.kind_sim,
+        .retrieval => fraction_config.kind_retr,
+    };
+
+    const values = switch (kind) {
+        .simulation => fraction_config.values_sim,
+        .retrieval => fraction_config.values_retr orelse fraction_config.apriori_values_retr,
+    } orelse return Error.InvalidValue;
+    const wavelengths_nm = switch (kind) {
+        .simulation => fraction_config.wavelengths_sim_nm orelse &.{},
+        .retrieval => fraction_config.wavelengths_retr_nm orelse &.{},
+    };
+    const control: AtmosphereModel.FractionControl = .{
+        .enabled = true,
+        .target = target,
+        .kind = fraction_kind,
+        .threshold_cloud_fraction = fraction_config.threshold_cloud_fraction orelse 0.0,
+        .threshold_variance = fraction_config.threshold_variance orelse 0.0,
+        .wavelengths_nm = wavelengths_nm,
+        .values = values,
+        .apriori_values = if (kind == .retrieval) fraction_config.apriori_values_retr orelse &.{} else &.{},
+        .variance_values = if (kind == .retrieval) fraction_config.variance_values_retr orelse &.{} else &.{},
+        .owns_arrays = false,
+    };
+
+    switch (target) {
+        .cloud => scene.cloud.fraction = control,
+        .aerosol => scene.aerosol.fraction = control,
+        .none => return Error.InvalidValue,
+    }
+}
+
+fn applyCloudConfigToScene(
+    kind: StageKind,
+    config: ?CloudConfig,
+    scene: *Scene,
+) !void {
+    const cloud_config = config orelse return;
+    const fit_interval = scene.atmosphere.interval_grid.fitInterval();
+    const cloud_type = switch (kind) {
+        .simulation => cloud_config.cloud_type_sim,
+        .retrieval => cloud_config.cloud_type_retr,
+    };
+    const hg_optical_thickness = switch (kind) {
+        .simulation => cloud_config.hg_optical_thickness_sim,
+        .retrieval => cloud_config.hg_optical_thickness_retr,
+    };
+    const mie_optical_thickness = switch (kind) {
+        .simulation => cloud_config.mie_optical_thickness_sim,
+        .retrieval => cloud_config.mie_optical_thickness_retr,
+    };
+
+    if (cloud_type) |value| {
+        scene.cloud.cloud_type = value;
+        scene.cloud.enabled = value != .none;
+    }
+    if (hg_optical_thickness) |value| {
+        scene.cloud.enabled = true;
+        scene.cloud.optical_thickness = value;
+        if (kind == .simulation) {
+            scene.cloud.single_scatter_albedo = cloud_config.hg_single_scattering_albedo_sim orelse scene.cloud.single_scatter_albedo;
+            scene.cloud.asymmetry_factor = cloud_config.hg_parameter_g_sim orelse scene.cloud.asymmetry_factor;
+            scene.cloud.angstrom_exponent = cloud_config.hg_angstrom_coefficient_sim orelse scene.cloud.angstrom_exponent;
+            if (scene.cloud.cloud_type == .none) scene.cloud.cloud_type = .hg_scattering;
+        }
+    }
+    if (mie_optical_thickness) |value| {
+        scene.cloud.enabled = true;
+        scene.cloud.optical_thickness = value;
+        if (scene.cloud.cloud_type == .none) scene.cloud.cloud_type = .mie_scattering;
+    }
+    if (scene.cloud.enabled) {
+        if (scene.cloud.id.len == 0) scene.cloud.id = "vendor_cloud";
+        if (fit_interval) |interval| scene.cloud.placement = placementForInterval(interval);
+    }
+    scene.atmosphere.has_clouds = scene.cloud.enabled;
+}
+
+fn applyAerosolConfigToScene(
+    kind: StageKind,
+    config: ?AerosolConfig,
+    scene: *Scene,
+) !void {
+    const aerosol_config = config orelse return;
+    const fit_interval = scene.atmosphere.interval_grid.fitInterval();
+    const aerosol_type = switch (kind) {
+        .simulation => aerosol_config.aerosol_type_sim,
+        .retrieval => aerosol_config.aerosol_type_retr,
+    };
+    const hg_optical_thickness = switch (kind) {
+        .simulation => aerosol_config.hg_optical_thickness_sim,
+        .retrieval => aerosol_config.hg_optical_thickness_retr,
+    };
+    const mie_optical_thickness = switch (kind) {
+        .simulation => aerosol_config.mie_optical_thickness_sim,
+        .retrieval => aerosol_config.mie_optical_thickness_retr,
+    };
+
+    if (aerosol_type) |value| {
+        scene.aerosol.aerosol_type = value;
+        scene.aerosol.enabled = value != .none;
+    }
+    if (hg_optical_thickness) |value| {
+        scene.aerosol.enabled = true;
+        scene.aerosol.optical_depth = value;
+        if (kind == .simulation) {
+            scene.aerosol.single_scatter_albedo = aerosol_config.hg_single_scattering_albedo_sim orelse scene.aerosol.single_scatter_albedo;
+            scene.aerosol.asymmetry_factor = aerosol_config.hg_parameter_g_sim orelse scene.aerosol.asymmetry_factor;
+            scene.aerosol.angstrom_exponent = aerosol_config.hg_angstrom_coefficient_sim orelse scene.aerosol.angstrom_exponent;
+            if (scene.aerosol.aerosol_type == .none) scene.aerosol.aerosol_type = .hg_scattering;
+        }
+    }
+    if (mie_optical_thickness) |value| {
+        scene.aerosol.enabled = true;
+        scene.aerosol.optical_depth = value;
+        if (scene.aerosol.aerosol_type == .none) scene.aerosol.aerosol_type = .mie_scattering;
+    }
+    if (scene.aerosol.enabled) {
+        if (scene.aerosol.id.len == 0) scene.aerosol.id = "vendor_aerosol";
+        if (fit_interval) |interval| scene.aerosol.placement = placementForInterval(interval);
+    }
+    scene.atmosphere.has_aerosols = scene.aerosol.enabled;
+}
+
+fn applySubcolumnsConfigToScene(
+    allocator: Allocator,
+    config: ?SubcolumnsConfig,
+    scene: *Scene,
+) !void {
+    const subcolumns_config = config orelse return;
+    if (!subcolumns_config.enabled) return;
+
+    const decoded_entries = subcolumns_config.entries orelse return Error.InvalidValue;
+    const subcolumns = try allocator.alloc(AtmosphereModel.Subcolumn, decoded_entries.len);
+    for (decoded_entries, 0..) |entry, index| {
+        subcolumns[index] = .{
+            .index_1based = @intCast(index + 1),
+            .label = entry.label,
+            .bottom_altitude_km = entry.bottom_altitude_km orelse 0.0,
+            .top_altitude_km = entry.top_altitude_km orelse 0.0,
+            .gaussian_nodes = entry.gaussian_nodes orelse &.{},
+            .gaussian_weights = entry.gaussian_weights orelse &.{},
+            .owns_arrays = false,
+        };
+    }
+
+    scene.atmosphere.subcolumns = .{
+        .enabled = true,
+        .boundary_layer_top_pressure_hpa = subcolumns_config.boundary_layer_top_pressure_hpa orelse 0.0,
+        .boundary_layer_top_altitude_km = subcolumns_config.boundary_layer_top_altitude_km orelse 0.0,
+        .tropopause_pressure_hpa = subcolumns_config.tropopause_pressure_hpa orelse 0.0,
+        .tropopause_altitude_km = subcolumns_config.tropopause_altitude_km orelse 0.0,
+        .subcolumns = subcolumns,
+        .owns_subcolumns = true,
+    };
+}
+
 fn applyAbsorbingGasConfigToScene(
     allocator: Allocator,
     kind: StageKind,
@@ -2523,6 +3021,59 @@ fn applyGeneralConfigToObservationModel(
         .xsec_strong_absorption_bands = owned_strong_absorption_bands,
         .polynomial_degree_bands = owned_polynomial_degree_bands,
     };
+}
+
+fn placementForInterval(interval: AtmosphereModel.VerticalInterval) AtmosphereModel.IntervalPlacement {
+    return .{
+        .semantics = .explicit_interval_bounds,
+        .interval_index_1based = interval.index_1based,
+        .top_pressure_hpa = interval.top_pressure_hpa,
+        .bottom_pressure_hpa = interval.bottom_pressure_hpa,
+        .top_altitude_km = interval.top_altitude_km,
+        .bottom_altitude_km = interval.bottom_altitude_km,
+    };
+}
+
+fn stageIntervalDivisions(
+    kind: StageKind,
+    radiative_transfer: ?RadiativeTransferConfig,
+    index: usize,
+    fallback: u8,
+) u32 {
+    const rt = radiative_transfer orelse return fallback;
+    const values = switch (kind) {
+        .simulation => rt.num_div_points_alt_sim,
+        .retrieval => rt.num_div_points_alt_retr,
+    } orelse return fallback;
+    if (index >= values.len) return fallback;
+    return values[index];
+}
+
+fn parseFractionTarget(value: []const u8) !AtmosphereModel.FractionTarget {
+    if (std.mem.eql(u8, value, "cloud")) return .cloud;
+    if (std.mem.eql(u8, value, "aerosol")) return .aerosol;
+    if (std.mem.eql(u8, value, "none")) return .none;
+    return Error.InvalidValue;
+}
+
+fn parseFractionKind(value: []const u8) !AtmosphereModel.FractionKind {
+    if (std.mem.eql(u8, value, "none")) return .none;
+    if (std.mem.eql(u8, value, "wavel_independent") or std.mem.eql(u8, value, "wavelength_independent")) {
+        return .wavel_independent;
+    }
+    if (std.mem.eql(u8, value, "wavel_dependent") or std.mem.eql(u8, value, "wavelength_dependent")) {
+        return .wavel_dependent;
+    }
+    return Error.InvalidValue;
+}
+
+fn parsePartitionLabel(value: []const u8) !AtmosphereModel.PartitionLabel {
+    if (std.mem.eql(u8, value, "unspecified")) return .unspecified;
+    if (std.mem.eql(u8, value, "boundary_layer")) return .boundary_layer;
+    if (std.mem.eql(u8, value, "free_troposphere")) return .free_troposphere;
+    if (std.mem.eql(u8, value, "fit_interval")) return .fit_interval;
+    if (std.mem.eql(u8, value, "stratosphere")) return .stratosphere;
+    return Error.InvalidValue;
 }
 
 fn findAbsorberForSpecies(absorbers: AbsorberSet, species: fields.AbsorberSpecies) ?*Absorber {
