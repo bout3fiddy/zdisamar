@@ -6,6 +6,9 @@
 - Keep `src/core` and `src/kernels` free of file I/O, text parsing, mission-specific wiring, and global mutable state.
 - Keep the public surface typed around `Engine -> Plan -> Workspace -> Request -> Result`. Do not reintroduce string-keyed mutation APIs.
 - Native plugin contracts must stay behind the C ABI in `src/api/c` and `src/plugins/abi`.
+- No parsed control may be silently ignored. Every new config/input field must be consumed, rejected with a typed error, or explicitly documented as inert with a covering test.
+- Do not silently drop enabled physics on unmatched identifiers, interval placements, or unsupported combinations. Fail fast when a nonzero or enabled control cannot be applied.
+- Preserve legacy semantics on legacy paths unless the change is an intentional compatibility break called out in the work package, PR summary, and focused regression coverage.
 
 ## Router
 
@@ -25,6 +28,8 @@
 - `zig build bench` is non-gating. It reuses `validation/perf/perf_matrix.json` and writes disposable benchmark summaries to `out/ci/bench/summary.json`.
 - `zig build tidy` is the advisory architecture lane. It writes `out/ci/tidy/report.json` and is expected to fail while findings still exist.
 - Keep heavier lanes like vendor differential runs, perf guardrails, and Valgrind out of the default local loop until their backing assets and packages are ready.
+- Aggregate build steps must have explicit coverage for composition. When a new focused lane or proof is added, tests or harness checks should prove that aggregate steps include it when required and omit it when intentionally opt-in.
+- When a change adds both legacy and explicit paths, add the smallest focused verification that proves intended semantic parity or intentional divergence across those paths.
 
 ## Before Push
 
@@ -32,6 +37,7 @@
 - Minimum baseline: `zig build check`.
 - If you touched runtime behavior, planners, retrieval, exporters, adapters, or validation fixtures, also run the relevant focused lanes such as `zig build test-fast`, `zig build test-transport`, `zig build test-validation-compatibility`, `zig build test-validation-o2a`, `zig build test-validation-o2a-vendor`, `zig build bench`, and `zig build tidy`.
 - Do not blindly run the full scientific integration suite for every push. Pick the smallest set of lanes that actually covers the changed surface area.
+- If you changed parser/adapter controls, field propagation, interval ordering, placement semantics, or wavelength-dependent behavior, include at least one focused test that would fail if the old fallback or reference-only path were still being used.
 
 ## Commands
 

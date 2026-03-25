@@ -755,6 +755,137 @@ test "compatibility harness execution honors RTM controls in prepared routes" {
     try expectPreparedRouteRtmControls();
 }
 
+test "compatibility harness preserves configured strat-trop interval partitions in prepared optics" {
+    const case = ParityCase{
+        .id = "compat-strat-trop-partitions",
+        .component = "optics",
+        .upstream_case = "Config_O2_with_CIA.in",
+        .runtime_profile = .{
+            .observation_regime = "nadir",
+            .solver_mode = "scalar",
+            .derivative_mode = "none",
+            .spectral_samples = 61,
+        },
+        .expected_route_family = "baseline_labos",
+        .expected_derivative_mode = "none",
+        .status = "optics_interval_partitions",
+        .spectral_start_nm = 760.8,
+        .spectral_end_nm = 771.5,
+        .has_aerosols = true,
+        .has_clouds = true,
+        .use_o2a_spectroscopy = true,
+        .tolerances = .{ .absolute = 1.0e-6, .relative = 1.0e-6 },
+    };
+
+    var scene = makeSceneForCase(case, .nadir);
+    scene.atmosphere.layer_count = 3;
+    scene.atmosphere.interval_grid = .{
+        .semantics = .explicit_pressure_bounds,
+        .fit_interval_index_1based = 2,
+        .intervals = &.{
+            .{
+                .index_1based = 1,
+                .top_pressure_hpa = 120.0,
+                .bottom_pressure_hpa = 350.0,
+                .top_altitude_km = 16.0,
+                .bottom_altitude_km = 8.0,
+                .altitude_divisions = 2,
+            },
+            .{
+                .index_1based = 2,
+                .top_pressure_hpa = 350.0,
+                .bottom_pressure_hpa = 800.0,
+                .top_altitude_km = 8.0,
+                .bottom_altitude_km = 2.0,
+                .altitude_divisions = 3,
+            },
+            .{
+                .index_1based = 3,
+                .top_pressure_hpa = 800.0,
+                .bottom_pressure_hpa = 1013.0,
+                .top_altitude_km = 2.0,
+                .bottom_altitude_km = 0.0,
+                .altitude_divisions = 1,
+            },
+        },
+    };
+    scene.atmosphere.subcolumns = .{
+        .enabled = true,
+        .boundary_layer_top_altitude_km = 2.0,
+        .tropopause_altitude_km = 8.0,
+        .subcolumns = &.{
+            .{
+                .index_1based = 1,
+                .label = .boundary_layer,
+                .bottom_altitude_km = 0.0,
+                .top_altitude_km = 2.0,
+            },
+            .{
+                .index_1based = 2,
+                .label = .free_troposphere,
+                .bottom_altitude_km = 2.0,
+                .top_altitude_km = 8.0,
+            },
+            .{
+                .index_1based = 3,
+                .label = .stratosphere,
+                .bottom_altitude_km = 8.0,
+                .top_altitude_km = 16.0,
+            },
+        },
+    };
+    scene.aerosol.placement = .{
+        .semantics = .explicit_interval_bounds,
+        .interval_index_1based = 2,
+        .top_pressure_hpa = 350.0,
+        .bottom_pressure_hpa = 800.0,
+        .top_altitude_km = 8.0,
+        .bottom_altitude_km = 2.0,
+    };
+    scene.aerosol.fraction = .{
+        .enabled = true,
+        .target = .aerosol,
+        .kind = .wavel_independent,
+        .values = &.{0.40},
+    };
+    scene.cloud.placement = .{
+        .semantics = .explicit_interval_bounds,
+        .interval_index_1based = 3,
+        .top_pressure_hpa = 800.0,
+        .bottom_pressure_hpa = 1013.0,
+        .top_altitude_km = 2.0,
+        .bottom_altitude_km = 0.0,
+    };
+    scene.cloud.fraction = .{
+        .enabled = true,
+        .target = .cloud,
+        .kind = .wavel_independent,
+        .values = &.{0.50},
+    };
+
+    var prepared = try prepareOpticalStateForCase(std.testing.allocator, case, scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.explicit_pressure_bounds, prepared.interval_semantics);
+    try std.testing.expectEqual(@as(u32, 2), prepared.fit_interval_index_1based);
+    try std.testing.expect(prepared.subcolumn_semantics_enabled);
+    try std.testing.expectEqual(@as(u32, 3), prepared.layers[0].interval_index_1based);
+    try std.testing.expectEqual(.boundary_layer, prepared.layers[0].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 2), prepared.layers[1].interval_index_1based);
+    try std.testing.expectEqual(.free_troposphere, prepared.layers[1].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 1), prepared.layers[2].interval_index_1based);
+    try std.testing.expectEqual(.stratosphere, prepared.layers[2].subcolumn_label);
+
+    var aerosol_sum: f64 = 0.0;
+    var cloud_sum: f64 = 0.0;
+    for (prepared.sublayers.?) |sublayer| {
+        if (sublayer.interval_index_1based == 2) aerosol_sum += sublayer.aerosol_optical_depth;
+        if (sublayer.interval_index_1based == 3) cloud_sum += sublayer.cloud_optical_depth;
+    }
+    try std.testing.expectApproxEqAbs(scene.aerosol.optical_depth * 0.40, aerosol_sum, 1.0e-12);
+    try std.testing.expectApproxEqAbs(scene.cloud.optical_thickness * 0.50, cloud_sum, 1.0e-12);
+}
+
 fn expectExplicitCrossSectionFixtureRoute(
     engine: *zdisamar.Engine,
     case: ParityCase,

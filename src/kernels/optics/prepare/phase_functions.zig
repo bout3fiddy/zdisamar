@@ -7,12 +7,20 @@ pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
     return .{ 1.0, 0.0, 0.05, 0.0 };
 }
 
-pub fn computeSingleScatterAlbedo(scene: *const Scene) f64 {
+pub fn computeSingleScatterAlbedo(scene: *const Scene, wavelength_nm: f64) f64 {
     const gas_ssa: f64 = 0.92;
     const aerosol_ssa = if (scene.atmosphere.has_aerosols) scene.aerosol.single_scatter_albedo else gas_ssa;
     const cloud_ssa = if (scene.atmosphere.has_clouds) scene.cloud.single_scatter_albedo else gas_ssa;
-    const aerosol_weight: f64 = if (scene.atmosphere.has_aerosols) 0.20 else 0.0;
-    const cloud_weight: f64 = if (scene.atmosphere.has_clouds) 0.30 else 0.0;
+    const aerosol_fraction = if (scene.aerosol.fraction.enabled)
+        scene.aerosol.fraction.valueAtWavelength(wavelength_nm)
+    else
+        1.0;
+    const cloud_fraction = if (scene.cloud.fraction.enabled)
+        scene.cloud.fraction.valueAtWavelength(wavelength_nm)
+    else
+        1.0;
+    const aerosol_weight: f64 = if (scene.atmosphere.has_aerosols) 0.20 * aerosol_fraction else 0.0;
+    const cloud_weight: f64 = if (scene.atmosphere.has_clouds) 0.30 * cloud_fraction else 0.0;
     const gas_weight: f64 = 1.0 - aerosol_weight - cloud_weight;
     return std.math.clamp(gas_weight * gas_ssa + aerosol_weight * aerosol_ssa + cloud_weight * cloud_ssa, 0.3, 0.999);
 }
@@ -71,4 +79,37 @@ pub fn computeLayerDepolarization(
     return gas_fraction * 0.0279 +
         aerosol_fraction * (0.04 + 0.02 * (1.0 - scene.aerosol.asymmetry_factor)) +
         cloud_fraction * (0.01 + 0.01 * (1.0 - scene.cloud.asymmetry_factor));
+}
+
+test "layer depolarization uses already-fraction-scaled particle taus" {
+    const scene: Scene = .{
+        .aerosol = .{
+            .enabled = true,
+            .asymmetry_factor = 0.70,
+            .fraction = .{
+                .enabled = true,
+                .target = .aerosol,
+                .kind = .wavel_independent,
+                .values = &.{0.25},
+            },
+        },
+        .cloud = .{
+            .enabled = true,
+            .asymmetry_factor = 0.85,
+            .fraction = .{
+                .enabled = true,
+                .target = .cloud,
+                .kind = .wavel_independent,
+                .values = &.{0.50},
+            },
+        },
+    };
+
+    const depolarization = computeLayerDepolarization(&scene, 0.60, 0.20, 0.20);
+    const expected =
+        0.60 * 0.0279 +
+        0.20 * (0.04 + 0.02 * (1.0 - scene.aerosol.asymmetry_factor)) +
+        0.20 * (0.01 + 0.01 * (1.0 - scene.cloud.asymmetry_factor));
+
+    try std.testing.expectApproxEqRel(expected, depolarization, 1.0e-12);
 }

@@ -67,12 +67,20 @@ pub const Surface = struct {
     //   `albedo` is a unitless hemispherical reflectance in the normalized `[0, 1]`
     //   range.
     albedo: f64 = 0.0,
+    // UNITS:
+    //   Optional surface pressure is expressed in hectopascals so canonical
+    //   surface metadata can preserve the boundary pressure used by vendor-like
+    //   interval and cloud-fraction configurations.
+    pressure_hpa: f64 = 0.0,
     parameters: []const Parameter = &[_]Parameter{},
 
     /// Purpose:
     ///   Ensure the surface configuration remains within physical bounds.
     pub fn validate(self: Surface) errors.Error!void {
         if (self.albedo < 0.0 or self.albedo > 1.0) {
+            return errors.Error.InvalidRequest;
+        }
+        if (self.pressure_hpa != 0.0 and (!std.math.isFinite(self.pressure_hpa) or self.pressure_hpa <= 0.0)) {
             return errors.Error.InvalidRequest;
         }
         for (self.parameters) |parameter| {

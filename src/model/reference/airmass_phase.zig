@@ -19,6 +19,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+pub const PhaseSupportKind = enum {
+    none,
+    analytic_hg,
+    mie_table,
+};
+
 /// Purpose:
 ///   Store a geometric airmass lookup point.
 pub const AirmassFactorPoint = struct {

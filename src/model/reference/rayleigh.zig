@@ -95,6 +95,19 @@ pub fn crossSectionCm2(wavelength_nm: f64) f64 {
     return cross_section * kingFactorAir(safe_wavelength_nm);
 }
 
+/// Purpose:
+///   Convert a Rayleigh cross section and air column into scattering optical depth.
+///
+/// Physics:
+///   The prepared atmosphere path uses this helper when interval preparation is
+///   driven by pressure-bounded columns rather than fixed altitude spans.
+pub fn scatteringOpticalDepthForColumn(
+    wavelength_nm: f64,
+    air_column_density_cm2: f64,
+) f64 {
+    return crossSectionCm2(wavelength_nm) * @max(air_column_density_cm2, 0.0);
+}
+
 test "rayleigh cross section and depolarization match dry-air O2A-scale expectations" {
     try std.testing.expectApproxEqAbs(@as(f64, 0.02771347468938541), depolarizationFactorAir(760.0), 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 1.213452195882859e-27), crossSectionCm2(760.0), 1.0e-39);

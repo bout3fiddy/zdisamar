@@ -135,14 +135,17 @@ pub const Scene = struct {
             .spectral_start_nm = self.spectral_grid.start_nm,
             .spectral_end_nm = self.spectral_grid.end_nm,
             .spectral_sample_count = self.spectral_grid.sample_count,
-            .layer_count = self.atmosphere.layer_count,
+            .layer_count = self.atmosphere.preparedLayerCount(),
         };
     }
 
     /// Purpose:
     ///   Release only the dynamically owned substructures attached to the scene.
     pub fn deinitOwned(self: *Scene, allocator: Allocator) void {
+        self.atmosphere.deinitOwned(allocator);
         self.surface.deinitOwned(allocator);
+        self.cloud.deinitOwned(allocator);
+        self.aerosol.deinitOwned(allocator);
         self.bands.deinitOwned(allocator);
         self.absorbers.deinitOwned(allocator);
         self.observation_model.deinitOwned(allocator);

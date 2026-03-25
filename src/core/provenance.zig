@@ -22,6 +22,24 @@
 const std = @import("std");
 const PreparedPlan = @import("Plan.zig").PreparedPlan;
 
+pub const IntervalSemantics = enum {
+    none,
+    altitude_layering_approximation,
+    explicit_pressure_bounds,
+};
+
+pub const SubcolumnSemantics = enum {
+    none,
+    derived_partitions,
+    configured_partitions,
+};
+
+pub const PhaseSupport = enum {
+    none,
+    analytic_hg,
+    mie_table,
+};
+
 /// Purpose:
 ///   Store the owned execution provenance reported alongside a result.
 pub const Provenance = struct {
@@ -34,6 +52,10 @@ pub const Provenance = struct {
     derivative_mode: []const u8 = "none",
     derivative_semantics: []const u8 = "none",
     numerical_mode: []const u8 = "scalar",
+    interval_semantics: IntervalSemantics = .none,
+    subcolumn_semantics: SubcolumnSemantics = .none,
+    aerosol_phase_support: PhaseSupport = .none,
+    cloud_phase_support: PhaseSupport = .none,
     plan_id: u64 = 0,
     plugin_inventory_generation: u64 = 0,
     workspace_label: []const u8 = "",
@@ -178,6 +200,22 @@ pub const Provenance = struct {
     pub fn setPluginVersions(self: *Provenance, values: []const []const u8) void {
         self.owns_entries = false;
         self.plugin_version_entries = values;
+    }
+
+    /// Purpose:
+    ///   Record whether the executed scene used explicit interval and subcolumn
+    ///   semantics plus which particle phase support path was active.
+    pub fn annotateAtmosphereSemantics(
+        self: *Provenance,
+        interval_semantics: IntervalSemantics,
+        subcolumn_semantics: SubcolumnSemantics,
+        aerosol_phase_support: PhaseSupport,
+        cloud_phase_support: PhaseSupport,
+    ) void {
+        self.interval_semantics = interval_semantics;
+        self.subcolumn_semantics = subcolumn_semantics;
+        self.aerosol_phase_support = aerosol_phase_support;
+        self.cloud_phase_support = cloud_phase_support;
     }
 };
 

@@ -1,7 +1,17 @@
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
-const ReferenceData = @import("../../../model/ReferenceData.zig");
+const AtmosphereModel = @import("../../../model/Atmosphere.zig");
 const Allocator = std.mem.Allocator;
+
+pub const PreparedVerticalGrid = struct {
+    layer_top_altitudes_km: []const f64,
+    layer_bottom_altitudes_km: []const f64,
+    layer_interval_indices_1based: []const u32,
+    sublayer_top_altitudes_km: []const f64,
+    sublayer_bottom_altitudes_km: []const f64,
+    sublayer_mid_altitudes_km: []const f64,
+    sublayer_parent_interval_indices_1based: []const u32,
+};
 
 pub fn scaleOpticalDepth(
     optical_depth: f64,
@@ -18,30 +28,36 @@ pub fn scaleOpticalDepth(
 pub fn buildAerosolSublayerDistribution(
     allocator: Allocator,
     scene: *const Scene,
-    profile: *const ReferenceData.ClimatologyProfile,
-    layer_count: u32,
-    sublayer_divisions: u32,
+    grid: PreparedVerticalGrid,
 ) ![]f64 {
+    const total_optical_depth = scene.aerosol.optical_depth;
+    if (scene.aerosol.placement.semantics == .explicit_interval_bounds) {
+        return buildPlacementBoundDistribution(
+            allocator,
+            grid,
+            scene.atmosphere.interval_grid.enabled(),
+            scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
+            total_optical_depth,
+            scene.aerosol.placement,
+        );
+    }
     if (scene.aerosol.aerosol_type == .hg_scattering) {
+        const placement = scene.aerosol.resolvedPlacement();
         return buildFiniteLayerSublayerDistribution(
             allocator,
-            profile,
-            layer_count,
-            sublayer_divisions,
-            scene.atmosphere.has_aerosols and scene.aerosol.enabled and scene.aerosol.optical_depth > 0.0,
-            scene.aerosol.optical_depth,
-            scene.aerosol.layer_center_km,
-            scene.aerosol.layer_width_km,
+            grid,
+            scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
+            total_optical_depth,
+            placement.bottom_altitude_km,
+            placement.top_altitude_km,
+            !scene.atmosphere.interval_grid.enabled() and placement.semantics == .altitude_center_width_approximation,
         );
     }
     return buildGaussianSublayerDistribution(
         allocator,
-        scene,
-        profile,
-        layer_count,
-        sublayer_divisions,
-        scene.atmosphere.has_aerosols and scene.aerosol.enabled and scene.aerosol.optical_depth > 0.0,
-        scene.aerosol.optical_depth,
+        grid,
+        scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
+        total_optical_depth,
         scene.aerosol.layer_center_km,
         scene.aerosol.layer_width_km,
     );
@@ -50,34 +66,103 @@ pub fn buildAerosolSublayerDistribution(
 pub fn buildCloudSublayerDistribution(
     allocator: Allocator,
     scene: *const Scene,
-    profile: *const ReferenceData.ClimatologyProfile,
-    layer_count: u32,
-    sublayer_divisions: u32,
+    grid: PreparedVerticalGrid,
 ) ![]f64 {
-    const cloud_center_km = scene.cloud.top_altitude_km - 0.5 * scene.cloud.thickness_km;
+    const total_optical_depth = scene.cloud.optical_thickness;
+    const placement = scene.cloud.resolvedPlacement();
+    if (scene.cloud.placement.semantics == .explicit_interval_bounds) {
+        return buildPlacementBoundDistribution(
+            allocator,
+            grid,
+            scene.atmosphere.interval_grid.enabled(),
+            scene.atmosphere.has_clouds and scene.cloud.enabled and total_optical_depth > 0.0,
+            total_optical_depth,
+            scene.cloud.placement,
+        );
+    }
     return buildFiniteLayerSublayerDistribution(
         allocator,
-        profile,
-        layer_count,
-        sublayer_divisions,
-        scene.atmosphere.has_clouds and scene.cloud.enabled and scene.cloud.optical_thickness > 0.0,
-        scene.cloud.optical_thickness,
-        cloud_center_km,
-        scene.cloud.thickness_km,
+        grid,
+        scene.atmosphere.has_clouds and scene.cloud.enabled and total_optical_depth > 0.0,
+        total_optical_depth,
+        placement.bottom_altitude_km,
+        placement.top_altitude_km,
+        !scene.atmosphere.interval_grid.enabled() and placement.semantics == .altitude_center_width_approximation,
     );
+}
+
+pub fn buildPlacementBoundDistribution(
+    allocator: Allocator,
+    grid: PreparedVerticalGrid,
+    has_explicit_interval_grid: bool,
+    enabled: bool,
+    total_optical_depth: f64,
+    placement: AtmosphereModel.IntervalPlacement,
+) ![]f64 {
+    if (placement.interval_index_1based != 0) {
+        if (!has_explicit_interval_grid) return error.InvalidRequest;
+        return buildIntervalMatchedDistribution(
+            allocator,
+            grid,
+            enabled,
+            total_optical_depth,
+            placement.interval_index_1based,
+        );
+    }
+    return buildFiniteLayerSublayerDistribution(
+        allocator,
+        grid,
+        enabled,
+        total_optical_depth,
+        placement.bottom_altitude_km,
+        placement.top_altitude_km,
+        false,
+    );
+}
+
+pub fn buildIntervalMatchedDistribution(
+    allocator: Allocator,
+    grid: PreparedVerticalGrid,
+    enabled: bool,
+    total_optical_depth: f64,
+    interval_index_1based: u32,
+) ![]f64 {
+    const weights = try allocator.alloc(f64, grid.sublayer_mid_altitudes_km.len);
+    errdefer allocator.free(weights);
+
+    if (!enabled or total_optical_depth == 0.0 or interval_index_1based == 0) {
+        @memset(weights, 0.0);
+        return weights;
+    }
+
+    var total_weight: f64 = 0.0;
+    for (weights, grid.sublayer_parent_interval_indices_1based, grid.sublayer_top_altitudes_km, grid.sublayer_bottom_altitudes_km) |*slot, parent_interval_index_1based, top_altitude_km, bottom_altitude_km| {
+        if (parent_interval_index_1based != interval_index_1based) {
+            slot.* = 0.0;
+            continue;
+        }
+        const weight = @max(top_altitude_km - bottom_altitude_km, 0.0);
+        slot.* = weight;
+        total_weight += weight;
+    }
+
+    if (total_weight == 0.0) {
+        return error.InvalidRequest;
+    }
+    for (weights) |*slot| slot.* = total_optical_depth * (slot.* / total_weight);
+    return weights;
 }
 
 pub fn buildFiniteLayerSublayerDistribution(
     allocator: Allocator,
-    profile: *const ReferenceData.ClimatologyProfile,
-    layer_count: u32,
-    sublayer_divisions: u32,
+    grid: PreparedVerticalGrid,
     enabled: bool,
     total_optical_depth: f64,
-    center_km: f64,
-    thickness_km: f64,
+    bottom_altitude_km: f64,
+    top_altitude_km: f64,
+    legacy_span_padding: bool,
 ) ![]f64 {
-    const weights = try allocator.alloc(f64, @as(usize, layer_count) * @as(usize, sublayer_divisions));
+    const weights = try allocator.alloc(f64, grid.sublayer_mid_altitudes_km.len);
     errdefer allocator.free(weights);
 
     if (!enabled or total_optical_depth == 0.0) {
@@ -85,17 +170,23 @@ pub fn buildFiniteLayerSublayerDistribution(
         return weights;
     }
 
-    const altitude_span = @max(profile.maxAltitude(), 1.0);
-    const total_slots = @as(usize, layer_count) * @as(usize, sublayer_divisions);
-    const slot_height_km = altitude_span / @as(f64, @floatFromInt(total_slots));
-    const half_thickness_km = 0.5 * @max(thickness_km, slot_height_km);
-    const layer_bottom_km = @max(center_km - half_thickness_km, 0.0);
-    const layer_top_km = @min(center_km + half_thickness_km, altitude_span);
+    var layer_bottom_km = @max(bottom_altitude_km, 0.0);
+    var layer_top_km = @max(top_altitude_km, layer_bottom_km);
+    if (legacy_span_padding and grid.sublayer_top_altitudes_km.len != 0) {
+        const center_km = 0.5 * (layer_top_km + layer_bottom_km);
+        const slot_height_km = @max(
+            grid.sublayer_top_altitudes_km[0] - grid.sublayer_bottom_altitudes_km[0],
+            1.0e-9,
+        );
+        const padded_half_thickness_km = 0.5 * @max(layer_top_km - layer_bottom_km, slot_height_km);
+        const grid_top_km = grid.sublayer_top_altitudes_km[grid.sublayer_top_altitudes_km.len - 1];
+        layer_bottom_km = @max(center_km - padded_half_thickness_km, 0.0);
+        layer_top_km = @min(center_km + padded_half_thickness_km, grid_top_km);
+    }
 
     var total_weight: f64 = 0.0;
-    for (weights, 0..) |*slot, index| {
-        const slot_bottom_km = slot_height_km * @as(f64, @floatFromInt(index));
-        const slot_top_km = slot_bottom_km + slot_height_km;
+    for (weights, grid.sublayer_top_altitudes_km, grid.sublayer_bottom_altitudes_km) |*slot, slot_top_km, slot_bottom_km| {
+        const slot_height_km = @max(slot_top_km - slot_bottom_km, 1.0e-9);
         const overlap_km = @max(
             0.0,
             @min(slot_top_km, layer_top_km) - @max(slot_bottom_km, layer_bottom_km),
@@ -106,32 +197,30 @@ pub fn buildFiniteLayerSublayerDistribution(
     }
 
     if (total_weight == 0.0) {
-        const nearest_index = std.math.clamp(
-            @as(isize, @intFromFloat(@round(center_km / slot_height_km - 0.5))),
-            0,
-            @as(isize, @intCast(total_slots - 1)),
-        );
-        weights[@as(usize, @intCast(nearest_index))] = 1.0;
-        total_weight = 1.0;
+        const nearest_index = nearestSublayerIndex(grid.sublayer_mid_altitudes_km, 0.5 * (layer_top_km + layer_bottom_km));
+        if (nearest_index) |index| {
+            weights[index] = 1.0;
+            total_weight = 1.0;
+        }
     }
 
+    if (total_weight == 0.0) {
+        @memset(weights, 0.0);
+        return weights;
+    }
     for (weights) |*slot| slot.* = total_optical_depth * (slot.* / total_weight);
     return weights;
 }
 
 pub fn buildGaussianSublayerDistribution(
     allocator: Allocator,
-    scene: *const Scene,
-    profile: *const ReferenceData.ClimatologyProfile,
-    layer_count: u32,
-    sublayer_divisions: u32,
+    grid: PreparedVerticalGrid,
     enabled: bool,
     total_optical_depth: f64,
     center_km: f64,
     width_km: f64,
 ) ![]f64 {
-    _ = scene;
-    const weights = try allocator.alloc(f64, @as(usize, layer_count) * @as(usize, sublayer_divisions));
+    const weights = try allocator.alloc(f64, grid.sublayer_mid_altitudes_km.len);
     errdefer allocator.free(weights);
 
     if (!enabled or total_optical_depth == 0.0) {
@@ -140,11 +229,7 @@ pub fn buildGaussianSublayerDistribution(
     }
 
     var total_weight: f64 = 0.0;
-    const altitude_span = @max(profile.maxAltitude(), 1.0);
-    const total_slots = @as(usize, layer_count) * @as(usize, sublayer_divisions);
-    for (weights, 0..) |*slot, index| {
-        const altitude_fraction = (@as(f64, @floatFromInt(index)) + 0.5) / @as(f64, @floatFromInt(total_slots));
-        const altitude_km = altitude_span * altitude_fraction;
+    for (weights, grid.sublayer_mid_altitudes_km) |*slot, altitude_km| {
         const delta = (altitude_km - center_km) / @max(width_km, 0.25);
         const weight = @exp(-0.5 * delta * delta);
         slot.* = weight;
@@ -153,4 +238,18 @@ pub fn buildGaussianSublayerDistribution(
     if (total_weight == 0.0) total_weight = 1.0;
     for (weights) |*slot| slot.* = total_optical_depth * (slot.* / total_weight);
     return weights;
+}
+
+fn nearestSublayerIndex(altitudes_km: []const f64, target_altitude_km: f64) ?usize {
+    if (altitudes_km.len == 0) return null;
+    var best_index: usize = 0;
+    var best_distance = std.math.inf(f64);
+    for (altitudes_km, 0..) |altitude_km, index| {
+        const distance = @abs(altitude_km - target_altitude_km);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best_index = index;
+        }
+    }
+    return best_index;
 }

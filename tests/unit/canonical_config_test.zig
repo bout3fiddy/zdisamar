@@ -380,6 +380,479 @@ test "canonical config parses typed vendor sections into resolved stage" {
     try std.testing.expectEqualStrings("baseline_labos", retr_plan.transport_route.family.provenanceLabel());
 }
 
+test "canonical config compiles interval grids, aerosol fractions, and subcolumns into scene state" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: interval-fraction-subcolumns
+        \\experiment:
+        \\  simulation:
+        \\    general:
+        \\      num_interval_fit: 2
+        \\    radiative_transfer:
+        \\      num_div_points_alt_sim: [2, 3, 1]
+        \\    surface_config:
+        \\      surf_pressure_sim: 1013.0
+        \\    atmospheric_intervals:
+        \\      sim:
+        \\        - top_pressure_hpa: 120.0
+        \\          bottom_pressure_hpa: 350.0
+        \\          top_altitude_km: 16.0
+        \\          bottom_altitude_km: 8.0
+        \\        - top_pressure_hpa: 350.0
+        \\          bottom_pressure_hpa: 800.0
+        \\          top_altitude_km: 8.0
+        \\          bottom_altitude_km: 2.0
+        \\        - top_pressure_hpa: 800.0
+        \\          bottom_pressure_hpa: 1013.0
+        \\          top_altitude_km: 2.0
+        \\          bottom_altitude_km: 0.0
+        \\    cloud_aerosol_fraction:
+        \\      target_sim: aerosol
+        \\      kind_sim: wavel_independent
+        \\      values_sim: [0.25]
+        \\    aerosol_config:
+        \\      aerosol_type_sim: hg_scattering
+        \\      hg_optical_thickness_sim: 0.24
+        \\      hg_angstrom_coefficient_sim: 1.1
+        \\      hg_single_scattering_albedo_sim: 0.95
+        \\      hg_parameter_g_sim: 0.71
+        \\    subcolumns:
+        \\      enabled: true
+        \\      boundary_layer_top_pressure_hpa: 800.0
+        \\      boundary_layer_top_altitude_km: 2.0
+        \\      tropopause_pressure_hpa: 350.0
+        \\      tropopause_altitude_km: 8.0
+        \\      entries:
+        \\        - label: boundary_layer
+        \\          bottom_altitude_km: 0.0
+        \\          top_altitude_km: 2.0
+        \\        - label: free_troposphere
+        \\          bottom_altitude_km: 2.0
+        \\          top_altitude_km: 8.0
+        \\        - label: stratosphere
+        \\          bottom_altitude_km: 8.0
+        \\          top_altitude_km: 16.0
+        \\    scene:
+        \\      id: interval_scene
+        \\      geometry:
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          sublayer_divisions: 2
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 762.0
+        \\          step_nm: 0.2
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    const interval_grid = stage.scene.atmosphere.interval_grid;
+    try std.testing.expect(interval_grid.enabled());
+    try std.testing.expectEqual(.explicit_pressure_bounds, interval_grid.semantics);
+    try std.testing.expectEqual(@as(u32, 2), interval_grid.fit_interval_index_1based);
+    try std.testing.expectEqual(@as(usize, 3), interval_grid.intervals.len);
+    try std.testing.expectEqual(@as(u32, 3), interval_grid.intervals[1].altitude_divisions);
+    try std.testing.expectApproxEqAbs(@as(f64, 1013.0), stage.scene.surface.pressure_hpa, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1013.0), stage.scene.atmosphere.surface_pressure_hpa, 1.0e-12);
+    try std.testing.expect(stage.scene.aerosol.enabled);
+    try std.testing.expectEqual(.hg_scattering, stage.scene.aerosol.aerosol_type);
+    try std.testing.expectEqual(@as(u32, 2), stage.scene.aerosol.placement.interval_index_1based);
+    try std.testing.expectApproxEqAbs(@as(f64, 350.0), stage.scene.aerosol.placement.top_pressure_hpa, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 800.0), stage.scene.aerosol.placement.bottom_pressure_hpa, 1.0e-12);
+    try std.testing.expect(stage.scene.aerosol.fraction.enabled);
+    try std.testing.expectEqual(.aerosol, stage.scene.aerosol.fraction.target);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.25), stage.scene.aerosol.fraction.values[0], 1.0e-12);
+    try std.testing.expect(stage.scene.atmosphere.subcolumns.enabled);
+    try std.testing.expectEqual(@as(usize, 3), stage.scene.atmosphere.subcolumns.subcolumns.len);
+    try std.testing.expectEqual(.boundary_layer, stage.scene.atmosphere.subcolumns.subcolumns[0].label);
+    try std.testing.expectEqual(.stratosphere, stage.scene.atmosphere.subcolumns.subcolumns[2].label);
+    try std.testing.expectEqual(@as(u32, 3), stage.plan.scene_blueprint.layer_count_hint);
+}
+
+test "canonical config normalizes wrapped relative azimuth inputs" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: wrapped-relative-azimuth
+        \\experiment:
+        \\  simulation:
+        \\    geometry:
+        \\      solar_zenith_angle_sim: 31.7
+        \\      instrument_nadir_angle_sim: 7.9
+        \\      solar_azimuth_angle_sim: 350.0
+        \\      instrument_azimuth_angle_sim: 10.0
+        \\    scene:
+        \\      id: wrapped_geometry_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 0.0
+        \\        viewing_zenith_deg: 0.0
+        \\        relative_azimuth_deg: 0.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    try std.testing.expectApproxEqAbs(@as(f64, 20.0), stage.scene.geometry.relative_azimuth_deg, 1.0e-12);
+}
+
+test "canonical config treats explicit none cloud-aerosol targets as a no-op" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: fraction-target-none
+        \\experiment:
+        \\  simulation:
+        \\    cloud_aerosol_fraction:
+        \\      target_sim: none
+        \\    scene:
+        \\      id: noop_fraction_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    try std.testing.expect(!stage.scene.aerosol.fraction.enabled);
+    try std.testing.expect(!stage.scene.cloud.fraction.enabled);
+}
+
+test "canonical config rejects cloud-aerosol fraction inputs without a stage target" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: fraction-target-missing
+        \\experiment:
+        \\  simulation:
+        \\    cloud_aerosol_fraction:
+        \\      kind_sim: wavel_independent
+        \\      values_sim: [0.25]
+        \\    scene:
+        \\      id: missing_fraction_target_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.InvalidValue,
+        document.resolve(std.testing.allocator),
+    );
+}
+
+test "canonical config rejects threshold-only cloud-aerosol fraction inputs without a stage target" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: fraction-threshold-target-missing
+        \\experiment:
+        \\  simulation:
+        \\    cloud_aerosol_fraction:
+        \\      threshold_cloud_fraction: 0.25
+        \\      threshold_variance: 0.05
+        \\    scene:
+        \\      id: missing_fraction_threshold_target_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.InvalidValue,
+        document.resolve(std.testing.allocator),
+    );
+}
+
+test "canonical config infers retrieval HG aerosols as hg_scattering" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: retrieval-hg-aerosol
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: retrieval_hg_aerosol_truth
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\  retrieval:
+        \\    from: experiment.simulation
+        \\    aerosol_config:
+        \\      hg_optical_thickness_retr: 0.12
+        \\    scene:
+        \\      id: retrieval_hg_aerosol_scene
+        \\    inverse:
+        \\      algorithm:
+        \\        name: oe
+        \\      measurement:
+        \\        source: truth_radiance
+        \\        observable: radiance
+        \\      state:
+        \\        surface_albedo:
+        \\          target: scene.surface.albedo
+        \\          prior:
+        \\            mean: 0.05
+        \\            sigma: 0.02
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.retrieval orelse return error.TestUnexpectedResult;
+    try std.testing.expect(stage.scene.aerosol.enabled);
+    try std.testing.expectEqual(.hg_scattering, stage.scene.aerosol.aerosol_type);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.12), stage.scene.aerosol.optical_depth, 1.0e-12);
+}
+
+test "canonical config infers retrieval HG clouds as hg_scattering" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: retrieval-hg-cloud
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: retrieval_hg_cloud_truth
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\  retrieval:
+        \\    from: experiment.simulation
+        \\    cloud_config:
+        \\      hg_optical_thickness_retr: 0.18
+        \\    scene:
+        \\      id: retrieval_hg_cloud_scene
+        \\    inverse:
+        \\      algorithm:
+        \\        name: oe
+        \\      measurement:
+        \\        source: truth_radiance
+        \\        observable: radiance
+        \\      state:
+        \\        surface_albedo:
+        \\          target: scene.surface.albedo
+        \\          prior:
+        \\            mean: 0.05
+        \\            sigma: 0.02
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.retrieval orelse return error.TestUnexpectedResult;
+    try std.testing.expect(stage.scene.cloud.enabled);
+    try std.testing.expectEqual(.hg_scattering, stage.scene.cloud.cloud_type);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.18), stage.scene.cloud.optical_thickness, 1.0e-12);
+}
+
 test "canonical config compiles absorbing-gas HITRAN controls onto line absorbers" {
     const source =
         \\schema_version: 1

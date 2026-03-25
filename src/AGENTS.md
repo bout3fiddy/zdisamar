@@ -13,6 +13,8 @@
 
 - Push domain-heavy guidance into the nearest scoped `AGENTS.md` before expanding this file.
 - Prefer moving legacy behavior to `src/adapters/` instead of leaking it back into `src/core/`.
+- When a feature exists in both legacy and explicit/typed forms, name the source of truth clearly and keep derived hints, prepared state, and runtime consumers synchronized by tests rather than convention.
+- Do not add typed fields whose only consumer is an eventual TODO. New scene/request/model controls must either affect runtime behavior now or be rejected explicitly.
 
 ## Scientific Port Commenting Contract
 

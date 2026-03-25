@@ -1912,6 +1912,381 @@ test "optical preparation recomputes layer phase mixing with wavelength-specific
     try std.testing.expect(@abs(layers_405[0].phase_coefficients[1] - layers_465[0].phase_coefficients[1]) > 1.0e-4);
 }
 
+test "optical preparation evaluates wavelength-dependent aerosol fractions at runtime" {
+    const scene: zdisamar.Scene = .{
+        .id = "wavelength-dependent-aerosol-fraction",
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 2,
+            .has_aerosols = true,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.40,
+            .single_scatter_albedo = 0.94,
+            .asymmetry_factor = 0.72,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 760.0,
+            .layer_center_km = 2.0,
+            .layer_width_km = 1.5,
+            .fraction = .{
+                .enabled = true,
+                .target = .aerosol,
+                .kind = .wavel_dependent,
+                .wavelengths_nm = &.{ 760.0, 761.2 },
+                .values = &.{ 0.25, 0.75 },
+            },
+        },
+        .geometry = .{
+            .solar_zenith_deg = 30.0,
+            .viewing_zenith_deg = 5.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.0,
+            .end_nm = 761.2,
+            .sample_count = 3,
+        },
+    };
+
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.5e19 },
+            .{ .altitude_km = 10.0, .pressure_hpa = 500.0, .temperature_k = 240.0, .air_number_density_cm3 = 1.0e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 761.2, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+    var lut = ReferenceData.AirmassFactorLut{
+        .points = try std.testing.allocator.dupe(ReferenceData.AirmassFactorPoint, &.{
+            .{ .solar_zenith_deg = 30.0, .view_zenith_deg = 5.0, .relative_azimuth_deg = 20.0, .airmass_factor = 1.1 },
+        }),
+    };
+    defer lut.deinit(std.testing.allocator);
+
+    var prepared = try OpticsPrepare.prepare(
+        std.testing.allocator,
+        &scene,
+        .{
+            .profile = &profile,
+            .cross_sections = &cross_sections,
+            .lut = &lut,
+        },
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.20), prepared.aerosol_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.50), prepared.layers[0].aerosol_fraction, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.50), prepared.sublayers.?[0].aerosol_fraction, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.50), prepared.sublayers.?[1].aerosol_fraction, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.10), prepared.aerosolOpticalDepthAtWavelength(760.0), 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.30), prepared.aerosolOpticalDepthAtWavelength(761.2), 1.0e-12);
+
+    var layer_inputs: [2]internal.kernels.transport.common.LayerInput = undefined;
+    const totals = PreparationTransport.fillForwardLayersAtWavelength(&prepared, &scene, 761.2, &layer_inputs);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.30), totals.aerosol_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(
+        totals.aerosol_optical_depth,
+        layer_inputs[0].aerosol_optical_depth + layer_inputs[1].aerosol_optical_depth,
+        1.0e-12,
+    );
+}
+
+test "optical preparation rejects unmatched explicit interval particle placements" {
+    const scene: zdisamar.Scene = .{
+        .id = "unmatched-interval-placement",
+        .atmosphere = .{
+            .layer_count = 2,
+            .has_aerosols = true,
+            .interval_grid = .{
+                .semantics = .explicit_pressure_bounds,
+                .intervals = &.{
+                    .{
+                        .index_1based = 1,
+                        .top_pressure_hpa = 150.0,
+                        .bottom_pressure_hpa = 500.0,
+                        .top_altitude_km = 10.0,
+                        .bottom_altitude_km = 4.0,
+                        .altitude_divisions = 2,
+                    },
+                    .{
+                        .index_1based = 2,
+                        .top_pressure_hpa = 500.0,
+                        .bottom_pressure_hpa = 1000.0,
+                        .top_altitude_km = 4.0,
+                        .bottom_altitude_km = 0.0,
+                        .altitude_divisions = 2,
+                    },
+                },
+            },
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.20,
+            .single_scatter_albedo = 0.94,
+            .asymmetry_factor = 0.70,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 760.0,
+            .placement = .{
+                .semantics = .explicit_interval_bounds,
+                .interval_index_1based = 3,
+                .top_pressure_hpa = 100.0,
+                .bottom_pressure_hpa = 200.0,
+                .top_altitude_km = 12.0,
+                .bottom_altitude_km = 9.0,
+            },
+        },
+        .geometry = .{
+            .solar_zenith_deg = 30.0,
+            .viewing_zenith_deg = 5.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.0,
+            .end_nm = 761.0,
+            .sample_count = 3,
+        },
+    };
+
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.5e19 },
+            .{ .altitude_km = 10.0, .pressure_hpa = 150.0, .temperature_k = 230.0, .air_number_density_cm3 = 7.5e18 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 761.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+    var lut = ReferenceData.AirmassFactorLut{
+        .points = try std.testing.allocator.dupe(ReferenceData.AirmassFactorPoint, &.{
+            .{ .solar_zenith_deg = 30.0, .view_zenith_deg = 5.0, .relative_azimuth_deg = 20.0, .airmass_factor = 1.1 },
+        }),
+    };
+    defer lut.deinit(std.testing.allocator);
+
+    try std.testing.expectError(
+        error.InvalidRequest,
+        OpticsPrepare.prepare(
+            std.testing.allocator,
+            &scene,
+            .{
+                .profile = &profile,
+                .cross_sections = &cross_sections,
+                .lut = &lut,
+            },
+        ),
+    );
+}
+
+test "optical preparation rejects explicit interval particle placements without interval grids" {
+    const scene: zdisamar.Scene = .{
+        .id = "legacy-explicit-interval-placement",
+        .atmosphere = .{
+            .layer_count = 2,
+            .has_aerosols = true,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.20,
+            .single_scatter_albedo = 0.94,
+            .asymmetry_factor = 0.70,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 760.0,
+            .placement = .{
+                .semantics = .explicit_interval_bounds,
+                .interval_index_1based = 1,
+                .top_pressure_hpa = 150.0,
+                .bottom_pressure_hpa = 500.0,
+                .top_altitude_km = 10.0,
+                .bottom_altitude_km = 4.0,
+            },
+        },
+        .geometry = .{
+            .solar_zenith_deg = 30.0,
+            .viewing_zenith_deg = 5.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.0,
+            .end_nm = 761.0,
+            .sample_count = 3,
+        },
+    };
+
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.5e19 },
+            .{ .altitude_km = 10.0, .pressure_hpa = 150.0, .temperature_k = 230.0, .air_number_density_cm3 = 7.5e18 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 761.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+    var lut = ReferenceData.AirmassFactorLut{
+        .points = try std.testing.allocator.dupe(ReferenceData.AirmassFactorPoint, &.{
+            .{ .solar_zenith_deg = 30.0, .view_zenith_deg = 5.0, .relative_azimuth_deg = 20.0, .airmass_factor = 1.1 },
+        }),
+    };
+    defer lut.deinit(std.testing.allocator);
+
+    try std.testing.expectError(
+        error.InvalidRequest,
+        OpticsPrepare.prepare(
+            std.testing.allocator,
+            &scene,
+            .{
+                .profile = &profile,
+                .cross_sections = &cross_sections,
+                .lut = &lut,
+            },
+        ),
+    );
+}
+
+test "legacy thin cloud placement still pads across adjacent sublayers" {
+    const scene: zdisamar.Scene = .{
+        .id = "legacy-thin-cloud-padding",
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 2,
+            .has_clouds = true,
+        },
+        .cloud = .{
+            .enabled = true,
+            .optical_thickness = 0.10,
+            .single_scatter_albedo = 0.998,
+            .asymmetry_factor = 0.84,
+            .angstrom_exponent = 0.25,
+            .reference_wavelength_nm = 550.0,
+            .top_altitude_km = 5.4,
+            .thickness_km = 0.2,
+        },
+        .geometry = .{
+            .solar_zenith_deg = 30.0,
+            .viewing_zenith_deg = 5.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.0,
+            .end_nm = 761.0,
+            .sample_count = 3,
+        },
+    };
+
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.5e19 },
+            .{ .altitude_km = 10.0, .pressure_hpa = 150.0, .temperature_k = 230.0, .air_number_density_cm3 = 7.5e18 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 761.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+    var lut = ReferenceData.AirmassFactorLut{
+        .points = try std.testing.allocator.dupe(ReferenceData.AirmassFactorPoint, &.{
+            .{ .solar_zenith_deg = 30.0, .view_zenith_deg = 5.0, .relative_azimuth_deg = 20.0, .airmass_factor = 1.1 },
+        }),
+    };
+    defer lut.deinit(std.testing.allocator);
+
+    var prepared = try OpticsPrepare.prepare(
+        std.testing.allocator,
+        &scene,
+        .{
+            .profile = &profile,
+            .cross_sections = &cross_sections,
+            .lut = &lut,
+        },
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    const sublayers = prepared.sublayers.?;
+    try std.testing.expectEqual(@as(usize, 2), sublayers.len);
+    try std.testing.expect(sublayers[0].cloud_optical_depth > 0.0);
+    try std.testing.expect(sublayers[1].cloud_optical_depth > 0.0);
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.10),
+        sublayers[0].cloud_optical_depth + sublayers[1].cloud_optical_depth,
+        1.0e-12,
+    );
+}
+
+test "legacy optical preparation keeps altitude-interpolated sublayer pressure" {
+    const scene: zdisamar.Scene = .{
+        .id = "legacy-pressure-midpoint",
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 2,
+        },
+        .geometry = .{
+            .solar_zenith_deg = 30.0,
+            .viewing_zenith_deg = 5.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 500.0,
+            .end_nm = 500.2,
+            .sample_count = 2,
+        },
+    };
+
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.5e19 },
+            .{ .altitude_km = 10.0, .pressure_hpa = 500.0, .temperature_k = 240.0, .air_number_density_cm3 = 1.0e19 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 500.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 500.2, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+    var lut = ReferenceData.AirmassFactorLut{
+        .points = try std.testing.allocator.dupe(ReferenceData.AirmassFactorPoint, &.{
+            .{ .solar_zenith_deg = 30.0, .view_zenith_deg = 5.0, .relative_azimuth_deg = 20.0, .airmass_factor = 1.1 },
+        }),
+    };
+    defer lut.deinit(std.testing.allocator);
+
+    var prepared = try OpticsPrepare.prepare(
+        std.testing.allocator,
+        &scene,
+        .{
+            .profile = &profile,
+            .cross_sections = &cross_sections,
+            .lut = &lut,
+        },
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 875.0), prepared.sublayers.?[0].pressure_hpa, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 625.0), prepared.sublayers.?[1].pressure_hpa, 1.0e-12);
+}
+
 test "optical preparation distributes aerosol and cloud optical depth across HG-style sublayers" {
     var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         std.testing.allocator,
@@ -2009,6 +2384,216 @@ test "optical preparation distributes aerosol and cloud optical depth across HG-
     try std.testing.expectApproxEqAbs(scene.cloud.optical_thickness, cloud_sum, 1e-12);
     try std.testing.expect(aerosol_peak > 0.0);
     try std.testing.expect(cloud_peak > 0.0);
+}
+
+test "optical preparation preserves explicit intervals, fractions, and subcolumn labels" {
+    var climatology_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .climatology_profile,
+        "data/climatologies/bundle_manifest.json",
+        "us_standard_1976_profile",
+    );
+    defer climatology_asset.deinit(std.testing.allocator);
+    var cross_section_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .cross_section_table,
+        "data/cross_sections/bundle_manifest.json",
+        "no2_405_465_demo",
+    );
+    defer cross_section_asset.deinit(std.testing.allocator);
+    var lut_asset = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
+        std.testing.allocator,
+        .lookup_table,
+        "data/luts/bundle_manifest.json",
+        "airmass_factor_nadir_demo",
+    );
+    defer lut_asset.deinit(std.testing.allocator);
+
+    var profile = try climatology_asset.toClimatologyProfile(std.testing.allocator);
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = try cross_section_asset.toCrossSectionTable(std.testing.allocator);
+    defer cross_sections.deinit(std.testing.allocator);
+    var lut = try lut_asset.toAirmassFactorLut(std.testing.allocator);
+    defer lut.deinit(std.testing.allocator);
+
+    const scene: zdisamar.Scene = .{
+        .id = "explicit-intervals",
+        .atmosphere = .{
+            .layer_count = 3,
+            .has_clouds = true,
+            .has_aerosols = true,
+            .interval_grid = .{
+                .semantics = .explicit_pressure_bounds,
+                .fit_interval_index_1based = 2,
+                .intervals = &.{
+                    .{
+                        .index_1based = 1,
+                        .top_pressure_hpa = 120.0,
+                        .bottom_pressure_hpa = 350.0,
+                        .top_altitude_km = 16.0,
+                        .bottom_altitude_km = 8.0,
+                        .altitude_divisions = 2,
+                    },
+                    .{
+                        .index_1based = 2,
+                        .top_pressure_hpa = 350.0,
+                        .bottom_pressure_hpa = 800.0,
+                        .top_altitude_km = 8.0,
+                        .bottom_altitude_km = 2.0,
+                        .altitude_divisions = 3,
+                    },
+                    .{
+                        .index_1based = 3,
+                        .top_pressure_hpa = 800.0,
+                        .bottom_pressure_hpa = 1013.0,
+                        .top_altitude_km = 2.0,
+                        .bottom_altitude_km = 0.0,
+                        .altitude_divisions = 1,
+                    },
+                },
+            },
+            .subcolumns = .{
+                .enabled = true,
+                .boundary_layer_top_altitude_km = 2.0,
+                .tropopause_altitude_km = 8.0,
+                .subcolumns = &.{
+                    .{
+                        .index_1based = 1,
+                        .label = .boundary_layer,
+                        .bottom_altitude_km = 0.0,
+                        .top_altitude_km = 2.0,
+                    },
+                    .{
+                        .index_1based = 2,
+                        .label = .free_troposphere,
+                        .bottom_altitude_km = 2.0,
+                        .top_altitude_km = 8.0,
+                    },
+                    .{
+                        .index_1based = 3,
+                        .label = .stratosphere,
+                        .bottom_altitude_km = 8.0,
+                        .top_altitude_km = 16.0,
+                    },
+                },
+            },
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.40,
+            .single_scatter_albedo = 0.94,
+            .asymmetry_factor = 0.72,
+            .angstrom_exponent = 1.0,
+            .reference_wavelength_nm = 550.0,
+            .placement = .{
+                .semantics = .explicit_interval_bounds,
+                .interval_index_1based = 2,
+                .top_pressure_hpa = 350.0,
+                .bottom_pressure_hpa = 800.0,
+                .top_altitude_km = 8.0,
+                .bottom_altitude_km = 2.0,
+            },
+            .fraction = .{
+                .enabled = true,
+                .target = .aerosol,
+                .kind = .wavel_independent,
+                .values = &.{0.25},
+            },
+        },
+        .cloud = .{
+            .enabled = true,
+            .optical_thickness = 0.20,
+            .single_scatter_albedo = 0.998,
+            .asymmetry_factor = 0.84,
+            .angstrom_exponent = 0.25,
+            .reference_wavelength_nm = 550.0,
+            .placement = .{
+                .semantics = .explicit_interval_bounds,
+                .interval_index_1based = 3,
+                .top_pressure_hpa = 800.0,
+                .bottom_pressure_hpa = 1013.0,
+                .top_altitude_km = 2.0,
+                .bottom_altitude_km = 0.0,
+            },
+            .fraction = .{
+                .enabled = true,
+                .target = .cloud,
+                .kind = .wavel_independent,
+                .values = &.{0.50},
+            },
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 40.0,
+            .viewing_zenith_deg = 10.0,
+            .relative_azimuth_deg = 30.0,
+        },
+        .surface = .{
+            .albedo = 0.08,
+            .pressure_hpa = 1013.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 121,
+        },
+    };
+
+    var prepared = try OpticsPrepare.prepare(
+        std.testing.allocator,
+        &scene,
+        .{
+            .profile = &profile,
+            .cross_sections = &cross_sections,
+            .lut = &lut,
+        },
+    );
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.explicit_pressure_bounds, prepared.interval_semantics);
+    try std.testing.expectEqual(@as(u32, 2), prepared.fit_interval_index_1based);
+    try std.testing.expect(prepared.subcolumn_semantics_enabled);
+    try std.testing.expectEqual(.analytic_hg, prepared.aerosol_phase_support);
+    try std.testing.expectEqual(.analytic_hg, prepared.cloud_phase_support);
+    try std.testing.expectEqual(@as(usize, 3), prepared.layers.len);
+    try std.testing.expectEqual(@as(u32, 3), prepared.layers[0].interval_index_1based);
+    try std.testing.expectEqual(.boundary_layer, prepared.layers[0].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 2), prepared.layers[1].interval_index_1based);
+    try std.testing.expectEqual(.free_troposphere, prepared.layers[1].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 1), prepared.layers[2].interval_index_1based);
+    try std.testing.expectEqual(.stratosphere, prepared.layers[2].subcolumn_label);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), prepared.sublayers.?[0].bottom_altitude_km, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 16.0), prepared.sublayers.?[prepared.sublayers.?.len - 1].top_altitude_km, 1.0e-12);
+    try std.testing.expectEqualSlices(
+        u32,
+        &.{ 3, 2, 2, 2, 1, 1 },
+        &.{
+            prepared.sublayers.?[0].interval_index_1based,
+            prepared.sublayers.?[1].interval_index_1based,
+            prepared.sublayers.?[2].interval_index_1based,
+            prepared.sublayers.?[3].interval_index_1based,
+            prepared.sublayers.?[4].interval_index_1based,
+            prepared.sublayers.?[5].interval_index_1based,
+        },
+    );
+
+    var aerosol_sum: f64 = 0.0;
+    var cloud_sum: f64 = 0.0;
+    for (prepared.sublayers.?) |sublayer| {
+        if (sublayer.interval_index_1based == 2) {
+            aerosol_sum += sublayer.aerosol_optical_depth;
+        } else {
+            try std.testing.expectApproxEqAbs(@as(f64, 0.0), sublayer.aerosol_optical_depth, 1.0e-12);
+        }
+        if (sublayer.interval_index_1based == 3) {
+            cloud_sum += sublayer.cloud_optical_depth;
+        } else {
+            try std.testing.expectApproxEqAbs(@as(f64, 0.0), sublayer.cloud_optical_depth, 1.0e-12);
+        }
+    }
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.10), aerosol_sum, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.10), cloud_sum, 1.0e-12);
 }
 
 test "optical preparation interpolates bounded Mie coefficient subsets when provided" {
