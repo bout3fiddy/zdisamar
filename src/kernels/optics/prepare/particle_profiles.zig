@@ -50,6 +50,7 @@ pub fn buildAerosolSublayerDistribution(
             total_optical_depth,
             placement.bottom_altitude_km,
             placement.top_altitude_km,
+            !scene.atmosphere.interval_grid.enabled() and placement.semantics == .altitude_center_width_approximation,
         );
     }
     return buildGaussianSublayerDistribution(
@@ -86,6 +87,7 @@ pub fn buildCloudSublayerDistribution(
         total_optical_depth,
         placement.bottom_altitude_km,
         placement.top_altitude_km,
+        !scene.atmosphere.interval_grid.enabled() and placement.semantics == .altitude_center_width_approximation,
     );
 }
 
@@ -114,6 +116,7 @@ pub fn buildPlacementBoundDistribution(
         total_optical_depth,
         placement.bottom_altitude_km,
         placement.top_altitude_km,
+        false,
     );
 }
 
@@ -157,6 +160,7 @@ pub fn buildFiniteLayerSublayerDistribution(
     total_optical_depth: f64,
     bottom_altitude_km: f64,
     top_altitude_km: f64,
+    legacy_span_padding: bool,
 ) ![]f64 {
     const weights = try allocator.alloc(f64, grid.sublayer_mid_altitudes_km.len);
     errdefer allocator.free(weights);
@@ -166,8 +170,19 @@ pub fn buildFiniteLayerSublayerDistribution(
         return weights;
     }
 
-    const layer_bottom_km = @max(bottom_altitude_km, 0.0);
-    const layer_top_km = @max(top_altitude_km, layer_bottom_km);
+    var layer_bottom_km = @max(bottom_altitude_km, 0.0);
+    var layer_top_km = @max(top_altitude_km, layer_bottom_km);
+    if (legacy_span_padding and grid.sublayer_top_altitudes_km.len != 0) {
+        const center_km = 0.5 * (layer_top_km + layer_bottom_km);
+        const slot_height_km = @max(
+            grid.sublayer_top_altitudes_km[0] - grid.sublayer_bottom_altitudes_km[0],
+            1.0e-9,
+        );
+        const padded_half_thickness_km = 0.5 * @max(layer_top_km - layer_bottom_km, slot_height_km);
+        const grid_top_km = grid.sublayer_top_altitudes_km[grid.sublayer_top_altitudes_km.len - 1];
+        layer_bottom_km = @max(center_km - padded_half_thickness_km, 0.0);
+        layer_top_km = @min(center_km + padded_half_thickness_km, grid_top_km);
+    }
 
     var total_weight: f64 = 0.0;
     for (weights, grid.sublayer_top_altitudes_km, grid.sublayer_bottom_altitudes_km) |*slot, slot_top_km, slot_bottom_km| {
