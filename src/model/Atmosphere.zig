@@ -158,13 +158,24 @@ pub const IntervalGrid = struct {
         if (self.semantics == .none) return errors.Error.InvalidRequest;
 
         var previous_bottom_pressure_hpa: f64 = 0.0;
+        var previous_bottom_altitude_km: f64 = 0.0;
+        var previous_has_altitude_bounds = false;
         for (self.intervals, 0..) |interval, index| {
             try interval.validate();
             if (interval.index_1based != index + 1) return errors.Error.InvalidRequest;
-            if (index != 0 and interval.top_pressure_hpa < previous_bottom_pressure_hpa) {
-                return errors.Error.InvalidRequest;
+            if (index != 0) {
+                if (interval.top_pressure_hpa < previous_bottom_pressure_hpa) {
+                    return errors.Error.InvalidRequest;
+                }
+                if (previous_has_altitude_bounds and interval.hasAltitudeBounds() and
+                    !std.math.approxEqAbs(f64, previous_bottom_altitude_km, interval.top_altitude_km, 1.0e-9))
+                {
+                    return errors.Error.InvalidRequest;
+                }
             }
             previous_bottom_pressure_hpa = interval.bottom_pressure_hpa;
+            previous_bottom_altitude_km = interval.bottom_altitude_km;
+            previous_has_altitude_bounds = interval.hasAltitudeBounds();
         }
         if (self.fit_interval_index_1based > self.intervals.len) return errors.Error.InvalidRequest;
         if (fallback_sublayer_divisions == 0) return errors.Error.InvalidRequest;
@@ -614,6 +625,33 @@ test "atmosphere rejects malformed interval and subcolumn metadata" {
                         .top_pressure_hpa = 400.0,
                         .bottom_pressure_hpa = 900.0,
                         .top_altitude_km = 7.0,
+                        .altitude_divisions = 2,
+                    },
+                },
+            },
+        }).validate(),
+    );
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (Atmosphere{
+            .layer_count = 2,
+            .interval_grid = .{
+                .semantics = .explicit_pressure_bounds,
+                .intervals = &.{
+                    VerticalInterval{
+                        .index_1based = 1,
+                        .top_pressure_hpa = 150.0,
+                        .bottom_pressure_hpa = 500.0,
+                        .top_altitude_km = 12.0,
+                        .bottom_altitude_km = 8.0,
+                        .altitude_divisions = 2,
+                    },
+                    VerticalInterval{
+                        .index_1based = 2,
+                        .top_pressure_hpa = 500.0,
+                        .bottom_pressure_hpa = 1013.0,
+                        .top_altitude_km = 9.0,
+                        .bottom_altitude_km = 0.0,
                         .altitude_divisions = 2,
                     },
                 },
