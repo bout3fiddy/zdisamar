@@ -514,24 +514,43 @@ fn storeFallbackRadianceSigma(
 ) !void {
     if (sigma.len != product.radiance.len) return error.ShapeMismatch;
 
-    const radiance_sigma_shared = product.radiance_noise_sigma.len != 0 and
-        product.radiance_noise_sigma.ptr == product.noise_sigma.ptr;
-    if (product.noise_sigma.len != product.radiance.len) {
-        allocator.free(product.noise_sigma);
-        product.noise_sigma = try allocator.alloc(f64, product.radiance.len);
-    }
-    @memcpy(product.noise_sigma, sigma);
+    const sample_count = product.radiance.len;
+    const old_noise_sigma = product.noise_sigma;
+    const old_radiance_noise_sigma = product.radiance_noise_sigma;
+    const radiance_sigma_shared = old_radiance_noise_sigma.len != 0 and
+        old_radiance_noise_sigma.ptr == old_noise_sigma.ptr;
 
-    if (product.radiance_noise_sigma.len == 0) {
-        allocator.free(product.radiance_noise_sigma);
-        product.radiance_noise_sigma = product.noise_sigma;
-    } else if (radiance_sigma_shared) {
-        product.radiance_noise_sigma = product.noise_sigma;
-    } else if (product.radiance_noise_sigma.len != product.radiance.len) {
-        allocator.free(product.radiance_noise_sigma);
-        product.radiance_noise_sigma = product.noise_sigma;
+    var replacement_noise_sigma: ?[]f64 = null;
+    errdefer if (replacement_noise_sigma) |buffer| allocator.free(buffer);
+
+    var next_noise_sigma = old_noise_sigma;
+    if (old_noise_sigma.len != sample_count) {
+        const buffer = try allocator.alloc(f64, sample_count);
+        @memcpy(buffer, sigma);
+        replacement_noise_sigma = buffer;
+        next_noise_sigma = buffer;
     } else {
-        @memcpy(product.radiance_noise_sigma, sigma);
+        @memcpy(next_noise_sigma, sigma);
+    }
+
+    const replace_radiance_sigma = old_radiance_noise_sigma.len == 0 or
+        radiance_sigma_shared or
+        old_radiance_noise_sigma.len != sample_count;
+    if (!replace_radiance_sigma) {
+        @memcpy(old_radiance_noise_sigma, sigma);
+    }
+
+    product.noise_sigma = next_noise_sigma;
+    product.radiance_noise_sigma = if (replace_radiance_sigma)
+        next_noise_sigma
+    else
+        old_radiance_noise_sigma;
+
+    if (replacement_noise_sigma != null and old_noise_sigma.len != 0) {
+        allocator.free(old_noise_sigma);
+    }
+    if (replace_radiance_sigma and !radiance_sigma_shared and old_radiance_noise_sigma.len != 0) {
+        allocator.free(old_radiance_noise_sigma);
     }
 
     if (product.reflectance_noise_sigma.len == product.radiance.len) {
@@ -870,4 +889,55 @@ fn validateVendorControls(experiment: *const ResolvedExperiment) Error!void {
             }
         }
     }
+}
+
+test "storeFallbackRadianceSigma preserves buffers when replacement allocation fails" {
+    const allocator = std.testing.allocator;
+
+    var product = MeasurementSpaceProduct{
+        .summary = .{
+            .sample_count = 2,
+            .wavelength_start_nm = 760.0,
+            .wavelength_end_nm = 760.1,
+            .mean_radiance = 1.5,
+            .mean_irradiance = 3.5,
+            .mean_reflectance = 5.5,
+            .mean_noise_sigma = 0.1,
+        },
+        .wavelengths = try allocator.dupe(f64, &[_]f64{ 760.0, 760.1 }),
+        .radiance = try allocator.dupe(f64, &[_]f64{ 1.0, 2.0 }),
+        .irradiance = try allocator.dupe(f64, &[_]f64{ 3.0, 4.0 }),
+        .reflectance = try allocator.dupe(f64, &[_]f64{ 5.0, 6.0 }),
+        .noise_sigma = try allocator.dupe(f64, &[_]f64{0.1}),
+        .radiance_noise_sigma = &.{},
+        .effective_air_mass_factor = 0.0,
+        .effective_single_scatter_albedo = 0.0,
+        .effective_temperature_k = 0.0,
+        .effective_pressure_hpa = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .total_optical_depth = 0.0,
+        .depolarization_factor = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+    };
+    product.radiance_noise_sigma = product.noise_sigma;
+    defer product.deinit(allocator);
+
+    const original_noise_ptr = product.noise_sigma.ptr;
+
+    var failing = std.testing.FailingAllocator.init(allocator, .{
+        .fail_index = 0,
+    });
+    try std.testing.expectError(
+        error.OutOfMemory,
+        storeFallbackRadianceSigma(failing.allocator(), &product, &[_]f64{ 0.2, 0.3 }),
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), product.noise_sigma.len);
+    try std.testing.expectEqual(original_noise_ptr, product.noise_sigma.ptr);
+    try std.testing.expectEqual(@as(usize, 1), product.radiance_noise_sigma.len);
+    try std.testing.expectEqual(original_noise_ptr, product.radiance_noise_sigma.ptr);
+    try std.testing.expectEqual(@as(f64, 0.1), product.noise_sigma[0]);
 }
