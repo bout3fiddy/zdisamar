@@ -2732,8 +2732,8 @@ fn applyAtmosphericIntervalsConfigToScene(
             .index_1based = @intCast(index + 1),
             .top_pressure_hpa = entry.top_pressure_hpa,
             .bottom_pressure_hpa = entry.bottom_pressure_hpa,
-            .top_altitude_km = entry.top_altitude_km orelse 0.0,
-            .bottom_altitude_km = entry.bottom_altitude_km orelse 0.0,
+            .top_altitude_km = entry.top_altitude_km orelse std.math.nan(f64),
+            .bottom_altitude_km = entry.bottom_altitude_km orelse std.math.nan(f64),
             .top_pressure_variance_hpa2 = entry.top_pressure_variance_hpa2 orelse 0.0,
             .bottom_pressure_variance_hpa2 = entry.bottom_pressure_variance_hpa2 orelse 0.0,
             .altitude_divisions = entry.altitude_divisions orelse default_divisions,
@@ -2759,6 +2759,19 @@ fn applyAtmosphericIntervalsConfigToScene(
     }
 }
 
+fn fractionConfigHasStageInputs(kind: StageKind, config: CloudAerosolFractionConfig) bool {
+    return switch (kind) {
+        .simulation => config.kind_sim != .none or
+            config.values_sim != null or
+            config.wavelengths_sim_nm != null,
+        .retrieval => config.kind_retr != .none or
+            config.values_retr != null or
+            config.apriori_values_retr != null or
+            config.variance_values_retr != null or
+            config.wavelengths_retr_nm != null,
+    };
+}
+
 fn applyCloudAerosolFractionConfigToScene(
     kind: StageKind,
     config: ?CloudAerosolFractionConfig,
@@ -2768,8 +2781,12 @@ fn applyCloudAerosolFractionConfigToScene(
     const target = switch (kind) {
         .simulation => fraction_config.target_sim,
         .retrieval => fraction_config.target_retr,
-    } orelse return;
-    if (target == .none) return;
+    };
+    if (target == null) {
+        if (fractionConfigHasStageInputs(kind, fraction_config)) return Error.InvalidValue;
+        return;
+    }
+    if (target.? == .none) return;
     const fraction_kind = switch (kind) {
         .simulation => fraction_config.kind_sim,
         .retrieval => fraction_config.kind_retr,
@@ -2785,7 +2802,7 @@ fn applyCloudAerosolFractionConfigToScene(
     };
     const control: AtmosphereModel.FractionControl = .{
         .enabled = true,
-        .target = target,
+        .target = target.?,
         .kind = fraction_kind,
         .threshold_cloud_fraction = fraction_config.threshold_cloud_fraction orelse 0.0,
         .threshold_variance = fraction_config.threshold_variance orelse 0.0,
@@ -2796,7 +2813,7 @@ fn applyCloudAerosolFractionConfigToScene(
         .owns_arrays = false,
     };
 
-    switch (target) {
+    switch (target.?) {
         .cloud => scene.cloud.fraction = control,
         .aerosol => scene.aerosol.fraction = control,
         .none => unreachable,

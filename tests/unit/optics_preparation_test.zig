@@ -1981,7 +1981,10 @@ test "optical preparation evaluates wavelength-dependent aerosol fractions at ru
     );
     defer prepared.deinit(std.testing.allocator);
 
-    try std.testing.expectApproxEqAbs(@as(f64, 0.10), prepared.aerosol_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.20), prepared.aerosol_optical_depth, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.50), prepared.layers[0].aerosol_fraction, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.50), prepared.sublayers.?[0].aerosol_fraction, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.50), prepared.sublayers.?[1].aerosol_fraction, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.10), prepared.aerosolOpticalDepthAtWavelength(760.0), 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.30), prepared.aerosolOpticalDepthAtWavelength(761.2), 1.0e-12);
 

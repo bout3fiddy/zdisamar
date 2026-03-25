@@ -116,13 +116,6 @@ pub const ClimatologyProfile = struct {
     pub fn maxAltitude(self: ClimatologyProfile) f64 {
         return if (self.rows.len == 0) 0.0 else self.rows[self.rows.len - 1].altitude_km;
     }
-
-    /// Purpose:
-    ///   Report the lowest altitude in the profile.
-    pub fn minAltitude(self: ClimatologyProfile) f64 {
-        return if (self.rows.len == 0) 0.0 else self.rows[0].altitude_km;
-    }
-
     /// Purpose:
     ///   Interpolate altitude at the requested pressure.
     ///

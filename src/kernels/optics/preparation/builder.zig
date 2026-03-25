@@ -372,7 +372,7 @@ fn prepareWithInputs(
         scene.geometry.viewing_zenith_deg,
         scene.geometry.relative_azimuth_deg,
     );
-    const base_single_scatter_albedo = PhaseFunctions.computeSingleScatterAlbedo(scene);
+    const base_single_scatter_albedo = PhaseFunctions.computeSingleScatterAlbedo(scene, midpoint_nm);
 
     var total_optical_depth: f64 = 0.0;
     var total_temperature_weighted: f64 = 0.0;
@@ -413,13 +413,13 @@ fn prepareWithInputs(
     const aerosol_extinction_scale = if (aerosol_mie_point) |point| point.extinction_scale else 1.0;
     const cloud_extinction_scale = if (cloud_mie_point) |point| point.extinction_scale else 1.0;
     const aerosol_fraction = if (scene.aerosol.fraction.enabled)
-        scene.aerosol.fraction.valueAtWavelength(scene.aerosol.reference_wavelength_nm)
+        scene.aerosol.fraction.valueAtWavelength(midpoint_nm)
     else if (scene.aerosol.enabled)
         @as(f64, 1.0)
     else
         @as(f64, 0.0);
     const cloud_fraction = if (scene.cloud.fraction.enabled)
-        scene.cloud.fraction.valueAtWavelength(scene.cloud.reference_wavelength_nm)
+        scene.cloud.fraction.valueAtWavelength(midpoint_nm)
     else if (scene.cloud.enabled)
         @as(f64, 1.0)
     else
@@ -1076,7 +1076,7 @@ fn buildExplicitVerticalGrid(
         source_interval_index -= 1;
         const interval = intervals[source_interval_index];
         const index = output_layer_index;
-        const has_altitude_bounds = interval.top_altitude_km != 0.0 or interval.bottom_altitude_km != 0.0;
+        const has_altitude_bounds = interval.hasAltitudeBounds();
         const layer_top_altitude_km = if (has_altitude_bounds)
             interval.top_altitude_km
         else

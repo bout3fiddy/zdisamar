@@ -33,7 +33,7 @@ The current Zig runtime still approximates some vendor atmosphere semantics too 
 - Measured-input or mission wiring; those belong in `WP-07`.
 - Retrieval-family math for OE, DOAS, or DISMAS; those belong in `WP-11` through `WP-13`.
 
-### WP-05 Atmospheric intervals, aerosol, cloud, fraction, and subcolumns parity [Status: Todo]
+### WP-05 Atmospheric intervals, aerosol, cloud, fraction, and subcolumns parity [Status: Done 2026-03-25]
 
 Issue:
 The current Zig atmosphere path still collapses vendor interval and particle-placement semantics into simpler altitude-centered approximations. That is not good enough for honest forward or retrieval parity.
@@ -61,12 +61,9 @@ A developer can point to one typed atmosphere representation in Zig and show exa
 
 Non-destructive tests:
 - `zig build test-unit --summary all`
-- `zig build test-integration --summary all`
-- `zig build test-validation --summary all`
-- `zig test tests/unit/optics_preparation_test.zig`
-- `zig test tests/integration/forward_model_integration_test.zig`
-- `zig test tests/validation/o2a_forward_shape_test.zig`
-- `zig test tests/validation/disamar_compatibility_harness_test.zig`
+- `zig build test-integration-forward-model --summary all`
+- `zig build test-validation-o2a --summary all`
+- `zig build test-validation-compatibility-full --summary all`
 
 Files by type:
 - Scene and atmosphere targets:
@@ -96,58 +93,66 @@ Files by type:
 
 ## Exact Patch Checklist
 
-- [ ] `src/adapters/canonical_config/Document.zig`, `document_fields.zig`, `src/model/Scene.zig`, `src/model/Atmosphere.zig`: represent vendor atmospheric interval controls explicitly.
+- [x] `src/adapters/canonical_config/Document.zig`, `document_fields.zig`, `src/model/Scene.zig`, `src/model/Atmosphere.zig`: represent vendor atmospheric interval controls explicitly.
   - Vendor anchors: `readConfigFileModule.f90::{readSurface,readAtmosphericIntervals}` and keys such as `numIntervalFit`, pressure bounds, and separate simulation versus retrieval interval grids.
   - Do not silently collapse pressure-bounded intervals into altitude-centered center-width shims during config compilation.
 
-- [ ] `src/model/Aerosol.zig`, `src/model/Cloud.zig`, `src/model/Surface.zig`, `src/model/Geometry.zig`: model aerosol and cloud placement plus fraction semantics as typed scene state.
+- [x] `src/model/Aerosol.zig`, `src/model/Cloud.zig`, `src/model/Surface.zig`, `src/model/Geometry.zig`: model aerosol and cloud placement plus fraction semantics as typed scene state.
   - Vendor anchors: `readConfigFileModule.f90::{readCldAerFraction,readCloud,readAerosol}`.
   - Keep fit-interval identity explicit and keep cloud or aerosol fractions separate from later measurement corrections.
 
-- [ ] `src/kernels/optics/prepare.zig`, `src/kernels/optics/prepare/particle_profiles.zig`, `src/model/reference/climatology.zig`, `src/model/reference/rayleigh.zig`: rebuild interval preparation around the vendor pressure-grid semantics.
+- [x] `src/kernels/optics/prepare.zig`, `src/kernels/optics/prepare/particle_profiles.zig`, `src/model/reference/climatology.zig`, `src/model/reference/rayleigh.zig`: rebuild interval preparation around the vendor pressure-grid semantics.
   - Vendor anchors: `propAtmosphere.f90::{fillHighResolutionPressureGrid}` and the interval-bound conversion logic that maps pressure nodes to altitude bounds.
   - The prepared atmosphere path should preserve interval top and bottom semantics, not only derived layer centers.
 
-- [ ] `src/model/reference/airmass_phase.zig`, `src/kernels/optics/prepare/phase_functions.zig`, `src/core/provenance.zig`: keep cloud and aerosol phase-support choices and effective interval controls auditable.
+- [x] `src/model/reference/airmass_phase.zig`, `src/kernels/optics/prepare/phase_functions.zig`, `src/core/provenance.zig`: keep cloud and aerosol phase-support choices and effective interval controls auditable.
   - Vendor anchors: `FourierCoefficientsModule.f90`, `radianceIrradianceModule.f90`, and the vendor interval or fit-grid state used by cloud and aerosol pathways.
   - Provenance should make it clear whether Zig honored explicit interval semantics or is still using a declared approximation.
 
-- [ ] `src/model/Atmosphere.zig`, `src/model/Scene.zig`, and later retrieval-facing preparation hooks: add subcolumn and strat-trop partition semantics that later WPs can consume directly.
+- [x] `src/model/Atmosphere.zig`, `src/model/Scene.zig`, and later retrieval-facing preparation hooks: add subcolumn and strat-trop partition semantics that later WPs can consume directly.
   - Vendor anchors: `subcolumnModule.f90::fillAltitudeGridCol` and the vendor subcolumn weighting and boundary logic.
   - Preserve subcolumn boundaries, partition labels, and Gaussian support data as typed structures instead of recomputing them from ad hoc rules in each retrieval family.
 
-- [ ] `tests/unit/optics_preparation_test.zig`, `tests/integration/forward_model_integration_test.zig`, `tests/validation/o2a_forward_shape_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: add interval-sensitive validation.
+- [x] `tests/unit/optics_preparation_test.zig`, `tests/integration/forward_model_integration_test.zig`, `tests/validation/o2a_forward_shape_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: add interval-sensitive validation.
   - Required families: `Config_O2_with_CIA.in`, one lower-troposphere NO2 or pollution case, one strat-trop partition case, and one cirrus or cloud-fraction case.
   - Assert that pressure-bounded intervals, fit-interval placement, and fraction controls affect the prepared atmosphere and final outputs in the expected direction.
 
 ## Completion Checklist
 
-- [ ] Implementation matches the described approach
-- [ ] Non-destructive tests pass
-- [ ] Proof / validation section filled with exact commands and outcomes
-- [ ] How to test section is reproducible
-- [ ] `overview.md` rollup row updated
-- [ ] Pressure-bounded atmospheric intervals are represented explicitly in typed scene state
-- [ ] Aerosol and cloud placement plus fraction semantics are honored without collapsing to center-width approximations
-- [ ] Subcolumn and strat-trop partition semantics are preserved for later retrieval-family work
+- [x] Implementation matches the described approach
+- [x] Non-destructive tests pass
+- [x] Proof / validation section filled with exact commands and outcomes
+- [x] How to test section is reproducible
+- [x] `overview.md` rollup row updated
+- [x] Pressure-bounded atmospheric intervals are represented explicitly in typed scene state
+- [x] Aerosol and cloud placement plus fraction semantics are honored without collapsing to center-width approximations
+- [x] Subcolumn and strat-trop partition semantics are preserved for later retrieval-family work
 
-## Implementation Status (2026-03-18)
+## Implementation Status (2026-03-25)
 
-Planning only. No code changes yet.
+Implementation is present on branch `codex/wp05-atmospheric-intervals`, and the scene/config/runtime path now carries vendor-style interval, fraction, and subcolumn semantics end to end. Canonical config compilation emits explicit pressure-bounded interval grids, aerosol/cloud placement and fraction controls, and typed subcolumn partitions into `Scene`; optics preparation preserves interval top/bottom altitude and pressure bounds, fit-interval identity, particle fractions, subcolumn labels, and phase-support metadata in `PreparedOpticalState`; and forward execution stamps those semantics into typed provenance for downstream retrieval work.
+
+The landed validation covers the new surface from three angles: canonical-config compilation into typed scene state, direct optics preparation and forward execution against explicit intervals and fractions, and validation-harness proofs for O2A morphology plus compatibility-harness strat-trop partition preservation.
 
 ## Why This Works
 
-By fixing interval and particle-placement semantics before instrument and retrieval work, the rest of the parity program stops building on the wrong atmosphere. This keeps the model honest where DISAMAR actually makes important distinctions: pressure bounds, fit interval, cloud and aerosol placement, and subcolumn partitions.
+By making interval grids, particle placement, fractions, and subcolumns first-class typed state, WP-05 removes the old pressure-interval-to-altitude-center approximation from the critical preparation path. The canonical compiler now resolves those semantics once, the optics builder preserves top/bottom bounds and fit-interval identity instead of collapsing them to anonymous midpoints, and aerosol or cloud fractions scale the prepared particulate optical depth where the vendor config actually applies them. Because the prepared state and provenance both carry the explicit interval and subcolumn metadata, later retrieval WPs can consume the same atmosphere layout without silently rebuilding or reinterpreting it.
 
 ## Proof / Validation
 
-- Planned: `zig test tests/unit/optics_preparation_test.zig` -> interval and particle preparation preserve explicit bounds and fit-interval semantics
-- Planned: `zig test tests/integration/forward_model_integration_test.zig` -> forward execution honors pressure-bounded cloud and aerosol placement
-- Planned: `zig test tests/validation/o2a_forward_shape_test.zig` and `disamar_compatibility_harness_test.zig` -> O2A, pollution, strat-trop, and cirrus-family cases stop relying on altitude-centered approximations
+- `zig build test-unit --summary all` -> `Build Summary: 4/4 steps succeeded; 147/147 tests passed.`
+- `zig build test-integration-forward-model --summary all` -> `Build Summary: 4/4 steps succeeded; 9/9 tests passed.`
+- `zig build test-validation-o2a --summary all` -> `Build Summary: 4/4 steps succeeded; 6/6 tests passed.`
+- `zig build test-validation-compatibility-full --summary all` -> `Build Summary: 4/4 steps succeeded; 1/1 tests passed.`
+- `zig build test-integration --summary all` -> `Build Summary: 2/4 steps succeeded; 32/33 tests passed; 1 failed.` The failing case is `canonical_config_execution_integration_test.test.canonical execution applies deterministic stage noise when requested`, and the same failure reproduces on clean `HEAD` worktree `d335e5f`, so it is not introduced by WP-05.
+- `zig build test-validation --summary all` -> `Build Summary: 11/13 steps succeeded; 44/46 tests passed; 2 failed.` The failing cases are `oe_parity_test.test.oe parity executes the full expert o2a scenario and improves the masked spectral fit` and `oe_parity_test.test.oe reference scenario matches the golden spectral-fit anchor`; both reproduce on clean `HEAD` worktree `d335e5f`, so they are not introduced by WP-05.
+- Direct `zig test tests/...` invocations remain unsupported in this repo because those standalone test modules do not declare the `zdisamar` imports outside the build graph. The supported reproducible entry points for this WP are the `zig build ...` commands above.
 
 ## How To Test
 
-1. Run the O2A forcing case and confirm the configured aerosol interval stays pressure-bounded through preparation.
-2. Run one pollution or PBL-sensitive case and confirm the fit interval and particle placement shift the output in the expected direction.
-3. Run one strat-trop partition case and inspect the prepared subcolumn boundaries and labels.
-4. Compare provenance and compatibility-harness output to confirm interval and fraction semantics are either honored exactly or called out explicitly.
+1. Run `zig build test-unit --summary all`.
+2. Run `zig build test-integration-forward-model --summary all`.
+3. Run `zig build test-validation-o2a --summary all`.
+4. Run `zig build test-validation-compatibility-full --summary all`.
+5. Inspect the new canonical-config, optics-preparation, forward-model, O2A, and compatibility-harness assertions to confirm interval bounds, fit-interval identity, fractions, and subcolumn labels survive compilation and preparation.
+6. Optionally run `zig build test-integration --summary all` and `zig build test-validation --summary all` to reproduce the current repo-wide baseline red lanes outside WP-05 ownership.

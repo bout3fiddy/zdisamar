@@ -67,11 +67,17 @@ pub const VerticalInterval = struct {
     index_1based: u32 = 0,
     top_pressure_hpa: f64 = 0.0,
     bottom_pressure_hpa: f64 = 0.0,
-    top_altitude_km: f64 = 0.0,
-    bottom_altitude_km: f64 = 0.0,
+    top_altitude_km: f64 = std.math.nan(f64),
+    bottom_altitude_km: f64 = std.math.nan(f64),
     top_pressure_variance_hpa2: f64 = 0.0,
     bottom_pressure_variance_hpa2: f64 = 0.0,
     altitude_divisions: u32 = 0,
+
+    /// Purpose:
+    ///   Report whether the interval carries both explicit altitude bounds.
+    pub fn hasAltitudeBounds(self: VerticalInterval) bool {
+        return std.math.isFinite(self.top_altitude_km) and std.math.isFinite(self.bottom_altitude_km);
+    }
 
     /// Purpose:
     ///   Ensure one pressure-bounded interval remains physically consistent.
@@ -84,7 +90,10 @@ pub const VerticalInterval = struct {
             .bottom_hpa = self.bottom_pressure_hpa,
         }).validate() catch return errors.Error.InvalidRequest;
 
-        if ((self.top_altitude_km != 0.0 or self.bottom_altitude_km != 0.0)) {
+        const has_top_altitude = std.math.isFinite(self.top_altitude_km);
+        const has_bottom_altitude = std.math.isFinite(self.bottom_altitude_km);
+        if (has_top_altitude != has_bottom_altitude) return errors.Error.InvalidRequest;
+        if (self.hasAltitudeBounds()) {
             (units.AltitudeRangeKm{
                 .bottom_km = self.bottom_altitude_km,
                 .top_km = self.top_altitude_km,
@@ -98,12 +107,14 @@ pub const VerticalInterval = struct {
     /// Purpose:
     ///   Return the altitude midpoint if both altitude bounds are known.
     pub fn midpointAltitudeKm(self: VerticalInterval) f64 {
+        if (!self.hasAltitudeBounds()) return 0.0;
         return 0.5 * (self.top_altitude_km + self.bottom_altitude_km);
     }
 
     /// Purpose:
     ///   Return the altitude thickness if both bounds are known.
     pub fn thicknessKm(self: VerticalInterval) f64 {
+        if (!self.hasAltitudeBounds()) return 0.0;
         return @max(self.top_altitude_km - self.bottom_altitude_km, 0.0);
     }
 };
@@ -172,13 +183,19 @@ pub const IntervalPlacement = struct {
     interval_index_1based: u32 = 0,
     top_pressure_hpa: f64 = 0.0,
     bottom_pressure_hpa: f64 = 0.0,
-    top_altitude_km: f64 = 0.0,
-    bottom_altitude_km: f64 = 0.0,
+    top_altitude_km: f64 = std.math.nan(f64),
+    bottom_altitude_km: f64 = std.math.nan(f64),
 
     /// Purpose:
     ///   Report whether the particle placement uses explicit interval metadata.
     pub fn enabled(self: IntervalPlacement) bool {
         return self.semantics != .none;
+    }
+
+    /// Purpose:
+    ///   Report whether the placement carries both explicit altitude bounds.
+    pub fn hasAltitudeBounds(self: IntervalPlacement) bool {
+        return std.math.isFinite(self.top_altitude_km) and std.math.isFinite(self.bottom_altitude_km);
     }
 
     /// Purpose:
@@ -200,7 +217,10 @@ pub const IntervalPlacement = struct {
                     .top_hpa = self.top_pressure_hpa,
                     .bottom_hpa = self.bottom_pressure_hpa,
                 }).validate() catch return errors.Error.InvalidRequest;
-                if (self.top_altitude_km != 0.0 or self.bottom_altitude_km != 0.0) {
+                const has_top_altitude = std.math.isFinite(self.top_altitude_km);
+                const has_bottom_altitude = std.math.isFinite(self.bottom_altitude_km);
+                if (has_top_altitude != has_bottom_altitude) return errors.Error.InvalidRequest;
+                if (self.hasAltitudeBounds()) {
                     (units.AltitudeRangeKm{
                         .bottom_km = self.bottom_altitude_km,
                         .top_km = self.top_altitude_km,
@@ -213,12 +233,14 @@ pub const IntervalPlacement = struct {
     /// Purpose:
     ///   Return the altitude midpoint implied by the placement.
     pub fn midpointAltitudeKm(self: IntervalPlacement) f64 {
+        if (!self.hasAltitudeBounds()) return 0.0;
         return 0.5 * (self.top_altitude_km + self.bottom_altitude_km);
     }
 
     /// Purpose:
     ///   Return the altitude thickness implied by the placement.
     pub fn thicknessKm(self: IntervalPlacement) f64 {
+        if (!self.hasAltitudeBounds()) return 0.0;
         return @max(self.top_altitude_km - self.bottom_altitude_km, 0.0);
     }
 };
@@ -567,6 +589,24 @@ test "atmosphere rejects malformed interval and subcolumn metadata" {
                         .index_1based = 1,
                         .top_pressure_hpa = 700.0,
                         .bottom_pressure_hpa = 500.0,
+                        .altitude_divisions = 2,
+                    },
+                },
+            },
+        }).validate(),
+    );
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (Atmosphere{
+            .layer_count = 1,
+            .interval_grid = .{
+                .semantics = .explicit_pressure_bounds,
+                .intervals = &.{
+                    VerticalInterval{
+                        .index_1based = 1,
+                        .top_pressure_hpa = 400.0,
+                        .bottom_pressure_hpa = 900.0,
+                        .top_altitude_km = 7.0,
                         .altitude_divisions = 2,
                     },
                 },

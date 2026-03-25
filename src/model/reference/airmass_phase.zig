@@ -93,12 +93,6 @@ pub const MiePhaseTable = struct {
         }
         return self.points[self.points.len - 1];
     }
-
-    /// Purpose:
-    ///   Report the phase-support kind this table contributes.
-    pub fn supportKind(self: MiePhaseTable) PhaseSupportKind {
-        return if (self.points.len == 0) .none else .mie_table;
-    }
 };
 
 /// Purpose:

@@ -157,6 +157,13 @@ pub const SummaryWorkspace = struct {
 ///   Estimate the transport-layer count needed for one measurement sweep.
 pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
     _ = route;
+    if (scene.atmosphere.interval_grid.enabled()) {
+        var total_sublayer_count: usize = 0;
+        for (scene.atmosphere.interval_grid.intervals) |interval| {
+            total_sublayer_count += @max(@as(usize, interval.altitude_divisions), 1);
+        }
+        return @max(total_sublayer_count, 1);
+    }
     const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
     return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
@@ -298,4 +305,52 @@ fn freePseudoSphericalSampleBuffer(allocator: Allocator, buffer: []common.Pseudo
 
 fn freeIndexBuffer(allocator: Allocator, buffer: []usize) void {
     if (buffer.len != 0) allocator.free(buffer);
+}
+
+test "measurement workspace transport hint follows explicit interval totals" {
+    const scene: Scene = .{
+        .id = "explicit-interval-workspace-hint",
+        .atmosphere = .{
+            .layer_count = 3,
+            .sublayer_divisions = 2,
+            .interval_grid = .{
+                .semantics = .explicit_pressure_bounds,
+                .intervals = &.{
+                    .{
+                        .index_1based = 1,
+                        .top_pressure_hpa = 150.0,
+                        .bottom_pressure_hpa = 350.0,
+                        .top_altitude_km = 12.0,
+                        .bottom_altitude_km = 7.0,
+                        .altitude_divisions = 1,
+                    },
+                    .{
+                        .index_1based = 2,
+                        .top_pressure_hpa = 350.0,
+                        .bottom_pressure_hpa = 800.0,
+                        .top_altitude_km = 7.0,
+                        .bottom_altitude_km = 2.0,
+                        .altitude_divisions = 3,
+                    },
+                    .{
+                        .index_1based = 3,
+                        .top_pressure_hpa = 800.0,
+                        .bottom_pressure_hpa = 1000.0,
+                        .top_altitude_km = 2.0,
+                        .bottom_altitude_km = 0.0,
+                        .altitude_divisions = 2,
+                    },
+                },
+            },
+        },
+    };
+    const route: common.Route = .{
+        .family = .adding,
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    };
+
+    try std.testing.expectEqual(@as(usize, 6), transportLayerCountHint(&scene, route));
+    try std.testing.expectEqual(@as(usize, 12), pseudoSphericalSampleCountHint(&scene, route));
 }
