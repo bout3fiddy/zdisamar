@@ -3486,7 +3486,7 @@ fn applyRrsRingConfigToObservationModel(
         .explicit = true,
         .enabled = band.use_rrs or band.ring_coefficient != 0.0,
         .differential = band.differential,
-        .coefficient = if (band.ring_coefficient != 0.0) band.ring_coefficient else 0.01 * band.fraction_raman_lines,
+        .coefficient = if (band.ring_coefficient != 0.0) band.ring_coefficient else 0.01,
         .approximate_rrs = band.approximate_rrs,
         .fraction_raman_lines = band.fraction_raman_lines,
         .use_cabannes = band.use_cabannes,

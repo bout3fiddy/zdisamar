@@ -185,7 +185,16 @@ pub const ObservationModel = struct {
                 //   retrieval code can treat the noise contract as already materialized.
                 if (self.ingested_noise_sigma.len == 0) return errors.Error.InvalidRequest;
             },
-            .none, .shot_noise, .lab_operational => {},
+            .lab_operational => {
+                const radiance_noise = self.resolvedChannelControls(.radiance).noise;
+                const irradiance_noise = self.resolvedChannelControls(.irradiance).noise;
+                if (radiance_noise.model != .lab_operational or irradiance_noise.model != .lab_operational) {
+                    return errors.Error.InvalidRequest;
+                }
+                try radiance_noise.validate();
+                try irradiance_noise.validate();
+            },
+            .none, .shot_noise => {},
         }
         if (self.noise_model == .s5p_operational and self.reference_radiance.len != self.ingested_noise_sigma.len) {
             return errors.Error.InvalidRequest;
@@ -367,6 +376,14 @@ test "observation model carries explicit measured-channel wavelengths" {
 
     try model.validate();
     try std.testing.expectEqual(@as(f64, 761.02), model.measured_wavelengths_nm[1]);
+}
+
+test "observation model rejects lab operational noise without explicit LAB coefficients" {
+    const invalid_model: ObservationModel = .{
+        .noise_model = .lab_operational,
+    };
+
+    try std.testing.expectError(errors.Error.InvalidRequest, invalid_model.validate());
 }
 
 test "cross-section fit controls validate band-scoped settings" {

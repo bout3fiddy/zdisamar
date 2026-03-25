@@ -508,6 +508,76 @@ test "canonical config hydrates separate radiance and irradiance instrument pipe
     try std.testing.expectApproxEqRel(@as(f64, 0.5), reflectance_calibration.additive_error.values[0], 1.0e-12);
 }
 
+test "canonical config keeps the default Ring coefficient independent from Raman fraction" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: default-ring-coefficient
+        \\experiment:
+        \\  simulation:
+        \\    rrs_ring:
+        \\      sim:
+        \\        - use_rrs: true
+        \\          fraction_raman_lines: 0.5
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      id: default_ring_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 16
+        \\      bands:
+        \\        band_1:
+        \\          start_nm: 758.0
+        \\          end_nm: 771.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\    products:
+        \\      sim_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const sim_stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    const ring = sim_stage.scene.observation_model.measurement_pipeline.ring;
+
+    try std.testing.expect(ring.enabled);
+    try std.testing.expectApproxEqRel(@as(f64, 0.01), ring.coefficient, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.5), ring.fraction_raman_lines, 1.0e-12);
+}
+
 test "canonical config compiles interval grids, aerosol fractions, and subcolumns into scene state" {
     const source =
         \\schema_version: 1

@@ -338,6 +338,9 @@ pub const Instrument = struct {
             if (!std.math.isFinite(self.lab_a) or self.lab_a < 0.0 or !std.math.isFinite(self.lab_b) or self.lab_b < 0.0) {
                 return errors.Error.InvalidRequest;
             }
+            if (self.enabled and self.model == .lab_operational and self.lab_a <= 0.0) {
+                return errors.Error.InvalidRequest;
+            }
             if (self.snr_wavelengths_nm.len != 0 and self.snr_wavelengths_nm.len != self.snr_values.len) {
                 return errors.Error.InvalidRequest;
             }

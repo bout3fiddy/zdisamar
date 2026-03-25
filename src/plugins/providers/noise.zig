@@ -155,7 +155,11 @@ fn referenceBinWidthNm(scene: *const Scene, channel: SpectralChannel, sample_cou
     if (scene.observation_model.operational_refspec_grid.enabled()) {
         return scene.observation_model.operational_refspec_grid.effectiveSpacingNm();
     }
-    if (sample_count > 1 and channel == .radiance and scene.observation_model.reference_radiance.len == sample_count) {
+    if (sample_count > 1 and
+        channel == .radiance and
+        scene.observation_model.reference_radiance.len == sample_count and
+        scene.observation_model.measured_wavelengths_nm.len == sample_count)
+    {
         return averageSpacingNm(scene.observation_model.measured_wavelengths_nm);
     }
     if (scene.observation_model.measured_wavelengths_nm.len > 1) {
@@ -220,6 +224,40 @@ test "s5p operational noise uses the operational reference grid as the reference
 
     try std.testing.expectApproxEqRel(@as(f64, 0.028284271), sigma[0], 1.0e-9);
     try std.testing.expectApproxEqRel(@as(f64, 0.028284271), sigma[4], 1.0e-9);
+}
+
+test "s5p operational noise falls back to spectral-grid spacing when measured wavelengths are absent" {
+    const scene: Scene = .{
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 761.2,
+            .sample_count = 5,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .noise_model = .s5p_operational,
+            .reference_radiance = &.{ 10.0, 10.0, 10.0, 10.0, 10.0 },
+            .ingested_noise_sigma = &.{ 0.02, 0.02, 0.02, 0.02, 0.02 },
+            .measurement_pipeline = .{
+                .radiance = .{
+                    .explicit = true,
+                    .noise = .{
+                        .explicit = true,
+                        .enabled = true,
+                        .model = .s5p_operational,
+                        .reference_bin_width_nm = 0.1,
+                    },
+                },
+            },
+        },
+    };
+
+    const signal = [_]f64{ 10.0, 10.0, 10.0, 10.0, 10.0 };
+    var sigma: [5]f64 = undefined;
+    try s5pOperationalSigma(&scene, .radiance, &.{ 760.8, 760.9, 761.0, 761.1, 761.2 }, &signal, &sigma);
+
+    try std.testing.expectApproxEqRel(@as(f64, 0.02), sigma[0], 1.0e-9);
+    try std.testing.expectApproxEqRel(@as(f64, 0.02), sigma[4], 1.0e-9);
 }
 
 test "lab operational noise uses explicit per-channel coefficients" {
