@@ -47,6 +47,154 @@ test "o2a forward reflectance tracks vendor reference morphology" {
     try std.testing.expect(@abs(metrics.red_wing_mean_difference) < 0.060);
 }
 
+test "o2a separate radiance and irradiance slit controls preserve physical reflectance normalization" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const grid: zdisamar.SpectralGrid = .{
+        .start_nm = 755.0,
+        .end_nm = 776.0,
+        .sample_count = 181,
+    };
+
+    var plan = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .observation_regime = .nadir,
+            .derivative_mode = .none,
+            .spectral_grid = grid,
+            .layer_count_hint = 12,
+            .measurement_count_hint = grid.sample_count,
+        },
+        .rtm_controls = .{
+            .n_streams = 6,
+            .num_orders_max = 20,
+        },
+    });
+    defer plan.deinit();
+
+    const base_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = .{
+            .explicit = true,
+            .response = .{
+                .explicit = true,
+                .slit_index = .flat_top_n4,
+                .fwhm_nm = 0.38,
+                .builtin_line_shape = .flat_top_n4,
+                .high_resolution_step_nm = 0.01,
+                .high_resolution_half_span_nm = 1.14,
+            },
+        },
+        .irradiance = .{
+            .explicit = true,
+            .response = .{
+                .explicit = true,
+                .slit_index = .flat_top_n4,
+                .fwhm_nm = 0.38,
+                .builtin_line_shape = .flat_top_n4,
+                .high_resolution_step_nm = 0.01,
+                .high_resolution_half_span_nm = 1.14,
+            },
+        },
+    };
+    const split_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = base_pipeline.radiance,
+        .irradiance = .{
+            .explicit = true,
+            .response = .{
+                .explicit = true,
+                .slit_index = .gaussian_modulated,
+                .fwhm_nm = 0.22,
+                .builtin_line_shape = .gaussian,
+                .high_resolution_step_nm = 0.01,
+                .high_resolution_half_span_nm = 0.80,
+            },
+        },
+    };
+
+    const base_scene: zdisamar.Scene = .{
+        .id = "o2a-split-instrument-validation",
+        .surface = .{
+            .albedo = 0.20,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.30,
+            .single_scatter_albedo = 1.0,
+            .asymmetry_factor = 0.70,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 760.0,
+            .layer_center_km = 5.4,
+            .layer_width_km = 0.4,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 60.0,
+            .viewing_zenith_deg = 30.0,
+            .relative_azimuth_deg = 120.0,
+        },
+        .atmosphere = .{
+            .layer_count = 12,
+            .sublayer_divisions = 2,
+            .has_aerosols = true,
+        },
+        .spectral_grid = grid,
+        .absorbers = .{
+            .items = &.{
+                zdisamar.Absorber{
+                    .id = "o2",
+                    .species = "o2",
+                    .resolved_species = .o2,
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "o2a-split-instrument" },
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .none,
+            .measurement_pipeline = base_pipeline,
+        },
+    };
+
+    var request_base = zdisamar.Request.init(base_scene);
+    request_base.expected_derivative_mode = .none;
+
+    var split_scene = base_scene;
+    split_scene.observation_model.measurement_pipeline = split_pipeline;
+    var request_split = zdisamar.Request.init(split_scene);
+    request_split.expected_derivative_mode = .none;
+
+    var workspace = engine.createWorkspace("o2a-split-instrument");
+    var result_base = try engine.execute(&plan, &workspace, &request_base);
+    defer result_base.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_split = try engine.execute(&plan, &workspace, &request_split);
+    defer result_split.deinit(std.testing.allocator);
+
+    const base_product = result_base.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const split_product = result_split.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const solar_cosine = split_scene.geometry.solarCosineAtAltitude(0.0);
+
+    try expectBoundedO2AMorphology(base_product.wavelengths, base_product.reflectance);
+    try expectBoundedO2AMorphology(split_product.wavelengths, split_product.reflectance);
+
+    const radiance_delta = meanAbsoluteDifference(base_product.radiance, split_product.radiance);
+    const irradiance_delta = meanAbsoluteDifference(base_product.irradiance, split_product.irradiance);
+    const reflectance_delta = meanAbsoluteDifference(base_product.reflectance, split_product.reflectance);
+    try std.testing.expect(irradiance_delta > radiance_delta * 5.0);
+    try std.testing.expect(reflectance_delta > 1.0e-12);
+
+    for (split_product.radiance, split_product.irradiance, split_product.reflectance) |radiance, irradiance, reflectance| {
+        const expected = (radiance * std.math.pi) / @max(irradiance * solar_cosine, 1.0e-9);
+        try std.testing.expectApproxEqRel(expected, reflectance, 1.0e-12);
+    }
+}
+
 test "o2a explicit interval aerosol fractions preserve morphology and change red-wing reflectance" {
     var engine = zdisamar.Engine.init(std.testing.allocator, .{});
     defer engine.deinit();

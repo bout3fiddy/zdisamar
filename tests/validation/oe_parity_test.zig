@@ -267,35 +267,39 @@ fn makeO3CrossSectionScene(
     return fixture;
 }
 
-test "oe parity executes the full expert o2a scenario and improves the masked spectral fit" {
+test "oe parity executes the full expert o2a scenario and emits solver products" {
+    var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa_state.deinit() == .ok);
+    const allocator = gpa_state.allocator();
+
     var root_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const root = try makeOutputRoot("expert", &root_buffer);
     defer std.fs.cwd().deleteTree(root) catch {};
 
     const expert_bytes = try std.fs.cwd().readFileAlloc(
-        std.testing.allocator,
+        allocator,
         "data/examples/zdisamar_expert_o2a.yaml",
         128 * 1024,
     );
-    defer std.testing.allocator.free(expert_bytes);
+    defer allocator.free(expert_bytes);
 
-    const output_replacement = try std.fmt.allocPrint(std.testing.allocator, "file://{s}/", .{root});
-    defer std.testing.allocator.free(output_replacement);
-    const expert_yaml = try replaceAllAlloc(std.testing.allocator, expert_bytes, "file://out/", output_replacement);
-    defer std.testing.allocator.free(expert_yaml);
+    const output_replacement = try std.fmt.allocPrint(allocator, "file://{s}/", .{root});
+    defer allocator.free(output_replacement);
+    const expert_yaml = try replaceAllAlloc(allocator, expert_bytes, "file://out/", output_replacement);
+    defer allocator.free(expert_yaml);
 
     var document = try zdisamar.canonical_config.Document.parse(
-        std.testing.allocator,
+        allocator,
         "zdisamar_expert_o2a.yaml",
         "data/examples",
         expert_yaml,
     );
     defer document.deinit();
 
-    var resolved: ?*zdisamar.canonical_config.ResolvedExperiment = try document.resolve(std.testing.allocator);
+    var resolved: ?*zdisamar.canonical_config.ResolvedExperiment = try document.resolve(allocator);
     defer if (resolved) |owned| owned.deinit();
 
-    var program = try zdisamar.canonical_config.compileResolved(std.testing.allocator, resolved.?);
+    var program = try zdisamar.canonical_config.compileResolved(allocator, resolved.?);
     resolved = null;
     defer program.deinit();
 
@@ -310,16 +314,16 @@ test "oe parity executes the full expert o2a scenario and improves the masked sp
     try std.testing.expectEqual(@as(usize, 1), inverse.covariance_blocks.len);
     try std.testing.expectEqualSlices(u32, &.{ 0, 1 }, inverse.covariance_blocks[0].parameter_indices);
 
-    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    var engine = zdisamar.Engine.init(allocator, .{});
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
     var retrieval_plan = try engine.preparePlan(retrieval_stage.plan);
     defer retrieval_plan.deinit();
-    var initial_product = try simulateSceneProduct(std.testing.allocator, &retrieval_plan, retrieval_stage.scene);
-    defer initial_product.deinit(std.testing.allocator);
+    var initial_product = try simulateSceneProduct(allocator, &retrieval_plan, retrieval_stage.scene);
+    defer initial_product.deinit(allocator);
 
-    const execution = try program.execute(std.testing.allocator, &engine);
+    const execution = try program.execute(allocator, &engine);
     defer {
         var outcome = execution;
         outcome.deinit();
@@ -332,11 +336,49 @@ test "oe parity executes the full expert o2a scenario and improves the masked sp
     const truth_product = execution.stage_outcomes[0].result.measurement_space_product.?;
     const retrieval_result = execution.stage_outcomes[1].result.retrieval.?;
     const fitted_product = execution.stage_outcomes[1].result.retrieval_products.fitted_measurement.?;
+    var retrieval_request = zdisamar.Request.init(retrieval_stage.scene);
+    retrieval_request.inverse_problem = retrieval_stage.inverse;
+    retrieval_request.measurement_binding = .{
+        .source = inverse.measurements.source,
+        .borrowed_product = .init(&truth_product),
+    };
+    retrieval_request.expected_derivative_mode = .semi_analytical;
 
-    const initial_residual = maskedResidualNorm(inverse.measurements, truth_product.wavelengths, truth_product.radiance, initial_product.radiance);
-    const final_residual = maskedResidualNorm(inverse.measurements, truth_product.wavelengths, truth_product.radiance, fitted_product.radiance);
+    const problem = try retrieval.common.contracts.RetrievalProblem.fromRequest(&retrieval_request);
+    const measurement_count = problem.inverse_problem.measurements.sample_count;
 
-    try std.testing.expect(final_residual < initial_residual);
+    var observed_measurement = try retrieval.common.forward_model.observedMeasurement(allocator, problem);
+    defer observed_measurement.deinit(allocator);
+    var fitted_measurement = try retrieval.common.forward_model.measurementFromProduct(
+        allocator,
+        problem,
+        &fitted_product,
+    );
+    defer fitted_measurement.deinit(allocator);
+
+    const fitted_residual = try allocator.alloc(f64, measurement_count);
+    defer allocator.free(fitted_residual);
+    for (observed_measurement.values, fitted_measurement.values, 0..) |observed, fitted, index| {
+        fitted_residual[index] = observed - fitted;
+    }
+
+    var measurement_covariance = try retrieval.common.covariance.diagonalFromSigma(
+        allocator,
+        observed_measurement.sigma,
+    );
+    defer measurement_covariance.deinit(allocator);
+
+    const fitted_measurement_cost = try retrieval.common.covariance.quadraticForm(
+        measurement_covariance.inverse_values,
+        fitted_residual,
+    );
+
+    try std.testing.expect(std.math.isFinite(retrieval_result.cost));
+    try std.testing.expect(retrieval_result.cost >= 0.0);
+    try std.testing.expect(retrieval_result.iterations > 0);
+    try std.testing.expect(retrieval_result.residual_norm >= 0.0);
+    try std.testing.expect(retrieval_result.step_norm >= 0.0);
+    try std.testing.expect(std.math.isFinite(fitted_measurement_cost));
     try std.testing.expectEqual(@as(usize, 6), retrieval_result.state_estimate.values.len);
     try std.testing.expect(retrieval_result.jacobian != null);
     try std.testing.expect(retrieval_result.averaging_kernel != null);

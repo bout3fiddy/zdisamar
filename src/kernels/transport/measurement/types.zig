@@ -58,6 +58,9 @@ pub const MeasurementSpaceProduct = struct {
     irradiance: []f64,
     reflectance: []f64,
     noise_sigma: []f64,
+    radiance_noise_sigma: []f64 = &.{},
+    irradiance_noise_sigma: []f64 = &.{},
+    reflectance_noise_sigma: []f64 = &.{},
     jacobian: ?[]f64 = null,
     effective_air_mass_factor: f64,
     effective_single_scatter_albedo: f64,
@@ -79,6 +82,9 @@ pub const MeasurementSpaceProduct = struct {
         allocator.free(self.irradiance);
         allocator.free(self.reflectance);
         allocator.free(self.noise_sigma);
+        if (self.radiance_noise_sigma.len != 0 and self.radiance_noise_sigma.ptr != self.noise_sigma.ptr) allocator.free(self.radiance_noise_sigma);
+        if (self.irradiance_noise_sigma.len != 0) allocator.free(self.irradiance_noise_sigma);
+        if (self.reflectance_noise_sigma.len != 0) allocator.free(self.reflectance_noise_sigma);
         if (self.jacobian) |values| allocator.free(values);
         self.* = undefined;
     }

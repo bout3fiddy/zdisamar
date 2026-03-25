@@ -113,26 +113,26 @@ test "canonical execution runs a forward-only program and writes outputs" {
         \\        derivative_mode: none
         \\    scene:
         \\      geometry:
-        \\        model: plane_parallel
-        \\        solar_zenith_deg: 30.0
-        \\        viewing_zenith_deg: 8.0
-        \\        relative_azimuth_deg: 145.0
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 60.0
+        \\        viewing_zenith_deg: 30.0
+        \\        relative_azimuth_deg: 120.0
         \\      atmosphere:
         \\        layering:
-        \\          layer_count: 16
+        \\          layer_count: 12
         \\      bands:
         \\        band_1:
-        \\          start_nm: 405.0
-        \\          end_nm: 465.0
-        \\          step_nm: 2.5
+        \\          start_nm: 760.8
+        \\          end_nm: 761.2
+        \\          step_nm: 0.2
         \\      absorbers:
         \\        o2:
         \\          species: o2
         \\          spectroscopy:
-        \\            model: cross_sections
+        \\            model: line_by_line
         \\      surface:
         \\        model: lambertian
-        \\        albedo: 0.07
+        \\        albedo: 0.20
         \\      measurement_model:
         \\        regime: nadir
         \\        instrument:
@@ -202,26 +202,26 @@ test "canonical execution applies deterministic stage noise when requested" {
         \\        derivative_mode: none
         \\    scene:
         \\      geometry:
-        \\        model: plane_parallel
-        \\        solar_zenith_deg: 30.0
-        \\        viewing_zenith_deg: 8.0
-        \\        relative_azimuth_deg: 145.0
+        \\        model: pseudo_spherical
+        \\        solar_zenith_deg: 60.0
+        \\        viewing_zenith_deg: 30.0
+        \\        relative_azimuth_deg: 120.0
         \\      atmosphere:
         \\        layering:
-        \\          layer_count: 16
+        \\          layer_count: 12
         \\      bands:
         \\        band_1:
-        \\          start_nm: 405.0
-        \\          end_nm: 465.0
-        \\          step_nm: 2.5
+        \\          start_nm: 760.8
+        \\          end_nm: 761.2
+        \\          step_nm: 0.2
         \\      absorbers:
         \\        o2:
         \\          species: o2
         \\          spectroscopy:
-        \\            model: cross_sections
+        \\            model: line_by_line
         \\      surface:
         \\        model: lambertian
-        \\        albedo: 0.07
+        \\        albedo: 0.20
         \\      measurement_model:
         \\        regime: nadir
         \\        instrument:

@@ -1,13 +1,14 @@
 const std = @import("std");
 const noise = @import("../../kernels/spectra/noise.zig");
+const SpectralChannel = @import("../../model/Instrument.zig").SpectralChannel;
 const Scene = @import("../../model/Scene.zig").Scene;
 
 pub const Error = noise.Error;
 
 pub const Provider = struct {
     id: []const u8,
-    materializesSigma: *const fn (scene: *const Scene) bool,
-    materializeSigma: *const fn (scene: *const Scene, signal: []const f64, output: []f64) Error!void,
+    materializesSigma: *const fn (scene: *const Scene, channel: SpectralChannel) bool,
+    materializeSigma: *const fn (scene: *const Scene, channel: SpectralChannel, wavelengths_nm: []const f64, signal: []const f64, output: []f64) Error!void,
 };
 
 pub fn resolve(provider_id: []const u8) ?Provider {
@@ -42,69 +43,120 @@ pub fn resolve(provider_id: []const u8) ?Provider {
     return null;
 }
 
-fn neverEnabled(_: *const Scene) bool {
+fn neverEnabled(_: *const Scene, _: SpectralChannel) bool {
     return false;
 }
 
-fn alwaysEnabled(_: *const Scene) bool {
+fn alwaysEnabled(_: *const Scene, _: SpectralChannel) bool {
     return true;
 }
 
-fn sceneNoiseEnabled(scene: *const Scene) bool {
-    return switch (scene.observation_model.noise_model) {
-        .none => false,
-        else => true,
+fn sceneNoiseEnabled(scene: *const Scene, channel: SpectralChannel) bool {
+    return scene.observation_model.resolvedChannelControls(channel).noise.enabled;
+}
+
+fn sceneNoiseSigma(
+    scene: *const Scene,
+    channel: SpectralChannel,
+    wavelengths_nm: []const f64,
+    signal: []const f64,
+    output: []f64,
+) Error!void {
+    const controls = scene.observation_model.resolvedChannelControls(channel).noise;
+    if (controls.snr_values.len != 0) {
+        return noise.sigmaFromInterpolatedSignalToNoise(
+            wavelengths_nm,
+            controls.snr_wavelengths_nm,
+            controls.snr_values,
+            signal,
+            output,
+        );
+    }
+    return switch (controls.model) {
+        .shot_noise => shotNoiseSigma(scene, channel, wavelengths_nm, signal, output),
+        .s5p_operational => s5pOperationalSigma(scene, channel, wavelengths_nm, signal, output),
+        .lab_operational => labOperationalSigma(scene, channel, wavelengths_nm, signal, output),
+        .snr_from_input => ingestedSigma(scene, channel, signal, output),
+        .none => zeroSigma(scene, channel, wavelengths_nm, signal, output),
     };
 }
 
-fn sceneNoiseSigma(scene: *const Scene, signal: []const f64, output: []f64) Error!void {
-    return switch (scene.observation_model.noise_model) {
-        .shot_noise => shotNoiseSigma(scene, signal, output),
-        .s5p_operational => s5pOperationalSigma(scene, signal, output),
-        .snr_from_input => ingestedSigma(scene, signal, output),
-        .none => zeroSigma(scene, signal, output),
-    };
-}
-
-fn zeroSigma(_: *const Scene, signal: []const f64, output: []f64) Error!void {
+fn zeroSigma(_: *const Scene, _: SpectralChannel, _: []const f64, signal: []const f64, output: []f64) Error!void {
     if (signal.len != output.len) return error.ShapeMismatch;
     @memset(output, 0.0);
 }
 
-fn shotNoiseSigma(_: *const Scene, signal: []const f64, output: []f64) Error!void {
-    try noise.shotNoiseStd(signal, 2.0, output);
+fn shotNoiseSigma(
+    scene: *const Scene,
+    channel: SpectralChannel,
+    _: []const f64,
+    signal: []const f64,
+    output: []f64,
+) Error!void {
+    const controls = scene.observation_model.resolvedChannelControls(channel).noise;
+    try noise.shotNoiseStd(signal, controls.electrons_per_count, output);
 }
 
-fn s5pOperationalSigma(scene: *const Scene, signal: []const f64, output: []f64) Error!void {
-    return noise.scaleSigmaFromReference(
-        scene.observation_model.reference_radiance,
-        scene.observation_model.ingested_noise_sigma,
-        signal,
-        referenceBinWidthNm(scene),
-        currentBinWidthNm(scene, signal.len),
-        output,
-    );
+fn s5pOperationalSigma(
+    scene: *const Scene,
+    channel: SpectralChannel,
+    wavelengths_nm: []const f64,
+    signal: []const f64,
+    output: []f64,
+) Error!void {
+    const controls = scene.observation_model.resolvedChannelControls(channel).noise;
+    if (controls.reference_signal.len != 0 and controls.reference_sigma.len != 0) {
+        return noise.scaleSigmaFromReference(
+            controls.reference_signal,
+            controls.reference_sigma,
+            signal,
+            referenceBinWidthNm(scene, channel, controls.reference_signal.len),
+            currentBinWidthNm(scene, wavelengths_nm),
+            output,
+        );
+    }
+    return noise.sigmaFromS5Operational(wavelengths_nm, signal, output);
 }
 
-fn ingestedSigma(scene: *const Scene, signal: []const f64, output: []f64) Error!void {
+fn labOperationalSigma(
+    scene: *const Scene,
+    channel: SpectralChannel,
+    _: []const f64,
+    signal: []const f64,
+    output: []f64,
+) Error!void {
+    const controls = scene.observation_model.resolvedChannelControls(channel).noise;
+    return noise.sigmaFromLabOperational(signal, controls.lab_a, controls.lab_b, output);
+}
+
+fn ingestedSigma(scene: *const Scene, channel: SpectralChannel, signal: []const f64, output: []f64) Error!void {
+    const controls = scene.observation_model.resolvedChannelControls(channel).noise;
     _ = signal;
+    if (controls.reference_sigma.len != 0) {
+        return noise.copyInputSigma(controls.reference_sigma, output);
+    }
     try noise.copyInputSigma(scene.observation_model.ingested_noise_sigma, output);
 }
 
-fn currentBinWidthNm(scene: *const Scene, sample_count: usize) f64 {
-    if (scene.observation_model.measured_wavelengths_nm.len == sample_count and sample_count > 1) {
-        return averageSpacingNm(scene.observation_model.measured_wavelengths_nm);
+fn currentBinWidthNm(scene: *const Scene, wavelengths_nm: []const f64) f64 {
+    if (wavelengths_nm.len > 1) {
+        return averageSpacingNm(wavelengths_nm);
     }
     if (scene.spectral_grid.sample_count > 1) {
         return (scene.spectral_grid.end_nm - scene.spectral_grid.start_nm) /
             @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
     }
-    return referenceBinWidthNm(scene);
+    return referenceBinWidthNm(scene, .radiance, 0);
 }
 
-fn referenceBinWidthNm(scene: *const Scene) f64 {
+fn referenceBinWidthNm(scene: *const Scene, channel: SpectralChannel, sample_count: usize) f64 {
+    const controls = scene.observation_model.resolvedChannelControls(channel).noise;
+    if (controls.reference_bin_width_nm > 0.0) return controls.reference_bin_width_nm;
     if (scene.observation_model.operational_refspec_grid.enabled()) {
         return scene.observation_model.operational_refspec_grid.effectiveSpacingNm();
+    }
+    if (sample_count > 1 and channel == .radiance and scene.observation_model.reference_radiance.len == sample_count) {
+        return averageSpacingNm(scene.observation_model.measured_wavelengths_nm);
     }
     if (scene.observation_model.measured_wavelengths_nm.len > 1) {
         return averageSpacingNm(scene.observation_model.measured_wavelengths_nm);
@@ -138,7 +190,7 @@ test "s5p operational noise reuses ingested sigma semantics instead of a toy sca
     };
     const signal = [_]f64{ 40.0, 5.0 };
     var sigma: [2]f64 = undefined;
-    try s5pOperationalSigma(&scene, &signal, &sigma);
+    try s5pOperationalSigma(&scene, .radiance, &.{ 760.8, 761.0 }, &signal, &sigma);
     try std.testing.expectApproxEqRel(@as(f64, 0.04), sigma[0], 1.0e-9);
     try std.testing.expectApproxEqRel(@as(f64, 0.015), sigma[1], 1.0e-9);
 }
@@ -164,8 +216,32 @@ test "s5p operational noise uses the operational reference grid as the reference
 
     const signal = [_]f64{ 10.0, 10.0, 10.0, 10.0, 10.0 };
     var sigma: [5]f64 = undefined;
-    try s5pOperationalSigma(&scene, &signal, &sigma);
+    try s5pOperationalSigma(&scene, .radiance, &.{ 760.8, 760.9, 761.0, 761.1, 761.2 }, &signal, &sigma);
 
     try std.testing.expectApproxEqRel(@as(f64, 0.028284271), sigma[0], 1.0e-9);
     try std.testing.expectApproxEqRel(@as(f64, 0.028284271), sigma[4], 1.0e-9);
+}
+
+test "lab operational noise uses explicit per-channel coefficients" {
+    const scene: Scene = .{
+        .observation_model = .{
+            .measurement_pipeline = .{
+                .radiance = .{
+                    .explicit = true,
+                    .noise = .{
+                        .explicit = true,
+                        .enabled = true,
+                        .model = .lab_operational,
+                        .lab_a = 3.5e-6,
+                        .lab_b = 1500.0,
+                    },
+                },
+            },
+        },
+    };
+    const signal = [_]f64{ 1.0e6, 1.5e6 };
+    var sigma: [2]f64 = undefined;
+    try labOperationalSigma(&scene, .radiance, &.{ 405.0, 406.0 }, &signal, &sigma);
+    try std.testing.expect(sigma[0] > 0.0);
+    try std.testing.expect(sigma[1] > sigma[0]);
 }

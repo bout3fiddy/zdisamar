@@ -22,6 +22,7 @@
 //!   Measurement-space summary and product tests.
 
 const std = @import("std");
+const SpectralChannel = @import("../../../model/Instrument.zig").SpectralChannel;
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
 const calibration = @import("../../spectra/calibration.zig");
@@ -78,9 +79,12 @@ pub fn simulate(
     };
     try resolved_axis.validate();
 
-    const calibration_config = providers.instrument.calibrationForScene(scene);
-    const slit_kernel = providers.instrument.slitKernelForScene(scene);
-    const uses_integrated_sampling = providers.instrument.usesIntegratedSampling(scene);
+    const radiance_calibration = providers.instrument.calibrationForScene(scene, .radiance);
+    const irradiance_calibration = providers.instrument.calibrationForScene(scene, .irradiance);
+    const radiance_slit_kernel = providers.instrument.slitKernelForScene(scene, .radiance);
+    const irradiance_slit_kernel = providers.instrument.slitKernelForScene(scene, .irradiance);
+    const uses_integrated_radiance_sampling = providers.instrument.usesIntegratedSampling(scene, .radiance);
+    const uses_integrated_irradiance_sampling = providers.instrument.usesIntegratedSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
 
@@ -101,13 +105,13 @@ pub fn simulate(
     for (0..sample_count) |index| {
         const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
         const evaluation_wavelength_nm = calibration.shiftedWavelength(
-            calibration_config,
+            radiance_calibration,
             nominal_wavelength_nm,
         );
         buffers.wavelengths[index] = nominal_wavelength_nm;
 
         var integration: @import("../../../plugins/providers/instrument.zig").IntegrationKernel = undefined;
-        providers.instrument.integrationForWavelength(scene, prepared, nominal_wavelength_nm, &integration);
+        providers.instrument.integrationForWavelength(scene, prepared, .radiance, nominal_wavelength_nm, &integration);
 
         const integrated = try SpectralEval.integrateForwardAtNominal(
             allocator,
@@ -130,24 +134,32 @@ pub fn simulate(
         buffers.scratch[index] = integrated.radiance;
         if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
     }
-    if (uses_integrated_sampling) {
+    if (uses_integrated_radiance_sampling) {
         // DECISION:
         //   Integrated sampling bypasses slit convolution because the
         //   instrument already performed the spectral integration.
         @memcpy(buffers.radiance, buffers.scratch);
     } else {
-        try convolution.apply(buffers.scratch, slit_kernel[0..], buffers.radiance);
+        try convolution.apply(buffers.scratch, radiance_slit_kernel[0..], buffers.radiance);
     }
-    try calibration.applySignal(calibration_config, buffers.radiance, buffers.radiance);
+    try applyChannelCorrections(
+        scene,
+        .radiance,
+        radiance_calibration,
+        prepared.depolarization_factor,
+        buffers.wavelengths,
+        buffers.radiance,
+        buffers.scratch_aux,
+    );
 
     for (0..sample_count) |index| {
         const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
         const evaluation_wavelength_nm = calibration.shiftedWavelength(
-            calibration_config,
+            irradiance_calibration,
             nominal_wavelength_nm,
         );
         var integration: @import("../../../plugins/providers/instrument.zig").IntegrationKernel = undefined;
-        providers.instrument.integrationForWavelength(scene, prepared, nominal_wavelength_nm, &integration);
+        providers.instrument.integrationForWavelength(scene, prepared, .irradiance, nominal_wavelength_nm, &integration);
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,
             prepared,
@@ -157,11 +169,27 @@ pub fn simulate(
             &integration,
         );
     }
-    if (uses_integrated_sampling) {
+    if (uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
-        try convolution.apply(buffers.scratch, slit_kernel[0..], buffers.irradiance);
+        try convolution.apply(buffers.scratch, irradiance_slit_kernel[0..], buffers.irradiance);
     }
+    try applyChannelCorrections(
+        scene,
+        .irradiance,
+        irradiance_calibration,
+        prepared.depolarization_factor,
+        buffers.wavelengths,
+        buffers.irradiance,
+        buffers.scratch_aux,
+    );
+    try calibration.applyRingSpectrum(
+        scene.observation_model.resolvedRingControls(),
+        buffers.wavelengths,
+        buffers.irradiance,
+        buffers.radiance,
+        buffers.scratch_aux,
+    );
 
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
@@ -173,17 +201,56 @@ pub fn simulate(
     }
 
     if (buffers.noise_sigma) |noise_sigma| {
-        try providers.noise.materializeSigma(scene, buffers.radiance, noise_sigma);
+        if (buffers.radiance_noise_sigma) |radiance_noise_sigma| {
+            if (providers.noise.materializesSigma(scene, .radiance)) {
+                try providers.noise.materializeSigma(scene, .radiance, buffers.wavelengths, buffers.radiance, radiance_noise_sigma);
+            } else {
+                @memset(radiance_noise_sigma, 0.0);
+            }
+            if (noise_sigma.ptr != radiance_noise_sigma.ptr) {
+                @memcpy(noise_sigma, radiance_noise_sigma);
+            }
+        }
+        if (buffers.irradiance_noise_sigma) |irradiance_noise_sigma| {
+            if (providers.noise.materializesSigma(scene, .irradiance)) {
+                try providers.noise.materializeSigma(scene, .irradiance, buffers.wavelengths, buffers.irradiance, irradiance_noise_sigma);
+            } else {
+                @memset(irradiance_noise_sigma, 0.0);
+            }
+        }
+        if (buffers.reflectance_noise_sigma) |reflectance_noise_sigma| {
+            const radiance_sigma = buffers.radiance_noise_sigma orelse noise_sigma;
+            const irradiance_sigma = buffers.irradiance_noise_sigma orelse noise_sigma;
+            for (0..sample_count) |index| {
+                const radiance_term = if (radiance_sigma.len == sample_count and buffers.radiance[index] > 0.0)
+                    buffers.reflectance[index] * (radiance_sigma[index] / @max(buffers.radiance[index], 1.0e-12))
+                else
+                    0.0;
+                const irradiance_term = if (irradiance_sigma.len == sample_count and buffers.irradiance[index] > 0.0)
+                    buffers.reflectance[index] * (irradiance_sigma[index] / @max(buffers.irradiance[index], 1.0e-12))
+                else
+                    0.0;
+                reflectance_noise_sigma[index] = std.math.sqrt(radiance_term * radiance_term + irradiance_term * irradiance_term);
+            }
+            try calibration.applyReflectanceCalibrationErrorSigma(
+                scene.observation_model.resolvedReflectanceCalibration(),
+                buffers.wavelengths,
+                buffers.reflectance,
+                reflectance_noise_sigma,
+                buffers.scratch_aux,
+            );
+        }
         for (noise_sigma) |value| noise_sum += value;
     }
 
     var mean_jacobian: ?f64 = null;
     if (buffers.jacobian) |jacobian| {
-        if (uses_integrated_sampling) {
+        if (uses_integrated_radiance_sampling) {
             for (jacobian) |value| jacobian_sum += value;
         } else {
-            try convolution.apply(jacobian, slit_kernel[0..], buffers.scratch);
+            try convolution.apply(jacobian, radiance_slit_kernel[0..], buffers.scratch);
             @memcpy(jacobian, buffers.scratch);
+            try calibration.applySignal(radiance_calibration, jacobian, jacobian);
             for (jacobian) |value| jacobian_sum += value;
         }
         mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
@@ -268,11 +335,25 @@ pub fn simulateProduct(
     errdefer allocator.free(reflectance);
     const scratch = try allocator.alloc(f64, sample_count);
     defer allocator.free(scratch);
-    const noise_sigma = if (providers.noise.materializesSigma(scene))
+    const scratch_aux = try allocator.alloc(f64, sample_count);
+    defer allocator.free(scratch_aux);
+    const wants_radiance_noise = providers.noise.materializesSigma(scene, .radiance);
+    const wants_irradiance_noise = providers.noise.materializesSigma(scene, .irradiance);
+    const noise_sigma = if (wants_radiance_noise or wants_irradiance_noise)
         try allocator.alloc(f64, sample_count)
     else
         try allocator.alloc(f64, 0);
     errdefer allocator.free(noise_sigma);
+    const irradiance_noise_sigma = if (wants_radiance_noise or wants_irradiance_noise)
+        try allocator.alloc(f64, sample_count)
+    else
+        try allocator.alloc(f64, 0);
+    errdefer allocator.free(irradiance_noise_sigma);
+    const reflectance_noise_sigma = if (wants_radiance_noise or wants_irradiance_noise)
+        try allocator.alloc(f64, sample_count)
+    else
+        try allocator.alloc(f64, 0);
+    errdefer allocator.free(reflectance_noise_sigma);
 
     const jacobian = if (route.derivative_mode == .none)
         null
@@ -300,6 +381,7 @@ pub fn simulateProduct(
         .irradiance = irradiance,
         .reflectance = reflectance,
         .scratch = scratch,
+        .scratch_aux = scratch_aux,
         .layer_inputs = layer_inputs,
         .pseudo_spherical_layers = pseudo_spherical_layers,
         .source_interfaces = source_interfaces,
@@ -309,6 +391,9 @@ pub fn simulateProduct(
         .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
         .jacobian = jacobian,
         .noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
+        .radiance_noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
+        .irradiance_noise_sigma = if (irradiance_noise_sigma.len == 0) null else irradiance_noise_sigma,
+        .reflectance_noise_sigma = if (reflectance_noise_sigma.len == 0) null else reflectance_noise_sigma,
     });
 
     return .{
@@ -318,6 +403,9 @@ pub fn simulateProduct(
         .irradiance = irradiance,
         .reflectance = reflectance,
         .noise_sigma = noise_sigma,
+        .radiance_noise_sigma = noise_sigma,
+        .irradiance_noise_sigma = irradiance_noise_sigma,
+        .reflectance_noise_sigma = reflectance_noise_sigma,
         .jacobian = jacobian,
         .effective_air_mass_factor = prepared.effective_air_mass_factor,
         .effective_single_scatter_albedo = prepared.effective_single_scatter_albedo,
@@ -331,4 +419,51 @@ pub fn simulateProduct(
         .depolarization_factor = prepared.depolarization_factor,
         .d_optical_depth_d_temperature = prepared.d_optical_depth_d_temperature,
     };
+}
+
+fn applyChannelCorrections(
+    scene: *const Scene,
+    channel: SpectralChannel,
+    calibration_config: calibration.Calibration,
+    depolarization_factor: f64,
+    wavelengths_nm: []const f64,
+    signal: []f64,
+    scratch: []f64,
+) !void {
+    const controls = scene.observation_model.resolvedChannelControls(channel);
+    try calibration.applySignal(calibration_config, signal, signal);
+    try calibration.applySimpleOffsets(controls.simple_offsets, signal);
+    try calibration.applySpectralFeatures(controls.spectral_features, wavelengths_nm, signal);
+    if (controls.smear_percent != 0.0) {
+        try calibration.applySmear(controls.smear_percent, signal, scratch);
+    }
+    try calibration.applyMultiplicativeNodes(controls.multiplicative_nodes, wavelengths_nm, signal, scratch);
+    const stray_reference = if (controls.stray_light_nodes.use_reference_spectrum)
+        correctionReferenceSignal(scene, channel, signal.len) orelse signal
+    else
+        signal;
+    try calibration.applyStrayLightNodes(controls.stray_light_nodes, wavelengths_nm, stray_reference, signal, scratch);
+    if (channel == .radiance) {
+        try calibration.applyPolarizationScramblerBias(
+            controls.use_polarization_scrambler,
+            depolarization_factor,
+            wavelengths_nm,
+            signal,
+        );
+    }
+}
+
+fn correctionReferenceSignal(
+    scene: *const Scene,
+    channel: SpectralChannel,
+    sample_count: usize,
+) ?[]const f64 {
+    const controls = scene.observation_model.resolvedChannelControls(channel);
+    if (controls.noise.reference_signal.len == sample_count) {
+        return controls.noise.reference_signal;
+    }
+    if (channel == .radiance and scene.observation_model.reference_radiance.len == sample_count) {
+        return scene.observation_model.reference_radiance;
+    }
+    return null;
 }

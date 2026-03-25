@@ -53,6 +53,7 @@ const Aerosol = @import("../../model/Aerosol.zig").Aerosol;
 const ObservationModel = @import("../../model/ObservationModel.zig").ObservationModel;
 const CrossSectionFitControls = @import("../../model/ObservationModel.zig").CrossSectionFitControls;
 const ObservationRegime = @import("../../model/ObservationModel.zig").ObservationRegime;
+const InstrumentModel = @import("../../model/Instrument.zig").Instrument;
 const InstrumentId = @import("../../model/Instrument.zig").Id;
 const BuiltinLineShapeKind = @import("../../model/Instrument.zig").BuiltinLineShapeKind;
 const Scene = @import("../../model/Scene.zig").Scene;
@@ -258,6 +259,8 @@ pub const RrsRingConfig = struct {
         use_cabannes: bool = false,
         degree_poly: u32 = 0,
         include_absorption: bool = false,
+        differential: bool = true,
+        ring_coefficient: f64 = 0.0,
     };
 
     sim: ?[]const PerBand = null,
@@ -334,10 +337,54 @@ pub const InstrumentConfig = struct {
         fwhm_irradiance_retr: ?f64 = null,
         fwhm_radiance_sim: ?f64 = null,
         fwhm_radiance_retr: ?f64 = null,
+        slit_index_irradiance_sim: ?InstrumentModel.SlitIndex = null,
+        slit_index_irradiance_retr: ?InstrumentModel.SlitIndex = null,
+        slit_index_radiance_sim: ?InstrumentModel.SlitIndex = null,
+        slit_index_radiance_retr: ?InstrumentModel.SlitIndex = null,
+        slit_amplitude_irradiance_sim: ?f64 = null,
+        slit_amplitude_irradiance_retr: ?f64 = null,
+        slit_amplitude_radiance_sim: ?f64 = null,
+        slit_amplitude_radiance_retr: ?f64 = null,
+        slit_scale_irradiance_sim: ?f64 = null,
+        slit_scale_irradiance_retr: ?f64 = null,
+        slit_scale_radiance_sim: ?f64 = null,
+        slit_scale_radiance_retr: ?f64 = null,
+        slit_phase_irradiance_sim: ?f64 = null,
+        slit_phase_irradiance_retr: ?f64 = null,
+        slit_phase_radiance_sim: ?f64 = null,
+        slit_phase_radiance_retr: ?f64 = null,
+        wavelength_shift_irradiance_sim: ?f64 = null,
+        wavelength_shift_irradiance_retr: ?f64 = null,
+        wavelength_shift_radiance_sim: ?f64 = null,
+        wavelength_shift_radiance_retr: ?f64 = null,
+        simple_offset_mul_irradiance_sim: ?f64 = null,
+        simple_offset_mul_irradiance_retr: ?f64 = null,
+        simple_offset_mul_radiance_sim: ?f64 = null,
+        simple_offset_mul_radiance_retr: ?f64 = null,
+        simple_offset_add_irradiance_sim: ?f64 = null,
+        simple_offset_add_irradiance_retr: ?f64 = null,
+        simple_offset_add_radiance_sim: ?f64 = null,
+        simple_offset_add_radiance_retr: ?f64 = null,
+        smear_percent_irradiance_sim: ?f64 = null,
+        smear_percent_irradiance_retr: ?f64 = null,
+        smear_percent_radiance_sim: ?f64 = null,
+        smear_percent_radiance_retr: ?f64 = null,
+        snr_irradiance_sim: ?f64 = null,
+        snr_irradiance_retr: ?f64 = null,
+        snr_radiance_sim: ?f64 = null,
+        snr_radiance_retr: ?f64 = null,
+        pol_scrambler_radiance_sim: ?bool = null,
+        pol_scrambler_radiance_retr: ?bool = null,
+        calibration_error_reflectance_mul_sim: ?f64 = null,
+        calibration_error_reflectance_mul_retr: ?f64 = null,
+        calibration_error_reflectance_add_sim: ?f64 = null,
+        calibration_error_reflectance_add_retr: ?f64 = null,
     };
     bands: ?[]const PerBand = null,
     add_noise_irr_sim: bool = false,
     add_noise_rad_sim: bool = false,
+    add_noise_irr_retr: bool = false,
+    add_noise_rad_retr: bool = false,
 };
 
 /// Typed representation of the vendor GEOMETRY section.
@@ -903,6 +950,8 @@ const ResolveContext = struct {
         stage.general = try decodeGeneralConfig(self.allocator, mapGet(stage_map, "general"), self.strict_unknown_fields);
         try applyGeneralConfigToObservationModel(self.allocator, kind, stage.general, &stage.scene);
         stage.instrument = try decodeInstrumentConfig(self.allocator, mapGet(stage_map, "instrument"), self.strict_unknown_fields);
+        try applyInstrumentConfigToObservationModel(self.allocator, kind, stage.instrument, &stage.scene);
+        try applyRrsRingConfigToObservationModel(kind, stage.rrs_ring, &stage.scene);
         stage.geometry = try decodeGeometryConfig(mapGet(stage_map, "geometry"), self.strict_unknown_fields);
         try applyGeometryConfigToScene(kind, stage.geometry, &stage.scene.geometry);
         stage.pressure_temperature = try decodePressureTemperatureConfig(self.allocator, mapGet(stage_map, "pressure_temperature"), self.strict_unknown_fields);
@@ -2083,6 +2132,8 @@ fn decodeRrsPerBandSeq(allocator: Allocator, value: yaml.Value, strict: bool) ![
             "use_cabannes",
             "degree_poly",
             "include_absorption",
+            "differential",
+            "ring_coefficient",
         }, strict);
 
         var band: RrsRingConfig.PerBand = .{};
@@ -2092,6 +2143,8 @@ fn decodeRrsPerBandSeq(allocator: Allocator, value: yaml.Value, strict: bool) ![
         if (mapGet(band_map, "use_cabannes")) |v| band.use_cabannes = try expectBool(v);
         if (mapGet(band_map, "degree_poly")) |v| band.degree_poly = @intCast(try expectU64(v));
         if (mapGet(band_map, "include_absorption")) |v| band.include_absorption = try expectBool(v);
+        if (mapGet(band_map, "differential")) |v| band.differential = try expectBool(v);
+        if (mapGet(band_map, "ring_coefficient")) |v| band.ring_coefficient = try expectF64(v);
         bands[index] = band;
     }
     return bands;
@@ -2212,13 +2265,31 @@ fn decodeInstrumentConfig(allocator: Allocator, value: ?yaml.Value, strict: bool
         "bands",
         "add_noise_irr_sim",
         "add_noise_rad_sim",
+        "add_noise_irr_retr",
+        "add_noise_rad_retr",
     }, strict);
 
     var ic: InstrumentConfig = .{};
     if (mapGet(ic_map, "add_noise_irr_sim")) |v| ic.add_noise_irr_sim = try expectBool(v);
     if (mapGet(ic_map, "add_noise_rad_sim")) |v| ic.add_noise_rad_sim = try expectBool(v);
+    if (mapGet(ic_map, "add_noise_irr_retr")) |v| ic.add_noise_irr_retr = try expectBool(v);
+    if (mapGet(ic_map, "add_noise_rad_retr")) |v| ic.add_noise_rad_retr = try expectBool(v);
     if (mapGet(ic_map, "bands")) |v| ic.bands = try decodeInstrumentPerBandSeq(allocator, v, strict);
     return ic;
+}
+
+fn decodeSlitIndexValue(value: yaml.Value) !InstrumentModel.SlitIndex {
+    return switch (value) {
+        .string => try InstrumentModel.SlitIndex.parse(try expectString(value)),
+        .integer => switch (try expectU64(value)) {
+            0 => .gaussian_modulated,
+            1 => .flat_top_n4,
+            2 => .triple_flat_top_n4,
+            5 => .table,
+            else => Error.InvalidValue,
+        },
+        else => Error.InvalidType,
+    };
 }
 
 fn decodeInstrumentPerBandSeq(allocator: Allocator, value: yaml.Value, strict: bool) ![]const InstrumentConfig.PerBand {
@@ -2235,6 +2306,48 @@ fn decodeInstrumentPerBandSeq(allocator: Allocator, value: yaml.Value, strict: b
             "fwhm_irradiance_retr",
             "fwhm_radiance_sim",
             "fwhm_radiance_retr",
+            "slit_index_irradiance_sim",
+            "slit_index_irradiance_retr",
+            "slit_index_radiance_sim",
+            "slit_index_radiance_retr",
+            "slit_amplitude_irradiance_sim",
+            "slit_amplitude_irradiance_retr",
+            "slit_amplitude_radiance_sim",
+            "slit_amplitude_radiance_retr",
+            "slit_scale_irradiance_sim",
+            "slit_scale_irradiance_retr",
+            "slit_scale_radiance_sim",
+            "slit_scale_radiance_retr",
+            "slit_phase_irradiance_sim",
+            "slit_phase_irradiance_retr",
+            "slit_phase_radiance_sim",
+            "slit_phase_radiance_retr",
+            "wavelength_shift_irradiance_sim",
+            "wavelength_shift_irradiance_retr",
+            "wavelength_shift_radiance_sim",
+            "wavelength_shift_radiance_retr",
+            "simple_offset_mul_irradiance_sim",
+            "simple_offset_mul_irradiance_retr",
+            "simple_offset_mul_radiance_sim",
+            "simple_offset_mul_radiance_retr",
+            "simple_offset_add_irradiance_sim",
+            "simple_offset_add_irradiance_retr",
+            "simple_offset_add_radiance_sim",
+            "simple_offset_add_radiance_retr",
+            "smear_percent_irradiance_sim",
+            "smear_percent_irradiance_retr",
+            "smear_percent_radiance_sim",
+            "smear_percent_radiance_retr",
+            "snr_irradiance_sim",
+            "snr_irradiance_retr",
+            "snr_radiance_sim",
+            "snr_radiance_retr",
+            "pol_scrambler_radiance_sim",
+            "pol_scrambler_radiance_retr",
+            "calibration_error_reflectance_mul_sim",
+            "calibration_error_reflectance_mul_retr",
+            "calibration_error_reflectance_add_sim",
+            "calibration_error_reflectance_add_retr",
         }, strict);
 
         var band: InstrumentConfig.PerBand = .{};
@@ -2246,6 +2359,48 @@ fn decodeInstrumentPerBandSeq(allocator: Allocator, value: yaml.Value, strict: b
         if (mapGet(band_map, "fwhm_irradiance_retr")) |v| band.fwhm_irradiance_retr = try expectF64(v);
         if (mapGet(band_map, "fwhm_radiance_sim")) |v| band.fwhm_radiance_sim = try expectF64(v);
         if (mapGet(band_map, "fwhm_radiance_retr")) |v| band.fwhm_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "slit_index_irradiance_sim")) |v| band.slit_index_irradiance_sim = try decodeSlitIndexValue(v);
+        if (mapGet(band_map, "slit_index_irradiance_retr")) |v| band.slit_index_irradiance_retr = try decodeSlitIndexValue(v);
+        if (mapGet(band_map, "slit_index_radiance_sim")) |v| band.slit_index_radiance_sim = try decodeSlitIndexValue(v);
+        if (mapGet(band_map, "slit_index_radiance_retr")) |v| band.slit_index_radiance_retr = try decodeSlitIndexValue(v);
+        if (mapGet(band_map, "slit_amplitude_irradiance_sim")) |v| band.slit_amplitude_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "slit_amplitude_irradiance_retr")) |v| band.slit_amplitude_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "slit_amplitude_radiance_sim")) |v| band.slit_amplitude_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "slit_amplitude_radiance_retr")) |v| band.slit_amplitude_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "slit_scale_irradiance_sim")) |v| band.slit_scale_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "slit_scale_irradiance_retr")) |v| band.slit_scale_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "slit_scale_radiance_sim")) |v| band.slit_scale_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "slit_scale_radiance_retr")) |v| band.slit_scale_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "slit_phase_irradiance_sim")) |v| band.slit_phase_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "slit_phase_irradiance_retr")) |v| band.slit_phase_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "slit_phase_radiance_sim")) |v| band.slit_phase_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "slit_phase_radiance_retr")) |v| band.slit_phase_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "wavelength_shift_irradiance_sim")) |v| band.wavelength_shift_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "wavelength_shift_irradiance_retr")) |v| band.wavelength_shift_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "wavelength_shift_radiance_sim")) |v| band.wavelength_shift_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "wavelength_shift_radiance_retr")) |v| band.wavelength_shift_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "simple_offset_mul_irradiance_sim")) |v| band.simple_offset_mul_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "simple_offset_mul_irradiance_retr")) |v| band.simple_offset_mul_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "simple_offset_mul_radiance_sim")) |v| band.simple_offset_mul_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "simple_offset_mul_radiance_retr")) |v| band.simple_offset_mul_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "simple_offset_add_irradiance_sim")) |v| band.simple_offset_add_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "simple_offset_add_irradiance_retr")) |v| band.simple_offset_add_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "simple_offset_add_radiance_sim")) |v| band.simple_offset_add_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "simple_offset_add_radiance_retr")) |v| band.simple_offset_add_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "smear_percent_irradiance_sim")) |v| band.smear_percent_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "smear_percent_irradiance_retr")) |v| band.smear_percent_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "smear_percent_radiance_sim")) |v| band.smear_percent_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "smear_percent_radiance_retr")) |v| band.smear_percent_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "snr_irradiance_sim")) |v| band.snr_irradiance_sim = try expectF64(v);
+        if (mapGet(band_map, "snr_irradiance_retr")) |v| band.snr_irradiance_retr = try expectF64(v);
+        if (mapGet(band_map, "snr_radiance_sim")) |v| band.snr_radiance_sim = try expectF64(v);
+        if (mapGet(band_map, "snr_radiance_retr")) |v| band.snr_radiance_retr = try expectF64(v);
+        if (mapGet(band_map, "pol_scrambler_radiance_sim")) |v| band.pol_scrambler_radiance_sim = try expectBool(v);
+        if (mapGet(band_map, "pol_scrambler_radiance_retr")) |v| band.pol_scrambler_radiance_retr = try expectBool(v);
+        if (mapGet(band_map, "calibration_error_reflectance_mul_sim")) |v| band.calibration_error_reflectance_mul_sim = try expectF64(v);
+        if (mapGet(band_map, "calibration_error_reflectance_mul_retr")) |v| band.calibration_error_reflectance_mul_retr = try expectF64(v);
+        if (mapGet(band_map, "calibration_error_reflectance_add_sim")) |v| band.calibration_error_reflectance_add_sim = try expectF64(v);
+        if (mapGet(band_map, "calibration_error_reflectance_add_retr")) |v| band.calibration_error_reflectance_add_retr = try expectF64(v);
         bands[index] = band;
     }
     return bands;
@@ -3043,6 +3198,300 @@ fn applyGeneralConfigToObservationModel(
         },
         .xsec_strong_absorption_bands = owned_strong_absorption_bands,
         .polynomial_degree_bands = owned_polynomial_degree_bands,
+    };
+}
+
+fn applyInstrumentConfigToObservationModel(
+    allocator: Allocator,
+    kind: StageKind,
+    config: ?InstrumentConfig,
+    scene: *Scene,
+) !void {
+    const instrument_config = config orelse return;
+    const band = if (instrument_config.bands) |bands| blk: {
+        if (scene.bands.items.len != 1 or bands.len != 1) return Error.InvalidValue;
+        break :blk bands[0];
+    } else InstrumentConfig.PerBand{};
+
+    var radiance = scene.observation_model.resolvedChannelControls(.radiance);
+    var irradiance = scene.observation_model.resolvedChannelControls(.irradiance);
+    var radiance_changed = false;
+    var irradiance_changed = false;
+
+    try applyInstrumentBandControls(
+        allocator,
+        kind,
+        .radiance,
+        band,
+        switch (kind) {
+            .simulation => instrument_config.add_noise_rad_sim,
+            .retrieval => instrument_config.add_noise_rad_retr,
+        },
+        &radiance,
+        &radiance_changed,
+        scene.spectral_grid,
+    );
+    try applyInstrumentBandControls(
+        allocator,
+        kind,
+        .irradiance,
+        band,
+        switch (kind) {
+            .simulation => instrument_config.add_noise_irr_sim,
+            .retrieval => instrument_config.add_noise_irr_retr,
+        },
+        &irradiance,
+        &irradiance_changed,
+        scene.spectral_grid,
+    );
+
+    if (radiance_changed) {
+        radiance.explicit = true;
+        scene.observation_model.measurement_pipeline.radiance = radiance;
+    }
+    if (irradiance_changed) {
+        irradiance.explicit = true;
+        scene.observation_model.measurement_pipeline.irradiance = irradiance;
+    }
+
+    const reflectance_mul = switch (kind) {
+        .simulation => band.calibration_error_reflectance_mul_sim,
+        .retrieval => band.calibration_error_reflectance_mul_retr,
+    };
+    if (reflectance_mul) |value| {
+        scene.observation_model.measurement_pipeline.reflectance_calibration.multiplicative_error =
+            try makeConstantCorrection(allocator, scene.spectral_grid.start_nm, value);
+    }
+    const reflectance_add = switch (kind) {
+        .simulation => band.calibration_error_reflectance_add_sim,
+        .retrieval => band.calibration_error_reflectance_add_retr,
+    };
+    if (reflectance_add) |value| {
+        scene.observation_model.measurement_pipeline.reflectance_calibration.additive_error =
+            try makeConstantCorrection(allocator, scene.spectral_grid.start_nm, value);
+    }
+}
+
+fn applyInstrumentBandControls(
+    allocator: Allocator,
+    kind: StageKind,
+    channel: enum { radiance, irradiance },
+    band: InstrumentConfig.PerBand,
+    enable_noise: bool,
+    controls: *InstrumentModel.SpectralChannelControls,
+    changed: *bool,
+    spectral_grid: SpectralGrid,
+) !void {
+    const fwhm = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.fwhm_radiance_sim,
+            .retrieval => band.fwhm_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.fwhm_irradiance_sim,
+            .retrieval => band.fwhm_irradiance_retr,
+        },
+    };
+    if (fwhm) |value| {
+        controls.response.explicit = true;
+        controls.response.fwhm_nm = value;
+        changed.* = true;
+    }
+
+    const slit_index = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.slit_index_radiance_sim,
+            .retrieval => band.slit_index_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.slit_index_irradiance_sim,
+            .retrieval => band.slit_index_irradiance_retr,
+        },
+    };
+    if (slit_index) |value| {
+        controls.response.explicit = true;
+        controls.response.slit_index = value;
+        controls.response.builtin_line_shape = value.builtinKind();
+        changed.* = true;
+    }
+
+    const slit_amplitude = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.slit_amplitude_radiance_sim,
+            .retrieval => band.slit_amplitude_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.slit_amplitude_irradiance_sim,
+            .retrieval => band.slit_amplitude_irradiance_retr,
+        },
+    };
+    if (slit_amplitude) |value| {
+        controls.response.explicit = true;
+        controls.response.amplitude = value;
+        changed.* = true;
+    }
+
+    const slit_scale = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.slit_scale_radiance_sim,
+            .retrieval => band.slit_scale_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.slit_scale_irradiance_sim,
+            .retrieval => band.slit_scale_irradiance_retr,
+        },
+    };
+    if (slit_scale) |value| {
+        controls.response.explicit = true;
+        controls.response.scale = value;
+        changed.* = true;
+    }
+
+    const slit_phase = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.slit_phase_radiance_sim,
+            .retrieval => band.slit_phase_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.slit_phase_irradiance_sim,
+            .retrieval => band.slit_phase_irradiance_retr,
+        },
+    };
+    if (slit_phase) |value| {
+        controls.response.explicit = true;
+        controls.response.phase_deg = value;
+        changed.* = true;
+    }
+
+    const wavelength_shift = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.wavelength_shift_radiance_sim,
+            .retrieval => band.wavelength_shift_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.wavelength_shift_irradiance_sim,
+            .retrieval => band.wavelength_shift_irradiance_retr,
+        },
+    };
+    if (wavelength_shift) |value| {
+        controls.wavelength_shift_nm = value;
+        changed.* = true;
+    }
+
+    const simple_offset_mul = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.simple_offset_mul_radiance_sim,
+            .retrieval => band.simple_offset_mul_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.simple_offset_mul_irradiance_sim,
+            .retrieval => band.simple_offset_mul_irradiance_retr,
+        },
+    };
+    if (simple_offset_mul) |value| {
+        controls.simple_offsets.multiplicative_percent = value;
+        changed.* = true;
+    }
+
+    const simple_offset_add = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.simple_offset_add_radiance_sim,
+            .retrieval => band.simple_offset_add_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.simple_offset_add_irradiance_sim,
+            .retrieval => band.simple_offset_add_irradiance_retr,
+        },
+    };
+    if (simple_offset_add) |value| {
+        controls.simple_offsets.additive_percent_of_first = value;
+        changed.* = true;
+    }
+
+    const smear_percent = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.smear_percent_radiance_sim,
+            .retrieval => band.smear_percent_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.smear_percent_irradiance_sim,
+            .retrieval => band.smear_percent_irradiance_retr,
+        },
+    };
+    if (smear_percent) |value| {
+        controls.smear_percent = value;
+        changed.* = true;
+    }
+
+    const snr_value = switch (channel) {
+        .radiance => switch (kind) {
+            .simulation => band.snr_radiance_sim,
+            .retrieval => band.snr_radiance_retr,
+        },
+        .irradiance => switch (kind) {
+            .simulation => band.snr_irradiance_sim,
+            .retrieval => band.snr_irradiance_retr,
+        },
+    };
+    if (enable_noise or snr_value != null) {
+        controls.noise.explicit = true;
+        controls.noise.enabled = true;
+        if (controls.noise.model == .none) controls.noise.model = .shot_noise;
+        if (snr_value) |value| {
+            controls.noise.snr_wavelengths_nm = try allocator.dupe(f64, &.{spectral_grid.start_nm});
+            controls.noise.snr_values = try allocator.dupe(f64, &.{value});
+            controls.noise.owns_memory = true;
+        }
+        changed.* = true;
+    }
+
+    if (channel == .radiance) {
+        const pol_scrambler = switch (kind) {
+            .simulation => band.pol_scrambler_radiance_sim,
+            .retrieval => band.pol_scrambler_radiance_retr,
+        };
+        if (pol_scrambler) |value| {
+            controls.use_polarization_scrambler = value;
+            changed.* = true;
+        }
+    }
+}
+
+fn makeConstantCorrection(allocator: Allocator, wavelength_nm: f64, value: f64) !InstrumentModel.NodalCorrection {
+    const wavelengths_nm = try allocator.dupe(f64, &.{wavelength_nm});
+    errdefer allocator.free(wavelengths_nm);
+    const values = try allocator.dupe(f64, &.{value});
+    return .{
+        .wavelengths_nm = wavelengths_nm,
+        .values = values,
+        .owns_memory = true,
+    };
+}
+
+fn applyRrsRingConfigToObservationModel(
+    kind: StageKind,
+    config: ?RrsRingConfig,
+    scene: *Scene,
+) !void {
+    const ring_config = config orelse return;
+    const bands = switch (kind) {
+        .simulation => ring_config.sim,
+        .retrieval => ring_config.retr,
+    } orelse return;
+    if (scene.bands.items.len != 1 or bands.len != 1) return Error.InvalidValue;
+
+    const band = bands[0];
+    if (!band.use_rrs and band.ring_coefficient == 0.0) return;
+    scene.observation_model.measurement_pipeline.ring = .{
+        .explicit = true,
+        .enabled = band.use_rrs or band.ring_coefficient != 0.0,
+        .differential = band.differential,
+        .coefficient = if (band.ring_coefficient != 0.0) band.ring_coefficient else 0.01 * band.fraction_raman_lines,
+        .approximate_rrs = band.approximate_rrs,
+        .fraction_raman_lines = band.fraction_raman_lines,
+        .use_cabannes = band.use_cabannes,
+        .degree_poly = band.degree_poly,
+        .include_absorption = band.include_absorption,
     };
 }
 

@@ -755,6 +755,122 @@ test "compatibility harness execution honors RTM controls in prepared routes" {
     try expectPreparedRouteRtmControls();
 }
 
+test "compatibility harness keeps ring and no-scrambler radiance stages explicit" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const case = ParityCase{
+        .id = "compat-instrument-corrections",
+        .component = "measurement_space",
+        .upstream_case = "Config_O2_with_CIA.in",
+        .runtime_profile = .{
+            .observation_regime = "nadir",
+            .solver_mode = "scalar",
+            .derivative_mode = "none",
+            .spectral_samples = 61,
+        },
+        .expected_route_family = "baseline_labos",
+        .expected_derivative_mode = "none",
+        .status = "measurement_space_contract",
+        .spectral_start_nm = 760.8,
+        .spectral_end_nm = 771.5,
+        .has_aerosols = true,
+        .use_o2a_spectroscopy = true,
+        .tolerances = .{ .absolute = 1.0e-6, .relative = 1.0e-6 },
+    };
+
+    const base_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = .{
+            .explicit = true,
+            .response = .{
+                .explicit = true,
+                .slit_index = .flat_top_n4,
+                .fwhm_nm = 0.38,
+                .builtin_line_shape = .flat_top_n4,
+                .high_resolution_step_nm = 0.01,
+                .high_resolution_half_span_nm = 1.14,
+            },
+        },
+        .irradiance = .{
+            .explicit = true,
+            .response = .{
+                .explicit = true,
+                .slit_index = .flat_top_n4,
+                .fwhm_nm = 0.38,
+                .builtin_line_shape = .flat_top_n4,
+                .high_resolution_step_nm = 0.01,
+                .high_resolution_half_span_nm = 1.14,
+            },
+        },
+    };
+    const corrected_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = .{
+            .explicit = true,
+            .response = base_pipeline.radiance.response,
+            .use_polarization_scrambler = false,
+            .simple_offsets = .{
+                .multiplicative_percent = 0.6,
+            },
+            .smear_percent = 1.0,
+        },
+        .irradiance = base_pipeline.irradiance,
+        .ring = .{
+            .explicit = true,
+            .enabled = true,
+            .coefficient = 0.015,
+            .fraction_raman_lines = 0.7,
+            .differential = true,
+        },
+    };
+
+    var base_scene = makeSceneForCase(case, .nadir);
+    base_scene.observation_model.measurement_pipeline = base_pipeline;
+    base_scene.observation_model.noise_model = .none;
+    var request_base = zdisamar.Request.init(base_scene);
+    request_base.expected_derivative_mode = .none;
+
+    var corrected_scene = makeSceneForCase(case, .nadir);
+    corrected_scene.observation_model.measurement_pipeline = corrected_pipeline;
+    corrected_scene.observation_model.noise_model = .none;
+    var request_corrected = zdisamar.Request.init(corrected_scene);
+    request_corrected.expected_derivative_mode = .none;
+
+    var plan = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .id = case.id,
+            .observation_regime = .nadir,
+            .derivative_mode = .none,
+            .spectral_grid = base_scene.spectral_grid,
+            .measurement_count_hint = case.runtime_profile.spectral_samples,
+        },
+        .rtm_controls = .{
+            .n_streams = 4,
+            .num_orders_max = 8,
+        },
+    });
+    defer plan.deinit();
+
+    var workspace = engine.createWorkspace("compatibility-instrument-corrections");
+    var result_base = try engine.execute(&plan, &workspace, &request_base);
+    defer result_base.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_corrected = try engine.execute(&plan, &workspace, &request_corrected);
+    defer result_corrected.deinit(std.testing.allocator);
+
+    const base_product = result_base.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const corrected_product = result_corrected.measurement_space_product orelse return error.MissingMeasurementProduct;
+
+    const radiance_delta = meanAbsoluteDifference(base_product.radiance, corrected_product.radiance);
+    const irradiance_delta = meanAbsoluteDifference(base_product.irradiance, corrected_product.irradiance);
+    const reflectance_delta = meanAbsoluteDifference(base_product.reflectance, corrected_product.reflectance);
+
+    try std.testing.expect(radiance_delta > 1.0e-5);
+    try std.testing.expect(reflectance_delta > 1.0e-6);
+    try std.testing.expect(irradiance_delta < 1.0e-12);
+    try expectBoundedO2AMorphology(corrected_product.wavelengths, corrected_product.reflectance);
+}
+
 test "compatibility harness preserves configured strat-trop interval partitions in prepared optics" {
     const case = ParityCase{
         .id = "compat-strat-trop-partitions",
@@ -1200,19 +1316,20 @@ fn expectNear(actual: f64, expected: f64, absolute_tolerance: f64, relative_tole
 // gate in vendor_config_surface_test.zig and parity_assets_test.zig. The harness
 // here focuses on runtime execution parity, not config-level inventory.
 
-fn runParityCases(
+fn runParityCasesWithAllocator(
+    allocator: std.mem.Allocator,
     components: []const ParityComponent,
 ) !ParityRunResult {
     const raw = try std.fs.cwd().readFileAlloc(
-        std.testing.allocator,
+        allocator,
         "validation/compatibility/parity_matrix.json",
         1024 * 1024,
     );
-    defer std.testing.allocator.free(raw);
+    defer allocator.free(raw);
 
     const matrix = try std.json.parseFromSlice(
         ParityMatrix,
-        std.testing.allocator,
+        allocator,
         raw,
         .{ .ignore_unknown_fields = true },
     );
@@ -1224,7 +1341,7 @@ fn runParityCases(
 
     const upstream_present = pathExists(matrix.value.upstream);
 
-    var engine = zdisamar.Engine.init(std.testing.allocator, .{ .max_prepared_plans = 64 });
+    var engine = zdisamar.Engine.init(allocator, .{ .max_prepared_plans = 64 });
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
 
@@ -1306,8 +1423,8 @@ fn runParityCases(
             try makeRetrievalRequest(case, regime, derivative_mode)
         else
             zdisamar.Request.init(case_scene);
-        var observed_measurement_product = try buildObservedMeasurementProduct(std.testing.allocator, plan, request);
-        defer if (observed_measurement_product) |*product| product.deinit(std.testing.allocator);
+        var observed_measurement_product = try buildObservedMeasurementProduct(allocator, plan, request);
+        defer if (observed_measurement_product) |*product| product.deinit(allocator);
         if (observed_measurement_product) |*product| {
             request.measurement_binding = .{
                 .source = request.inverse_problem.?.measurements.source,
@@ -1315,7 +1432,7 @@ fn runParityCases(
             };
         }
         var result = try engine.execute(&plan, &workspace, &request);
-        defer result.deinit(std.testing.allocator);
+        defer result.deinit(allocator);
 
         try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
         try std.testing.expectEqualStrings(case.expected_route_family, result.provenance.transport_family);
@@ -1343,7 +1460,7 @@ fn runParityCases(
                     "{s}/{s}",
                     .{ matrix.value.upstream, numeric_anchor },
                 );
-                const anchor = try parseVendorAsciiHdfAnchor(upstream_anchor_path, std.testing.allocator);
+                const anchor = try parseVendorAsciiHdfAnchor(upstream_anchor_path, allocator);
 
                 const iteration_delta = @abs(@as(i64, @intCast(outcome.iterations)) - @as(i64, @intCast(anchor.iterations)));
                 try std.testing.expect(@as(f64, @floatFromInt(iteration_delta)) <= case.tolerances.absolute);
@@ -1372,10 +1489,10 @@ fn runParityCases(
             }
         } else if (std.mem.eql(u8, case.component, "optics")) {
             var prepared = if (case.scene_fixture.len != 0)
-                try plan.providers.optics.prepareForScene(std.testing.allocator, &case_scene)
+                try plan.providers.optics.prepareForScene(allocator, &case_scene)
             else
-                try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);
-            defer prepared.deinit(std.testing.allocator);
+                try prepareOpticalStateForCase(allocator, case, case_scene);
+            defer prepared.deinit(allocator);
 
             try std.testing.expect(prepared.sublayers != null);
             try std.testing.expect(prepared.sublayers.?.len > prepared.layers.len);
@@ -1401,17 +1518,17 @@ fn runParityCases(
                 try std.testing.expect(prepared.sublayers.?[0].aerosol_phase_coefficients[1] > case_scene.aerosol.asymmetry_factor);
             }
         } else if (std.mem.eql(u8, case.component, "measurement_space")) {
-            var prepared = try prepareOpticalStateForCase(std.testing.allocator, case, case_scene);
-            defer prepared.deinit(std.testing.allocator);
+            var prepared = try prepareOpticalStateForCase(allocator, case, case_scene);
+            defer prepared.deinit(allocator);
 
             var product = try MeasurementSpace.simulateProduct(
-                std.testing.allocator,
+                allocator,
                 &case_scene,
                 plan.transport_route,
                 &prepared,
                 measurementProviders(plan),
             );
-            defer product.deinit(std.testing.allocator);
+            defer product.deinit(allocator);
             const summary = product.summary;
             try std.testing.expectEqual(case.runtime_profile.spectral_samples, summary.sample_count);
             try std.testing.expect(summary.mean_radiance > 0.0);
@@ -1432,6 +1549,12 @@ fn runParityCases(
         .expected = expected_counts,
         .executed = executed_counts,
     };
+}
+
+fn runParityCases(
+    components: []const ParityComponent,
+) !ParityRunResult {
+    return runParityCasesWithAllocator(std.testing.allocator, components);
 }
 
 test "compatibility harness executes transport and measurement-space parity cases against vendor anchors" {
@@ -1473,7 +1596,13 @@ test "compatibility harness parses bounded vendor retrieval diagnostics from asc
 }
 
 test "compatibility harness executes the full parity matrix against vendor anchors" {
-    const result = try runParityCases(&.{ .transport, .measurement_space, .retrieval, .optics });
+    var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa_state.deinit() == .ok);
+
+    const result = try runParityCasesWithAllocator(
+        gpa_state.allocator(),
+        &.{ .transport, .measurement_space, .retrieval, .optics },
+    );
     try std.testing.expect(result.expected.total > 0);
     try std.testing.expectEqual(result.expected.total, result.executed.total);
     try std.testing.expectEqual(result.expected.transport, result.executed.transport);

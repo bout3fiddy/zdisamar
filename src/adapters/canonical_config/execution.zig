@@ -28,6 +28,7 @@ const core_errors = @import("../../core/errors.zig");
 const Engine = @import("../../core/Engine.zig").Engine;
 const Request = @import("../../core/Request.zig").Request;
 const Result = @import("../../core/Result.zig").Result;
+const spectral_noise = @import("../../kernels/spectra/noise.zig");
 const MeasurementSpaceProduct = @import("../../kernels/transport/measurement.zig").MeasurementSpaceProduct;
 const SceneModel = @import("../../model/Scene.zig");
 const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
@@ -319,7 +320,7 @@ pub const ExecutionProgram = struct {
                 .kind = stage_execution.kind,
                 .result = try engine.execute(&plan, &workspace, &request),
             };
-            if (stageRequestsAppliedNoise(self.products, index)) {
+            if (stageRequestsAppliedNoise(stage_execution.stage.products)) {
                 try applyNoiseToStageMeasurementProduct(
                     &stage_outcomes[index].result,
                     &stage_execution.stage.scene,
@@ -447,9 +448,9 @@ fn findProduct(products: []const ProductRef, name: []const u8) ?ProductRef {
     return null;
 }
 
-fn stageRequestsAppliedNoise(products: []const ProductRef, stage_index: usize) bool {
+fn stageRequestsAppliedNoise(products: []const Product) bool {
     for (products) |product| {
-        if (product.stage_index == stage_index and product.kind == .measurement_space and product.apply_noise) {
+        if (product.kind == .measurement_space and product.apply_noise) {
             return true;
         }
     }
@@ -466,7 +467,17 @@ fn stageNoiseSeed(stage_execution: StageExecution) u64 {
 
 fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel.Scene, seed: u64) !void {
     if (result.measurement_space_product) |*product| {
-        if (product.noise_sigma.len == 0 or product.noise_sigma.len != product.radiance.len) {
+        var fallback_sigma: []f64 = &.{};
+        defer if (fallback_sigma.len != 0) std.heap.page_allocator.free(fallback_sigma);
+
+        var effective_sigma = product.noise_sigma;
+        if (effective_sigma.len != product.radiance.len or !hasPositiveSigma(effective_sigma)) {
+            fallback_sigma = try std.heap.page_allocator.alloc(f64, product.radiance.len);
+            const controls = scene.observation_model.resolvedChannelControls(.radiance).noise;
+            try spectral_noise.shotNoiseStd(product.radiance, controls.electrons_per_count, fallback_sigma);
+            effective_sigma = fallback_sigma;
+        }
+        if (effective_sigma.len == 0 or effective_sigma.len != product.radiance.len) {
             return error.MissingNoiseSigma;
         }
         if (product.irradiance.len != product.radiance.len or product.reflectance.len != product.radiance.len) {
@@ -475,7 +486,7 @@ fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel
 
         var prng = std.Random.DefaultPrng.init(seed);
         const random = prng.random();
-        for (product.radiance, product.noise_sigma, 0..) |*radiance, sigma, index| {
+        for (product.radiance, effective_sigma, 0..) |*radiance, sigma, index| {
             const perturbed = radiance.* + random.floatNorm(f64) * sigma;
             radiance.* = @max(perturbed, 0.0);
             product.reflectance[index] = reflectanceForSample(scene, radiance.*, product.irradiance[index]);
@@ -490,6 +501,13 @@ fn applyNoiseToStageMeasurementProduct(result: *Result, scene: *const SceneModel
 fn reflectanceForSample(scene: *const SceneModel.Scene, radiance: f64, irradiance: f64) f64 {
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     return (radiance * std.math.pi) / @max(irradiance * solar_cosine, 1.0e-9);
+}
+
+fn hasPositiveSigma(sigma: []const f64) bool {
+    for (sigma) |value| {
+        if (std.math.isFinite(value) and value > 0.0) return true;
+    }
+    return false;
 }
 
 fn recomputeMeasurementSummary(product: *MeasurementSpaceProduct) void {
@@ -547,7 +565,7 @@ fn buildIngestMeasurementProduct(
     }
     switch (request.scene.observation_model.noise_model) {
         .snr_from_input, .s5p_operational => request.scene.observation_model.ingested_noise_sigma = product.noise_sigma,
-        .none, .shot_noise => {},
+        .none, .shot_noise, .lab_operational => {},
     }
     if (!request.scene.observation_model.operational_solar_spectrum.enabled() and
         ingest.loaded_spectra.channelCount(.irradiance) > 0)

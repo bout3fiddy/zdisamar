@@ -380,6 +380,134 @@ test "canonical config parses typed vendor sections into resolved stage" {
     try std.testing.expectEqualStrings("baseline_labos", retr_plan.transport_route.family.provenanceLabel());
 }
 
+test "canonical config hydrates separate radiance and irradiance instrument pipelines" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: explicit-instrument-pipeline
+        \\experiment:
+        \\  simulation:
+        \\    instrument:
+        \\      add_noise_rad_sim: true
+        \\      add_noise_irr_sim: true
+        \\      bands:
+        \\        - slit_index_radiance_sim: 2
+        \\          slit_index_irradiance_sim: 0
+        \\          fwhm_radiance_sim: 0.38
+        \\          fwhm_irradiance_sim: 0.22
+        \\          wavelength_shift_radiance_sim: 0.02
+        \\          wavelength_shift_irradiance_sim: -0.01
+        \\          simple_offset_mul_radiance_sim: 1.5
+        \\          simple_offset_add_radiance_sim: 0.25
+        \\          smear_percent_radiance_sim: 1.0
+        \\          snr_radiance_sim: 250.0
+        \\          snr_irradiance_sim: 500.0
+        \\          pol_scrambler_radiance_sim: false
+        \\          calibration_error_reflectance_mul_sim: 1.0
+        \\          calibration_error_reflectance_add_sim: 0.5
+        \\    rrs_ring:
+        \\      sim:
+        \\        - use_rrs: true
+        \\          approximate_rrs: true
+        \\          differential: false
+        \\          ring_coefficient: 0.02
+        \\          fraction_raman_lines: 0.5
+        \\          use_cabannes: false
+        \\          degree_poly: 4
+        \\          include_absorption: true
+        \\    plan:
+        \\      model_family: disamar_standard
+        \\      transport:
+        \\        solver: dispatcher
+        \\      execution:
+        \\        solver_mode: scalar
+        \\        derivative_mode: none
+        \\    scene:
+        \\      id: explicit_instrument_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 30.0
+        \\        viewing_zenith_deg: 8.0
+        \\        relative_azimuth_deg: 145.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 16
+        \\      bands:
+        \\        band_1:
+        \\          start_nm: 758.0
+        \\          end_nm: 771.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\    products:
+        \\      sim_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const sim_stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    const radiance = sim_stage.scene.observation_model.measurement_pipeline.radiance;
+    const irradiance = sim_stage.scene.observation_model.measurement_pipeline.irradiance;
+    const ring = sim_stage.scene.observation_model.measurement_pipeline.ring;
+    const reflectance_calibration = sim_stage.scene.observation_model.measurement_pipeline.reflectance_calibration;
+
+    try std.testing.expect(radiance.explicit);
+    try std.testing.expect(irradiance.explicit);
+    try std.testing.expectEqual(zdisamar.Instrument.SlitIndex.triple_flat_top_n4, radiance.response.slit_index);
+    try std.testing.expectEqual(zdisamar.Instrument.SlitIndex.gaussian_modulated, irradiance.response.slit_index);
+    try std.testing.expectApproxEqRel(@as(f64, 0.38), radiance.response.fwhm_nm, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.22), irradiance.response.fwhm_nm, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.02), radiance.wavelength_shift_nm, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, -0.01), irradiance.wavelength_shift_nm, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 1.5), radiance.simple_offsets.multiplicative_percent, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.25), radiance.simple_offsets.additive_percent_of_first, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 1.0), radiance.smear_percent, 1.0e-12);
+    try std.testing.expect(radiance.noise.enabled);
+    try std.testing.expect(irradiance.noise.enabled);
+    try std.testing.expectEqual(zdisamar.Instrument.NoiseModelKind.shot_noise, radiance.noise.model);
+    try std.testing.expectEqual(zdisamar.Instrument.NoiseModelKind.shot_noise, irradiance.noise.model);
+    try std.testing.expectEqual(@as(usize, 1), radiance.noise.snr_values.len);
+    try std.testing.expectEqual(@as(usize, 1), irradiance.noise.snr_values.len);
+    try std.testing.expectApproxEqRel(@as(f64, 250.0), radiance.noise.snr_values[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 500.0), irradiance.noise.snr_values[0], 1.0e-12);
+    try std.testing.expect(!radiance.use_polarization_scrambler);
+
+    try std.testing.expect(ring.explicit);
+    try std.testing.expect(ring.enabled);
+    try std.testing.expect(!ring.differential);
+    try std.testing.expect(ring.approximate_rrs);
+    try std.testing.expectApproxEqRel(@as(f64, 0.02), ring.coefficient, 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.5), ring.fraction_raman_lines, 1.0e-12);
+    try std.testing.expectEqual(@as(u32, 4), ring.degree_poly);
+    try std.testing.expect(ring.include_absorption);
+
+    try std.testing.expect(reflectance_calibration.multiplicative_error.enabled());
+    try std.testing.expect(reflectance_calibration.additive_error.enabled());
+    try std.testing.expectApproxEqRel(@as(f64, 1.0), reflectance_calibration.multiplicative_error.values[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.5), reflectance_calibration.additive_error.values[0], 1.0e-12);
+}
+
 test "canonical config compiles interval grids, aerosol fractions, and subcolumns into scene state" {
     const source =
         \\schema_version: 1

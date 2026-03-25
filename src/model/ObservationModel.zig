@@ -32,6 +32,7 @@ const InstrumentLineShapeTable = @import("Instrument.zig").InstrumentLineShapeTa
 const OperationalReferenceGrid = @import("Instrument.zig").OperationalReferenceGrid;
 const OperationalSolarSpectrum = @import("Instrument.zig").OperationalSolarSpectrum;
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
+const SpectralChannel = @import("Instrument.zig").SpectralChannel;
 const Allocator = std.mem.Allocator;
 
 pub const ObservationRegime = enum {
@@ -147,6 +148,7 @@ pub const ObservationModel = struct {
     operational_solar_spectrum: OperationalSolarSpectrum = .{},
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
+    measurement_pipeline: Instrument.MeasurementPipeline = .{},
     cross_section_fit: CrossSectionFitControls = .{},
     measured_wavelengths_nm: []const f64 = &.{},
     owns_measured_wavelengths: bool = false,
@@ -183,7 +185,7 @@ pub const ObservationModel = struct {
                 //   retrieval code can treat the noise contract as already materialized.
                 if (self.ingested_noise_sigma.len == 0) return errors.Error.InvalidRequest;
             },
-            .none, .shot_noise => {},
+            .none, .shot_noise, .lab_operational => {},
         }
         if (self.noise_model == .s5p_operational and self.reference_radiance.len != self.ingested_noise_sigma.len) {
             return errors.Error.InvalidRequest;
@@ -220,7 +222,89 @@ pub const ObservationModel = struct {
         try self.operational_solar_spectrum.validate();
         try self.o2_operational_lut.validate();
         try self.o2o2_operational_lut.validate();
+        try self.measurement_pipeline.validate();
         try self.cross_section_fit.validate();
+    }
+
+    /// Purpose:
+    ///   Resolve the effective per-channel measurement controls, preserving legacy defaults
+    ///   until callers opt into the explicit channel pipeline.
+    pub fn resolvedChannelControls(self: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
+        return switch (channel) {
+            .radiance => if (self.measurement_pipeline.radiance.explicit)
+                self.measurement_pipeline.radiance
+            else
+                self.legacyChannelControls(.radiance),
+            .irradiance => if (self.measurement_pipeline.irradiance.explicit)
+                self.measurement_pipeline.irradiance
+            else
+                self.legacyChannelControls(.irradiance),
+        };
+    }
+
+    /// Purpose:
+    ///   Return the explicit Ring controls, or a disabled record when absent.
+    pub fn resolvedRingControls(self: *const ObservationModel) Instrument.RingControls {
+        return self.measurement_pipeline.ring;
+    }
+
+    /// Purpose:
+    ///   Return reflectance calibration-error controls for sigma propagation.
+    pub fn resolvedReflectanceCalibration(self: *const ObservationModel) Instrument.ReflectanceCalibration {
+        return self.measurement_pipeline.reflectance_calibration;
+    }
+
+    fn legacyChannelControls(self: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
+        var controls: Instrument.SpectralChannelControls = .{
+            .response = legacySpectralResponse(self),
+            .wavelength_shift_nm = self.wavelength_shift_nm,
+            .noise = .{
+                .enabled = legacyNoiseEnabled(self.noise_model, channel),
+                .model = legacyNoiseModel(self.noise_model, channel),
+                .reference_signal = if (channel == .radiance) self.reference_radiance else &.{},
+                .reference_sigma = if (channel == .radiance) self.ingested_noise_sigma else &.{},
+            },
+        };
+        if (channel == .radiance) {
+            controls.multiplicative_offset = self.multiplicative_offset;
+            controls.stray_light = self.stray_light;
+            controls.use_polarization_scrambler = true;
+        }
+        return controls;
+    }
+
+    fn legacySpectralResponse(self: *const ObservationModel) Instrument.SpectralResponse {
+        return .{
+            .slit_index = switch (self.builtin_line_shape) {
+                .gaussian => if (self.instrument_line_shape_table.nominal_count > 0) .table else .gaussian_modulated,
+                .flat_top_n4 => .flat_top_n4,
+                .triple_flat_top_n4 => .triple_flat_top_n4,
+            },
+            .fwhm_nm = self.instrument_line_fwhm_nm,
+            .builtin_line_shape = self.builtin_line_shape,
+            .high_resolution_step_nm = self.high_resolution_step_nm,
+            .high_resolution_half_span_nm = self.high_resolution_half_span_nm,
+            .instrument_line_shape = self.instrument_line_shape,
+            .instrument_line_shape_table = self.instrument_line_shape_table,
+        };
+    }
+
+    fn legacyNoiseEnabled(model: Instrument.NoiseModelKind, channel: SpectralChannel) bool {
+        return switch (channel) {
+            .radiance => model != .none,
+            .irradiance => switch (model) {
+                .shot_noise, .lab_operational => true,
+                .none, .s5p_operational, .snr_from_input => false,
+            },
+        };
+    }
+
+    fn legacyNoiseModel(model: Instrument.NoiseModelKind, channel: SpectralChannel) Instrument.NoiseModelKind {
+        if (channel == .radiance) return model;
+        return switch (model) {
+            .shot_noise, .lab_operational => model,
+            .none, .s5p_operational, .snr_from_input => .none,
+        };
     }
 
     /// Purpose:
@@ -232,6 +316,7 @@ pub const ObservationModel = struct {
         self.operational_solar_spectrum.deinitOwned(allocator);
         self.o2_operational_lut.deinitOwned(allocator);
         self.o2o2_operational_lut.deinitOwned(allocator);
+        self.measurement_pipeline.deinitOwned(allocator);
         self.cross_section_fit.deinitOwned(allocator);
         if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) allocator.free(self.measured_wavelengths_nm);
         self.measured_wavelengths_nm = &.{};
