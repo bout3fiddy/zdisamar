@@ -2896,11 +2896,11 @@ fn applyAerosolConfigToScene(
     if (hg_optical_thickness) |value| {
         scene.aerosol.enabled = true;
         scene.aerosol.optical_depth = value;
+        if (scene.aerosol.aerosol_type == .none) scene.aerosol.aerosol_type = .hg_scattering;
         if (kind == .simulation) {
             scene.aerosol.single_scatter_albedo = aerosol_config.hg_single_scattering_albedo_sim orelse scene.aerosol.single_scatter_albedo;
             scene.aerosol.asymmetry_factor = aerosol_config.hg_parameter_g_sim orelse scene.aerosol.asymmetry_factor;
             scene.aerosol.angstrom_exponent = aerosol_config.hg_angstrom_coefficient_sim orelse scene.aerosol.angstrom_exponent;
-            if (scene.aerosol.aerosol_type == .none) scene.aerosol.aerosol_type = .hg_scattering;
         }
     }
     if (mie_optical_thickness) |value| {
