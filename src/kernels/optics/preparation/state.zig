@@ -187,7 +187,9 @@ pub const PreparedLayer = struct {
     gas_optical_depth: f64,
     gas_scattering_optical_depth: f64 = 0.0,
     aerosol_optical_depth: f64,
+    aerosol_base_optical_depth: f64 = 0.0,
     cloud_optical_depth: f64,
+    cloud_base_optical_depth: f64 = 0.0,
     layer_single_scatter_albedo: f64,
     depolarization_factor: f64,
     optical_depth: f64,
@@ -225,7 +227,9 @@ pub const PreparedSublayer = struct {
     d_gas_optical_depth_d_temperature: f64,
     d_cia_optical_depth_d_temperature: f64,
     aerosol_optical_depth: f64,
+    aerosol_base_optical_depth: f64 = 0.0,
     cloud_optical_depth: f64,
+    cloud_base_optical_depth: f64 = 0.0,
     aerosol_single_scatter_albedo: f64,
     cloud_single_scatter_albedo: f64,
     aerosol_phase_coefficients: [phase_coefficient_count]f64,
@@ -318,7 +322,9 @@ pub const PreparedOpticalState = struct {
     gas_optical_depth: f64,
     cia_optical_depth: f64,
     aerosol_optical_depth: f64,
+    aerosol_base_optical_depth: f64 = 0.0,
     cloud_optical_depth: f64,
+    cloud_base_optical_depth: f64 = 0.0,
     d_optical_depth_d_temperature: f64,
     depolarization_factor: f64,
     total_optical_depth: f64,
@@ -327,6 +333,8 @@ pub const PreparedOpticalState = struct {
     subcolumn_semantics_enabled: bool = false,
     aerosol_phase_support: PhaseSupportKind = .none,
     cloud_phase_support: PhaseSupportKind = .none,
+    aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
+    cloud_fraction_control: AtmosphereModel.FractionControl = .{},
 
     /// Purpose:
     ///   Release the prepared optical state and all owned substructures.
@@ -359,6 +367,8 @@ pub const PreparedOpticalState = struct {
                 owned.deinit(allocator);
             }
         }
+        self.aerosol_fraction_control.deinitOwned(allocator);
+        self.cloud_fraction_control.deinitOwned(allocator);
         self.* = undefined;
     }
 
@@ -744,6 +754,41 @@ pub const PreparedOpticalState = struct {
         return self.lineAbsorberDensityForSpeciesAtAltitude(owner_species, sublayers, altitude_km);
     }
 
+    fn fractionAtWavelength(control: AtmosphereModel.FractionControl, wavelength_nm: f64) f64 {
+        if (!control.enabled) return 1.0;
+        return control.valueAtWavelength(wavelength_nm);
+    }
+
+    pub fn particleOpticalDepthAtWavelength(
+        effective_reference_optical_depth: f64,
+        base_reference_optical_depth: f64,
+        reference_wavelength_nm: f64,
+        angstrom_exponent: f64,
+        control: AtmosphereModel.FractionControl,
+        wavelength_nm: f64,
+    ) f64 {
+        if (base_reference_optical_depth > 0.0) {
+            return ParticleProfiles.scaleOpticalDepth(
+                base_reference_optical_depth,
+                reference_wavelength_nm,
+                angstrom_exponent,
+                wavelength_nm,
+            ) * fractionAtWavelength(control, wavelength_nm);
+        }
+
+        const effective_optical_depth = ParticleProfiles.scaleOpticalDepth(
+            effective_reference_optical_depth,
+            reference_wavelength_nm,
+            angstrom_exponent,
+            wavelength_nm,
+        );
+        if (!control.enabled) return effective_optical_depth;
+
+        const reference_fraction = control.valueAtWavelength(reference_wavelength_nm);
+        if (reference_fraction <= 0.0) return 0.0;
+        return effective_optical_depth * fractionAtWavelength(control, wavelength_nm) / reference_fraction;
+    }
+
     pub fn opticalDepthBreakdownAtWavelength(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
@@ -786,16 +831,20 @@ pub const PreparedOpticalState = struct {
             cia_table.sigmaAt(wavelength_nm, self.effective_temperature_k) * self.cia_pair_path_factor_cm5
         else
             0.0;
-        const aerosol_optical_depth = ParticleProfiles.scaleOpticalDepth(
+        const aerosol_optical_depth = particleOpticalDepthAtWavelength(
             self.aerosol_optical_depth,
+            self.aerosol_base_optical_depth,
             self.aerosol_reference_wavelength_nm,
             self.aerosol_angstrom_exponent,
+            self.aerosol_fraction_control,
             wavelength_nm,
         );
-        const cloud_optical_depth = ParticleProfiles.scaleOpticalDepth(
+        const cloud_optical_depth = particleOpticalDepthAtWavelength(
             self.cloud_optical_depth,
+            self.cloud_base_optical_depth,
             self.cloud_reference_wavelength_nm,
             self.cloud_angstrom_exponent,
+            self.cloud_fraction_control,
             wavelength_nm,
         );
         const particle_single_scatter_albedos = self.resolvedParticleSingleScatterAlbedos();
@@ -910,16 +959,20 @@ pub const PreparedOpticalState = struct {
                 sublayer.oxygen_number_density_cm3 *
                 sublayer.oxygen_number_density_cm3 *
                 sublayer.path_length_cm;
-            const aerosol_optical_depth = ParticleProfiles.scaleOpticalDepth(
+            const aerosol_optical_depth = particleOpticalDepthAtWavelength(
                 sublayer.aerosol_optical_depth,
+                sublayer.aerosol_base_optical_depth,
                 self.aerosol_reference_wavelength_nm,
                 self.aerosol_angstrom_exponent,
+                self.aerosol_fraction_control,
                 wavelength_nm,
             );
-            const cloud_optical_depth = ParticleProfiles.scaleOpticalDepth(
+            const cloud_optical_depth = particleOpticalDepthAtWavelength(
                 sublayer.cloud_optical_depth,
+                sublayer.cloud_base_optical_depth,
                 self.cloud_reference_wavelength_nm,
                 self.cloud_angstrom_exponent,
+                self.cloud_fraction_control,
                 wavelength_nm,
             );
             const aerosol_scattering_optical_depth = aerosol_optical_depth * sublayer.aerosol_single_scatter_albedo;

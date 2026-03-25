@@ -30,11 +30,7 @@ pub fn buildAerosolSublayerDistribution(
     scene: *const Scene,
     grid: PreparedVerticalGrid,
 ) ![]f64 {
-    const fraction = if (scene.aerosol.fraction.enabled)
-        scene.aerosol.fraction.valueAtWavelength(scene.aerosol.reference_wavelength_nm)
-    else
-        1.0;
-    const total_optical_depth = scene.aerosol.optical_depth * fraction;
+    const total_optical_depth = scene.aerosol.optical_depth;
     if (scene.aerosol.placement.semantics == .explicit_interval_bounds) {
         return buildPlacementBoundDistribution(
             allocator,
@@ -70,11 +66,7 @@ pub fn buildCloudSublayerDistribution(
     scene: *const Scene,
     grid: PreparedVerticalGrid,
 ) ![]f64 {
-    const fraction = if (scene.cloud.fraction.enabled)
-        scene.cloud.fraction.valueAtWavelength(scene.cloud.reference_wavelength_nm)
-    else
-        1.0;
-    const total_optical_depth = scene.cloud.optical_thickness * fraction;
+    const total_optical_depth = scene.cloud.optical_thickness;
     const placement = scene.cloud.resolvedPlacement();
     if (scene.cloud.placement.semantics == .explicit_interval_bounds) {
         return buildPlacementBoundDistribution(
@@ -148,8 +140,7 @@ pub fn buildIntervalMatchedDistribution(
     }
 
     if (total_weight == 0.0) {
-        @memset(weights, 0.0);
-        return weights;
+        return error.InvalidRequest;
     }
     for (weights) |*slot| slot.* = total_optical_depth * (slot.* / total_weight);
     return weights;

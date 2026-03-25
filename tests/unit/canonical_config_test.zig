@@ -442,7 +442,6 @@ test "canonical config compiles interval grids, aerosol fractions, and subcolumn
         \\        relative_azimuth_deg: 143.4
         \\      atmosphere:
         \\        layering:
-        \\          layer_count: 3
         \\          sublayer_divisions: 2
         \\      bands:
         \\        a_band:
@@ -498,6 +497,112 @@ test "canonical config compiles interval grids, aerosol fractions, and subcolumn
     try std.testing.expectEqual(.boundary_layer, stage.scene.atmosphere.subcolumns.subcolumns[0].label);
     try std.testing.expectEqual(.stratosphere, stage.scene.atmosphere.subcolumns.subcolumns[2].label);
     try std.testing.expectEqual(@as(u32, 3), stage.plan.scene_blueprint.layer_count_hint);
+}
+
+test "canonical config normalizes wrapped relative azimuth inputs" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: wrapped-relative-azimuth
+        \\experiment:
+        \\  simulation:
+        \\    geometry:
+        \\      solar_zenith_angle_sim: 31.7
+        \\      instrument_nadir_angle_sim: 7.9
+        \\      solar_azimuth_angle_sim: 350.0
+        \\      instrument_azimuth_angle_sim: 10.0
+        \\    scene:
+        \\      id: wrapped_geometry_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 0.0
+        \\        viewing_zenith_deg: 0.0
+        \\        relative_azimuth_deg: 0.0
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    try std.testing.expectApproxEqAbs(@as(f64, 20.0), stage.scene.geometry.relative_azimuth_deg, 1.0e-12);
+}
+
+test "canonical config treats explicit none cloud-aerosol targets as a no-op" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: fraction-target-none
+        \\experiment:
+        \\  simulation:
+        \\    cloud_aerosol_fraction:
+        \\      target_sim: none
+        \\    scene:
+        \\      id: noop_fraction_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation orelse return error.TestUnexpectedResult;
+    try std.testing.expect(!stage.scene.aerosol.fraction.enabled);
+    try std.testing.expect(!stage.scene.cloud.fraction.enabled);
 }
 
 test "canonical config compiles absorbing-gas HITRAN controls onto line absorbers" {

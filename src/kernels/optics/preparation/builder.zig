@@ -130,6 +130,10 @@ fn prepareWithInputs(
         var owned = line_list;
         owned.deinit(allocator);
     };
+    var aerosol_fraction_control = try scene.aerosol.fraction.clone(allocator);
+    errdefer aerosol_fraction_control.deinitOwned(allocator);
+    var cloud_fraction_control = try scene.cloud.fraction.clone(allocator);
+    errdefer cloud_fraction_control.deinitOwned(allocator);
     const operational_o2_lut = scene.observation_model.o2_operational_lut;
     const operational_o2o2_lut = scene.observation_model.o2o2_operational_lut;
     const active_line_absorbers = try Spectroscopy.collectActiveLineAbsorbers(allocator, scene);
@@ -381,7 +385,9 @@ fn prepareWithInputs(
     var total_gas_optical_depth: f64 = 0.0;
     var total_cia_optical_depth: f64 = 0.0;
     var total_aerosol_optical_depth: f64 = 0.0;
+    var total_aerosol_base_optical_depth: f64 = 0.0;
     var total_cloud_optical_depth: f64 = 0.0;
+    var total_cloud_base_optical_depth: f64 = 0.0;
     var total_scattering_optical_depth: f64 = 0.0;
     var total_d_optical_depth_d_temperature: f64 = 0.0;
     var depolarization_weighted: f64 = 0.0;
@@ -443,7 +449,9 @@ fn prepareWithInputs(
         var layer_gas_scattering_optical_depth: f64 = 0.0;
         var layer_cia_optical_depth: f64 = 0.0;
         var layer_aerosol_optical_depth: f64 = 0.0;
+        var layer_aerosol_base_optical_depth: f64 = 0.0;
         var layer_cloud_optical_depth: f64 = 0.0;
+        var layer_cloud_base_optical_depth: f64 = 0.0;
 
         for (0..layer_sublayer_count) |sublayer_index| {
             sublayer_write_index = @as(usize, layer_sublayer_start_index) + sublayer_index;
@@ -453,7 +461,9 @@ fn prepareWithInputs(
             const sublayer_bottom_pressure_hpa = vertical_grid.sublayer_bottom_pressures_hpa[sublayer_write_index];
             const altitude_km = vertical_grid.sublayer_mid_altitudes_km[sublayer_write_index];
             const density = profile.interpolateDensity(altitude_km);
-            const pressure = if (sublayer_top_pressure_hpa > 0.0 and sublayer_bottom_pressure_hpa > 0.0)
+            const pressure = if (scene.atmosphere.interval_grid.enabled() and
+                sublayer_top_pressure_hpa > 0.0 and
+                sublayer_bottom_pressure_hpa > 0.0)
                 @sqrt(sublayer_top_pressure_hpa * sublayer_bottom_pressure_hpa)
             else
                 profile.interpolatePressure(altitude_km);
@@ -720,8 +730,10 @@ fn prepareWithInputs(
             const d_gas_optical_depth_d_temperature =
                 spectroscopy_eval.d_sigma_d_temperature_cm2_per_molecule_per_k * line_gas_column_density_cm2 +
                 cross_section_d_optical_depth_d_temperature;
-            const aerosol_optical_depth = aerosol_sublayer_distribution[sublayer_write_index] * aerosol_extinction_scale;
-            const cloud_optical_depth = cloud_sublayer_distribution[sublayer_write_index] * cloud_extinction_scale;
+            const aerosol_base_optical_depth = aerosol_sublayer_distribution[sublayer_write_index] * aerosol_extinction_scale;
+            const cloud_base_optical_depth = cloud_sublayer_distribution[sublayer_write_index] * cloud_extinction_scale;
+            const aerosol_optical_depth = aerosol_base_optical_depth * aerosol_fraction;
+            const cloud_optical_depth = cloud_base_optical_depth * cloud_fraction;
             const aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo;
             const cloud_scattering_optical_depth = cloud_optical_depth * cloud_single_scatter_albedo;
             const combined_phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
@@ -758,7 +770,9 @@ fn prepareWithInputs(
                 .d_gas_optical_depth_d_temperature = d_gas_optical_depth_d_temperature,
                 .d_cia_optical_depth_d_temperature = d_cia_optical_depth_d_temperature,
                 .aerosol_optical_depth = aerosol_optical_depth,
+                .aerosol_base_optical_depth = aerosol_base_optical_depth,
                 .cloud_optical_depth = cloud_optical_depth,
+                .cloud_base_optical_depth = cloud_base_optical_depth,
                 .aerosol_single_scatter_albedo = aerosol_single_scatter_albedo,
                 .cloud_single_scatter_albedo = cloud_single_scatter_albedo,
                 .aerosol_phase_coefficients = aerosol_phase_coefficients,
@@ -784,7 +798,9 @@ fn prepareWithInputs(
             layer_gas_scattering_optical_depth += gas_scattering_optical_depth;
             layer_cia_optical_depth += cia_optical_depth;
             layer_aerosol_optical_depth += aerosol_optical_depth;
+            layer_aerosol_base_optical_depth += aerosol_base_optical_depth;
             layer_cloud_optical_depth += cloud_optical_depth;
+            layer_cloud_base_optical_depth += cloud_base_optical_depth;
             air_column_density_factor += density * sublayer_path_length_cm;
             oxygen_column_density_factor += o2_density_cm3 * sublayer_path_length_cm;
             column_density_factor += total_gas_column_density_cm2;
@@ -797,7 +813,9 @@ fn prepareWithInputs(
         const pressure = if (layer_density_weight == 0.0) 0.0 else layer_pressure_sum / layer_density_weight;
         const gas_optical_depth = layer_gas_optical_depth;
         const aerosol_optical_depth = layer_aerosol_optical_depth;
+        const aerosol_base_optical_depth = layer_aerosol_base_optical_depth;
         const cloud_optical_depth = layer_cloud_optical_depth;
+        const cloud_base_optical_depth = layer_cloud_base_optical_depth;
         const optical_depth = gas_optical_depth + layer_cia_optical_depth + aerosol_optical_depth + cloud_optical_depth;
         const aerosol_scattering = aerosol_optical_depth * aerosol_single_scatter_albedo;
         const cloud_scattering = cloud_optical_depth * cloud_single_scatter_albedo;
@@ -813,7 +831,9 @@ fn prepareWithInputs(
         total_gas_optical_depth += gas_optical_depth;
         total_cia_optical_depth += layer_cia_optical_depth;
         total_aerosol_optical_depth += aerosol_optical_depth;
+        total_aerosol_base_optical_depth += aerosol_base_optical_depth;
         total_cloud_optical_depth += cloud_optical_depth;
+        total_cloud_base_optical_depth += cloud_base_optical_depth;
         total_scattering_optical_depth += scattering;
         depolarization_weighted += depolarization * optical_depth;
 
@@ -833,7 +853,9 @@ fn prepareWithInputs(
             .gas_optical_depth = gas_optical_depth,
             .gas_scattering_optical_depth = gas_scattering,
             .aerosol_optical_depth = aerosol_optical_depth,
+            .aerosol_base_optical_depth = aerosol_base_optical_depth,
             .cloud_optical_depth = cloud_optical_depth,
+            .cloud_base_optical_depth = cloud_base_optical_depth,
             .layer_single_scatter_albedo = layer_single_scatter_albedo,
             .depolarization_factor = depolarization,
             .optical_depth = optical_depth,
@@ -958,7 +980,9 @@ fn prepareWithInputs(
         .gas_optical_depth = total_gas_optical_depth,
         .cia_optical_depth = total_cia_optical_depth,
         .aerosol_optical_depth = total_aerosol_optical_depth,
+        .aerosol_base_optical_depth = total_aerosol_base_optical_depth,
         .cloud_optical_depth = total_cloud_optical_depth,
+        .cloud_base_optical_depth = total_cloud_base_optical_depth,
         .d_optical_depth_d_temperature = total_d_optical_depth_d_temperature,
         .depolarization_factor = if (total_optical_depth == 0.0) 0.0 else depolarization_weighted / total_optical_depth,
         .total_optical_depth = total_optical_depth,
@@ -967,6 +991,8 @@ fn prepareWithInputs(
         .subcolumn_semantics_enabled = scene.atmosphere.subcolumns.enabled,
         .aerosol_phase_support = if (aerosol_mie != null) .mie_table else if (scene.aerosol.enabled) .analytic_hg else .none,
         .cloud_phase_support = if (cloud_mie != null) .mie_table else if (scene.cloud.enabled) .analytic_hg else .none,
+        .aerosol_fraction_control = aerosol_fraction_control,
+        .cloud_fraction_control = cloud_fraction_control,
     };
 }
 

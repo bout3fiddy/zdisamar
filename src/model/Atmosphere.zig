@@ -291,6 +291,47 @@ pub const FractionControl = struct {
     }
 
     /// Purpose:
+    ///   Duplicate the fraction metadata into allocator-owned storage.
+    pub fn clone(self: FractionControl, allocator: Allocator) !FractionControl {
+        const wavelengths_nm = if (self.wavelengths_nm.len != 0)
+            try allocator.dupe(f64, self.wavelengths_nm)
+        else
+            &.{};
+        errdefer if (self.wavelengths_nm.len != 0) allocator.free(wavelengths_nm);
+
+        const values = if (self.values.len != 0)
+            try allocator.dupe(f64, self.values)
+        else
+            &.{};
+        errdefer if (self.values.len != 0) allocator.free(values);
+
+        const apriori_values = if (self.apriori_values.len != 0)
+            try allocator.dupe(f64, self.apriori_values)
+        else
+            &.{};
+        errdefer if (self.apriori_values.len != 0) allocator.free(apriori_values);
+
+        const variance_values = if (self.variance_values.len != 0)
+            try allocator.dupe(f64, self.variance_values)
+        else
+            &.{};
+        errdefer if (self.variance_values.len != 0) allocator.free(variance_values);
+
+        return .{
+            .enabled = self.enabled,
+            .target = self.target,
+            .kind = self.kind,
+            .threshold_cloud_fraction = self.threshold_cloud_fraction,
+            .threshold_variance = self.threshold_variance,
+            .wavelengths_nm = wavelengths_nm,
+            .values = values,
+            .apriori_values = apriori_values,
+            .variance_values = variance_values,
+            .owns_arrays = wavelengths_nm.len != 0 or values.len != 0 or apriori_values.len != 0 or variance_values.len != 0,
+        };
+    }
+
+    /// Purpose:
     ///   Release any allocator-owned fraction arrays.
     pub fn deinitOwned(self: *FractionControl, allocator: Allocator) void {
         if (!self.owns_arrays) {
@@ -395,10 +436,7 @@ pub const SubcolumnLayout = struct {
     ///   Release any allocator-owned subcolumn storage.
     pub fn deinitOwned(self: *SubcolumnLayout, allocator: Allocator) void {
         if (self.owns_subcolumns and self.subcolumns.len != 0) {
-            for (0..self.subcolumns.len) |index| {
-                var subcolumn = self.subcolumns[index];
-                subcolumn.deinitOwned(allocator);
-            }
+            for (@constCast(self.subcolumns)) |*subcolumn| subcolumn.deinitOwned(allocator);
             allocator.free(self.subcolumns);
         }
         self.* = .{};
@@ -551,5 +589,33 @@ test "atmosphere rejects malformed interval and subcolumn metadata" {
                 },
             },
         }).validate(),
+    );
+}
+
+fn cloneFractionControlWithAllocator(allocator: Allocator) !void {
+    const control: FractionControl = .{
+        .enabled = true,
+        .target = .aerosol,
+        .kind = .wavel_dependent,
+        .threshold_cloud_fraction = 0.25,
+        .threshold_variance = 0.1,
+        .wavelengths_nm = &.{ 760.0, 761.0 },
+        .values = &.{ 0.20, 0.60 },
+        .apriori_values = &.{ 0.25, 0.55 },
+        .variance_values = &.{ 0.01, 0.04 },
+    };
+
+    var cloned = try control.clone(allocator);
+    defer cloned.deinitOwned(allocator);
+
+    try std.testing.expect(cloned.owns_arrays);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.40), cloned.valueAtWavelength(760.5), 1.0e-12);
+}
+
+test "fraction control clone cleans up across allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        cloneFractionControlWithAllocator,
+        .{},
     );
 }

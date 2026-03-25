@@ -169,16 +169,20 @@ pub fn fillForwardLayersAtWavelength(
 
     var totals: OpticalDepthBreakdown = .{};
     for (self.layers, layer_inputs) |layer, *layer_input| {
-        const aerosol_optical_depth = ParticleProfiles.scaleOpticalDepth(
+        const aerosol_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
             layer.aerosol_optical_depth,
+            layer.aerosol_base_optical_depth,
             self.aerosol_reference_wavelength_nm,
             self.aerosol_angstrom_exponent,
+            self.aerosol_fraction_control,
             wavelength_nm,
         );
-        const cloud_optical_depth = ParticleProfiles.scaleOpticalDepth(
+        const cloud_optical_depth = PreparedOpticalState.particleOpticalDepthAtWavelength(
             layer.cloud_optical_depth,
+            layer.cloud_base_optical_depth,
             self.cloud_reference_wavelength_nm,
             self.cloud_angstrom_exponent,
+            self.cloud_fraction_control,
             wavelength_nm,
         );
         const gas_scattering_optical_depth = layer.gas_scattering_optical_depth;

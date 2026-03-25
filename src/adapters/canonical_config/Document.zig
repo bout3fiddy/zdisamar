@@ -915,7 +915,6 @@ const ResolveContext = struct {
             kind,
             stage.general,
             stage.radiative_transfer,
-            stage.pressure_temperature,
             stage.atmospheric_intervals,
             &stage.scene,
         );
@@ -930,6 +929,7 @@ const ResolveContext = struct {
         stage.retrieval_config = try decodeRetrievalConfig(mapGet(stage_map, "retrieval_config"), self.strict_unknown_fields);
         stage.absorbing_gas = try decodeAbsorbingGasConfig(self.allocator, mapGet(stage_map, "absorbing_gas"), self.strict_unknown_fields);
         try applyAbsorbingGasConfigToScene(self.allocator, kind, stage.absorbing_gas, &stage.scene);
+        stage.plan.scene_blueprint.layer_count_hint = stage.scene.atmosphere.preparedLayerCount();
 
         try ensureDistinctProducts(stage.products);
         try stage.plan.validate();
@@ -2632,9 +2632,9 @@ fn applyGeometryConfigToScene(
             if (geo.instrument_nadir_angle_sim) |v| geometry.viewing_zenith_deg = v;
             if (geo.instrument_azimuth_angle_sim) |instrument_azimuth| {
                 const solar_azimuth = geo.solar_azimuth_angle_sim orelse 0.0;
-                geometry.relative_azimuth_deg = instrument_azimuth - solar_azimuth;
+                geometry.relative_azimuth_deg = normalizeRelativeAzimuthDeg(instrument_azimuth - solar_azimuth);
             } else if (geo.solar_azimuth_angle_sim) |solar_azimuth| {
-                geometry.relative_azimuth_deg = geometry.relative_azimuth_deg - solar_azimuth;
+                geometry.relative_azimuth_deg = normalizeRelativeAzimuthDeg(geometry.relative_azimuth_deg - solar_azimuth);
             }
         },
         .retrieval => {
@@ -2642,12 +2642,17 @@ fn applyGeometryConfigToScene(
             if (geo.instrument_nadir_angle_retr) |v| geometry.viewing_zenith_deg = v;
             if (geo.instrument_azimuth_angle_retr) |instrument_azimuth| {
                 const solar_azimuth = geo.solar_azimuth_angle_retr orelse 0.0;
-                geometry.relative_azimuth_deg = instrument_azimuth - solar_azimuth;
+                geometry.relative_azimuth_deg = normalizeRelativeAzimuthDeg(instrument_azimuth - solar_azimuth);
             } else if (geo.solar_azimuth_angle_retr) |solar_azimuth| {
-                geometry.relative_azimuth_deg = geometry.relative_azimuth_deg - solar_azimuth;
+                geometry.relative_azimuth_deg = normalizeRelativeAzimuthDeg(geometry.relative_azimuth_deg - solar_azimuth);
             }
         },
     }
+}
+
+fn normalizeRelativeAzimuthDeg(value_deg: f64) f64 {
+    const wrapped = @mod(value_deg, 360.0);
+    return if (wrapped < 0.0) wrapped + 360.0 else wrapped;
 }
 
 fn applyPressureTemperatureConfigToScene(
@@ -2710,7 +2715,6 @@ fn applyAtmosphericIntervalsConfigToScene(
     kind: StageKind,
     general: ?GeneralConfig,
     radiative_transfer: ?RadiativeTransferConfig,
-    pressure_temperature: ?PressureTemperatureConfig,
     config: ?AtmosphericIntervalsConfig,
     scene: *Scene,
 ) !void {
@@ -2753,8 +2757,6 @@ fn applyAtmosphericIntervalsConfigToScene(
     if (scene.geometry.surface_altitude_km == 0.0 and intervals[intervals.len - 1].bottom_altitude_km > 0.0) {
         scene.geometry.surface_altitude_km = intervals[intervals.len - 1].bottom_altitude_km;
     }
-
-    try applyPressureTemperatureConfigToScene(kind, pressure_temperature, scene);
 }
 
 fn applyCloudAerosolFractionConfigToScene(
@@ -2767,6 +2769,7 @@ fn applyCloudAerosolFractionConfigToScene(
         .simulation => fraction_config.target_sim,
         .retrieval => fraction_config.target_retr,
     } orelse return;
+    if (target == .none) return;
     const fraction_kind = switch (kind) {
         .simulation => fraction_config.kind_sim,
         .retrieval => fraction_config.kind_retr,
@@ -2796,7 +2799,7 @@ fn applyCloudAerosolFractionConfigToScene(
     switch (target) {
         .cloud => scene.cloud.fraction = control,
         .aerosol => scene.aerosol.fraction = control,
-        .none => return Error.InvalidValue,
+        .none => unreachable,
     }
 }
 
