@@ -476,8 +476,8 @@ fn applyChannelJacobianCorrections(
 ) !void {
     const controls = scene.observation_model.resolvedChannelControls(channel);
     try calibration.applySignalDerivative(calibration_config, jacobian, jacobian);
-    try calibration.applySimpleOffsets(controls.simple_offsets, jacobian);
-    try calibration.applySpectralFeatures(controls.spectral_features, wavelengths_nm, jacobian);
+    try calibration.applySimpleOffsetDerivatives(controls.simple_offsets, jacobian);
+    try calibration.applySpectralFeatureDerivatives(controls.spectral_features, wavelengths_nm, jacobian);
     if (controls.smear_percent != 0.0) {
         try calibration.applySmear(controls.smear_percent, jacobian, scratch);
     }

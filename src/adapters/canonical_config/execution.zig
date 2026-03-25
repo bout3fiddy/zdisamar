@@ -473,32 +473,51 @@ fn applyNoiseToStageMeasurementProduct(
     seed: u64,
 ) !void {
     if (result.measurement_space_product) |*product| {
-        var fallback_sigma: []f64 = &.{};
-        defer if (fallback_sigma.len != 0) std.heap.page_allocator.free(fallback_sigma);
-
-        var effective_sigma = product.noise_sigma;
-        if (effective_sigma.len != product.radiance.len or !hasPositiveSigma(effective_sigma)) {
-            fallback_sigma = try std.heap.page_allocator.alloc(f64, product.radiance.len);
-            const controls = scene.observation_model.resolvedChannelControls(.radiance).noise;
-            try spectral_noise.shotNoiseStd(product.radiance, controls.electrons_per_count, fallback_sigma);
-            effective_sigma = fallback_sigma;
-        }
-        if (effective_sigma.len == 0 or effective_sigma.len != product.radiance.len) {
-            return error.MissingNoiseSigma;
-        }
-        if (fallback_sigma.len != 0) {
-            try storeFallbackRadianceSigma(allocator, product, effective_sigma);
-        }
         if (product.irradiance.len != product.radiance.len or product.reflectance.len != product.radiance.len) {
             return error.InvalidRequest;
         }
 
+        const sample_count = product.radiance.len;
+        const radiance_controls = scene.observation_model.resolvedChannelControls(.radiance).noise;
+        const irradiance_controls = scene.observation_model.resolvedChannelControls(.irradiance).noise;
+        const uses_explicit_channel_pipeline =
+            scene.observation_model.measurement_pipeline.radiance.explicit or
+            scene.observation_model.measurement_pipeline.irradiance.explicit;
+
+        var fallback_radiance_sigma: []f64 = &.{};
+        defer if (fallback_radiance_sigma.len != 0) std.heap.page_allocator.free(fallback_radiance_sigma);
+
+        var radiance_sigma: []const f64 = &.{};
+        if (radiance_controls.enabled or !uses_explicit_channel_pipeline) {
+            radiance_sigma = product.radiance_noise_sigma;
+            if (radiance_sigma.len != sample_count or !hasPositiveSigma(radiance_sigma)) {
+                fallback_radiance_sigma = try std.heap.page_allocator.alloc(f64, sample_count);
+                try spectral_noise.shotNoiseStd(product.radiance, radiance_controls.electrons_per_count, fallback_radiance_sigma);
+                radiance_sigma = fallback_radiance_sigma;
+                try storeFallbackRadianceSigma(allocator, product, radiance_sigma);
+            }
+        }
+
+        var irradiance_sigma: []const f64 = &.{};
+        if (irradiance_controls.enabled) {
+            irradiance_sigma = product.irradiance_noise_sigma;
+            if (irradiance_sigma.len != sample_count or !hasPositiveSigma(irradiance_sigma)) {
+                return error.MissingNoiseSigma;
+            }
+        }
+
         var prng = std.Random.DefaultPrng.init(seed);
         const random = prng.random();
-        for (product.radiance, effective_sigma, 0..) |*radiance, sigma, index| {
-            const perturbed = radiance.* + random.floatNorm(f64) * sigma;
-            radiance.* = @max(perturbed, 0.0);
-            product.reflectance[index] = reflectanceForSample(scene, radiance.*, product.irradiance[index]);
+        for (0..sample_count) |index| {
+            if (radiance_sigma.len == sample_count) {
+                const perturbed = product.radiance[index] + random.floatNorm(f64) * radiance_sigma[index];
+                product.radiance[index] = @max(perturbed, 0.0);
+            }
+            if (irradiance_sigma.len == sample_count) {
+                const perturbed = product.irradiance[index] + random.floatNorm(f64) * irradiance_sigma[index];
+                product.irradiance[index] = @max(perturbed, 0.0);
+            }
+            product.reflectance[index] = reflectanceForSample(scene, product.radiance[index], product.irradiance[index]);
         }
         recomputeMeasurementSummary(product);
         result.measurement_space = product.summary;
@@ -940,4 +959,91 @@ test "storeFallbackRadianceSigma preserves buffers when replacement allocation f
     try std.testing.expectEqual(@as(usize, 1), product.radiance_noise_sigma.len);
     try std.testing.expectEqual(original_noise_ptr, product.radiance_noise_sigma.ptr);
     try std.testing.expectEqual(@as(f64, 0.1), product.noise_sigma[0]);
+}
+
+test "applyNoiseToStageMeasurementProduct perturbs only enabled channels" {
+    const allocator = std.testing.allocator;
+    const wavelengths = [_]f64{ 760.0, 760.1 };
+    const radiance = [_]f64{ 10.0, 12.0 };
+    const irradiance = [_]f64{ 20.0, 24.0 };
+    const reflectance = [_]f64{ 1.0, 1.0 };
+    const zero_sigma = [_]f64{ 0.0, 0.0 };
+    const irradiance_sigma = [_]f64{ 0.25, 0.5 };
+
+    var result = try Result.init(allocator, 1, "unit", "noise-channel-split", .{});
+    defer result.deinit(allocator);
+    result.attachMeasurementSpaceProduct(.{
+        .summary = .{
+            .sample_count = wavelengths.len,
+            .wavelength_start_nm = wavelengths[0],
+            .wavelength_end_nm = wavelengths[wavelengths.len - 1],
+            .mean_radiance = 11.0,
+            .mean_irradiance = 22.0,
+            .mean_reflectance = 1.0,
+            .mean_noise_sigma = 0.0,
+        },
+        .wavelengths = try allocator.dupe(f64, &wavelengths),
+        .radiance = try allocator.dupe(f64, &radiance),
+        .irradiance = try allocator.dupe(f64, &irradiance),
+        .reflectance = try allocator.dupe(f64, &reflectance),
+        .noise_sigma = try allocator.dupe(f64, &zero_sigma),
+        .radiance_noise_sigma = &.{},
+        .irradiance_noise_sigma = try allocator.dupe(f64, &irradiance_sigma),
+        .effective_air_mass_factor = 0.0,
+        .effective_single_scatter_albedo = 0.0,
+        .effective_temperature_k = 0.0,
+        .effective_pressure_hpa = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .total_optical_depth = 0.0,
+        .depolarization_factor = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+    });
+    result.measurement_space_product.?.radiance_noise_sigma = result.measurement_space_product.?.noise_sigma;
+
+    const scene: SceneModel.Scene = .{
+        .observation_model = .{
+            .noise_model = .none,
+            .measurement_pipeline = .{
+                .radiance = .{
+                    .explicit = true,
+                    .noise = .{
+                        .explicit = true,
+                        .enabled = false,
+                    },
+                },
+                .irradiance = .{
+                    .explicit = true,
+                    .noise = .{
+                        .explicit = true,
+                        .enabled = true,
+                        .model = .shot_noise,
+                    },
+                },
+            },
+        },
+    };
+
+    var expected_prng = std.Random.DefaultPrng.init(1234);
+    const expected_random = expected_prng.random();
+    var expected_irradiance = irradiance;
+    var expected_reflectance = reflectance;
+    for (0..expected_irradiance.len) |index| {
+        const perturbed = expected_irradiance[index] + expected_random.floatNorm(f64) * irradiance_sigma[index];
+        expected_irradiance[index] = @max(perturbed, 0.0);
+        expected_reflectance[index] = reflectanceForSample(&scene, radiance[index], expected_irradiance[index]);
+    }
+
+    try applyNoiseToStageMeasurementProduct(allocator, &result, &scene, 1234);
+
+    const product = result.measurement_space_product.?;
+    try std.testing.expectEqualSlices(f64, &radiance, product.radiance);
+    for (expected_irradiance, product.irradiance) |expected, actual| {
+        try std.testing.expectApproxEqRel(expected, actual, 1.0e-12);
+    }
+    for (expected_reflectance, product.reflectance) |expected, actual| {
+        try std.testing.expectApproxEqRel(expected, actual, 1.0e-12);
+    }
 }

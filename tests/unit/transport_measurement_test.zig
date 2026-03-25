@@ -1828,6 +1828,12 @@ test "measurement-space propagates radiance pipeline corrections into routed jac
                 .multiplicative_percent = 1.0,
                 .additive_percent_of_first = 0.5,
             },
+            .spectral_features = .{
+                .additive_amplitude_percent = 0.5,
+                .additive_period_nm = 4.0,
+                .multiplicative_amplitude_percent = 1.0,
+                .multiplicative_period_nm = 4.0,
+            },
             .smear_percent = 2.0,
             .multiplicative_nodes = .{
                 .wavelengths_nm = correction_wavelengths[0..],
@@ -1891,7 +1897,12 @@ test "measurement-space propagates radiance pipeline corrections into routed jac
     const scratch = try std.testing.allocator.alloc(f64, expected_jacobian.len);
     defer std.testing.allocator.free(scratch);
 
-    try calibration.applySimpleOffsets(corrected_pipeline.radiance.simple_offsets, expected_jacobian);
+    try calibration.applySimpleOffsetDerivatives(corrected_pipeline.radiance.simple_offsets, expected_jacobian);
+    try calibration.applySpectralFeatureDerivatives(
+        corrected_pipeline.radiance.spectral_features,
+        base_product.wavelengths,
+        expected_jacobian,
+    );
     try calibration.applySmear(corrected_pipeline.radiance.smear_percent, expected_jacobian, scratch);
     try calibration.applyMultiplicativeNodes(
         corrected_pipeline.radiance.multiplicative_nodes,

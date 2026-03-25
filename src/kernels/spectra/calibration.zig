@@ -94,6 +94,15 @@ pub fn applySimpleOffsets(offsets: Instrument.SimpleOffsets, signal: []f64) !voi
 }
 
 /// Purpose:
+///   Apply only the multiplicative simple-offset term to a signal derivative.
+pub fn applySimpleOffsetDerivatives(offsets: Instrument.SimpleOffsets, signal: []f64) !void {
+    if (signal.len == 0) return;
+    for (signal) |*sample| {
+        sample.* *= 1.0 + 0.01 * offsets.multiplicative_percent;
+    }
+}
+
+/// Purpose:
 ///   Apply sinusoidal additive and multiplicative features relative to the first wavelength.
 pub fn applySpectralFeatures(
     features: Instrument.SinusoidalFeatures,
@@ -122,6 +131,28 @@ pub fn applySpectralFeatures(
 }
 
 /// Purpose:
+///   Apply only the multiplicative sinusoidal feature term to a signal derivative.
+pub fn applySpectralFeatureDerivatives(
+    features: Instrument.SinusoidalFeatures,
+    wavelengths_nm: []const f64,
+    signal: []f64,
+) !void {
+    if (wavelengths_nm.len != signal.len) return error.ShapeMismatch;
+    if (signal.len == 0) return;
+
+    const first_wavelength = wavelengths_nm[0];
+    for (wavelengths_nm, signal) |wavelength_nm, *sample| {
+        const delta_nm = wavelength_nm - first_wavelength;
+        var multiplicative_term: f64 = 0.0;
+        if (features.multiplicative_amplitude_percent != 0.0) {
+            multiplicative_term = 0.01 * features.multiplicative_amplitude_percent *
+                @sin((delta_nm * 2.0 * std.math.pi / features.multiplicative_period_nm) + degreesToRadians(features.multiplicative_phase_deg));
+        }
+        sample.* *= 1.0 + multiplicative_term;
+    }
+}
+
+/// Purpose:
 ///   Apply the vendor-style smear model by moving a percentage of each sample to its neighbor.
 pub fn applySmear(percent_smear: f64, signal: []f64, scratch: []f64) !void {
     if (signal.len != scratch.len) return error.ShapeMismatch;
@@ -129,14 +160,12 @@ pub fn applySmear(percent_smear: f64, signal: []f64, scratch: []f64) !void {
 
     @memcpy(scratch, signal);
     const first = signal[0];
-    const last = signal[signal.len - 1];
     for (0..signal.len - 1) |index| {
         const smear = 0.01 * percent_smear * signal[index];
         scratch[index] -= smear;
         scratch[index + 1] += smear;
     }
     scratch[0] = first;
-    scratch[signal.len - 1] = last;
     @memcpy(signal, scratch);
 }
 
@@ -387,6 +416,26 @@ test "calibration applies only the linear response to signal derivatives" {
     try std.testing.expectApproxEqRel(@as(f64, 5.5), output[2], 1.0e-12);
 }
 
+test "calibration derivative helpers exclude additive correction terms" {
+    const wavelengths = [_]f64{ 760.8, 761.0, 761.2 };
+    var signal = [_]f64{ 10.0, 11.0, 12.0 };
+
+    try applySimpleOffsetDerivatives(.{
+        .multiplicative_percent = 2.0,
+        .additive_percent_of_first = 5.0,
+    }, &signal);
+    try applySpectralFeatureDerivatives(.{
+        .additive_amplitude_percent = 3.0,
+        .additive_period_nm = 0.4,
+        .multiplicative_amplitude_percent = 1.0,
+        .multiplicative_period_nm = 0.4,
+    }, &wavelengths, &signal);
+
+    try std.testing.expectApproxEqRel(@as(f64, 10.2), signal[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 11.22), signal[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 12.24), signal[2], 1.0e-12);
+}
+
 test "calibration helpers apply explicit correction families in sequence" {
     const wavelengths = [_]f64{ 760.8, 761.0, 761.2 };
     var signal = [_]f64{ 10.0, 11.0, 12.0 };
@@ -408,6 +457,17 @@ test "calibration helpers apply explicit correction families in sequence" {
 
     try std.testing.expect(signal[0] > 10.0);
     try std.testing.expect(signal[2] > signal[0]);
+}
+
+test "smear preserves the leading boundary while accumulating into the trailing boundary" {
+    var signal = [_]f64{ 10.0, 20.0, 30.0 };
+    var scratch: [3]f64 = undefined;
+
+    try applySmear(10.0, &signal, &scratch);
+
+    try std.testing.expectApproxEqRel(@as(f64, 10.0), signal[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 19.0), signal[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 32.0), signal[2], 1.0e-12);
 }
 
 test "polarization scrambler bias only perturbs radiance when the scrambler is disabled" {
