@@ -2763,12 +2763,16 @@ fn fractionConfigHasStageInputs(kind: StageKind, config: CloudAerosolFractionCon
     return switch (kind) {
         .simulation => config.kind_sim != .none or
             config.values_sim != null or
-            config.wavelengths_sim_nm != null,
+            config.wavelengths_sim_nm != null or
+            config.threshold_cloud_fraction != null or
+            config.threshold_variance != null,
         .retrieval => config.kind_retr != .none or
             config.values_retr != null or
             config.apriori_values_retr != null or
             config.variance_values_retr != null or
-            config.wavelengths_retr_nm != null,
+            config.wavelengths_retr_nm != null or
+            config.threshold_cloud_fraction != null or
+            config.threshold_variance != null,
     };
 }
 

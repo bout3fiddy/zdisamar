@@ -132,7 +132,7 @@ Files by type:
 
 Implementation is present on branch `codex/wp05-atmospheric-intervals`, and the scene/config/runtime path now carries vendor-style interval, fraction, and subcolumn semantics end to end. Canonical config compilation emits explicit pressure-bounded interval grids, aerosol/cloud placement and fraction controls, and typed subcolumn partitions into `Scene`; optics preparation preserves interval top/bottom altitude and pressure bounds, fit-interval identity, particle fractions, subcolumn labels, and phase-support metadata in `PreparedOpticalState`; and forward execution stamps those semantics into typed provenance for downstream retrieval work.
 
-The final post-review hardening pass also aligned measurement-workspace sizing with explicit interval sublayer totals and tightened `FractionControl` validation so wavelength-dependent fraction grids must be strictly monotonic before runtime interpolation is allowed.
+The final post-review hardening pass also aligned measurement-workspace sizing with explicit interval sublayer totals, tightened `FractionControl` validation so wavelength-dependent fraction grids must be strictly monotonic before runtime interpolation is allowed, rejects threshold-only fraction configs that omit a simulation or retrieval target, and fails explicit interval-index particle placements when the scene never enabled an interval grid.
 
 The landed validation covers the new surface from three angles: canonical-config compilation into typed scene state, direct optics preparation and forward execution against explicit intervals and fractions, and validation-harness proofs for O2A morphology plus compatibility-harness strat-trop partition preservation.
 
@@ -142,7 +142,7 @@ By making interval grids, particle placement, fractions, and subcolumns first-cl
 
 ## Proof / Validation
 
-- `zig build test-unit --summary all` -> `Build Summary: 4/4 steps succeeded; 147/147 tests passed.`
+- `zig build test-unit --summary all` -> `Build Summary: 4/4 steps succeeded; 149/149 tests passed.`
 - `zig build test-integration-forward-model --summary all` -> `Build Summary: 4/4 steps succeeded; 9/9 tests passed.`
 - `zig build test-validation-o2a --summary all` -> `Build Summary: 4/4 steps succeeded; 6/6 tests passed.`
 - `zig build test-validation-compatibility-full --summary all` -> `Build Summary: 4/4 steps succeeded; 1/1 tests passed.`

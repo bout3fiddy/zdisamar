@@ -656,6 +656,57 @@ test "canonical config rejects cloud-aerosol fraction inputs without a stage tar
     );
 }
 
+test "canonical config rejects threshold-only cloud-aerosol fraction inputs without a stage target" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: fraction-threshold-target-missing
+        \\experiment:
+        \\  simulation:
+        \\    cloud_aerosol_fraction:
+        \\      threshold_cloud_fraction: 0.25
+        \\      threshold_variance: 0.05
+        \\    scene:
+        \\      id: missing_fraction_threshold_target_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.InvalidValue,
+        document.resolve(std.testing.allocator),
+    );
+}
+
 test "canonical config compiles absorbing-gas HITRAN controls onto line absorbers" {
     const source =
         \\schema_version: 1

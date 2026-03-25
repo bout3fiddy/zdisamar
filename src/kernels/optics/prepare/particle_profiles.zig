@@ -35,6 +35,7 @@ pub fn buildAerosolSublayerDistribution(
         return buildPlacementBoundDistribution(
             allocator,
             grid,
+            scene.atmosphere.interval_grid.enabled(),
             scene.atmosphere.has_aerosols and scene.aerosol.enabled and total_optical_depth > 0.0,
             total_optical_depth,
             scene.aerosol.placement,
@@ -72,6 +73,7 @@ pub fn buildCloudSublayerDistribution(
         return buildPlacementBoundDistribution(
             allocator,
             grid,
+            scene.atmosphere.interval_grid.enabled(),
             scene.atmosphere.has_clouds and scene.cloud.enabled and total_optical_depth > 0.0,
             total_optical_depth,
             scene.cloud.placement,
@@ -90,11 +92,13 @@ pub fn buildCloudSublayerDistribution(
 pub fn buildPlacementBoundDistribution(
     allocator: Allocator,
     grid: PreparedVerticalGrid,
+    has_explicit_interval_grid: bool,
     enabled: bool,
     total_optical_depth: f64,
     placement: AtmosphereModel.IntervalPlacement,
 ) ![]f64 {
     if (placement.interval_index_1based != 0) {
+        if (!has_explicit_interval_grid) return error.InvalidRequest;
         return buildIntervalMatchedDistribution(
             allocator,
             grid,

@@ -2089,6 +2089,76 @@ test "optical preparation rejects unmatched explicit interval particle placement
     );
 }
 
+test "optical preparation rejects explicit interval particle placements without interval grids" {
+    const scene: zdisamar.Scene = .{
+        .id = "legacy-explicit-interval-placement",
+        .atmosphere = .{
+            .layer_count = 2,
+            .has_aerosols = true,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.20,
+            .single_scatter_albedo = 0.94,
+            .asymmetry_factor = 0.70,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 760.0,
+            .placement = .{
+                .semantics = .explicit_interval_bounds,
+                .interval_index_1based = 1,
+                .top_pressure_hpa = 150.0,
+                .bottom_pressure_hpa = 500.0,
+                .top_altitude_km = 10.0,
+                .bottom_altitude_km = 4.0,
+            },
+        },
+        .geometry = .{
+            .solar_zenith_deg = 30.0,
+            .viewing_zenith_deg = 5.0,
+            .relative_azimuth_deg = 20.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 760.0,
+            .end_nm = 761.0,
+            .sample_count = 3,
+        },
+    };
+
+    var profile = ReferenceData.ClimatologyProfile{
+        .rows = try std.testing.allocator.dupe(ReferenceData.ClimatologyPoint, &.{
+            .{ .altitude_km = 0.0, .pressure_hpa = 1000.0, .temperature_k = 290.0, .air_number_density_cm3 = 2.5e19 },
+            .{ .altitude_km = 10.0, .pressure_hpa = 150.0, .temperature_k = 230.0, .air_number_density_cm3 = 7.5e18 },
+        }),
+    };
+    defer profile.deinit(std.testing.allocator);
+    var cross_sections = ReferenceData.CrossSectionTable{
+        .points = try std.testing.allocator.dupe(ReferenceData.CrossSectionPoint, &.{
+            .{ .wavelength_nm = 760.0, .sigma_cm2_per_molecule = 0.0 },
+            .{ .wavelength_nm = 761.0, .sigma_cm2_per_molecule = 0.0 },
+        }),
+    };
+    defer cross_sections.deinit(std.testing.allocator);
+    var lut = ReferenceData.AirmassFactorLut{
+        .points = try std.testing.allocator.dupe(ReferenceData.AirmassFactorPoint, &.{
+            .{ .solar_zenith_deg = 30.0, .view_zenith_deg = 5.0, .relative_azimuth_deg = 20.0, .airmass_factor = 1.1 },
+        }),
+    };
+    defer lut.deinit(std.testing.allocator);
+
+    try std.testing.expectError(
+        error.InvalidRequest,
+        OpticsPrepare.prepare(
+            std.testing.allocator,
+            &scene,
+            .{
+                .profile = &profile,
+                .cross_sections = &cross_sections,
+                .lut = &lut,
+            },
+        ),
+    );
+}
+
 test "legacy optical preparation keeps altitude-interpolated sublayer pressure" {
     const scene: zdisamar.Scene = .{
         .id = "legacy-pressure-midpoint",
