@@ -1044,7 +1044,12 @@ fn buildExplicitVerticalGrid(
     errdefer grid.deinit(allocator);
 
     var sublayer_cursor: usize = 0;
-    for (intervals, 0..) |interval, index| {
+    var source_interval_index = intervals.len;
+    var output_layer_index: usize = 0;
+    while (source_interval_index > 0) : (output_layer_index += 1) {
+        source_interval_index -= 1;
+        const interval = intervals[source_interval_index];
+        const index = output_layer_index;
         const has_altitude_bounds = interval.top_altitude_km != 0.0 or interval.bottom_altitude_km != 0.0;
         const layer_top_altitude_km = if (has_altitude_bounds)
             interval.top_altitude_km
@@ -1066,22 +1071,22 @@ fn buildExplicitVerticalGrid(
             0.5 * (layer_top_altitude_km + layer_bottom_altitude_km),
         );
 
-        const log_top_pressure = @log(@max(interval.top_pressure_hpa, 1.0e-9));
         const log_bottom_pressure = @log(@max(interval.bottom_pressure_hpa, 1.0e-9));
-        const layer_altitude_span_km = layer_bottom_altitude_km - layer_top_altitude_km;
+        const log_top_pressure = @log(@max(interval.top_pressure_hpa, 1.0e-9));
+        const layer_altitude_span_km = layer_top_altitude_km - layer_bottom_altitude_km;
         for (0..interval.altitude_divisions) |sublayer_index| {
-            const top_fraction = @as(f64, @floatFromInt(sublayer_index)) / @as(f64, @floatFromInt(interval.altitude_divisions));
-            const bottom_fraction = @as(f64, @floatFromInt(sublayer_index + 1)) / @as(f64, @floatFromInt(interval.altitude_divisions));
-            const top_pressure_hpa = @exp(log_top_pressure + (log_bottom_pressure - log_top_pressure) * top_fraction);
-            const bottom_pressure_hpa = @exp(log_top_pressure + (log_bottom_pressure - log_top_pressure) * bottom_fraction);
-            const top_altitude_km = if (has_altitude_bounds)
-                layer_top_altitude_km + layer_altitude_span_km * top_fraction
-            else
-                profile.interpolateAltitudeForPressure(top_pressure_hpa);
+            const bottom_fraction = @as(f64, @floatFromInt(sublayer_index)) / @as(f64, @floatFromInt(interval.altitude_divisions));
+            const top_fraction = @as(f64, @floatFromInt(sublayer_index + 1)) / @as(f64, @floatFromInt(interval.altitude_divisions));
+            const bottom_pressure_hpa = @exp(log_bottom_pressure + (log_top_pressure - log_bottom_pressure) * bottom_fraction);
+            const top_pressure_hpa = @exp(log_bottom_pressure + (log_top_pressure - log_bottom_pressure) * top_fraction);
             const bottom_altitude_km = if (has_altitude_bounds)
-                layer_top_altitude_km + layer_altitude_span_km * bottom_fraction
+                layer_bottom_altitude_km + layer_altitude_span_km * bottom_fraction
             else
                 profile.interpolateAltitudeForPressure(bottom_pressure_hpa);
+            const top_altitude_km = if (has_altitude_bounds)
+                layer_bottom_altitude_km + layer_altitude_span_km * top_fraction
+            else
+                profile.interpolateAltitudeForPressure(top_pressure_hpa);
             const global_index = sublayer_cursor + sublayer_index;
             grid.sublayer_top_altitudes_km[global_index] = top_altitude_km;
             grid.sublayer_bottom_altitudes_km[global_index] = bottom_altitude_km;

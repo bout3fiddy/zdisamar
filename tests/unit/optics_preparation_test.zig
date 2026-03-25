@@ -2181,9 +2181,14 @@ test "optical preparation preserves explicit intervals, fractions, and subcolumn
     try std.testing.expectEqual(.analytic_hg, prepared.aerosol_phase_support);
     try std.testing.expectEqual(.analytic_hg, prepared.cloud_phase_support);
     try std.testing.expectEqual(@as(usize, 3), prepared.layers.len);
-    try std.testing.expectEqual(.stratosphere, prepared.layers[0].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 3), prepared.layers[0].interval_index_1based);
+    try std.testing.expectEqual(.boundary_layer, prepared.layers[0].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 2), prepared.layers[1].interval_index_1based);
     try std.testing.expectEqual(.free_troposphere, prepared.layers[1].subcolumn_label);
-    try std.testing.expectEqual(.boundary_layer, prepared.layers[2].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 1), prepared.layers[2].interval_index_1based);
+    try std.testing.expectEqual(.stratosphere, prepared.layers[2].subcolumn_label);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), prepared.sublayers.?[0].bottom_altitude_km, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 16.0), prepared.sublayers.?[prepared.sublayers.?.len - 1].top_altitude_km, 1.0e-12);
 
     var aerosol_sum: f64 = 0.0;
     var cloud_sum: f64 = 0.0;

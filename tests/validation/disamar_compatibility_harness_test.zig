@@ -869,9 +869,12 @@ test "compatibility harness preserves configured strat-trop interval partitions 
     try std.testing.expectEqual(.explicit_pressure_bounds, prepared.interval_semantics);
     try std.testing.expectEqual(@as(u32, 2), prepared.fit_interval_index_1based);
     try std.testing.expect(prepared.subcolumn_semantics_enabled);
-    try std.testing.expectEqual(.stratosphere, prepared.layers[0].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 3), prepared.layers[0].interval_index_1based);
+    try std.testing.expectEqual(.boundary_layer, prepared.layers[0].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 2), prepared.layers[1].interval_index_1based);
     try std.testing.expectEqual(.free_troposphere, prepared.layers[1].subcolumn_label);
-    try std.testing.expectEqual(.boundary_layer, prepared.layers[2].subcolumn_label);
+    try std.testing.expectEqual(@as(u32, 1), prepared.layers[2].interval_index_1based);
+    try std.testing.expectEqual(.stratosphere, prepared.layers[2].subcolumn_label);
 
     var aerosol_sum: f64 = 0.0;
     var cloud_sum: f64 = 0.0;
