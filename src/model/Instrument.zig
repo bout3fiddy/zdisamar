@@ -317,7 +317,7 @@ pub const Instrument = struct {
         enabled: bool = false,
         model: NoiseModelKind = .none,
         electrons_per_count: f64 = 2.0,
-        reference_bin_width_nm: f64 = 1.0,
+        reference_bin_width_nm: f64 = 0.0,
         snr_max: f64 = std.math.inf(f64),
         lab_a: f64 = 0.0,
         lab_b: f64 = 0.0,
@@ -331,7 +331,7 @@ pub const Instrument = struct {
             if (!std.math.isFinite(self.electrons_per_count) or self.electrons_per_count <= 0.0) {
                 return errors.Error.InvalidRequest;
             }
-            if (!std.math.isFinite(self.reference_bin_width_nm) or self.reference_bin_width_nm <= 0.0) {
+            if (!std.math.isFinite(self.reference_bin_width_nm) or self.reference_bin_width_nm < 0.0) {
                 return errors.Error.InvalidRequest;
             }
             if (std.math.isNan(self.snr_max) or self.snr_max <= 0.0) return errors.Error.InvalidRequest;
