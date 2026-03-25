@@ -2850,11 +2850,11 @@ fn applyCloudConfigToScene(
     if (hg_optical_thickness) |value| {
         scene.cloud.enabled = true;
         scene.cloud.optical_thickness = value;
+        if (scene.cloud.cloud_type == .none) scene.cloud.cloud_type = .hg_scattering;
         if (kind == .simulation) {
             scene.cloud.single_scatter_albedo = cloud_config.hg_single_scattering_albedo_sim orelse scene.cloud.single_scatter_albedo;
             scene.cloud.asymmetry_factor = cloud_config.hg_parameter_g_sim orelse scene.cloud.asymmetry_factor;
             scene.cloud.angstrom_exponent = cloud_config.hg_angstrom_coefficient_sim orelse scene.cloud.angstrom_exponent;
-            if (scene.cloud.cloud_type == .none) scene.cloud.cloud_type = .hg_scattering;
         }
     }
     if (mie_optical_thickness) |value| {

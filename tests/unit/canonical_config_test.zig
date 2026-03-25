@@ -780,6 +780,79 @@ test "canonical config infers retrieval HG aerosols as hg_scattering" {
     try std.testing.expectApproxEqAbs(@as(f64, 0.12), stage.scene.aerosol.optical_depth, 1.0e-12);
 }
 
+test "canonical config infers retrieval HG clouds as hg_scattering" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: retrieval-hg-cloud
+        \\experiment:
+        \\  simulation:
+        \\    scene:
+        \\      id: retrieval_hg_cloud_truth
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 1
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\    products:
+        \\      truth_radiance:
+        \\        kind: measurement_space
+        \\        observable: radiance
+        \\  retrieval:
+        \\    from: experiment.simulation
+        \\    cloud_config:
+        \\      hg_optical_thickness_retr: 0.18
+        \\    scene:
+        \\      id: retrieval_hg_cloud_scene
+        \\    inverse:
+        \\      algorithm:
+        \\        name: oe
+        \\      measurement:
+        \\        source: truth_radiance
+        \\        observable: radiance
+        \\      state:
+        \\        surface_albedo:
+        \\          target: scene.surface.albedo
+        \\          prior:
+        \\            mean: 0.05
+        \\            sigma: 0.02
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.retrieval orelse return error.TestUnexpectedResult;
+    try std.testing.expect(stage.scene.cloud.enabled);
+    try std.testing.expectEqual(.hg_scattering, stage.scene.cloud.cloud_type);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.18), stage.scene.cloud.optical_thickness, 1.0e-12);
+}
+
 test "canonical config compiles absorbing-gas HITRAN controls onto line absorbers" {
     const source =
         \\schema_version: 1

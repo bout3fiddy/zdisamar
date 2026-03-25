@@ -164,7 +164,10 @@ pub const IntervalGrid = struct {
             try interval.validate();
             if (interval.index_1based != index + 1) return errors.Error.InvalidRequest;
             if (index != 0) {
-                if (interval.top_pressure_hpa < previous_bottom_pressure_hpa) {
+                // INVARIANT:
+                //   Adjacent explicit pressure intervals must tile the atmosphere without
+                //   overlap or gaps so later vertical-grid expansion does not skip any slab.
+                if (!std.math.approxEqAbs(f64, interval.top_pressure_hpa, previous_bottom_pressure_hpa, 1.0e-9)) {
                     return errors.Error.InvalidRequest;
                 }
                 if (previous_has_altitude_bounds and interval.hasAltitudeBounds() and
@@ -651,6 +654,33 @@ test "atmosphere rejects malformed interval and subcolumn metadata" {
                         .top_pressure_hpa = 500.0,
                         .bottom_pressure_hpa = 1013.0,
                         .top_altitude_km = 9.0,
+                        .bottom_altitude_km = 0.0,
+                        .altitude_divisions = 2,
+                    },
+                },
+            },
+        }).validate(),
+    );
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (Atmosphere{
+            .layer_count = 2,
+            .interval_grid = .{
+                .semantics = .explicit_pressure_bounds,
+                .intervals = &.{
+                    VerticalInterval{
+                        .index_1based = 1,
+                        .top_pressure_hpa = 150.0,
+                        .bottom_pressure_hpa = 500.0,
+                        .top_altitude_km = 12.0,
+                        .bottom_altitude_km = 8.0,
+                        .altitude_divisions = 2,
+                    },
+                    VerticalInterval{
+                        .index_1based = 2,
+                        .top_pressure_hpa = 550.0,
+                        .bottom_pressure_hpa = 1013.0,
+                        .top_altitude_km = 8.0,
                         .bottom_altitude_km = 0.0,
                         .altitude_divisions = 2,
                     },
