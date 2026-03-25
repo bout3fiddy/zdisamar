@@ -284,6 +284,13 @@ pub const FractionControl = struct {
         for (self.wavelengths_nm) |wavelength_nm| {
             if (!std.math.isFinite(wavelength_nm) or wavelength_nm <= 0.0) return errors.Error.InvalidRequest;
         }
+        if (self.kind == .wavel_dependent and self.wavelengths_nm.len > 1) {
+            var previous_wavelength_nm = self.wavelengths_nm[0];
+            for (self.wavelengths_nm[1..]) |wavelength_nm| {
+                if (wavelength_nm <= previous_wavelength_nm) return errors.Error.InvalidRequest;
+                previous_wavelength_nm = wavelength_nm;
+            }
+        }
         if (self.threshold_cloud_fraction < 0.0 or self.threshold_cloud_fraction > 1.0) {
             return errors.Error.InvalidRequest;
         }
@@ -657,5 +664,18 @@ test "fraction control clone cleans up across allocation failure" {
         std.testing.allocator,
         cloneFractionControlWithAllocator,
         .{},
+    );
+}
+
+test "fraction control rejects non-monotonic wavelength grids" {
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (FractionControl{
+            .enabled = true,
+            .target = .aerosol,
+            .kind = .wavel_dependent,
+            .wavelengths_nm = &.{ 761.0, 760.0 },
+            .values = &.{ 0.25, 0.75 },
+        }).validate(),
     );
 }
