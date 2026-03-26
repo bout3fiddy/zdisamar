@@ -485,13 +485,13 @@ fn applyNoiseToStageMeasurementProduct(
             scene.observation_model.measurement_pipeline.irradiance.explicit;
 
         var fallback_radiance_sigma: []f64 = &.{};
-        defer if (fallback_radiance_sigma.len != 0) std.heap.page_allocator.free(fallback_radiance_sigma);
+        defer if (fallback_radiance_sigma.len != 0) allocator.free(fallback_radiance_sigma);
 
         var radiance_sigma: []const f64 = &.{};
         if (radiance_controls.enabled or !uses_explicit_channel_pipeline) {
             radiance_sigma = product.radiance_noise_sigma;
             if (radiance_sigma.len != sample_count or !hasPositiveSigma(radiance_sigma)) {
-                fallback_radiance_sigma = try std.heap.page_allocator.alloc(f64, sample_count);
+                fallback_radiance_sigma = try allocator.alloc(f64, sample_count);
                 try spectral_noise.shotNoiseStd(product.radiance, radiance_controls.electrons_per_count, fallback_radiance_sigma);
                 radiance_sigma = fallback_radiance_sigma;
                 try storeFallbackRadianceSigma(allocator, product, radiance_sigma);

@@ -161,7 +161,7 @@ pub fn applySmear(percent_smear: f64, signal: []f64, scratch: []f64) !void {
     @memcpy(scratch, signal);
     const first = signal[0];
     for (0..signal.len - 1) |index| {
-        const smear = 0.01 * percent_smear * signal[index];
+        const smear = 0.01 * percent_smear * scratch[index];
         scratch[index] -= smear;
         scratch[index + 1] += smear;
     }
@@ -459,15 +459,15 @@ test "calibration helpers apply explicit correction families in sequence" {
     try std.testing.expect(signal[2] > signal[0]);
 }
 
-test "smear preserves the leading boundary while accumulating into the trailing boundary" {
+test "smear preserves the leading boundary while cascading into later samples" {
     var signal = [_]f64{ 10.0, 20.0, 30.0 };
     var scratch: [3]f64 = undefined;
 
     try applySmear(10.0, &signal, &scratch);
 
     try std.testing.expectApproxEqRel(@as(f64, 10.0), signal[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 19.0), signal[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 32.0), signal[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 18.9), signal[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 32.1), signal[2], 1.0e-12);
 }
 
 test "polarization scrambler bias only perturbs radiance when the scrambler is disabled" {
