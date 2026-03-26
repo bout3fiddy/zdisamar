@@ -122,11 +122,11 @@ pub fn applySpectralFeatures(
         var multiplicative_term: f64 = 0.0;
         if (features.additive_amplitude_percent != 0.0) {
             additive_term = reference_signal * 0.01 * features.additive_amplitude_percent *
-                @sin((delta_nm * 2.0 * std.math.pi / features.additive_period_nm) + degreesToRadians(features.additive_phase_deg));
+                @sin((delta_nm * 2.0 * std.math.pi / features.additive_period_nm) + std.math.degreesToRadians(features.additive_phase_deg));
         }
         if (features.multiplicative_amplitude_percent != 0.0) {
             multiplicative_term = 0.01 * features.multiplicative_amplitude_percent *
-                @sin((delta_nm * 2.0 * std.math.pi / features.multiplicative_period_nm) + degreesToRadians(features.multiplicative_phase_deg));
+                @sin((delta_nm * 2.0 * std.math.pi / features.multiplicative_period_nm) + std.math.degreesToRadians(features.multiplicative_phase_deg));
         }
         sample.* = sample.* * (1.0 + multiplicative_term) + additive_term;
     }
@@ -150,11 +150,11 @@ pub fn applySpectralFeatureDerivatives(
         var multiplicative_term: f64 = 0.0;
         if (features.additive_amplitude_percent != 0.0) {
             additive_term = reference_signal * 0.01 * features.additive_amplitude_percent *
-                @sin((delta_nm * 2.0 * std.math.pi / features.additive_period_nm) + degreesToRadians(features.additive_phase_deg));
+                @sin((delta_nm * 2.0 * std.math.pi / features.additive_period_nm) + std.math.degreesToRadians(features.additive_phase_deg));
         }
         if (features.multiplicative_amplitude_percent != 0.0) {
             multiplicative_term = 0.01 * features.multiplicative_amplitude_percent *
-                @sin((delta_nm * 2.0 * std.math.pi / features.multiplicative_period_nm) + degreesToRadians(features.multiplicative_phase_deg));
+                @sin((delta_nm * 2.0 * std.math.pi / features.multiplicative_period_nm) + std.math.degreesToRadians(features.multiplicative_phase_deg));
         }
         sample.* = sample.* * (1.0 + multiplicative_term) + additive_term;
     }
@@ -369,10 +369,6 @@ fn samplePolynomial(x: []const f64, y: []const f64, target_x: f64) !f64 {
         total += yi * basis;
     }
     return total;
-}
-
-fn degreesToRadians(degrees: f64) f64 {
-    return degrees * std.math.pi / 180.0;
 }
 
 fn synthesizedDifferentialRing(irradiance: []const f64, index: usize) f64 {
