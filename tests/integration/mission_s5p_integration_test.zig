@@ -9,6 +9,32 @@ fn uniqueScratchPath(prefix: []const u8, buffer: []u8) ![]const u8 {
     );
 }
 
+fn averageSpacingNm(wavelengths_nm: []const f64) f64 {
+    if (wavelengths_nm.len < 2) return 1.0;
+
+    var spacing_sum: f64 = 0.0;
+    for (wavelengths_nm[0 .. wavelengths_nm.len - 1], wavelengths_nm[1..]) |left_nm, right_nm| {
+        spacing_sum += right_nm - left_nm;
+    }
+    return spacing_sum / @as(f64, @floatFromInt(wavelengths_nm.len - 1));
+}
+
+fn effectiveReferenceSpacingNm(scene: zdisamar.Scene) f64 {
+    const configured_spacing = scene.observation_model.resolvedChannelControls(.radiance).noise.reference_bin_width_nm;
+    if (configured_spacing > 0.0) return configured_spacing;
+    if (scene.observation_model.operational_refspec_grid.enabled()) {
+        return scene.observation_model.operational_refspec_grid.effectiveSpacingNm();
+    }
+    if (scene.observation_model.measured_wavelengths_nm.len > 1) {
+        return averageSpacingNm(scene.observation_model.measured_wavelengths_nm);
+    }
+    if (scene.spectral_grid.sample_count > 1) {
+        return (scene.spectral_grid.end_nm - scene.spectral_grid.start_nm) /
+            @as(f64, @floatFromInt(scene.spectral_grid.sample_count - 1));
+    }
+    return 1.0;
+}
+
 test "s5p mission adapter drives typed engine execution" {
     const mission_run = zdisamar.mission_s5p.build(.{
         .scene_id = "s5p-no2",
@@ -163,8 +189,11 @@ test "s5p operational mission adapter executes O2 and O2-O2 refspec replacement 
     const product = result.measurement_space_product.?;
     const reference_radiance = mission_run.request.scene.observation_model.reference_radiance;
     const reference_sigma = mission_run.request.scene.observation_model.ingested_noise_sigma;
+    const reference_spacing = effectiveReferenceSpacingNm(mission_run.request.scene);
+    const current_spacing = averageSpacingNm(product.wavelengths);
+    const spacing_factor = std.math.sqrt(reference_spacing / current_spacing);
     for (product.radiance, product.noise_sigma, reference_radiance, reference_sigma) |radiance, sigma, ref_radiance, ref_sigma| {
-        const expected_sigma = ref_sigma * std.math.sqrt(radiance / ref_radiance);
+        const expected_sigma = ref_sigma * std.math.sqrt(radiance / ref_radiance) * spacing_factor;
         try std.testing.expectApproxEqRel(expected_sigma, sigma, 1.0e-9);
     }
 }
@@ -288,9 +317,8 @@ test "s5p operational mission adapter carries non-unity reference-bin scaling th
     const product = result.measurement_space_product.?;
     const reference_radiance = mission_run.request.scene.observation_model.reference_radiance;
     const reference_sigma = mission_run.request.scene.observation_model.ingested_noise_sigma;
-    const reference_spacing = mission_run.request.scene.observation_model.operational_refspec_grid.effectiveSpacingNm();
-    const current_spacing = (mission_run.request.scene.spectral_grid.end_nm - mission_run.request.scene.spectral_grid.start_nm) /
-        @as(f64, @floatFromInt(mission_run.request.scene.spectral_grid.sample_count - 1));
+    const reference_spacing = effectiveReferenceSpacingNm(mission_run.request.scene);
+    const current_spacing = averageSpacingNm(product.wavelengths);
     const spacing_factor = std.math.sqrt(reference_spacing / current_spacing);
 
     for (product.radiance, product.noise_sigma, reference_radiance, reference_sigma) |radiance, sigma, ref_radiance, ref_sigma| {

@@ -163,7 +163,7 @@ pub const ClimatologyProfile = struct {
 
 test "climatology interpolates altitude from pressure with log-pressure spacing" {
     const profile = ClimatologyProfile{
-        .rows = &.{
+        .rows = @constCast(@as([]const ClimatologyPoint, &.{
             .{
                 .altitude_km = 0.0,
                 .pressure_hpa = 1000.0,
@@ -182,7 +182,7 @@ test "climatology interpolates altitude from pressure with log-pressure spacing"
                 .temperature_k = 225.0,
                 .air_number_density_cm3 = 7.0e18,
             },
-        },
+        })),
     };
 
     const altitude_km = profile.interpolateAltitudeForPressure(540.0);

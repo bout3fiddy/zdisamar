@@ -17,6 +17,7 @@
 //!   Tests cover shot-noise estimation, whitening, sigma copying, and reference-bin correction.
 
 const std = @import("std");
+const sampling = @import("sampling.zig");
 
 pub const Error = error{
     ShapeMismatch,
@@ -26,6 +27,7 @@ pub const Error = error{
     MissingReferenceSignal,
     InvalidReferenceSignal,
     SingularWhiteningWeight,
+    UnsupportedS5OperationalRange,
 };
 
 /// Purpose:
@@ -131,6 +133,111 @@ pub fn scaleSigmaFromReference(
     }
 }
 
+/// Purpose:
+///   Interpolate a sparse SNR specification onto the current wavelengths and convert it to sigma.
+pub fn sigmaFromInterpolatedSignalToNoise(
+    wavelengths_nm: []const f64,
+    snr_wavelengths_nm: []const f64,
+    snr_values: []const f64,
+    signal: []const f64,
+    output: []f64,
+) Error!void {
+    if (wavelengths_nm.len != signal.len or signal.len != output.len) return error.ShapeMismatch;
+    if (snr_wavelengths_nm.len == 0 or snr_wavelengths_nm.len != snr_values.len) return error.InvalidNoiseScaleFactor;
+    if (snr_wavelengths_nm.len == 1) {
+        const snr_value = snr_values[0];
+        if (!std.math.isFinite(snr_value) or snr_value <= 0.0) return error.InvalidNoiseScaleFactor;
+        for (signal, output) |signal_value, *slot| {
+            if (!std.math.isFinite(signal_value) or signal_value < 0.0) return error.InvalidReferenceSignal;
+            slot.* = signal_value / snr_value;
+        }
+        return;
+    }
+    for (wavelengths_nm, signal, output) |wavelength_nm, signal_value, *slot| {
+        if (!std.math.isFinite(signal_value) or signal_value < 0.0) return error.InvalidReferenceSignal;
+        const snr_value = sampling.sampleLinearClampedAssumeValid(snr_wavelengths_nm, snr_values, wavelength_nm);
+        if (!std.math.isFinite(snr_value) or snr_value <= 0.0) return error.InvalidNoiseScaleFactor;
+        slot.* = signal_value / snr_value;
+    }
+}
+
+/// Purpose:
+///   Evaluate the vendor-style LAB SNR parameterization and convert it to sigma.
+pub fn sigmaFromLabOperational(signal: []const f64, a: f64, b: f64, output: []f64) Error!void {
+    if (signal.len != output.len) return error.ShapeMismatch;
+    if (!std.math.isFinite(a) or a <= 0.0 or !std.math.isFinite(b) or b < 0.0) {
+        return error.InvalidNoiseScaleFactor;
+    }
+    for (signal, output) |signal_value, *slot| {
+        if (!std.math.isFinite(signal_value) or signal_value < 0.0) return error.InvalidReferenceSignal;
+        slot.* = std.math.sqrt(a * signal_value + b * b) / a;
+    }
+}
+
+/// Purpose:
+///   Evaluate the legacy Sentinel-5 SNR parameterization and convert it to sigma.
+pub fn sigmaFromS5Operational(
+    wavelengths_nm: []const f64,
+    signal: []const f64,
+    output: []f64,
+) Error!void {
+    if (wavelengths_nm.len != signal.len or signal.len != output.len) return error.ShapeMismatch;
+
+    for (wavelengths_nm, signal, output) |wavelength_nm, signal_value, *slot| {
+        if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(signal_value) or signal_value < 0.0) {
+            return error.InvalidReferenceSignal;
+        }
+        const coefficients = try s5OperationalCoefficients(wavelength_nm);
+        slot.* = std.math.sqrt(coefficients.a * signal_value + coefficients.b) / coefficients.a;
+    }
+}
+
+const S5Coefficients = struct {
+    a: f64,
+    b: f64,
+};
+
+fn s5OperationalCoefficients(wavelength_nm: f64) Error!S5Coefficients {
+    const a_1 = 4.70194461239e-05;
+    const b_1 = 3449239.8849;
+    const a0_4 = 4.67913725e-06;
+    const a1_4 = -1.26105546e-05;
+    const a2_4 = 1.39147643e-05;
+    const a3_4 = -5.39067088e-06;
+    const b0_4 = -407188.40771951;
+    const b1_4 = 1161526.66109376;
+    const a0_2 = 3.03796420e-07;
+    const a1_2 = -6.81549664e-07;
+    const a2_2 = 6.78226603e-07;
+    const a3_2 = -2.70807116e-07;
+    const b0_2 = 131105.24706965;
+    const b1_2 = 15500.79117382;
+    const a_3 = 3.7839338322e-07;
+    const b_3 = 787116.299872;
+
+    if (wavelength_nm < 270.0 or wavelength_nm > 500.0 or (wavelength_nm > 300.0 and wavelength_nm < 303.0)) {
+        return error.UnsupportedS5OperationalRange;
+    }
+    if (wavelength_nm <= 300.0) {
+        return .{ .a = a_1, .b = b_1 };
+    }
+    if (wavelength_nm >= 303.0 and wavelength_nm <= 310.0) {
+        const d = (wavelength_nm - 302.0) / 8.0;
+        return .{
+            .a = a0_4 + a1_4 * d + a2_4 * d * d + a3_4 * d * d * d,
+            .b = b0_4 + b1_4 / d,
+        };
+    }
+    if (wavelength_nm > 310.0 and wavelength_nm < 330.0) {
+        const d = (wavelength_nm - 309.0) / 21.0;
+        return .{
+            .a = a0_2 + a1_2 * d + a2_2 * d * d + a3_2 * d * d * d,
+            .b = b0_2 + b1_2 / d,
+        };
+    }
+    return .{ .a = a_3, .b = b_3 };
+}
+
 test "noise helpers estimate shot-noise sigma and whiten residuals" {
     const signal = [_]f64{ 100.0, 400.0 };
     var sigma: [2]f64 = undefined;
@@ -164,6 +271,22 @@ test "noise helpers require explicit positive sigma input for snr-driven paths" 
     try std.testing.expectEqual(@as(f64, 0.03), sigma[1]);
 }
 
+test "noise helpers reject invalid single-point interpolated SNR inputs" {
+    const wavelengths = [_]f64{ 310.0, 312.0 };
+    const signal = [_]f64{ 100.0, 120.0 };
+    const snr_wavelengths = [_]f64{311.0};
+    var sigma: [2]f64 = undefined;
+
+    try std.testing.expectError(
+        error.InvalidNoiseScaleFactor,
+        sigmaFromInterpolatedSignalToNoise(&wavelengths, &snr_wavelengths, &.{0.0}, &signal, &sigma),
+    );
+    try std.testing.expectError(
+        error.InvalidNoiseScaleFactor,
+        sigmaFromInterpolatedSignalToNoise(&wavelengths, &snr_wavelengths, &.{std.math.inf(f64)}, &signal, &sigma),
+    );
+}
+
 test "noise helpers scale sigma from a reference radiance spectrum with spectral-bin correction" {
     const reference_signal = [_]f64{ 10.0, 20.0 };
     const reference_sigma = [_]f64{ 0.1, 0.2 };
@@ -181,4 +304,18 @@ test "noise helpers scale sigma from a reference radiance spectrum with spectral
 
     try std.testing.expectApproxEqRel(@as(f64, 0.282842712), sigma[0], 1.0e-9);
     try std.testing.expectApproxEqRel(@as(f64, 0.141421356), sigma[1], 1.0e-9);
+}
+
+test "noise helpers evaluate LAB and Sentinel-5 operational sigma branches" {
+    const wavelengths = [_]f64{ 290.0, 320.0, 450.0 };
+    const signal = [_]f64{ 1.2e6, 1.5e6, 2.0e6 };
+    var lab_sigma: [3]f64 = undefined;
+    var s5_sigma: [3]f64 = undefined;
+
+    try sigmaFromLabOperational(&signal, 3.5e-6, 1500.0, &lab_sigma);
+    try sigmaFromS5Operational(&wavelengths, &signal, &s5_sigma);
+
+    try std.testing.expect(lab_sigma[0] > 0.0);
+    try std.testing.expect(s5_sigma[0] > 0.0);
+    try std.testing.expect(s5_sigma[1] != s5_sigma[2]);
 }

@@ -48,6 +48,7 @@ pub const Buffers = struct {
     irradiance: []f64,
     reflectance: []f64,
     scratch: []f64,
+    scratch_aux: []f64,
     layer_inputs: []common.LayerInput,
     pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
@@ -57,6 +58,9 @@ pub const Buffers = struct {
     pseudo_spherical_level_altitudes: []f64,
     jacobian: ?[]f64 = null,
     noise_sigma: ?[]f64 = null,
+    radiance_noise_sigma: ?[]f64 = null,
+    irradiance_noise_sigma: ?[]f64 = null,
+    reflectance_noise_sigma: ?[]f64 = null,
 };
 
 /// Reusable measurement-space workspace that owns the backing storage.
@@ -66,6 +70,7 @@ pub const SummaryWorkspace = struct {
     irradiance: []f64 = &.{},
     reflectance: []f64 = &.{},
     scratch: []f64 = &.{},
+    scratch_aux: []f64 = &.{},
     layer_inputs: []common.LayerInput = &.{},
     pseudo_spherical_layers: []common.LayerInput = &.{},
     source_interfaces: []common.SourceInterfaceInput = &.{},
@@ -75,6 +80,9 @@ pub const SummaryWorkspace = struct {
     pseudo_spherical_level_altitudes: []f64 = &.{},
     jacobian: []f64 = &.{},
     noise_sigma: []f64 = &.{},
+    radiance_noise_sigma: []f64 = &.{},
+    irradiance_noise_sigma: []f64 = &.{},
+    reflectance_noise_sigma: []f64 = &.{},
 
     /// Purpose:
     ///   Release every owned buffer held by the measurement workspace.
@@ -84,6 +92,7 @@ pub const SummaryWorkspace = struct {
         freeBuffer(allocator, self.irradiance);
         freeBuffer(allocator, self.reflectance);
         freeBuffer(allocator, self.scratch);
+        freeBuffer(allocator, self.scratch_aux);
         freeLayerBuffer(allocator, self.layer_inputs);
         freeLayerBuffer(allocator, self.pseudo_spherical_layers);
         freeSourceInterfaceBuffer(allocator, self.source_interfaces);
@@ -93,6 +102,9 @@ pub const SummaryWorkspace = struct {
         freeBuffer(allocator, self.pseudo_spherical_level_altitudes);
         freeBuffer(allocator, self.jacobian);
         freeBuffer(allocator, self.noise_sigma);
+        freeBuffer(allocator, self.radiance_noise_sigma);
+        freeBuffer(allocator, self.irradiance_noise_sigma);
+        freeBuffer(allocator, self.reflectance_noise_sigma);
         self.* = .{};
     }
 
@@ -113,13 +125,18 @@ pub const SummaryWorkspace = struct {
         const layer_count = transportLayerCountHint(scene, route);
         const pseudo_spherical_sample_count = pseudoSphericalSampleCountHint(scene, route);
         const wants_jacobian = route.derivative_mode != .none;
-        const wants_noise = providers.noise.materializesSigma(scene);
+        const wants_radiance_noise = providers.noise.materializesSigma(scene, .radiance);
+        const wants_irradiance_noise = providers.noise.materializesSigma(scene, .irradiance);
+        const wants_noise = wants_radiance_noise or
+            wants_irradiance_noise or
+            reflectanceCalibrationEnabled(scene);
 
         try ensureBufferCapacity(allocator, &self.wavelengths, sample_count);
         try ensureBufferCapacity(allocator, &self.radiance, sample_count);
         try ensureBufferCapacity(allocator, &self.irradiance, sample_count);
         try ensureBufferCapacity(allocator, &self.reflectance, sample_count);
         try ensureBufferCapacity(allocator, &self.scratch, sample_count);
+        try ensureBufferCapacity(allocator, &self.scratch_aux, sample_count);
         try ensureLayerBufferCapacity(allocator, &self.layer_inputs, layer_count);
         try ensureLayerBufferCapacity(allocator, &self.pseudo_spherical_layers, pseudo_spherical_sample_count);
         try ensureSourceInterfaceBufferCapacity(allocator, &self.source_interfaces, layer_count + 1);
@@ -132,6 +149,9 @@ pub const SummaryWorkspace = struct {
         }
         if (wants_noise) {
             try ensureBufferCapacity(allocator, &self.noise_sigma, sample_count);
+            try ensureBufferCapacity(allocator, &self.radiance_noise_sigma, sample_count);
+            try ensureBufferCapacity(allocator, &self.irradiance_noise_sigma, sample_count);
+            try ensureBufferCapacity(allocator, &self.reflectance_noise_sigma, sample_count);
         }
 
         return .{
@@ -140,6 +160,7 @@ pub const SummaryWorkspace = struct {
             .irradiance = self.irradiance[0..sample_count],
             .reflectance = self.reflectance[0..sample_count],
             .scratch = self.scratch[0..sample_count],
+            .scratch_aux = self.scratch_aux[0..sample_count],
             .layer_inputs = self.layer_inputs[0..layer_count],
             .pseudo_spherical_layers = self.pseudo_spherical_layers[0..pseudo_spherical_sample_count],
             .source_interfaces = self.source_interfaces[0 .. layer_count + 1],
@@ -149,6 +170,9 @@ pub const SummaryWorkspace = struct {
             .pseudo_spherical_level_altitudes = self.pseudo_spherical_level_altitudes[0 .. layer_count + 1],
             .jacobian = if (wants_jacobian) self.jacobian[0..sample_count] else null,
             .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
+            .radiance_noise_sigma = if (wants_noise) self.radiance_noise_sigma[0..sample_count] else null,
+            .irradiance_noise_sigma = if (wants_noise) self.irradiance_noise_sigma[0..sample_count] else null,
+            .reflectance_noise_sigma = if (wants_noise) self.reflectance_noise_sigma[0..sample_count] else null,
         };
     }
 };
@@ -173,6 +197,11 @@ pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
 pub fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usize {
     const layer_count = transportLayerCountHint(scene, route);
     return layer_count * pseudoSphericalSubgridDivisions(scene);
+}
+
+pub fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
+    const controls = scene.observation_model.resolvedReflectanceCalibration();
+    return controls.multiplicative_error.enabled() or controls.additive_error.enabled();
 }
 
 /// Purpose:
@@ -206,6 +235,7 @@ pub fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
         buffers.irradiance.len != sample_count or
         buffers.reflectance.len != sample_count or
         buffers.scratch.len != sample_count or
+        buffers.scratch_aux.len != sample_count or
         buffers.layer_inputs.len == 0 or
         buffers.pseudo_spherical_layers.len == 0 or
         buffers.source_interfaces.len != buffers.layer_inputs.len + 1 or
@@ -224,6 +254,15 @@ pub fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
     }
     if (buffers.noise_sigma) |noise_sigma| {
         if (noise_sigma.len != sample_count) return error.ShapeMismatch;
+    }
+    if (buffers.radiance_noise_sigma) |sigma| {
+        if (sigma.len != sample_count) return error.ShapeMismatch;
+    }
+    if (buffers.irradiance_noise_sigma) |sigma| {
+        if (sigma.len != sample_count) return error.ShapeMismatch;
+    }
+    if (buffers.reflectance_noise_sigma) |sigma| {
+        if (sigma.len != sample_count) return error.ShapeMismatch;
     }
 }
 

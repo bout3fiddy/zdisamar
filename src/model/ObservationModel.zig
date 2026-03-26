@@ -32,6 +32,7 @@ const InstrumentLineShapeTable = @import("Instrument.zig").InstrumentLineShapeTa
 const OperationalReferenceGrid = @import("Instrument.zig").OperationalReferenceGrid;
 const OperationalSolarSpectrum = @import("Instrument.zig").OperationalSolarSpectrum;
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
+const SpectralChannel = @import("Instrument.zig").SpectralChannel;
 const Allocator = std.mem.Allocator;
 
 pub const ObservationRegime = enum {
@@ -147,6 +148,7 @@ pub const ObservationModel = struct {
     operational_solar_spectrum: OperationalSolarSpectrum = .{},
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
+    measurement_pipeline: Instrument.MeasurementPipeline = .{},
     cross_section_fit: CrossSectionFitControls = .{},
     measured_wavelengths_nm: []const f64 = &.{},
     owns_measured_wavelengths: bool = false,
@@ -182,6 +184,15 @@ pub const ObservationModel = struct {
                 //   Input-driven noise models require an explicit sigma vector so transport and
                 //   retrieval code can treat the noise contract as already materialized.
                 if (self.ingested_noise_sigma.len == 0) return errors.Error.InvalidRequest;
+            },
+            .lab_operational => {
+                const radiance_noise = self.resolvedChannelControls(.radiance).noise;
+                const irradiance_noise = self.resolvedChannelControls(.irradiance).noise;
+                if (radiance_noise.model != .lab_operational or irradiance_noise.model != .lab_operational) {
+                    return errors.Error.InvalidRequest;
+                }
+                try radiance_noise.validate();
+                try irradiance_noise.validate();
             },
             .none, .shot_noise => {},
         }
@@ -220,7 +231,106 @@ pub const ObservationModel = struct {
         try self.operational_solar_spectrum.validate();
         try self.o2_operational_lut.validate();
         try self.o2o2_operational_lut.validate();
+        try self.measurement_pipeline.validate();
         try self.cross_section_fit.validate();
+    }
+
+    /// Purpose:
+    ///   Resolve the effective per-channel measurement controls, preserving legacy defaults
+    ///   until callers opt into the explicit channel pipeline.
+    pub fn resolvedChannelControls(self: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
+        return switch (channel) {
+            .radiance => if (self.measurement_pipeline.radiance.explicit)
+                self.measurement_pipeline.radiance
+            else
+                self.legacyChannelControls(.radiance),
+            .irradiance => if (self.measurement_pipeline.irradiance.explicit)
+                self.measurement_pipeline.irradiance
+            else
+                self.legacyChannelControls(.irradiance),
+        };
+    }
+
+    /// Purpose:
+    ///   Return the explicit Ring controls, or a disabled record when absent.
+    pub fn resolvedRingControls(self: *const ObservationModel) Instrument.RingControls {
+        return self.measurement_pipeline.ring;
+    }
+
+    /// Purpose:
+    ///   Return reflectance calibration-error controls for sigma propagation.
+    pub fn resolvedReflectanceCalibration(self: *const ObservationModel) Instrument.ReflectanceCalibration {
+        return self.measurement_pipeline.reflectance_calibration;
+    }
+
+    fn legacyChannelControls(self: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
+        var controls: Instrument.SpectralChannelControls = .{
+            .response = legacySpectralResponse(self),
+            .wavelength_shift_nm = self.wavelength_shift_nm,
+            .noise = .{
+                .enabled = legacyNoiseEnabled(self.noise_model, channel),
+                .model = legacyNoiseModel(self.noise_model, channel),
+                .reference_signal = if (channel == .radiance) self.reference_radiance else &.{},
+                .reference_sigma = if (channel == .radiance) self.ingested_noise_sigma else &.{},
+            },
+        };
+        if (channel == .radiance) {
+            controls.multiplicative_offset = self.multiplicative_offset;
+            controls.stray_light = self.stray_light;
+            controls.use_polarization_scrambler = true;
+        }
+        return controls;
+    }
+
+    fn legacySpectralResponse(self: *const ObservationModel) Instrument.SpectralResponse {
+        return .{
+            .slit_index = switch (self.builtin_line_shape) {
+                .gaussian => if (self.instrument_line_shape_table.nominal_count > 0) .table else .gaussian_modulated,
+                .flat_top_n4 => .flat_top_n4,
+                .triple_flat_top_n4 => .triple_flat_top_n4,
+            },
+            .fwhm_nm = self.instrument_line_fwhm_nm,
+            .builtin_line_shape = self.builtin_line_shape,
+            .high_resolution_step_nm = self.high_resolution_step_nm,
+            .high_resolution_half_span_nm = self.high_resolution_half_span_nm,
+            // DECISION:
+            //   Legacy channel controls borrow the observation-model line-shape carriers.
+            //   The derived controls can be copied into the explicit measurement pipeline,
+            //   so they must not inherit ownership and double-free the same backing slices
+            //   during teardown.
+            .instrument_line_shape = borrowedLineShape(self.instrument_line_shape),
+            .instrument_line_shape_table = borrowedLineShapeTable(self.instrument_line_shape_table),
+        };
+    }
+
+    fn borrowedLineShape(line_shape: InstrumentLineShape) InstrumentLineShape {
+        var borrowed = line_shape;
+        borrowed.owns_memory = false;
+        return borrowed;
+    }
+
+    fn borrowedLineShapeTable(line_shape_table: InstrumentLineShapeTable) InstrumentLineShapeTable {
+        var borrowed = line_shape_table;
+        borrowed.owns_memory = false;
+        return borrowed;
+    }
+
+    fn legacyNoiseEnabled(model: Instrument.NoiseModelKind, channel: SpectralChannel) bool {
+        return switch (channel) {
+            .radiance => model != .none,
+            .irradiance => switch (model) {
+                .shot_noise, .lab_operational => true,
+                .none, .s5p_operational, .snr_from_input => false,
+            },
+        };
+    }
+
+    fn legacyNoiseModel(model: Instrument.NoiseModelKind, channel: SpectralChannel) Instrument.NoiseModelKind {
+        if (channel == .radiance) return model;
+        return switch (model) {
+            .shot_noise, .lab_operational => model,
+            .none, .s5p_operational, .snr_from_input => .none,
+        };
     }
 
     /// Purpose:
@@ -232,6 +342,7 @@ pub const ObservationModel = struct {
         self.operational_solar_spectrum.deinitOwned(allocator);
         self.o2_operational_lut.deinitOwned(allocator);
         self.o2o2_operational_lut.deinitOwned(allocator);
+        self.measurement_pipeline.deinitOwned(allocator);
         self.cross_section_fit.deinitOwned(allocator);
         if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) allocator.free(self.measured_wavelengths_nm);
         self.measured_wavelengths_nm = &.{};
@@ -282,6 +393,86 @@ test "observation model carries explicit measured-channel wavelengths" {
 
     try model.validate();
     try std.testing.expectEqual(@as(f64, 761.02), model.measured_wavelengths_nm[1]);
+}
+
+test "observation model rejects lab operational noise without explicit LAB coefficients" {
+    const invalid_model: ObservationModel = .{
+        .noise_model = .lab_operational,
+    };
+
+    try std.testing.expectError(errors.Error.InvalidRequest, invalid_model.validate());
+}
+
+test "observation model keeps borrowed legacy noise references when SNR tables are owned" {
+    const measured_wavelengths = [_]f64{760.8};
+    const reference_radiance = [_]f64{1.2};
+    const ingested_noise_sigma = [_]f64{0.02};
+    const model: ObservationModel = .{
+        .instrument = .tropomi,
+        .noise_model = .s5p_operational,
+        .measured_wavelengths_nm = &measured_wavelengths,
+        .reference_radiance = &reference_radiance,
+        .ingested_noise_sigma = &ingested_noise_sigma,
+    };
+
+    var controls = model.resolvedChannelControls(.radiance);
+    const snr_wavelengths_nm = try std.testing.allocator.dupe(f64, &.{760.8});
+    errdefer std.testing.allocator.free(snr_wavelengths_nm);
+    const snr_values = try std.testing.allocator.dupe(f64, &.{250.0});
+    errdefer std.testing.allocator.free(snr_values);
+
+    controls.noise.snr_wavelengths_nm = snr_wavelengths_nm;
+    controls.noise.snr_values = snr_values;
+    controls.noise.owns_snr_memory = true;
+    defer controls.noise.deinitOwned(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), controls.noise.reference_signal.len);
+    try std.testing.expectEqual(@as(usize, 1), controls.noise.reference_sigma.len);
+}
+
+test "observation model legacy spectral response borrows owned line-shape carriers" {
+    var line_shape: InstrumentLineShape = .{
+        .sample_count = 2,
+        .offsets_nm = try std.testing.allocator.dupe(f64, &.{ -0.1, 0.1 }),
+        .weights = try std.testing.allocator.dupe(f64, &.{ 0.4, 0.6 }),
+        .owns_memory = true,
+    };
+    errdefer line_shape.deinitOwned(std.testing.allocator);
+
+    var line_shape_table: InstrumentLineShapeTable = .{
+        .nominal_count = 1,
+        .sample_count = 2,
+        .nominal_wavelengths_nm = try std.testing.allocator.dupe(f64, &.{760.8}),
+        .offsets_nm = try std.testing.allocator.dupe(f64, &.{ -0.1, 0.1 }),
+        .weights = try std.testing.allocator.dupe(f64, &.{ 0.45, 0.55 }),
+        .owns_memory = true,
+    };
+    errdefer line_shape_table.deinitOwned(std.testing.allocator);
+
+    var model: ObservationModel = .{
+        .instrument = .tropomi,
+        .builtin_line_shape = .gaussian,
+        .instrument_line_fwhm_nm = 0.38,
+        .instrument_line_shape = line_shape,
+        .instrument_line_shape_table = line_shape_table,
+        .noise_model = .none,
+    };
+    defer model.deinitOwned(std.testing.allocator);
+
+    var radiance = model.resolvedChannelControls(.radiance);
+    radiance.explicit = true;
+    model.measurement_pipeline.radiance = radiance;
+
+    try std.testing.expect(!radiance.response.instrument_line_shape.owns_memory);
+    try std.testing.expect(!radiance.response.instrument_line_shape_table.owns_memory);
+    try std.testing.expectEqual(
+        @intFromPtr(model.instrument_line_shape.offsets_nm.ptr),
+        @intFromPtr(radiance.response.instrument_line_shape.offsets_nm.ptr),
+    );
+    try std.testing.expectEqual(
+        @intFromPtr(model.instrument_line_shape_table.weights.ptr),
+        @intFromPtr(radiance.response.instrument_line_shape_table.weights.ptr),
+    );
 }
 
 test "cross-section fit controls validate band-scoped settings" {

@@ -281,13 +281,14 @@ fn sampleSigma(
 ) !f64 {
     var variance: f64 = 0.0;
     if (measurement.error_model.from_source_noise) {
-        if (index >= product.noise_sigma.len or product.noise_sigma.len == 0) {
+        const source_sigma_values = sigmaValues(product, measurement.observable);
+        if (index >= source_sigma_values.len or source_sigma_values.len == 0) {
             return error.InvalidRequest;
         }
         // UNITS:
         //   Noise values are stored as per-sample sigma, so the combined
         //   variance is assembled in squared measurement units here.
-        const source_sigma = product.noise_sigma[index];
+        const source_sigma = source_sigma_values[index];
         if (!std.math.isFinite(source_sigma) or source_sigma < 0.0) return error.InvalidRequest;
         variance += source_sigma * source_sigma;
     }
@@ -309,6 +310,15 @@ fn measurementValues(product: *const MeasurementSpaceProduct, observable: Measur
 
 fn measurementJacobian(product: *const MeasurementSpaceProduct, observable: MeasurementQuantity) ?[]const f64 {
     return if (observable == .radiance) product.jacobian else null;
+}
+
+fn sigmaValues(product: *const MeasurementSpaceProduct, observable: MeasurementQuantity) []const f64 {
+    return switch (observable) {
+        .radiance => if (product.radiance_noise_sigma.len != 0) product.radiance_noise_sigma else product.noise_sigma,
+        .irradiance => if (product.irradiance_noise_sigma.len != 0) product.irradiance_noise_sigma else product.noise_sigma,
+        .reflectance => if (product.reflectance_noise_sigma.len != 0) product.reflectance_noise_sigma else product.noise_sigma,
+        .slant_column => &.{},
+    };
 }
 
 test "spectral evaluator selects masked observable vectors with sigma" {

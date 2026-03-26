@@ -154,6 +154,223 @@ test "engine execute materializes measurement-space summaries through the typed 
     try std.testing.expect(measurement_product.jacobian != null);
 }
 
+test "engine execute keeps radiance and irradiance pipelines separate and restores the baseline when radiance-only corrections are disabled" {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const grid: zdisamar.SpectralGrid = .{
+        .start_nm = 760.8,
+        .end_nm = 771.5,
+        .sample_count = 41,
+    };
+
+    var plan = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .observation_regime = .nadir,
+            .derivative_mode = .none,
+            .spectral_grid = grid,
+            .layer_count_hint = 12,
+            .measurement_count_hint = grid.sample_count,
+        },
+        .rtm_controls = .{
+            .n_streams = 4,
+            .num_orders_max = 8,
+        },
+    });
+    defer plan.deinit();
+
+    const correction_wavelengths = [_]f64{ 760.8, 766.15, 771.5 };
+    const multiplicative_values = [_]f64{ 1.2, 0.4, -0.8 };
+    const stray_values = [_]f64{ 0.9, 0.2, 0.5 };
+
+    const base_measurement_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = .{
+            .explicit = true,
+            .response = .{
+                .explicit = true,
+                .slit_index = .flat_top_n4,
+                .fwhm_nm = 0.38,
+                .builtin_line_shape = .flat_top_n4,
+                .high_resolution_step_nm = 0.01,
+                .high_resolution_half_span_nm = 1.14,
+            },
+            .noise = .{
+                .explicit = true,
+                .enabled = true,
+                .model = .shot_noise,
+            },
+        },
+        .irradiance = .{
+            .explicit = true,
+            .response = .{
+                .explicit = true,
+                .slit_index = .flat_top_n4,
+                .fwhm_nm = 0.38,
+                .builtin_line_shape = .flat_top_n4,
+                .high_resolution_step_nm = 0.01,
+                .high_resolution_half_span_nm = 1.14,
+            },
+            .noise = .{
+                .explicit = true,
+                .enabled = true,
+                .model = .shot_noise,
+            },
+        },
+    };
+
+    const split_measurement_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = base_measurement_pipeline.radiance,
+        .irradiance = .{
+            .explicit = true,
+            .response = .{
+                .explicit = true,
+                .slit_index = .gaussian_modulated,
+                .fwhm_nm = 0.22,
+                .builtin_line_shape = .gaussian,
+                .high_resolution_step_nm = 0.01,
+                .high_resolution_half_span_nm = 0.80,
+            },
+            .noise = .{
+                .explicit = true,
+                .enabled = true,
+                .model = .shot_noise,
+            },
+        },
+    };
+
+    const corrected_measurement_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = .{
+            .explicit = true,
+            .response = base_measurement_pipeline.radiance.response,
+            .noise = base_measurement_pipeline.radiance.noise,
+            .simple_offsets = .{
+                .multiplicative_percent = 0.8,
+                .additive_percent_of_first = 0.2,
+            },
+            .smear_percent = 1.5,
+            .multiplicative_nodes = .{
+                .wavelengths_nm = correction_wavelengths[0..],
+                .values = multiplicative_values[0..],
+                .use_linear_interpolation = true,
+            },
+            .stray_light_nodes = .{
+                .wavelengths_nm = correction_wavelengths[0..],
+                .values = stray_values[0..],
+                .use_linear_interpolation = true,
+            },
+        },
+        .irradiance = base_measurement_pipeline.irradiance,
+        .ring = .{
+            .explicit = true,
+            .enabled = true,
+            .coefficient = 0.02,
+            .fraction_raman_lines = 0.6,
+            .differential = true,
+        },
+    };
+
+    const restored_measurement_pipeline: zdisamar.Instrument.MeasurementPipeline = .{
+        .radiance = base_measurement_pipeline.radiance,
+        .irradiance = base_measurement_pipeline.irradiance,
+        .ring = .{
+            .explicit = true,
+            .enabled = false,
+        },
+    };
+
+    const base_scene: zdisamar.Scene = .{
+        .id = "forward-instrument-pipeline",
+        .atmosphere = .{
+            .layer_count = 12,
+            .sublayer_divisions = 2,
+            .has_aerosols = true,
+        },
+        .aerosol = .{
+            .enabled = true,
+            .optical_depth = 0.30,
+            .single_scatter_albedo = 1.0,
+            .asymmetry_factor = 0.70,
+            .angstrom_exponent = 0.0,
+            .reference_wavelength_nm = 760.0,
+            .layer_center_km = 5.4,
+            .layer_width_km = 0.4,
+        },
+        .surface = .{
+            .albedo = 0.20,
+        },
+        .geometry = .{
+            .model = .pseudo_spherical,
+            .solar_zenith_deg = 60.0,
+            .viewing_zenith_deg = 30.0,
+            .relative_azimuth_deg = 120.0,
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "integration-instrument-pipeline" },
+            .regime = .nadir,
+            .sampling = .native,
+            .noise_model = .none,
+            .measurement_pipeline = base_measurement_pipeline,
+        },
+        .spectral_grid = grid,
+    };
+
+    var request_base = zdisamar.Request.init(base_scene);
+    request_base.expected_derivative_mode = .none;
+
+    var split_scene = base_scene;
+    split_scene.observation_model.measurement_pipeline = split_measurement_pipeline;
+    var request_split = zdisamar.Request.init(split_scene);
+    request_split.expected_derivative_mode = .none;
+
+    var corrected_scene = base_scene;
+    corrected_scene.observation_model.measurement_pipeline = corrected_measurement_pipeline;
+    var request_corrected = zdisamar.Request.init(corrected_scene);
+    request_corrected.expected_derivative_mode = .none;
+
+    var restored_scene = base_scene;
+    restored_scene.observation_model.measurement_pipeline = restored_measurement_pipeline;
+    var request_restored = zdisamar.Request.init(restored_scene);
+    request_restored.expected_derivative_mode = .none;
+
+    var workspace = engine.createWorkspace("forward-instrument-pipeline");
+    var result_base = try engine.execute(&plan, &workspace, &request_base);
+    defer result_base.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_split = try engine.execute(&plan, &workspace, &request_split);
+    defer result_split.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_corrected = try engine.execute(&plan, &workspace, &request_corrected);
+    defer result_corrected.deinit(std.testing.allocator);
+    workspace.reset();
+    var result_restored = try engine.execute(&plan, &workspace, &request_restored);
+    defer result_restored.deinit(std.testing.allocator);
+
+    const base_product = result_base.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const split_product = result_split.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const corrected_product = result_corrected.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const restored_product = result_restored.measurement_space_product orelse return error.MissingMeasurementProduct;
+
+    const split_radiance_delta = meanAbsoluteDifference(base_product.radiance, split_product.radiance);
+    const split_irradiance_delta = meanAbsoluteDifference(base_product.irradiance, split_product.irradiance);
+    try std.testing.expect(split_irradiance_delta > 1.0e-5);
+    try std.testing.expect(split_irradiance_delta > split_radiance_delta * 5.0);
+
+    const corrected_radiance_delta = meanAbsoluteDifference(base_product.radiance, corrected_product.radiance);
+    const corrected_irradiance_delta = meanAbsoluteDifference(base_product.irradiance, corrected_product.irradiance);
+    const corrected_reflectance_delta = meanAbsoluteDifference(base_product.reflectance, corrected_product.reflectance);
+    try std.testing.expect(corrected_radiance_delta > 1.0e-5);
+    try std.testing.expect(corrected_reflectance_delta > 1.0e-6);
+    try std.testing.expect(corrected_irradiance_delta < 1.0e-12);
+
+    const restored_radiance_delta = meanAbsoluteDifference(base_product.radiance, restored_product.radiance);
+    const restored_irradiance_delta = meanAbsoluteDifference(base_product.irradiance, restored_product.irradiance);
+    const restored_reflectance_delta = meanAbsoluteDifference(base_product.reflectance, restored_product.reflectance);
+    try std.testing.expect(restored_radiance_delta < corrected_radiance_delta * 1.0e-4);
+    try std.testing.expect(restored_irradiance_delta < 1.0e-12);
+    try std.testing.expect(restored_reflectance_delta < corrected_reflectance_delta * 1.0e-4);
+}
+
 test "engine execute annotates provenance and responds to explicit interval aerosol fractions" {
     var engine = zdisamar.Engine.init(std.testing.allocator, .{});
     defer engine.deinit();

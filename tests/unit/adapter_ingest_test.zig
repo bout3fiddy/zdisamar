@@ -204,11 +204,11 @@ test "reference asset ingest accepts generic cross-section sigma column names" {
     try std.fs.cwd().writeFile(.{
         .sub_path = path,
         .data =
-            \\wavelength_nm,o3_sigma_cm2_per_molecule
-            \\320.0,1.1e-19
-            \\325.0,1.4e-19
-            \\330.0,1.2e-19
-            \\
+        \\wavelength_nm,o3_sigma_cm2_per_molecule
+        \\320.0,1.1e-19
+        \\325.0,1.4e-19
+        \\330.0,1.2e-19
+        \\
         ,
     });
 

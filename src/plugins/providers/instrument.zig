@@ -25,6 +25,8 @@ const calibration = @import("../../kernels/spectra/calibration.zig");
 const PreparedOpticalState = @import("../../kernels/optics/preparation.zig").PreparedOpticalState;
 const AdaptiveReferenceGrid = @import("../../model/Instrument.zig").AdaptiveReferenceGrid;
 const BuiltinLineShapeKind = @import("../../model/Instrument.zig").BuiltinLineShapeKind;
+const InstrumentModel = @import("../../model/Instrument.zig").Instrument;
+const SpectralChannel = @import("../../model/Instrument.zig").SpectralChannel;
 const max_line_shape_samples = @import("../../model/Instrument.zig").max_line_shape_samples;
 const Scene = @import("../../model/Scene.zig").Scene;
 
@@ -44,10 +46,10 @@ pub const IntegrationKernel = struct {
 /// Builtin instrument-response provider contract.
 pub const Provider = struct {
     id: []const u8,
-    calibrationForScene: *const fn (scene: *const Scene) calibration.Calibration,
-    usesIntegratedSampling: *const fn (scene: *const Scene) bool,
-    integrationForWavelength: *const fn (scene: *const Scene, prepared: ?*const PreparedOpticalState, nominal_wavelength_nm: f64, kernel: *IntegrationKernel) void,
-    slitKernelForScene: *const fn (scene: *const Scene) [5]f64,
+    calibrationForScene: *const fn (scene: *const Scene, channel: SpectralChannel) calibration.Calibration,
+    usesIntegratedSampling: *const fn (scene: *const Scene, channel: SpectralChannel) bool,
+    integrationForWavelength: *const fn (scene: *const Scene, prepared: ?*const PreparedOpticalState, channel: SpectralChannel, nominal_wavelength_nm: f64, kernel: *IntegrationKernel) void,
+    slitKernelForScene: *const fn (scene: *const Scene, channel: SpectralChannel) [5]f64,
 };
 
 /// Resolve a builtin instrument response provider by identifier.
@@ -68,16 +70,18 @@ fn genericProvider(provider_id: []const u8) Provider {
     };
 }
 
-fn calibrationForScene(scene: *const Scene) calibration.Calibration {
+fn calibrationForScene(scene: *const Scene, channel: SpectralChannel) calibration.Calibration {
+    const controls = scene.observation_model.resolvedChannelControls(channel);
     return .{
-        .gain = scene.observation_model.multiplicative_offset,
-        .offset = 0.0,
-        .wavelength_shift_nm = scene.observation_model.wavelength_shift_nm,
-        .stray_light = scene.observation_model.stray_light,
+        .gain = controls.multiplicative_offset,
+        .offset = controls.additive_offset,
+        .wavelength_shift_nm = controls.wavelength_shift_nm,
+        .stray_light = controls.stray_light,
     };
 }
 
-fn usesIntegratedInstrumentSampling(scene: *const Scene) bool {
+fn usesIntegratedInstrumentSampling(scene: *const Scene, channel: SpectralChannel) bool {
+    const response = scene.observation_model.resolvedChannelControls(channel).response;
     // DECISION:
     //   Integrated sampling is driven by the observation model first; explicit
     //   line-shape metadata also forces integration so the legacy convolution
@@ -87,20 +91,27 @@ fn usesIntegratedInstrumentSampling(scene: *const Scene) bool {
         .native, .synthetic => false,
     };
     return mode_requires_native_integration or
-        scene.observation_model.instrument_line_fwhm_nm > 0.0 or
-        scene.observation_model.instrument_line_shape.sample_count > 0 or
-        scene.observation_model.instrument_line_shape_table.nominal_count > 0;
+        response.fwhm_nm > 0.0 or
+        response.instrument_line_shape.sample_count > 0 or
+        response.instrument_line_shape_table.nominal_count > 0;
 }
 
-fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOpticalState, nominal_wavelength_nm: f64, kernel: *IntegrationKernel) void {
+fn integrationForWavelength(
+    scene: *const Scene,
+    prepared: ?*const PreparedOpticalState,
+    channel: SpectralChannel,
+    nominal_wavelength_nm: f64,
+    kernel: *IntegrationKernel,
+) void {
     resetKernel(kernel);
-    if (!usesIntegratedInstrumentSampling(scene)) {
+    const response = scene.observation_model.resolvedChannelControls(channel).response;
+    if (!usesIntegratedInstrumentSampling(scene, channel)) {
         kernel.sample_count = 1;
         return;
     }
 
-    if (scene.observation_model.instrument_line_shape_table.nominal_count > 0) {
-        kernel.sample_count = scene.observation_model.instrument_line_shape_table.writeNormalizedKernelForNominal(
+    if (response.instrument_line_shape_table.nominal_count > 0) {
+        kernel.sample_count = response.instrument_line_shape_table.writeNormalizedKernelForNominal(
             nominal_wavelength_nm,
             kernel.offsets_nm[0..],
             kernel.weights[0..],
@@ -119,8 +130,8 @@ fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOptic
         return;
     }
 
-    if (scene.observation_model.instrument_line_shape.sample_count > 0) {
-        kernel.sample_count = scene.observation_model.instrument_line_shape.writeNormalizedKernel(
+    if (response.instrument_line_shape.sample_count > 0) {
+        kernel.sample_count = response.instrument_line_shape.writeNormalizedKernel(
             kernel.offsets_nm[0..],
             kernel.weights[0..],
         );
@@ -136,24 +147,19 @@ fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOptic
     }
 
     if (prepared) |prepared_state| {
-        if (buildAdaptiveIntegrationKernel(scene, prepared_state, nominal_wavelength_nm, kernel)) {
+        if (buildAdaptiveIntegrationKernel(scene, prepared_state, response, nominal_wavelength_nm, kernel)) {
             return;
         }
     }
 
-    if (scene.observation_model.high_resolution_step_nm > 0.0 and scene.observation_model.high_resolution_half_span_nm > 0.0) {
-        const step_nm = scene.observation_model.high_resolution_step_nm;
-        const half_span_nm = scene.observation_model.high_resolution_half_span_nm;
-        const shape = scene.observation_model.builtin_line_shape;
+    if (response.high_resolution_step_nm > 0.0 and response.high_resolution_half_span_nm > 0.0) {
+        const step_nm = response.high_resolution_step_nm;
+        const half_span_nm = response.high_resolution_half_span_nm;
         var sample_count: usize = 0;
         var offset_nm = -half_span_nm;
         while (offset_nm <= half_span_nm + (step_nm * 0.5) and sample_count < max_integration_sample_count) : (offset_nm += step_nm) {
             kernel.offsets_nm[sample_count] = offset_nm;
-            kernel.weights[sample_count] = builtinLineShapeWeight(
-                shape,
-                scene.observation_model.instrument_line_fwhm_nm,
-                offset_nm,
-            );
+            kernel.weights[sample_count] = spectralResponseWeight(response, offset_nm);
             sample_count += 1;
         }
         if (sample_count == 0) sample_count = 1;
@@ -183,7 +189,7 @@ fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOptic
         .native, .synthetic => {},
     }
 
-    const default_half_span_nm = defaultKernelHalfSpanNm(scene.observation_model.instrument_line_fwhm_nm);
+    const default_half_span_nm = defaultKernelHalfSpanNm(response.fwhm_nm);
     const offsets_nm: [default_integration_sample_count]f64 = .{
         -default_half_span_nm,
         -0.5 * default_half_span_nm,
@@ -195,11 +201,7 @@ fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOptic
     var total_weight: f64 = 0.0;
     for (offsets_nm, 0..) |offset_nm, index| {
         kernel.offsets_nm[index] = offset_nm;
-        kernel.weights[index] = builtinLineShapeWeight(
-            scene.observation_model.builtin_line_shape,
-            scene.observation_model.instrument_line_fwhm_nm,
-            offset_nm,
-        );
+        kernel.weights[index] = spectralResponseWeight(response, offset_nm);
         total_weight += kernel.weights[index];
     }
     for (0..default_integration_sample_count) |index| kernel.weights[index] /= total_weight;
@@ -238,12 +240,13 @@ fn integrationForWavelength(scene: *const Scene, prepared: ?*const PreparedOptic
 fn buildAdaptiveIntegrationKernel(
     scene: *const Scene,
     prepared: *const PreparedOpticalState,
+    response: InstrumentModel.SpectralResponse,
     nominal_wavelength_nm: f64,
     kernel: *IntegrationKernel,
 ) bool {
     const adaptive = scene.observation_model.adaptive_reference_grid;
     if (!adaptive.enabled()) return false;
-    if (scene.observation_model.instrument_line_fwhm_nm <= 0.0) return false;
+    if (response.fwhm_nm <= 0.0) return false;
 
     const has_single_line_list = if (prepared.spectroscopy_lines) |line_list|
         line_list.lines.len != 0
@@ -251,14 +254,13 @@ fn buildAdaptiveIntegrationKernel(
         false;
     if (!has_single_line_list and prepared.line_absorbers.len == 0) return false;
 
-    const fwhm_nm = @max(scene.observation_model.instrument_line_fwhm_nm, 1.0e-4);
-    const half_span_nm = if (scene.observation_model.high_resolution_half_span_nm > 0.0)
-        scene.observation_model.high_resolution_half_span_nm
+    const fwhm_nm = @max(response.fwhm_nm, 1.0e-4);
+    const half_span_nm = if (response.high_resolution_half_span_nm > 0.0)
+        response.high_resolution_half_span_nm
     else
         defaultKernelHalfSpanNm(fwhm_nm);
     const window_start_nm = nominal_wavelength_nm - half_span_nm;
     const window_end_nm = nominal_wavelength_nm + half_span_nm;
-    const shape = scene.observation_model.builtin_line_shape;
 
     var sample_wavelengths_nm: [max_integration_sample_count]f64 = undefined;
     var sample_raw_weights: [max_integration_sample_count]f64 = undefined;
@@ -268,8 +270,7 @@ fn buildAdaptiveIntegrationKernel(
         &sample_wavelengths_nm,
         &sample_raw_weights,
         &sample_count,
-        shape,
-        fwhm_nm,
+        response,
         nominal_wavelength_nm,
         window_start_nm,
         window_end_nm,
@@ -280,8 +281,7 @@ fn buildAdaptiveIntegrationKernel(
         if (!addAdaptiveStrongLineSamplesFromList(
             adaptive,
             line_list,
-            shape,
-            fwhm_nm,
+            response,
             nominal_wavelength_nm,
             window_start_nm,
             window_end_nm,
@@ -295,8 +295,7 @@ fn buildAdaptiveIntegrationKernel(
             if (!addAdaptiveStrongLineSamplesFromList(
                 adaptive,
                 line_absorber.line_list,
-                shape,
-                fwhm_nm,
+                response,
                 nominal_wavelength_nm,
                 window_start_nm,
                 window_end_nm,
@@ -318,8 +317,7 @@ fn buildAdaptiveIntegrationKernel(
 fn addAdaptiveStrongLineSamplesFromList(
     adaptive: AdaptiveReferenceGrid,
     line_list: ReferenceData.SpectroscopyLineList,
-    shape: BuiltinLineShapeKind,
-    fwhm_nm: f64,
+    response: InstrumentModel.SpectralResponse,
     nominal_wavelength_nm: f64,
     window_start_nm: f64,
     window_end_nm: f64,
@@ -327,6 +325,7 @@ fn addAdaptiveStrongLineSamplesFromList(
     sample_raw_weights: *[max_integration_sample_count]f64,
     sample_count: *usize,
 ) bool {
+    const fwhm_nm = @max(response.fwhm_nm, 1.0e-4);
     const threshold_strength = line_list.runtime_controls.thresholdStrength(line_list.lines) orelse return true;
     var previous_center_nm: ?f64 = null;
     for (line_list.lines) |line| {
@@ -348,8 +347,7 @@ fn addAdaptiveStrongLineSamplesFromList(
             sample_wavelengths_nm,
             sample_raw_weights,
             sample_count,
-            shape,
-            fwhm_nm,
+            response,
             nominal_wavelength_nm,
             line.center_wavelength_nm,
             strong_start_nm,
@@ -364,13 +362,13 @@ fn addUniformAdaptiveSamples(
     sample_wavelengths_nm: *[max_integration_sample_count]f64,
     sample_raw_weights: *[max_integration_sample_count]f64,
     sample_count: *usize,
-    shape: BuiltinLineShapeKind,
-    fwhm_nm: f64,
+    response: InstrumentModel.SpectralResponse,
     nominal_wavelength_nm: f64,
     window_start_nm: f64,
     window_end_nm: f64,
     points_per_fwhm: u16,
 ) bool {
+    const fwhm_nm = @max(response.fwhm_nm, 1.0e-4);
     const safe_points_per_fwhm: usize = @max(@as(usize, points_per_fwhm), 1);
     // UNITS:
     //   The integration step is derived from FWHM in nanometers and the grid
@@ -384,7 +382,7 @@ fn addUniformAdaptiveSamples(
             sample_raw_weights,
             sample_count,
             0.5 * (interval_start_nm + interval_end_nm),
-            builtinLineShapeWeight(shape, fwhm_nm, 0.5 * (interval_start_nm + interval_end_nm) - nominal_wavelength_nm) * (interval_end_nm - interval_start_nm),
+            spectralResponseWeight(response, 0.5 * (interval_start_nm + interval_end_nm) - nominal_wavelength_nm) * (interval_end_nm - interval_start_nm),
         )) return false;
         interval_start_nm = interval_end_nm;
     }
@@ -395,8 +393,7 @@ fn addStrongAdaptiveSamples(
     sample_wavelengths_nm: *[max_integration_sample_count]f64,
     sample_raw_weights: *[max_integration_sample_count]f64,
     sample_count: *usize,
-    shape: BuiltinLineShapeKind,
-    fwhm_nm: f64,
+    response: InstrumentModel.SpectralResponse,
     nominal_wavelength_nm: f64,
     strong_center_nm: f64,
     strong_start_nm: f64,
@@ -410,7 +407,7 @@ fn addStrongAdaptiveSamples(
         sample_raw_weights,
         sample_count,
         strong_center_nm,
-        builtinLineShapeWeight(shape, fwhm_nm, strong_center_nm - nominal_wavelength_nm) *
+        spectralResponseWeight(response, strong_center_nm - nominal_wavelength_nm) *
             (strong_width_nm / @as(f64, @floatFromInt(refinement_count))),
     )) return false;
 
@@ -425,7 +422,7 @@ fn addStrongAdaptiveSamples(
             sample_raw_weights,
             sample_count,
             0.5 * (interval_start_nm + interval_end_nm),
-            builtinLineShapeWeight(shape, fwhm_nm, 0.5 * (interval_start_nm + interval_end_nm) - nominal_wavelength_nm) * (interval_end_nm - interval_start_nm),
+            spectralResponseWeight(response, 0.5 * (interval_start_nm + interval_end_nm) - nominal_wavelength_nm) * (interval_end_nm - interval_start_nm),
         )) return false;
         interval_start_nm = interval_end_nm;
     }
@@ -513,12 +510,13 @@ fn resetKernel(kernel: *IntegrationKernel) void {
     @memset(kernel.weights[0..], 0.0);
 }
 
-fn slitKernelForScene(scene: *const Scene) [5]f64 {
+fn slitKernelForScene(scene: *const Scene, channel: SpectralChannel) [5]f64 {
+    const response = scene.observation_model.resolvedChannelControls(channel).response;
     // PARITY:
     //   The default slit kernel remains a five-point symmetric kernel so the
     //   legacy convolution shape stays recognizable when explicit line-shape
     //   metadata is absent.
-    if (scene.observation_model.instrument_line_fwhm_nm <= 0.0) {
+    if (response.fwhm_nm <= 0.0) {
         return .{ 1.0, 4.0, 6.0, 4.0, 1.0 };
     }
 
@@ -531,11 +529,7 @@ fn slitKernelForScene(scene: *const Scene) [5]f64 {
     for (0..kernel.len) |index| {
         const offset_samples = @as(f64, @floatFromInt(@as(i32, @intCast(index)) - 2));
         const offset_nm = offset_samples * sample_spacing_nm;
-        const value = builtinLineShapeWeight(
-            scene.observation_model.builtin_line_shape,
-            scene.observation_model.instrument_line_fwhm_nm,
-            offset_nm,
-        );
+        const value = spectralResponseWeight(response, offset_nm);
         kernel[index] = value;
         sum += value;
     }
@@ -548,6 +542,24 @@ fn defaultKernelHalfSpanNm(fwhm_nm: f64) f64 {
     //   Half-span is expressed in nanometers and clamped to keep the fallback
     //   kernel away from degenerate widths.
     return @max(3.0 * @max(fwhm_nm, 1.0e-4), 1.0e-4);
+}
+
+fn spectralResponseWeight(response: InstrumentModel.SpectralResponse, offset_nm: f64) f64 {
+    const fwhm_nm = @max(response.fwhm_nm, 1.0e-4);
+    return switch (response.slit_index) {
+        .gaussian_modulated => {
+            const sigma_nm = fwhm_nm / 2.354820045;
+            const gaussian = @exp(-0.5 * std.math.pow(f64, offset_nm / sigma_nm, 2.0));
+            const phase_rad = std.math.degreesToRadians(response.phase_deg);
+            const modulation = 1.0 + response.amplitude * std.math.pow(f64, @sin(response.scale * offset_nm / fwhm_nm + phase_rad), 2.0);
+            return @max(gaussian * modulation, 0.0);
+        },
+        .flat_top_n4 => flatTopN4Weight(fwhm_nm, offset_nm),
+        .triple_flat_top_n4 => flatTopN4Weight(fwhm_nm, offset_nm) +
+            flatTopN4Weight(fwhm_nm, offset_nm - 0.1) +
+            flatTopN4Weight(fwhm_nm, offset_nm + 0.1),
+        .table => builtinLineShapeWeight(response.builtin_line_shape, fwhm_nm, offset_nm),
+    };
 }
 
 fn builtinLineShapeWeight(shape: BuiltinLineShapeKind, fwhm_nm: f64, offset_nm: f64) f64 {
@@ -590,7 +602,7 @@ test "high-resolution integration retains the full symmetric sampling span" {
     };
 
     var kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&scene, null, 760.5, &kernel);
+    integrationForWavelength(&scene, null, .radiance, 760.5, &kernel);
     try std.testing.expect(kernel.enabled);
     try std.testing.expectEqual(@as(usize, 81), kernel.sample_count);
     try std.testing.expectApproxEqAbs(@as(f64, -0.40), kernel.offsets_nm[0], 1e-12);
@@ -630,9 +642,9 @@ test "flat-top line shape spreads weight more broadly than gaussian for the same
     };
 
     var gaussian_kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&gaussian_scene, null, 760.5, &gaussian_kernel);
+    integrationForWavelength(&gaussian_scene, null, .radiance, 760.5, &gaussian_kernel);
     var flat_top_kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&flat_top_scene, null, 760.5, &flat_top_kernel);
+    integrationForWavelength(&flat_top_scene, null, .radiance, 760.5, &flat_top_kernel);
 
     try std.testing.expectEqual(gaussian_kernel.sample_count, flat_top_kernel.sample_count);
     try std.testing.expect(flat_top_kernel.weights[flat_top_kernel.sample_count / 2] < gaussian_kernel.weights[gaussian_kernel.sample_count / 2]);
@@ -655,10 +667,10 @@ test "measured-channel sampling bypasses legacy post-convolution even without ex
         },
     };
 
-    try std.testing.expect(usesIntegratedInstrumentSampling(&scene));
+    try std.testing.expect(usesIntegratedInstrumentSampling(&scene, .radiance));
 
     var kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&scene, null, 761.03, &kernel);
+    integrationForWavelength(&scene, null, .radiance, 761.03, &kernel);
     try std.testing.expectEqual(@as(usize, 1), kernel.sample_count);
     try std.testing.expect(!kernel.enabled);
 }
@@ -700,7 +712,7 @@ test "adaptive strong-line sampling injects refined centers from prepared spectr
     };
 
     var kernel: IntegrationKernel = undefined;
-    integrationForWavelength(&scene, &prepared, 760.5, &kernel);
+    integrationForWavelength(&scene, &prepared, .radiance, 760.5, &kernel);
     try std.testing.expect(kernel.enabled);
     try std.testing.expect(kernel.sample_count > 18);
 
