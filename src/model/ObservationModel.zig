@@ -293,9 +293,26 @@ pub const ObservationModel = struct {
             .builtin_line_shape = self.builtin_line_shape,
             .high_resolution_step_nm = self.high_resolution_step_nm,
             .high_resolution_half_span_nm = self.high_resolution_half_span_nm,
-            .instrument_line_shape = self.instrument_line_shape,
-            .instrument_line_shape_table = self.instrument_line_shape_table,
+            // DECISION:
+            //   Legacy channel controls borrow the observation-model line-shape carriers.
+            //   The derived controls can be copied into the explicit measurement pipeline,
+            //   so they must not inherit ownership and double-free the same backing slices
+            //   during teardown.
+            .instrument_line_shape = borrowedLineShape(self.instrument_line_shape),
+            .instrument_line_shape_table = borrowedLineShapeTable(self.instrument_line_shape_table),
         };
+    }
+
+    fn borrowedLineShape(line_shape: InstrumentLineShape) InstrumentLineShape {
+        var borrowed = line_shape;
+        borrowed.owns_memory = false;
+        return borrowed;
+    }
+
+    fn borrowedLineShapeTable(line_shape_table: InstrumentLineShapeTable) InstrumentLineShapeTable {
+        var borrowed = line_shape_table;
+        borrowed.owns_memory = false;
+        return borrowed;
     }
 
     fn legacyNoiseEnabled(model: Instrument.NoiseModelKind, channel: SpectralChannel) bool {
@@ -411,6 +428,51 @@ test "observation model keeps borrowed legacy noise references when SNR tables a
 
     try std.testing.expectEqual(@as(usize, 1), controls.noise.reference_signal.len);
     try std.testing.expectEqual(@as(usize, 1), controls.noise.reference_sigma.len);
+}
+
+test "observation model legacy spectral response borrows owned line-shape carriers" {
+    var line_shape: InstrumentLineShape = .{
+        .sample_count = 2,
+        .offsets_nm = try std.testing.allocator.dupe(f64, &.{ -0.1, 0.1 }),
+        .weights = try std.testing.allocator.dupe(f64, &.{ 0.4, 0.6 }),
+        .owns_memory = true,
+    };
+    errdefer line_shape.deinitOwned(std.testing.allocator);
+
+    var line_shape_table: InstrumentLineShapeTable = .{
+        .nominal_count = 1,
+        .sample_count = 2,
+        .nominal_wavelengths_nm = try std.testing.allocator.dupe(f64, &.{760.8}),
+        .offsets_nm = try std.testing.allocator.dupe(f64, &.{ -0.1, 0.1 }),
+        .weights = try std.testing.allocator.dupe(f64, &.{ 0.45, 0.55 }),
+        .owns_memory = true,
+    };
+    errdefer line_shape_table.deinitOwned(std.testing.allocator);
+
+    var model: ObservationModel = .{
+        .instrument = .tropomi,
+        .builtin_line_shape = .gaussian,
+        .instrument_line_fwhm_nm = 0.38,
+        .instrument_line_shape = line_shape,
+        .instrument_line_shape_table = line_shape_table,
+        .noise_model = .none,
+    };
+    defer model.deinitOwned(std.testing.allocator);
+
+    var radiance = model.resolvedChannelControls(.radiance);
+    radiance.explicit = true;
+    model.measurement_pipeline.radiance = radiance;
+
+    try std.testing.expect(!radiance.response.instrument_line_shape.owns_memory);
+    try std.testing.expect(!radiance.response.instrument_line_shape_table.owns_memory);
+    try std.testing.expectEqual(
+        @intFromPtr(model.instrument_line_shape.offsets_nm.ptr),
+        @intFromPtr(radiance.response.instrument_line_shape.offsets_nm.ptr),
+    );
+    try std.testing.expectEqual(
+        @intFromPtr(model.instrument_line_shape_table.weights.ptr),
+        @intFromPtr(radiance.response.instrument_line_shape_table.weights.ptr),
+    );
 }
 
 test "cross-section fit controls validate band-scoped settings" {
