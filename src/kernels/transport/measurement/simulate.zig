@@ -200,46 +200,59 @@ pub fn simulate(
         reflectance_sum += buffers.reflectance[index];
     }
 
+    const radiance_noise_sigma = if (buffers.radiance_noise_sigma) |sigma|
+        sigma
+    else if (buffers.noise_sigma) |sigma|
+        sigma
+    else if (buffers.reflectance_noise_sigma != null)
+        buffers.scratch
+    else
+        null;
+    if (radiance_noise_sigma) |sigma| {
+        try materializeChannelSigma(providers, scene, .radiance, buffers.wavelengths, buffers.radiance, sigma);
+    }
     if (buffers.noise_sigma) |noise_sigma| {
-        const radiance_noise_sigma = buffers.radiance_noise_sigma orelse noise_sigma;
-        if (providers.noise.materializesSigma(scene, .radiance)) {
-            try providers.noise.materializeSigma(scene, .radiance, buffers.wavelengths, buffers.radiance, radiance_noise_sigma);
-        } else {
-            @memset(radiance_noise_sigma, 0.0);
+        const sigma = radiance_noise_sigma orelse return error.ShapeMismatch;
+        if (noise_sigma.ptr != sigma.ptr) {
+            @memcpy(noise_sigma, sigma);
         }
-        if (noise_sigma.ptr != radiance_noise_sigma.ptr) {
-            @memcpy(noise_sigma, radiance_noise_sigma);
+    }
+
+    const irradiance_noise_sigma = if (buffers.irradiance_noise_sigma) |sigma|
+        sigma
+    else if (buffers.reflectance_noise_sigma != null)
+        buffers.scratch_aux
+    else
+        null;
+    if (irradiance_noise_sigma) |sigma| {
+        try materializeChannelSigma(providers, scene, .irradiance, buffers.wavelengths, buffers.irradiance, sigma);
+    }
+
+    if (buffers.reflectance_noise_sigma) |reflectance_noise_sigma| {
+        const radiance_sigma = radiance_noise_sigma orelse return error.ShapeMismatch;
+        const irradiance_sigma = irradiance_noise_sigma orelse return error.ShapeMismatch;
+        for (0..sample_count) |index| {
+            const radiance_term = if (radiance_sigma.len == sample_count and buffers.radiance[index] > 0.0)
+                buffers.reflectance[index] * (radiance_sigma[index] / @max(buffers.radiance[index], 1.0e-12))
+            else
+                0.0;
+            const irradiance_term = if (irradiance_sigma.len == sample_count and buffers.irradiance[index] > 0.0)
+                buffers.reflectance[index] * (irradiance_sigma[index] / @max(buffers.irradiance[index], 1.0e-12))
+            else
+                0.0;
+            reflectance_noise_sigma[index] = std.math.sqrt(radiance_term * radiance_term + irradiance_term * irradiance_term);
         }
-        if (buffers.irradiance_noise_sigma) |irradiance_noise_sigma| {
-            if (providers.noise.materializesSigma(scene, .irradiance)) {
-                try providers.noise.materializeSigma(scene, .irradiance, buffers.wavelengths, buffers.irradiance, irradiance_noise_sigma);
-            } else {
-                @memset(irradiance_noise_sigma, 0.0);
-            }
-        }
-        if (buffers.reflectance_noise_sigma) |reflectance_noise_sigma| {
-            const radiance_sigma = buffers.radiance_noise_sigma orelse noise_sigma;
-            const irradiance_sigma = buffers.irradiance_noise_sigma orelse noise_sigma;
-            for (0..sample_count) |index| {
-                const radiance_term = if (radiance_sigma.len == sample_count and buffers.radiance[index] > 0.0)
-                    buffers.reflectance[index] * (radiance_sigma[index] / @max(buffers.radiance[index], 1.0e-12))
-                else
-                    0.0;
-                const irradiance_term = if (irradiance_sigma.len == sample_count and buffers.irradiance[index] > 0.0)
-                    buffers.reflectance[index] * (irradiance_sigma[index] / @max(buffers.irradiance[index], 1.0e-12))
-                else
-                    0.0;
-                reflectance_noise_sigma[index] = std.math.sqrt(radiance_term * radiance_term + irradiance_term * irradiance_term);
-            }
-            try calibration.applyReflectanceCalibrationErrorSigma(
-                scene.observation_model.resolvedReflectanceCalibration(),
-                buffers.wavelengths,
-                buffers.reflectance,
-                reflectance_noise_sigma,
-                buffers.scratch_aux,
-            );
-        }
-        for (noise_sigma) |value| noise_sum += value;
+        try calibration.applyReflectanceCalibrationErrorSigma(
+            scene.observation_model.resolvedReflectanceCalibration(),
+            buffers.wavelengths,
+            buffers.reflectance,
+            reflectance_noise_sigma,
+            buffers.scratch_aux,
+        );
+    }
+
+    if (radiance_noise_sigma) |sigma| {
+        for (sigma) |value| noise_sum += value;
     }
 
     var mean_jacobian: ?f64 = null;
@@ -271,12 +284,27 @@ pub fn simulate(
         .mean_radiance = radiance_sum / @as(f64, @floatFromInt(sample_count)),
         .mean_irradiance = irradiance_sum / @as(f64, @floatFromInt(sample_count)),
         .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(sample_count)),
-        .mean_noise_sigma = if (buffers.noise_sigma != null)
+        .mean_noise_sigma = if (radiance_noise_sigma != null)
             noise_sum / @as(f64, @floatFromInt(sample_count))
         else
             0.0,
         .mean_jacobian = mean_jacobian,
     };
+}
+
+fn materializeChannelSigma(
+    providers: Types.ProviderBindings,
+    scene: *const Scene,
+    channel: SpectralChannel,
+    wavelengths_nm: []const f64,
+    signal: []const f64,
+    output: []f64,
+) Workspace.Error!void {
+    if (providers.noise.materializesSigma(scene, channel)) {
+        try providers.noise.materializeSigma(scene, channel, wavelengths_nm, signal, output);
+    } else {
+        @memset(output, 0.0);
+    }
 }
 
 /// Purpose:

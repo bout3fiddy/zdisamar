@@ -96,12 +96,7 @@ pub fn applySimpleOffsets(offsets: Instrument.SimpleOffsets, signal: []f64) !voi
 /// Purpose:
 ///   Apply the simple-offset derivative, including the shared first-sample additive term.
 pub fn applySimpleOffsetDerivatives(offsets: Instrument.SimpleOffsets, signal: []f64) !void {
-    if (signal.len == 0) return;
-    const reference = signal[0];
-    for (signal) |*sample| {
-        sample.* *= 1.0 + 0.01 * offsets.multiplicative_percent;
-        sample.* += 0.01 * offsets.additive_percent_of_first * reference;
-    }
+    try applySimpleOffsets(offsets, signal);
 }
 
 /// Purpose:
@@ -139,25 +134,7 @@ pub fn applySpectralFeatureDerivatives(
     wavelengths_nm: []const f64,
     signal: []f64,
 ) !void {
-    if (wavelengths_nm.len != signal.len) return error.ShapeMismatch;
-    if (signal.len == 0) return;
-
-    const first_wavelength = wavelengths_nm[0];
-    const reference_signal = signal[0];
-    for (wavelengths_nm, signal) |wavelength_nm, *sample| {
-        const delta_nm = wavelength_nm - first_wavelength;
-        var additive_term: f64 = 0.0;
-        var multiplicative_term: f64 = 0.0;
-        if (features.additive_amplitude_percent != 0.0) {
-            additive_term = reference_signal * 0.01 * features.additive_amplitude_percent *
-                @sin((delta_nm * 2.0 * std.math.pi / features.additive_period_nm) + std.math.degreesToRadians(features.additive_phase_deg));
-        }
-        if (features.multiplicative_amplitude_percent != 0.0) {
-            multiplicative_term = 0.01 * features.multiplicative_amplitude_percent *
-                @sin((delta_nm * 2.0 * std.math.pi / features.multiplicative_period_nm) + std.math.degreesToRadians(features.multiplicative_phase_deg));
-        }
-        sample.* = sample.* * (1.0 + multiplicative_term) + additive_term;
-    }
+    try applySpectralFeatures(features, wavelengths_nm, signal);
 }
 
 /// Purpose:

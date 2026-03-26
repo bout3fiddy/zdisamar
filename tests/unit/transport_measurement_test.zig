@@ -1594,6 +1594,157 @@ test "measurement-space simulate materializes shared noise sigma without channel
     try std.testing.expect(buffers.noise_sigma.?[0] > 0.0);
 }
 
+test "measurement-space simulate materializes explicit channel sigma buffers without legacy noise buffer" {
+    const scene: Scene = .{
+        .id = "measurement-explicit-channel-noise-sigma",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 12,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var reference_workspace: SummaryWorkspace = .{};
+    defer reference_workspace.deinit(std.testing.allocator);
+    const reference_buffers = try reference_workspace.buffers(
+        std.testing.allocator,
+        &scene,
+        route,
+        testProviders(),
+    );
+    const reference_summary = try MeasurementSpaceShim.simulate(
+        std.testing.allocator,
+        &scene,
+        route,
+        &prepared,
+        testProviders(),
+        reference_buffers,
+    );
+
+    var workspace: SummaryWorkspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+    var buffers = try workspace.buffers(
+        std.testing.allocator,
+        &scene,
+        route,
+        testProviders(),
+    );
+    buffers.noise_sigma = null;
+    @memset(buffers.radiance_noise_sigma.?, 0.0);
+    @memset(buffers.irradiance_noise_sigma.?, 0.0);
+    @memset(buffers.reflectance_noise_sigma.?, 0.0);
+
+    const summary = try MeasurementSpaceShim.simulate(
+        std.testing.allocator,
+        &scene,
+        route,
+        &prepared,
+        testProviders(),
+        buffers,
+    );
+
+    try std.testing.expectApproxEqRel(reference_summary.mean_noise_sigma, summary.mean_noise_sigma, 1.0e-12);
+    for (reference_buffers.radiance_noise_sigma.?, buffers.radiance_noise_sigma.?) |expected, actual| {
+        try std.testing.expectApproxEqRel(expected, actual, 1.0e-12);
+    }
+    for (reference_buffers.irradiance_noise_sigma.?, buffers.irradiance_noise_sigma.?) |expected, actual| {
+        try std.testing.expectApproxEqRel(expected, actual, 1.0e-12);
+    }
+    for (reference_buffers.reflectance_noise_sigma.?, buffers.reflectance_noise_sigma.?) |expected, actual| {
+        try std.testing.expectApproxEqRel(expected, actual, 1.0e-12);
+    }
+}
+
+test "measurement-space simulate preserves reflectance sigma when only legacy and reflectance buffers are exposed" {
+    const scene: Scene = .{
+        .id = "measurement-reflectance-sigma-legacy-alias",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 12,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var reference_workspace: SummaryWorkspace = .{};
+    defer reference_workspace.deinit(std.testing.allocator);
+    const reference_buffers = try reference_workspace.buffers(
+        std.testing.allocator,
+        &scene,
+        route,
+        testProviders(),
+    );
+    const reference_summary = try MeasurementSpaceShim.simulate(
+        std.testing.allocator,
+        &scene,
+        route,
+        &prepared,
+        testProviders(),
+        reference_buffers,
+    );
+
+    var workspace: SummaryWorkspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+    var buffers = try workspace.buffers(
+        std.testing.allocator,
+        &scene,
+        route,
+        testProviders(),
+    );
+    @memset(buffers.noise_sigma.?, 0.0);
+    @memset(buffers.reflectance_noise_sigma.?, 0.0);
+    buffers.radiance_noise_sigma = null;
+    buffers.irradiance_noise_sigma = null;
+
+    const summary = try MeasurementSpaceShim.simulate(
+        std.testing.allocator,
+        &scene,
+        route,
+        &prepared,
+        testProviders(),
+        buffers,
+    );
+
+    try std.testing.expectApproxEqRel(reference_summary.mean_noise_sigma, summary.mean_noise_sigma, 1.0e-12);
+    for (reference_buffers.radiance_noise_sigma.?, buffers.noise_sigma.?) |expected, actual| {
+        try std.testing.expectApproxEqRel(expected, actual, 1.0e-12);
+    }
+    for (reference_buffers.reflectance_noise_sigma.?, buffers.reflectance_noise_sigma.?) |expected, actual| {
+        try std.testing.expectApproxEqRel(expected, actual, 1.0e-12);
+    }
+}
+
 test "measurement-space product materializes spectral vectors and physical fields" {
     const scene: Scene = .{
         .id = "measurement-product",
