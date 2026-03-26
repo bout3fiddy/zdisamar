@@ -145,9 +145,11 @@ pub fn sigmaFromInterpolatedSignalToNoise(
     if (wavelengths_nm.len != signal.len or signal.len != output.len) return error.ShapeMismatch;
     if (snr_wavelengths_nm.len == 0 or snr_wavelengths_nm.len != snr_values.len) return error.InvalidNoiseScaleFactor;
     if (snr_wavelengths_nm.len == 1) {
+        const snr_value = snr_values[0];
+        if (!std.math.isFinite(snr_value) or snr_value <= 0.0) return error.InvalidNoiseScaleFactor;
         for (signal, output) |signal_value, *slot| {
             if (!std.math.isFinite(signal_value) or signal_value < 0.0) return error.InvalidReferenceSignal;
-            slot.* = signal_value / snr_values[0];
+            slot.* = signal_value / snr_value;
         }
         return;
     }
@@ -267,6 +269,22 @@ test "noise helpers require explicit positive sigma input for snr-driven paths" 
     try copyInputSigma(&.{ 0.02, 0.03 }, &sigma);
     try std.testing.expectEqual(@as(f64, 0.02), sigma[0]);
     try std.testing.expectEqual(@as(f64, 0.03), sigma[1]);
+}
+
+test "noise helpers reject invalid single-point interpolated SNR inputs" {
+    const wavelengths = [_]f64{ 310.0, 312.0 };
+    const signal = [_]f64{ 100.0, 120.0 };
+    const snr_wavelengths = [_]f64{311.0};
+    var sigma: [2]f64 = undefined;
+
+    try std.testing.expectError(
+        error.InvalidNoiseScaleFactor,
+        sigmaFromInterpolatedSignalToNoise(&wavelengths, &snr_wavelengths, &.{0.0}, &signal, &sigma),
+    );
+    try std.testing.expectError(
+        error.InvalidNoiseScaleFactor,
+        sigmaFromInterpolatedSignalToNoise(&wavelengths, &snr_wavelengths, &.{std.math.inf(f64)}, &signal, &sigma),
+    );
 }
 
 test "noise helpers scale sigma from a reference radiance spectrum with spectral-bin correction" {
