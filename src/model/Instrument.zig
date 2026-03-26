@@ -342,10 +342,10 @@ pub const Instrument = struct {
             if (self.enabled and self.model == .lab_operational and self.lab_a <= 0.0) {
                 return errors.Error.InvalidRequest;
             }
-            if (self.snr_wavelengths_nm.len != 0 and self.snr_wavelengths_nm.len != self.snr_values.len) {
+            if (self.snr_wavelengths_nm.len != self.snr_values.len) {
                 return errors.Error.InvalidRequest;
             }
-            if (self.reference_signal.len != 0 and self.reference_signal.len != self.reference_sigma.len) {
+            if (self.reference_signal.len != self.reference_sigma.len) {
                 return errors.Error.InvalidRequest;
             }
             var previous_wavelength: ?f64 = null;
@@ -603,6 +603,22 @@ test "instrument validation rejects malformed operational lut surfaces" {
     };
 
     try std.testing.expectError(errors.Error.InvalidRequest, invalid.validate());
+}
+
+test "noise controls validation rejects one-sided tables" {
+    const snr_missing_wavelengths: Instrument.NoiseControls = .{
+        .enabled = true,
+        .model = .snr_from_input,
+        .snr_values = &[_]f64{100.0},
+    };
+    try std.testing.expectError(errors.Error.InvalidRequest, snr_missing_wavelengths.validate());
+
+    const reference_missing_signal: Instrument.NoiseControls = .{
+        .enabled = true,
+        .model = .s5p_operational,
+        .reference_sigma = &[_]f64{1.0},
+    };
+    try std.testing.expectError(errors.Error.InvalidRequest, reference_missing_signal.validate());
 }
 
 test "operational reference grid and solar spectrum validate typed external inputs" {

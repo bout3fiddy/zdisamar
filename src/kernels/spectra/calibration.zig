@@ -94,11 +94,13 @@ pub fn applySimpleOffsets(offsets: Instrument.SimpleOffsets, signal: []f64) !voi
 }
 
 /// Purpose:
-///   Apply only the multiplicative simple-offset term to a signal derivative.
+///   Apply the simple-offset derivative, including the shared first-sample additive term.
 pub fn applySimpleOffsetDerivatives(offsets: Instrument.SimpleOffsets, signal: []f64) !void {
     if (signal.len == 0) return;
+    const reference = signal[0];
     for (signal) |*sample| {
         sample.* *= 1.0 + 0.01 * offsets.multiplicative_percent;
+        sample.* += 0.01 * offsets.additive_percent_of_first * reference;
     }
 }
 
@@ -131,7 +133,7 @@ pub fn applySpectralFeatures(
 }
 
 /// Purpose:
-///   Apply only the multiplicative sinusoidal feature term to a signal derivative.
+///   Apply the sinusoidal-feature derivative, including any first-sample additive term.
 pub fn applySpectralFeatureDerivatives(
     features: Instrument.SinusoidalFeatures,
     wavelengths_nm: []const f64,
@@ -141,14 +143,20 @@ pub fn applySpectralFeatureDerivatives(
     if (signal.len == 0) return;
 
     const first_wavelength = wavelengths_nm[0];
+    const reference_signal = signal[0];
     for (wavelengths_nm, signal) |wavelength_nm, *sample| {
         const delta_nm = wavelength_nm - first_wavelength;
+        var additive_term: f64 = 0.0;
         var multiplicative_term: f64 = 0.0;
+        if (features.additive_amplitude_percent != 0.0) {
+            additive_term = reference_signal * 0.01 * features.additive_amplitude_percent *
+                @sin((delta_nm * 2.0 * std.math.pi / features.additive_period_nm) + degreesToRadians(features.additive_phase_deg));
+        }
         if (features.multiplicative_amplitude_percent != 0.0) {
             multiplicative_term = 0.01 * features.multiplicative_amplitude_percent *
                 @sin((delta_nm * 2.0 * std.math.pi / features.multiplicative_period_nm) + degreesToRadians(features.multiplicative_phase_deg));
         }
-        sample.* *= 1.0 + multiplicative_term;
+        sample.* = sample.* * (1.0 + multiplicative_term) + additive_term;
     }
 }
 
@@ -416,8 +424,8 @@ test "calibration applies only the linear response to signal derivatives" {
     try std.testing.expectApproxEqRel(@as(f64, 5.5), output[2], 1.0e-12);
 }
 
-test "calibration derivative helpers exclude additive correction terms" {
-    const wavelengths = [_]f64{ 760.8, 761.0, 761.2 };
+test "calibration derivative helpers carry first-sample additive dependence" {
+    const wavelengths = [_]f64{ 760.8, 760.9, 761.0 };
     var signal = [_]f64{ 10.0, 11.0, 12.0 };
 
     try applySimpleOffsetDerivatives(.{
@@ -431,9 +439,9 @@ test "calibration derivative helpers exclude additive correction terms" {
         .multiplicative_period_nm = 0.4,
     }, &wavelengths, &signal);
 
-    try std.testing.expectApproxEqRel(@as(f64, 10.2), signal[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 11.22), signal[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 12.24), signal[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 10.7), signal[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 12.1582), signal[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 12.74), signal[2], 1.0e-12);
 }
 
 test "calibration helpers apply explicit correction families in sequence" {
