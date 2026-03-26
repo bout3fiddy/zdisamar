@@ -5,6 +5,7 @@ const Scene = zdisamar.Scene;
 const common = internal.kernels.transport.common;
 const labos = internal.kernels.transport.labos;
 const MeasurementSpace = internal.kernels.transport.measurement;
+const MeasurementSpaceShim = internal.kernels.transport.measurement_space;
 const MeasurementForwardInput = MeasurementSpace.forward_input;
 const MeasurementSpectral = MeasurementSpace.spectral_eval;
 const MeasurementTestSupport = MeasurementSpace.test_support;
@@ -1538,6 +1539,59 @@ test "ensureBufferCapacity preserves the original buffer on allocation failure" 
     try std.testing.expectEqual(original_len, buffer.len);
 
     allocator.free(buffer);
+}
+
+test "measurement-space simulate materializes shared noise sigma without channel-specific buffers" {
+    const scene: Scene = .{
+        .id = "measurement-shared-noise-sigma",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 12,
+        },
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    });
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+
+    var workspace: SummaryWorkspace = .{};
+    defer workspace.deinit(std.testing.allocator);
+
+    var buffers = try workspace.buffers(
+        std.testing.allocator,
+        &scene,
+        route,
+        testProviders(),
+    );
+    @memset(buffers.noise_sigma.?, 0.0);
+    buffers.radiance_noise_sigma = null;
+    buffers.irradiance_noise_sigma = null;
+    buffers.reflectance_noise_sigma = null;
+
+    const summary = try MeasurementSpaceShim.simulate(
+        std.testing.allocator,
+        &scene,
+        route,
+        &prepared,
+        testProviders(),
+        buffers,
+    );
+
+    try std.testing.expect(summary.mean_noise_sigma > 0.0);
+    try std.testing.expect(buffers.noise_sigma.?[0] > 0.0);
 }
 
 test "measurement-space product materializes spectral vectors and physical fields" {

@@ -201,15 +201,14 @@ pub fn simulate(
     }
 
     if (buffers.noise_sigma) |noise_sigma| {
-        if (buffers.radiance_noise_sigma) |radiance_noise_sigma| {
-            if (providers.noise.materializesSigma(scene, .radiance)) {
-                try providers.noise.materializeSigma(scene, .radiance, buffers.wavelengths, buffers.radiance, radiance_noise_sigma);
-            } else {
-                @memset(radiance_noise_sigma, 0.0);
-            }
-            if (noise_sigma.ptr != radiance_noise_sigma.ptr) {
-                @memcpy(noise_sigma, radiance_noise_sigma);
-            }
+        const radiance_noise_sigma = buffers.radiance_noise_sigma orelse noise_sigma;
+        if (providers.noise.materializesSigma(scene, .radiance)) {
+            try providers.noise.materializeSigma(scene, .radiance, buffers.wavelengths, buffers.radiance, radiance_noise_sigma);
+        } else {
+            @memset(radiance_noise_sigma, 0.0);
+        }
+        if (noise_sigma.ptr != radiance_noise_sigma.ptr) {
+            @memcpy(noise_sigma, radiance_noise_sigma);
         }
         if (buffers.irradiance_noise_sigma) |irradiance_noise_sigma| {
             if (providers.noise.materializesSigma(scene, .irradiance)) {
