@@ -533,16 +533,6 @@ fn findAbsorberIndexById(items: []const AbsorberModel.Absorber, id: []const u8) 
     return null;
 }
 
-fn findAbsorberBySpecies(
-    items: []const AbsorberModel.Absorber,
-    species: AbsorberModel.AbsorberSpecies,
-) ?AbsorberModel.Absorber {
-    for (items) |absorber| {
-        if ((AbsorberModel.resolvedAbsorberSpecies(absorber) orelse continue) == species) return absorber;
-    }
-    return null;
-}
-
 fn findUniqueAbsorberBySpeciesAndMode(
     items: []const AbsorberModel.Absorber,
     species: AbsorberModel.AbsorberSpecies,

@@ -283,7 +283,7 @@ test "lut compatibility keys tolerate numerically equivalent float inputs" {
         },
         .spectral_start_nm = 758.0,
         .spectral_end_nm = 770.0,
-        .nominal_sample_count = 9,
+        .nominal_sample_count = 0,
         .solar_zenith_deg = 60.0,
         .viewing_zenith_deg = 30.0,
         .relative_azimuth_deg = 120.0,
