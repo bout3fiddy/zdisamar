@@ -348,14 +348,6 @@ pub fn toRequest(
         f64,
         artifacts.measured_input.radiance.noise_sigma,
     );
-    scene.observation_model.operational_solar_spectrum = try artifacts.band_support.operational_solar_spectrum.clone(allocator);
-    scene.observation_model.high_resolution_step_nm = artifacts.band_support.high_resolution_step_nm;
-    scene.observation_model.high_resolution_half_span_nm = artifacts.band_support.high_resolution_half_span_nm;
-    scene.observation_model.instrument_line_shape = try artifacts.band_support.instrument_line_shape.clone(allocator);
-    scene.observation_model.instrument_line_shape_table = try artifacts.band_support.instrument_line_shape_table.clone(allocator);
-    scene.observation_model.operational_refspec_grid = try artifacts.band_support.operational_refspec_grid.clone(allocator);
-    scene.observation_model.o2_operational_lut = try artifacts.band_support.o2_operational_lut.clone(allocator);
-    scene.observation_model.o2o2_operational_lut = try artifacts.band_support.o2o2_operational_lut.clone(allocator);
 
     const band_step_nm = if (artifacts.measured_input.radiance.wavelengths_nm.len > 1)
         meanSpacingNm(artifacts.measured_input.radiance.wavelengths_nm)

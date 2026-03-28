@@ -49,8 +49,13 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.ingested_noise_sigma.len);
     try std.testing.expectApproxEqRel(@as(f64, 1.116153e13 / 1485.0), request.scene.observation_model.ingested_noise_sigma[0], 1.0e-12);
     try std.testing.expectApproxEqRel(@as(f64, 1.096153e13 / 1445.0), request.scene.observation_model.ingested_noise_sigma[1], 1.0e-12);
-    try std.testing.expect(request.scene.observation_model.operational_solar_spectrum.enabled());
-    try std.testing.expectApproxEqAbs(@as(f64, 3.402296e14), request.scene.observation_model.operational_solar_spectrum.irradiance[0], 1.0e8);
+    try std.testing.expect(!request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expect(request.scene.observation_model.operational_band_support[0].operational_solar_spectrum.enabled());
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 3.402296e14),
+        request.scene.observation_model.operational_band_support[0].operational_solar_spectrum.irradiance[0],
+        1.0e8,
+    );
 
     var copied_sigma: [2]f64 = undefined;
     try internal.kernels.spectra.noise.copyInputSigma(request.scene.observation_model.ingested_noise_sigma, &copied_sigma);

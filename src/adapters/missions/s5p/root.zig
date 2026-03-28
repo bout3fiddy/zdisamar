@@ -241,8 +241,6 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
             .noise_model = options.noise_model,
             .wavelength_shift_nm = metadata.wavelength_shift_nm orelse 0.0,
             .instrument_line_fwhm_nm = metadata.isrf_fwhm_nm orelse 0.0,
-            .high_resolution_step_nm = artifacts.band_support.high_resolution_step_nm,
-            .high_resolution_half_span_nm = artifacts.band_support.high_resolution_half_span_nm,
         },
     };
     errdefer scene.deinitOwned(allocator);
@@ -258,12 +256,6 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
         .step_nm = band_step_nm,
     }});
 
-    scene.observation_model.instrument_line_shape = try artifacts.band_support.instrument_line_shape.clone(allocator);
-    scene.observation_model.instrument_line_shape_table = try artifacts.band_support.instrument_line_shape_table.clone(allocator);
-    scene.observation_model.operational_refspec_grid = try artifacts.band_support.operational_refspec_grid.clone(allocator);
-    scene.observation_model.operational_solar_spectrum = try artifacts.band_support.operational_solar_spectrum.clone(allocator);
-    scene.observation_model.o2_operational_lut = try artifacts.band_support.o2_operational_lut.clone(allocator);
-    scene.observation_model.o2o2_operational_lut = try artifacts.band_support.o2o2_operational_lut.clone(allocator);
     scene.observation_model.measured_wavelengths_nm = try allocator.dupe(
         f64,
         artifacts.measured_input.radiance.wavelengths_nm,
@@ -495,14 +487,19 @@ test "s5p operational adapter maps explicit high-resolution grid and isrf table 
     });
     defer mission_run.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(f64, 0.08), mission_run.request.scene.observation_model.high_resolution_step_nm);
-    try std.testing.expectEqual(@as(f64, 0.32), mission_run.request.scene.observation_model.high_resolution_half_span_nm);
-    try std.testing.expectEqual(@as(u8, 5), mission_run.request.scene.observation_model.instrument_line_shape.sample_count);
-    try std.testing.expectEqual(@as(f64, -0.32), mission_run.request.scene.observation_model.instrument_line_shape.offsets_nm[0]);
-    try std.testing.expectEqual(@as(f64, 0.36), mission_run.request.scene.observation_model.instrument_line_shape.weights[2]);
-    try std.testing.expectEqual(@as(u16, 3), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_count);
-    try std.testing.expectEqual(@as(f64, 406.0), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_wavelengths_nm[1]);
-    try std.testing.expectEqual(@as(f64, 0.30), mission_run.request.scene.observation_model.instrument_line_shape_table.weightAt(1, 1));
+    try std.testing.expectEqual(@as(f64, 0.0), mission_run.request.scene.observation_model.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.0), mission_run.request.scene.observation_model.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 0), mission_run.request.scene.observation_model.instrument_line_shape.sample_count);
+    try std.testing.expectEqual(@as(u16, 0), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_count);
+    const support = mission_run.request.scene.observation_model.operational_band_support[0];
+    try std.testing.expectEqual(@as(f64, 0.08), support.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.32), support.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 5), support.instrument_line_shape.sample_count);
+    try std.testing.expectEqual(@as(f64, -0.32), support.instrument_line_shape.offsets_nm[0]);
+    try std.testing.expectEqual(@as(f64, 0.36), support.instrument_line_shape.weights[2]);
+    try std.testing.expectEqual(@as(u16, 3), support.instrument_line_shape_table.nominal_count);
+    try std.testing.expectEqual(@as(f64, 406.0), support.instrument_line_shape_table.nominal_wavelengths_nm[1]);
+    try std.testing.expectEqual(@as(f64, 0.30), support.instrument_line_shape_table.weightAt(1, 1));
 }
 
 test "s5p operational adapter maps O2 and O2-O2 refspec LUT metadata" {
@@ -517,21 +514,26 @@ test "s5p operational adapter maps O2 and O2-O2 refspec LUT metadata" {
 
     try std.testing.expectEqual(Instrument.SamplingMode.operational, mission_run.request.scene.observation_model.sampling);
     try std.testing.expectEqual(Instrument.NoiseModelKind.s5p_operational, mission_run.request.scene.observation_model.noise_model);
-    try std.testing.expect(mission_run.request.scene.observation_model.operational_refspec_grid.enabled());
-    try std.testing.expect(mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
-    try std.testing.expectEqual(@as(usize, 3), mission_run.request.scene.observation_model.operational_refspec_grid.wavelengths_nm.len);
-    try std.testing.expectEqual(@as(usize, 5), mission_run.request.scene.observation_model.operational_solar_spectrum.wavelengths_nm.len);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.70), mission_run.request.scene.observation_model.operational_refspec_grid.weights[1], 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), mission_run.request.scene.observation_model.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
-    try std.testing.expect(mission_run.request.scene.observation_model.o2_operational_lut.enabled());
-    try std.testing.expect(mission_run.request.scene.observation_model.o2o2_operational_lut.enabled());
-    try std.testing.expectEqual(@as(usize, 3), mission_run.request.scene.observation_model.o2_operational_lut.wavelengths_nm.len);
+    try std.testing.expect(!mission_run.request.scene.observation_model.operational_refspec_grid.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.o2o2_operational_lut.enabled());
+    const support = mission_run.request.scene.observation_model.operational_band_support[0];
+    try std.testing.expect(support.operational_refspec_grid.enabled());
+    try std.testing.expect(support.operational_solar_spectrum.enabled());
+    try std.testing.expectEqual(@as(usize, 3), support.operational_refspec_grid.wavelengths_nm.len);
+    try std.testing.expectEqual(@as(usize, 5), support.operational_solar_spectrum.wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.70), support.operational_refspec_grid.weights[1], 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), support.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
+    try std.testing.expect(support.o2_operational_lut.enabled());
+    try std.testing.expect(support.o2o2_operational_lut.enabled());
+    try std.testing.expectEqual(@as(usize, 3), support.o2_operational_lut.wavelengths_nm.len);
     try std.testing.expect(
-        mission_run.request.scene.observation_model.o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
-            mission_run.request.scene.observation_model.o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
+        support.o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
+            support.o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
     );
     try std.testing.expect(
-        mission_run.request.scene.observation_model.o2o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
-            mission_run.request.scene.observation_model.o2o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
+        support.o2o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
+            support.o2o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
     );
 }
