@@ -190,7 +190,11 @@ fn applyLutWorkflows(
                 const o2_lines = line_list orelse return error.InvalidRequest;
                 const wavelengths_nm = try sampleSceneWavelengthsOwned(allocator, source_scene);
                 defer allocator.free(wavelengths_nm);
-                const o2_absorber = findAbsorberBySpecies(source_scene.absorbers.items, .o2) orelse return error.InvalidRequest;
+                const o2_absorber = try findUniqueAbsorberBySpeciesAndMode(
+                    source_scene.absorbers.items,
+                    .o2,
+                    .line_by_line,
+                ) orelse return error.InvalidRequest;
                 const o2_hitran_index = (AbsorberModel.resolvedAbsorberSpecies(o2_absorber) orelse return error.InvalidRequest).hitranIndex() orelse return error.InvalidRequest;
                 var controlled_o2_lines = try o2_lines.clone(allocator);
                 defer controlled_o2_lines.deinit(allocator);
@@ -539,6 +543,21 @@ fn findAbsorberBySpecies(
     return null;
 }
 
+fn findUniqueAbsorberBySpeciesAndMode(
+    items: []const AbsorberModel.Absorber,
+    species: AbsorberModel.AbsorberSpecies,
+    mode: AbsorberModel.SpectroscopyMode,
+) !?AbsorberModel.Absorber {
+    var matched: ?AbsorberModel.Absorber = null;
+    for (items) |absorber| {
+        if (absorber.spectroscopy.mode != mode) continue;
+        if ((AbsorberModel.resolvedAbsorberSpecies(absorber) orelse continue) != species) continue;
+        if (matched != null) return error.InvalidRequest;
+        matched = absorber;
+    }
+    return matched;
+}
+
 fn sampleSceneWavelengthsOwned(allocator: Allocator, scene: *const Scene) ![]f64 {
     const support = scene.observation_model.primaryOperationalBandSupport();
     const nominal_bounds = scene.lutNominalWavelengthBounds();
@@ -720,6 +739,7 @@ fn loadCollisionInducedAbsorptionForScene(
     scene: *const Scene,
 ) !?ReferenceData.CollisionInducedAbsorptionTable {
     const requests_explicit_cia = assets.sceneRequestsSpectroscopyMode(scene, .o2_o2, .cia);
+    const generating_o2o2_lut = requests_explicit_cia and scene.lut_controls.xsec.mode == .generate;
     const has_explicit_cia_bindings = assets.hasExplicitCiaBindings(scene);
     if (requests_explicit_cia) {
         if (assets.resolvedCollisionInducedAbsorptionTable(scene)) |table| {
@@ -731,7 +751,7 @@ fn loadCollisionInducedAbsorptionForScene(
         //   Explicit CIA bindings must be materialized or the scene configuration is incomplete.
         return error.UnresolvedCollisionInducedAbsorptionBinding;
     }
-    if (scene.observation_model.primaryOperationalBandSupport().o2o2_operational_lut.enabled()) {
+    if (scene.observation_model.primaryOperationalBandSupport().o2o2_operational_lut.enabled() and !generating_o2o2_lut) {
         // DECISION:
         //   The operational LUT takes precedence over the bundled O2-O2 CIA sidecar to preserve
         //   the runtime control path expected by the scene configuration.

@@ -64,12 +64,14 @@ fn generatedXsecControls() zdisamar.LutControls {
 
 fn expectedGeneratedXsecSpectralBins(scene: zdisamar.Scene) !u32 {
     const support = scene.observation_model.primaryOperationalBandSupport();
-    if (support.high_resolution_step_nm <= 0.0 or support.high_resolution_half_span_nm <= 0.0) {
+    const lut_sampling_half_span_nm = scene.observation_model.lutSamplingHalfSpanNm();
+    if (support.high_resolution_step_nm <= 0.0 or lut_sampling_half_span_nm <= 0.0) {
         return scene.spectral_grid.sample_count;
     }
 
-    const start_nm = scene.spectral_grid.start_nm - support.high_resolution_half_span_nm;
-    const end_nm = scene.spectral_grid.end_nm + support.high_resolution_half_span_nm;
+    const nominal_bounds = scene.lutNominalWavelengthBounds();
+    const start_nm = nominal_bounds.start_nm - lut_sampling_half_span_nm;
+    const end_nm = nominal_bounds.end_nm + lut_sampling_half_span_nm;
     const span_nm = end_nm - start_nm;
     return @as(u32, @intFromFloat(@floor((span_nm / support.high_resolution_step_nm) + 0.5))) + 1;
 }
