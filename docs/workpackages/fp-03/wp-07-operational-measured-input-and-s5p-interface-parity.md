@@ -33,7 +33,7 @@ The vendor system is not only a forward simulator from static configs. It also s
 - Hiding measured-input semantics behind the same API as purely synthetic scenes.
 - Implementing mission-specific retrieval families in this WP.
 
-### WP-07 Operational measured-input and S5P interface parity [Status: Todo]
+### WP-07 Operational measured-input and S5P interface parity [Status: Done 2026-03-28]
 
 Issue:
 Current Zig workflows are still heavily synthetic-scene oriented. The vendor code supports operational use cases where measured spectra and dynamic support data replace static inputs late in the pipeline.
@@ -54,17 +54,17 @@ Why this approach:
 The vendor operational path treats measured inputs and replacement data as a distinct execution mode. Zig should do the same instead of pretending everything is just another static YAML scene.
 
 Recommendation rationale:
-This follows instrument parity because it depends on correct instrument-grid semantics, but it should land before broad operational case claims or full mission adapters.
+This landed immediately after instrument parity because it depends on the corrected measurement-grid and correction semantics from `WP-06`, and it needed to land before any broader operational or mission-parity claims could be made honestly.
 
 Desired outcome:
 A mission-style or operational caller can provide measured radiance/irradiance and replacement assets through typed APIs, and the Zig runtime can execute them without abusing the static-scene path.
 
 Non-destructive tests:
 - `zig build test-unit --summary all`
-- `zig build test-integration --summary all`
-- `zig test tests/integration/mission_s5p_integration_test.zig`
-- `zig test tests/unit/adapter_ingest_test.zig`
-- `zig test tests/validation/disamar_compatibility_harness_test.zig`
+- `zig build test-transport --summary all`
+- `zig build test-validation --summary all`
+- `zig build test-fast --summary all`
+- `zig build check --summary all`
 
 Files by type:
 - Ingest/mission targets:
@@ -84,62 +84,72 @@ Files by type:
   - `src/plugins/providers/noise.zig`
   - `src/runtime/reference/BundledOptics.zig`
 - Validation targets:
+  - `build.zig`
   - `tests/integration/mission_s5p_integration_test.zig`
   - `tests/unit/adapter_ingest_test.zig`
   - `tests/validation/disamar_compatibility_harness_test.zig`
 
 ## Exact Patch Checklist
 
-- [ ] `src/adapters/ingest/spectral_ascii.zig`, `spectral_ascii_metadata.zig`, `spectral_ascii_runtime.zig`: represent measured radiance/irradiance inputs as typed runtime artifacts.
+- [x] `src/adapters/ingest/spectral_ascii.zig`, `spectral_ascii_metadata.zig`, `spectral_ascii_runtime.zig`: represent measured radiance/irradiance inputs as typed runtime artifacts.
   - Vendor anchors: `readIrrRadFromFileModule.f90::{readIrrRadFromFile,readIrrRadPostProcess}`.
   - Parse measured-grid metadata, SNR-like information, and band-specific instrument descriptors into a struct that the runtime can consume directly.
   - Do not reduce measured inputs to “external spectrum file path + maybe noise.”
 
-- [ ] `src/core/Request.zig`, `src/core/Plan.zig`, `src/core/Engine.zig`: add a distinct operational/measured-input execution mode.
+- [x] `src/core/Request.zig`, `src/core/Plan.zig`, `src/core/Engine.zig`: add a distinct operational/measured-input execution mode.
   - Vendor anchors: `S5PInterfaceModule.f90::{setInputGeneric,setInputBand,prepare,retrieve}` and `S5POperationalModule.f90::replaceDynamicData`.
   - The prepared plan should know whether it is executing a synthetic scene or an operational measured-input case.
   - Use typed handles or owned views for measured spectra instead of raw pointers with ambiguous lifetime.
 
-- [ ] `src/model/Instrument.zig`, `src/model/ObservationModel.zig`, `src/plugins/providers/instrument.zig`: support band-level replacement of ISRF, HR wavelength data, and reference assets.
+- [x] `src/model/Instrument.zig`, `src/model/ObservationModel.zig`, `src/plugins/providers/instrument.zig`: support band-level replacement of ISRF, HR wavelength data, and reference assets.
   - Vendor anchors: `S5POperationalModule.f90::{replaceXSecLUTData,replaceHRWavelengthData,replaceISRFData}`.
   - Keep replacement operations explicit and band-scoped; do not let one late replacement silently rewrite unrelated bands.
 
-- [ ] `src/adapters/missions/s5p/root.zig`: turn the current mission adapter into a real operational bridge instead of just preset metadata.
+- [x] `src/adapters/missions/s5p/root.zig`: turn the current mission adapter into a real operational bridge instead of just preset metadata.
   - Vendor anchors: `S5PInterfaceModule.f90::initialize` and `S5POperationalModule.f90` workflow.
   - Add typed mission presets for input band setup, dynamic replacement, and expected outputs, but keep them layered on top of the generic engine.
 
-- [ ] `tests/unit/adapter_ingest_test.zig`, `tests/integration/mission_s5p_integration_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: validate operational flows.
+- [x] `tests/unit/adapter_ingest_test.zig`, `tests/integration/mission_s5p_integration_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: validate operational flows.
   - Add at least one measured-radiance/irradiance ingestion test and one S5P-style replacement test.
   - Confirm that runtime replacement actually changes the executed plan and that provenance records the replaced assets.
 
 ## Completion Checklist
 
-- [ ] Implementation matches the described approach
-- [ ] Non-destructive tests pass
-- [ ] Proof / validation section filled with exact commands and outcomes
-- [ ] How to test section is reproducible
-- [ ] `overview.md` rollup row updated
-- [ ] Measured radiance/irradiance are first-class typed inputs
-- [ ] Band-level operational replacement of ISRF/HR/LUT data is explicit and testable
-- [ ] At least one S5P-style integration flow runs end-to-end
+- [x] Implementation matches the described approach
+- [x] Non-destructive tests pass
+- [x] Proof / validation section filled with exact commands and outcomes
+- [x] How to test section is reproducible
+- [x] `overview.md` rollup row updated
+- [x] Measured radiance/irradiance are first-class typed inputs
+- [x] Band-level operational replacement of ISRF/HR/LUT data is explicit and testable
+- [x] At least one S5P-style integration flow runs end-to-end
 
-## Implementation Status (2026-03-18)
+## Implementation Status (2026-03-28)
 
-Planning only. No code changes yet.
+Implemented. Measured radiance/irradiance ingestion now materializes typed `MeasuredInput` and per-band `OperationalBandSupport` artifacts, the core request/plan/result path now carries an explicit `operational_measured_input` execution mode, S5P mission wiring now builds a real measured-input request instead of only preset metadata, focused validation covers typed ingest, end-to-end operational execution, and compatibility-harness classification, and the final post-review hardening both rejects malformed inactive HR-grid controls and removes duplicated legacy-carrier clones so operational measured-input requests keep band support as the single source of truth.
 
 ## Why This Works
 
-Operational parity is not a thin wrapper around the static forward model. The vendor code clearly separates measured-input setup, per-band replacement, and retrieval execution. This WP gives Zig the same capability without inheriting the Fortran global-state design.
+Operational parity is not a thin wrapper around the static forward model. The implemented path keeps measured spectra and band-scoped replacement assets as typed owned values from ingest through execution, so the runtime can reject unsupported or inconsistent operational inputs instead of silently falling back to the synthetic-scene path. The explicit execution mode and provenance annotations make the operational path visible in request planning, mission adapters, and validation output without recreating the vendor's global mutable state.
 
 ## Proof / Validation
 
-- Planned: `zig test tests/unit/adapter_ingest_test.zig` -> measured-input artifacts parse into typed runtime structures
-- Planned: `zig test tests/integration/mission_s5p_integration_test.zig` -> band-level operational replacement and execution succeed end-to-end
-- Planned: `zig test tests/validation/disamar_compatibility_harness_test.zig` -> operational example configs are classified and mapped correctly
+- `zig build test-unit --summary all` -> passed (`161/161`); includes the measured-input ingest/runtime ownership coverage plus the new request-drift regression in `tests/unit/adapter_ingest_test.zig`
+- `zig build test-transport --summary all` -> passed (`180/180`); covers the focused transport/O2A aggregate and now includes the operational measured-input compatibility shard
+- `zig build test-validation --summary all` -> passed (`48/48`); proves the full validation aggregate, including the new operational measured-input classification shard wired into `build.zig`
+- `zig build test-fast --summary all` -> passed (`196/196`)
+- `zig build check --summary all` -> passed (`161/161`)
+
+Note:
+The original planning note used raw `zig test tests/...` commands, but this repo wires test modules through `build.zig`. The completed proof uses the equivalent `zig build` suite steps so the required module imports and the new operational-classification harness step are reproducible.
+
+Final review follow-up:
+The latest PR-review hardening commits tightened `Instrument.OperationalBandSupport.validate()` so negative or one-sided high-resolution grid controls fail even when no other operational replacement is enabled (`add6c3a`), then removed redundant top-level operational carrier clones from the measured-input builders so `operational_band_support` is the single runtime source of truth on that path (`d002448`). Both follow-ups reran `zig build test-fast --summary all` (`196/196`) and `zig build check --summary all` (`161/161`) on the updated heads.
 
 ## How To Test
 
-1. Ingest a measured radiance/irradiance file and inspect the typed runtime artifact.
-2. Run an S5P-style case with replacement ISRF or HR grid data and confirm the plan provenance changes.
-3. Compare outputs with and without a replacement asset to ensure the new data is actually used.
-4. Confirm lifetime/ownership of measured inputs survives the full execution path.
+1. Run `zig build test-unit --summary all` and confirm the typed ingest suite passes, especially the measured-input artifact, allocation-failure cleanup, and request-drift checks in `tests/unit/adapter_ingest_test.zig`.
+2. Run `zig build test-transport --summary all` and confirm the focused transport/O2A aggregate passes, including the operational measured-input compatibility classification shard.
+3. Run `zig build test-validation --summary all` and confirm the full validation aggregate passes with the operational measured-input shard included in the current `build.zig` wiring.
+4. Run `zig build test-fast --summary all` and `zig build check --summary all` to confirm the presubmit and baseline repo lanes still pass on the same tree.
+5. Run `zig build check --summary all` as the final repo baseline.
