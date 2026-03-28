@@ -1702,6 +1702,221 @@ test "canonical config maps explicit LUT controls into the scene and prepared bl
     try std.testing.expectApproxEqAbs(@as(f64, 0.05), compatibility.surface_albedo, 1.0e-12);
 }
 
+test "canonical config preserves explicit zero LUT surface albedo" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: zero-lut-surface-albedo
+        \\experiment:
+        \\  simulation:
+        \\    general:
+        \\      create_lut:
+        \\        surface_albedo: 0.0
+        \\    scene:
+        \\      id: zero_lut_surface_albedo_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation.?;
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), stage.scene.lut_controls.reflectance.surface_albedo, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), stage.plan.scene_blueprint.lut_compatibility.controls.reflectance.surface_albedo, 1.0e-12);
+}
+
+test "canonical config defaults polynomial-expansion xsec LUT mode to direct without explicit LUT controls" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: default-direct-xsec-lut-mode
+        \\experiment:
+        \\  simulation:
+        \\    general:
+        \\      usePolyExpXsecSim: true
+        \\    scene:
+        \\      id: default_direct_xsec_lut_mode_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    var resolved = try document.resolve(std.testing.allocator);
+    defer resolved.deinit();
+
+    const stage = resolved.simulation.?;
+    try std.testing.expectEqual(zdisamar.LutMode.direct, stage.scene.lut_controls.xsec.mode);
+}
+
+test "canonical config rejects negative LUT surface albedo" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: negative-lut-surface-albedo
+        \\experiment:
+        \\  simulation:
+        \\    general:
+        \\      create_lut:
+        \\        surface_albedo: -0.01
+        \\    scene:
+        \\      id: negative_lut_surface_albedo_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.InvalidValue,
+        document.resolve(std.testing.allocator),
+    );
+}
+
+test "canonical config rejects legacy xsec LUT creation without polynomial expansion" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: xsec-lut-create-without-poly-expansion
+        \\experiment:
+        \\  simulation:
+        \\    general:
+        \\      usePolyExpXsecSim: false
+        \\      create_xsec_lut:
+        \\        create_xsec_poly_lut: true
+        \\    scene:
+        \\      id: xsec_lut_create_without_poly_expansion_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.InvalidValue,
+        document.resolve(std.testing.allocator),
+    );
+}
+
 test "canonical config resolves non-o2 operational LUT ingests into cross-section absorbers" {
     const path = "zig-cache/test-o3-operational-lut.txt";
     defer std.fs.cwd().deleteFile(path) catch {};

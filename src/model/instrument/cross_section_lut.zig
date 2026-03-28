@@ -141,7 +141,7 @@ pub const OperationalCrossSectionLut = struct {
         controls: LutControls.XsecControls,
     ) !OperationalCrossSectionLut {
         try controls.validate();
-        if (controls.mode == .direct or wavelengths_nm.len == 0) {
+        if (controls.mode == .direct or controls.mode == .consume or wavelengths_nm.len == 0) {
             return errors.Error.InvalidRequest;
         }
         if (controls.temperature_coefficient_count > max_operational_refspec_temperature_coefficients or
@@ -642,6 +642,21 @@ test "generated cross-section LUT reproduces direct table values" {
 
     try std.testing.expectApproxEqRel(@as(f64, 3.0e-19), lut.sigmaAt(431.0, 250.0, 600.0), 1.0e-10);
     try std.testing.expectApproxEqRel(@as(f64, 0.0), lut.dSigmaDTemperatureAt(431.0, 250.0, 600.0), 1.0e-10);
+}
+
+test "generated cross-section LUT rejects consume-mode source builds" {
+    const wavelengths = [_]f64{430.0};
+    const points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.0e-19 },
+    };
+    const table: ReferenceData.CrossSectionTable = .{ .points = @constCast(points[0..]) };
+
+    try std.testing.expectError(errors.Error.InvalidRequest, OperationalCrossSectionLut.buildFromSource(
+        std.testing.allocator,
+        wavelengths[0..],
+        .{ .cross_section_table = &table },
+        .{ .mode = .consume },
+    ));
 }
 
 test "cross-section LUT extrapolates scaled log coordinates outside configured temperature range" {

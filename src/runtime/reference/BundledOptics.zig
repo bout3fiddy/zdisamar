@@ -370,6 +370,10 @@ fn applyReflectanceLutWorkflow(
     const compatibility = scene.lutCompatibilityKey();
     const controls = scene.lut_controls.reflectance;
 
+    if (controls.reflectance_mode == .consume or controls.correction_mode == .consume) {
+        return error.InvalidRequest;
+    }
+
     if (controls.reflectance_mode != .direct) {
         try appendExecutionLabelOwned(
             allocator,

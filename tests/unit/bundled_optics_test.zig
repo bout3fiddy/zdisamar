@@ -200,6 +200,32 @@ test "runtime bundled optics replaces explicit cross-section tables when generat
     try std.testing.expectEqualStrings("no2:xsec_lut:generated", prepared.generated_lut_assets[0].provenance_label);
 }
 
+test "runtime bundled optics rejects reflectance LUT consume modes without a source" {
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-reflectance-lut-consume",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 771.5,
+            .sample_count = 48,
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+        },
+        .lut_controls = .{
+            .reflectance = .{
+                .correction_mode = .consume,
+            },
+        },
+    };
+
+    try std.testing.expectError(error.InvalidRequest, bundled_optics.prepareForScene(std.testing.allocator, &scene));
+}
+
 test "runtime bundled optics keeps visible bundled line fallback for implicit absorbers" {
     const scene: zdisamar.Scene = .{
         .id = "runtime-visible-implicit-absorbers",

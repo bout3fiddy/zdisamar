@@ -297,7 +297,7 @@ pub const GeneralConfig = struct {
         reflectance_mode: LutControls.Mode = .direct,
         correction_mode: LutControls.Mode = .direct,
         use_chandra_formula: bool = false,
-        surface_albedo: f64 = 0.0,
+        surface_albedo: ?f64 = null,
     };
 
     pub const CreateXsecLut = struct {
@@ -3287,29 +3287,38 @@ fn applyGeneralConfigToObservationModel(
         .simulation => general.use_poly_exp_xsec_sim,
         .retrieval => general.use_poly_exp_xsec_retr,
     };
+    const explicit_xsec_mode = general.create_xsec_lut.mode;
+    const legacy_create_xsec_poly_lut = general.create_xsec_lut.create_xsec_poly_lut;
     const derived_xsec_mode = blk: {
         if (!use_polynomial_expansion) {
-            if (general.create_xsec_lut.mode) |mode| {
+            if (legacy_create_xsec_poly_lut) return Error.InvalidValue;
+            if (explicit_xsec_mode) |mode| {
                 if (mode != .direct) return Error.InvalidValue;
             }
             break :blk LutControls.Mode.direct;
         }
-        if (general.create_xsec_lut.mode) |mode| break :blk mode;
-        break :blk if (general.create_xsec_lut.create_xsec_poly_lut)
+        if (explicit_xsec_mode) |mode| {
+            if (legacy_create_xsec_poly_lut and mode != .generate) return Error.InvalidValue;
+            break :blk mode;
+        }
+        break :blk if (legacy_create_xsec_poly_lut)
             LutControls.Mode.generate
         else
-            LutControls.Mode.consume;
+            LutControls.Mode.direct;
     };
+    const lut_surface_albedo = if (general.create_lut.surface_albedo) |surface_albedo| blk: {
+        if (!std.math.isFinite(surface_albedo) or surface_albedo < 0.0) {
+            return Error.InvalidValue;
+        }
+        break :blk surface_albedo;
+    } else scene.surface.albedo;
 
     scene.lut_controls = .{
         .reflectance = .{
             .reflectance_mode = general.create_lut.reflectance_mode,
             .correction_mode = general.create_lut.correction_mode,
             .use_chandra_formula = general.create_lut.use_chandra_formula,
-            .surface_albedo = if (general.create_lut.surface_albedo > 0.0)
-                general.create_lut.surface_albedo
-            else
-                scene.surface.albedo,
+            .surface_albedo = lut_surface_albedo,
         },
         .xsec = .{
             .mode = derived_xsec_mode,
