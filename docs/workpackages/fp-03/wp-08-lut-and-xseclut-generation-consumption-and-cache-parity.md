@@ -33,7 +33,7 @@ The vendor code supports precomputed LUT workflows for both reflectance/correcti
 - Over-optimizing before validation and acceptance criteria exist.
 - Replacing direct simulation paths entirely.
 
-### WP-08 LUT and XsecLUT generation, consumption, and cache parity [Status: Todo]
+### WP-08 LUT and XsecLUT generation, consumption, and cache parity [Status: Done 2026-03-28]
 
 Issue:
 The vendor config and source support LUT workflows as first-class capabilities. Zig has early cache structures and a strong `cross_section_lut` carrier, but not yet the full workflow or the config/runtime semantics around it.
@@ -54,89 +54,105 @@ Why this approach:
 LUT workflows affect both scientific behavior and performance. They must be explicit enough that the validation harness can prove whether a case used direct computation or a LUT.
 
 Recommendation rationale:
-This follows the core physics and instrument WPs because the LUTs are only meaningful once their source computations are correct.
+This follows the core physics, cross-section, and operational measured-input WPs because the LUT workflows only become meaningful once the forward physics, instrument sampling, and typed mission/runtime carriers are already honest.
 
 Desired outcome:
 A caller can choose direct or LUT-backed execution through typed config, the engine can generate or consume the appropriate asset, and validation can compare both modes on the same scientific case.
 
 Non-destructive tests:
 - `zig build test-unit --summary all`
-- `zig build test-validation --summary all`
-- `zig test tests/unit/runtime_cache_scheduler_test.zig`
-- `zig test tests/validation/parity_assets_test.zig`
-- `zig test tests/validation/disamar_compatibility_harness_test.zig`
+- `zig build test-validation-lut-assets --summary all`
+- `zig build test-validation-compatibility-lut-parity --summary all`
+- `zig build test-fast --summary all`
+- `zig build check --summary all`
 
 Files by type:
 - Runtime/cache targets:
   - `src/runtime/cache/LUTCache.zig`
   - `src/runtime/cache/PreparedLayout.zig`
   - `src/runtime/reference/BundledOptics.zig`
+  - `src/core/Request.zig`
+  - `src/core/engine/forward.zig`
+  - `src/core/provenance.zig`
 - Spectroscopy/LUT targets:
+  - `src/core/lut_controls.zig`
   - `src/model/instrument/cross_section_lut.zig`
-  - `src/kernels/optics/prepare.zig`
-  - `src/plugins/providers/optics.zig`
+  - `src/kernels/optics/preparation/state.zig`
+  - `src/kernels/optics/preparation/builder.zig`
+  - `src/kernels/quadrature/gauss_legendre.zig`
 - Config/compiler targets:
   - `src/adapters/canonical_config/Document.zig`
-  - `src/adapters/canonical_config/document_fields.zig`
-  - `src/core/Plan.zig`
+  - `src/model/Scene.zig`
   - `src/core/Engine.zig`
+  - `src/root.zig`
 - Validation targets:
+  - `build.zig`
+  - `tests/unit/bundled_optics_test.zig`
+  - `tests/unit/canonical_config_test.zig`
   - `tests/unit/runtime_cache_scheduler_test.zig`
   - `tests/validation/parity_assets_test.zig`
   - `tests/validation/disamar_compatibility_harness_test.zig`
+  - `tests/validation/main.zig`
 
 ## Exact Patch Checklist
 
-- [ ] `src/adapters/canonical_config/Document.zig` and `document_fields.zig`: expose vendor create/use LUT controls exactly enough to distinguish generation and consumption modes.
+- [x] `src/adapters/canonical_config/Document.zig` and `document_fields.zig`: expose vendor create/use LUT controls exactly enough to distinguish generation and consumption modes.
   - Vendor anchors: `readConfigFileModule.f90::readGeneral` subsections `createLUT` and `createXsecLUT`; `readReferenceData`.
   - Carry parameters like pressure/temperature ranges, polynomial order controls, and toggles for reflectance vs correction LUTs.
 
-- [ ] `src/model/instrument/cross_section_lut.zig`, `src/kernels/optics/prepare.zig`, `src/plugins/providers/optics.zig`: implement XsecLUT generation and use as explicit execution paths.
+- [x] `src/model/instrument/cross_section_lut.zig`, `src/kernels/optics/prepare.zig`, `src/plugins/providers/optics.zig`: implement XsecLUT generation and use as explicit execution paths.
   - Vendor anchors: `propAtmosphere.f90::{createXsecLUT,getAbsorptionXsecUsingLUT,getAbsorptionXsecFromLUT,convoluteXsecLUT}`.
   - Keep direct spectroscopy and LUT-backed spectroscopy as separate code paths with common interfaces.
   - Record which path was used in provenance and test output.
 
-- [ ] `src/runtime/cache/LUTCache.zig`, `src/runtime/cache/PreparedLayout.zig`, `src/core/Plan.zig`, `src/core/Engine.zig`: make prepared plans and caches aware of LUT identity and compatibility.
+- [x] `src/runtime/cache/LUTCache.zig`, `src/runtime/cache/PreparedLayout.zig`, `src/core/Plan.zig`, `src/core/Engine.zig`: make prepared plans and caches aware of LUT identity and compatibility.
   - Vendor anchors: `DISAMARModule.f90::fillWavelPressureGeometryLUT` and `createLUTModule.f90`.
   - A prepared plan should not accidentally reuse a LUT generated for incompatible geometry, spectral window, or instrument settings.
   - Include hashable keys based on the scientific inputs that define a LUT.
 
-- [ ] `src/runtime/reference/BundledOptics.zig`: add or standardize typed storage for generated LUT assets.
+- [x] `src/runtime/reference/BundledOptics.zig`: add or standardize typed storage for generated LUT assets.
   - Vendor anchors: reflectance/polarization/RRS correction LUT generation in `createLUTModule.f90`.
   - Avoid storing opaque “some LUT” blobs. Use typed asset wrappers with dimensions, grid specs, provenance, and intended use.
 
-- [ ] `tests/unit/runtime_cache_scheduler_test.zig`, `tests/validation/parity_assets_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: add direct-vs-LUT comparisons.
+- [x] `tests/unit/runtime_cache_scheduler_test.zig`, `tests/validation/parity_assets_test.zig`, `tests/validation/disamar_compatibility_harness_test.zig`: add direct-vs-LUT comparisons.
   - Required cases: `Config_O2A_XsecLUT.in` and one non-O2 LUT-relevant case.
   - Assert that direct and LUT-backed runs stay within agreed thresholds and that the harness can report which mode was used.
 
 ## Completion Checklist
 
-- [ ] Implementation matches the described approach
-- [ ] Non-destructive tests pass
-- [ ] Proof / validation section filled with exact commands and outcomes
-- [ ] How to test section is reproducible
-- [ ] `overview.md` rollup row updated
-- [ ] Create/use LUT controls are explicit in config and prepared plans
-- [ ] Provenance records whether execution used direct or LUT-backed paths
-- [ ] At least one XsecLUT case runs end-to-end through the validation harness
+- [x] Implementation matches the described approach
+- [x] Non-destructive tests pass
+- [x] Proof / validation section filled with exact commands and outcomes
+- [x] How to test section is reproducible
+- [x] `overview.md` rollup row updated
+- [x] Create/use LUT controls are explicit in config and prepared plans
+- [x] Provenance records whether execution used direct or LUT-backed paths
+- [x] At least one XsecLUT case runs end-to-end through the validation harness
 
-## Implementation Status (2026-03-18)
+## Implementation Status (2026-03-28)
 
-Planning only. No code changes yet.
+Implemented. The runtime now carries typed reflectance/correction and XsecLUT controls through `Scene`, canonical-config staging, prepared-plan compatibility keys, and cache registration; `BundledOptics` can generate or consume typed reflectance/correction/XsecLUT assets with explicit provenance labels; generated LUT assets are registered into the typed `LUTCache` with geometry/spectral/instrument compatibility keys; request validation rejects plan/request LUT mismatches; and focused validation now covers cache compatibility, generated-versus-consumed asset metadata, O2A generated-XsecLUT bounded parity, and a non-O2 NO2 LUT path.
 
 ## Why This Works
 
-The vendor code uses LUTs as a real execution mode, not just a cache side effect. Modeling them explicitly in config, planning, and provenance preserves scientific auditability while still enabling performance-oriented workflows.
+The vendor code uses LUTs as a real execution mode, not as an incidental memoization layer, and the landed Zig path now does the same. `LutControls` and `CompatibilityKey` make the create/use choice explicit on the typed scene/plan boundary, generated assets are recorded as typed reflectance/correction/Xsec entries instead of opaque blobs, and request execution rejects incompatible plan reuse before a stale LUT can leak across geometry, spectral-window, or instrument-response changes. On the spectroscopy side, the XsecLUT carrier keeps direct and LUT-backed paths separate while sharing the same runtime interfaces, so provenance and validation can prove which route actually ran.
+
+For the O2A validation case, the current runtime stays morphologically consistent and bounded at a mean absolute reflectance delta below the explicit `1.5e-3` acceptance threshold, while the non-O2 NO2 LUT case remains effectively exact under its tighter tolerance. That gives the harness an honest bounded-parity contract instead of a silent direct-path fallback.
 
 ## Proof / Validation
 
-- Planned: `zig test tests/unit/runtime_cache_scheduler_test.zig` -> LUT identity and cache compatibility are enforced correctly
-- Planned: `zig test tests/validation/parity_assets_test.zig` -> generated/consumed LUT assets are typed and complete
-- Planned: `zig test tests/validation/disamar_compatibility_harness_test.zig` -> vendor LUT cases map to the correct Zig execution mode
+- `zig build test-unit --summary all` -> passed (`165/165`); covers the new LUT compatibility-key comparisons, cache mismatch rejection, generated cross-section LUT extrapolation regression, and the bundled-optics generated-table replacement regression
+- `zig build test-validation-lut-assets --summary all` -> passed (`2/2`); proves generated reflectance/correction/Xsec assets register typed cache metadata and that consume mode records provenance without creating cache entries
+- `zig build test-validation-compatibility-lut-parity --summary all` -> passed (`2/2`); proves `Config_O2A_XsecLUT` direct versus generated runs stay within the explicit bounded O2A threshold and that the non-O2 NO2 LUT case remains within its tighter parity tolerance
+- `zig build test-fast --summary all` -> passed (`200/200`)
+- `zig build check --summary all` -> passed (`165/165`)
+
+Note:
+The planning draft referenced raw `zig test tests/...` commands, but this repo wires the relevant suites through `build.zig`. The completed proof uses the corresponding `zig build` entrypoints so the same aggregates the repo expects before push are the ones recorded here.
 
 ## How To Test
 
-1. Run a direct O2A case and an XsecLUT-backed O2A case.
-2. Confirm the prepared plan and provenance record which path was taken.
-3. Compare scientific outputs and ensure differences stay within the acceptance criteria.
-4. Invalidate one defining input (for example spectral window or geometry) and confirm the runtime refuses to reuse an incompatible LUT.
+1. Run `zig build test-validation-lut-assets --summary all` and confirm the generated reflectance/correction/Xsec asset metadata and consume-mode provenance checks pass.
+2. Run `zig build test-validation-compatibility-lut-parity --summary all` and confirm the O2A generated-XsecLUT case stays within the explicit bounded parity threshold while the non-O2 NO2 case still passes its tighter tolerance.
+3. Run `zig build test-unit --summary all` and confirm the LUT compatibility-key, request/plan mismatch, bundled-optics generation, and cross-section-LUT regression coverage stays green.
+4. Run `zig build test-fast --summary all` and `zig build check --summary all` as the presubmit and repo-baseline confirmation on the same tree.
