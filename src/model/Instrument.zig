@@ -516,16 +516,16 @@ pub const Instrument = struct {
         }
 
         pub fn validate(self: *const OperationalBandSupport) errors.Error!void {
-            if (!self.enabled()) {
-                return;
-            }
-            if (self.id.len == 0) return errors.Error.InvalidRequest;
             if (self.high_resolution_step_nm < 0.0 or self.high_resolution_half_span_nm < 0.0) {
                 return errors.Error.InvalidRequest;
             }
             if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
                 return errors.Error.InvalidRequest;
             }
+            if (!self.enabled()) {
+                return;
+            }
+            if (self.id.len == 0) return errors.Error.InvalidRequest;
             try self.instrument_line_shape.validate();
             try self.instrument_line_shape_table.validate();
             try self.operational_refspec_grid.validate();
@@ -711,6 +711,20 @@ test "instrument validation rejects malformed operational lut surfaces" {
     };
 
     try std.testing.expectError(errors.Error.InvalidRequest, invalid.validate());
+}
+
+test "operational band support rejects malformed inert hr-grid controls" {
+    const negative_step: Instrument.OperationalBandSupport = .{
+        .high_resolution_step_nm = -0.08,
+        .high_resolution_half_span_nm = -0.32,
+    };
+    try std.testing.expectError(errors.Error.InvalidRequest, negative_step.validate());
+
+    const one_sided_grid: Instrument.OperationalBandSupport = .{
+        .high_resolution_step_nm = 0.08,
+        .high_resolution_half_span_nm = 0.0,
+    };
+    try std.testing.expectError(errors.Error.InvalidRequest, one_sided_grid.validate());
 }
 
 test "noise controls validation rejects one-sided tables" {
