@@ -23,6 +23,7 @@
 //!   execute prepared plans.
 
 const SceneModel = @import("../model/Scene.zig");
+const ExecutionMode = @import("execution_mode.zig").ExecutionMode;
 const PluginRegistry = @import("../plugins/registry/CapabilityRegistry.zig");
 const PluginRuntime = @import("../plugins/loader/runtime.zig");
 const PluginProviders = @import("../plugins/providers/root.zig");
@@ -73,6 +74,8 @@ pub const PreparedPlan = struct {
     allocator: std.mem.Allocator,
     id: u64,
     template: Template,
+    execution_mode: ExecutionMode,
+    operational_band_count: u32,
     transport_route: TransportRoute,
     prepared_layout: PreparedLayout = .{},
     plugin_snapshot: PluginRegistry.PluginSnapshot = .{},
@@ -93,6 +96,8 @@ pub const PreparedPlan = struct {
             .allocator = allocator,
             .id = id,
             .template = template,
+            .execution_mode = template.scene_blueprint.execution_mode,
+            .operational_band_count = template.scene_blueprint.operational_band_count_hint,
             .transport_route = transport_route,
             .prepared_layout = prepared_layout,
             .plugin_snapshot = plugin_snapshot,

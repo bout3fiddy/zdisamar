@@ -1595,6 +1595,35 @@ test "compatibility harness parses bounded vendor retrieval diagnostics from asc
     try expectBoundedVendorAsciiHdfDiagnostics();
 }
 
+test "compatibility harness classifies operational measured-input S5P flows distinctly from synthetic scenes" {
+    var mission_run = try zdisamar.mission_s5p.buildOperational(std.testing.allocator, .{
+        .scene_id = "compat-s5p-operational",
+        .spectral_input_path = "data/examples/irr_rad_channels_operational_refspec_demo.txt",
+        .destination_uri = "file://out/compat-s5p-operational.nc",
+        .sampling = .operational,
+        .noise_model = .s5p_operational,
+    });
+    defer mission_run.deinit(std.testing.allocator);
+
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    var plan = try engine.preparePlan(mission_run.plan_template);
+    defer plan.deinit();
+    var workspace = engine.createWorkspace("compat-operational");
+    var result = try engine.execute(&plan, &workspace, &mission_run.request);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(zdisamar.ExecutionMode.operational_measured_input, plan.execution_mode);
+    try std.testing.expectEqual(zdisamar.ExecutionMode.operational_measured_input, result.execution_mode);
+    try std.testing.expectEqualStrings("operational_measured_input", result.provenance.execution_mode);
+    try std.testing.expectEqual(@as(u32, 1), result.provenance.operational_band_count);
+    try std.testing.expectEqual(@as(usize, 1), result.provenance.operational_replacement_entries.len);
+    try std.testing.expect(std.mem.indexOf(u8, result.provenance.operational_replacement_entries[0], "refspec") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.provenance.operational_replacement_entries[0], "o2_lut") != null);
+}
+
 test "compatibility harness executes the full parity matrix against vendor anchors" {
     var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa_state.deinit() == .ok);

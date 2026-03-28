@@ -105,9 +105,7 @@ pub const OperationalCrossSectionLut = struct {
     /// Purpose:
     ///   Clone the LUT into owned storage.
     pub fn clone(self: OperationalCrossSectionLut, allocator: Allocator) !OperationalCrossSectionLut {
-        return .{
-            .wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm),
-            .coefficients = try allocator.dupe(f64, self.coefficients),
+        var cloned: OperationalCrossSectionLut = .{
             .temperature_coefficient_count = self.temperature_coefficient_count,
             .pressure_coefficient_count = self.pressure_coefficient_count,
             .min_temperature_k = self.min_temperature_k,
@@ -115,6 +113,10 @@ pub const OperationalCrossSectionLut = struct {
             .min_pressure_hpa = self.min_pressure_hpa,
             .max_pressure_hpa = self.max_pressure_hpa,
         };
+        cloned.wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm);
+        errdefer allocator.free(cloned.wavelengths_nm);
+        cloned.coefficients = try allocator.dupe(f64, self.coefficients);
+        return cloned;
     }
 
     /// Purpose:

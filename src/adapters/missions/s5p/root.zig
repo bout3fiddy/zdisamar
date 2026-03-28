@@ -25,6 +25,7 @@ const PlanTemplate = @import("../../../core/Plan.zig").Template;
 const Request = @import("../../../core/Request.zig").Request;
 const Scene = @import("../../../model/Scene.zig").Scene;
 const SpectralGrid = @import("../../../model/Scene.zig").SpectralGrid;
+const SpectralBand = @import("../../../model/Scene.zig").SpectralBand;
 const DerivativeMode = @import("../../../model/Scene.zig").DerivativeMode;
 const Instrument = @import("../../../model/Instrument.zig").Instrument;
 const InstrumentId = @import("../../../model/Instrument.zig").Id;
@@ -67,7 +68,7 @@ pub const MissionRun = struct {
             product.deinit(allocator);
             allocator.destroy(product);
         }
-        self.request.scene.deinitOwned(allocator);
+        self.request.deinitOwned(allocator);
         self.* = undefined;
     }
 };
@@ -170,6 +171,15 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
     defer loaded.deinit(allocator);
 
     if (loaded.channelCount(.radiance) == 0) return error.InvalidOperationalInput;
+    var artifacts = loaded.operationalArtifacts(
+        allocator,
+        options.spectral_input_path,
+        "s5p-operational-band-0",
+    ) catch |err| switch (err) {
+        SpectralAscii.ParseError.InvalidLine => return error.InvalidOperationalInput,
+        else => return err,
+    };
+    errdefer artifacts.deinitOwned(allocator);
 
     const spectral_grid = loaded.spectralGrid() orelse return error.InvalidOperationalInput;
     const measurement_summary = loaded.measurement("radiance");
@@ -231,28 +241,48 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
             .noise_model = options.noise_model,
             .wavelength_shift_nm = metadata.wavelength_shift_nm orelse 0.0,
             .instrument_line_fwhm_nm = metadata.isrf_fwhm_nm orelse 0.0,
-            .high_resolution_step_nm = metadata.high_resolution_step_nm orelse 0.0,
-            .high_resolution_half_span_nm = metadata.high_resolution_half_span_nm orelse 0.0,
         },
     };
     errdefer scene.deinitOwned(allocator);
 
-    scene.observation_model.instrument_line_shape = try metadata.instrument_line_shape.clone(allocator);
-    scene.observation_model.instrument_line_shape_table = try metadata.instrument_line_shape_table.clone(allocator);
-    scene.observation_model.operational_refspec_grid = try metadata.operational_refspec_grid.clone(allocator);
-    scene.observation_model.operational_solar_spectrum = if (metadata.operational_solar_spectrum.enabled())
-        try metadata.operational_solar_spectrum.clone(allocator)
+    const band_step_nm = if (artifacts.measured_input.radiance.wavelengths_nm.len > 1)
+        spectral_runtime.meanSpacingNm(artifacts.measured_input.radiance.wavelengths_nm)
     else
-        try loaded.solarSpectrumForKind(allocator, .irradiance);
-    scene.observation_model.o2_operational_lut = try metadata.o2_operational_lut.clone(allocator);
-    scene.observation_model.o2o2_operational_lut = try metadata.o2o2_operational_lut.clone(allocator);
-    scene.observation_model.measured_wavelengths_nm = try loaded.wavelengthsForKind(allocator, .radiance);
+        1.0;
+    scene.bands.items = try allocator.dupe(SpectralBand, &[_]SpectralBand{.{
+        .id = "s5p-operational-band-0",
+        .start_nm = spectral_grid.start_nm,
+        .end_nm = spectral_grid.end_nm,
+        .step_nm = band_step_nm,
+    }});
+
+    scene.observation_model.measured_wavelengths_nm = try allocator.dupe(
+        f64,
+        artifacts.measured_input.radiance.wavelengths_nm,
+    );
     scene.observation_model.owns_measured_wavelengths = scene.observation_model.measured_wavelengths_nm.len != 0;
-    scene.observation_model.reference_radiance = try spectral_runtime.channelValuesForKind(allocator, &loaded, .radiance);
+    scene.observation_model.reference_radiance = try allocator.dupe(
+        f64,
+        artifacts.measured_input.radiance.values,
+    );
     scene.observation_model.owns_reference_radiance = scene.observation_model.reference_radiance.len != 0;
-    scene.observation_model.ingested_noise_sigma = try loaded.noiseSigmaForKind(allocator, .radiance);
+    scene.observation_model.ingested_noise_sigma = try allocator.dupe(
+        f64,
+        artifacts.measured_input.radiance.noise_sigma,
+    );
+    scene.observation_model.operational_band_support = try allocator.dupe(
+        Instrument.OperationalBandSupport,
+        &[_]Instrument.OperationalBandSupport{artifacts.band_support},
+    );
+    scene.observation_model.owns_operational_band_support = true;
+    artifacts.band_support = .{};
 
     var request = Request.init(scene);
+    scene = .{};
+    errdefer request.deinitOwned(allocator);
+    request.execution_mode = .operational_measured_input;
+    request.measured_input = artifacts.measured_input;
+    artifacts.measured_input = .{};
     request.expected_derivative_mode = options.derivative_mode;
     request.requested_products = &[_]Request.RequestedProduct{
         .named(requested_product, .result, .slant_column),
@@ -274,8 +304,10 @@ pub fn buildOperational(allocator: std.mem.Allocator, options: OperationalOption
                 .id = options.scene_id,
                 .spectral_grid = spectral_grid,
                 .derivative_mode = options.derivative_mode,
+                .execution_mode = .operational_measured_input,
                 .layer_count_hint = options.layer_count,
                 .measurement_count_hint = measurement_summary.sample_count,
+                .operational_band_count_hint = 1,
             },
         },
         .request = request,
@@ -370,11 +402,12 @@ fn irradianceOnWavelengthGrid(
     loaded: *const SpectralAscii.LoadedSpectra,
     wavelengths: []const f64,
 ) ![]f64 {
-    const spectrum = if (scene.observation_model.operational_solar_spectrum.enabled())
-        scene.observation_model.operational_solar_spectrum
+    const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
+    const spectrum = if (operational_band_support.operational_solar_spectrum.enabled())
+        operational_band_support.operational_solar_spectrum
     else
         try loaded.solarSpectrumForKind(allocator, .irradiance);
-    defer if (!scene.observation_model.operational_solar_spectrum.enabled()) {
+    defer if (!operational_band_support.operational_solar_spectrum.enabled()) {
         var owned = spectrum;
         owned.deinitOwned(allocator);
     };
@@ -413,8 +446,13 @@ test "s5p operational adapter derives spectral grid from measured input" {
 
     try std.testing.expectEqualStrings("s5p-op-no2", mission_run.plan_template.scene_blueprint.id);
     try std.testing.expectEqual(@as(u32, 2), mission_run.plan_template.scene_blueprint.measurement_count_hint);
+    try std.testing.expectEqual(.operational_measured_input, mission_run.plan_template.scene_blueprint.execution_mode);
+    try std.testing.expectEqual(@as(u32, 1), mission_run.plan_template.scene_blueprint.operational_band_count_hint);
+    try std.testing.expectEqual(.operational_measured_input, mission_run.request.execution_mode);
+    try std.testing.expect(mission_run.request.measured_input != null);
     try std.testing.expectEqual(Instrument.SamplingMode.measured_channels, mission_run.request.scene.observation_model.sampling);
     try std.testing.expectEqual(Instrument.NoiseModelKind.snr_from_input, mission_run.request.scene.observation_model.noise_model);
+    try std.testing.expectEqual(@as(usize, 1), mission_run.request.scene.observation_model.operational_band_support.len);
     try std.testing.expectEqual(@as(u32, 2), mission_run.measurement_summary.?.sample_count);
 }
 
@@ -449,14 +487,19 @@ test "s5p operational adapter maps explicit high-resolution grid and isrf table 
     });
     defer mission_run.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(f64, 0.08), mission_run.request.scene.observation_model.high_resolution_step_nm);
-    try std.testing.expectEqual(@as(f64, 0.32), mission_run.request.scene.observation_model.high_resolution_half_span_nm);
-    try std.testing.expectEqual(@as(u8, 5), mission_run.request.scene.observation_model.instrument_line_shape.sample_count);
-    try std.testing.expectEqual(@as(f64, -0.32), mission_run.request.scene.observation_model.instrument_line_shape.offsets_nm[0]);
-    try std.testing.expectEqual(@as(f64, 0.36), mission_run.request.scene.observation_model.instrument_line_shape.weights[2]);
-    try std.testing.expectEqual(@as(u16, 3), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_count);
-    try std.testing.expectEqual(@as(f64, 406.0), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_wavelengths_nm[1]);
-    try std.testing.expectEqual(@as(f64, 0.30), mission_run.request.scene.observation_model.instrument_line_shape_table.weightAt(1, 1));
+    try std.testing.expectEqual(@as(f64, 0.0), mission_run.request.scene.observation_model.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.0), mission_run.request.scene.observation_model.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 0), mission_run.request.scene.observation_model.instrument_line_shape.sample_count);
+    try std.testing.expectEqual(@as(u16, 0), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_count);
+    const support = mission_run.request.scene.observation_model.operational_band_support[0];
+    try std.testing.expectEqual(@as(f64, 0.08), support.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.32), support.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 5), support.instrument_line_shape.sample_count);
+    try std.testing.expectEqual(@as(f64, -0.32), support.instrument_line_shape.offsets_nm[0]);
+    try std.testing.expectEqual(@as(f64, 0.36), support.instrument_line_shape.weights[2]);
+    try std.testing.expectEqual(@as(u16, 3), support.instrument_line_shape_table.nominal_count);
+    try std.testing.expectEqual(@as(f64, 406.0), support.instrument_line_shape_table.nominal_wavelengths_nm[1]);
+    try std.testing.expectEqual(@as(f64, 0.30), support.instrument_line_shape_table.weightAt(1, 1));
 }
 
 test "s5p operational adapter maps O2 and O2-O2 refspec LUT metadata" {
@@ -471,21 +514,26 @@ test "s5p operational adapter maps O2 and O2-O2 refspec LUT metadata" {
 
     try std.testing.expectEqual(Instrument.SamplingMode.operational, mission_run.request.scene.observation_model.sampling);
     try std.testing.expectEqual(Instrument.NoiseModelKind.s5p_operational, mission_run.request.scene.observation_model.noise_model);
-    try std.testing.expect(mission_run.request.scene.observation_model.operational_refspec_grid.enabled());
-    try std.testing.expect(mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
-    try std.testing.expectEqual(@as(usize, 3), mission_run.request.scene.observation_model.operational_refspec_grid.wavelengths_nm.len);
-    try std.testing.expectEqual(@as(usize, 5), mission_run.request.scene.observation_model.operational_solar_spectrum.wavelengths_nm.len);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.70), mission_run.request.scene.observation_model.operational_refspec_grid.weights[1], 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), mission_run.request.scene.observation_model.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
-    try std.testing.expect(mission_run.request.scene.observation_model.o2_operational_lut.enabled());
-    try std.testing.expect(mission_run.request.scene.observation_model.o2o2_operational_lut.enabled());
-    try std.testing.expectEqual(@as(usize, 3), mission_run.request.scene.observation_model.o2_operational_lut.wavelengths_nm.len);
+    try std.testing.expect(!mission_run.request.scene.observation_model.operational_refspec_grid.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.o2o2_operational_lut.enabled());
+    const support = mission_run.request.scene.observation_model.operational_band_support[0];
+    try std.testing.expect(support.operational_refspec_grid.enabled());
+    try std.testing.expect(support.operational_solar_spectrum.enabled());
+    try std.testing.expectEqual(@as(usize, 3), support.operational_refspec_grid.wavelengths_nm.len);
+    try std.testing.expectEqual(@as(usize, 5), support.operational_solar_spectrum.wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.70), support.operational_refspec_grid.weights[1], 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), support.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
+    try std.testing.expect(support.o2_operational_lut.enabled());
+    try std.testing.expect(support.o2o2_operational_lut.enabled());
+    try std.testing.expectEqual(@as(usize, 3), support.o2_operational_lut.wavelengths_nm.len);
     try std.testing.expect(
-        mission_run.request.scene.observation_model.o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
-            mission_run.request.scene.observation_model.o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
+        support.o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
+            support.o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
     );
     try std.testing.expect(
-        mission_run.request.scene.observation_model.o2o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
-            mission_run.request.scene.observation_model.o2o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
+        support.o2o2_operational_lut.sigmaAt(761.0, 260.0, 700.0) >
+            support.o2o2_operational_lut.sigmaAt(760.8, 260.0, 700.0),
     );
 }

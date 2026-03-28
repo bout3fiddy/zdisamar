@@ -32,6 +32,7 @@ const runtime_helpers = @import("spectral_ascii_runtime.zig");
 
 pub const ParseError = metadata_helpers.Error;
 pub const OperationalMetadata = metadata_helpers.OperationalMetadata;
+pub const OperationalArtifacts = runtime_helpers.OperationalArtifacts;
 
 pub const ChannelKind = enum {
     irradiance,
@@ -142,6 +143,24 @@ pub const LoadedSpectra = struct {
     ) ![]const f64 {
         return runtime_helpers.noiseSigmaForKind(allocator, self, kind);
     }
+
+    /// Purpose:
+    ///   Build typed measured-input and band-support artifacts from the loaded spectra.
+    pub fn operationalArtifacts(
+        self: LoadedSpectra,
+        allocator: std.mem.Allocator,
+        source_name: []const u8,
+        band_id: []const u8,
+    ) !OperationalArtifacts {
+        return runtime_helpers.operationalArtifacts(
+            allocator,
+            self,
+            source_name,
+            band_id,
+            ChannelKind.radiance,
+            ChannelKind.irradiance,
+        );
+    }
 };
 
 /// Purpose:
@@ -237,16 +256,27 @@ pub fn parse(allocator: std.mem.Allocator, contents: []const u8) !LoadedSpectra 
     if (legacy_mode or current_builder_index != null) return ParseError.UnclosedSection;
     if (!saw_channel or builders.items.len == 0) return ParseError.MissingChannels;
 
+    const metadata = try metadata_state.intoOwned(allocator);
+    errdefer {
+        var owned = metadata;
+        owned.deinitOwned(allocator);
+    }
+
     const channels = try allocator.alloc(Channel, builders.items.len);
     errdefer allocator.free(channels);
+
+    var built_channels: usize = 0;
+    errdefer {
+        for (channels[0..built_channels]) |channel| allocator.free(channel.samples);
+    }
 
     for (builders.items, 0..) |*builder, index| {
         channels[index] = .{
             .kind = builder.kind,
             .samples = try builder.samples.toOwnedSlice(allocator),
         };
+        built_channels = index + 1;
     }
-    const metadata = try metadata_state.intoOwned(allocator);
 
     return .{
         .channels = channels,

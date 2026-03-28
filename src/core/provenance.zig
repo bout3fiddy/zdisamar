@@ -21,6 +21,7 @@
 
 const std = @import("std");
 const PreparedPlan = @import("Plan.zig").PreparedPlan;
+const ExecutionMode = @import("execution_mode.zig").ExecutionMode;
 
 pub const IntervalSemantics = enum {
     none,
@@ -49,6 +50,7 @@ pub const Provenance = struct {
     transport_family: []const u8 = "baseline_labos",
     transport_maturity: []const u8 = "method_faithful",
     retrieval_maturity: []const u8 = "not_requested",
+    execution_mode: []const u8 = "synthetic",
     derivative_mode: []const u8 = "none",
     derivative_semantics: []const u8 = "none",
     numerical_mode: []const u8 = "scalar",
@@ -58,6 +60,7 @@ pub const Provenance = struct {
     cloud_phase_support: PhaseSupport = .none,
     plan_id: u64 = 0,
     plugin_inventory_generation: u64 = 0,
+    operational_band_count: u32 = 0,
     workspace_label: []const u8 = "",
     scene_id: []const u8 = "",
     plugin_version_entries: []const []const u8 = &.{},
@@ -65,6 +68,7 @@ pub const Provenance = struct {
     native_capability_slots: []const []const u8 = &.{},
     native_entry_symbols: []const []const u8 = &.{},
     native_library_paths: []const []const u8 = &.{},
+    operational_replacement_entries: []const []const u8 = &.{},
     owns_entries: bool = false,
 
     /// Purpose:
@@ -111,6 +115,8 @@ pub const Provenance = struct {
             retrievalMaturityLabel(plan),
         );
         errdefer allocator.free(retrieval_maturity);
+        const execution_mode = try allocator.dupe(u8, plan.execution_mode.label());
+        errdefer allocator.free(execution_mode);
         const derivative_mode = try allocator.dupe(u8, @tagName(plan.transport_route.derivative_mode));
         errdefer allocator.free(derivative_mode);
         const derivative_semantics = try allocator.dupe(
@@ -131,11 +137,13 @@ pub const Provenance = struct {
             .transport_family = transport_family,
             .transport_maturity = transport_maturity,
             .retrieval_maturity = retrieval_maturity,
+            .execution_mode = execution_mode,
             .derivative_mode = derivative_mode,
             .derivative_semantics = derivative_semantics,
             .numerical_mode = owned_numerical_mode,
             .plan_id = plan.id,
             .plugin_inventory_generation = plan.plugin_snapshot.generation,
+            .operational_band_count = plan.operational_band_count,
             .workspace_label = owned_workspace_label,
             .scene_id = owned_scene_id,
             .plugin_version_entries = plugin_version_entries,
@@ -143,6 +151,7 @@ pub const Provenance = struct {
             .native_capability_slots = native_capability_slots,
             .native_entry_symbols = native_entry_symbols,
             .native_library_paths = native_library_paths,
+            .operational_replacement_entries = &.{},
             .owns_entries = true,
         };
     }
@@ -171,11 +180,13 @@ pub const Provenance = struct {
         freeStringSlice(allocator, self.native_capability_slots);
         freeStringSlice(allocator, self.native_entry_symbols);
         freeStringSlice(allocator, self.native_library_paths);
+        freeStringSlice(allocator, self.operational_replacement_entries);
         allocator.free(self.model_family);
         allocator.free(self.solver_route);
         allocator.free(self.transport_family);
         allocator.free(self.transport_maturity);
         allocator.free(self.retrieval_maturity);
+        allocator.free(self.execution_mode);
         allocator.free(self.derivative_mode);
         allocator.free(self.derivative_semantics);
         allocator.free(self.numerical_mode);
@@ -217,9 +228,36 @@ pub const Provenance = struct {
         self.aerosol_phase_support = aerosol_phase_support;
         self.cloud_phase_support = cloud_phase_support;
     }
+
+    /// Purpose:
+    ///   Record the request execution mode and any per-band operational replacements that were active.
+    pub fn annotateOperationalExecution(
+        self: *Provenance,
+        allocator: std.mem.Allocator,
+        execution_mode: ExecutionMode,
+        operational_band_count: u32,
+        replacement_entries: []const []const u8,
+    ) !void {
+        if (self.owns_entries) {
+            const owned_execution_mode = try allocator.dupe(u8, execution_mode.label());
+            errdefer allocator.free(owned_execution_mode);
+            const owned_replacement_entries = try dupeStringSlice(allocator, replacement_entries);
+            errdefer freeStringSlice(allocator, owned_replacement_entries);
+
+            allocator.free(self.execution_mode);
+            freeStringSlice(allocator, self.operational_replacement_entries);
+            self.execution_mode = owned_execution_mode;
+            self.operational_replacement_entries = owned_replacement_entries;
+        } else {
+            self.execution_mode = execution_mode.label();
+            self.operational_replacement_entries = replacement_entries;
+        }
+        self.operational_band_count = operational_band_count;
+    }
 };
 
 fn dupeStringSlice(allocator: std.mem.Allocator, values: []const []const u8) ![]const []const u8 {
+    if (values.len == 0) return &.{};
     const owned = try allocator.alloc([]const u8, values.len);
     errdefer allocator.free(owned);
     var copied: usize = 0;
@@ -237,6 +275,7 @@ fn dupeSnapshotVersionLabels(
     allocator: std.mem.Allocator,
     values: []const @import("../plugins/registry/CapabilityRegistry.zig").SnapshotCapability,
 ) ![]const []const u8 {
+    if (values.len == 0) return &.{};
     const owned = try allocator.alloc([]const u8, values.len);
     errdefer allocator.free(owned);
 

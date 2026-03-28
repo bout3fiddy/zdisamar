@@ -120,8 +120,9 @@ fn irradianceAtWavelength(
     wavelength_nm: f64,
     safe_span: f64,
 ) f64 {
-    const source_irradiance = if (scene.observation_model.operational_solar_spectrum.enabled())
-        scene.observation_model.operational_solar_spectrum.interpolateIrradiance(wavelength_nm)
+    const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
+    const source_irradiance = if (operational_band_support.operational_solar_spectrum.enabled())
+        operational_band_support.operational_solar_spectrum.interpolateIrradiance(wavelength_nm)
     else if (scene.observation_model.solar_spectrum_source.kind() == .bundle_default)
         bundledSolarIrradiance(wavelength_nm) orelse defaultSolarContinuumIrradiance(wavelength_nm)
     else

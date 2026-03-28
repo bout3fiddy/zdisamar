@@ -158,7 +158,7 @@ fn selectMeasurement(
     observable: MeasurementQuantity,
     product: Request.BorrowedMeasurementProduct,
 ) common.Error!SpectralMeasurement {
-    const raw_product = product.product;
+    const raw_product = product.view();
     const source_values = measurementValues(raw_product, observable) catch return common.Error.InvalidRequest;
     const source_jacobian = measurementJacobian(raw_product, observable);
     const source_count = raw_product.wavelengths.len;

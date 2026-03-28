@@ -18,14 +18,30 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectEqual(zdisamar.MeasurementQuantity.radiance, measurement.observable);
     try std.testing.expectEqual(@as(u32, 2), measurement.sample_count);
 
+    var artifacts = try loaded.operationalArtifacts(
+        std.testing.allocator,
+        "demo-source",
+        "demo-band-0",
+    );
+    defer artifacts.deinitOwned(std.testing.allocator);
+    try std.testing.expectEqualStrings("demo-source", artifacts.measured_input.source_name);
+    try std.testing.expectEqual(@as(usize, 2), artifacts.measured_input.radiance.wavelengths_nm.len);
+    try std.testing.expect(artifacts.measured_input.irradiance != null);
+    try std.testing.expectEqualStrings("demo-band-0", artifacts.band_support.id);
+    try std.testing.expect(artifacts.band_support.operational_solar_spectrum.enabled());
+
     var request = try loaded.toRequest(std.testing.allocator, "demo-scene", &[_]zdisamar.RequestedProduct{
         .fromName("radiance"),
     });
     defer request.deinitOwned(std.testing.allocator);
+    try std.testing.expectEqual(zdisamar.ExecutionMode.operational_measured_input, request.execution_mode);
+    try std.testing.expect(request.measured_input != null);
     try std.testing.expectEqualStrings("demo-scene", request.scene.id);
     try std.testing.expectEqual(@as(u32, 2), request.scene.spectral_grid.sample_count);
     try std.testing.expectEqual(zdisamar.Instrument.SamplingMode.measured_channels, request.scene.observation_model.sampling);
     try std.testing.expectEqual(zdisamar.Instrument.NoiseModelKind.snr_from_input, request.scene.observation_model.noise_model);
+    try std.testing.expectEqual(@as(usize, 1), request.scene.observation_model.operational_band_support.len);
+    try std.testing.expectEqualStrings("operational-band-0", request.scene.observation_model.operational_band_support[0].id);
     try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.measured_wavelengths_nm.len);
     try std.testing.expectApproxEqAbs(@as(f64, 405.0), request.scene.observation_model.measured_wavelengths_nm[0], 1.0e-12);
     try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.reference_radiance.len);
@@ -33,13 +49,52 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.ingested_noise_sigma.len);
     try std.testing.expectApproxEqRel(@as(f64, 1.116153e13 / 1485.0), request.scene.observation_model.ingested_noise_sigma[0], 1.0e-12);
     try std.testing.expectApproxEqRel(@as(f64, 1.096153e13 / 1445.0), request.scene.observation_model.ingested_noise_sigma[1], 1.0e-12);
-    try std.testing.expect(request.scene.observation_model.operational_solar_spectrum.enabled());
-    try std.testing.expectApproxEqAbs(@as(f64, 3.402296e14), request.scene.observation_model.operational_solar_spectrum.irradiance[0], 1.0e8);
+    try std.testing.expect(!request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expect(request.scene.observation_model.operational_band_support[0].operational_solar_spectrum.enabled());
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 3.402296e14),
+        request.scene.observation_model.operational_band_support[0].operational_solar_spectrum.irradiance[0],
+        1.0e8,
+    );
 
     var copied_sigma: [2]f64 = undefined;
     try internal.kernels.spectra.noise.copyInputSigma(request.scene.observation_model.ingested_noise_sigma, &copied_sigma);
     try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[0], copied_sigma[0], 1.0e-12);
     try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[1], copied_sigma[1], 1.0e-12);
+}
+
+test "operational measured-input requests reject scene-side measurement drift" {
+    var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
+        std.testing.allocator,
+        "data/examples/irr_rad_channels_demo.txt",
+    );
+    defer loaded.deinit(std.testing.allocator);
+
+    var request = try loaded.toRequest(std.testing.allocator, "drift-check-scene", &[_]zdisamar.RequestedProduct{
+        .fromName("radiance"),
+    });
+    defer request.deinitOwned(std.testing.allocator);
+
+    @constCast(request.scene.observation_model.reference_radiance)[0] += 1.0;
+    try std.testing.expectError(error.InvalidRequest, request.validate());
+}
+
+test "operational measured-input requests require measured wavelengths" {
+    var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
+        std.testing.allocator,
+        "data/examples/irr_rad_channels_demo.txt",
+    );
+    defer loaded.deinit(std.testing.allocator);
+
+    var request = try loaded.toRequest(std.testing.allocator, "missing-wavelengths-scene", &[_]zdisamar.RequestedProduct{
+        .fromName("radiance"),
+    });
+    defer request.deinitOwned(std.testing.allocator);
+
+    std.testing.allocator.free(request.scene.observation_model.measured_wavelengths_nm);
+    request.scene.observation_model.measured_wavelengths_nm = &.{};
+    request.scene.observation_model.owns_measured_wavelengths = false;
+    try std.testing.expectError(error.InvalidRequest, request.validate());
 }
 
 test "spectral ascii ingest preserves explicit high-resolution grid and isrf table metadata" {
@@ -77,6 +132,10 @@ test "spectral ascii ingest preserves operational refspec weights and external s
     try std.testing.expectEqual(@as(usize, 5), loaded.metadata.operational_solar_spectrum.wavelengths_nm.len);
     try std.testing.expectApproxEqAbs(@as(f64, 760.6), loaded.metadata.operational_solar_spectrum.wavelengths_nm[0], 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), loaded.metadata.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
+}
+
+test "spectral ascii ingest operational artifacts clean up across allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, operationalArtifactsWithAllocator, .{});
 }
 
 test "reference asset ingest validates manifests and registers provenance into engine caches" {
@@ -130,6 +189,21 @@ test "reference asset ingest validates manifests and registers provenance into e
     const lut_entry = engine.lut_cache.get(lut.dataset_id, lut.asset_id).?;
     try std.testing.expectEqual(@as(u32, 5), lut_entry.shape.spectral_bins);
     try std.testing.expectEqual(@as(u32, 3), lut_entry.shape.coefficient_count);
+}
+
+fn operationalArtifactsWithAllocator(allocator: std.mem.Allocator) !void {
+    var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
+        std.testing.allocator,
+        "data/examples/irr_rad_channels_operational_refspec_demo.txt",
+    );
+    defer loaded.deinit(std.testing.allocator);
+
+    var artifacts = try loaded.operationalArtifacts(
+        allocator,
+        "allocation-failure-source",
+        "allocation-failure-band-0",
+    );
+    defer artifacts.deinitOwned(allocator);
 }
 
 test "reference asset ingest assembles vendor-shaped spectroscopy sidecars into typed evaluation lanes" {

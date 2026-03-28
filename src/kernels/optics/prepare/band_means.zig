@@ -52,9 +52,10 @@ pub fn computeOperationalBandMean(
     effective_temperature_k: f64,
     effective_pressure_hpa: f64,
 ) f64 {
-    if (scene.observation_model.operational_refspec_grid.enabled()) {
+    const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
+    if (operational_band_support.operational_refspec_grid.enabled()) {
         return computeWeightedOperationalBandMean(
-            scene.observation_model.operational_refspec_grid,
+            operational_band_support.operational_refspec_grid,
             lut,
             effective_temperature_k,
             effective_pressure_hpa,

@@ -28,7 +28,12 @@ pub const Catalog = @import("core/Catalog.zig").Catalog;
 pub const PlanTemplate = @import("core/Plan.zig").Template;
 pub const PreparedPlan = @import("core/Plan.zig").PreparedPlan;
 pub const SolverMode = @import("core/Plan.zig").SolverMode;
+pub const ExecutionMode = @import("core/execution_mode.zig").ExecutionMode;
 pub const Request = @import("core/Request.zig").Request;
+pub const BorrowedMeasurementProduct = @import("core/Request.zig").Request.BorrowedMeasurementProduct;
+pub const MeasuredSpectrum = @import("core/Request.zig").Request.MeasuredSpectrum;
+pub const MeasuredInput = @import("core/Request.zig").Request.MeasuredInput;
+pub const MeasurementBinding = @import("core/Request.zig").Request.MeasurementBinding;
 pub const RequestedProductKind = @import("core/Request.zig").Request.RequestedProductKind;
 pub const RequestedProduct = @import("core/Request.zig").Request.RequestedProduct;
 pub const DiagnosticsSpec = @import("core/diagnostics.zig").DiagnosticsSpec;
@@ -66,6 +71,7 @@ pub const InstrumentLineShapeTable = @import("model/Instrument.zig").InstrumentL
 pub const OperationalReferenceGrid = @import("model/Instrument.zig").OperationalReferenceGrid;
 pub const OperationalSolarSpectrum = @import("model/Instrument.zig").OperationalSolarSpectrum;
 pub const OperationalCrossSectionLut = @import("model/Instrument.zig").OperationalCrossSectionLut;
+pub const OperationalBandSupport = @import("model/Instrument.zig").Instrument.OperationalBandSupport;
 pub const ObservationModel = @import("model/ObservationModel.zig").ObservationModel;
 pub const ObservationRegime = @import("model/Scene.zig").ObservationRegime;
 pub const DerivativeMode = @import("model/Scene.zig").DerivativeMode;
@@ -132,6 +138,7 @@ test "engine scaffold prepares a plan and returns provenance" {
 
     try std.testing.expectEqual(Result.Status.success, result.status);
     try std.testing.expectEqual(@as(u64, 1), result.plan_id);
+    try std.testing.expectEqual(ExecutionMode.synthetic, result.execution_mode);
     try std.testing.expectEqualStrings("scene-unit", result.scene_id);
     try std.testing.expectEqualStrings("builtin.dispatcher", result.provenance.solver_route);
     try std.testing.expect(result.measurement_space != null);

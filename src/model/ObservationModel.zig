@@ -29,6 +29,7 @@ const BuiltinLineShapeKind = @import("Instrument.zig").BuiltinLineShapeKind;
 const AdaptiveReferenceGrid = @import("Instrument.zig").AdaptiveReferenceGrid;
 const InstrumentLineShape = @import("Instrument.zig").InstrumentLineShape;
 const InstrumentLineShapeTable = @import("Instrument.zig").InstrumentLineShapeTable;
+const OperationalBandSupport = @import("Instrument.zig").Instrument.OperationalBandSupport;
 const OperationalReferenceGrid = @import("Instrument.zig").OperationalReferenceGrid;
 const OperationalSolarSpectrum = @import("Instrument.zig").OperationalSolarSpectrum;
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
@@ -148,6 +149,8 @@ pub const ObservationModel = struct {
     operational_solar_spectrum: OperationalSolarSpectrum = .{},
     o2_operational_lut: OperationalCrossSectionLut = .{},
     o2o2_operational_lut: OperationalCrossSectionLut = .{},
+    operational_band_support: []const OperationalBandSupport = &.{},
+    owns_operational_band_support: bool = false,
     measurement_pipeline: Instrument.MeasurementPipeline = .{},
     cross_section_fit: CrossSectionFitControls = .{},
     measured_wavelengths_nm: []const f64 = &.{},
@@ -231,6 +234,19 @@ pub const ObservationModel = struct {
         try self.operational_solar_spectrum.validate();
         try self.o2_operational_lut.validate();
         try self.o2o2_operational_lut.validate();
+        if (self.operational_band_support.len > 1) {
+            // GOTCHA:
+            //   Runtime consumers still resolve one operational support record per scene. Reject
+            //   multi-band support until optics/measurement prep becomes truly band-indexed rather
+            //   than silently dropping enabled replacements for bands > 0.
+            return errors.Error.InvalidRequest;
+        }
+        for (self.operational_band_support, 0..) |*support, index| {
+            try support.validate();
+            for (self.operational_band_support[index + 1 ..]) |other| {
+                if (std.mem.eql(u8, support.id, other.id)) return errors.Error.InvalidRequest;
+            }
+        }
         try self.measurement_pipeline.validate();
         try self.cross_section_fit.validate();
     }
@@ -255,6 +271,63 @@ pub const ObservationModel = struct {
     ///   Return the explicit Ring controls, or a disabled record when absent.
     pub fn resolvedRingControls(self: *const ObservationModel) Instrument.RingControls {
         return self.measurement_pipeline.ring;
+    }
+
+    /// Purpose:
+    ///   Return how many explicit operational band replacements are attached to the model.
+    pub fn operationalBandCount(self: *const ObservationModel) usize {
+        if (self.operational_band_support.len != 0) return self.operational_band_support.len;
+        return if (legacyOperationalBandSupport(self).enabled()) 1 else 0;
+    }
+
+    /// Purpose:
+    ///   Resolve the primary operational replacement set, falling back to the legacy singleton fields.
+    pub fn primaryOperationalBandSupport(self: *const ObservationModel) OperationalBandSupport {
+        return self.resolvedOperationalBandSupport(0) orelse .{};
+    }
+
+    /// Purpose:
+    ///   Return the explicit support record for a band, or the legacy singleton view for band zero.
+    pub fn resolvedOperationalBandSupport(
+        self: *const ObservationModel,
+        band_index: usize,
+    ) ?OperationalBandSupport {
+        if (band_index < self.operational_band_support.len) {
+            return mergedOperationalBandSupport(
+                self.operational_band_support[band_index],
+                legacyOperationalBandSupport(self),
+            );
+        }
+        if (band_index == 0) {
+            const legacy = legacyOperationalBandSupport(self);
+            if (legacy.enabled()) return legacy;
+        }
+        return null;
+    }
+
+    /// Purpose:
+    ///   Materialize stable provenance labels for each active operational replacement band.
+    pub fn operationalReplacementLabelsOwned(
+        self: *const ObservationModel,
+        allocator: Allocator,
+    ) ![]const []const u8 {
+        const band_count = self.operationalBandCount();
+        if (band_count == 0) return &.{};
+
+        const labels = try allocator.alloc([]const u8, band_count);
+        errdefer allocator.free(labels);
+
+        var built: usize = 0;
+        errdefer {
+            for (labels[0..built]) |label| allocator.free(label);
+        }
+
+        for (0..band_count) |band_index| {
+            const support = self.resolvedOperationalBandSupport(band_index).?;
+            labels[band_index] = try supportReplacementLabelOwned(allocator, support, band_index);
+            built = band_index + 1;
+        }
+        return labels;
     }
 
     /// Purpose:
@@ -283,24 +356,73 @@ pub const ObservationModel = struct {
     }
 
     fn legacySpectralResponse(self: *const ObservationModel) Instrument.SpectralResponse {
+        const support = self.primaryOperationalBandSupport();
         return .{
             .slit_index = switch (self.builtin_line_shape) {
-                .gaussian => if (self.instrument_line_shape_table.nominal_count > 0) .table else .gaussian_modulated,
+                .gaussian => if (support.instrument_line_shape_table.nominal_count > 0 or self.instrument_line_shape_table.nominal_count > 0) .table else .gaussian_modulated,
                 .flat_top_n4 => .flat_top_n4,
                 .triple_flat_top_n4 => .triple_flat_top_n4,
             },
             .fwhm_nm = self.instrument_line_fwhm_nm,
             .builtin_line_shape = self.builtin_line_shape,
-            .high_resolution_step_nm = self.high_resolution_step_nm,
-            .high_resolution_half_span_nm = self.high_resolution_half_span_nm,
+            .high_resolution_step_nm = if (support.high_resolution_step_nm > 0.0)
+                support.high_resolution_step_nm
+            else
+                self.high_resolution_step_nm,
+            .high_resolution_half_span_nm = if (support.high_resolution_half_span_nm > 0.0)
+                support.high_resolution_half_span_nm
+            else
+                self.high_resolution_half_span_nm,
             // DECISION:
             //   Legacy channel controls borrow the observation-model line-shape carriers.
             //   The derived controls can be copied into the explicit measurement pipeline,
             //   so they must not inherit ownership and double-free the same backing slices
             //   during teardown.
+            .instrument_line_shape = if (support.instrument_line_shape.sample_count > 0)
+                borrowedLineShape(support.instrument_line_shape)
+            else
+                borrowedLineShape(self.instrument_line_shape),
+            .instrument_line_shape_table = if (support.instrument_line_shape_table.nominal_count > 0)
+                borrowedLineShapeTable(support.instrument_line_shape_table)
+            else
+                borrowedLineShapeTable(self.instrument_line_shape_table),
+        };
+    }
+
+    fn legacyOperationalBandSupport(self: *const ObservationModel) OperationalBandSupport {
+        return .{
+            .id = if (self.instrument != .unset) "primary" else "",
+            .high_resolution_step_nm = self.high_resolution_step_nm,
+            .high_resolution_half_span_nm = self.high_resolution_half_span_nm,
             .instrument_line_shape = borrowedLineShape(self.instrument_line_shape),
             .instrument_line_shape_table = borrowedLineShapeTable(self.instrument_line_shape_table),
+            .operational_refspec_grid = self.operational_refspec_grid,
+            .operational_solar_spectrum = self.operational_solar_spectrum,
+            .o2_operational_lut = self.o2_operational_lut,
+            .o2o2_operational_lut = self.o2o2_operational_lut,
         };
+    }
+
+    fn mergedOperationalBandSupport(
+        explicit: OperationalBandSupport,
+        legacy: OperationalBandSupport,
+    ) OperationalBandSupport {
+        var merged = legacy;
+        if (explicit.id.len != 0) {
+            merged.id = explicit.id;
+            merged.owns_id = explicit.owns_id;
+        }
+        if (explicit.high_resolution_step_nm > 0.0) {
+            merged.high_resolution_step_nm = explicit.high_resolution_step_nm;
+            merged.high_resolution_half_span_nm = explicit.high_resolution_half_span_nm;
+        }
+        if (explicit.instrument_line_shape.sample_count > 0) merged.instrument_line_shape = explicit.instrument_line_shape;
+        if (explicit.instrument_line_shape_table.nominal_count > 0) merged.instrument_line_shape_table = explicit.instrument_line_shape_table;
+        if (explicit.operational_refspec_grid.enabled()) merged.operational_refspec_grid = explicit.operational_refspec_grid;
+        if (explicit.operational_solar_spectrum.enabled()) merged.operational_solar_spectrum = explicit.operational_solar_spectrum;
+        if (explicit.o2_operational_lut.enabled()) merged.o2_operational_lut = explicit.o2_operational_lut;
+        if (explicit.o2o2_operational_lut.enabled()) merged.o2o2_operational_lut = explicit.o2o2_operational_lut;
+        return merged;
     }
 
     fn borrowedLineShape(line_shape: InstrumentLineShape) InstrumentLineShape {
@@ -333,6 +455,33 @@ pub const ObservationModel = struct {
         };
     }
 
+    fn supportReplacementLabelOwned(
+        allocator: Allocator,
+        support: OperationalBandSupport,
+        band_index: usize,
+    ) ![]const u8 {
+        var buffer = std.ArrayList(u8).empty;
+        defer buffer.deinit(allocator);
+
+        if (support.id.len != 0) {
+            try buffer.writer(allocator).print("{s}:", .{support.id});
+        } else {
+            try buffer.writer(allocator).print("band-{d}:", .{band_index});
+        }
+
+        if (support.high_resolution_step_nm > 0.0) try buffer.appendSlice(allocator, "hr_grid,");
+        if (support.instrument_line_shape.sample_count > 0 or support.instrument_line_shape_table.nominal_count > 0) {
+            try buffer.appendSlice(allocator, "isrf,");
+        }
+        if (support.operational_refspec_grid.enabled()) try buffer.appendSlice(allocator, "refspec,");
+        if (support.operational_solar_spectrum.enabled()) try buffer.appendSlice(allocator, "solar,");
+        if (support.o2_operational_lut.enabled()) try buffer.appendSlice(allocator, "o2_lut,");
+        if (support.o2o2_operational_lut.enabled()) try buffer.appendSlice(allocator, "o2o2_lut,");
+        if (buffer.items[buffer.items.len - 1] == ',') _ = buffer.pop();
+
+        return buffer.toOwnedSlice(allocator);
+    }
+
     /// Purpose:
     ///   Release any owned line-shape, grid, solar-spectrum, LUT, and measured-channel storage.
     pub fn deinitOwned(self: *ObservationModel, allocator: Allocator) void {
@@ -342,6 +491,15 @@ pub const ObservationModel = struct {
         self.operational_solar_spectrum.deinitOwned(allocator);
         self.o2_operational_lut.deinitOwned(allocator);
         self.o2o2_operational_lut.deinitOwned(allocator);
+        if (self.owns_operational_band_support) {
+            for (self.operational_band_support) |support| {
+                var owned = support;
+                owned.deinitOwned(allocator);
+            }
+            if (self.operational_band_support.len != 0) allocator.free(self.operational_band_support);
+        }
+        self.operational_band_support = &.{};
+        self.owns_operational_band_support = false;
         self.measurement_pipeline.deinitOwned(allocator);
         self.cross_section_fit.deinitOwned(allocator);
         if (self.owns_measured_wavelengths and self.measured_wavelengths_nm.len != 0) allocator.free(self.measured_wavelengths_nm);
@@ -521,4 +679,45 @@ test "cross-section fit controls clone cleans up across allocation failure" {
         cloneCrossSectionFitControlsWithAllocator,
         .{},
     );
+}
+
+test "observation model rejects multi-band operational support until runtime becomes band-indexed" {
+    const support = [_]OperationalBandSupport{
+        .{ .id = "band-0" },
+        .{ .id = "band-1" },
+    };
+    var model: ObservationModel = .{
+        .operational_band_support = &support,
+    };
+
+    try std.testing.expectError(error.InvalidRequest, model.validate());
+}
+
+test "observation model merges partial explicit operational support with legacy replacements" {
+    const support = [_]OperationalBandSupport{.{
+        .id = "band-0",
+        .instrument_line_shape = .{
+            .sample_count = 3,
+            .offsets_nm = &.{ -0.1, 0.0, 0.1 },
+            .weights = &.{ 0.25, 0.5, 0.25 },
+        },
+    }};
+    var model: ObservationModel = .{
+        .instrument = .tropomi,
+        .high_resolution_step_nm = 0.08,
+        .high_resolution_half_span_nm = 0.32,
+        .operational_solar_spectrum = .{
+            .wavelengths_nm = &.{ 760.8, 761.0, 761.2 },
+            .irradiance = &.{ 2.7e14, 2.8e14, 2.75e14 },
+        },
+        .operational_band_support = &support,
+    };
+
+    const resolved = model.primaryOperationalBandSupport();
+    try std.testing.expectEqualStrings("band-0", resolved.id);
+    try std.testing.expectEqual(@as(f64, 0.08), resolved.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.32), resolved.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 3), resolved.instrument_line_shape.sample_count);
+    try std.testing.expect(resolved.operational_solar_spectrum.enabled());
+    try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), resolved.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
 }

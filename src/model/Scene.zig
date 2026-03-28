@@ -23,6 +23,7 @@
 
 const std = @import("std");
 const errors = @import("../core/errors.zig");
+const ExecutionMode = @import("../core/execution_mode.zig").ExecutionMode;
 const Allocator = std.mem.Allocator;
 
 pub const LayoutRequirements = @import("LayoutRequirements.zig").LayoutRequirements;
@@ -68,9 +69,11 @@ pub const Blueprint = struct {
     spectral_grid: SpectralGrid = .{},
     observation_regime: ObservationRegime = .nadir,
     derivative_mode: DerivativeMode = .none,
+    execution_mode: ExecutionMode = .synthetic,
     layer_count_hint: u32 = 0,
     state_parameter_count_hint: u32 = 0,
     measurement_count_hint: u32 = 0,
+    operational_band_count_hint: u32 = 0,
 
     /// Purpose:
     ///   Convert the blueprint hints into reusable layout requirements for plan/workspace
@@ -118,6 +121,13 @@ pub const Scene = struct {
         try self.aerosol.validate();
         try self.observation_model.validate();
         try self.observation_model.cross_section_fit.validateForBandCount(self.bands.items.len);
+        const explicit_operational_band_count = self.observation_model.operational_band_support.len;
+        if (self.bands.items.len != 0 and
+            explicit_operational_band_count != 0 and
+            explicit_operational_band_count != self.bands.items.len)
+        {
+            return errors.Error.InvalidRequest;
+        }
         if (self.observation_model.measured_wavelengths_nm.len != 0 and
             self.observation_model.measured_wavelengths_nm.len != @as(usize, self.spectral_grid.sample_count))
         {
@@ -242,6 +252,26 @@ test "scene accepts canonical bands absorbers and supporting observation metadat
                 .ingest_name = "refspec_demo",
                 .output_name = "operational_refspec_grid",
             } },
+        },
+    }).validate();
+}
+
+test "scene allows global legacy operational support across multiple bands" {
+    try (Scene{
+        .id = "scene-multi-band-operational-legacy",
+        .spectral_grid = .{ .start_nm = 760.0, .end_nm = 763.0, .sample_count = 4 },
+        .bands = .{
+            .items = &[_]SpectralBand{
+                .{ .id = "band-a", .start_nm = 760.0, .end_nm = 761.0, .step_nm = 0.5 },
+                .{ .id = "band-b", .start_nm = 762.0, .end_nm = 763.0, .step_nm = 0.5 },
+            },
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .operational_refspec_grid = .{
+                .wavelengths_nm = &.{ 760.0, 760.5, 761.0 },
+                .weights = &.{ 0.2, 0.6, 0.2 },
+            },
         },
     }).validate();
 }

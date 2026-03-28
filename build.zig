@@ -386,6 +386,21 @@ pub fn build(b: *std.Build) void {
             "compatibility harness parses bounded vendor retrieval diagnostics from asciiHDF",
         },
     );
+    const run_validation_compatibility_operational_measured_input = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-compatibility-operational-measured-input",
+        "Run DISAMAR compatibility operational measured-input classification proof",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "compatibility harness classifies operational measured-input S5P flows distinctly from synthetic scenes",
+        },
+    );
     const run_validation_compatibility_full = addSuiteRunStepWithArgs(
         b,
         target,
@@ -456,6 +471,7 @@ pub fn build(b: *std.Build) void {
     const validation_step = b.step("test-validation", "Run compatibility and validation asset suite");
     validation_step.dependOn(run_validation_asset_suite.run_step);
     validation_step.dependOn(run_validation_cross_section_parity);
+    validation_step.dependOn(run_validation_compatibility_operational_measured_input.run_step);
     validation_step.dependOn(run_validation_compatibility_full.run_step);
     const run_validation_o2a = addSuiteRunStep(
         b,
@@ -567,6 +583,7 @@ pub fn build(b: *std.Build) void {
     transport_step.dependOn(run_unit_suite.run_step);
     transport_step.dependOn(run_integration_forward_model.run_step);
     transport_step.dependOn(run_validation_compatibility_transport_measurement.run_step);
+    transport_step.dependOn(run_validation_compatibility_operational_measured_input.run_step);
     transport_step.dependOn(run_validation_o2a.run_step);
 
     const test_suites_step = b.step("test-suites", "Run all verification suites");

@@ -107,7 +107,7 @@ pub const RetrievalProblem = struct {
         ///   Return the measurement-space summary associated with the bound
         ///   observed product.
         pub fn summary(self: ObservedMeasurement) MeasurementSpaceSummary {
-            return self.product.product.summary;
+            return self.product.summary();
         }
     };
 

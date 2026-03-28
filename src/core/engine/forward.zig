@@ -62,6 +62,7 @@ pub fn initializeResult(
     result: *Result,
 ) errors.Error!void {
     var provenance: Provenance = undefined;
+    const operational_band_count = @as(u32, @intCast(request.scene.observation_model.operationalBandCount()));
     Provenance.fromPlanOwned(
         &provenance,
         allocator,
@@ -72,9 +73,23 @@ pub fn initializeResult(
     ) catch |err| return err;
     errdefer provenance.deinit(allocator);
 
-    try result.initOwned(
+    const operational_replacement_entries = try request.scene.observation_model.operationalReplacementLabelsOwned(allocator);
+    defer {
+        for (operational_replacement_entries) |entry| allocator.free(entry);
+        if (operational_replacement_entries.len != 0) allocator.free(operational_replacement_entries);
+    }
+    try provenance.annotateOperationalExecution(
+        allocator,
+        request.execution_mode,
+        operational_band_count,
+        operational_replacement_entries,
+    );
+
+    try result.initOwnedWithExecution(
         allocator,
         plan.id,
+        request.execution_mode,
+        operational_band_count,
         workspace.label,
         request.scene.id,
         provenance,

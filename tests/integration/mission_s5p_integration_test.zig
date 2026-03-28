@@ -22,8 +22,9 @@ fn averageSpacingNm(wavelengths_nm: []const f64) f64 {
 fn effectiveReferenceSpacingNm(scene: zdisamar.Scene) f64 {
     const configured_spacing = scene.observation_model.resolvedChannelControls(.radiance).noise.reference_bin_width_nm;
     if (configured_spacing > 0.0) return configured_spacing;
-    if (scene.observation_model.operational_refspec_grid.enabled()) {
-        return scene.observation_model.operational_refspec_grid.effectiveSpacingNm();
+    const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
+    if (operational_band_support.operational_refspec_grid.enabled()) {
+        return operational_band_support.operational_refspec_grid.effectiveSpacingNm();
     }
     if (scene.observation_model.measured_wavelengths_nm.len > 1) {
         return averageSpacingNm(scene.observation_model.measured_wavelengths_nm);
@@ -78,15 +79,25 @@ test "s5p operational mission adapter drives engine execution from measured spec
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
     try std.testing.expectEqualStrings("s5p-operational", result.scene_id);
+    try std.testing.expectEqual(zdisamar.ExecutionMode.operational_measured_input, mission_run.request.execution_mode);
+    try std.testing.expectEqual(zdisamar.ExecutionMode.operational_measured_input, plan.execution_mode);
+    try std.testing.expectEqual(zdisamar.ExecutionMode.operational_measured_input, result.execution_mode);
+    try std.testing.expectEqualStrings("operational_measured_input", result.provenance.execution_mode);
+    try std.testing.expectEqual(@as(u32, 1), result.provenance.operational_band_count);
+    try std.testing.expectEqual(@as(usize, 1), result.provenance.operational_replacement_entries.len);
     try std.testing.expectEqual(@as(u32, 2), mission_run.measurement_summary.?.sample_count);
     try std.testing.expect(mission_run.observed_measurement_product != null);
+    try std.testing.expect(mission_run.request.measured_input != null);
     try std.testing.expect(mission_run.request.measurement_binding != null);
     try std.testing.expectApproxEqAbs(@as(f64, 1.116153e13), mission_run.observed_measurement_product.?.radiance[0], 1.0e8);
     try std.testing.expectApproxEqAbs(@as(f64, 3.402296e14), mission_run.observed_measurement_product.?.irradiance[0], 1.0e9);
     try std.testing.expectEqual(zdisamar.Instrument.SamplingMode.measured_channels, mission_run.request.scene.observation_model.sampling);
+    try std.testing.expectEqual(@as(usize, 1), mission_run.request.scene.observation_model.operational_band_support.len);
+    try std.testing.expectEqualStrings("s5p-operational-band-0", mission_run.request.scene.observation_model.operational_band_support[0].id);
     try std.testing.expectEqual(@as(usize, 2), mission_run.request.scene.observation_model.measured_wavelengths_nm.len);
     try std.testing.expectApproxEqAbs(@as(f64, 405.0), mission_run.request.scene.observation_model.measured_wavelengths_nm[0], 1.0e-12);
-    try std.testing.expect(mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expect(mission_run.request.scene.observation_model.operational_band_support[0].operational_solar_spectrum.enabled());
     try std.testing.expect(result.measurement_space_product != null);
     try std.testing.expect(result.measurement_space_product.?.noise_sigma[0] > 0.0);
     try std.testing.expect(result.measurement_space_product.?.noise_sigma[1] > 0.0);
@@ -143,11 +154,16 @@ test "s5p operational mission adapter executes explicit isrf table metadata" {
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
-    try std.testing.expectEqual(@as(f64, 0.08), mission_run.request.scene.observation_model.high_resolution_step_nm);
-    try std.testing.expectEqual(@as(f64, 0.32), mission_run.request.scene.observation_model.high_resolution_half_span_nm);
-    try std.testing.expectEqual(@as(u8, 5), mission_run.request.scene.observation_model.instrument_line_shape.sample_count);
-    try std.testing.expectEqual(@as(u16, 3), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_count);
-    try std.testing.expectEqual(@as(f64, 406.0), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_wavelengths_nm[1]);
+    try std.testing.expectEqual(@as(f64, 0.0), mission_run.request.scene.observation_model.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.0), mission_run.request.scene.observation_model.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 0), mission_run.request.scene.observation_model.instrument_line_shape.sample_count);
+    try std.testing.expectEqual(@as(u16, 0), mission_run.request.scene.observation_model.instrument_line_shape_table.nominal_count);
+    const isrf_support = mission_run.request.scene.observation_model.operational_band_support[0];
+    try std.testing.expectEqual(@as(f64, 0.08), isrf_support.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.32), isrf_support.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 5), isrf_support.instrument_line_shape.sample_count);
+    try std.testing.expectEqual(@as(u16, 3), isrf_support.instrument_line_shape_table.nominal_count);
+    try std.testing.expectEqual(@as(f64, 406.0), isrf_support.instrument_line_shape_table.nominal_wavelengths_nm[1]);
     try std.testing.expect(result.measurement_space_product != null);
     try std.testing.expect(result.measurement_space_product.?.radiance[0] > 0.0);
 }
@@ -173,10 +189,17 @@ test "s5p operational mission adapter executes O2 and O2-O2 refspec replacement 
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(zdisamar.Result.Status.success, result.status);
-    try std.testing.expect(mission_run.request.scene.observation_model.operational_refspec_grid.enabled());
-    try std.testing.expect(mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
-    try std.testing.expect(mission_run.request.scene.observation_model.o2_operational_lut.enabled());
-    try std.testing.expect(mission_run.request.scene.observation_model.o2o2_operational_lut.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.operational_refspec_grid.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.operational_solar_spectrum.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(!mission_run.request.scene.observation_model.o2o2_operational_lut.enabled());
+    const refspec_support = mission_run.request.scene.observation_model.operational_band_support[0];
+    try std.testing.expect(refspec_support.operational_refspec_grid.enabled());
+    try std.testing.expect(refspec_support.operational_solar_spectrum.enabled());
+    try std.testing.expect(refspec_support.o2_operational_lut.enabled());
+    try std.testing.expect(refspec_support.o2o2_operational_lut.enabled());
+    try std.testing.expect(std.mem.indexOf(u8, result.provenance.operational_replacement_entries[0], "refspec") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.provenance.operational_replacement_entries[0], "o2_lut") != null);
     try std.testing.expect(result.measurement_space_product != null);
     try std.testing.expect(result.measurement_space_product.?.cia_optical_depth > 0.0);
     try std.testing.expect(result.measurement_space_product.?.radiance.len == 3);
@@ -293,16 +316,6 @@ test "s5p operational mission adapter carries non-unity reference-bin scaling th
         .noise_model = .s5p_operational,
     });
     defer mission_run.deinit(std.testing.allocator);
-
-    std.testing.allocator.free(mission_run.request.scene.observation_model.measured_wavelengths_nm);
-    mission_run.request.scene.observation_model.measured_wavelengths_nm = &.{};
-    mission_run.request.scene.observation_model.owns_measured_wavelengths = false;
-    mission_run.request.scene.spectral_grid = .{
-        .start_nm = 760.8,
-        .end_nm = 761.4,
-        .sample_count = 3,
-    };
-    mission_run.plan_template.scene_blueprint.spectral_grid = mission_run.request.scene.spectral_grid;
 
     var engine = zdisamar.Engine.init(std.testing.allocator, .{});
     defer engine.deinit();
