@@ -459,7 +459,7 @@ test "surrogate forward module supports canonical multi-parameter state applicat
             .observable = .radiance,
             .product_name = "radiance",
             .sample_count = 32,
-            .product = .{ .product = &observed_product },
+            .product = .init(&observed_product),
         },
     };
 

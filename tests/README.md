@@ -32,6 +32,7 @@ Run all suites with `zig build test`, or targeted suites with:
 - `zig build test-validation-compatibility-optics`
 - `zig build test-validation-compatibility-rtm-controls`
 - `zig build test-validation-compatibility-asciihdf`
+- `zig build test-validation-compatibility-operational-measured-input`
 - `zig build test-validation-compatibility-full`
 - `zig build test-validation-o2a`
 - `zig build test-validation-o2a-vendor`

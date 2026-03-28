@@ -72,9 +72,23 @@ pub fn initializeResult(
     ) catch |err| return err;
     errdefer provenance.deinit(allocator);
 
-    try result.initOwned(
+    const operational_replacement_entries = try request.scene.observation_model.operationalReplacementLabelsOwned(allocator);
+    defer {
+        for (operational_replacement_entries) |entry| allocator.free(entry);
+        if (operational_replacement_entries.len != 0) allocator.free(operational_replacement_entries);
+    }
+    try provenance.annotateOperationalExecution(
+        allocator,
+        request.execution_mode,
+        @as(u32, @intCast(request.scene.observation_model.operationalBandCount())),
+        operational_replacement_entries,
+    );
+
+    try result.initOwnedWithExecution(
         allocator,
         plan.id,
+        plan.execution_mode,
+        plan.operational_band_count,
         workspace.label,
         request.scene.id,
         provenance,

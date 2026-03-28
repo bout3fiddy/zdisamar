@@ -24,13 +24,27 @@ const std = @import("std");
 const Request = @import("../../core/Request.zig").Request;
 const Scene = @import("../../model/Scene.zig").Scene;
 const SpectralGrid = @import("../../model/Scene.zig").SpectralGrid;
+const SpectralBand = @import("../../model/Scene.zig").SpectralBand;
 const Measurement = @import("../../model/Measurement.zig").Measurement;
 const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
+const OperationalBandSupport = @import("../../model/Instrument.zig").Instrument.OperationalBandSupport;
 const OperationalSolarSpectrum = @import("../../model/Instrument.zig").OperationalSolarSpectrum;
+const OperationalMetadata = @import("spectral_ascii_metadata.zig").OperationalMetadata;
 pub const ParseError = @import("spectral_ascii_metadata.zig").Error;
 
 pub const wavelength_alignment_threshold_nm: f64 = 1.0e-3;
 pub const wavelength_alignment_error_threshold_nm: f64 = 0.06;
+
+pub const OperationalArtifacts = struct {
+    measured_input: Request.MeasuredInput,
+    band_support: OperationalBandSupport,
+
+    pub fn deinitOwned(self: *OperationalArtifacts, allocator: std.mem.Allocator) void {
+        self.measured_input.deinitOwned(allocator);
+        self.band_support.deinitOwned(allocator);
+        self.* = undefined;
+    }
+};
 
 // UNITS:
 //   Wavelength thresholds are in nanometers and gate whether a measured
@@ -245,6 +259,53 @@ pub fn meanSpacingNm(wavelengths_nm: []const f64) f64 {
 }
 
 /// Purpose:
+///   Convert loaded radiance/irradiance channels and metadata into typed measured-input artifacts.
+pub fn operationalArtifacts(
+    allocator: std.mem.Allocator,
+    loaded: anytype,
+    source_name: []const u8,
+    band_id: []const u8,
+    radiance_kind: anytype,
+    irradiance_kind: anytype,
+) !OperationalArtifacts {
+    const measured_input = try buildMeasuredInput(
+        allocator,
+        loaded,
+        source_name,
+        radiance_kind,
+        irradiance_kind,
+    );
+    errdefer {
+        var cleanup = measured_input;
+        cleanup.deinitOwned(allocator);
+    }
+
+    const fallback_solar = if (measured_input.irradiance) |irradiance|
+        OperationalSolarSpectrum{
+            .wavelengths_nm = irradiance.wavelengths_nm,
+            .irradiance = irradiance.values,
+        }
+    else
+        OperationalSolarSpectrum{};
+
+    const band_support = try buildOperationalBandSupport(
+        allocator,
+        loaded.metadata,
+        band_id,
+        &fallback_solar,
+    );
+    errdefer {
+        var cleanup = band_support;
+        cleanup.deinitOwned(allocator);
+    }
+
+    return .{
+        .measured_input = measured_input,
+        .band_support = band_support,
+    };
+}
+
+/// Purpose:
 ///   Convert a loaded ingest bundle into a canonical retrieval request.
 pub fn toRequest(
     allocator: std.mem.Allocator,
@@ -255,21 +316,135 @@ pub fn toRequest(
     irradiance_kind: anytype,
 ) !Request {
     var scene: Scene = .{ .id = scene_id };
+    errdefer scene.deinitOwned(allocator);
     if (spectralGrid(loaded, radiance_kind, irradiance_kind)) |resolved_grid| {
         scene.spectral_grid = resolved_grid;
     }
 
     if (channelCount(loaded, radiance_kind) == 0) return ParseError.MissingChannels;
+    var artifacts = try operationalArtifacts(
+        allocator,
+        loaded,
+        scene_id,
+        "operational-band-0",
+        radiance_kind,
+        irradiance_kind,
+    );
+    errdefer artifacts.deinitOwned(allocator);
+
     scene.observation_model.sampling = .measured_channels;
     scene.observation_model.noise_model = .snr_from_input;
-    scene.observation_model.measured_wavelengths_nm = try wavelengthsForKind(allocator, loaded, radiance_kind);
+    scene.observation_model.measured_wavelengths_nm = try allocator.dupe(
+        f64,
+        artifacts.measured_input.radiance.wavelengths_nm,
+    );
     scene.observation_model.owns_measured_wavelengths = true;
-    scene.observation_model.reference_radiance = try channelValuesForKind(allocator, loaded, radiance_kind);
+    scene.observation_model.reference_radiance = try allocator.dupe(
+        f64,
+        artifacts.measured_input.radiance.values,
+    );
     scene.observation_model.owns_reference_radiance = true;
-    scene.observation_model.operational_solar_spectrum = try solarSpectrumForKind(allocator, loaded, irradiance_kind);
-    scene.observation_model.ingested_noise_sigma = try noiseSigmaForKind(allocator, loaded, radiance_kind);
+    scene.observation_model.ingested_noise_sigma = try allocator.dupe(
+        f64,
+        artifacts.measured_input.radiance.noise_sigma,
+    );
+    scene.observation_model.operational_solar_spectrum = try artifacts.band_support.operational_solar_spectrum.clone(allocator);
+    scene.observation_model.high_resolution_step_nm = artifacts.band_support.high_resolution_step_nm;
+    scene.observation_model.high_resolution_half_span_nm = artifacts.band_support.high_resolution_half_span_nm;
+    scene.observation_model.instrument_line_shape = try artifacts.band_support.instrument_line_shape.clone(allocator);
+    scene.observation_model.instrument_line_shape_table = try artifacts.band_support.instrument_line_shape_table.clone(allocator);
+    scene.observation_model.operational_refspec_grid = try artifacts.band_support.operational_refspec_grid.clone(allocator);
+    scene.observation_model.o2_operational_lut = try artifacts.band_support.o2_operational_lut.clone(allocator);
+    scene.observation_model.o2o2_operational_lut = try artifacts.band_support.o2o2_operational_lut.clone(allocator);
+
+    const band_step_nm = if (artifacts.measured_input.radiance.wavelengths_nm.len > 1)
+        meanSpacingNm(artifacts.measured_input.radiance.wavelengths_nm)
+    else
+        1.0;
+    scene.bands.items = try allocator.dupe(SpectralBand, &[_]SpectralBand{.{
+        .id = "operational-band-0",
+        .start_nm = scene.spectral_grid.start_nm,
+        .end_nm = scene.spectral_grid.end_nm,
+        .step_nm = band_step_nm,
+    }});
+    scene.observation_model.operational_band_support = try allocator.dupe(
+        OperationalBandSupport,
+        &[_]OperationalBandSupport{artifacts.band_support},
+    );
+    scene.observation_model.owns_operational_band_support = true;
+    artifacts.band_support = .{};
 
     var request = Request.init(scene);
+    request.execution_mode = .operational_measured_input;
+    request.measured_input = artifacts.measured_input;
+    artifacts.measured_input = .{};
     request.requested_products = requested_products;
     return request;
+}
+
+fn buildMeasuredInput(
+    allocator: std.mem.Allocator,
+    loaded: anytype,
+    source_name: []const u8,
+    radiance_kind: anytype,
+    irradiance_kind: anytype,
+) !Request.MeasuredInput {
+    const radiance_wavelengths = try wavelengthsForKind(allocator, loaded, radiance_kind);
+    errdefer if (radiance_wavelengths.len != 0) allocator.free(radiance_wavelengths);
+    const radiance_values = try channelValuesForKind(allocator, loaded, radiance_kind);
+    errdefer if (radiance_values.len != 0) allocator.free(radiance_values);
+    const radiance_sigma = try noiseSigmaForKind(allocator, loaded, radiance_kind);
+    errdefer if (radiance_sigma.len != 0) allocator.free(radiance_sigma);
+
+    var measured_input: Request.MeasuredInput = .{
+        .source_name = try allocator.dupe(u8, source_name),
+        .owns_source_name = true,
+        .radiance = .{
+            .observable = .radiance,
+            .wavelengths_nm = radiance_wavelengths,
+            .values = radiance_values,
+            .noise_sigma = radiance_sigma,
+            .owns_memory = true,
+        },
+    };
+    errdefer measured_input.deinitOwned(allocator);
+
+    if (channelCount(loaded, irradiance_kind) != 0) {
+        measured_input.irradiance = .{
+            .observable = .irradiance,
+            .wavelengths_nm = try wavelengthsForKind(allocator, loaded, irradiance_kind),
+            .values = try channelValuesForKind(allocator, loaded, irradiance_kind),
+            .noise_sigma = try noiseSigmaForKind(allocator, loaded, irradiance_kind),
+            .owns_memory = true,
+        };
+    }
+
+    return measured_input;
+}
+
+fn buildOperationalBandSupport(
+    allocator: std.mem.Allocator,
+    metadata: OperationalMetadata,
+    band_id: []const u8,
+    fallback_solar: *const OperationalSolarSpectrum,
+) !OperationalBandSupport {
+    if (metadata.cross_section_operational_luts.len != 0) {
+        return ParseError.InvalidLine;
+    }
+
+    return .{
+        .id = try allocator.dupe(u8, band_id),
+        .owns_id = true,
+        .high_resolution_step_nm = metadata.high_resolution_step_nm orelse 0.0,
+        .high_resolution_half_span_nm = metadata.high_resolution_half_span_nm orelse 0.0,
+        .instrument_line_shape = try metadata.instrument_line_shape.clone(allocator),
+        .instrument_line_shape_table = try metadata.instrument_line_shape_table.clone(allocator),
+        .operational_refspec_grid = try metadata.operational_refspec_grid.clone(allocator),
+        .operational_solar_spectrum = if (metadata.operational_solar_spectrum.enabled())
+            try metadata.operational_solar_spectrum.clone(allocator)
+        else
+            try fallback_solar.clone(allocator),
+        .o2_operational_lut = try metadata.o2_operational_lut.clone(allocator),
+        .o2o2_operational_lut = try metadata.o2o2_operational_lut.clone(allocator),
+    };
 }

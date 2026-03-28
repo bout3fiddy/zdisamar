@@ -490,6 +490,115 @@ pub const Instrument = struct {
         }
     };
 
+    /// Purpose:
+    ///   Carry explicit operational replacements scoped to one prepared spectral band.
+    pub const OperationalBandSupport = struct {
+        id: []const u8 = "",
+        owns_id: bool = false,
+        high_resolution_step_nm: f64 = 0.0,
+        high_resolution_half_span_nm: f64 = 0.0,
+        instrument_line_shape: InstrumentLineShape = .{},
+        instrument_line_shape_table: InstrumentLineShapeTable = .{},
+        operational_refspec_grid: OperationalReferenceGrid = .{},
+        operational_solar_spectrum: OperationalSolarSpectrum = .{},
+        o2_operational_lut: OperationalCrossSectionLut = .{},
+        o2o2_operational_lut: OperationalCrossSectionLut = .{},
+
+        pub fn enabled(self: *const OperationalBandSupport) bool {
+            return self.high_resolution_step_nm > 0.0 or
+                self.high_resolution_half_span_nm > 0.0 or
+                self.instrument_line_shape.sample_count > 0 or
+                self.instrument_line_shape_table.nominal_count > 0 or
+                self.operational_refspec_grid.enabled() or
+                self.operational_solar_spectrum.enabled() or
+                self.o2_operational_lut.enabled() or
+                self.o2o2_operational_lut.enabled();
+        }
+
+        pub fn validate(self: *const OperationalBandSupport) errors.Error!void {
+            if (!self.enabled()) {
+                if (self.id.len == 0) return;
+                return;
+            }
+            if (self.id.len == 0) return errors.Error.InvalidRequest;
+            if (self.high_resolution_step_nm < 0.0 or self.high_resolution_half_span_nm < 0.0) {
+                return errors.Error.InvalidRequest;
+            }
+            if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
+                return errors.Error.InvalidRequest;
+            }
+            try self.instrument_line_shape.validate();
+            try self.instrument_line_shape_table.validate();
+            try self.operational_refspec_grid.validate();
+            try self.operational_solar_spectrum.validate();
+            try self.o2_operational_lut.validate();
+            try self.o2o2_operational_lut.validate();
+        }
+
+        pub fn clone(self: OperationalBandSupport, allocator: Allocator) !OperationalBandSupport {
+            const owned_id = if (self.id.len != 0)
+                try allocator.dupe(u8, self.id)
+            else
+                "";
+            errdefer if (owned_id.len != 0) allocator.free(owned_id);
+
+            const line_shape = try self.instrument_line_shape.clone(allocator);
+            errdefer {
+                var cleanup = line_shape;
+                cleanup.deinitOwned(allocator);
+            }
+            const line_shape_table = try self.instrument_line_shape_table.clone(allocator);
+            errdefer {
+                var cleanup = line_shape_table;
+                cleanup.deinitOwned(allocator);
+            }
+            const refspec_grid = try self.operational_refspec_grid.clone(allocator);
+            errdefer {
+                var cleanup = refspec_grid;
+                cleanup.deinitOwned(allocator);
+            }
+            const solar_spectrum = try self.operational_solar_spectrum.clone(allocator);
+            errdefer {
+                var cleanup = solar_spectrum;
+                cleanup.deinitOwned(allocator);
+            }
+            const o2_lut = try self.o2_operational_lut.clone(allocator);
+            errdefer {
+                var cleanup = o2_lut;
+                cleanup.deinitOwned(allocator);
+            }
+            const o2o2_lut = try self.o2o2_operational_lut.clone(allocator);
+            errdefer {
+                var cleanup = o2o2_lut;
+                cleanup.deinitOwned(allocator);
+            }
+
+            return .{
+                .id = owned_id,
+                .owns_id = owned_id.len != 0,
+                .high_resolution_step_nm = self.high_resolution_step_nm,
+                .high_resolution_half_span_nm = self.high_resolution_half_span_nm,
+                .instrument_line_shape = line_shape,
+                .instrument_line_shape_table = line_shape_table,
+                .operational_refspec_grid = refspec_grid,
+                .operational_solar_spectrum = solar_spectrum,
+                .o2_operational_lut = o2_lut,
+                .o2o2_operational_lut = o2o2_lut,
+            };
+        }
+
+        pub fn deinitOwned(self: *OperationalBandSupport, allocator: Allocator) void {
+            if (self.owns_id and self.id.len != 0) allocator.free(self.id);
+            self.instrument_line_shape.deinitOwned(allocator);
+            self.instrument_line_shape_table.deinitOwned(allocator);
+            self.operational_refspec_grid.deinitOwned(allocator);
+            self.operational_solar_spectrum.deinitOwned(allocator);
+            self.o2_operational_lut.deinitOwned(allocator);
+            self.o2o2_operational_lut.deinitOwned(allocator);
+            self.* = .{};
+        }
+    };
+
     id: Id = .generic,
     sampling: SamplingMode = .native,
     noise_model: NoiseModelKind = .none,

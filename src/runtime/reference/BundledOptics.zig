@@ -174,7 +174,7 @@ fn loadCollisionInducedAbsorptionForScene(
         //   Explicit CIA bindings must be materialized or the scene configuration is incomplete.
         return error.UnresolvedCollisionInducedAbsorptionBinding;
     }
-    if (scene.observation_model.o2o2_operational_lut.enabled()) {
+    if (scene.observation_model.primaryOperationalBandSupport().o2o2_operational_lut.enabled()) {
         // DECISION:
         //   The operational LUT takes precedence over the bundled O2-O2 CIA sidecar to preserve
         //   the runtime control path expected by the scene configuration.

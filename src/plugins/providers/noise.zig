@@ -151,9 +151,10 @@ fn currentBinWidthNm(scene: *const Scene, wavelengths_nm: []const f64) f64 {
 
 fn referenceBinWidthNm(scene: *const Scene, channel: SpectralChannel, sample_count: usize) f64 {
     const controls = scene.observation_model.resolvedChannelControls(channel).noise;
+    const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     if (controls.reference_bin_width_nm > 0.0) return controls.reference_bin_width_nm;
-    if (scene.observation_model.operational_refspec_grid.enabled()) {
-        return scene.observation_model.operational_refspec_grid.effectiveSpacingNm();
+    if (operational_band_support.operational_refspec_grid.enabled()) {
+        return operational_band_support.operational_refspec_grid.effectiveSpacingNm();
     }
     if (sample_count > 1 and
         channel == .radiance and

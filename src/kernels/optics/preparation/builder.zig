@@ -134,8 +134,9 @@ fn prepareWithInputs(
     errdefer aerosol_fraction_control.deinitOwned(allocator);
     var cloud_fraction_control = try scene.cloud.fraction.clone(allocator);
     errdefer cloud_fraction_control.deinitOwned(allocator);
-    const operational_o2_lut = scene.observation_model.o2_operational_lut;
-    const operational_o2o2_lut = scene.observation_model.o2o2_operational_lut;
+    const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
+    const operational_o2_lut = operational_band_support.o2_operational_lut;
+    const operational_o2o2_lut = operational_band_support.o2o2_operational_lut;
     const active_line_absorbers = try Spectroscopy.collectActiveLineAbsorbers(allocator, scene);
     defer allocator.free(active_line_absorbers);
     const active_cross_section_absorbers = try Spectroscopy.collectActiveCrossSectionAbsorbers(

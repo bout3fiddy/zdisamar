@@ -23,6 +23,7 @@
 
 const std = @import("std");
 const errors = @import("../core/errors.zig");
+const ExecutionMode = @import("../core/execution_mode.zig").ExecutionMode;
 const Allocator = std.mem.Allocator;
 
 pub const LayoutRequirements = @import("LayoutRequirements.zig").LayoutRequirements;
@@ -68,9 +69,11 @@ pub const Blueprint = struct {
     spectral_grid: SpectralGrid = .{},
     observation_regime: ObservationRegime = .nadir,
     derivative_mode: DerivativeMode = .none,
+    execution_mode: ExecutionMode = .synthetic,
     layer_count_hint: u32 = 0,
     state_parameter_count_hint: u32 = 0,
     measurement_count_hint: u32 = 0,
+    operational_band_count_hint: u32 = 0,
 
     /// Purpose:
     ///   Convert the blueprint hints into reusable layout requirements for plan/workspace
@@ -118,6 +121,10 @@ pub const Scene = struct {
         try self.aerosol.validate();
         try self.observation_model.validate();
         try self.observation_model.cross_section_fit.validateForBandCount(self.bands.items.len);
+        const operational_band_count = self.observation_model.operationalBandCount();
+        if (self.bands.items.len != 0 and operational_band_count != 0 and operational_band_count != self.bands.items.len) {
+            return errors.Error.InvalidRequest;
+        }
         if (self.observation_model.measured_wavelengths_nm.len != 0 and
             self.observation_model.measured_wavelengths_nm.len != @as(usize, self.spectral_grid.sample_count))
         {

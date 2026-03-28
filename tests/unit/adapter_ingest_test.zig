@@ -18,14 +18,30 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectEqual(zdisamar.MeasurementQuantity.radiance, measurement.observable);
     try std.testing.expectEqual(@as(u32, 2), measurement.sample_count);
 
+    var artifacts = try loaded.operationalArtifacts(
+        std.testing.allocator,
+        "demo-source",
+        "demo-band-0",
+    );
+    defer artifacts.deinitOwned(std.testing.allocator);
+    try std.testing.expectEqualStrings("demo-source", artifacts.measured_input.source_name);
+    try std.testing.expectEqual(@as(usize, 2), artifacts.measured_input.radiance.wavelengths_nm.len);
+    try std.testing.expect(artifacts.measured_input.irradiance != null);
+    try std.testing.expectEqualStrings("demo-band-0", artifacts.band_support.id);
+    try std.testing.expect(artifacts.band_support.operational_solar_spectrum.enabled());
+
     var request = try loaded.toRequest(std.testing.allocator, "demo-scene", &[_]zdisamar.RequestedProduct{
         .fromName("radiance"),
     });
     defer request.deinitOwned(std.testing.allocator);
+    try std.testing.expectEqual(zdisamar.ExecutionMode.operational_measured_input, request.execution_mode);
+    try std.testing.expect(request.measured_input != null);
     try std.testing.expectEqualStrings("demo-scene", request.scene.id);
     try std.testing.expectEqual(@as(u32, 2), request.scene.spectral_grid.sample_count);
     try std.testing.expectEqual(zdisamar.Instrument.SamplingMode.measured_channels, request.scene.observation_model.sampling);
     try std.testing.expectEqual(zdisamar.Instrument.NoiseModelKind.snr_from_input, request.scene.observation_model.noise_model);
+    try std.testing.expectEqual(@as(usize, 1), request.scene.observation_model.operational_band_support.len);
+    try std.testing.expectEqualStrings("operational-band-0", request.scene.observation_model.operational_band_support[0].id);
     try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.measured_wavelengths_nm.len);
     try std.testing.expectApproxEqAbs(@as(f64, 405.0), request.scene.observation_model.measured_wavelengths_nm[0], 1.0e-12);
     try std.testing.expectEqual(@as(usize, 2), request.scene.observation_model.reference_radiance.len);

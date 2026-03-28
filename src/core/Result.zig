@@ -21,6 +21,7 @@
 //!   attach forward and retrieval outputs.
 
 const Diagnostics = @import("diagnostics.zig").Diagnostics;
+const ExecutionMode = @import("execution_mode.zig").ExecutionMode;
 const Provenance = @import("provenance.zig").Provenance;
 const std = @import("std");
 const MeasurementSpaceSummary = @import("../kernels/transport/measurement.zig").MeasurementSpaceSummary;
@@ -105,6 +106,8 @@ pub const Result = struct {
 
     status: Status = .success,
     plan_id: u64,
+    execution_mode: ExecutionMode = .synthetic,
+    operational_band_count: u32 = 0,
     workspace_label: []const u8,
     scene_id: []const u8,
     provenance: Provenance = .{},
@@ -124,6 +127,27 @@ pub const Result = struct {
         scene_id: []const u8,
         provenance: Provenance,
     ) !void {
+        try self.initOwnedWithExecution(
+            allocator,
+            plan_id,
+            .synthetic,
+            0,
+            workspace_label,
+            scene_id,
+            provenance,
+        );
+    }
+
+    pub fn initOwnedWithExecution(
+        self: *Result,
+        allocator: Allocator,
+        plan_id: u64,
+        execution_mode: ExecutionMode,
+        operational_band_count: u32,
+        workspace_label: []const u8,
+        scene_id: []const u8,
+        provenance: Provenance,
+    ) !void {
         const owned_workspace_label = try allocator.dupe(u8, workspace_label);
         errdefer allocator.free(owned_workspace_label);
         const owned_scene_id = try allocator.dupe(u8, scene_id);
@@ -131,6 +155,8 @@ pub const Result = struct {
 
         self.* = .{
             .plan_id = plan_id,
+            .execution_mode = execution_mode,
+            .operational_band_count = operational_band_count,
             .workspace_label = owned_workspace_label,
             .scene_id = owned_scene_id,
             .provenance = provenance,
@@ -145,8 +171,36 @@ pub const Result = struct {
         scene_id: []const u8,
         provenance: Provenance,
     ) !Result {
+        return initWithExecution(
+            allocator,
+            plan_id,
+            .synthetic,
+            0,
+            workspace_label,
+            scene_id,
+            provenance,
+        );
+    }
+
+    pub fn initWithExecution(
+        allocator: Allocator,
+        plan_id: u64,
+        execution_mode: ExecutionMode,
+        operational_band_count: u32,
+        workspace_label: []const u8,
+        scene_id: []const u8,
+        provenance: Provenance,
+    ) !Result {
         var result: Result = undefined;
-        try result.initOwned(allocator, plan_id, workspace_label, scene_id, provenance);
+        try result.initOwnedWithExecution(
+            allocator,
+            plan_id,
+            execution_mode,
+            operational_band_count,
+            workspace_label,
+            scene_id,
+            provenance,
+        );
         return result;
     }
 
@@ -196,7 +250,7 @@ pub const Result = struct {
 };
 
 test "result can carry summary-only measurement-space output" {
-    var result = try Result.init(std.testing.allocator, 7, "unit", "scene-summary", .{});
+    var result = try Result.initWithExecution(std.testing.allocator, 7, .synthetic, 0, "unit", "scene-summary", .{});
     defer result.deinit(std.testing.allocator);
 
     result.measurement_space = .{
@@ -218,7 +272,7 @@ test "result owns identifier strings independently of caller buffers" {
     const workspace_label = try std.fmt.allocPrint(std.testing.allocator, "workspace-{d}", .{11});
     const scene_id = try std.fmt.allocPrint(std.testing.allocator, "scene-{d}", .{29});
 
-    var result = try Result.init(std.testing.allocator, 11, workspace_label, scene_id, .{});
+    var result = try Result.initWithExecution(std.testing.allocator, 11, .synthetic, 0, workspace_label, scene_id, .{});
     defer result.deinit(std.testing.allocator);
 
     std.testing.allocator.free(workspace_label);
