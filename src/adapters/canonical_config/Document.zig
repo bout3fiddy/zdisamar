@@ -2335,11 +2335,15 @@ fn decodeCreateXsecLutConfig(value: yaml.Value, strict: bool) !GeneralConfig.Cre
     if (mapGet(config_map, "max_temperature_k")) |v| config.max_temperature_k = try expectF64(v);
     if (mapGet(config_map, "min_pressure_hpa")) |v| config.min_pressure_hpa = try expectF64(v);
     if (mapGet(config_map, "max_pressure_hpa")) |v| config.max_pressure_hpa = try expectF64(v);
-    if (mapGet(config_map, "pressure_grid_count")) |v| config.pressure_grid_count = @intCast(try expectU64(v));
-    if (mapGet(config_map, "temperature_grid_count")) |v| config.temperature_grid_count = @intCast(try expectU64(v));
-    if (mapGet(config_map, "pressure_coefficient_count")) |v| config.pressure_coefficient_count = @intCast(try expectU64(v));
-    if (mapGet(config_map, "temperature_coefficient_count")) |v| config.temperature_coefficient_count = @intCast(try expectU64(v));
+    if (mapGet(config_map, "pressure_grid_count")) |v| config.pressure_grid_count = try expectU8Value(v);
+    if (mapGet(config_map, "temperature_grid_count")) |v| config.temperature_grid_count = try expectU8Value(v);
+    if (mapGet(config_map, "pressure_coefficient_count")) |v| config.pressure_coefficient_count = try expectU8Value(v);
+    if (mapGet(config_map, "temperature_coefficient_count")) |v| config.temperature_coefficient_count = try expectU8Value(v);
     return config;
+}
+
+fn expectU8Value(value: yaml.Value) !u8 {
+    return std.math.cast(u8, try expectU64(value)) orelse Error.InvalidValue;
 }
 
 fn decodeInstrumentConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?InstrumentConfig {

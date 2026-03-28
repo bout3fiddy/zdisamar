@@ -24,6 +24,7 @@ const std = @import("std");
 const Scene = @import("../../model/Scene.zig").Scene;
 const AbsorberModel = @import("../../model/Absorber.zig");
 const ReferenceData = @import("../../model/ReferenceData.zig");
+const Instrument = @import("../../model/Instrument.zig").Instrument;
 const OperationalCrossSectionLut = @import("../../model/Instrument.zig").OperationalCrossSectionLut;
 const LutControls = @import("../../core/lut_controls.zig");
 const OpticsPrepare = @import("../../kernels/optics/preparation.zig");
@@ -92,6 +93,11 @@ pub fn prepareForScene(allocator: Allocator, scene: *const Scene) !OpticsPrepare
     var working_scene = scene.*;
     var owned_absorbers: ?AbsorberModel.AbsorberSet = null;
     defer if (owned_absorbers) |*absorbers| absorbers.deinitOwned(allocator);
+    var owned_operational_band_support: ?[]Instrument.OperationalBandSupport = null;
+    defer if (owned_operational_band_support) |supports| {
+        for (supports) |*support| support.deinitOwned(allocator);
+        allocator.free(supports);
+    };
 
     var generated_assets = std.ArrayList(OpticsState.GeneratedLutAsset).empty;
     defer {
@@ -114,6 +120,7 @@ pub fn prepareForScene(allocator: Allocator, scene: *const Scene) !OpticsPrepare
         scene,
         &working_scene,
         &owned_absorbers,
+        &owned_operational_band_support,
         line_list_ptr,
         cia_ptr,
         &generated_o2_lut,
@@ -143,6 +150,7 @@ fn applyLutWorkflows(
     source_scene: *const Scene,
     working_scene: *Scene,
     owned_absorbers: *?AbsorberModel.AbsorberSet,
+    owned_operational_band_support: *?[]Instrument.OperationalBandSupport,
     line_list: ?*const ReferenceData.SpectroscopyLineList,
     cia_table: ?*const ReferenceData.CollisionInducedAbsorptionTable,
     generated_o2_lut: *?OperationalCrossSectionLut,
@@ -201,6 +209,14 @@ fn applyLutWorkflows(
                     .{ .line_list = &controlled_o2_lines },
                     xsec_controls,
                 );
+                try replacePrimaryOperationalBandSupportLut(
+                    allocator,
+                    source_scene,
+                    working_scene,
+                    owned_operational_band_support,
+                    generated_o2_lut.*.?,
+                    .o2,
+                );
                 working_scene.observation_model.o2_operational_lut = generated_o2_lut.*.?;
                 try appendExecutionLabel(allocator, execution_entries, "o2:xsec_lut:generated");
                 try appendGeneratedAsset(
@@ -249,6 +265,14 @@ fn applyLutWorkflows(
                     .{ .cia_table = o2o2_table },
                     xsec_controls,
                 );
+                try replacePrimaryOperationalBandSupportLut(
+                    allocator,
+                    source_scene,
+                    working_scene,
+                    owned_operational_band_support,
+                    generated_o2o2_lut.*.?,
+                    .o2o2,
+                );
                 working_scene.observation_model.o2o2_operational_lut = generated_o2o2_lut.*.?;
                 try appendExecutionLabel(allocator, execution_entries, "o2o2:xsec_lut:generated");
                 try appendGeneratedAsset(
@@ -271,7 +295,10 @@ fn applyLutWorkflows(
 
     for (source_scene.absorbers.items) |absorber| {
         if (absorber.spectroscopy.mode != .cross_sections) continue;
-        _ = AbsorberModel.resolvedAbsorberSpecies(absorber) orelse continue;
+        if (AbsorberModel.resolvedAbsorberSpecies(absorber) == null) {
+            if (xsec_controls.mode != .direct) return error.InvalidRequest;
+            continue;
+        }
         switch (xsec_controls.mode) {
             .direct => {
                 if (absorber.spectroscopy.resolved_cross_section_lut != null) {
@@ -423,6 +450,11 @@ fn applyReflectanceLutWorkflow(
     }
 }
 
+const PrimaryOperationalBandSupportLut = enum {
+    o2,
+    o2o2,
+};
+
 fn ensureOwnedAbsorbers(
     allocator: Allocator,
     source_scene: *const Scene,
@@ -434,6 +466,60 @@ fn ensureOwnedAbsorbers(
         working_scene.absorbers = owned_absorbers.*.?;
     }
     return &(owned_absorbers.*.?);
+}
+
+fn ensureOwnedOperationalBandSupport(
+    allocator: Allocator,
+    source_scene: *const Scene,
+    working_scene: *Scene,
+    owned_operational_band_support: *?[]Instrument.OperationalBandSupport,
+) ![]Instrument.OperationalBandSupport {
+    if (owned_operational_band_support.* == null) {
+        const source_support = source_scene.observation_model.operational_band_support;
+        const cloned_support = try allocator.alloc(Instrument.OperationalBandSupport, source_support.len);
+        errdefer allocator.free(cloned_support);
+
+        var initialized: usize = 0;
+        errdefer for (cloned_support[0..initialized]) |*support| support.deinitOwned(allocator);
+
+        for (source_support, 0..) |support, index| {
+            cloned_support[index] = try support.clone(allocator);
+            initialized += 1;
+        }
+
+        owned_operational_band_support.* = cloned_support;
+        working_scene.observation_model.operational_band_support = cloned_support;
+        working_scene.observation_model.owns_operational_band_support = true;
+    }
+    return owned_operational_band_support.*.?;
+}
+
+fn replacePrimaryOperationalBandSupportLut(
+    allocator: Allocator,
+    source_scene: *const Scene,
+    working_scene: *Scene,
+    owned_operational_band_support: *?[]Instrument.OperationalBandSupport,
+    generated_lut: OperationalCrossSectionLut,
+    which: PrimaryOperationalBandSupportLut,
+) !void {
+    if (source_scene.observation_model.operational_band_support.len == 0) return;
+
+    const supports = try ensureOwnedOperationalBandSupport(
+        allocator,
+        source_scene,
+        working_scene,
+        owned_operational_band_support,
+    );
+    switch (which) {
+        .o2 => {
+            supports[0].o2_operational_lut.deinitOwned(allocator);
+            supports[0].o2_operational_lut = try generated_lut.clone(allocator);
+        },
+        .o2o2 => {
+            supports[0].o2o2_operational_lut.deinitOwned(allocator);
+            supports[0].o2o2_operational_lut = try generated_lut.clone(allocator);
+        },
+    }
 }
 
 fn findAbsorberIndexById(items: []const AbsorberModel.Absorber, id: []const u8) ?usize {

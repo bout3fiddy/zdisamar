@@ -1976,6 +1976,60 @@ test "canonical config rejects legacy xsec LUT creation without polynomial expan
     );
 }
 
+test "canonical config rejects xsec LUT count values above u8 bounds" {
+    const source =
+        \\schema_version: 1
+        \\metadata:
+        \\  id: xsec-lut-counts-out-of-range
+        \\experiment:
+        \\  simulation:
+        \\    general:
+        \\      usePolyExpXsecSim: true
+        \\      create_xsec_lut:
+        \\        pressure_grid_count: 256
+        \\    scene:
+        \\      id: xsec_lut_counts_out_of_range_scene
+        \\      geometry:
+        \\        model: plane_parallel
+        \\        solar_zenith_deg: 31.7
+        \\        viewing_zenith_deg: 7.9
+        \\        relative_azimuth_deg: 143.4
+        \\      atmosphere:
+        \\        layering:
+        \\          layer_count: 8
+        \\      bands:
+        \\        a_band:
+        \\          start_nm: 760.0
+        \\          end_nm: 761.0
+        \\          step_nm: 0.5
+        \\      absorbers: {}
+        \\      surface:
+        \\        model: lambertian
+        \\        albedo: 0.05
+        \\      measurement_model:
+        \\        regime: nadir
+        \\        instrument:
+        \\          name: synthetic
+        \\        sampling:
+        \\          mode: native
+        \\validation:
+        \\  strict_unknown_fields: true
+    ;
+
+    var document = try zdisamar.canonical_config.Document.parse(
+        std.testing.allocator,
+        "inline.yaml",
+        ".",
+        source,
+    );
+    defer document.deinit();
+
+    try std.testing.expectError(
+        zdisamar.canonical_config.Error.InvalidValue,
+        document.resolve(std.testing.allocator),
+    );
+}
+
 test "canonical config resolves non-o2 operational LUT ingests into cross-section absorbers" {
     const path = "zig-cache/test-o3-operational-lut.txt";
     defer std.fs.cwd().deleteFile(path) catch {};
