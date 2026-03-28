@@ -293,7 +293,10 @@ pub const ObservationModel = struct {
         band_index: usize,
     ) ?OperationalBandSupport {
         if (band_index < self.operational_band_support.len) {
-            return self.operational_band_support[band_index];
+            return mergedOperationalBandSupport(
+                self.operational_band_support[band_index],
+                legacyOperationalBandSupport(self),
+            );
         }
         if (band_index == 0) {
             const legacy = legacyOperationalBandSupport(self);
@@ -398,6 +401,28 @@ pub const ObservationModel = struct {
             .o2_operational_lut = self.o2_operational_lut,
             .o2o2_operational_lut = self.o2o2_operational_lut,
         };
+    }
+
+    fn mergedOperationalBandSupport(
+        explicit: OperationalBandSupport,
+        legacy: OperationalBandSupport,
+    ) OperationalBandSupport {
+        var merged = legacy;
+        if (explicit.id.len != 0) {
+            merged.id = explicit.id;
+            merged.owns_id = explicit.owns_id;
+        }
+        if (explicit.high_resolution_step_nm > 0.0) {
+            merged.high_resolution_step_nm = explicit.high_resolution_step_nm;
+            merged.high_resolution_half_span_nm = explicit.high_resolution_half_span_nm;
+        }
+        if (explicit.instrument_line_shape.sample_count > 0) merged.instrument_line_shape = explicit.instrument_line_shape;
+        if (explicit.instrument_line_shape_table.nominal_count > 0) merged.instrument_line_shape_table = explicit.instrument_line_shape_table;
+        if (explicit.operational_refspec_grid.enabled()) merged.operational_refspec_grid = explicit.operational_refspec_grid;
+        if (explicit.operational_solar_spectrum.enabled()) merged.operational_solar_spectrum = explicit.operational_solar_spectrum;
+        if (explicit.o2_operational_lut.enabled()) merged.o2_operational_lut = explicit.o2_operational_lut;
+        if (explicit.o2o2_operational_lut.enabled()) merged.o2o2_operational_lut = explicit.o2o2_operational_lut;
+        return merged;
     }
 
     fn borrowedLineShape(line_shape: InstrumentLineShape) InstrumentLineShape {
@@ -666,4 +691,33 @@ test "observation model rejects multi-band operational support until runtime bec
     };
 
     try std.testing.expectError(error.InvalidRequest, model.validate());
+}
+
+test "observation model merges partial explicit operational support with legacy replacements" {
+    const support = [_]OperationalBandSupport{.{
+        .id = "band-0",
+        .instrument_line_shape = .{
+            .sample_count = 3,
+            .offsets_nm = &.{ -0.1, 0.0, 0.1 },
+            .weights = &.{ 0.25, 0.5, 0.25 },
+        },
+    }};
+    var model: ObservationModel = .{
+        .instrument = .tropomi,
+        .high_resolution_step_nm = 0.08,
+        .high_resolution_half_span_nm = 0.32,
+        .operational_solar_spectrum = .{
+            .wavelengths_nm = &.{ 760.8, 761.0, 761.2 },
+            .irradiance = &.{ 2.7e14, 2.8e14, 2.75e14 },
+        },
+        .operational_band_support = &support,
+    };
+
+    const resolved = model.primaryOperationalBandSupport();
+    try std.testing.expectEqualStrings("band-0", resolved.id);
+    try std.testing.expectEqual(@as(f64, 0.08), resolved.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 0.32), resolved.high_resolution_half_span_nm);
+    try std.testing.expectEqual(@as(u8, 3), resolved.instrument_line_shape.sample_count);
+    try std.testing.expect(resolved.operational_solar_spectrum.enabled());
+    try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), resolved.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
 }
