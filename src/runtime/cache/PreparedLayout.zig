@@ -19,6 +19,7 @@
 const std = @import("std");
 const SceneModel = @import("../../model/Scene.zig");
 const layout = @import("../../model/layout/root.zig");
+const LutControls = @import("../../core/lut_controls.zig");
 
 /// Purpose:
 ///   Store the reusable layout hints for a prepared scene.
@@ -38,6 +39,7 @@ pub const PreparedLayout = struct {
     state_axis: ?layout.Axes.StateAxis = null,
     measurement_capacity: u32 = 0,
     dataset_hash_count: u32 = 0,
+    lut_compatibility: LutControls.CompatibilityKey = .{},
 
     /// Purpose:
     ///   Build a cached layout snapshot from a scene blueprint.
@@ -83,6 +85,7 @@ pub const PreparedLayout = struct {
                 null,
             .measurement_capacity = layout_requirements.measurement_count,
             .dataset_hash_count = dataset_hash_count,
+            .lut_compatibility = blueprint.lut_compatibility,
         };
     }
 };
@@ -106,6 +109,7 @@ test "prepared layout derives reusable layout hints from the scene blueprint" {
     try std.testing.expect(cache.spectral_axis != null);
     try std.testing.expect(cache.layer_axis != null);
     try std.testing.expect(cache.state_axis != null);
+    try std.testing.expect(!cache.lut_compatibility.enabled());
 }
 
 test "runtime cache package includes layout and cache implementations" {

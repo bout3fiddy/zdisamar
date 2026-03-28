@@ -287,6 +287,12 @@ pub const ObservationModel = struct {
     }
 
     /// Purpose:
+    ///   Return the effective wavelength-support half-span used when LUT generation expands the scene grid.
+    pub fn lutSamplingHalfSpanNm(self: *const ObservationModel) f64 {
+        return operationalBandLutSamplingHalfSpan(self.primaryOperationalBandSupport());
+    }
+
+    /// Purpose:
     ///   Return the explicit support record for a band, or the legacy singleton view for band zero.
     pub fn resolvedOperationalBandSupport(
         self: *const ObservationModel,
@@ -423,6 +429,23 @@ pub const ObservationModel = struct {
         if (explicit.o2_operational_lut.enabled()) merged.o2_operational_lut = explicit.o2_operational_lut;
         if (explicit.o2o2_operational_lut.enabled()) merged.o2o2_operational_lut = explicit.o2o2_operational_lut;
         return merged;
+    }
+
+    fn operationalBandLutSamplingHalfSpan(support: OperationalBandSupport) f64 {
+        if (support.high_resolution_step_nm <= 0.0) return 0.0;
+
+        var half_span_nm = support.high_resolution_half_span_nm;
+        if (support.instrument_line_shape.sample_count > 0) {
+            for (support.instrument_line_shape.offsets_nm[0..support.instrument_line_shape.sample_count]) |offset_nm| {
+                half_span_nm = @max(half_span_nm, @abs(offset_nm));
+            }
+        }
+        if (support.instrument_line_shape_table.sample_count > 0) {
+            for (support.instrument_line_shape_table.offsets_nm[0..support.instrument_line_shape_table.sample_count]) |offset_nm| {
+                half_span_nm = @max(half_span_nm, @abs(offset_nm));
+            }
+        }
+        return half_span_nm;
     }
 
     fn borrowedLineShape(line_shape: InstrumentLineShape) InstrumentLineShape {

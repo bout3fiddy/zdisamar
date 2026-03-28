@@ -9,6 +9,24 @@ const OpticsPrepare = internal.kernels.optics.preparation;
 const Absorber = zdisamar.Absorber;
 const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
 
+fn hasGeneratedAssetLabel(assets: []const OpticsPrepare.state.GeneratedLutAsset, expected: []const u8) bool {
+    for (assets) |asset| {
+        if (std.mem.eql(u8, asset.provenance_label, expected)) return true;
+    }
+    return false;
+}
+
+fn expectOperationalLutsEqual(expected: zdisamar.OperationalCrossSectionLut, actual: zdisamar.OperationalCrossSectionLut) !void {
+    try std.testing.expectEqualSlices(f64, expected.wavelengths_nm, actual.wavelengths_nm);
+    try std.testing.expectEqualSlices(f64, expected.coefficients, actual.coefficients);
+    try std.testing.expectEqual(expected.temperature_coefficient_count, actual.temperature_coefficient_count);
+    try std.testing.expectEqual(expected.pressure_coefficient_count, actual.pressure_coefficient_count);
+    try std.testing.expectApproxEqAbs(expected.min_temperature_k, actual.min_temperature_k, 1.0e-12);
+    try std.testing.expectApproxEqAbs(expected.max_temperature_k, actual.max_temperature_k, 1.0e-12);
+    try std.testing.expectApproxEqAbs(expected.min_pressure_hpa, actual.min_pressure_hpa, 1.0e-12);
+    try std.testing.expectApproxEqAbs(expected.max_pressure_hpa, actual.max_pressure_hpa, 1.0e-12);
+}
+
 test "runtime bundled optics uses NO2 assets in the visible band" {
     const scene: zdisamar.Scene = .{
         .id = "runtime-no2",
@@ -110,6 +128,623 @@ test "runtime bundled optics skips visible line and cia defaults for explicit cr
         prepared.cross_section_absorbers[0].representation_kind,
     );
     try std.testing.expect(prepared.gas_optical_depth > 0.0);
+}
+
+test "runtime bundled optics replaces explicit cross-section tables when generating LUTs" {
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.8e-19 },
+        .{ .wavelength_nm = 420.0, .sigma_cm2_per_molecule = 3.4e-19 },
+        .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 2.2e-19 },
+        .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 1.7e-19 },
+        .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.1e-19 },
+    };
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-cross-sections-generate-lut",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 48,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "vis-no2",
+                    .start_nm = 405.0,
+                    .end_nm = 465.0,
+                    .step_nm = 1.25,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = 2,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), prepared.cross_section_absorbers.len);
+    try std.testing.expectEqual(
+        OpticsPrepare.state.CrossSectionRepresentationKind.effective_lut,
+        prepared.cross_section_absorbers[0].representation_kind,
+    );
+    try std.testing.expectEqual(@as(usize, 1), prepared.generated_lut_assets.len);
+    try std.testing.expectEqualStrings("no2:xsec_lut:generated", prepared.generated_lut_assets[0].provenance_label);
+}
+
+test "runtime bundled optics generates low-resolution LUTs on measured wavelengths" {
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.8e-19 },
+        .{ .wavelength_nm = 420.0, .sigma_cm2_per_molecule = 3.4e-19 },
+        .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 2.2e-19 },
+        .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 1.7e-19 },
+        .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.1e-19 },
+    };
+    const measured_wavelengths = [_]f64{ 405.0, 408.5, 417.25, 465.0 };
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-cross-sections-generate-lut-measured",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = measured_wavelengths.len,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "vis-no2",
+                    .start_nm = 405.0,
+                    .end_nm = 465.0,
+                    .step_nm = 1.25,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .measured_wavelengths_nm = measured_wavelengths[0..],
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = 2,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    const lut = switch (prepared.cross_section_absorbers[0].representation) {
+        .lut => |lut| lut,
+        .table => unreachable,
+    };
+    try std.testing.expectEqualSlices(f64, measured_wavelengths[0..], lut.wavelengths_nm);
+}
+
+test "runtime bundled optics high-resolution LUT grids include the upper bound" {
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 404.5, .sigma_cm2_per_molecule = 5.1e-19 },
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.8e-19 },
+        .{ .wavelength_nm = 405.5, .sigma_cm2_per_molecule = 4.2e-19 },
+        .{ .wavelength_nm = 406.0, .sigma_cm2_per_molecule = 3.6e-19 },
+    };
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-cross-sections-generate-lut-upper-bound",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 405.8,
+            .sample_count = 4,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "vis-no2",
+                    .start_nm = 405.0,
+                    .end_nm = 405.8,
+                    .step_nm = 0.2,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .high_resolution_step_nm = 0.3,
+            .high_resolution_half_span_nm = 0.1,
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = 2,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    const lut = switch (prepared.cross_section_absorbers[0].representation) {
+        .lut => |lut| lut,
+        .table => unreachable,
+    };
+    try std.testing.expectEqual(@as(usize, 5), lut.wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 404.9), lut.wavelengths_nm[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 405.9), lut.wavelengths_nm[lut.wavelengths_nm.len - 1], 1.0e-12);
+}
+
+test "runtime bundled optics generated O2 LUT overrides explicit primary operational support" {
+    const stale_o2_lut: zdisamar.OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{999.0},
+        .coefficients = &[_]f64{9.9e-24},
+        .temperature_coefficient_count = 1,
+        .pressure_coefficient_count = 1,
+        .min_temperature_k = 200.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 10.0,
+        .max_pressure_hpa = 1013.0,
+    };
+    const operational_support = [_]zdisamar.Instrument.OperationalBandSupport{.{
+        .id = "primary",
+        .o2_operational_lut = stale_o2_lut,
+    }};
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-o2-generate-overrides-explicit-primary-support",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 771.5,
+            .sample_count = 32,
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "o2",
+                    .species = "o2",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .operational_band_support = &operational_support,
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(prepared.operational_o2_lut.enabled());
+    try std.testing.expectEqual(@as(usize, scene.spectral_grid.sample_count), prepared.operational_o2_lut.wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 760.8), prepared.operational_o2_lut.wavelengths_nm[0], 1.0e-12);
+    try std.testing.expectEqual(@as(usize, 1), prepared.generated_lut_assets.len);
+    try std.testing.expectEqualStrings("o2:xsec_lut:generated", prepared.generated_lut_assets[0].provenance_label);
+}
+
+test "runtime bundled optics generated O2O2 LUT overrides explicit primary operational support" {
+    const stale_o2o2_lut: zdisamar.OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{999.0},
+        .coefficients = &[_]f64{9.9e-46},
+        .temperature_coefficient_count = 1,
+        .pressure_coefficient_count = 1,
+        .min_temperature_k = 200.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 10.0,
+        .max_pressure_hpa = 1013.0,
+    };
+    const operational_support = [_]zdisamar.Instrument.OperationalBandSupport{.{
+        .id = "primary",
+        .o2o2_operational_lut = stale_o2o2_lut,
+    }};
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-o2o2-generate-overrides-explicit-primary-support",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 771.5,
+            .sample_count = 32,
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "o2",
+                    .species = "o2",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .line_by_line,
+                    },
+                },
+                .{
+                    .id = "o2o2",
+                    .species = "o2o2",
+                    .profile_source = .atmosphere,
+                    .spectroscopy = .{
+                        .mode = .cia,
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .operational_band_support = &operational_support,
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(prepared.operational_o2o2_lut.enabled());
+    try std.testing.expectEqual(@as(usize, scene.spectral_grid.sample_count), prepared.operational_o2o2_lut.wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 760.8), prepared.operational_o2o2_lut.wavelengths_nm[0], 1.0e-12);
+    try std.testing.expect(hasGeneratedAssetLabel(prepared.generated_lut_assets, "o2o2:xsec_lut:generated"));
+}
+
+test "runtime bundled optics uses the line-by-line O2 absorber controls for generated LUTs" {
+    var o2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 760.8, .sigma_cm2_per_molecule = 2.1e-24 },
+        .{ .wavelength_nm = 761.15, .sigma_cm2_per_molecule = 2.7e-24 },
+        .{ .wavelength_nm = 761.5, .sigma_cm2_per_molecule = 2.3e-24 },
+    };
+    const line_o2_absorber: Absorber = .{
+        .id = "o2-line",
+        .species = "o2",
+        .profile_source = .atmosphere,
+        .spectroscopy = .{
+            .mode = .line_by_line,
+            .line_gas_controls = .{
+                .factor_lm_sim = 0.4,
+                .isotopes_sim = &.{2},
+                .threshold_line_sim = 0.02,
+                .cutoff_sim_cm1 = 8.0,
+            },
+        },
+    };
+    const cross_section_o2_absorber: Absorber = .{
+        .id = "o2-cross-sections",
+        .species = "o2",
+        .profile_source = .atmosphere,
+        .spectroscopy = .{
+            .mode = .cross_sections,
+            .line_gas_controls = .{
+                .factor_lm_sim = 0.9,
+                .isotopes_sim = &.{1},
+                .threshold_line_sim = 0.08,
+                .cutoff_sim_cm1 = 12.0,
+            },
+            .resolved_cross_section_table = .{
+                .points = o2_points[0..],
+            },
+        },
+    };
+
+    var baseline_scene: zdisamar.Scene = .{
+        .id = "runtime-o2-generate-line-controls-baseline",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 771.5,
+            .sample_count = 32,
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{line_o2_absorber},
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+    var mixed_scene = baseline_scene;
+    mixed_scene.id = "runtime-o2-generate-line-controls-mixed";
+    mixed_scene.absorbers = .{
+        .items = &[_]Absorber{
+            cross_section_o2_absorber,
+            line_o2_absorber,
+        },
+    };
+
+    var baseline_prepared = try bundled_optics.prepareForScene(std.testing.allocator, &baseline_scene);
+    defer baseline_prepared.deinit(std.testing.allocator);
+    var mixed_prepared = try bundled_optics.prepareForScene(std.testing.allocator, &mixed_scene);
+    defer mixed_prepared.deinit(std.testing.allocator);
+
+    try expectOperationalLutsEqual(baseline_prepared.operational_o2_lut, mixed_prepared.operational_o2_lut);
+}
+
+test "runtime bundled optics rejects non-direct xsec LUT modes for unresolved cross-section species" {
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.8e-19 },
+        .{ .wavelength_nm = 420.0, .sigma_cm2_per_molecule = 3.4e-19 },
+        .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 2.2e-19 },
+        .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 1.7e-19 },
+        .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.1e-19 },
+    };
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-cross-sections-generate-lut-unresolved-species",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 48,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "vis-no2",
+                    .start_nm = 405.0,
+                    .end_nm = 465.0,
+                    .step_nm = 1.25,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+                .{
+                    .id = "mystery_xsec",
+                    .species = "mystery_xsec",
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.02 },
+                        .{ 450.0, 0.01 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = 2,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    try std.testing.expectError(error.InvalidRequest, bundled_optics.prepareForScene(std.testing.allocator, &scene));
+}
+
+test "runtime bundled optics rejects reflectance LUT consume modes without a source" {
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-reflectance-lut-consume",
+        .spectral_grid = .{
+            .start_nm = 760.8,
+            .end_nm = 771.5,
+            .sample_count = 48,
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+        },
+        .lut_controls = .{
+            .reflectance = .{
+                .correction_mode = .consume,
+            },
+        },
+    };
+
+    try std.testing.expectError(error.InvalidRequest, bundled_optics.prepareForScene(std.testing.allocator, &scene));
 }
 
 test "runtime bundled optics keeps visible bundled line fallback for implicit absorbers" {

@@ -29,6 +29,7 @@ const Result = @import("../Result.zig").Result;
 const Workspace = @import("../Workspace.zig").Workspace;
 const Provenance = @import("../provenance.zig").Provenance;
 const PlanCache = @import("../../runtime/cache/PlanCache.zig").PlanCache;
+const LUTCache = @import("../../runtime/cache/LUTCache.zig").LUTCache;
 const PluginRuntime = @import("../../plugins/loader/runtime.zig");
 const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 const shared = @import("shared.zig");
@@ -100,6 +101,7 @@ pub fn initializeResult(
 ///   Prepare optics and attach the forward measurement-space product to the result.
 pub fn executeForwardProducts(
     allocator: std.mem.Allocator,
+    lut_cache: *LUTCache,
     plan: *const PreparedPlan,
     request: *const Request,
     result: *Result,
@@ -128,6 +130,20 @@ pub fn executeForwardProducts(
             .mie_table => .mie_table,
         },
     );
+
+    if (prepared_optics.lut_execution_entries.len != 0) {
+        try result.provenance.annotateLutExecution(allocator, prepared_optics.lut_execution_entries);
+    }
+    for (prepared_optics.generated_lut_assets) |asset| {
+        lut_cache.upsertWithCompatibility(asset.dataset_id, asset.lut_id, .{
+            .spectral_bins = asset.spectral_bin_count,
+            .layer_count = asset.layer_count,
+            .coefficient_count = asset.coefficient_count,
+        }, asset.compatibility) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return errors.Error.InvalidRequest,
+        };
+    }
 
     const measurement_space_product = MeasurementSpace.simulateProduct(
         allocator,

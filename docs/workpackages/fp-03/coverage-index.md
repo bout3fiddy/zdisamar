@@ -132,8 +132,9 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | --- | --- | --- |
 | `src/core/execution_mode.zig` | `WP-07` | Shared execution-mode typing for synthetic versus operational measured-input flows. |
 | `src/core/Plan.zig` | `WP-01`, `WP-02`, `WP-06`, `WP-07`, `WP-11` | Prepared control state, route typing, and operational execution-mode propagation. |
+| `src/core/lut_controls.zig` | `WP-08` | Typed reflectance/correction/XsecLUT controls plus compatibility-key identity for explicit LUT generation and reuse. |
 | `src/core/Engine.zig` | `WP-02`, `WP-06`, `WP-07`, `WP-08`, `WP-09`, `WP-11`, `WP-14` | Main orchestration hotspot. |
-| `src/core/Request.zig` | `WP-01`, `WP-07`, `WP-11`, `WP-12`, `WP-13` | Measurement-source and retrieval request semantics. |
+| `src/core/Request.zig` | `WP-01`, `WP-07`, `WP-08`, `WP-11`, `WP-12`, `WP-13` | Measurement-source, retrieval request semantics, and prepared-plan LUT compatibility gating. |
 | `src/core/Result.zig` | `WP-06`, `WP-07`, `WP-09`, `WP-11`, `WP-14` | Output ownership and honesty of produced products, including explicit operational execution metadata. |
 | `src/core/Workspace.zig` | `WP-02`, `WP-10`, `WP-15` | Execution-context and later cleanup/perf work. |
 | `src/core/Catalog.zig` | `WP-01`, `WP-15` | Capability registration and narrowing. |
@@ -142,7 +143,7 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | `src/core/logging.zig` | `WP-14`, `WP-15` | Logging/output surface. |
 | `src/core/provenance.zig` | `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-05`, `WP-06`, `WP-07`, `WP-08`, `WP-09`, `WP-14` | Must record effective controls and operational replacement state for parity review. |
 | `src/core/units.zig` | `WP-01`, `WP-05` | Geometry/control typing. |
-| `src/model/Scene.zig` | `WP-01`, `WP-05`, `WP-07` | Scene-level config structure, including operational-band execution hints. |
+| `src/model/Scene.zig` | `WP-01`, `WP-05`, `WP-07`, `WP-08` | Scene-level config structure, including operational-band execution hints and typed LUT compatibility keys. |
 | `src/model/ObservationModel.zig` | `WP-01`, `WP-06`, `WP-07` | Instrument/control representation is still too stringly. |
 | `src/model/Instrument.zig` | `WP-01`, `WP-06`, `WP-07`, `WP-08` | Instrument and operational data carriers. |
 | `src/model/instrument/reference_grid.zig` | `WP-06`, `WP-07`, `WP-08` | Operational spectral-grid parity. |
@@ -259,7 +260,7 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | `src/api/zig/wrappers.zig` | `WP-15` | Wrapper cleanup and error-surface hardening. |
 | `src/api/c/bridge.zig` | `WP-15` | C ABI cleanup after scientific parity. |
 | `src/api/c/disamar.h` | `WP-15` | Same. |
-| `src/root.zig` | `WP-15` | Public export-surface reduction. |
+| `src/root.zig` | `WP-08`, `WP-15` | Public export-surface reduction plus LUT-control/test-support re-exports needed for validation and API parity. |
 
 ## Current Zig Plugins / Runtime Files
 
@@ -301,7 +302,7 @@ Representative vendor example configs are listed below. The complete key-by-key 
 | `src/runtime/cache/DatasetCache.zig` | `WP-08`, `WP-10`, `WP-15` | Dataset and LUT/cache support. |
 | `src/runtime/cache/LUTCache.zig` | `WP-08`, `WP-10`, `WP-15` | LUT cache parity and later performance work. |
 | `src/runtime/cache/PlanCache.zig` | `WP-10`, `WP-15` | Runtime cache/performance and later cleanup. |
-| `src/runtime/cache/PreparedLayout.zig` | `WP-10`, `WP-15` | Layout/performance and naming cleanup. |
+| `src/runtime/cache/PreparedLayout.zig` | `WP-08`, `WP-10`, `WP-15` | Prepared-layout carrier now includes LUT compatibility identity in addition to later layout/performance cleanup work. |
 | `src/runtime/scheduler/ScratchArena.zig` | `WP-10`, `WP-15` | Execution scratch/perf support. |
 | `src/runtime/scheduler/ThreadContext.zig` | `WP-10`, `WP-15` | Execution-context cleanup. |
 | `src/runtime/scheduler/BatchRunner.zig` | `WP-10`, `WP-15` | Benchmark and later simplification. |
@@ -310,10 +311,11 @@ Representative vendor example configs are listed below. The complete key-by-key 
 
 | File | Assignment | Why |
 | --- | --- | --- |
-| `tests/validation/main.zig` | `WP-03`, `WP-09` | Validation-suite entrypoint now includes the focused line-gas family lane. |
+| `tests/validation/main.zig` | `WP-03`, `WP-08`, `WP-09` | Validation-suite entrypoint now includes the focused LUT asset coverage alongside the broader line-gas family lane. |
 | `tests/validation/o2a_vendor_reflectance_support.zig` | `WP-02`, `WP-03`, `WP-09` | Shared O2A validation harness for vendor reference comparison plus line-gas control/adaptive execution toggles. |
 | `tests/validation/o2a_forward_shape_test.zig` | `WP-02`, `WP-03`, `WP-09` | O2A morphology, RTM-control, adaptive sampling, and line-gas control/CIA sensitivity checks. |
 | `tests/validation/line_gas_family_validation_test.zig` | `WP-03`, `WP-09` | Focused non-O2 staged line-gas validation through the real prepare and measurement-space path, now including the vendor-window-anchored H2O/NH3 SWIR multi-gas case. |
+| `tests/validation/parity_assets_test.zig` | `WP-08`, `WP-09` | Focused generated-versus-consumed LUT asset metadata, cache registration, and provenance coverage. |
 | `tests/validation/disamar_compatibility_harness_test.zig` | `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-07`, `WP-08`, `WP-09`, `WP-14` | Shared compatibility harness that still needs broader non-O2 vendor-corpus line-gas coverage. |
 
 ## Preserve / No Immediate Patch

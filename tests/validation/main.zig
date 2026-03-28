@@ -1,5 +1,6 @@
 comptime {
     _ = @import("canonical_config_assets_test.zig");
+    _ = @import("parity_assets_test.zig");
     _ = @import("parity_contract_assets_test.zig");
     _ = @import("golden_reference_assets_test.zig");
     _ = @import("vendor_config_surface_test.zig");

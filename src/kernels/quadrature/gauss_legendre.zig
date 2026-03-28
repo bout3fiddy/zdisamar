@@ -25,6 +25,50 @@ pub const Rule = struct {
 };
 
 /// Purpose:
+///   Fill caller-provided buffers with a Gauss-Legendre rule on `[-1, 1]`.
+///
+/// Design:
+///   Uses the standard Newton iteration on Legendre roots so higher-order LUT fitting can request
+///   more nodes than the compact fixed table exposes.
+pub fn fillNodesAndWeights(
+    order: u32,
+    nodes_out: []f64,
+    weights_out: []f64,
+) error{InvalidOrder}!void {
+    if (order == 0 or nodes_out.len < order or weights_out.len < order) {
+        return error.InvalidOrder;
+    }
+
+    const order_usize: usize = @intCast(order);
+    const half_count = (order_usize + 1) / 2;
+    const tolerance = 1.0e-14;
+
+    for (0..half_count) |index| {
+        var root = std.math.cos(std.math.pi * (@as(f64, @floatFromInt(index)) + 0.75) / (@as(f64, @floatFromInt(order)) + 0.5));
+        while (true) {
+            const polynomial = legendrePolynomial(order, root);
+            const derivative = legendreDerivative(order, root, polynomial.value, polynomial.previous_value);
+            const next_root = root - (polynomial.value / derivative);
+            if (@abs(next_root - root) <= tolerance) {
+                root = next_root;
+                break;
+            }
+            root = next_root;
+        }
+
+        const polynomial = legendrePolynomial(order, root);
+        const derivative = legendreDerivative(order, root, polynomial.value, polynomial.previous_value);
+        const weight = 2.0 / ((1.0 - (root * root)) * derivative * derivative);
+
+        nodes_out[index] = -root;
+        weights_out[index] = weight;
+        const mirrored_index = order_usize - 1 - index;
+        nodes_out[mirrored_index] = root;
+        weights_out[mirrored_index] = weight;
+    }
+}
+
+/// Purpose:
 ///   Return a Gauss-Legendre rule of the requested order.
 ///
 /// Physics:
@@ -154,6 +198,43 @@ pub fn rule(order: u32) error{UnsupportedOrder}!Rule {
     };
 }
 
+const PolynomialState = struct {
+    value: f64,
+    previous_value: f64,
+};
+
+fn legendrePolynomial(order: u32, x: f64) PolynomialState {
+    if (order == 0) {
+        return .{ .value = 1.0, .previous_value = 0.0 };
+    }
+
+    var previous_previous: f64 = 1.0;
+    var previous: f64 = x;
+    if (order == 1) {
+        return .{ .value = previous, .previous_value = previous_previous };
+    }
+
+    var current: f64 = previous;
+    var n: u32 = 2;
+    while (n <= order) : (n += 1) {
+        current =
+            (((2.0 * @as(f64, @floatFromInt(n))) - 1.0) * x * previous -
+                (@as(f64, @floatFromInt(n)) - 1.0) * previous_previous) /
+            @as(f64, @floatFromInt(n));
+        previous_previous = previous;
+        previous = current;
+    }
+
+    return .{
+        .value = current,
+        .previous_value = previous_previous,
+    };
+}
+
+fn legendreDerivative(order: u32, x: f64, value: f64, previous_value: f64) f64 {
+    return (@as(f64, @floatFromInt(order)) * (x * value - previous_value)) / ((x * x) - 1.0);
+}
+
 test "gauss-legendre rules expose stable nodes and weights" {
     const one_point = try rule(1);
     try std.testing.expectEqual(@as(u32, 1), one_point.count);
@@ -174,6 +255,16 @@ test "gauss-legendre rules expose stable nodes and weights" {
     try std.testing.expectEqual(@as(u32, 10), ten_point.count);
     try std.testing.expectApproxEqRel(@as(f64, -0.9739065285171717), ten_point.nodes[0], 1e-12);
     try std.testing.expectApproxEqRel(@as(f64, 0.2955242247147529), ten_point.weights[4], 1e-12);
+}
+
+test "gauss-legendre dynamic fill supports higher-order rules" {
+    var nodes = [_]f64{0.0} ** 20;
+    var weights = [_]f64{0.0} ** 20;
+
+    try fillNodesAndWeights(20, nodes[0..], weights[0..]);
+    try std.testing.expectApproxEqRel(@as(f64, -0.9931285991850949), nodes[0], 1e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.1527533871307258), weights[9], 1e-12);
+    try std.testing.expectApproxEqRel(@as(f64, -nodes[19]), nodes[0], 1e-12);
 }
 
 const std = @import("std");

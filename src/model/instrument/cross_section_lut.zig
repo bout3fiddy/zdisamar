@@ -18,10 +18,19 @@
 
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
+const LutControls = @import("../../core/lut_controls.zig");
+const ReferenceData = @import("../ReferenceData.zig");
+const gauss_legendre = @import("../../kernels/quadrature/gauss_legendre.zig");
 const constants = @import("constants.zig");
 const max_operational_refspec_temperature_coefficients = constants.max_operational_refspec_temperature_coefficients;
 const max_operational_refspec_pressure_coefficients = constants.max_operational_refspec_pressure_coefficients;
 const Allocator = std.mem.Allocator;
+
+pub const GenerationSource = union(enum) {
+    line_list: *const ReferenceData.SpectroscopyLineList,
+    cross_section_table: *const ReferenceData.CrossSectionTable,
+    cia_table: *const ReferenceData.CollisionInducedAbsorptionTable,
+};
 
 /// Purpose:
 ///   Store an operational cross-section lookup table.
@@ -117,6 +126,180 @@ pub const OperationalCrossSectionLut = struct {
         errdefer allocator.free(cloned.wavelengths_nm);
         cloned.coefficients = try allocator.dupe(f64, self.coefficients);
         return cloned;
+    }
+
+    /// Purpose:
+    ///   Build an operational LUT by fitting direct absorption evaluations onto the Legendre basis.
+    ///
+    /// Physics:
+    ///   Mirrors the vendor XsecLUT workflow by evaluating sigma on Gauss-Legendre nodes in
+    ///   scaled `ln(T)` and `ln(p)` coordinates, then projecting onto the orthogonal basis.
+    pub fn buildFromSource(
+        allocator: Allocator,
+        wavelengths_nm: []const f64,
+        source: GenerationSource,
+        controls: LutControls.XsecControls,
+    ) !OperationalCrossSectionLut {
+        try controls.validate();
+        if (controls.mode == .direct or controls.mode == .consume or wavelengths_nm.len == 0) {
+            return errors.Error.InvalidRequest;
+        }
+        if (controls.temperature_coefficient_count > max_operational_refspec_temperature_coefficients or
+            controls.pressure_coefficient_count > max_operational_refspec_pressure_coefficients)
+        {
+            return errors.Error.InvalidRequest;
+        }
+
+        const temperature_grid_count: usize = controls.temperature_grid_count;
+        const pressure_grid_count: usize = controls.pressure_grid_count;
+        const temperature_coefficient_count: usize = controls.temperature_coefficient_count;
+        const pressure_coefficient_count: usize = controls.pressure_coefficient_count;
+
+        const scaled_lnT = try allocator.alloc(f64, temperature_grid_count);
+        defer allocator.free(scaled_lnT);
+        const scaled_lnp = try allocator.alloc(f64, pressure_grid_count);
+        defer allocator.free(scaled_lnp);
+        const weight_scaled_lnT = try allocator.alloc(f64, temperature_grid_count);
+        defer allocator.free(weight_scaled_lnT);
+        const weight_scaled_lnp = try allocator.alloc(f64, pressure_grid_count);
+        defer allocator.free(weight_scaled_lnp);
+        const temperatures_k = try allocator.alloc(f64, temperature_grid_count);
+        defer allocator.free(temperatures_k);
+        const pressures_hpa = try allocator.alloc(f64, pressure_grid_count);
+        defer allocator.free(pressures_hpa);
+        const legendre_lnT = try allocator.alloc(f64, temperature_coefficient_count * temperature_grid_count);
+        defer allocator.free(legendre_lnT);
+        const legendre_lnp = try allocator.alloc(f64, pressure_coefficient_count * pressure_grid_count);
+        defer allocator.free(legendre_lnp);
+        const samples = try allocator.alloc(f64, wavelengths_nm.len * temperature_grid_count * pressure_grid_count);
+        defer allocator.free(samples);
+        const coefficients = try allocator.alloc(f64, wavelengths_nm.len * temperature_coefficient_count * pressure_coefficient_count);
+        errdefer allocator.free(coefficients);
+
+        try gauss_legendre.fillNodesAndWeights(
+            controls.temperature_grid_count,
+            scaled_lnT,
+            weight_scaled_lnT,
+        );
+        try gauss_legendre.fillNodesAndWeights(
+            controls.pressure_grid_count,
+            scaled_lnp,
+            weight_scaled_lnp,
+        );
+
+        fillPhysicalGrid(
+            scaled_lnT,
+            temperatures_k,
+            controls.min_temperature_k,
+            controls.max_temperature_k,
+        );
+        fillPhysicalGrid(
+            scaled_lnp,
+            pressures_hpa,
+            controls.min_pressure_hpa,
+            controls.max_pressure_hpa,
+        );
+
+        for (0..temperature_grid_count) |temperature_index| {
+            fillLegendreValues(
+                legendre_lnT[temperature_index * temperature_coefficient_count ..][0..temperature_coefficient_count],
+                scaled_lnT[temperature_index],
+            );
+        }
+        for (0..pressure_grid_count) |pressure_index| {
+            fillLegendreValues(
+                legendre_lnp[pressure_index * pressure_coefficient_count ..][0..pressure_coefficient_count],
+                scaled_lnp[pressure_index],
+            );
+        }
+
+        for (0..temperature_grid_count) |temperature_index| {
+            for (0..pressure_grid_count) |pressure_index| {
+                var prepared_line_state: ?ReferenceData.StrongLinePreparedState = null;
+                defer if (prepared_line_state) |*state| state.deinit(allocator);
+                if (source == .line_list) {
+                    prepared_line_state = try source.line_list.prepareStrongLineState(
+                        allocator,
+                        temperatures_k[temperature_index],
+                        pressures_hpa[pressure_index],
+                    );
+                }
+                for (wavelengths_nm, 0..) |wavelength_nm, wavelength_index| {
+                    samples[
+                        sampleIndex(
+                            temperature_index,
+                            pressure_index,
+                            wavelength_index,
+                            pressure_grid_count,
+                            wavelengths_nm.len,
+                        )
+                    ] = sampleSigmaAtSource(
+                        source,
+                        wavelength_nm,
+                        temperatures_k[temperature_index],
+                        pressures_hpa[pressure_index],
+                        if (prepared_line_state) |*state| state else null,
+                    );
+                }
+            }
+        }
+
+        for (wavelengths_nm, 0..) |_, wavelength_index| {
+            for (0..pressure_coefficient_count) |pressure_coefficient_index| {
+                for (0..temperature_coefficient_count) |temperature_coefficient_index| {
+                    var coefficient: f64 = 0.0;
+                    for (0..pressure_grid_count) |pressure_index| {
+                        const pressure_legendre = legendre_lnp[
+                            pressure_index * pressure_coefficient_count + pressure_coefficient_index
+                        ];
+                        for (0..temperature_grid_count) |temperature_index| {
+                            const temperature_legendre = legendre_lnT[
+                                temperature_index * temperature_coefficient_count + temperature_coefficient_index
+                            ];
+                            coefficient +=
+                                weight_scaled_lnp[pressure_index] *
+                                weight_scaled_lnT[temperature_index] *
+                                pressure_legendre *
+                                temperature_legendre *
+                                samples[
+                                    sampleIndex(
+                                        temperature_index,
+                                        pressure_index,
+                                        wavelength_index,
+                                        pressure_grid_count,
+                                        wavelengths_nm.len,
+                                    )
+                                ];
+                        }
+                    }
+                    coefficient *= (2.0 * @as(f64, @floatFromInt(pressure_coefficient_index)) + 1.0) / 2.0;
+                    coefficient *= (2.0 * @as(f64, @floatFromInt(temperature_coefficient_index)) + 1.0) / 2.0;
+                    coefficients[
+                        coefficientIndex(
+                            temperature_coefficient_index,
+                            pressure_coefficient_index,
+                            wavelength_index,
+                            temperature_coefficient_count,
+                            pressure_coefficient_count,
+                        )
+                    ] = coefficient;
+                }
+            }
+        }
+
+        const lut: OperationalCrossSectionLut = .{
+            .wavelengths_nm = try allocator.dupe(f64, wavelengths_nm),
+            .coefficients = coefficients,
+            .temperature_coefficient_count = controls.temperature_coefficient_count,
+            .pressure_coefficient_count = controls.pressure_coefficient_count,
+            .min_temperature_k = controls.min_temperature_k,
+            .max_temperature_k = controls.max_temperature_k,
+            .min_pressure_hpa = controls.min_pressure_hpa,
+            .max_pressure_hpa = controls.max_pressure_hpa,
+        };
+        errdefer allocator.free(lut.wavelengths_nm);
+        try lut.validate();
+        return lut;
     }
 
     /// Purpose:
@@ -278,12 +461,13 @@ pub const OperationalCrossSectionLut = struct {
         maximum: f64,
     ) f64 {
         _ = self;
-        const clamped = std.math.clamp(value, minimum, maximum);
+        if (!(minimum > 0.0) or !(maximum > 0.0)) return 0.0;
         const ln_max = @log(maximum);
         const ln_min = @log(minimum);
         const scale = ln_max - ln_min;
         if (scale == 0.0) return 0.0;
-        return -((ln_max + ln_min) / scale) + (2.0 * @log(clamped) / scale);
+        const safe_value = if (value > 0.0) value else minimum;
+        return -((ln_max + ln_min) / scale) + (2.0 * @log(safe_value) / scale);
     }
 
     /// Purpose:
@@ -361,7 +545,7 @@ fn fillLegendreTemperatureDerivative(
     const scale = ln_max - ln_min;
     if (scale == 0.0 or temperature_k <= 0.0) return;
 
-    const d_scaled_d_temperature = 2.0 / (scale * std.math.clamp(temperature_k, minimum_temperature_k, maximum_temperature_k));
+    const d_scaled_d_temperature = 2.0 / (scale * temperature_k);
     derivative_values[1] = 1.0;
     for (2..derivative_values.len) |index| {
         derivative_values[index] =
@@ -371,4 +555,164 @@ fn fillLegendreTemperatureDerivative(
     for (1..derivative_values.len) |index| {
         derivative_values[index] *= d_scaled_d_temperature;
     }
+}
+
+fn fillPhysicalGrid(
+    scaled_coordinates: []const f64,
+    values: []f64,
+    minimum: f64,
+    maximum: f64,
+) void {
+    const a = (@log(maximum) + @log(minimum)) * 0.5;
+    const b = (@log(maximum) - @log(minimum)) * 0.5;
+    for (scaled_coordinates, values) |scaled_coordinate, *value| {
+        value.* = @exp(a + (b * scaled_coordinate));
+    }
+}
+
+fn sampleSigmaAtSource(
+    source: GenerationSource,
+    wavelength_nm: f64,
+    temperature_k: f64,
+    pressure_hpa: f64,
+    prepared_line_state: ?*const ReferenceData.StrongLinePreparedState,
+) f64 {
+    return switch (source) {
+        .line_list => |line_list| line_list.evaluateAtPrepared(
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+            prepared_line_state,
+        ).total_sigma_cm2_per_molecule,
+        .cross_section_table => |table| table.interpolateSigma(wavelength_nm),
+        .cia_table => |table| table.sigmaAt(wavelength_nm, temperature_k),
+    };
+}
+
+fn sampleIndex(
+    temperature_index: usize,
+    pressure_index: usize,
+    wavelength_index: usize,
+    pressure_grid_count: usize,
+    wavelength_count: usize,
+) usize {
+    return temperature_index * pressure_grid_count * wavelength_count +
+        pressure_index * wavelength_count +
+        wavelength_index;
+}
+
+fn coefficientIndex(
+    temperature_coefficient_index: usize,
+    pressure_coefficient_index: usize,
+    wavelength_index: usize,
+    temperature_coefficient_count: usize,
+    pressure_coefficient_count: usize,
+) usize {
+    return wavelength_index * temperature_coefficient_count * pressure_coefficient_count +
+        pressure_coefficient_index * temperature_coefficient_count +
+        temperature_coefficient_index;
+}
+
+test "generated cross-section LUT reproduces direct table values" {
+    const wavelengths = [_]f64{ 430.0, 431.0, 432.0 };
+    const points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.0e-19 },
+        .{ .wavelength_nm = 431.0, .sigma_cm2_per_molecule = 3.0e-19 },
+        .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 4.0e-19 },
+    };
+    const table: ReferenceData.CrossSectionTable = .{ .points = @constCast(points[0..]) };
+    const lut = try OperationalCrossSectionLut.buildFromSource(
+        std.testing.allocator,
+        wavelengths[0..],
+        .{ .cross_section_table = &table },
+        .{
+            .mode = .generate,
+            .min_temperature_k = 180.0,
+            .max_temperature_k = 325.0,
+            .min_pressure_hpa = 0.03,
+            .max_pressure_hpa = 1050.0,
+            .temperature_grid_count = 6,
+            .pressure_grid_count = 8,
+            .temperature_coefficient_count = 3,
+            .pressure_coefficient_count = 4,
+        },
+    );
+    defer {
+        var owned = lut;
+        owned.deinitOwned(std.testing.allocator);
+    }
+
+    try std.testing.expectApproxEqRel(@as(f64, 3.0e-19), lut.sigmaAt(431.0, 250.0, 600.0), 1.0e-10);
+    try std.testing.expectApproxEqRel(@as(f64, 0.0), lut.dSigmaDTemperatureAt(431.0, 250.0, 600.0), 1.0e-10);
+}
+
+test "generated cross-section LUT rejects consume-mode source builds" {
+    const wavelengths = [_]f64{430.0};
+    const points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.0e-19 },
+    };
+    const table: ReferenceData.CrossSectionTable = .{ .points = @constCast(points[0..]) };
+
+    try std.testing.expectError(errors.Error.InvalidRequest, OperationalCrossSectionLut.buildFromSource(
+        std.testing.allocator,
+        wavelengths[0..],
+        .{ .cross_section_table = &table },
+        .{ .mode = .consume },
+    ));
+}
+
+test "cross-section LUT extrapolates scaled log coordinates outside configured temperature range" {
+    const lut: OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{431.0},
+        .coefficients = &[_]f64{
+            0.0,
+            1.0,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 1,
+        .min_temperature_k = 100.0,
+        .max_temperature_k = 200.0,
+        .min_pressure_hpa = 10.0,
+        .max_pressure_hpa = 1000.0,
+    };
+    try lut.validate();
+
+    const ln_span = @log(lut.max_temperature_k) - @log(lut.min_temperature_k);
+    const expected_scaled_lnT =
+        -((@log(lut.max_temperature_k) + @log(lut.min_temperature_k)) / ln_span) +
+        (2.0 * @log(@as(f64, 50.0)) / ln_span);
+    const expected_derivative = 2.0 / (ln_span * 50.0);
+
+    try std.testing.expect(expected_scaled_lnT < -1.0);
+    try std.testing.expectApproxEqRel(expected_scaled_lnT, lut.sigmaAt(431.0, 50.0, 100.0), 1.0e-12);
+    try std.testing.expectApproxEqRel(expected_derivative, lut.dSigmaDTemperatureAt(431.0, 50.0, 100.0), 1.0e-12);
+}
+
+test "cross-section LUT keeps non-positive temperature and pressure inputs finite" {
+    const lut: OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{431.0},
+        .coefficients = &[_]f64{
+            0.0,
+            1.0,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 1,
+        .min_temperature_k = 100.0,
+        .max_temperature_k = 200.0,
+        .min_pressure_hpa = 10.0,
+        .max_pressure_hpa = 1000.0,
+    };
+    try lut.validate();
+
+    const sigma = lut.sigmaAt(431.0, 0.0, 0.0);
+    const derivative = lut.dSigmaDTemperatureAt(431.0, 0.0, 0.0);
+
+    try std.testing.expect(std.math.isFinite(sigma));
+    try std.testing.expect(std.math.isFinite(derivative));
+    try std.testing.expectApproxEqRel(
+        lut.sigmaAt(431.0, lut.min_temperature_k, lut.min_pressure_hpa),
+        sigma,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), derivative, 1.0e-12);
 }
