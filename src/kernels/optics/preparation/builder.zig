@@ -23,6 +23,7 @@
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const AtmosphereModel = @import("../../../model/Atmosphere.zig");
+const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;
 const Scene = @import("../../../model/Scene.zig").Scene;
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");
@@ -137,6 +138,22 @@ fn prepareWithInputs(
     const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
     const operational_o2_lut = operational_band_support.o2_operational_lut;
     const operational_o2o2_lut = operational_band_support.o2o2_operational_lut;
+    const owned_operational_o2_lut = if (operational_o2_lut.enabled())
+        try operational_o2_lut.clone(allocator)
+    else
+        OperationalCrossSectionLut{};
+    errdefer if (owned_operational_o2_lut.enabled()) {
+        var owned = owned_operational_o2_lut;
+        owned.deinitOwned(allocator);
+    };
+    const owned_operational_o2o2_lut = if (operational_o2o2_lut.enabled())
+        try operational_o2o2_lut.clone(allocator)
+    else
+        OperationalCrossSectionLut{};
+    errdefer if (owned_operational_o2o2_lut.enabled()) {
+        var owned = owned_operational_o2o2_lut;
+        owned.deinitOwned(allocator);
+    };
     const active_line_absorbers = try Spectroscopy.collectActiveLineAbsorbers(allocator, scene);
     defer allocator.free(active_line_absorbers);
     const active_cross_section_absorbers = try Spectroscopy.collectActiveCrossSectionAbsorbers(
@@ -955,8 +972,10 @@ fn prepareWithInputs(
         .cross_section_absorbers = owned_cross_section_absorbers,
         .line_absorbers = owned_line_absorbers,
         .continuum_owner_species = continuum_owner_species,
-        .operational_o2_lut = operational_o2_lut,
-        .operational_o2o2_lut = operational_o2o2_lut,
+        .operational_o2_lut = owned_operational_o2_lut,
+        .operational_o2o2_lut = owned_operational_o2o2_lut,
+        .owns_operational_o2_lut = owned_operational_o2_lut.enabled(),
+        .owns_operational_o2o2_lut = owned_operational_o2o2_lut.enabled(),
         .mean_cross_section_cm2_per_molecule = cross_section_mean + line_means.line_mean_cross_section_cm2_per_molecule + line_means.line_mixing_mean_cross_section_cm2_per_molecule,
         .line_mean_cross_section_cm2_per_molecule = line_means.line_mean_cross_section_cm2_per_molecule,
         .line_mixing_mean_cross_section_cm2_per_molecule = line_means.line_mixing_mean_cross_section_cm2_per_molecule,

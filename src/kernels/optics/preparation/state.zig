@@ -26,6 +26,7 @@ const AtmosphereModel = @import("../../../model/Atmosphere.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;
+const LutControls = @import("../../../core/lut_controls.zig");
 const PhaseSupportKind = @import("../../../model/reference/airmass_phase.zig").PhaseSupportKind;
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const transport_common = @import("../../transport/common.zig");
@@ -288,6 +289,34 @@ pub const EvaluatedLayer = struct {
     view_mu: f64 = 1.0,
 };
 
+pub const GeneratedLutAssetKind = enum {
+    reflectance,
+    correction,
+    xsec,
+};
+
+pub const GeneratedLutAsset = struct {
+    dataset_id: []const u8 = "",
+    lut_id: []const u8 = "",
+    provenance_label: []const u8 = "",
+    kind: GeneratedLutAssetKind,
+    mode: LutControls.Mode = .direct,
+    spectral_bin_count: u32 = 0,
+    layer_count: u32 = 0,
+    coefficient_count: u32 = 0,
+    compatibility: LutControls.CompatibilityKey = .{},
+    owns_strings: bool = false,
+
+    pub fn deinitOwned(self: *GeneratedLutAsset, allocator: Allocator) void {
+        if (self.owns_strings) {
+            if (self.dataset_id.len != 0) allocator.free(self.dataset_id);
+            if (self.lut_id.len != 0) allocator.free(self.lut_id);
+            if (self.provenance_label.len != 0) allocator.free(self.provenance_label);
+        }
+        self.* = undefined;
+    }
+};
+
 /// Prepared optical state consumed by transport and measurement evaluation.
 pub const PreparedOpticalState = struct {
     layers: []PreparedLayer,
@@ -301,6 +330,8 @@ pub const PreparedOpticalState = struct {
     continuum_owner_species: ?AbsorberModel.AbsorberSpecies = null,
     operational_o2_lut: OperationalCrossSectionLut = .{},
     operational_o2o2_lut: OperationalCrossSectionLut = .{},
+    owns_operational_o2_lut: bool = false,
+    owns_operational_o2o2_lut: bool = false,
     mean_cross_section_cm2_per_molecule: f64,
     line_mean_cross_section_cm2_per_molecule: f64,
     line_mixing_mean_cross_section_cm2_per_molecule: f64,
@@ -335,6 +366,10 @@ pub const PreparedOpticalState = struct {
     cloud_phase_support: PhaseSupportKind = .none,
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
     cloud_fraction_control: AtmosphereModel.FractionControl = .{},
+    generated_lut_assets: []GeneratedLutAsset = &.{},
+    owns_generated_lut_assets: bool = false,
+    lut_execution_entries: []const []const u8 = &.{},
+    owns_lut_execution_entries: bool = false,
 
     /// Purpose:
     ///   Release the prepared optical state and all owned substructures.
@@ -369,6 +404,22 @@ pub const PreparedOpticalState = struct {
         }
         self.aerosol_fraction_control.deinitOwned(allocator);
         self.cloud_fraction_control.deinitOwned(allocator);
+        if (self.owns_operational_o2_lut) {
+            var owned = self.operational_o2_lut;
+            owned.deinitOwned(allocator);
+        }
+        if (self.owns_operational_o2o2_lut) {
+            var owned = self.operational_o2o2_lut;
+            owned.deinitOwned(allocator);
+        }
+        if (self.owns_generated_lut_assets) {
+            for (self.generated_lut_assets) |*asset| asset.deinitOwned(allocator);
+            if (self.generated_lut_assets.len != 0) allocator.free(self.generated_lut_assets);
+        }
+        if (self.owns_lut_execution_entries) {
+            for (self.lut_execution_entries) |entry| allocator.free(entry);
+            if (self.lut_execution_entries.len != 0) allocator.free(self.lut_execution_entries);
+        }
         self.* = undefined;
     }
 

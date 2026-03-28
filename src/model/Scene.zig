@@ -24,6 +24,7 @@
 const std = @import("std");
 const errors = @import("../core/errors.zig");
 const ExecutionMode = @import("../core/execution_mode.zig").ExecutionMode;
+const LutControls = @import("../core/lut_controls.zig");
 const Allocator = std.mem.Allocator;
 
 pub const LayoutRequirements = @import("LayoutRequirements.zig").LayoutRequirements;
@@ -70,6 +71,7 @@ pub const Blueprint = struct {
     observation_regime: ObservationRegime = .nadir,
     derivative_mode: DerivativeMode = .none,
     execution_mode: ExecutionMode = .synthetic,
+    lut_compatibility: LutControls.CompatibilityKey = .{},
     layer_count_hint: u32 = 0,
     state_parameter_count_hint: u32 = 0,
     measurement_count_hint: u32 = 0,
@@ -103,6 +105,7 @@ pub const Scene = struct {
     cloud: Cloud = .{},
     aerosol: Aerosol = .{},
     observation_model: ObservationModel = .{},
+    lut_controls: LutControls.Controls = .{},
 
     /// Purpose:
     ///   Validate the canonical scene and its supporting observation metadata.
@@ -120,6 +123,7 @@ pub const Scene = struct {
         try self.cloud.validate();
         try self.aerosol.validate();
         try self.observation_model.validate();
+        try self.lut_controls.validate();
         try self.observation_model.cross_section_fit.validateForBandCount(self.bands.items.len);
         const explicit_operational_band_count = self.observation_model.operational_band_support.len;
         if (self.bands.items.len != 0 and
@@ -146,6 +150,23 @@ pub const Scene = struct {
             .spectral_end_nm = self.spectral_grid.end_nm,
             .spectral_sample_count = self.spectral_grid.sample_count,
             .layer_count = self.atmosphere.preparedLayerCount(),
+        };
+    }
+
+    /// Purpose:
+    ///   Derive the scientific identity that makes scene-local LUTs reusable or incompatible.
+    pub fn lutCompatibilityKey(self: *const Scene) LutControls.CompatibilityKey {
+        return .{
+            .controls = self.lut_controls,
+            .spectral_start_nm = self.spectral_grid.start_nm,
+            .spectral_end_nm = self.spectral_grid.end_nm,
+            .solar_zenith_deg = self.geometry.solar_zenith_deg,
+            .viewing_zenith_deg = self.geometry.viewing_zenith_deg,
+            .relative_azimuth_deg = self.geometry.relative_azimuth_deg,
+            .surface_albedo = self.surface.albedo,
+            .instrument_line_fwhm_nm = self.observation_model.instrument_line_fwhm_nm,
+            .high_resolution_step_nm = self.observation_model.high_resolution_step_nm,
+            .high_resolution_half_span_nm = self.observation_model.high_resolution_half_span_nm,
         };
     }
 
@@ -200,6 +221,51 @@ test "blueprint and inverse problem expose canonical layout and validation contr
             .sample_count = 121,
         },
     }).validate();
+}
+
+test "scene derives LUT compatibility keys from geometry and instrument settings" {
+    const scene: Scene = .{
+        .id = "lut-compatibility",
+        .geometry = .{
+            .solar_zenith_deg = 60.0,
+            .viewing_zenith_deg = 30.0,
+            .relative_azimuth_deg = 120.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 758.0,
+            .end_nm = 770.0,
+            .sample_count = 121,
+        },
+        .surface = .{
+            .kind = .lambertian,
+            .albedo = 0.2,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .instrument_line_fwhm_nm = 0.38,
+            .high_resolution_step_nm = 0.01,
+            .high_resolution_half_span_nm = 1.14,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 10,
+                .pressure_grid_count = 20,
+                .temperature_coefficient_count = 5,
+                .pressure_coefficient_count = 10,
+            },
+        },
+    };
+
+    const key = scene.lutCompatibilityKey();
+    try key.validate();
+    try std.testing.expectEqual(LutControls.Mode.generate, key.controls.xsec.mode);
+    try std.testing.expectEqual(@as(f64, 120.0), key.relative_azimuth_deg);
+    try std.testing.expectEqual(@as(f64, 0.38), key.instrument_line_fwhm_nm);
 }
 
 test "scene accepts canonical bands absorbers and supporting observation metadata" {

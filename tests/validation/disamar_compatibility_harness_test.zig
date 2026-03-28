@@ -170,6 +170,29 @@ fn meanAbsoluteDifference(values_a: []const f64, values_b: []const f64) f64 {
     return sum / @as(f64, @floatFromInt(values_a.len));
 }
 
+fn hasLutExecutionLabel(entries: []const []const u8, expected: []const u8) bool {
+    for (entries) |entry| {
+        if (std.mem.eql(u8, entry, expected)) return true;
+    }
+    return false;
+}
+
+fn generatedXsecLutControls() zdisamar.LutControls {
+    return .{
+        .xsec = .{
+            .mode = .generate,
+            .min_temperature_k = 180.0,
+            .max_temperature_k = 325.0,
+            .min_pressure_hpa = 0.03,
+            .max_pressure_hpa = 1050.0,
+            .temperature_grid_count = 6,
+            .pressure_grid_count = 8,
+            .temperature_coefficient_count = 3,
+            .pressure_coefficient_count = 4,
+        },
+    };
+}
+
 fn expectBoundedO2AMorphology(
     wavelengths_nm: []const f64,
     reflectance: []const f64,
@@ -232,6 +255,20 @@ const no2_fixture_points = [_]ReferenceData.CrossSectionPoint{
 const no2_fixture_profile_ppmv = [_][2]f64{
     .{ 1000.0, 0.12 },
     .{ 450.0, 0.05 },
+};
+const o2a_lut_fixture_absorbers = [_]zdisamar.Absorber{
+    .{
+        .id = "o2",
+        .species = "o2",
+        .profile_source = .atmosphere,
+        .spectroscopy = .{ .mode = .line_by_line },
+    },
+    .{
+        .id = "o2o2",
+        .species = "o2_o2",
+        .profile_source = .atmosphere,
+        .spectroscopy = .{ .mode = .cia },
+    },
 };
 const no2_domino_fixture_absorbers = [_]zdisamar.Absorber{
     .{
@@ -676,6 +713,28 @@ fn makeSceneForCase(case: ParityCase, regime: zdisamar.ObservationRegime) zdisam
     applySceneFixture(&scene, case) catch unreachable;
 
     return scene;
+}
+
+fn executeMeasurementSceneResult(
+    engine: *zdisamar.Engine,
+    scene: zdisamar.Scene,
+    workspace_label: []const u8,
+) !zdisamar.Result {
+    var plan = try engine.preparePlan(.{
+        .scene_blueprint = .{
+            .id = scene.id,
+            .observation_regime = scene.observation_model.regime,
+            .spectral_grid = scene.spectral_grid,
+            .layer_count_hint = scene.atmosphere.layer_count,
+            .measurement_count_hint = scene.spectral_grid.sample_count,
+            .lut_compatibility = scene.lutCompatibilityKey(),
+        },
+    });
+    defer plan.deinit();
+
+    var workspace = engine.createWorkspace(workspace_label);
+    var request = zdisamar.Request.init(scene);
+    return try engine.execute(&plan, &workspace, &request);
 }
 
 fn expectPreparedRouteRtmControls() !void {
@@ -1624,6 +1683,136 @@ test "compatibility harness classifies operational measured-input S5P flows dist
     try std.testing.expect(std.mem.indexOf(u8, result.provenance.operational_replacement_entries[0], "o2_lut") != null);
 }
 
+fn expectO2AXsecLutParity() !void {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const case = ParityCase{
+        .id = "compat-o2a-xseclut-direct",
+        .component = "measurement_space",
+        .upstream_case = "InputFiles/Config_O2A_XsecLUT.in",
+        .runtime_profile = .{
+            .observation_regime = "nadir",
+            .solver_mode = "scalar",
+            .derivative_mode = "none",
+            .spectral_samples = 25,
+        },
+        .expected_route_family = "baseline_labos",
+        .expected_derivative_mode = "none",
+        .status = "measurement_space_contract",
+        .spectral_start_nm = 760.8,
+        .spectral_end_nm = 771.5,
+        .has_aerosols = false,
+        .use_o2a_spectroscopy = true,
+        .tolerances = .{ .absolute = 1.5e-3, .relative = 2.0e-4 },
+    };
+
+    var direct_scene = makeSceneForCase(case, .nadir);
+    direct_scene.absorbers.items = o2a_lut_fixture_absorbers[0..];
+    var generated_scene = direct_scene;
+    generated_scene.id = "compat-o2a-xseclut-generated";
+    generated_scene.lut_controls = generatedXsecLutControls();
+
+    var direct_result = try executeMeasurementSceneResult(
+        &engine,
+        direct_scene,
+        "compat-o2a-xseclut-direct",
+    );
+    defer direct_result.deinit(std.testing.allocator);
+    var generated_result = try executeMeasurementSceneResult(
+        &engine,
+        generated_scene,
+        "compat-o2a-xseclut-generated",
+    );
+    defer generated_result.deinit(std.testing.allocator);
+
+    const direct_product = direct_result.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const generated_product = generated_result.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const reflectance_delta = meanAbsoluteDifference(direct_product.reflectance, generated_product.reflectance);
+
+    try std.testing.expect(hasLutExecutionLabel(direct_result.provenance.lut_execution_entries, "o2:xsec:direct"));
+    try std.testing.expect(hasLutExecutionLabel(direct_result.provenance.lut_execution_entries, "o2o2:xsec:direct"));
+    try std.testing.expect(hasLutExecutionLabel(generated_result.provenance.lut_execution_entries, "o2:xsec_lut:generated"));
+    try std.testing.expect(hasLutExecutionLabel(generated_result.provenance.lut_execution_entries, "o2o2:xsec_lut:generated"));
+    try std.testing.expect(reflectance_delta <= case.tolerances.absolute);
+    try expectBoundedO2AMorphology(direct_product.wavelengths, direct_product.reflectance);
+    try expectBoundedO2AMorphology(generated_product.wavelengths, generated_product.reflectance);
+    try std.testing.expect(
+        engine.lut_cache.getCompatible(
+            "generated.xsec.o2",
+            generated_scene.id,
+            generated_scene.lutCompatibilityKey(),
+        ) != null,
+    );
+}
+
+test "compatibility harness keeps Config_O2A_XsecLUT direct and generated runs within bounded parity" {
+    try expectO2AXsecLutParity();
+}
+
+fn expectNo2LutParity() !void {
+    var engine = zdisamar.Engine.init(std.testing.allocator, .{});
+    defer engine.deinit();
+    try engine.bootstrapBuiltinCatalog();
+
+    const case = ParityCase{
+        .id = "compat-no2-domino-direct",
+        .component = "measurement_space",
+        .upstream_case = "InputFiles/Config_NO2_DOMINO.in",
+        .runtime_profile = .{
+            .observation_regime = "nadir",
+            .solver_mode = "scalar",
+            .derivative_mode = "none",
+            .spectral_samples = 49,
+        },
+        .expected_route_family = "baseline_labos",
+        .expected_derivative_mode = "none",
+        .status = "measurement_space_contract",
+        .scene_fixture = "no2_domino_cross_sections",
+        .spectral_start_nm = 405.0,
+        .spectral_end_nm = 465.0,
+        .tolerances = .{ .absolute = 1.0e-10, .relative = 1.0e-10 },
+    };
+
+    const direct_scene = makeSceneForCase(case, .nadir);
+    var generated_scene = direct_scene;
+    generated_scene.id = "compat-no2-domino-generated";
+    generated_scene.lut_controls = generatedXsecLutControls();
+
+    var direct_result = try executeMeasurementSceneResult(
+        &engine,
+        direct_scene,
+        "compat-no2-domino-direct",
+    );
+    defer direct_result.deinit(std.testing.allocator);
+    var generated_result = try executeMeasurementSceneResult(
+        &engine,
+        generated_scene,
+        "compat-no2-domino-generated",
+    );
+    defer generated_result.deinit(std.testing.allocator);
+
+    const direct_product = direct_result.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const generated_product = generated_result.measurement_space_product orelse return error.MissingMeasurementProduct;
+    const reflectance_delta = meanAbsoluteDifference(direct_product.reflectance, generated_product.reflectance);
+
+    try std.testing.expect(hasLutExecutionLabel(direct_result.provenance.lut_execution_entries, "no2:xsec:direct"));
+    try std.testing.expect(hasLutExecutionLabel(generated_result.provenance.lut_execution_entries, "no2:xsec_lut:generated"));
+    try std.testing.expect(reflectance_delta <= case.tolerances.absolute);
+    try std.testing.expect(
+        engine.lut_cache.getCompatible(
+            "generated.xsec.no2",
+            generated_scene.id,
+            generated_scene.lutCompatibilityKey(),
+        ) != null,
+    );
+}
+
+test "compatibility harness keeps non-o2 LUT-backed NO2 parity within bounded tolerance" {
+    try expectNo2LutParity();
+}
+
 test "compatibility harness executes the full parity matrix against vendor anchors" {
     var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa_state.deinit() == .ok);
@@ -1640,4 +1829,6 @@ test "compatibility harness executes the full parity matrix against vendor ancho
     try std.testing.expectEqual(result.expected.optics, result.executed.optics);
     try expectPreparedRouteRtmControls();
     try expectBoundedVendorAsciiHdfDiagnostics();
+    try expectO2AXsecLutParity();
+    try expectNo2LutParity();
 }

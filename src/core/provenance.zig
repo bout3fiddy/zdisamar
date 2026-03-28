@@ -69,6 +69,7 @@ pub const Provenance = struct {
     native_entry_symbols: []const []const u8 = &.{},
     native_library_paths: []const []const u8 = &.{},
     operational_replacement_entries: []const []const u8 = &.{},
+    lut_execution_entries: []const []const u8 = &.{},
     owns_entries: bool = false,
 
     /// Purpose:
@@ -152,6 +153,7 @@ pub const Provenance = struct {
             .native_entry_symbols = native_entry_symbols,
             .native_library_paths = native_library_paths,
             .operational_replacement_entries = &.{},
+            .lut_execution_entries = &.{},
             .owns_entries = true,
         };
     }
@@ -181,6 +183,7 @@ pub const Provenance = struct {
         freeStringSlice(allocator, self.native_entry_symbols);
         freeStringSlice(allocator, self.native_library_paths);
         freeStringSlice(allocator, self.operational_replacement_entries);
+        freeStringSlice(allocator, self.lut_execution_entries);
         allocator.free(self.model_family);
         allocator.free(self.solver_route);
         allocator.free(self.transport_family);
@@ -253,6 +256,24 @@ pub const Provenance = struct {
             self.operational_replacement_entries = replacement_entries;
         }
         self.operational_band_count = operational_band_count;
+    }
+
+    /// Purpose:
+    ///   Record whether the runtime executed direct or LUT-backed spectroscopy/correction paths.
+    pub fn annotateLutExecution(
+        self: *Provenance,
+        allocator: std.mem.Allocator,
+        entries: []const []const u8,
+    ) !void {
+        if (self.owns_entries) {
+            const owned_entries = try dupeStringSlice(allocator, entries);
+            errdefer freeStringSlice(allocator, owned_entries);
+
+            freeStringSlice(allocator, self.lut_execution_entries);
+            self.lut_execution_entries = owned_entries;
+        } else {
+            self.lut_execution_entries = entries;
+        }
     }
 };
 

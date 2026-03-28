@@ -109,6 +109,16 @@ pub const Engine = struct {
         try self.lut_cache.upsert(dataset_id, lut_id, shape);
     }
 
+    pub fn registerLUTArtifactWithCompatibility(
+        self: *Engine,
+        dataset_id: []const u8,
+        lut_id: []const u8,
+        shape: LUTCache.Shape,
+        compatibility: @import("lut_controls.zig").CompatibilityKey,
+    ) !void {
+        try self.lut_cache.upsertWithCompatibility(dataset_id, lut_id, shape, compatibility);
+    }
+
     pub fn preparePlan(self: *Engine, template: PlanModule.Template) errors.PreparationError!PreparedPlan {
         var context = Preparation.Context{
             .allocator = self.allocator,
@@ -157,7 +167,7 @@ pub const Engine = struct {
         // DECISION:
         //   Forward products are always materialized before retrieval so retrieval providers see
         //   the same typed measurement-space preparation path as direct forward requests.
-        try ForwardExecution.executeForwardProducts(self.allocator, plan, request, &result);
+        try ForwardExecution.executeForwardProducts(self.allocator, &self.lut_cache, plan, request, &result);
         try RetrievalExecution.execute(self.allocator, plan, request, &result);
         result.diagnostics = plan.providers.diagnostics.materialize(
             request.diagnostics,

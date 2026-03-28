@@ -26,6 +26,7 @@ const std = @import("std");
 const yaml = @import("yaml.zig");
 const fields = @import("document_fields.zig");
 const yaml_helpers = @import("document_yaml_helpers.zig");
+const LutControls = @import("../../core/lut_controls.zig");
 const PlanTemplate = @import("../../core/Plan.zig").Template;
 const SolverMode = @import("../../core/Plan.zig").SolverMode;
 const DiagnosticsSpec = @import("../../core/diagnostics.zig").DiagnosticsSpec;
@@ -292,6 +293,26 @@ pub const AdditionalOutputConfig = struct {
 /// Typed representation of the vendor GENERAL section.
 /// Only fields with exact/approximate parity status are included.
 pub const GeneralConfig = struct {
+    pub const CreateLut = struct {
+        reflectance_mode: LutControls.Mode = .direct,
+        correction_mode: LutControls.Mode = .direct,
+        use_chandra_formula: bool = false,
+        surface_albedo: f64 = 0.0,
+    };
+
+    pub const CreateXsecLut = struct {
+        mode: ?LutControls.Mode = null,
+        create_xsec_poly_lut: bool = false,
+        min_temperature_k: f64 = 0.0,
+        max_temperature_k: f64 = 0.0,
+        min_pressure_hpa: f64 = 0.0,
+        max_pressure_hpa: f64 = 0.0,
+        pressure_grid_count: u8 = 0,
+        temperature_grid_count: u8 = 0,
+        pressure_coefficient_count: u8 = 0,
+        temperature_coefficient_count: u8 = 0,
+    };
+
     // Counts (approximate -- derived from list lengths in Zig)
     number_spectral_bands: ?u32 = null,
     number_trace_gases: ?u32 = null,
@@ -323,6 +344,8 @@ pub const GeneralConfig = struct {
     solar_irr_file_retr: ?[]const u8 = null,
     temperature_climatology: ?[]const u8 = null,
     ozone_climatology: ?[]const u8 = null,
+    create_lut: CreateLut = .{},
+    create_xsec_lut: CreateXsecLut = .{},
 };
 
 /// Typed representation of the vendor INSTRUMENT section.
@@ -979,6 +1002,10 @@ const ResolveContext = struct {
         stage.absorbing_gas = try decodeAbsorbingGasConfig(self.allocator, mapGet(stage_map, "absorbing_gas"), self.strict_unknown_fields);
         try applyAbsorbingGasConfigToScene(self.allocator, kind, stage.absorbing_gas, &stage.scene);
         stage.plan.scene_blueprint.layer_count_hint = stage.scene.atmosphere.preparedLayerCount();
+        stage.plan.scene_blueprint.id = stage.scene.id;
+        stage.plan.scene_blueprint.spectral_grid = stage.scene.spectral_grid;
+        stage.plan.scene_blueprint.observation_regime = stage.scene.observation_model.regime;
+        stage.plan.scene_blueprint.lut_compatibility = stage.scene.lutCompatibilityKey();
 
         try ensureDistinctProducts(stage.products);
         try stage.plan.validate();
@@ -2226,6 +2253,8 @@ fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !
         "solar_irr_file_retr",
         "temperature_climatology",
         "ozone_climatology",
+        "create_lut",
+        "create_xsec_lut",
     }, strict);
 
     var gc: GeneralConfig = .{};
@@ -2255,7 +2284,61 @@ fn decodeGeneralConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !
     if (mapGet(gc_map, "solar_irr_file_retr")) |v| gc.solar_irr_file_retr = try expectString(v);
     if (mapGet(gc_map, "temperature_climatology")) |v| gc.temperature_climatology = try expectString(v);
     if (mapGet(gc_map, "ozone_climatology")) |v| gc.ozone_climatology = try expectString(v);
+    if (mapGet(gc_map, "create_lut")) |v| gc.create_lut = try decodeCreateLutConfig(v, strict);
+    if (mapGet(gc_map, "create_xsec_lut")) |v| gc.create_xsec_lut = try decodeCreateXsecLutConfig(v, strict);
     return gc;
+}
+
+fn decodeCreateLutConfig(value: yaml.Value, strict: bool) !GeneralConfig.CreateLut {
+    const config_map = try expectMap(value);
+    try ensureKnownFields(config_map, &.{
+        "reflectance_mode",
+        "correction_mode",
+        "use_chandra_formula",
+        "surface_albedo",
+    }, strict);
+
+    var config: GeneralConfig.CreateLut = .{};
+    if (mapGet(config_map, "reflectance_mode")) |v| {
+        config.reflectance_mode = LutControls.Mode.parse(try expectString(v)) orelse return Error.InvalidValue;
+    }
+    if (mapGet(config_map, "correction_mode")) |v| {
+        config.correction_mode = LutControls.Mode.parse(try expectString(v)) orelse return Error.InvalidValue;
+    }
+    if (mapGet(config_map, "use_chandra_formula")) |v| config.use_chandra_formula = try expectBool(v);
+    if (mapGet(config_map, "surface_albedo")) |v| config.surface_albedo = try expectF64(v);
+    return config;
+}
+
+fn decodeCreateXsecLutConfig(value: yaml.Value, strict: bool) !GeneralConfig.CreateXsecLut {
+    const config_map = try expectMap(value);
+    try ensureKnownFields(config_map, &.{
+        "mode",
+        "create_xsec_poly_lut",
+        "min_temperature_k",
+        "max_temperature_k",
+        "min_pressure_hpa",
+        "max_pressure_hpa",
+        "pressure_grid_count",
+        "temperature_grid_count",
+        "pressure_coefficient_count",
+        "temperature_coefficient_count",
+    }, strict);
+
+    var config: GeneralConfig.CreateXsecLut = .{};
+    if (mapGet(config_map, "mode")) |v| {
+        config.mode = LutControls.Mode.parse(try expectString(v)) orelse return Error.InvalidValue;
+    }
+    if (mapGet(config_map, "create_xsec_poly_lut")) |v| config.create_xsec_poly_lut = try expectBool(v);
+    if (mapGet(config_map, "min_temperature_k")) |v| config.min_temperature_k = try expectF64(v);
+    if (mapGet(config_map, "max_temperature_k")) |v| config.max_temperature_k = try expectF64(v);
+    if (mapGet(config_map, "min_pressure_hpa")) |v| config.min_pressure_hpa = try expectF64(v);
+    if (mapGet(config_map, "max_pressure_hpa")) |v| config.max_pressure_hpa = try expectF64(v);
+    if (mapGet(config_map, "pressure_grid_count")) |v| config.pressure_grid_count = @intCast(try expectU64(v));
+    if (mapGet(config_map, "temperature_grid_count")) |v| config.temperature_grid_count = @intCast(try expectU64(v));
+    if (mapGet(config_map, "pressure_coefficient_count")) |v| config.pressure_coefficient_count = @intCast(try expectU64(v));
+    if (mapGet(config_map, "temperature_coefficient_count")) |v| config.temperature_coefficient_count = @intCast(try expectU64(v));
+    return config;
 }
 
 fn decodeInstrumentConfig(allocator: Allocator, value: ?yaml.Value, strict: bool) !?InstrumentConfig {
@@ -3198,6 +3281,47 @@ fn applyGeneralConfigToObservationModel(
         },
         .xsec_strong_absorption_bands = owned_strong_absorption_bands,
         .polynomial_degree_bands = owned_polynomial_degree_bands,
+    };
+
+    const use_polynomial_expansion = switch (kind) {
+        .simulation => general.use_poly_exp_xsec_sim,
+        .retrieval => general.use_poly_exp_xsec_retr,
+    };
+    const derived_xsec_mode = blk: {
+        if (!use_polynomial_expansion) {
+            if (general.create_xsec_lut.mode) |mode| {
+                if (mode != .direct) return Error.InvalidValue;
+            }
+            break :blk LutControls.Mode.direct;
+        }
+        if (general.create_xsec_lut.mode) |mode| break :blk mode;
+        break :blk if (general.create_xsec_lut.create_xsec_poly_lut)
+            LutControls.Mode.generate
+        else
+            LutControls.Mode.consume;
+    };
+
+    scene.lut_controls = .{
+        .reflectance = .{
+            .reflectance_mode = general.create_lut.reflectance_mode,
+            .correction_mode = general.create_lut.correction_mode,
+            .use_chandra_formula = general.create_lut.use_chandra_formula,
+            .surface_albedo = if (general.create_lut.surface_albedo > 0.0)
+                general.create_lut.surface_albedo
+            else
+                scene.surface.albedo,
+        },
+        .xsec = .{
+            .mode = derived_xsec_mode,
+            .min_temperature_k = general.create_xsec_lut.min_temperature_k,
+            .max_temperature_k = general.create_xsec_lut.max_temperature_k,
+            .min_pressure_hpa = general.create_xsec_lut.min_pressure_hpa,
+            .max_pressure_hpa = general.create_xsec_lut.max_pressure_hpa,
+            .temperature_grid_count = general.create_xsec_lut.temperature_grid_count,
+            .pressure_grid_count = general.create_xsec_lut.pressure_grid_count,
+            .temperature_coefficient_count = general.create_xsec_lut.temperature_coefficient_count,
+            .pressure_coefficient_count = general.create_xsec_lut.pressure_coefficient_count,
+        },
     };
 }
 

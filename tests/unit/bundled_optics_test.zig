@@ -112,6 +112,94 @@ test "runtime bundled optics skips visible line and cia defaults for explicit cr
     try std.testing.expect(prepared.gas_optical_depth > 0.0);
 }
 
+test "runtime bundled optics replaces explicit cross-section tables when generating LUTs" {
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.8e-19 },
+        .{ .wavelength_nm = 420.0, .sigma_cm2_per_molecule = 3.4e-19 },
+        .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 2.2e-19 },
+        .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 1.7e-19 },
+        .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.1e-19 },
+    };
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-cross-sections-generate-lut",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = 48,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "vis-no2",
+                    .start_nm = 405.0,
+                    .end_nm = 465.0,
+                    .step_nm = 1.25,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = 2,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), prepared.cross_section_absorbers.len);
+    try std.testing.expectEqual(
+        OpticsPrepare.state.CrossSectionRepresentationKind.effective_lut,
+        prepared.cross_section_absorbers[0].representation_kind,
+    );
+    try std.testing.expectEqual(@as(usize, 1), prepared.generated_lut_assets.len);
+    try std.testing.expectEqualStrings("no2:xsec_lut:generated", prepared.generated_lut_assets[0].provenance_label);
+}
+
 test "runtime bundled optics keeps visible bundled line fallback for implicit absorbers" {
     const scene: zdisamar.Scene = .{
         .id = "runtime-visible-implicit-absorbers",

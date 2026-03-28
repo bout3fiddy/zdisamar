@@ -333,6 +333,13 @@ pub const Request = struct {
         {
             return errors.Error.InvalidRequest;
         }
+        if (plan.prepared_layout.lut_compatibility.enabled()) {
+            const request_lut_compatibility = self.scene.lutCompatibilityKey();
+            try request_lut_compatibility.validate();
+            if (!request_lut_compatibility.matches(plan.prepared_layout.lut_compatibility)) {
+                return errors.Error.InvalidRequest;
+            }
+        }
     }
 
     /// Purpose:

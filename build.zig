@@ -299,6 +299,22 @@ pub fn build(b: *std.Build) void {
         "Run non-compatibility validation asset suite",
         "tests/validation/main.zig",
     );
+    _ = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-lut-assets",
+        "Run focused WP-08 LUT asset provenance and cache checks",
+        "tests/validation/main.zig",
+        &.{
+            "generated LUT assets register typed cache entries and provenance labels",
+            "consume-mode LUT execution records provenance without creating cache entries",
+        },
+    );
     const run_validation_compatibility = addSuiteRunStep(
         b,
         target,
@@ -399,6 +415,22 @@ pub fn build(b: *std.Build) void {
         "tests/validation/disamar_compatibility_harness_test.zig",
         &.{
             "compatibility harness classifies operational measured-input S5P flows distinctly from synthetic scenes",
+        },
+    );
+    _ = addSuiteRunStepWithArgs(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-compatibility-lut-parity",
+        "Run WP-08 direct-vs-LUT compatibility parity checks",
+        "tests/validation/disamar_compatibility_harness_test.zig",
+        &.{
+            "compatibility harness keeps Config_O2A_XsecLUT direct and generated runs within bounded parity",
+            "compatibility harness keeps non-o2 LUT-backed NO2 parity within bounded tolerance",
         },
     );
     const run_validation_compatibility_full = addSuiteRunStepWithArgs(
