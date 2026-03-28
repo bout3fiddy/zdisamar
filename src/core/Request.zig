@@ -281,11 +281,22 @@ pub const Request = struct {
             .operational_measured_input => {
                 const measured_input = self.measured_input orelse return errors.Error.InvalidRequest;
                 try measured_input.validate();
-                if (self.scene.observation_model.operationalBandCount() == 0) {
+                const observation_model = self.scene.observation_model;
+                if (observation_model.operationalBandCount() == 0) {
                     return errors.Error.InvalidRequest;
                 }
-                if (self.scene.observation_model.measured_wavelengths_nm.len != 0 and
-                    !std.mem.eql(f64, self.scene.observation_model.measured_wavelengths_nm, measured_input.radiance.wavelengths_nm))
+                if ((observation_model.measured_wavelengths_nm.len != 0 and
+                    !floatSlicesEqual(observation_model.measured_wavelengths_nm, measured_input.radiance.wavelengths_nm)) or
+                    !floatSlicesEqual(observation_model.reference_radiance, measured_input.radiance.values) or
+                    !floatSlicesEqual(observation_model.ingested_noise_sigma, measured_input.radiance.noise_sigma))
+                {
+                    return errors.Error.InvalidRequest;
+                }
+                const radiance_noise = observation_model.resolvedChannelControls(.radiance).noise;
+                if ((radiance_noise.reference_signal.len != 0 and
+                    !floatSlicesEqual(radiance_noise.reference_signal, measured_input.radiance.values)) or
+                    (radiance_noise.reference_sigma.len != 0 and
+                        !floatSlicesEqual(radiance_noise.reference_sigma, measured_input.radiance.noise_sigma)))
                 {
                     return errors.Error.InvalidRequest;
                 }
@@ -364,3 +375,7 @@ pub const Request = struct {
         self.* = undefined;
     }
 };
+
+fn floatSlicesEqual(lhs: []const f64, rhs: []const f64) bool {
+    return std.mem.eql(u8, std.mem.sliceAsBytes(lhs), std.mem.sliceAsBytes(rhs));
+}

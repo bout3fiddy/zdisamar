@@ -58,6 +58,22 @@ test "spectral ascii ingest bridges vendor-style input into typed measurement an
     try std.testing.expectApproxEqRel(request.scene.observation_model.ingested_noise_sigma[1], copied_sigma[1], 1.0e-12);
 }
 
+test "operational measured-input requests reject scene-side measurement drift" {
+    var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
+        std.testing.allocator,
+        "data/examples/irr_rad_channels_demo.txt",
+    );
+    defer loaded.deinit(std.testing.allocator);
+
+    var request = try loaded.toRequest(std.testing.allocator, "drift-check-scene", &[_]zdisamar.RequestedProduct{
+        .fromName("radiance"),
+    });
+    defer request.deinitOwned(std.testing.allocator);
+
+    @constCast(request.scene.observation_model.reference_radiance)[0] += 1.0;
+    try std.testing.expectError(error.InvalidRequest, request.validate());
+}
+
 test "spectral ascii ingest preserves explicit high-resolution grid and isrf table metadata" {
     var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
         std.testing.allocator,

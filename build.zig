@@ -583,6 +583,7 @@ pub fn build(b: *std.Build) void {
     transport_step.dependOn(run_unit_suite.run_step);
     transport_step.dependOn(run_integration_forward_model.run_step);
     transport_step.dependOn(run_validation_compatibility_transport_measurement.run_step);
+    transport_step.dependOn(run_validation_compatibility_operational_measured_input.run_step);
     transport_step.dependOn(run_validation_o2a.run_step);
 
     const test_suites_step = b.step("test-suites", "Run all verification suites");

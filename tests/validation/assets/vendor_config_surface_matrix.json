@@ -129,7 +129,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Measured reflectance from file; operational workflow unsupported until WP-07"
+    "notes": "Measured reflectance from file; operational workflow still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -261,7 +261,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Reference radiance file for operational workflows; unsupported until WP-07"
+    "notes": "Reference radiance file for operational workflows; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -276,7 +276,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "OMI-specific ASCII input file; unsupported until WP-07"
+    "notes": "OMI-specific ASCII input file; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -291,7 +291,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "External reflectance file; operational workflow unsupported until WP-07"
+    "notes": "External reflectance file; operational workflow still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1458,7 +1458,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1473,7 +1473,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1488,7 +1488,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1503,7 +1503,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1518,7 +1518,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1533,7 +1533,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1548,7 +1548,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1563,7 +1563,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1578,7 +1578,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1593,7 +1593,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1608,7 +1608,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1623,7 +1623,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1638,7 +1638,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1653,7 +1653,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "GENERAL",
@@ -1668,7 +1668,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Operational mode external data; unsupported until WP-07"
+    "notes": "Operational mode external data; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "INSTRUMENT",
@@ -4660,7 +4660,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Latitude for PT climatology lookup; unsupported until WP-07"
+    "notes": "Latitude for PT climatology lookup; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4682,7 +4682,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Month for PT climatology lookup; unsupported until WP-07"
+    "notes": "Month for PT climatology lookup; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -4704,7 +4704,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Day for PT climatology lookup; unsupported until WP-07"
+    "notes": "Day for PT climatology lookup; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "PRESSURE_TEMPERATURE",
@@ -5056,7 +5056,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Latitude for gas climatology lookup; unsupported until WP-07"
+    "notes": "Latitude for gas climatology lookup; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5078,7 +5078,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Month for gas climatology lookup; unsupported until WP-07"
+    "notes": "Month for gas climatology lookup; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "ABSORBING_GAS",
@@ -5100,7 +5100,7 @@
     "zig_yaml_path": null,
     "status": "unsupported",
     "runtime_consumer": null,
-    "notes": "Day for gas climatology lookup; unsupported until WP-07"
+    "notes": "Day for gas climatology lookup; still unsupported after WP-07 for canonical YAML/config parity"
   },
   {
     "section": "ABSORBING_GAS",
