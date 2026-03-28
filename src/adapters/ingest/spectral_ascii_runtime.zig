@@ -389,34 +389,28 @@ fn buildMeasuredInput(
     radiance_kind: anytype,
     irradiance_kind: anytype,
 ) !Request.MeasuredInput {
-    const radiance_wavelengths = try wavelengthsForKind(allocator, loaded, radiance_kind);
-    errdefer if (radiance_wavelengths.len != 0) allocator.free(radiance_wavelengths);
-    const radiance_values = try channelValuesForKind(allocator, loaded, radiance_kind);
-    errdefer if (radiance_values.len != 0) allocator.free(radiance_values);
-    const radiance_sigma = try noiseSigmaForKind(allocator, loaded, radiance_kind);
-    errdefer if (radiance_sigma.len != 0) allocator.free(radiance_sigma);
-
     var measured_input: Request.MeasuredInput = .{
         .source_name = try allocator.dupe(u8, source_name),
         .owns_source_name = true,
         .radiance = .{
             .observable = .radiance,
-            .wavelengths_nm = radiance_wavelengths,
-            .values = radiance_values,
-            .noise_sigma = radiance_sigma,
             .owns_memory = true,
         },
     };
     errdefer measured_input.deinitOwned(allocator);
 
+    measured_input.radiance.wavelengths_nm = try wavelengthsForKind(allocator, loaded, radiance_kind);
+    measured_input.radiance.values = try channelValuesForKind(allocator, loaded, radiance_kind);
+    measured_input.radiance.noise_sigma = try noiseSigmaForKind(allocator, loaded, radiance_kind);
+
     if (channelCount(loaded, irradiance_kind) != 0) {
         measured_input.irradiance = .{
             .observable = .irradiance,
-            .wavelengths_nm = try wavelengthsForKind(allocator, loaded, irradiance_kind),
-            .values = try channelValuesForKind(allocator, loaded, irradiance_kind),
-            .noise_sigma = try noiseSigmaForKind(allocator, loaded, irradiance_kind),
             .owns_memory = true,
         };
+        measured_input.irradiance.?.wavelengths_nm = try wavelengthsForKind(allocator, loaded, irradiance_kind);
+        measured_input.irradiance.?.values = try channelValuesForKind(allocator, loaded, irradiance_kind);
+        measured_input.irradiance.?.noise_sigma = try noiseSigmaForKind(allocator, loaded, irradiance_kind);
     }
 
     return measured_input;
@@ -432,19 +426,23 @@ fn buildOperationalBandSupport(
         return ParseError.InvalidLine;
     }
 
-    return .{
+    var band_support: OperationalBandSupport = .{
         .id = try allocator.dupe(u8, band_id),
         .owns_id = true,
         .high_resolution_step_nm = metadata.high_resolution_step_nm orelse 0.0,
         .high_resolution_half_span_nm = metadata.high_resolution_half_span_nm orelse 0.0,
-        .instrument_line_shape = try metadata.instrument_line_shape.clone(allocator),
-        .instrument_line_shape_table = try metadata.instrument_line_shape_table.clone(allocator),
-        .operational_refspec_grid = try metadata.operational_refspec_grid.clone(allocator),
-        .operational_solar_spectrum = if (metadata.operational_solar_spectrum.enabled())
-            try metadata.operational_solar_spectrum.clone(allocator)
-        else
-            try fallback_solar.clone(allocator),
-        .o2_operational_lut = try metadata.o2_operational_lut.clone(allocator),
-        .o2o2_operational_lut = try metadata.o2o2_operational_lut.clone(allocator),
     };
+    errdefer band_support.deinitOwned(allocator);
+
+    band_support.instrument_line_shape = try metadata.instrument_line_shape.clone(allocator);
+    band_support.instrument_line_shape_table = try metadata.instrument_line_shape_table.clone(allocator);
+    band_support.operational_refspec_grid = try metadata.operational_refspec_grid.clone(allocator);
+    band_support.operational_solar_spectrum = if (metadata.operational_solar_spectrum.enabled())
+        try metadata.operational_solar_spectrum.clone(allocator)
+    else
+        try fallback_solar.clone(allocator);
+    band_support.o2_operational_lut = try metadata.o2_operational_lut.clone(allocator);
+    band_support.o2o2_operational_lut = try metadata.o2o2_operational_lut.clone(allocator);
+
+    return band_support;
 }

@@ -59,10 +59,11 @@ pub const OperationalSolarSpectrum = struct {
     /// Purpose:
     ///   Clone the spectrum into owned storage.
     pub fn clone(self: OperationalSolarSpectrum, allocator: Allocator) !OperationalSolarSpectrum {
-        return .{
-            .wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm),
-            .irradiance = try allocator.dupe(f64, self.irradiance),
-        };
+        var cloned: OperationalSolarSpectrum = .{};
+        cloned.wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm);
+        errdefer allocator.free(cloned.wavelengths_nm);
+        cloned.irradiance = try allocator.dupe(f64, self.irradiance);
+        return cloned;
     }
 
     /// Purpose:

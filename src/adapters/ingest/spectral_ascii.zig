@@ -256,16 +256,27 @@ pub fn parse(allocator: std.mem.Allocator, contents: []const u8) !LoadedSpectra 
     if (legacy_mode or current_builder_index != null) return ParseError.UnclosedSection;
     if (!saw_channel or builders.items.len == 0) return ParseError.MissingChannels;
 
+    const metadata = try metadata_state.intoOwned(allocator);
+    errdefer {
+        var owned = metadata;
+        owned.deinitOwned(allocator);
+    }
+
     const channels = try allocator.alloc(Channel, builders.items.len);
     errdefer allocator.free(channels);
+
+    var built_channels: usize = 0;
+    errdefer {
+        for (channels[0..built_channels]) |channel| allocator.free(channel.samples);
+    }
 
     for (builders.items, 0..) |*builder, index| {
         channels[index] = .{
             .kind = builder.kind,
             .samples = try builder.samples.toOwnedSlice(allocator),
         };
+        built_channels = index + 1;
     }
-    const metadata = try metadata_state.intoOwned(allocator);
 
     return .{
         .channels = channels,

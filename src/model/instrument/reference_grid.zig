@@ -62,10 +62,11 @@ pub const OperationalReferenceGrid = struct {
     /// Purpose:
     ///   Clone the grid into owned storage.
     pub fn clone(self: OperationalReferenceGrid, allocator: Allocator) !OperationalReferenceGrid {
-        return .{
-            .wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm),
-            .weights = try allocator.dupe(f64, self.weights),
-        };
+        var cloned: OperationalReferenceGrid = .{};
+        cloned.wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm);
+        errdefer allocator.free(cloned.wavelengths_nm);
+        cloned.weights = try allocator.dupe(f64, self.weights);
+        return cloned;
     }
 
     /// Purpose:

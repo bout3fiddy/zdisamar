@@ -95,6 +95,10 @@ test "spectral ascii ingest preserves operational refspec weights and external s
     try std.testing.expectApproxEqAbs(@as(f64, 2.8e14), loaded.metadata.operational_solar_spectrum.interpolateIrradiance(761.0), 1.0e9);
 }
 
+test "spectral ascii ingest operational artifacts clean up across allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, operationalArtifactsWithAllocator, .{});
+}
+
 test "reference asset ingest validates manifests and registers provenance into engine caches" {
     var cross_section = try zdisamar.ingest.reference_assets.loadCsvBundleAsset(
         std.testing.allocator,
@@ -146,6 +150,21 @@ test "reference asset ingest validates manifests and registers provenance into e
     const lut_entry = engine.lut_cache.get(lut.dataset_id, lut.asset_id).?;
     try std.testing.expectEqual(@as(u32, 5), lut_entry.shape.spectral_bins);
     try std.testing.expectEqual(@as(u32, 3), lut_entry.shape.coefficient_count);
+}
+
+fn operationalArtifactsWithAllocator(allocator: std.mem.Allocator) !void {
+    var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
+        std.testing.allocator,
+        "data/examples/irr_rad_channels_operational_refspec_demo.txt",
+    );
+    defer loaded.deinit(std.testing.allocator);
+
+    var artifacts = try loaded.operationalArtifacts(
+        allocator,
+        "allocation-failure-source",
+        "allocation-failure-band-0",
+    );
+    defer artifacts.deinitOwned(allocator);
 }
 
 test "reference asset ingest assembles vendor-shaped spectroscopy sidecars into typed evaluation lanes" {
