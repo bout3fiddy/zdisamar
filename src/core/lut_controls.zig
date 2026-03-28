@@ -122,6 +122,8 @@ pub const CompatibilityKey = struct {
     controls: Controls = .{},
     spectral_start_nm: f64 = 0.0,
     spectral_end_nm: f64 = 0.0,
+    nominal_sample_count: u32 = 0,
+    nominal_wavelength_hash: u64 = 0,
     solar_zenith_deg: f64 = 0.0,
     viewing_zenith_deg: f64 = 0.0,
     relative_azimuth_deg: f64 = 0.0,
@@ -162,12 +164,21 @@ pub const CompatibilityKey = struct {
         if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
             return errors.Error.InvalidRequest;
         }
+        if (self.high_resolution_step_nm > 0.0) {
+            if (self.nominal_sample_count != 0 or self.nominal_wavelength_hash != 0) {
+                return errors.Error.InvalidRequest;
+            }
+        } else if (self.nominal_sample_count == 0) {
+            return errors.Error.InvalidRequest;
+        }
     }
 
     pub fn matches(self: CompatibilityKey, other: CompatibilityKey) bool {
         return std.meta.eql(self.controls, other.controls) and
             self.spectral_start_nm == other.spectral_start_nm and
             self.spectral_end_nm == other.spectral_end_nm and
+            self.nominal_sample_count == other.nominal_sample_count and
+            self.nominal_wavelength_hash == other.nominal_wavelength_hash and
             self.solar_zenith_deg == other.solar_zenith_deg and
             self.viewing_zenith_deg == other.viewing_zenith_deg and
             self.relative_azimuth_deg == other.relative_azimuth_deg and

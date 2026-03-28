@@ -200,6 +200,94 @@ test "runtime bundled optics replaces explicit cross-section tables when generat
     try std.testing.expectEqualStrings("no2:xsec_lut:generated", prepared.generated_lut_assets[0].provenance_label);
 }
 
+test "runtime bundled optics generates low-resolution LUTs on measured wavelengths" {
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.8e-19 },
+        .{ .wavelength_nm = 420.0, .sigma_cm2_per_molecule = 3.4e-19 },
+        .{ .wavelength_nm = 435.0, .sigma_cm2_per_molecule = 2.2e-19 },
+        .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 1.7e-19 },
+        .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 1.1e-19 },
+    };
+    const measured_wavelengths = [_]f64{ 405.0, 408.5, 417.25, 465.0 };
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-cross-sections-generate-lut-measured",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 465.0,
+            .sample_count = measured_wavelengths.len,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "vis-no2",
+                    .start_nm = 405.0,
+                    .end_nm = 465.0,
+                    .step_nm = 1.25,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .measured_wavelengths_nm = measured_wavelengths[0..],
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = 2,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    const lut = switch (prepared.cross_section_absorbers[0].representation) {
+        .lut => |lut| lut,
+        .table => unreachable,
+    };
+    try std.testing.expectEqualSlices(f64, measured_wavelengths[0..], lut.wavelengths_nm);
+}
+
 test "runtime bundled optics rejects reflectance LUT consume modes without a source" {
     const scene: zdisamar.Scene = .{
         .id = "runtime-reflectance-lut-consume",

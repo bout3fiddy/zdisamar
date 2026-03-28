@@ -457,13 +457,17 @@ fn sampleSceneWavelengthsOwned(allocator: Allocator, scene: *const Scene) ![]f64
     const support = scene.observation_model.primaryOperationalBandSupport();
     const nominal_bounds = scene.lutNominalWavelengthBounds();
     const support_half_span_nm = scene.observation_model.lutSamplingHalfSpanNm();
-    if (support.high_resolution_step_nm > 0.0 and support_half_span_nm > 0.0) {
+    if (scene.usesHighResolutionLutSampling()) {
         return uniformWavelengthGridOwned(
             allocator,
             nominal_bounds.start_nm - support_half_span_nm,
             nominal_bounds.end_nm + support_half_span_nm,
             support.high_resolution_step_nm,
         );
+    }
+
+    if (scene.observation_model.measured_wavelengths_nm.len != 0) {
+        return allocator.dupe(f64, scene.observation_model.measured_wavelengths_nm);
     }
 
     const sample_count: usize = scene.spectral_grid.sample_count;
