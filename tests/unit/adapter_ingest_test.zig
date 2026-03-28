@@ -79,6 +79,24 @@ test "operational measured-input requests reject scene-side measurement drift" {
     try std.testing.expectError(error.InvalidRequest, request.validate());
 }
 
+test "operational measured-input requests require measured wavelengths" {
+    var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
+        std.testing.allocator,
+        "data/examples/irr_rad_channels_demo.txt",
+    );
+    defer loaded.deinit(std.testing.allocator);
+
+    var request = try loaded.toRequest(std.testing.allocator, "missing-wavelengths-scene", &[_]zdisamar.RequestedProduct{
+        .fromName("radiance"),
+    });
+    defer request.deinitOwned(std.testing.allocator);
+
+    std.testing.allocator.free(request.scene.observation_model.measured_wavelengths_nm);
+    request.scene.observation_model.measured_wavelengths_nm = &.{};
+    request.scene.observation_model.owns_measured_wavelengths = false;
+    try std.testing.expectError(error.InvalidRequest, request.validate());
+}
+
 test "spectral ascii ingest preserves explicit high-resolution grid and isrf table metadata" {
     var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
         std.testing.allocator,

@@ -263,8 +263,8 @@ pub const Request = struct {
                 if (observation_model.operationalBandCount() == 0) {
                     return errors.Error.InvalidRequest;
                 }
-                if ((observation_model.measured_wavelengths_nm.len != 0 and
-                    !floatSlicesEqual(observation_model.measured_wavelengths_nm, measured_input.radiance.wavelengths_nm)) or
+                if (observation_model.measured_wavelengths_nm.len == 0 or
+                    !floatSlicesEqual(observation_model.measured_wavelengths_nm, measured_input.radiance.wavelengths_nm) or
                     !floatSlicesEqual(observation_model.reference_radiance, measured_input.radiance.values) or
                     !floatSlicesEqual(observation_model.ingested_noise_sigma, measured_input.radiance.noise_sigma))
                 {

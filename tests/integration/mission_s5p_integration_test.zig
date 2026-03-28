@@ -317,16 +317,6 @@ test "s5p operational mission adapter carries non-unity reference-bin scaling th
     });
     defer mission_run.deinit(std.testing.allocator);
 
-    std.testing.allocator.free(mission_run.request.scene.observation_model.measured_wavelengths_nm);
-    mission_run.request.scene.observation_model.measured_wavelengths_nm = &.{};
-    mission_run.request.scene.observation_model.owns_measured_wavelengths = false;
-    mission_run.request.scene.spectral_grid = .{
-        .start_nm = 760.8,
-        .end_nm = 761.4,
-        .sample_count = 3,
-    };
-    mission_run.plan_template.scene_blueprint.spectral_grid = mission_run.request.scene.spectral_grid;
-
     var engine = zdisamar.Engine.init(std.testing.allocator, .{});
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
