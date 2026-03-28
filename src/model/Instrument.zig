@@ -517,7 +517,6 @@ pub const Instrument = struct {
 
         pub fn validate(self: *const OperationalBandSupport) errors.Error!void {
             if (!self.enabled()) {
-                if (self.id.len == 0) return;
                 return;
             }
             if (self.id.len == 0) return errors.Error.InvalidRequest;

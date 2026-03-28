@@ -375,6 +375,8 @@ pub fn toRequest(
     artifacts.band_support = .{};
 
     var request = Request.init(scene);
+    scene = .{};
+    errdefer request.deinitOwned(allocator);
     request.execution_mode = .operational_measured_input;
     request.measured_input = artifacts.measured_input;
     artifacts.measured_input = .{};
