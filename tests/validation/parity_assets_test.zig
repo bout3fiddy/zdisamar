@@ -73,7 +73,7 @@ fn expectedGeneratedXsecSpectralBins(scene: zdisamar.Scene) !u32 {
     const start_nm = nominal_bounds.start_nm - lut_sampling_half_span_nm;
     const end_nm = nominal_bounds.end_nm + lut_sampling_half_span_nm;
     const span_nm = end_nm - start_nm;
-    return @as(u32, @intFromFloat(@floor((span_nm / support.high_resolution_step_nm) + 0.5))) + 1;
+    return @as(u32, @intFromFloat(@ceil((span_nm / support.high_resolution_step_nm) - 1.0e-12))) + 1;
 }
 
 fn makeO2ALutScene(id: []const u8) zdisamar.Scene {

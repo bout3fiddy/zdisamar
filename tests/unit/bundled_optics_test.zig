@@ -306,6 +306,95 @@ test "runtime bundled optics generates low-resolution LUTs on measured wavelengt
     try std.testing.expectEqualSlices(f64, measured_wavelengths[0..], lut.wavelengths_nm);
 }
 
+test "runtime bundled optics high-resolution LUT grids include the upper bound" {
+    var no2_points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 404.5, .sigma_cm2_per_molecule = 5.1e-19 },
+        .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 4.8e-19 },
+        .{ .wavelength_nm = 405.5, .sigma_cm2_per_molecule = 4.2e-19 },
+        .{ .wavelength_nm = 406.0, .sigma_cm2_per_molecule = 3.6e-19 },
+    };
+
+    const scene: zdisamar.Scene = .{
+        .id = "runtime-visible-cross-sections-generate-lut-upper-bound",
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 405.8,
+            .sample_count = 4,
+        },
+        .bands = .{
+            .items = &.{
+                .{
+                    .id = "vis-no2",
+                    .start_nm = 405.0,
+                    .end_nm = 405.8,
+                    .step_nm = 0.2,
+                },
+            },
+        },
+        .absorbers = .{
+            .items = &[_]Absorber{
+                .{
+                    .id = "no2",
+                    .species = "no2",
+                    .resolved_species = std.meta.stringToEnum(AbsorberSpecies, "no2").?,
+                    .profile_source = .atmosphere,
+                    .volume_mixing_ratio_profile_ppmv = &.{
+                        .{ 1000.0, 0.09 },
+                        .{ 450.0, 0.03 },
+                    },
+                    .spectroscopy = .{
+                        .mode = .cross_sections,
+                        .resolved_cross_section_table = .{
+                            .points = no2_points[0..],
+                        },
+                    },
+                },
+            },
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "unit-test" },
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .high_resolution_step_nm = 0.3,
+            .high_resolution_half_span_nm = 0.1,
+            .cross_section_fit = .{
+                .use_effective_cross_section_oe = true,
+                .use_polynomial_expansion = true,
+                .xsec_strong_absorption_bands = &.{true},
+                .polynomial_degree_bands = &.{4},
+            },
+        },
+        .atmosphere = .{
+            .layer_count = 24,
+            .sublayer_divisions = 2,
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 6,
+                .pressure_grid_count = 8,
+                .temperature_coefficient_count = 3,
+                .pressure_coefficient_count = 4,
+            },
+        },
+    };
+
+    var prepared = try bundled_optics.prepareForScene(std.testing.allocator, &scene);
+    defer prepared.deinit(std.testing.allocator);
+
+    const lut = switch (prepared.cross_section_absorbers[0].representation) {
+        .lut => |lut| lut,
+        .table => unreachable,
+    };
+    try std.testing.expectEqual(@as(usize, 5), lut.wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 404.9), lut.wavelengths_nm[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 405.9), lut.wavelengths_nm[lut.wavelengths_nm.len - 1], 1.0e-12);
+}
+
 test "runtime bundled optics generated O2 LUT overrides explicit primary operational support" {
     const stale_o2_lut: zdisamar.OperationalCrossSectionLut = .{
         .wavelengths_nm = &[_]f64{999.0},

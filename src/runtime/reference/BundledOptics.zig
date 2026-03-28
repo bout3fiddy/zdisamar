@@ -593,7 +593,8 @@ fn uniformWavelengthGridOwned(
     }
 
     const span_nm = end_nm - start_nm;
-    const sample_count = @as(usize, @intFromFloat(@floor((span_nm / step_nm) + 0.5))) + 1;
+    const interval_count = @as(usize, @intFromFloat(@ceil((span_nm / step_nm) - 1.0e-12)));
+    const sample_count = interval_count + 1;
     const wavelengths_nm = try allocator.alloc(f64, sample_count);
     for (wavelengths_nm, 0..) |*wavelength_nm, index| {
         wavelength_nm.* = @min(start_nm + step_nm * @as(f64, @floatFromInt(index)), end_nm);
