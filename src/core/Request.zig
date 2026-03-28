@@ -110,29 +110,7 @@ pub const Request = struct {
 
         pub fn init(product: *const MeasurementSpaceProduct) BorrowedMeasurementProduct {
             return .{
-                .product_view = .{
-                    .summary = product.summary,
-                    .wavelengths = product.wavelengths,
-                    .radiance = product.radiance,
-                    .irradiance = product.irradiance,
-                    .reflectance = product.reflectance,
-                    .noise_sigma = product.noise_sigma,
-                    .radiance_noise_sigma = product.radiance_noise_sigma,
-                    .irradiance_noise_sigma = product.irradiance_noise_sigma,
-                    .reflectance_noise_sigma = product.reflectance_noise_sigma,
-                    .jacobian = product.jacobian,
-                    .effective_air_mass_factor = product.effective_air_mass_factor,
-                    .effective_single_scatter_albedo = product.effective_single_scatter_albedo,
-                    .effective_temperature_k = product.effective_temperature_k,
-                    .effective_pressure_hpa = product.effective_pressure_hpa,
-                    .gas_optical_depth = product.gas_optical_depth,
-                    .cia_optical_depth = product.cia_optical_depth,
-                    .aerosol_optical_depth = product.aerosol_optical_depth,
-                    .cloud_optical_depth = product.cloud_optical_depth,
-                    .total_optical_depth = product.total_optical_depth,
-                    .depolarization_factor = product.depolarization_factor,
-                    .d_optical_depth_d_temperature = product.d_optical_depth_d_temperature,
-                },
+                .product_view = product.*,
             };
         }
 
