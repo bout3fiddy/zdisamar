@@ -130,18 +130,19 @@ Representative vendor example configs are listed below. The complete key-by-key 
 
 | File | Assignment | Why |
 | --- | --- | --- |
-| `src/core/Plan.zig` | `WP-01`, `WP-02`, `WP-06`, `WP-11` | Prepared control state and route typing. |
+| `src/core/execution_mode.zig` | `WP-07` | Shared execution-mode typing for synthetic versus operational measured-input flows. |
+| `src/core/Plan.zig` | `WP-01`, `WP-02`, `WP-06`, `WP-07`, `WP-11` | Prepared control state, route typing, and operational execution-mode propagation. |
 | `src/core/Engine.zig` | `WP-02`, `WP-06`, `WP-07`, `WP-08`, `WP-09`, `WP-11`, `WP-14` | Main orchestration hotspot. |
 | `src/core/Request.zig` | `WP-01`, `WP-07`, `WP-11`, `WP-12`, `WP-13` | Measurement-source and retrieval request semantics. |
-| `src/core/Result.zig` | `WP-06`, `WP-09`, `WP-11`, `WP-14` | Output ownership and honesty of produced products. |
+| `src/core/Result.zig` | `WP-06`, `WP-07`, `WP-09`, `WP-11`, `WP-14` | Output ownership and honesty of produced products, including explicit operational execution metadata. |
 | `src/core/Workspace.zig` | `WP-02`, `WP-10`, `WP-15` | Execution-context and later cleanup/perf work. |
 | `src/core/Catalog.zig` | `WP-01`, `WP-15` | Capability registration and narrowing. |
 | `src/core/diagnostics.zig` | `WP-14` | Diagnostic output path. |
 | `src/core/errors.zig` | `WP-01`, `WP-11`, `WP-15` | Error-domain honesty. |
 | `src/core/logging.zig` | `WP-14`, `WP-15` | Logging/output surface. |
-| `src/core/provenance.zig` | `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-05`, `WP-06`, `WP-08`, `WP-09`, `WP-14` | Must record effective controls for parity review. |
+| `src/core/provenance.zig` | `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-05`, `WP-06`, `WP-07`, `WP-08`, `WP-09`, `WP-14` | Must record effective controls and operational replacement state for parity review. |
 | `src/core/units.zig` | `WP-01`, `WP-05` | Geometry/control typing. |
-| `src/model/Scene.zig` | `WP-01`, `WP-05` | Scene-level config structure. |
+| `src/model/Scene.zig` | `WP-01`, `WP-05`, `WP-07` | Scene-level config structure, including operational-band execution hints. |
 | `src/model/ObservationModel.zig` | `WP-01`, `WP-06`, `WP-07` | Instrument/control representation is still too stringly. |
 | `src/model/Instrument.zig` | `WP-01`, `WP-06`, `WP-07`, `WP-08` | Instrument and operational data carriers. |
 | `src/model/instrument/reference_grid.zig` | `WP-06`, `WP-07`, `WP-08` | Operational spectral-grid parity. |
