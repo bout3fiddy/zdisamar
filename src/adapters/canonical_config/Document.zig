@@ -981,6 +981,7 @@ const ResolveContext = struct {
         try applyPressureTemperatureConfigToScene(kind, stage.pressure_temperature, &stage.scene);
         stage.surface_config = try decodeSurfaceConfig(self.allocator, mapGet(stage_map, "surface_config"), self.strict_unknown_fields);
         try applySurfaceConfigToScene(kind, stage.surface_config, &stage.scene);
+        syncImplicitLutSurfaceAlbedo(stage.general, &stage.scene);
         stage.atmospheric_intervals = try decodeAtmosphericIntervalsConfig(self.allocator, mapGet(stage_map, "atmospheric_intervals"), self.strict_unknown_fields);
         try applyAtmosphericIntervalsConfigToScene(
             self.allocator,
@@ -2945,6 +2946,16 @@ fn applySurfaceConfigToScene(
         .retrieval => surface_config.surf_albedo_retr,
     };
     if (albedo) |value| scene.surface.albedo = value;
+}
+
+fn syncImplicitLutSurfaceAlbedo(
+    config: ?GeneralConfig,
+    scene: *Scene,
+) void {
+    const general = config orelse return;
+    if (general.create_lut.surface_albedo == null) {
+        scene.lut_controls.reflectance.surface_albedo = scene.surface.albedo;
+    }
 }
 
 fn applyAtmosphericIntervalsConfigToScene(

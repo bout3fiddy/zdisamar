@@ -75,9 +75,6 @@ pub const XsecControls = struct {
         if (self.mode == .direct) {
             return;
         }
-        if (self.mode == .consume) {
-            return;
-        }
 
         if (!std.math.isFinite(self.min_temperature_k) or
             !std.math.isFinite(self.max_temperature_k) or
@@ -132,6 +129,7 @@ pub const CompatibilityKey = struct {
     instrument_line_fwhm_nm: f64 = 0.0,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
+    lut_sampling_half_span_nm: f64 = 0.0,
 
     pub fn enabled(self: CompatibilityKey) bool {
         return self.controls.enabled();
@@ -149,7 +147,8 @@ pub const CompatibilityKey = struct {
             !std.math.isFinite(self.surface_albedo) or
             !std.math.isFinite(self.instrument_line_fwhm_nm) or
             !std.math.isFinite(self.high_resolution_step_nm) or
-            !std.math.isFinite(self.high_resolution_half_span_nm))
+            !std.math.isFinite(self.high_resolution_half_span_nm) or
+            !std.math.isFinite(self.lut_sampling_half_span_nm))
         {
             return errors.Error.InvalidRequest;
         }
@@ -159,6 +158,7 @@ pub const CompatibilityKey = struct {
         if (self.high_resolution_step_nm < 0.0 or self.high_resolution_half_span_nm < 0.0) {
             return errors.Error.InvalidRequest;
         }
+        if (self.lut_sampling_half_span_nm < 0.0) return errors.Error.InvalidRequest;
         if ((self.high_resolution_step_nm == 0.0) != (self.high_resolution_half_span_nm == 0.0)) {
             return errors.Error.InvalidRequest;
         }
@@ -174,13 +174,17 @@ pub const CompatibilityKey = struct {
             self.surface_albedo == other.surface_albedo and
             self.instrument_line_fwhm_nm == other.instrument_line_fwhm_nm and
             self.high_resolution_step_nm == other.high_resolution_step_nm and
-            self.high_resolution_half_span_nm == other.high_resolution_half_span_nm;
+            self.high_resolution_half_span_nm == other.high_resolution_half_span_nm and
+            self.lut_sampling_half_span_nm == other.lut_sampling_half_span_nm;
     }
 };
 
 test "lut controls reject incomplete non-direct xsec settings" {
     try std.testing.expectError(errors.Error.InvalidRequest, (Controls{
         .xsec = .{ .mode = .generate },
+    }).validate());
+    try std.testing.expectError(errors.Error.InvalidRequest, (Controls{
+        .xsec = .{ .mode = .consume },
     }).validate());
 }
 
@@ -209,6 +213,7 @@ test "lut compatibility keys compare all scientific inputs explicitly" {
         .instrument_line_fwhm_nm = 0.38,
         .high_resolution_step_nm = 0.01,
         .high_resolution_half_span_nm = 1.14,
+        .lut_sampling_half_span_nm = 1.14,
     };
     var rhs = lhs;
 
@@ -216,6 +221,6 @@ test "lut compatibility keys compare all scientific inputs explicitly" {
     try rhs.validate();
     try std.testing.expect(lhs.matches(rhs));
 
-    rhs.relative_azimuth_deg = 90.0;
+    rhs.lut_sampling_half_span_nm = 1.5;
     try std.testing.expect(!lhs.matches(rhs));
 }

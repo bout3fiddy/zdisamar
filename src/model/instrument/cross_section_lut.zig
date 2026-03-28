@@ -461,11 +461,13 @@ pub const OperationalCrossSectionLut = struct {
         maximum: f64,
     ) f64 {
         _ = self;
+        if (!(minimum > 0.0) or !(maximum > 0.0)) return 0.0;
         const ln_max = @log(maximum);
         const ln_min = @log(minimum);
         const scale = ln_max - ln_min;
         if (scale == 0.0) return 0.0;
-        return -((ln_max + ln_min) / scale) + (2.0 * @log(value) / scale);
+        const safe_value = if (value > 0.0) value else minimum;
+        return -((ln_max + ln_min) / scale) + (2.0 * @log(safe_value) / scale);
     }
 
     /// Purpose:
@@ -684,4 +686,33 @@ test "cross-section LUT extrapolates scaled log coordinates outside configured t
     try std.testing.expect(expected_scaled_lnT < -1.0);
     try std.testing.expectApproxEqRel(expected_scaled_lnT, lut.sigmaAt(431.0, 50.0, 100.0), 1.0e-12);
     try std.testing.expectApproxEqRel(expected_derivative, lut.dSigmaDTemperatureAt(431.0, 50.0, 100.0), 1.0e-12);
+}
+
+test "cross-section LUT keeps non-positive temperature and pressure inputs finite" {
+    const lut: OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{431.0},
+        .coefficients = &[_]f64{
+            0.0,
+            1.0,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 1,
+        .min_temperature_k = 100.0,
+        .max_temperature_k = 200.0,
+        .min_pressure_hpa = 10.0,
+        .max_pressure_hpa = 1000.0,
+    };
+    try lut.validate();
+
+    const sigma = lut.sigmaAt(431.0, 0.0, 0.0);
+    const derivative = lut.dSigmaDTemperatureAt(431.0, 0.0, 0.0);
+
+    try std.testing.expect(std.math.isFinite(sigma));
+    try std.testing.expect(std.math.isFinite(derivative));
+    try std.testing.expectApproxEqRel(
+        lut.sigmaAt(431.0, lut.min_temperature_k, lut.min_pressure_hpa),
+        sigma,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), derivative, 1.0e-12);
 }

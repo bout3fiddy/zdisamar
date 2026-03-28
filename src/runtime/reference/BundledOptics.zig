@@ -464,7 +464,7 @@ fn sampleSceneWavelengthsOwned(allocator: Allocator, scene: *const Scene) ![]f64
         nominal_wavelengths[nominal_wavelengths.len - 1]
     else
         scene.spectral_grid.end_nm;
-    const support_half_span_nm = maxInstrumentSupportHalfSpan(support);
+    const support_half_span_nm = scene.observation_model.lutSamplingHalfSpanNm();
     if (support.high_resolution_step_nm > 0.0 and support_half_span_nm > 0.0) {
         return uniformWavelengthGridOwned(
             allocator,
@@ -489,21 +489,6 @@ fn sampleSceneWavelengthsOwned(allocator: Allocator, scene: *const Scene) ![]f64
         wavelength_nm.* = scene.spectral_grid.start_nm + step_nm * @as(f64, @floatFromInt(index));
     }
     return wavelengths_nm;
-}
-
-fn maxInstrumentSupportHalfSpan(support: anytype) f64 {
-    var half_span_nm = support.high_resolution_half_span_nm;
-    if (support.instrument_line_shape.sample_count > 0) {
-        for (support.instrument_line_shape.offsets_nm[0..support.instrument_line_shape.sample_count]) |offset_nm| {
-            half_span_nm = @max(half_span_nm, @abs(offset_nm));
-        }
-    }
-    if (support.instrument_line_shape_table.sample_count > 0) {
-        for (support.instrument_line_shape_table.offsets_nm[0..support.instrument_line_shape_table.sample_count]) |offset_nm| {
-            half_span_nm = @max(half_span_nm, @abs(offset_nm));
-        }
-    }
-    return half_span_nm;
 }
 
 fn uniformWavelengthGridOwned(

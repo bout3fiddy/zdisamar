@@ -167,6 +167,7 @@ pub const Scene = struct {
             .instrument_line_fwhm_nm = self.observation_model.instrument_line_fwhm_nm,
             .high_resolution_step_nm = self.observation_model.high_resolution_step_nm,
             .high_resolution_half_span_nm = self.observation_model.high_resolution_half_span_nm,
+            .lut_sampling_half_span_nm = self.observation_model.lutSamplingHalfSpanNm(),
         };
     }
 
@@ -266,6 +267,21 @@ test "scene derives LUT compatibility keys from geometry and instrument settings
     try std.testing.expectEqual(LutControls.Mode.generate, key.controls.xsec.mode);
     try std.testing.expectEqual(@as(f64, 120.0), key.relative_azimuth_deg);
     try std.testing.expectEqual(@as(f64, 0.38), key.instrument_line_fwhm_nm);
+    try std.testing.expectEqual(@as(f64, 1.14), key.lut_sampling_half_span_nm);
+
+    const offsets = [_]f64{ -1.5, 0.0, 1.5 };
+    const weights = [_]f64{ 0.25, 0.5, 0.25 };
+    var wider_support_scene = scene;
+    wider_support_scene.observation_model.instrument_line_shape = .{
+        .sample_count = 3,
+        .offsets_nm = offsets[0..],
+        .weights = weights[0..],
+    };
+
+    const wider_support_key = wider_support_scene.lutCompatibilityKey();
+    try wider_support_key.validate();
+    try std.testing.expectEqual(@as(f64, 1.5), wider_support_key.lut_sampling_half_span_nm);
+    try std.testing.expect(!key.matches(wider_support_key));
 }
 
 test "scene accepts canonical bands absorbers and supporting observation metadata" {

@@ -213,7 +213,17 @@ test "consume-mode LUT execution records provenance without creating cache entri
 
     var scene = makeO2ALutScene("validation-o2a-consume");
     scene.lut_controls = .{
-        .xsec = .{ .mode = .consume },
+        .xsec = .{
+            .mode = .consume,
+            .min_temperature_k = 220.0,
+            .max_temperature_k = 320.0,
+            .min_pressure_hpa = 150.0,
+            .max_pressure_hpa = 1000.0,
+            .temperature_grid_count = 2,
+            .pressure_grid_count = 2,
+            .temperature_coefficient_count = 2,
+            .pressure_coefficient_count = 2,
+        },
     };
     scene.observation_model.o2_operational_lut = consumed_o2_lut;
     scene.observation_model.o2o2_operational_lut = consumed_o2o2_lut;
