@@ -455,21 +455,13 @@ fn findAbsorberBySpecies(
 
 fn sampleSceneWavelengthsOwned(allocator: Allocator, scene: *const Scene) ![]f64 {
     const support = scene.observation_model.primaryOperationalBandSupport();
-    const nominal_wavelengths = scene.observation_model.measured_wavelengths_nm;
-    const nominal_start_nm = if (nominal_wavelengths.len != 0)
-        nominal_wavelengths[0]
-    else
-        scene.spectral_grid.start_nm;
-    const nominal_end_nm = if (nominal_wavelengths.len != 0)
-        nominal_wavelengths[nominal_wavelengths.len - 1]
-    else
-        scene.spectral_grid.end_nm;
+    const nominal_bounds = scene.lutNominalWavelengthBounds();
     const support_half_span_nm = scene.observation_model.lutSamplingHalfSpanNm();
     if (support.high_resolution_step_nm > 0.0 and support_half_span_nm > 0.0) {
         return uniformWavelengthGridOwned(
             allocator,
-            nominal_start_nm - support_half_span_nm,
-            nominal_end_nm + support_half_span_nm,
+            nominal_bounds.start_nm - support_half_span_nm,
+            nominal_bounds.end_nm + support_half_span_nm,
             support.high_resolution_step_nm,
         );
     }

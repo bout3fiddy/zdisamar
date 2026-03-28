@@ -156,18 +156,36 @@ pub const Scene = struct {
     /// Purpose:
     ///   Derive the scientific identity that makes scene-local LUTs reusable or incompatible.
     pub fn lutCompatibilityKey(self: *const Scene) LutControls.CompatibilityKey {
+        const support = self.observation_model.primaryOperationalBandSupport();
+        const nominal_bounds = self.lutNominalWavelengthBounds();
         return .{
             .controls = self.lut_controls,
-            .spectral_start_nm = self.spectral_grid.start_nm,
-            .spectral_end_nm = self.spectral_grid.end_nm,
+            .spectral_start_nm = nominal_bounds.start_nm,
+            .spectral_end_nm = nominal_bounds.end_nm,
             .solar_zenith_deg = self.geometry.solar_zenith_deg,
             .viewing_zenith_deg = self.geometry.viewing_zenith_deg,
             .relative_azimuth_deg = self.geometry.relative_azimuth_deg,
             .surface_albedo = self.surface.albedo,
             .instrument_line_fwhm_nm = self.observation_model.instrument_line_fwhm_nm,
-            .high_resolution_step_nm = self.observation_model.high_resolution_step_nm,
-            .high_resolution_half_span_nm = self.observation_model.high_resolution_half_span_nm,
+            .high_resolution_step_nm = support.high_resolution_step_nm,
+            .high_resolution_half_span_nm = support.high_resolution_half_span_nm,
             .lut_sampling_half_span_nm = self.observation_model.lutSamplingHalfSpanNm(),
+        };
+    }
+
+    /// Purpose:
+    ///   Return the nominal wavelength bounds that seed LUT wavelength sampling.
+    pub fn lutNominalWavelengthBounds(self: *const Scene) struct { start_nm: f64, end_nm: f64 } {
+        const nominal_wavelengths = self.observation_model.measured_wavelengths_nm;
+        if (nominal_wavelengths.len != 0) {
+            return .{
+                .start_nm = nominal_wavelengths[0],
+                .end_nm = nominal_wavelengths[nominal_wavelengths.len - 1],
+            };
+        }
+        return .{
+            .start_nm = self.spectral_grid.start_nm,
+            .end_nm = self.spectral_grid.end_nm,
         };
     }
 
@@ -282,6 +300,59 @@ test "scene derives LUT compatibility keys from geometry and instrument settings
     try wider_support_key.validate();
     try std.testing.expectEqual(@as(f64, 1.5), wider_support_key.lut_sampling_half_span_nm);
     try std.testing.expect(!key.matches(wider_support_key));
+}
+
+test "scene LUT compatibility key follows effective nominal wavelengths and operational support" {
+    const measured_wavelengths = [_]f64{ 758.2, 758.4, 758.6 };
+    const operational_support = [_]Instrument.OperationalBandSupport{.{
+        .id = "primary",
+        .high_resolution_step_nm = 0.01,
+        .high_resolution_half_span_nm = 1.14,
+    }};
+
+    const scene: Scene = .{
+        .id = "lut-compatibility-effective-support",
+        .geometry = .{
+            .solar_zenith_deg = 60.0,
+            .viewing_zenith_deg = 30.0,
+            .relative_azimuth_deg = 120.0,
+        },
+        .spectral_grid = .{
+            .start_nm = 758.0,
+            .end_nm = 770.0,
+            .sample_count = 3,
+        },
+        .surface = .{
+            .kind = .lambertian,
+            .albedo = 0.2,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .instrument_line_fwhm_nm = 0.38,
+            .measured_wavelengths_nm = measured_wavelengths[0..],
+            .operational_band_support = operational_support[0..],
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 10,
+                .pressure_grid_count = 20,
+                .temperature_coefficient_count = 5,
+                .pressure_coefficient_count = 10,
+            },
+        },
+    };
+
+    const key = scene.lutCompatibilityKey();
+    try key.validate();
+    try std.testing.expectEqual(@as(f64, 758.2), key.spectral_start_nm);
+    try std.testing.expectEqual(@as(f64, 758.6), key.spectral_end_nm);
+    try std.testing.expectEqual(@as(f64, 0.01), key.high_resolution_step_nm);
+    try std.testing.expectEqual(@as(f64, 1.14), key.high_resolution_half_span_nm);
 }
 
 test "scene accepts canonical bands absorbers and supporting observation metadata" {
