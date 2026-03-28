@@ -107,6 +107,28 @@ Run the full verification baseline:
 zig build test
 ```
 
+When disk is tight and you do not want `zig build` to leave a persistent
+`.zig-cache` or global Zig cache behind, use the ephemeral wrapper instead:
+
+```bash
+./scripts/zig-build-ephemeral.sh check
+./scripts/zig-build-ephemeral.sh test-fast --summary all
+```
+
+That wrapper points both Zig cache roots at temporary directories and removes
+them automatically when the build exits. It is slower than the default flow
+because it disables cache reuse across runs.
+
+If you only need to reclaim space from prior runs, remove the repo-local caches
+after the build finishes:
+
+```bash
+./scripts/clean-zig-caches.sh
+```
+
+That deletes `.zig-cache`, `.zig-cache-int`, and the repo's disposable
+`zig-cache/` test-output directory.
+
 Targeted suites are also available:
 
 ```bash

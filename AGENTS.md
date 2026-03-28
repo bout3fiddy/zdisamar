@@ -27,6 +27,8 @@
 - `zig build test-fast` is the broader presubmit lane: unit plus integration, including the leak/lifecycle coverage that uses allocation-failure and `DebugAllocator` checks.
 - `zig build bench` is non-gating. It reuses `validation/perf/perf_matrix.json` and writes disposable benchmark summaries to `out/ci/bench/summary.json`.
 - `zig build tidy` is the advisory architecture lane. It writes `out/ci/tidy/report.json` and is expected to fail while findings still exist.
+- `./scripts/clean-zig-caches.sh` removes accumulated repo-local Zig caches (`.zig-cache`, `.zig-cache-int`, and `zig-cache/`) after a run has finished.
+- `./scripts/zig-build-ephemeral.sh ...` runs `zig build` with temporary local and global caches and deletes them on exit; use it for low-disk or one-shot verification, but keep plain `zig build ...` as the default front door.
 - Keep heavier lanes like vendor differential runs, perf guardrails, and Valgrind out of the default local loop until their backing assets and packages are ready.
 - Aggregate build steps must have explicit coverage for composition. When a new focused lane or proof is added, tests or harness checks should prove that aggregate steps include it when required and omit it when intentionally opt-in.
 - When a change adds both legacy and explicit paths, add the smallest focused verification that proves intended semantic parity or intentional divergence across those paths.
@@ -51,3 +53,5 @@
 - `zig build test-validation-o2a-vendor` runs the opt-in O2A vendor trend assessment lane.
 - `zig build test` is the full verification command.
 - `zig build` builds the scaffold CLI and library.
+- `./scripts/clean-zig-caches.sh` removes repo-local Zig caches after a run.
+- `./scripts/zig-build-ephemeral.sh ...` is the zero-persistence wrapper when cache reuse is less important than disk pressure.
