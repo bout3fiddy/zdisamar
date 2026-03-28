@@ -234,6 +234,13 @@ pub const ObservationModel = struct {
         try self.operational_solar_spectrum.validate();
         try self.o2_operational_lut.validate();
         try self.o2o2_operational_lut.validate();
+        if (self.operational_band_support.len > 1) {
+            // GOTCHA:
+            //   Runtime consumers still resolve one operational support record per scene. Reject
+            //   multi-band support until optics/measurement prep becomes truly band-indexed rather
+            //   than silently dropping enabled replacements for bands > 0.
+            return errors.Error.InvalidRequest;
+        }
         for (self.operational_band_support, 0..) |*support, index| {
             try support.validate();
             for (self.operational_band_support[index + 1 ..]) |other| {
@@ -647,4 +654,16 @@ test "cross-section fit controls clone cleans up across allocation failure" {
         cloneCrossSectionFitControlsWithAllocator,
         .{},
     );
+}
+
+test "observation model rejects multi-band operational support until runtime becomes band-indexed" {
+    const support = [_]OperationalBandSupport{
+        .{ .id = "band-0" },
+        .{ .id = "band-1" },
+    };
+    var model: ObservationModel = .{
+        .operational_band_support = &support,
+    };
+
+    try std.testing.expectError(error.InvalidRequest, model.validate());
 }
