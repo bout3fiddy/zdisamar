@@ -37,7 +37,7 @@
 
 - There is no repo CI workflow. Run the necessary checks locally before pushing larger changes.
 - Minimum baseline: `zig build check`.
-- If you touched runtime behavior, planners, retrieval, exporters, adapters, or validation fixtures, also run the relevant focused lanes such as `zig build test-fast`, `zig build test-transport`, `zig build test-validation-compatibility`, `zig build test-validation-o2a`, `zig build test-validation-o2a-vendor`, `zig build bench`, and `zig build tidy`.
+- If you touched runtime behavior, planners, retrieval, exporters, adapters, or validation fixtures, also run the relevant focused lanes such as `zig build test-fast`, `zig build test-transport`, `zig build test-validation-compatibility`, `zig build test-validation-o2a`, `zig build test-validation-o2a-compare`, `zig build test-validation-o2a-vendor`, `zig build bench`, and `zig build tidy`.
 - Do not blindly run the full scientific integration suite for every push. Pick the smallest set of lanes that actually covers the changed surface area.
 - If you changed parser/adapter controls, field propagation, interval ordering, placement semantics, or wavelength-dependent behavior, include at least one focused test that would fail if the old fallback or reference-only path were still being used.
 
@@ -50,6 +50,7 @@
 - `zig build test-transport` is the focused transport/parity verification command.
 - `zig build test-validation-compatibility` is the fast compatibility smoke command.
 - `zig build test-validation-compatibility-full` runs the full DISAMAR compatibility harness.
+- `zig build test-validation-o2a-compare` runs the single O2A compare-and-time lane against the cached vendor reference spectrum.
 - `zig build test-validation-o2a-vendor` runs the opt-in O2A vendor trend assessment lane.
 - `zig build test` is the full verification command.
 - `zig build` builds the scaffold CLI and library.
