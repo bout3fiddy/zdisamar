@@ -325,37 +325,78 @@ fn addAdaptiveStrongLineSamplesFromList(
     sample_raw_weights: *[max_integration_sample_count]f64,
     sample_count: *usize,
 ) bool {
-    const fwhm_nm = @max(response.fwhm_nm, 1.0e-4);
+    if (line_list.strong_lines) |strong_lines| {
+        for (strong_lines) |strong_line| {
+            if (!addAdaptiveStrongLineSamplesForCenter(
+                adaptive,
+                response,
+                nominal_wavelength_nm,
+                window_start_nm,
+                window_end_nm,
+                strong_line.center_wavelength_nm,
+                sample_wavelengths_nm,
+                sample_raw_weights,
+                sample_count,
+            )) return false;
+        }
+        return true;
+    }
+
     const threshold_strength = line_list.runtime_controls.thresholdStrength(line_list.lines) orelse return true;
     var previous_center_nm: ?f64 = null;
     for (line_list.lines) |line| {
         if (line.line_strength_cm2_per_molecule < threshold_strength) continue;
-        if (line.center_wavelength_nm < window_start_nm or line.center_wavelength_nm > window_end_nm) continue;
         if (previous_center_nm) |previous| {
             if (@abs(line.center_wavelength_nm - previous) <= 1.0e-9) continue;
         }
         previous_center_nm = line.center_wavelength_nm;
-
-        const strong_half_span_nm = 0.5 * fwhm_nm;
-        const strong_start_nm = @max(window_start_nm, line.center_wavelength_nm - strong_half_span_nm);
-        const strong_end_nm = @min(window_end_nm, line.center_wavelength_nm + strong_half_span_nm);
-        // UNITS:
-        //   `refinement_count` tracks how many wavelength intervals are used to
-        //   cover the strong-line window in nanometers.
-        const refinement_count = strongDivisionCount(adaptive, strong_end_nm - strong_start_nm, fwhm_nm);
-        if (!addStrongAdaptiveSamples(
+        if (!addAdaptiveStrongLineSamplesForCenter(
+            adaptive,
+            response,
+            nominal_wavelength_nm,
+            window_start_nm,
+            window_end_nm,
+            line.center_wavelength_nm,
             sample_wavelengths_nm,
             sample_raw_weights,
             sample_count,
-            response,
-            nominal_wavelength_nm,
-            line.center_wavelength_nm,
-            strong_start_nm,
-            strong_end_nm,
-            refinement_count,
         )) return false;
     }
     return true;
+}
+
+fn addAdaptiveStrongLineSamplesForCenter(
+    adaptive: AdaptiveReferenceGrid,
+    response: InstrumentModel.SpectralResponse,
+    nominal_wavelength_nm: f64,
+    window_start_nm: f64,
+    window_end_nm: f64,
+    strong_center_nm: f64,
+    sample_wavelengths_nm: *[max_integration_sample_count]f64,
+    sample_raw_weights: *[max_integration_sample_count]f64,
+    sample_count: *usize,
+) bool {
+    if (strong_center_nm < window_start_nm or strong_center_nm > window_end_nm) return true;
+
+    const fwhm_nm = @max(response.fwhm_nm, 1.0e-4);
+    const strong_half_span_nm = 0.5 * fwhm_nm;
+    const strong_start_nm = @max(window_start_nm, strong_center_nm - strong_half_span_nm);
+    const strong_end_nm = @min(window_end_nm, strong_center_nm + strong_half_span_nm);
+    // UNITS:
+    //   `refinement_count` tracks how many wavelength intervals are used to
+    //   cover the strong-line window in nanometers.
+    const refinement_count = strongDivisionCount(adaptive, strong_end_nm - strong_start_nm, fwhm_nm);
+    return addStrongAdaptiveSamples(
+        sample_wavelengths_nm,
+        sample_raw_weights,
+        sample_count,
+        response,
+        nominal_wavelength_nm,
+        strong_center_nm,
+        strong_start_nm,
+        strong_end_nm,
+        refinement_count,
+    );
 }
 
 fn addUniformAdaptiveSamples(
@@ -724,4 +765,69 @@ test "adaptive strong-line sampling injects refined centers from prepared spectr
         }
     }
     try std.testing.expect(found_strong_center);
+}
+
+test "adaptive strong-line sampling prefers attached sidecar centers over thresholded weak-line centers" {
+    var prepared = std.mem.zeroInit(PreparedOpticalState, .{
+        .layers = &.{},
+        .continuum_points = &.{},
+        .spectroscopy_lines = ReferenceData.SpectroscopyLineList{
+            .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+                .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 760.52, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.001, .temperature_exponent = 0.7, .lower_state_energy_cm1 = 120.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0 },
+            }),
+            .strong_lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyStrongLine, &.{
+                .{
+                    .center_wavenumber_cm1 = 1.0e7 / 760.47,
+                    .center_wavelength_nm = 760.47,
+                    .population_t0 = 1.0,
+                    .dipole_ratio = 1.0,
+                    .dipole_t0 = 1.0,
+                    .lower_state_energy_cm1 = 120.0,
+                    .air_half_width_cm1 = 0.03,
+                    .air_half_width_nm = 0.0017,
+                    .temperature_exponent = 0.7,
+                    .pressure_shift_cm1 = 0.0,
+                    .pressure_shift_nm = 0.0,
+                    .rotational_index_m1 = -35,
+                },
+            }),
+            .runtime_controls = .{
+                .gas_index = 7,
+                .threshold_line_scale = 0.5,
+            },
+        },
+    });
+    defer if (prepared.spectroscopy_lines) |*line_list| line_list.deinit(std.testing.allocator);
+
+    const scene: Scene = .{
+        .spectral_grid = .{
+            .start_nm = 759.0,
+            .end_nm = 762.0,
+            .sample_count = 121,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .instrument_line_fwhm_nm = 0.4,
+            .adaptive_reference_grid = .{
+                .points_per_fwhm = 3,
+                .strong_line_min_divisions = 5,
+                .strong_line_max_divisions = 9,
+            },
+        },
+    };
+
+    var kernel: IntegrationKernel = undefined;
+    integrationForWavelength(&scene, &prepared, .radiance, 760.5, &kernel);
+    try std.testing.expect(kernel.enabled);
+
+    var found_sidecar_center = false;
+    var found_threshold_line_center = false;
+    for (kernel.offsets_nm[0..kernel.sample_count]) |offset_nm| {
+        if (@abs(offset_nm - (-0.03)) <= 1.0e-6) found_sidecar_center = true;
+        if (@abs(offset_nm - 0.02) <= 1.0e-6) found_threshold_line_center = true;
+    }
+    try std.testing.expect(found_sidecar_center);
+    try std.testing.expect(!found_threshold_line_center);
 }
