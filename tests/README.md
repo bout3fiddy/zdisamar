@@ -15,7 +15,7 @@ Use `zig build bench` for the non-gating benchmark summary lane.
 Use `zig build tidy` for architecture and policy checks.
 Use `zig build test-transport` for the focused transport/parity loop, including the operational measured-input compatibility classification proof.
 Use `zig build test-validation-compatibility` for fast compatibility smoke checks.
-Use `zig build test-validation-o2a-vendor` only for the opt-in O2A vendor trend assessment lane.
+Use `zig build test-validation-o2a-vendor -Doptimize=ReleaseFast` for the opt-in O2A compare-and-time lane against the cached vendor reference spectrum.
 
 Run all suites with `zig build test`, or targeted suites with:
 

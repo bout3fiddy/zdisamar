@@ -95,7 +95,7 @@ Run the fast compatibility smoke loop:
 zig build test-validation-compatibility
 ```
 
-Run the optional O2A vendor trend assessment lane when you need a vendor comparison:
+Run the optional O2A compare-and-time lane when you need a cached vendor comparison:
 
 ```bash
 zig build test-validation-o2a-vendor
@@ -603,7 +603,7 @@ zig build
 zig build check
 zig build test-transport
 zig build test-validation-compatibility
-# optional: zig build test-validation-o2a-vendor
+# optional: zig build test-validation-o2a-vendor -Doptimize=ReleaseFast
 ./zig-out/bin/zdisamar config validate data/examples/zdisamar_common_use.yaml
 ./zig-out/bin/zdisamar config resolve data/examples/zdisamar_common_use.yaml
 ./zig-out/bin/zdisamar run data/examples/zdisamar_common_use.yaml
