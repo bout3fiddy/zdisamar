@@ -44,7 +44,7 @@
       "id": "o2a_hitran_subset_07_hit08_tropomi",
       "path": "data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par",
       "format": "hitran_160",
-      "sha256": "sha256:776ac1e53cfcccc40327fe090406bc3077471e253d95a97cafe359d6a834e236",
+      "sha256": "sha256:bee028338745fda4510c3a89136be709501fc3c0d847d61cae4a9da59d38d2f0",
       "columns": [
         "gas_index",
         "isotope_number",
@@ -55,14 +55,17 @@
         "temperature_exponent",
         "lower_state_energy_cm1",
         "pressure_shift_nm",
-        "line_mixing_coefficient"
+        "line_mixing_coefficient",
+        "branch_ic1",
+        "branch_ic2",
+        "rotational_nf"
       ]
     },
     {
       "id": "o2a_hitran_07_hit08_tropomi",
       "path": "data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
       "format": "hitran_160",
-      "sha256": "sha256:a380be78be60379201a397117eee58fbcd8ae228e8372449ddc8b6707c711507",
+      "sha256": "sha256:b377eb68225a652595996c2149b626f3051a108b04ee85d91ba9fc5e3c29fb4d",
       "columns": [
         "gas_index",
         "isotope_number",
@@ -73,7 +76,10 @@
         "temperature_exponent",
         "lower_state_energy_cm1",
         "pressure_shift_nm",
-        "line_mixing_coefficient"
+        "line_mixing_coefficient",
+        "branch_ic1",
+        "branch_ic2",
+        "rotational_nf"
       ]
     },
     {

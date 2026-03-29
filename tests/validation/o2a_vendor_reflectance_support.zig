@@ -40,6 +40,15 @@ pub const ComparisonMetrics = struct {
     red_wing_mean_difference: f64,
 };
 
+pub const AblationDiagnosticPoint = struct {
+    wavelength_nm: f64,
+    weak_line_sigma_cm2_per_molecule: f64,
+    strong_line_sigma_cm2_per_molecule: f64,
+    line_mixing_sigma_cm2_per_molecule: f64,
+    cia_sigma_cm5_per_molecule2: f64,
+    total_optical_depth: f64,
+};
+
 pub const TrendTolerances = struct {
     mean_abs_difference_abs: f64,
     root_mean_square_difference_abs: f64,
@@ -89,6 +98,7 @@ pub const VendorO2AReflectanceCase = struct {
     prepared: OpticsPrepare.PreparedOpticalState,
     product: MeasurementSpace.MeasurementSpaceProduct,
     transport_route: TransportRoute,
+    adaptive_reference_grid: AdaptiveReferenceGrid,
 
     pub fn deinit(self: *VendorO2AReflectanceCase, allocator: std.mem.Allocator) void {
         self.product.deinit(allocator);
@@ -117,9 +127,19 @@ pub const VendorO2AExecutionConfig = struct {
     use_vendor_parity_fixture: bool = false,
 };
 
+pub const AdaptiveReferenceGrid = struct {
+    points_per_fwhm: u16,
+    strong_line_min_divisions: u16,
+    strong_line_max_divisions: u16,
+};
+
 const vendor_surface_pressure_hpa = 1013.25;
 const vendor_fit_interval_index_1based: u32 = 2;
 const vendor_aerosol_interval_index_1based: u32 = 2;
+const vendor_adaptive_points_per_fwhm: u16 = 20;
+const vendor_adaptive_strong_line_min_divisions: u16 = 8;
+const vendor_adaptive_strong_line_max_divisions: u16 = 40;
+pub const vendor_ablation_wavelengths_nm = [_]f64{ 755.0, 762.29, 765.0, 775.0 };
 
 const vendor_interval_grid = [_]VerticalInterval{
     .{
@@ -172,6 +192,41 @@ pub fn meanOpticalDepthInRange(
         count += 1;
     }
     return if (count == 0) 0.0 else sum / @as(f64, @floatFromInt(count));
+}
+
+pub fn collectVendorO2AAblationDiagnostics(
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+) [vendor_ablation_wavelengths_nm.len]AblationDiagnosticPoint {
+    var diagnostics: [vendor_ablation_wavelengths_nm.len]AblationDiagnosticPoint = undefined;
+    const effective_temperature_k = prepared.effective_temperature_k;
+    const effective_pressure_hpa = prepared.effective_pressure_hpa;
+
+    for (vendor_ablation_wavelengths_nm, 0..) |wavelength_nm, index| {
+        const spectroscopy = if (prepared.spectroscopy_lines) |line_list|
+            line_list.evaluateAt(wavelength_nm, effective_temperature_k, effective_pressure_hpa)
+        else
+            ReferenceData.SpectroscopyEvaluation{
+                .weak_line_sigma_cm2_per_molecule = 0.0,
+                .strong_line_sigma_cm2_per_molecule = 0.0,
+                .line_sigma_cm2_per_molecule = 0.0,
+                .line_mixing_sigma_cm2_per_molecule = 0.0,
+                .total_sigma_cm2_per_molecule = 0.0,
+                .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+            };
+        diagnostics[index] = .{
+            .wavelength_nm = wavelength_nm,
+            .weak_line_sigma_cm2_per_molecule = spectroscopy.weak_line_sigma_cm2_per_molecule,
+            .strong_line_sigma_cm2_per_molecule = spectroscopy.strong_line_sigma_cm2_per_molecule,
+            .line_mixing_sigma_cm2_per_molecule = spectroscopy.line_mixing_sigma_cm2_per_molecule,
+            .cia_sigma_cm5_per_molecule2 = if (prepared.collision_induced_absorption) |cia|
+                cia.sigmaAt(wavelength_nm, effective_temperature_k)
+            else
+                0.0,
+            .total_optical_depth = prepared.totalOpticalDepthAtWavelength(wavelength_nm),
+        };
+    }
+
+    return diagnostics;
 }
 
 pub fn meanVectorInRange(
@@ -593,6 +648,28 @@ pub fn runConfiguredVendorO2AReflectanceCase(
         reference_irradiance[index] = sample.irradiance;
     }
 
+    const adaptive_points_per_fwhm = if (config.use_vendor_parity_fixture and
+        config.adaptive_points_per_fwhm == 0 and
+        config.adaptive_strong_line_min_divisions == 0 and
+        config.adaptive_strong_line_max_divisions == 0)
+        vendor_adaptive_points_per_fwhm
+    else
+        config.adaptive_points_per_fwhm;
+    const adaptive_strong_line_min_divisions = if (config.use_vendor_parity_fixture and
+        config.adaptive_points_per_fwhm == 0 and
+        config.adaptive_strong_line_min_divisions == 0 and
+        config.adaptive_strong_line_max_divisions == 0)
+        vendor_adaptive_strong_line_min_divisions
+    else
+        config.adaptive_strong_line_min_divisions;
+    const adaptive_strong_line_max_divisions = if (config.use_vendor_parity_fixture and
+        config.adaptive_points_per_fwhm == 0 and
+        config.adaptive_strong_line_min_divisions == 0 and
+        config.adaptive_strong_line_max_divisions == 0)
+        vendor_adaptive_strong_line_max_divisions
+    else
+        config.adaptive_strong_line_max_divisions;
+
     var scene: zdisamar.Scene = .{
         .id = "o2a-forward-validation",
         .surface = .{
@@ -650,9 +727,9 @@ pub fn runConfiguredVendorO2AReflectanceCase(
             .high_resolution_step_nm = 0.01,
             .high_resolution_half_span_nm = 1.14,
             .adaptive_reference_grid = .{
-                .points_per_fwhm = config.adaptive_points_per_fwhm,
-                .strong_line_min_divisions = config.adaptive_strong_line_min_divisions,
-                .strong_line_max_divisions = config.adaptive_strong_line_max_divisions,
+                .points_per_fwhm = adaptive_points_per_fwhm,
+                .strong_line_min_divisions = adaptive_strong_line_min_divisions,
+                .strong_line_max_divisions = adaptive_strong_line_max_divisions,
             },
         },
     };
@@ -728,5 +805,10 @@ pub fn runConfiguredVendorO2AReflectanceCase(
         .prepared = prepared,
         .product = product,
         .transport_route = plan.transport_route,
+        .adaptive_reference_grid = .{
+            .points_per_fwhm = adaptive_points_per_fwhm,
+            .strong_line_min_divisions = adaptive_strong_line_min_divisions,
+            .strong_line_max_divisions = adaptive_strong_line_max_divisions,
+        },
     };
 }

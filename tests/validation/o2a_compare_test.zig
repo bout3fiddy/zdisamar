@@ -9,6 +9,9 @@ const ParityReport = struct {
     n_streams: u16,
     num_orders_max: u16,
     use_adding: bool,
+    adaptive_points_per_fwhm: u16,
+    strong_line_min_divisions: u16,
+    strong_line_max_divisions: u16,
     fit_interval_index_1based: u32,
     interval_count: usize,
     aerosol_interval_index_1based: u32,
@@ -22,6 +25,7 @@ const CompareReport = struct {
     sample_count: usize,
     parity: ParityReport,
     metrics: o2a_vendor.ComparisonMetrics,
+    ablation: [o2a_vendor.vendor_ablation_wavelengths_nm.len]o2a_vendor.AblationDiagnosticPoint,
 };
 
 test "o2a compare emits runtime for the vendor parity fixture and compares against cached vendor reference" {
@@ -37,6 +41,7 @@ test "o2a compare emits runtime for the vendor parity fixture and compares again
         compare_case.reference,
         1.0e-12,
     );
+    const ablation = o2a_vendor.collectVendorO2AAblationDiagnostics(&compare_case.prepared);
 
     try std.testing.expectEqual(compare_case.reference.len, compare_case.product.wavelengths.len);
     try std.testing.expectEqual(compare_case.reference.len, compare_case.product.reflectance.len);
@@ -52,10 +57,20 @@ test "o2a compare emits runtime for the vendor parity fixture and compares again
     try std.testing.expect(compare_case.transport_route.rtm_controls.integrate_source_function);
     try std.testing.expect(compare_case.transport_route.rtm_controls.renorm_phase_function);
     try std.testing.expectEqual(.explicit_pressure_bounds, compare_case.prepared.interval_semantics);
+    try std.testing.expectEqual(@as(u16, 20), compare_case.adaptive_reference_grid.points_per_fwhm);
+    try std.testing.expectEqual(@as(u16, 8), compare_case.adaptive_reference_grid.strong_line_min_divisions);
+    try std.testing.expectEqual(@as(u16, 40), compare_case.adaptive_reference_grid.strong_line_max_divisions);
     try std.testing.expectEqual(@as(u32, 2), compare_case.prepared.fit_interval_index_1based);
     try std.testing.expectEqual(@as(u32, 2), compare_case.prepared.layers[1].interval_index_1based);
     try std.testing.expectApproxEqAbs(@as(f64, 500.0), compare_case.prepared.layers[1].top_pressure_hpa, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 520.0), compare_case.prepared.layers[1].bottom_pressure_hpa, 1.0e-12);
+    for (ablation, o2a_vendor.vendor_ablation_wavelengths_nm) |point, expected_wavelength_nm| {
+        try std.testing.expectApproxEqAbs(expected_wavelength_nm, point.wavelength_nm, 1.0e-12);
+        try std.testing.expect(point.total_optical_depth > 0.0);
+        try std.testing.expect(point.cia_sigma_cm5_per_molecule2 >= 0.0);
+    }
+    try std.testing.expect(ablation[1].total_optical_depth > ablation[0].total_optical_depth);
+    try std.testing.expect(ablation[1].total_optical_depth > ablation[3].total_optical_depth);
 
     // Keep this lane as a stable compare-and-time smoke check rather than a
     // strict zero-residual gate. The goal here is a vendor-equivalent scene and
@@ -76,11 +91,15 @@ test "o2a compare emits runtime for the vendor parity fixture and compares again
             .n_streams = compare_case.transport_route.rtm_controls.n_streams,
             .num_orders_max = compare_case.transport_route.rtm_controls.num_orders_max,
             .use_adding = compare_case.transport_route.rtm_controls.use_adding,
+            .adaptive_points_per_fwhm = compare_case.adaptive_reference_grid.points_per_fwhm,
+            .strong_line_min_divisions = compare_case.adaptive_reference_grid.strong_line_min_divisions,
+            .strong_line_max_divisions = compare_case.adaptive_reference_grid.strong_line_max_divisions,
             .fit_interval_index_1based = compare_case.prepared.fit_interval_index_1based,
             .interval_count = compare_case.prepared.layers.len,
             .aerosol_interval_index_1based = compare_case.prepared.layers[1].interval_index_1based,
         },
         .metrics = metrics,
+        .ablation = ablation,
     };
 
     const rendered = try std.fmt.allocPrint(

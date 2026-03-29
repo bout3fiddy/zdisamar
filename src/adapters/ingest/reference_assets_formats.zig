@@ -149,6 +149,8 @@ fn parseHitran160(
     contents: []const u8,
     columns: []const []const u8,
 ) Error!ParsedTable {
+    const has_vendor_o2a_fields = columns.len == 13;
+    const minimum_line_length: usize = 67;
     const owned_columns = try dupColumns(allocator, columns);
     errdefer freeColumns(allocator, owned_columns);
 
@@ -161,7 +163,7 @@ fn parseHitran160(
         const line = trimLineEnding(raw_line);
         const stripped = trimWhitespace(line);
         if (stripped.len == 0 or stripped[0] == '#' or stripped[0] == '!') continue;
-        if (line.len < 67) return error.InvalidAssetFormat;
+        if (line.len < minimum_line_length) return error.InvalidAssetFormat;
 
         const gas_index = try parseFixedInt(line[0..2]);
         const isotope_number = try parseFixedInt(line[2..3]);
@@ -171,6 +173,7 @@ fn parseHitran160(
         const lower_state_energy_cm1 = try parseFixedFloat(line[45..55]);
         const temperature_exponent = try parseFixedFloat(line[55..59]);
         const pressure_shift_cm1 = try parseFixedFloat(line[59..67]);
+        const has_inline_vendor_fields = has_vendor_o2a_fields and line.len >= 85;
 
         // UNITS:
         //   The fixed-width cm^-1 fields are converted to the nm values expected by the typed
@@ -179,6 +182,9 @@ fn parseHitran160(
         const air_half_width_nm = spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
         const pressure_shift_nm = -spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
         const line_mixing_coefficient = deriveLineMixingCoefficient(air_half_width_cm1, pressure_shift_cm1);
+        const branch_ic1 = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[67..70]) else null;
+        const branch_ic2 = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[70..73]) else null;
+        const rotational_nf = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[83..85]) else null;
 
         try values.appendSlice(allocator, &.{
             @as(f64, @floatFromInt(gas_index)),
@@ -192,6 +198,13 @@ fn parseHitran160(
             pressure_shift_nm,
             line_mixing_coefficient,
         });
+        if (has_vendor_o2a_fields) {
+            try values.appendSlice(allocator, &.{
+                if (branch_ic1) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
+                if (branch_ic2) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
+                if (rotational_nf) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
+            });
+        }
         row_count += 1;
     }
     if (row_count == 0) return error.InvalidAssetFormat;
@@ -409,6 +422,14 @@ fn parseFixedFloat(slice: []const u8) Error!f64 {
 ///   Parse one integer field from a fixed-width slice.
 fn parseFixedInt(slice: []const u8) Error!u16 {
     return std.fmt.parseInt(u16, trimWhitespace(slice), 10) catch error.InvalidNumber;
+}
+
+/// Purpose:
+///   Parse one optional integer field from a fixed-width slice, leaving blank fields unset.
+fn parseOptionalFixedInt(slice: []const u8) Error!?u16 {
+    const trimmed = trimWhitespace(slice);
+    if (trimmed.len == 0) return null;
+    return std.fmt.parseInt(u16, trimmed, 10) catch error.InvalidNumber;
 }
 
 /// Purpose:

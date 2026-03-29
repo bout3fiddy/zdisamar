@@ -18,7 +18,7 @@ inputs:
     o2_hitran:
       kind: file
       path: data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par
-      format: hitran_par
+      format: hitran_par_o2a
 
     o2_line_mixing:
       kind: file

@@ -30,7 +30,15 @@
       "bundle_manifest": "data/cross_sections/bundle_manifest.json",
       "local_asset": "data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par",
       "upstream_candidates": [
-        "RefSpec/07_HIT08_TROPOMI.par",
+        "RefSpec/07_HIT08_O2AJPL_TROPOMI.par",
+        "InputFiles/Config_O2_with_CIA.in"
+      ]
+    },
+    {
+      "bundle_manifest": "data/cross_sections/bundle_manifest.json",
+      "local_asset": "data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
+      "upstream_candidates": [
+        "RefSpec/07_HIT08_O2AJPL_TROPOMI.par",
         "InputFiles/Config_O2A_XsecLUT.in"
       ]
     },

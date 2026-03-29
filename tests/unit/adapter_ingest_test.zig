@@ -238,6 +238,10 @@ test "reference asset ingest assembles vendor-shaped spectroscopy sidecars into 
     var relaxation_matrix = try rmf_asset.toSpectroscopyRelaxationMatrix(std.testing.allocator);
     defer relaxation_matrix.deinit(std.testing.allocator);
 
+    try std.testing.expectEqual(@as(usize, 13), line_asset.columnCount());
+    try std.testing.expectEqual(@as(u8, 5), line_list.lines[2].branch_ic1.?);
+    try std.testing.expectEqual(@as(u8, 1), line_list.lines[2].branch_ic2.?);
+    try std.testing.expect(line_list.lines[2].rotational_nf.? <= 35);
     try line_list.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
     try line_list.applyRuntimeControls(std.testing.allocator, 7, &.{}, null, null, 1.0);
 
