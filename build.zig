@@ -568,7 +568,7 @@ pub fn build(b: *std.Build) void {
         test_legacy_config_module,
         test_cli_app_module,
         "test-validation-o2a-vendor",
-        "Run O2A compare-and-time lane against cached vendor spectra",
+        "Run O2A vendor-parity compare-and-time lane against cached vendor spectra",
         "tests/validation/o2a_compare_test.zig",
     );
 

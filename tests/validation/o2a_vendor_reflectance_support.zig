@@ -5,8 +5,11 @@ const internal = @import("zdisamar_internal");
 const ReferenceData = internal.reference_data;
 const OpticsPrepare = internal.kernels.optics.preparation;
 const MeasurementSpace = internal.kernels.transport.measurement;
+const TransportRoute = internal.kernels.transport.common.Route;
 const bundled_optics = internal.runtime.reference.bundled_optics_assets;
 const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
+const RtmControls = @TypeOf(@as(zdisamar.PlanTemplate, .{}).rtm_controls);
+const VerticalInterval = @typeInfo(@TypeOf(@as(zdisamar.Scene, .{}).atmosphere.interval_grid.intervals)).pointer.child;
 
 pub const ReferenceSample = struct {
     wavelength_nm: f64,
@@ -85,6 +88,7 @@ pub const VendorO2AReflectanceCase = struct {
     reference: []ReferenceSample,
     prepared: OpticsPrepare.PreparedOpticalState,
     product: MeasurementSpace.MeasurementSpaceProduct,
+    transport_route: TransportRoute,
 
     pub fn deinit(self: *VendorO2AReflectanceCase, allocator: std.mem.Allocator) void {
         self.product.deinit(allocator);
@@ -110,6 +114,48 @@ pub const VendorO2AExecutionConfig = struct {
     adaptive_strong_line_min_divisions: u16 = 0,
     adaptive_strong_line_max_divisions: u16 = 0,
     include_cia: bool = true,
+    use_vendor_parity_fixture: bool = false,
+};
+
+const vendor_surface_pressure_hpa = 1013.25;
+const vendor_fit_interval_index_1based: u32 = 2;
+const vendor_aerosol_interval_index_1based: u32 = 2;
+
+const vendor_interval_grid = [_]VerticalInterval{
+    .{
+        .index_1based = 1,
+        .top_pressure_hpa = 0.3,
+        .bottom_pressure_hpa = 500.0,
+        .altitude_divisions = 28,
+    },
+    .{
+        .index_1based = 2,
+        .top_pressure_hpa = 500.0,
+        .bottom_pressure_hpa = 520.0,
+        .altitude_divisions = 6,
+    },
+    .{
+        .index_1based = 3,
+        .top_pressure_hpa = 520.0,
+        .bottom_pressure_hpa = vendor_surface_pressure_hpa,
+        .altitude_divisions = 8,
+    },
+};
+
+const vendor_parity_rtm_controls: RtmControls = .{
+    .scattering = .multiple,
+    .n_streams = 20,
+    .use_adding = false,
+    .num_orders_max = 0,
+    .fourier_floor_scalar = 2,
+    .threshold_conv_first = 1.5e-7,
+    .threshold_conv_mult = 1.5e-9,
+    .threshold_doubl = 1.0e-6,
+    .threshold_mul = 1.0e-8,
+    .use_spherical_correction = true,
+    .integrate_source_function = true,
+    .renorm_phase_function = true,
+    .stokes_dimension = 1,
 };
 
 pub fn meanOpticalDepthInRange(
@@ -504,7 +550,13 @@ pub fn computeComparisonMetrics(
 }
 
 pub fn runVendorO2AReflectanceCase(allocator: std.mem.Allocator) !VendorO2AReflectanceCase {
-    return runConfiguredVendorO2AReflectanceCase(allocator, .{});
+    return runConfiguredVendorO2AReflectanceCase(allocator, .{
+        .use_vendor_parity_fixture = true,
+        .line_mixing_factor = 1.0,
+        .isotopes_sim = &.{ 1, 2, 3 },
+        .threshold_line_sim = 3.0e-5,
+        .cutoff_sim_cm1 = 200.0,
+    });
 }
 
 pub fn runConfiguredVendorO2AReflectanceCase(
@@ -604,6 +656,30 @@ pub fn runConfiguredVendorO2AReflectanceCase(
             },
         },
     };
+    var rtm_controls: RtmControls = .{
+        .n_streams = 6,
+        .num_orders_max = 20,
+    };
+
+    if (config.use_vendor_parity_fixture) {
+        scene.id = "o2a-vendor-parity";
+        scene.surface.pressure_hpa = vendor_surface_pressure_hpa;
+        scene.atmosphere.surface_pressure_hpa = vendor_surface_pressure_hpa;
+        scene.atmosphere.layer_count = vendor_interval_grid.len;
+        scene.atmosphere.interval_grid = .{
+            .semantics = .explicit_pressure_bounds,
+            .fit_interval_index_1based = vendor_fit_interval_index_1based,
+            .intervals = vendor_interval_grid[0..],
+        };
+        scene.aerosol.reference_wavelength_nm = 550.0;
+        scene.aerosol.placement = .{
+            .semantics = .explicit_interval_bounds,
+            .interval_index_1based = vendor_aerosol_interval_index_1based,
+            .top_pressure_hpa = vendor_interval_grid[vendor_aerosol_interval_index_1based - 1].top_pressure_hpa,
+            .bottom_pressure_hpa = vendor_interval_grid[vendor_aerosol_interval_index_1based - 1].bottom_pressure_hpa,
+        };
+        rtm_controls = vendor_parity_rtm_controls;
+    }
     scene.observation_model.operational_solar_spectrum = .{
         .wavelengths_nm = reference_wavelengths,
         .irradiance = reference_irradiance,
@@ -626,13 +702,10 @@ pub fn runConfiguredVendorO2AReflectanceCase(
             .observation_regime = .nadir,
             .derivative_mode = .none,
             .spectral_grid = scene.spectral_grid,
-            .layer_count_hint = scene.atmosphere.layer_count,
+            .layer_count_hint = scene.atmosphere.preparedLayerCount(),
             .measurement_count_hint = scene.spectral_grid.sample_count,
         },
-        .rtm_controls = .{
-            .n_streams = 6,
-            .num_orders_max = 20,
-        },
+        .rtm_controls = rtm_controls,
     });
     defer plan.deinit();
 
@@ -654,5 +727,6 @@ pub fn runConfiguredVendorO2AReflectanceCase(
         .reference = reference,
         .prepared = prepared,
         .product = product,
+        .transport_route = plan.transport_route,
     };
 }
