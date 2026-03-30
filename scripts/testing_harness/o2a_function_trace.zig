@@ -482,8 +482,6 @@ fn emitTransportTraces(
     const transport_layer_count = Measurement.workspace.resolvedTransportLayerCount(route, prepared);
     const radiance_calibration = providers.instrument.calibrationForScene(scene, .radiance);
     const irradiance_support = scene.observation_model.primaryOperationalBandSupport().operational_solar_spectrum;
-    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
-
     for (wavelengths_nm) |nominal_wavelength_nm| {
         if (try InstrumentProviders.traceAdaptiveIntegrationKernel(
             allocator,
@@ -597,8 +595,8 @@ fn emitTransportTraces(
             .nominal_wavelength_nm = nominal_wavelength_nm,
             .final_radiance = integrated_radiance.radiance,
             .final_irradiance = integrated_irradiance,
-            .final_reflectance = (integrated_radiance.radiance * std.math.pi) /
-                @max(integrated_irradiance * solar_cosine, 1.0e-12),
+            .final_reflectance = integrated_radiance.radiance /
+                @max(integrated_irradiance, 1.0e-12),
         });
     }
 

@@ -6,6 +6,7 @@ const ReferenceData = internal.reference_data;
 const OpticsPrepare = internal.kernels.optics.preparation;
 const MeasurementSpace = internal.kernels.transport.measurement;
 const bundled_optics = internal.runtime.reference.bundled_optics_assets;
+const reference_assets = zdisamar.ingest.reference_assets;
 const AbsorberSpecies = @typeInfo(@TypeOf(@as(zdisamar.Absorber, .{}).resolved_species)).optional.child;
 const RtmControls = @TypeOf(@as(zdisamar.PlanTemplate, .{}).rtm_controls);
 const VerticalInterval = @typeInfo(@TypeOf(@as(zdisamar.Scene, .{}).atmosphere.interval_grid.intervals)).pointer.child;
@@ -173,6 +174,7 @@ const vendor_aerosol_interval_index_1based: u32 = 2;
 const vendor_adaptive_points_per_fwhm: u16 = 20;
 const vendor_adaptive_strong_line_min_divisions: u16 = 8;
 const vendor_adaptive_strong_line_max_divisions: u16 = 40;
+const vendor_stock_o2a_line_list_path = "vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par";
 
 const vendor_interval_grid = [_]VerticalInterval{
     .{
@@ -639,7 +641,10 @@ pub fn prepareConfiguredVendorO2ATraceCase(
     defer profile.deinit(allocator);
     var cross_sections = try bundled_optics.zeroContinuumTable(allocator, 758.0, 771.0);
     defer cross_sections.deinit(allocator);
-    var line_list = try bundled_optics.loadO2aSpectroscopyLineList(allocator);
+    var line_list = if (config.use_vendor_parity_fixture)
+        try loadVendorParityO2ASpectroscopyLineList(allocator)
+    else
+        try bundled_optics.loadO2aSpectroscopyLineList(allocator);
     defer line_list.deinit(allocator);
     var cia_table: ?ReferenceData.CollisionInducedAbsorptionTable = null;
     defer if (cia_table) |*table| table.deinit(allocator);
@@ -819,4 +824,29 @@ pub fn prepareConfiguredVendorO2ATraceCase(
         .plan = plan,
         .prepared = prepared,
     };
+}
+
+fn loadVendorParityO2ASpectroscopyLineList(
+    allocator: std.mem.Allocator,
+) !ReferenceData.SpectroscopyLineList {
+    var asset = try reference_assets.loadExternalAsset(
+        allocator,
+        .spectroscopy_line_list,
+        "vendor_o2a_hitran_07_hit08_tropomi",
+        vendor_stock_o2a_line_list_path,
+        "hitran_par",
+    );
+    defer asset.deinit(allocator);
+
+    var line_list = try asset.toSpectroscopyLineList(allocator);
+    errdefer line_list.deinit(allocator);
+
+    var strong_lines = try bundled_optics.loadO2AStrongLineSet(allocator);
+    defer strong_lines.deinit(allocator);
+
+    var relaxation_matrix = try bundled_optics.loadO2ARelaxationMatrix(allocator);
+    defer relaxation_matrix.deinit(allocator);
+
+    try line_list.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
+    return line_list;
 }
