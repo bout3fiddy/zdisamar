@@ -120,6 +120,7 @@ pub const test_support = if (build_options.enable_test_support) struct {
         pub const dynlib = @import("plugins/loader/dynlib.zig");
         pub const resolver = @import("plugins/loader/resolver.zig");
         pub const manifest = @import("plugins/loader/manifest.zig");
+        pub const providers = @import("plugins/providers/root.zig");
     };
 } else struct {};
 

@@ -845,17 +845,6 @@ test "runtime bundled optics uses O2A sidecars and aerosol Mie tables when reque
     try std.testing.expect(prepared.sublayers.?[0].aerosol_phase_coefficients[1] > scene.aerosol.asymmetry_factor);
 }
 
-test "bundled O2A line list loads wavelength-sorted at the asset boundary" {
-    var line_list = try bundled_optics_assets.loadO2ALineList(std.testing.allocator);
-    defer line_list.deinit(std.testing.allocator);
-
-    try std.testing.expect(line_list.lines_sorted_ascending);
-    try std.testing.expect(line_list.lines.len >= 1300);
-    for (line_list.lines[1..], 1..) |line, index| {
-        try std.testing.expect(line_list.lines[index - 1].center_wavelength_nm <= line.center_wavelength_nm);
-    }
-}
-
 test "runtime bundled optics keeps bundled O2A CIA for explicit o2-only scenes" {
     const scene: zdisamar.Scene = .{
         .id = "runtime-o2a-o2-only",

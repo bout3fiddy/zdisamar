@@ -151,6 +151,51 @@ pub const SpectroscopyEvaluation = struct {
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 
+pub const SpectroscopyTraceContributionKind = enum {
+    weak_included,
+    weak_excluded_anchor,
+    weak_excluded_vendor_partition,
+    strong_sidecar,
+};
+
+pub const SpectroscopyTraceRow = struct {
+    contribution_kind: SpectroscopyTraceContributionKind,
+    wavelength_nm: f64,
+    global_line_index: ?usize = null,
+    strong_index: ?usize = null,
+    matched_strong_index: ?usize = null,
+    gas_index: u16 = 0,
+    isotope_number: u8 = 0,
+    center_wavelength_nm: f64,
+    center_wavenumber_cm1: f64,
+    shifted_center_wavenumber_cm1: f64,
+    line_strength_cm2_per_molecule: f64 = 0.0,
+    air_half_width_nm: f64 = 0.0,
+    lower_state_energy_cm1: f64 = 0.0,
+    pressure_shift_nm: f64 = 0.0,
+    line_mixing_coefficient: f64 = 0.0,
+    branch_ic1: ?u8 = null,
+    branch_ic2: ?u8 = null,
+    rotational_nf: ?u8 = null,
+    weak_line_sigma_cm2_per_molecule: f64 = 0.0,
+    strong_line_sigma_cm2_per_molecule: f64 = 0.0,
+    line_mixing_sigma_cm2_per_molecule: f64 = 0.0,
+    total_sigma_cm2_per_molecule: f64 = 0.0,
+};
+
+pub const SpectroscopyTrace = struct {
+    wavelength_nm: f64,
+    temperature_k: f64,
+    pressure_hpa: f64,
+    evaluation: SpectroscopyEvaluation,
+    rows: []SpectroscopyTraceRow,
+
+    pub fn deinit(self: *SpectroscopyTrace, allocator: Allocator) void {
+        allocator.free(self.rows);
+        self.* = undefined;
+    }
+};
+
 /// Purpose:
 ///   Describe runtime filtering and line-mixing controls applied to a spectroscopy line list.
 pub const SpectroscopyRuntimeControls = struct {
@@ -483,6 +528,142 @@ pub const SpectroscopyLineList = struct {
         };
     }
 
+    pub fn traceAt(
+        self: SpectroscopyLineList,
+        allocator: Allocator,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        prepared_state: ?*const StrongLinePreparedState,
+    ) !SpectroscopyTrace {
+        var rows = std.ArrayList(SpectroscopyTraceRow).empty;
+        errdefer rows.deinit(allocator);
+
+        const safe_temperature = @max(temperature_k, 150.0);
+        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+
+        if (!self.hasStrongLineSidecars()) {
+            const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
+            for (relevant_window.lines, 0..) |line, line_index| {
+                const contribution = weakLineContribution(
+                    wavelength_nm,
+                    line,
+                    safe_temperature,
+                    pressure_scale,
+                    hitran_reference_temperature_k,
+                    self.runtime_controls.cutoff_cm1,
+                );
+                try rows.append(allocator, traceRowForWeakLine(
+                    wavelength_nm,
+                    relevant_window.start_index + line_index,
+                    line,
+                    null,
+                    .weak_included,
+                    contribution,
+                    pressure_scale,
+                ));
+            }
+        } else {
+            const strong_lines = self.strong_lines.?;
+            const relaxation_matrix = self.relaxation_matrix.?;
+            const convtp_state = if (prepared_state == null)
+                prepareStrongLineConvTPState(strong_lines, relaxation_matrix, safe_temperature, pressure_scale)
+            else
+                null;
+            const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
+            const relevant_lines = relevant_window.lines;
+            const strong_line_anchors = self.selectStrongLineAnchors(relevant_lines, relevant_window.start_index);
+
+            for (relevant_lines, 0..) |line, line_index| {
+                const matched_strong_index = self.matchedStrongIndexForRelevantLine(
+                    relevant_window.start_index,
+                    line,
+                    line_index,
+                );
+                if (self.shouldExcludeWeakLine(relevant_window.start_index, line, line_index, &strong_line_anchors)) {
+                    const exclusion_kind: SpectroscopyTraceContributionKind = if (self.usesVendorStrongLinePartition())
+                        .weak_excluded_vendor_partition
+                    else
+                        .weak_excluded_anchor;
+                    try rows.append(allocator, traceRowForWeakLine(
+                        wavelength_nm,
+                        relevant_window.start_index + line_index,
+                        line,
+                        matched_strong_index,
+                        exclusion_kind,
+                        zeroEvaluation(),
+                        pressure_scale,
+                    ));
+                    continue;
+                }
+                const contribution = weakLineContribution(
+                    wavelength_nm,
+                    line,
+                    safe_temperature,
+                    pressure_scale,
+                    hitran_reference_temperature_k,
+                    self.runtime_controls.cutoff_cm1,
+                );
+                try rows.append(allocator, traceRowForWeakLine(
+                    wavelength_nm,
+                    relevant_window.start_index + line_index,
+                    line,
+                    matched_strong_index,
+                    .weak_included,
+                    contribution,
+                    pressure_scale,
+                ));
+            }
+
+            for (strong_line_anchors[0..strong_lines.len], 0..) |anchor_line_index, strong_index| {
+                const line_index = anchor_line_index orelse continue;
+                const anchor_line = relevant_lines[line_index];
+                const contribution = if (prepared_state) |state|
+                    strongLineContributionPrepared(
+                        wavelength_nm,
+                        anchor_line,
+                        strong_lines,
+                        strong_index,
+                        state,
+                        safe_temperature,
+                        pressure_scale,
+                        self.runtime_controls.cutoff_cm1,
+                    )
+                else
+                    strongLineContribution(
+                        wavelength_nm,
+                        anchor_line,
+                        strong_lines,
+                        strong_index,
+                        convtp_state.?,
+                        safe_temperature,
+                        pressure_scale,
+                        self.runtime_controls.cutoff_cm1,
+                    );
+                try rows.append(allocator, traceRowForStrongLine(
+                    wavelength_nm,
+                    relevant_window.start_index + line_index,
+                    strong_index,
+                    anchor_line,
+                    strong_lines[strong_index],
+                    contribution,
+                    pressure_scale,
+                ));
+            }
+        }
+
+        return .{
+            .wavelength_nm = wavelength_nm,
+            .temperature_k = safe_temperature,
+            .pressure_hpa = pressure_hpa,
+            .evaluation = if (prepared_state) |state|
+                self.evaluateAtPrepared(wavelength_nm, safe_temperature, pressure_hpa, state)
+            else
+                self.evaluateAt(wavelength_nm, safe_temperature, pressure_hpa),
+            .rows = try rows.toOwnedSlice(allocator),
+        };
+    }
+
     fn totalSigmaAt(self: SpectroscopyLineList, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) SpectroscopyEvaluation {
         if (self.strong_lines != null and self.relaxation_matrix != null) {
             return self.totalSigmaWithStrongLineSidecars(wavelength_nm, temperature_k, pressure_hpa);
@@ -799,9 +980,12 @@ pub const SpectroscopyLineList = struct {
 
     fn usesVendorStrongLinePartition(self: SpectroscopyLineList) bool {
         if (!self.hasStrongLineSidecars()) return false;
-        if (self.runtime_controls.gas_index) |gas_index| return gas_index == 7;
+        if (self.runtime_controls.gas_index) |gas_index| {
+            if (gas_index != 7) return false;
+        }
         for (self.lines) |line| {
-            if (line.gas_index == 7) return true;
+            if (line.gas_index != 7) continue;
+            if (lineHasVendorStrongLineMetadata(line)) return true;
         }
         return false;
     }
@@ -822,6 +1006,87 @@ fn lineIndexIsStrongAnchor(anchor_indices: []const ?usize, line_index: usize) bo
         if (anchor.? == line_index) return true;
     }
     return false;
+}
+
+fn zeroEvaluation() SpectroscopyEvaluation {
+    return .{
+        .weak_line_sigma_cm2_per_molecule = 0.0,
+        .strong_line_sigma_cm2_per_molecule = 0.0,
+        .line_sigma_cm2_per_molecule = 0.0,
+        .line_mixing_sigma_cm2_per_molecule = 0.0,
+        .total_sigma_cm2_per_molecule = 0.0,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+    };
+}
+
+fn traceRowForWeakLine(
+    wavelength_nm: f64,
+    global_line_index: usize,
+    line: SpectroscopyLine,
+    matched_strong_index: ?usize,
+    contribution_kind: SpectroscopyTraceContributionKind,
+    contribution: SpectroscopyEvaluation,
+    pressure_atm: f64,
+) SpectroscopyTraceRow {
+    return .{
+        .contribution_kind = contribution_kind,
+        .wavelength_nm = wavelength_nm,
+        .global_line_index = global_line_index,
+        .strong_index = null,
+        .matched_strong_index = matched_strong_index,
+        .gas_index = line.gas_index,
+        .isotope_number = line.isotope_number,
+        .center_wavelength_nm = line.center_wavelength_nm,
+        .center_wavenumber_cm1 = wavelengthToWavenumberCm1(line.center_wavelength_nm),
+        .shifted_center_wavenumber_cm1 = shiftedLineCenterWavenumberCm1(line, pressure_atm),
+        .line_strength_cm2_per_molecule = line.line_strength_cm2_per_molecule,
+        .air_half_width_nm = line.air_half_width_nm,
+        .lower_state_energy_cm1 = line.lower_state_energy_cm1,
+        .pressure_shift_nm = line.pressure_shift_nm,
+        .line_mixing_coefficient = line.line_mixing_coefficient,
+        .branch_ic1 = line.branch_ic1,
+        .branch_ic2 = line.branch_ic2,
+        .rotational_nf = line.rotational_nf,
+        .weak_line_sigma_cm2_per_molecule = contribution.weak_line_sigma_cm2_per_molecule,
+        .strong_line_sigma_cm2_per_molecule = contribution.strong_line_sigma_cm2_per_molecule,
+        .line_mixing_sigma_cm2_per_molecule = contribution.line_mixing_sigma_cm2_per_molecule,
+        .total_sigma_cm2_per_molecule = contribution.total_sigma_cm2_per_molecule,
+    };
+}
+
+fn traceRowForStrongLine(
+    wavelength_nm: f64,
+    global_line_index: usize,
+    strong_index: usize,
+    anchor_line: SpectroscopyLine,
+    strong_line: SpectroscopyStrongLine,
+    contribution: SpectroscopyEvaluation,
+    pressure_atm: f64,
+) SpectroscopyTraceRow {
+    return .{
+        .contribution_kind = .strong_sidecar,
+        .wavelength_nm = wavelength_nm,
+        .global_line_index = global_line_index,
+        .strong_index = strong_index,
+        .matched_strong_index = strong_index,
+        .gas_index = anchor_line.gas_index,
+        .isotope_number = anchor_line.isotope_number,
+        .center_wavelength_nm = strong_line.center_wavelength_nm,
+        .center_wavenumber_cm1 = strong_line.center_wavenumber_cm1,
+        .shifted_center_wavenumber_cm1 = strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1,
+        .line_strength_cm2_per_molecule = anchor_line.line_strength_cm2_per_molecule,
+        .air_half_width_nm = strong_line.air_half_width_nm,
+        .lower_state_energy_cm1 = strong_line.lower_state_energy_cm1,
+        .pressure_shift_nm = anchor_line.pressure_shift_nm,
+        .line_mixing_coefficient = anchor_line.line_mixing_coefficient,
+        .branch_ic1 = anchor_line.branch_ic1,
+        .branch_ic2 = anchor_line.branch_ic2,
+        .rotational_nf = anchor_line.rotational_nf,
+        .weak_line_sigma_cm2_per_molecule = contribution.weak_line_sigma_cm2_per_molecule,
+        .strong_line_sigma_cm2_per_molecule = contribution.strong_line_sigma_cm2_per_molecule,
+        .line_mixing_sigma_cm2_per_molecule = contribution.line_mixing_sigma_cm2_per_molecule,
+        .total_sigma_cm2_per_molecule = contribution.total_sigma_cm2_per_molecule,
+    };
 }
 
 fn lineHasVendorStrongLineMetadata(line: SpectroscopyLine) bool {

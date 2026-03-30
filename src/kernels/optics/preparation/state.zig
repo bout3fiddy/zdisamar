@@ -607,6 +607,31 @@ pub const PreparedOpticalState = struct {
         return continuum + line_sigma;
     }
 
+    pub fn effectiveSpectroscopyEvaluationAtWavelength(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+    ) ReferenceData.SpectroscopyEvaluation {
+        return self.weightedSpectroscopyEvaluationAtWavelength(
+            wavelength_nm,
+            self.effective_temperature_k,
+            self.effective_pressure_hpa,
+        );
+    }
+
+    pub fn collisionInducedSigmaAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
+        if (self.operational_o2o2_lut.enabled()) {
+            return self.operational_o2o2_lut.sigmaAt(
+                wavelength_nm,
+                self.effective_temperature_k,
+                self.effective_pressure_hpa,
+            );
+        }
+        if (self.collision_induced_absorption) |cia_table| {
+            return cia_table.sigmaAt(wavelength_nm, self.effective_temperature_k);
+        }
+        return 0.0;
+    }
+
     fn weightedCrossSectionSigmaAtWavelength(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,

@@ -568,8 +568,8 @@ pub fn build(b: *std.Build) void {
         test_legacy_config_module,
         test_cli_app_module,
         "test-validation-o2a-vendor",
-        "Run O2A vendor-parity compare-and-time lane against cached vendor spectra",
-        "tests/validation/o2a_compare_test.zig",
+        "Run O2A vendor reflectance assessment lane",
+        "tests/validation/o2a_vendor_reflectance_assessment_test.zig",
     );
 
     const fmt_check_cmd = b.addFmt(.{

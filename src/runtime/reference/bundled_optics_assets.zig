@@ -46,20 +46,6 @@ pub const asset_ids = struct {
 const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
-fn sortSpectroscopyLineListAscending(line_list: *ReferenceData.SpectroscopyLineList) void {
-    std.sort.pdq(
-        ReferenceData.SpectroscopyLine,
-        line_list.lines,
-        {},
-        struct {
-            fn lessThan(_: void, left: ReferenceData.SpectroscopyLine, right: ReferenceData.SpectroscopyLine) bool {
-                return left.center_wavelength_nm < right.center_wavelength_nm;
-            }
-        }.lessThan,
-    );
-    line_list.lines_sorted_ascending = true;
-}
-
 /// Purpose:
 ///   Test whether two wavelength windows overlap.
 ///
@@ -168,9 +154,7 @@ pub fn loadO2ALineList(
         asset_ids.o2a_line_list,
     );
     defer asset.deinit(allocator);
-    var line_list = try asset.toSpectroscopyLineList(allocator);
-    sortSpectroscopyLineListAscending(&line_list);
-    return line_list;
+    return try asset.toSpectroscopyLineList(allocator);
 }
 
 /// Purpose:
