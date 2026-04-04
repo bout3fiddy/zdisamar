@@ -41,6 +41,7 @@ const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;
 const hitran_hc_over_kb_cm_k = 1.4387770;
 const hitran_gas_constant_j_per_mol_k = 8.3144621;
 const hitran_speed_of_light_m_per_s = 2.99792458e8;
+const min_spectroscopy_pressure_atm = 1.0e-12;
 
 pub const ClimatologyPoint = climatology.ClimatologyPoint;
 pub const ClimatologyProfile = climatology.ClimatologyProfile;
@@ -500,7 +501,7 @@ pub const SpectroscopyLineList = struct {
         pressure_hpa: f64,
     ) !?StrongLinePreparedState {
         if (!self.hasStrongLineSidecars()) return null;
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
         const stack_state = prepareStrongLineConvTPState(
             self.strong_lines.?,
             self.relaxation_matrix.?,
@@ -540,7 +541,7 @@ pub const SpectroscopyLineList = struct {
         errdefer rows.deinit(allocator);
 
         const safe_temperature = @max(temperature_k, 150.0);
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
 
         if (!self.hasStrongLineSidecars()) {
             const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
@@ -685,7 +686,7 @@ pub const SpectroscopyLineList = struct {
 
         const reference_temperature_k = hitran_reference_temperature_k;
         const safe_temperature = @max(temperature_k, 150.0);
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
 
         const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
         var line_sigma: f64 = 0.0;
@@ -726,7 +727,7 @@ pub const SpectroscopyLineList = struct {
 
         const strong_lines = self.strong_lines.?;
         const relaxation_matrix = self.relaxation_matrix.?;
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
         const safe_temperature = @max(temperature_k, 150.0);
         const convtp_state = prepareStrongLineConvTPState(
             strong_lines,
@@ -801,7 +802,7 @@ pub const SpectroscopyLineList = struct {
         }
 
         const strong_lines = self.strong_lines.?;
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
         const safe_temperature = @max(temperature_k, 150.0);
         const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
         const relevant_lines = relevant_window.lines;
@@ -1727,6 +1728,68 @@ test "strong-line convtp state applies detailed-balance and pressure-scaled line
     try std.testing.expect(high_pressure.half_width_cm1_at_t[0] > relaxation_matrix.weightAt(0, 0));
 }
 
+test "prepared strong-line state preserves upper-atmosphere pressure scaling" {
+    var line_list = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{}),
+        .strong_lines = try std.testing.allocator.dupe(SpectroscopyStrongLine, &.{
+            .{
+                .center_wavenumber_cm1 = 12965.1079,
+                .center_wavelength_nm = 771.3015,
+                .population_t0 = 5.10e-05,
+                .dipole_ratio = 0.712,
+                .dipole_t0 = 5.80e-04,
+                .lower_state_energy_cm1 = 1804.8773,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -35,
+            },
+            .{
+                .center_wavenumber_cm1 = 12966.8087,
+                .center_wavelength_nm = 771.2004,
+                .population_t0 = 4.99e-05,
+                .dipole_ratio = -0.702,
+                .dipole_t0 = -5.78e-04,
+                .lower_state_energy_cm1 = 1803.1765,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -34,
+            },
+        }),
+        .relaxation_matrix = RelaxationMatrix{
+            .line_count = 2,
+            .wt0 = try std.testing.allocator.dupe(f64, &.{ 0.02764486, 0.0004338554, 0.0004338554, 0.02655312 }),
+            .bw = try std.testing.allocator.dupe(f64, &.{ 0.629999646133, 1.169364903905, 1.169364903905, 0.629999646133 }),
+        },
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var prepared_state = (try line_list.prepareStrongLineState(std.testing.allocator, 190.5, 0.000258)).?;
+    defer prepared_state.deinit(std.testing.allocator);
+
+    const pressure_atm = 0.000258 / 1013.25;
+    const expected_state = prepareStrongLineConvTPState(
+        line_list.strong_lines.?,
+        line_list.relaxation_matrix.?,
+        190.5,
+        pressure_atm,
+    );
+
+    try std.testing.expectApproxEqAbs(expected_state.sig_moy_cm1, prepared_state.sig_moy_cm1, 1.0e-12);
+    try std.testing.expectApproxEqAbs(expected_state.mod_sig_cm1[0], prepared_state.mod_sig_cm1[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(expected_state.half_width_cm1_at_t[0], prepared_state.half_width_cm1_at_t[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(
+        expected_state.line_mixing_coefficients[0],
+        prepared_state.line_mixing_coefficients[0],
+        1.0e-18,
+    );
+}
+
 test "demo reference assets are allocatable and physically ordered" {
     var profile = try buildDemoClimatology(std.testing.allocator);
     defer profile.deinit(std.testing.allocator);
@@ -2018,7 +2081,7 @@ fn prepareWeakLineVoigtState(
     reference_temperature_k: f64,
 ) WeakLineVoigtState {
     const safe_temperature = @max(temperature_k, 150.0);
-    const safe_pressure = @max(pressure_atm, 0.05);
+    const safe_pressure = @max(pressure_atm, min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
     const center_wavenumber_cm1 = wavelengthToWavenumberCm1(line.center_wavelength_nm);
     const temperature_ratio = reference_temperature_k / safe_temperature;
@@ -2132,7 +2195,7 @@ fn strongLineContribution(
 ) SpectroscopyEvaluation {
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
-    const safe_pressure = @max(pressure_scale, 0.05);
+    const safe_pressure = @max(pressure_scale, min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
     if (cutoff_cm1) |window_cm1| {
         if (@abs(convtp_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) > window_cm1) {
@@ -2192,7 +2255,7 @@ fn strongLineContributionPrepared(
 ) SpectroscopyEvaluation {
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
-    const safe_pressure = @max(pressure_scale, 0.05);
+    const safe_pressure = @max(pressure_scale, min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
     if (cutoff_cm1) |window_cm1| {
         if (@abs(prepared_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) > window_cm1) {

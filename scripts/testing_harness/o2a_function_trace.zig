@@ -85,6 +85,11 @@ const TransportSummaryRow = struct {
     final_reflectance: f64,
 };
 
+const ThermodynamicState = struct {
+    pressure_hpa: f64,
+    temperature_k: f64,
+};
+
 const CliConfig = struct {
     trace_root: []const u8,
     wavelengths_nm: []f64,
@@ -192,25 +197,44 @@ pub fn main() !void {
     defer line_list.deinit(allocator);
     try line_list.buildStrongLineMatchIndex(allocator);
 
+    const comparison_states = try loadComparisonThermodynamicStates(allocator, config.trace_root);
+    defer if (comparison_states.len != 0) allocator.free(comparison_states);
+
     try emitLineCatalog(
         &files.line_catalog,
         line_list,
         prepared_case.scene.spectral_grid.start_nm,
         prepared_case.scene.spectral_grid.end_nm,
     );
-    try emitStrongStates(
-        &files.strong_state,
-        prepared_case.prepared.spectroscopy_lines.?,
-        prepared_case.prepared.sublayers.?,
-        prepared_case.prepared.strong_line_states.?,
-    );
-    try emitSpectroscopySummaries(
-        &files.spectroscopy_summary,
-        line_list,
-        prepared_case.prepared.sublayers.?,
-        prepared_case.prepared.strong_line_states.?,
-        config.wavelengths_nm,
-    );
+    if (comparison_states.len != 0) {
+        try emitStrongStatesAtThermodynamicGrid(
+            &files.strong_state,
+            allocator,
+            line_list,
+            comparison_states,
+        );
+        try emitSpectroscopySummariesAtThermodynamicGrid(
+            &files.spectroscopy_summary,
+            allocator,
+            line_list,
+            comparison_states,
+            config.wavelengths_nm,
+        );
+    } else {
+        try emitStrongStates(
+            &files.strong_state,
+            prepared_case.prepared.spectroscopy_lines.?,
+            prepared_case.prepared.sublayers.?,
+            prepared_case.prepared.strong_line_states.?,
+        );
+        try emitSpectroscopySummaries(
+            &files.spectroscopy_summary,
+            line_list,
+            prepared_case.prepared.sublayers.?,
+            prepared_case.prepared.strong_line_states.?,
+            config.wavelengths_nm,
+        );
+    }
 
     var transport_buffers = try TransportBuffers.init(
         allocator,
@@ -431,6 +455,118 @@ fn emitSpectroscopySummaries(
             try rows.append(std.heap.page_allocator, .{
                 .pressure_hpa = sublayer.pressure_hpa,
                 .temperature_k = sublayer.temperature_k,
+                .wavelength_nm = wavelength_nm,
+                .weak_sigma_cm2_per_molecule = evaluation.weak_line_sigma_cm2_per_molecule,
+                .strong_sigma_cm2_per_molecule = evaluation.strong_line_sigma_cm2_per_molecule,
+                .line_mixing_sigma_cm2_per_molecule = evaluation.line_mixing_sigma_cm2_per_molecule,
+                .total_sigma_cm2_per_molecule = evaluation.total_sigma_cm2_per_molecule,
+            });
+        }
+    }
+
+    std.sort.block(SpectroscopySummaryRow, rows.items, {}, lessThanSpectroscopySummaryRow);
+    var writer = file.deprecatedWriter();
+    for (rows.items) |row| {
+        try writer.print(
+            "{},{},{},{},{},{},{}\n",
+            .{
+                row.pressure_hpa,
+                row.temperature_k,
+                row.wavelength_nm,
+                row.weak_sigma_cm2_per_molecule,
+                row.strong_sigma_cm2_per_molecule,
+                row.line_mixing_sigma_cm2_per_molecule,
+                row.total_sigma_cm2_per_molecule,
+            },
+        );
+    }
+}
+
+fn emitStrongStatesAtThermodynamicGrid(
+    file: *std.fs.File,
+    allocator: std.mem.Allocator,
+    line_list: ReferenceData.SpectroscopyLineList,
+    thermodynamic_states: []const ThermodynamicState,
+) !void {
+    var rows = std.ArrayList(StrongStateRow).empty;
+    defer rows.deinit(allocator);
+
+    const strong_lines = line_list.strong_lines orelse return;
+    for (thermodynamic_states) |thermodynamic_state| {
+        var prepared_state = (try line_list.prepareStrongLineState(
+            allocator,
+            thermodynamic_state.temperature_k,
+            thermodynamic_state.pressure_hpa,
+        )) orelse continue;
+        defer prepared_state.deinit(allocator);
+
+        for (strong_lines, 0..) |strong_line, strong_index| {
+            try rows.append(allocator, .{
+                .pressure_hpa = thermodynamic_state.pressure_hpa,
+                .temperature_k = thermodynamic_state.temperature_k,
+                .strong_index = strong_index,
+                .center_wavelength_nm = strong_line.center_wavelength_nm,
+                .center_wavenumber_cm1 = strong_line.center_wavenumber_cm1,
+                .sig_moy_cm1 = prepared_state.sig_moy_cm1,
+                .population_t = prepared_state.population_t[strong_index],
+                .dipole_t = prepared_state.dipole_t[strong_index],
+                .mod_sig_cm1 = prepared_state.mod_sig_cm1[strong_index],
+                .half_width_cm1_at_t = prepared_state.half_width_cm1_at_t[strong_index],
+                .line_mixing_coefficient = prepared_state.line_mixing_coefficients[strong_index],
+            });
+        }
+    }
+
+    std.sort.block(StrongStateRow, rows.items, {}, lessThanStrongStateRow);
+    var writer = file.deprecatedWriter();
+    for (rows.items) |row| {
+        try writer.print(
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
+            .{
+                row.pressure_hpa,
+                row.temperature_k,
+                row.strong_index,
+                row.center_wavelength_nm,
+                row.center_wavenumber_cm1,
+                row.sig_moy_cm1,
+                row.population_t,
+                row.dipole_t,
+                row.mod_sig_cm1,
+                row.half_width_cm1_at_t,
+                row.line_mixing_coefficient,
+            },
+        );
+    }
+}
+
+fn emitSpectroscopySummariesAtThermodynamicGrid(
+    file: *std.fs.File,
+    allocator: std.mem.Allocator,
+    line_list: ReferenceData.SpectroscopyLineList,
+    thermodynamic_states: []const ThermodynamicState,
+    wavelengths_nm: []const f64,
+) !void {
+    var rows = std.ArrayList(SpectroscopySummaryRow).empty;
+    defer rows.deinit(allocator);
+
+    for (thermodynamic_states) |thermodynamic_state| {
+        var prepared_state = (try line_list.prepareStrongLineState(
+            allocator,
+            thermodynamic_state.temperature_k,
+            thermodynamic_state.pressure_hpa,
+        )) orelse continue;
+        defer prepared_state.deinit(allocator);
+
+        for (wavelengths_nm) |wavelength_nm| {
+            const evaluation = line_list.evaluateAtPrepared(
+                wavelength_nm,
+                thermodynamic_state.temperature_k,
+                thermodynamic_state.pressure_hpa,
+                &prepared_state,
+            );
+            try rows.append(allocator, .{
+                .pressure_hpa = thermodynamic_state.pressure_hpa,
+                .temperature_k = thermodynamic_state.temperature_k,
                 .wavelength_nm = wavelength_nm,
                 .weak_sigma_cm2_per_molecule = evaluation.weak_line_sigma_cm2_per_molecule,
                 .strong_sigma_cm2_per_molecule = evaluation.strong_line_sigma_cm2_per_molecule,
@@ -753,4 +889,58 @@ fn sortNanLast(lhs: f64, rhs: f64) ?bool {
     if (lhs_nan != rhs_nan) return !lhs_nan;
     if (lhs != rhs) return lhs < rhs;
     return null;
+}
+
+fn loadComparisonThermodynamicStates(
+    allocator: std.mem.Allocator,
+    trace_root: []const u8,
+) ![]ThermodynamicState {
+    const path = try std.fs.path.join(
+        allocator,
+        &.{ trace_root, "fortran", "spectroscopy_summary.csv" },
+    );
+    defer allocator.free(path);
+
+    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return &.{},
+        else => return err,
+    };
+    defer file.close();
+
+    const contents = try file.readToEndAlloc(allocator, 16 * 1024 * 1024);
+    defer allocator.free(contents);
+
+    var states = std.ArrayList(ThermodynamicState).empty;
+    defer states.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    _ = lines.next();
+    var previous_state: ?ThermodynamicState = null;
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0) continue;
+        const state = try parseThermodynamicStateFromSpectroscopySummaryLine(trimmed);
+        if (previous_state) |previous| {
+            if (sameThermodynamicState(previous, state)) continue;
+        }
+        try states.append(allocator, state);
+        previous_state = state;
+    }
+
+    return states.toOwnedSlice(allocator);
+}
+
+fn parseThermodynamicStateFromSpectroscopySummaryLine(line: []const u8) !ThermodynamicState {
+    var columns = std.mem.splitScalar(u8, line, ',');
+    const pressure_text = columns.next() orelse return error.InvalidFortranSpectroscopySummary;
+    const temperature_text = columns.next() orelse return error.InvalidFortranSpectroscopySummary;
+    return .{
+        .pressure_hpa = try std.fmt.parseFloat(f64, std.mem.trim(u8, pressure_text, " \t\r")),
+        .temperature_k = try std.fmt.parseFloat(f64, std.mem.trim(u8, temperature_text, " \t\r")),
+    };
+}
+
+fn sameThermodynamicState(lhs: ThermodynamicState, rhs: ThermodynamicState) bool {
+    return @abs(lhs.pressure_hpa - rhs.pressure_hpa) <= 1.0e-12 and
+        @abs(lhs.temperature_k - rhs.temperature_k) <= 1.0e-12;
 }
