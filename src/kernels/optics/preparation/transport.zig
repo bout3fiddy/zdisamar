@@ -101,7 +101,7 @@ pub fn toForwardInputAtWavelengthWithLayers(
         .air_mass_factor = prepared.effective_air_mass_factor,
         .mu0 = mu0,
         .muv = muv,
-        .relative_azimuth_rad = std.math.degreesToRadians(scene.geometry.relative_azimuth_deg),
+        .relative_azimuth_rad = transportAzimuthDifferenceRad(scene.geometry.relative_azimuth_deg),
         .surface_albedo = std.math.clamp(scene.surface.albedo, 0.0, 1.0),
         .gas_absorption_optical_depth = optical_depths.gas_absorption_optical_depth,
         .gas_scattering_optical_depth = optical_depths.gas_scattering_optical_depth,
@@ -117,6 +117,14 @@ pub fn toForwardInputAtWavelengthWithLayers(
             prepared.effective_single_scatter_albedo,
         .layers = if (layer_inputs) |owned_layers| owned_layers else &.{},
     };
+}
+
+fn transportAzimuthDifferenceRad(relative_azimuth_deg: f64) f64 {
+    // VENDOR PARITY:
+    //   DISAMAR/LABOS expands the Fourier series in dphi, the azimuth
+    //   difference between incident sunlight and the line of sight.
+    const transport_dphi_deg = @mod(180.0 - relative_azimuth_deg, 360.0);
+    return std.math.degreesToRadians(transport_dphi_deg);
 }
 
 /// Purpose:

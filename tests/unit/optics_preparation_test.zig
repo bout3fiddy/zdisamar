@@ -2752,6 +2752,7 @@ test "optical preparation derives deterministic layer optical depths from typed 
     try std.testing.expect(input.optical_depth > 0.0);
     try std.testing.expectApproxEqAbs(@as(f64, 1.241), input.air_mass_factor, 1e-9);
     try std.testing.expectApproxEqAbs(@as(f64, 0.5), input.spectral_weight, 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, std.math.degreesToRadians(150.0)), input.relative_azimuth_rad, 1e-12);
     try std.testing.expect(prepared.totalCrossSectionAtWavelength(434.6) > prepared.totalCrossSectionAtWavelength(465.0));
 
     try std.testing.expect(prepared.sublayers != null);
