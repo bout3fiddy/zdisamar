@@ -50,6 +50,27 @@ pub const MeasurementSpaceSummary = struct {
     mean_jacobian: ?f64 = null,
 };
 
+/// Coarse phase timings for one forward measurement-space sweep.
+pub const ForwardProfile = struct {
+    radiance_integration_ns: u64 = 0,
+    radiance_postprocess_ns: u64 = 0,
+    irradiance_integration_ns: u64 = 0,
+    irradiance_postprocess_ns: u64 = 0,
+    reduction_ns: u64 = 0,
+
+    pub fn reset(self: *ForwardProfile) void {
+        self.* = .{};
+    }
+
+    pub fn totalNs(self: ForwardProfile) u64 {
+        return self.radiance_integration_ns +
+            self.radiance_postprocess_ns +
+            self.irradiance_integration_ns +
+            self.irradiance_postprocess_ns +
+            self.reduction_ns;
+    }
+};
+
 /// Measurement-space product arrays and associated bulk optical properties.
 pub const MeasurementSpaceProduct = struct {
     summary: MeasurementSpaceSummary,

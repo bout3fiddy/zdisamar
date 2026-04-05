@@ -101,6 +101,35 @@ pub const VendorO2AReflectanceCase = struct {
     }
 };
 
+pub const VendorO2APreparationProfile = struct {
+    input_loading_ns: u64 = 0,
+    scene_assembly_ns: u64 = 0,
+    optics_preparation_ns: u64 = 0,
+    plan_preparation_ns: u64 = 0,
+
+    pub fn reset(self: *VendorO2APreparationProfile) void {
+        self.* = .{};
+    }
+
+    pub fn totalNs(self: VendorO2APreparationProfile) u64 {
+        return self.input_loading_ns +
+            self.scene_assembly_ns +
+            self.optics_preparation_ns +
+            self.plan_preparation_ns;
+    }
+};
+
+pub const VendorO2AProfileCase = struct {
+    reflectance_case: VendorO2AReflectanceCase,
+    preparation_profile: VendorO2APreparationProfile,
+    forward_profile: MeasurementSpace.ForwardProfile,
+
+    pub fn deinit(self: *VendorO2AProfileCase, allocator: std.mem.Allocator) void {
+        self.reflectance_case.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub const VendorO2ATracePreparation = struct {
     reference: []ReferenceSample,
     scene: zdisamar.Scene,
@@ -119,7 +148,23 @@ pub const VendorO2ATracePreparation = struct {
         self: *VendorO2ATracePreparation,
         allocator: std.mem.Allocator,
     ) !VendorO2AReflectanceCase {
-        var product = try MeasurementSpace.simulateProduct(
+        return intoReflectanceCaseWithProfile(self, allocator, null);
+    }
+
+    pub fn intoProfiledReflectanceCase(
+        self: *VendorO2ATracePreparation,
+        allocator: std.mem.Allocator,
+        forward_profile: *MeasurementSpace.ForwardProfile,
+    ) !VendorO2AReflectanceCase {
+        return intoReflectanceCaseWithProfile(self, allocator, forward_profile);
+    }
+
+    fn intoReflectanceCaseWithProfile(
+        self: *VendorO2ATracePreparation,
+        allocator: std.mem.Allocator,
+        forward_profile: ?*MeasurementSpace.ForwardProfile,
+    ) !VendorO2AReflectanceCase {
+        var product = try MeasurementSpace.simulateProductWithProfile(
             allocator,
             &self.scene,
             self.plan.transport_route,
@@ -130,6 +175,7 @@ pub const VendorO2ATracePreparation = struct {
                 .instrument = self.plan.providers.instrument,
                 .noise = self.plan.providers.noise,
             },
+            forward_profile,
         );
         errdefer product.deinit(allocator);
 
@@ -623,6 +669,40 @@ pub fn runConfiguredVendorO2AReflectanceCase(
     return try prepared_case.intoReflectanceCase(allocator);
 }
 
+pub fn runVendorO2AProfileCase(allocator: std.mem.Allocator) !VendorO2AProfileCase {
+    return runConfiguredVendorO2AProfileCase(allocator, .{
+        .use_vendor_parity_fixture = true,
+        .line_mixing_factor = 1.0,
+        .isotopes_sim = &.{ 1, 2, 3 },
+        .threshold_line_sim = 3.0e-5,
+        .cutoff_sim_cm1 = 200.0,
+    });
+}
+
+pub fn runConfiguredVendorO2AProfileCase(
+    allocator: std.mem.Allocator,
+    config: VendorO2AExecutionConfig,
+) !VendorO2AProfileCase {
+    var preparation_profile: VendorO2APreparationProfile = .{};
+    var prepared_case = try prepareConfiguredVendorO2ATraceCaseWithProfile(
+        allocator,
+        config,
+        &preparation_profile,
+    );
+    errdefer prepared_case.deinit(allocator);
+
+    var forward_profile: MeasurementSpace.ForwardProfile = .{};
+    const reflectance_case = try prepared_case.intoProfiledReflectanceCase(
+        allocator,
+        &forward_profile,
+    );
+    return .{
+        .reflectance_case = reflectance_case,
+        .preparation_profile = preparation_profile,
+        .forward_profile = forward_profile,
+    };
+}
+
 pub fn prepareVendorO2ATraceCase(allocator: std.mem.Allocator) !VendorO2ATracePreparation {
     return prepareConfiguredVendorO2ATraceCase(allocator, .{
         .use_vendor_parity_fixture = true,
@@ -637,22 +717,117 @@ pub fn prepareConfiguredVendorO2ATraceCase(
     allocator: std.mem.Allocator,
     config: VendorO2AExecutionConfig,
 ) !VendorO2ATracePreparation {
+    return prepareConfiguredVendorO2ATraceCaseWithProfile(allocator, config, null);
+}
+
+fn recordPreparationLap(timer: ?*std.time.Timer, target: *u64) void {
+    if (timer) |resolved_timer| target.* = resolved_timer.lap();
+}
+
+const LoadedVendorO2AInputs = struct {
+    profile: ReferenceData.ClimatologyProfile,
+    cross_sections: ReferenceData.CrossSectionTable,
+    line_list: ReferenceData.SpectroscopyLineList,
+    cia_table: ?ReferenceData.CollisionInducedAbsorptionTable,
+    lut: ReferenceData.AirmassFactorLut,
+    reference: []ReferenceSample,
+
+    fn deinit(self: *LoadedVendorO2AInputs, allocator: std.mem.Allocator) void {
+        self.profile.deinit(allocator);
+        self.cross_sections.deinit(allocator);
+        self.line_list.deinit(allocator);
+        if (self.cia_table) |*table| table.deinit(allocator);
+        self.lut.deinit(allocator);
+        if (self.reference.len != 0) allocator.free(self.reference);
+        self.* = undefined;
+    }
+};
+
+const ResolvedAdaptiveReferenceGrid = struct {
+    points_per_fwhm: u16,
+    strong_line_min_divisions: u16,
+    strong_line_max_divisions: u16,
+};
+
+fn prepareConfiguredVendorO2ATraceCaseWithProfile(
+    allocator: std.mem.Allocator,
+    config: VendorO2AExecutionConfig,
+    preparation_profile: ?*VendorO2APreparationProfile,
+) !VendorO2ATracePreparation {
+    if (preparation_profile) |profile| profile.reset();
+    var phase_timer = if (preparation_profile != null)
+        std.time.Timer.start() catch unreachable
+    else
+        null;
+
+    var inputs = try loadConfiguredVendorO2AInputs(allocator, config);
+    defer inputs.deinit(allocator);
+    if (preparation_profile) |profile| recordPreparationLap(
+        if (phase_timer) |*timer| timer else null,
+        &profile.input_loading_ns,
+    );
+
+    var scene = try buildConfiguredVendorO2AScene(allocator, config, inputs.reference);
+    errdefer scene.deinitOwned(allocator);
+    if (preparation_profile) |profile| recordPreparationLap(
+        if (phase_timer) |*timer| timer else null,
+        &profile.scene_assembly_ns,
+    );
+
+    const reference = inputs.reference;
+    inputs.reference = inputs.reference[0..0];
+    errdefer allocator.free(reference);
+
+    var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
+        .profile = &inputs.profile,
+        .cross_sections = &inputs.cross_sections,
+        .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
+        .spectroscopy_lines = &inputs.line_list,
+        .lut = &inputs.lut,
+    });
+    errdefer prepared.deinit(allocator);
+    if (preparation_profile) |profile| recordPreparationLap(
+        if (phase_timer) |*timer| timer else null,
+        &profile.optics_preparation_ns,
+    );
+
+    var plan = try prepareConfiguredVendorO2APlan(allocator, &scene, configuredVendorO2ARtmControls(config));
+    errdefer plan.deinit();
+    if (preparation_profile) |profile| recordPreparationLap(
+        if (phase_timer) |*timer| timer else null,
+        &profile.plan_preparation_ns,
+    );
+
+    return .{
+        .reference = reference,
+        .scene = scene,
+        .plan = plan,
+        .prepared = prepared,
+    };
+}
+
+fn loadConfiguredVendorO2AInputs(
+    allocator: std.mem.Allocator,
+    config: VendorO2AExecutionConfig,
+) !LoadedVendorO2AInputs {
     var profile = try bundled_optics.loadStandardClimatologyProfile(allocator);
-    defer profile.deinit(allocator);
+    errdefer profile.deinit(allocator);
     var cross_sections = try bundled_optics.zeroContinuumTable(allocator, 758.0, 771.0);
-    defer cross_sections.deinit(allocator);
+    errdefer cross_sections.deinit(allocator);
     var line_list = if (config.use_vendor_parity_fixture)
         try loadVendorParityO2ASpectroscopyLineList(allocator)
     else
         try bundled_optics.loadO2aSpectroscopyLineList(allocator);
-    defer line_list.deinit(allocator);
+    errdefer line_list.deinit(allocator);
+
     var cia_table: ?ReferenceData.CollisionInducedAbsorptionTable = null;
-    defer if (cia_table) |*table| table.deinit(allocator);
+    errdefer if (cia_table) |*table| table.deinit(allocator);
     if (config.include_cia) {
         cia_table = try bundled_optics.loadO2ACollisionInducedAbsorptionTable(allocator);
     }
+
     var lut = try bundled_optics.loadAirmassFactorLut(allocator);
-    defer lut.deinit(allocator);
+    errdefer lut.deinit(allocator);
 
     const reference = try loadReferenceSamples(
         allocator,
@@ -660,6 +835,22 @@ pub fn prepareConfiguredVendorO2ATraceCase(
     );
     errdefer allocator.free(reference);
 
+    return .{
+        .profile = profile,
+        .cross_sections = cross_sections,
+        .line_list = line_list,
+        .cia_table = cia_table,
+        .lut = lut,
+        .reference = reference,
+    };
+}
+
+fn buildConfiguredVendorO2AScene(
+    allocator: std.mem.Allocator,
+    config: VendorO2AExecutionConfig,
+    reference: []const ReferenceSample,
+) !zdisamar.Scene {
+    const adaptive_grid = resolveAdaptiveReferenceGrid(config);
     const reference_wavelengths = try allocator.alloc(f64, reference.len);
     errdefer allocator.free(reference_wavelengths);
     const reference_irradiance = try allocator.alloc(f64, reference.len);
@@ -669,28 +860,6 @@ pub fn prepareConfiguredVendorO2ATraceCase(
         reference_wavelengths[index] = sample.wavelength_nm;
         reference_irradiance[index] = sample.irradiance;
     }
-
-    const adaptive_points_per_fwhm = if (config.use_vendor_parity_fixture and
-        config.adaptive_points_per_fwhm == 0 and
-        config.adaptive_strong_line_min_divisions == 0 and
-        config.adaptive_strong_line_max_divisions == 0)
-        vendor_adaptive_points_per_fwhm
-    else
-        config.adaptive_points_per_fwhm;
-    const adaptive_strong_line_min_divisions = if (config.use_vendor_parity_fixture and
-        config.adaptive_points_per_fwhm == 0 and
-        config.adaptive_strong_line_min_divisions == 0 and
-        config.adaptive_strong_line_max_divisions == 0)
-        vendor_adaptive_strong_line_min_divisions
-    else
-        config.adaptive_strong_line_min_divisions;
-    const adaptive_strong_line_max_divisions = if (config.use_vendor_parity_fixture and
-        config.adaptive_points_per_fwhm == 0 and
-        config.adaptive_strong_line_min_divisions == 0 and
-        config.adaptive_strong_line_max_divisions == 0)
-        vendor_adaptive_strong_line_max_divisions
-    else
-        config.adaptive_strong_line_max_divisions;
 
     const absorber_items = try allocator.alloc(zdisamar.Absorber, 1);
     errdefer allocator.free(absorber_items);
@@ -760,17 +929,17 @@ pub fn prepareConfiguredVendorO2ATraceCase(
             .high_resolution_step_nm = 0.01,
             .high_resolution_half_span_nm = 1.14,
             .adaptive_reference_grid = .{
-                .points_per_fwhm = adaptive_points_per_fwhm,
-                .strong_line_min_divisions = adaptive_strong_line_min_divisions,
-                .strong_line_max_divisions = adaptive_strong_line_max_divisions,
+                .points_per_fwhm = adaptive_grid.points_per_fwhm,
+                .strong_line_min_divisions = adaptive_grid.strong_line_min_divisions,
+                .strong_line_max_divisions = adaptive_grid.strong_line_max_divisions,
+            },
+            .operational_solar_spectrum = .{
+                .wavelengths_nm = reference_wavelengths,
+                .irradiance = reference_irradiance,
             },
         },
     };
     errdefer scene.deinitOwned(allocator);
-    var rtm_controls: RtmControls = .{
-        .n_streams = 6,
-        .num_orders_max = 20,
-    };
 
     if (config.use_vendor_parity_fixture) {
         scene.id = "o2a-vendor-parity";
@@ -789,26 +958,56 @@ pub fn prepareConfiguredVendorO2ATraceCase(
             .top_pressure_hpa = vendor_interval_grid[vendor_aerosol_interval_index_1based - 1].top_pressure_hpa,
             .bottom_pressure_hpa = vendor_interval_grid[vendor_aerosol_interval_index_1based - 1].bottom_pressure_hpa,
         };
-        rtm_controls = vendor_parity_rtm_controls;
     }
-    scene.observation_model.operational_solar_spectrum = .{
-        .wavelengths_nm = reference_wavelengths,
-        .irradiance = reference_irradiance,
+
+    return scene;
+}
+
+fn resolveAdaptiveReferenceGrid(
+    config: VendorO2AExecutionConfig,
+) ResolvedAdaptiveReferenceGrid {
+    return .{
+        .points_per_fwhm = if (config.use_vendor_parity_fixture and
+            config.adaptive_points_per_fwhm == 0 and
+            config.adaptive_strong_line_min_divisions == 0 and
+            config.adaptive_strong_line_max_divisions == 0)
+            vendor_adaptive_points_per_fwhm
+        else
+            config.adaptive_points_per_fwhm,
+        .strong_line_min_divisions = if (config.use_vendor_parity_fixture and
+            config.adaptive_points_per_fwhm == 0 and
+            config.adaptive_strong_line_min_divisions == 0 and
+            config.adaptive_strong_line_max_divisions == 0)
+            vendor_adaptive_strong_line_min_divisions
+        else
+            config.adaptive_strong_line_min_divisions,
+        .strong_line_max_divisions = if (config.use_vendor_parity_fixture and
+            config.adaptive_points_per_fwhm == 0 and
+            config.adaptive_strong_line_min_divisions == 0 and
+            config.adaptive_strong_line_max_divisions == 0)
+            vendor_adaptive_strong_line_max_divisions
+        else
+            config.adaptive_strong_line_max_divisions,
     };
+}
 
-    var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
-        .profile = &profile,
-        .cross_sections = &cross_sections,
-        .collision_induced_absorption = if (cia_table) |*table| table else null,
-        .spectroscopy_lines = &line_list,
-        .lut = &lut,
-    });
-    errdefer prepared.deinit(allocator);
+fn configuredVendorO2ARtmControls(config: VendorO2AExecutionConfig) RtmControls {
+    if (config.use_vendor_parity_fixture) return vendor_parity_rtm_controls;
+    return .{
+        .n_streams = 6,
+        .num_orders_max = 20,
+    };
+}
 
+fn prepareConfiguredVendorO2APlan(
+    allocator: std.mem.Allocator,
+    scene: *const zdisamar.Scene,
+    rtm_controls: RtmControls,
+) !zdisamar.PreparedPlan {
     var engine = zdisamar.Engine.init(allocator, .{});
     defer engine.deinit();
     try engine.bootstrapBuiltinCatalog();
-    const plan = try engine.preparePlan(.{
+    return engine.preparePlan(.{
         .scene_blueprint = .{
             .observation_regime = .nadir,
             .derivative_mode = .none,
@@ -818,12 +1017,6 @@ pub fn prepareConfiguredVendorO2ATraceCase(
         },
         .rtm_controls = rtm_controls,
     });
-    return .{
-        .reference = reference,
-        .scene = scene,
-        .plan = plan,
-        .prepared = prepared,
-    };
 }
 
 fn loadVendorParityO2ASpectroscopyLineList(

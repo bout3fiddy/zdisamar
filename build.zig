@@ -86,6 +86,7 @@ fn addSuiteRunStepWithArgs(
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const profile_optimize = if (optimize == .Debug) .ReleaseFast else optimize;
     const public_build_options = b.addOptions();
     public_build_options.addOption(bool, "enable_test_support", false);
     const test_build_options = b.addOptions();
@@ -224,6 +225,21 @@ pub fn build(b: *std.Build) void {
             },
         },
     });
+    const o2a_forward_profile_support_module = b.createModule(.{
+        .root_source_file = b.path("tests/validation/o2a_forward_profile_support.zig"),
+        .target = target,
+        .optimize = profile_optimize,
+        .imports = &.{
+            .{
+                .name = "zdisamar",
+                .module = test_lib_module,
+            },
+            .{
+                .name = "zdisamar_internal",
+                .module = internal_module,
+            },
+        },
+    });
 
     const o2a_vendor_dump_tool_module = b.createModule(.{
         .root_source_file = b.path("scripts/testing_harness/o2a_vendor_spectrum_dump.zig"),
@@ -247,6 +263,32 @@ pub fn build(b: *std.Build) void {
     const o2a_vendor_dump_exe = b.addExecutable(.{
         .name = "zdisamar-o2a-vendor-spectrum",
         .root_module = o2a_vendor_dump_tool_module,
+    });
+
+    const o2a_forward_profile_tool_module = b.createModule(.{
+        .root_source_file = b.path("scripts/testing_harness/o2a_forward_profile.zig"),
+        .target = target,
+        .optimize = profile_optimize,
+        .strip = false,
+        .omit_frame_pointer = false,
+        .imports = &.{
+            .{
+                .name = "zdisamar",
+                .module = test_lib_module,
+            },
+            .{
+                .name = "zdisamar_internal",
+                .module = internal_module,
+            },
+            .{
+                .name = "o2a_forward_profile_support",
+                .module = o2a_forward_profile_support_module,
+            },
+        },
+    });
+    const o2a_forward_profile_exe = b.addExecutable(.{
+        .name = "zdisamar-o2a-forward-profile",
+        .root_module = o2a_forward_profile_tool_module,
     });
 
     const test_module = b.createModule(.{
@@ -625,6 +667,19 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&bench_run.step);
 
     const o2a_vendor_dump_run = b.addRunArtifact(o2a_vendor_dump_exe);
+    const o2a_forward_profile_install = b.addInstallArtifact(o2a_forward_profile_exe, .{});
+    const o2a_forward_profile_bin_step = b.step(
+        "o2a-forward-profile-bin",
+        "Build and install the O2A forward profiling binary",
+    );
+    o2a_forward_profile_bin_step.dependOn(&o2a_forward_profile_install.step);
+    const o2a_forward_profile_run = b.addRunArtifact(o2a_forward_profile_exe);
+    const o2a_forward_profile_step = b.step(
+        "o2a-forward-profile",
+        "Run the O2A forward profiler and emit summary artifacts",
+    );
+    o2a_forward_profile_step.dependOn(&o2a_forward_profile_install.step);
+    o2a_forward_profile_step.dependOn(&o2a_forward_profile_run.step);
     const o2a_vendor_plot_cmd = b.addSystemCommand(&.{
         "python3",
         "scripts/testing_harness/plot_o2a_vendor_spectrum.py",
