@@ -30,6 +30,7 @@ const attenuation = @import("labos/attenuation.zig");
 const layers_mod = @import("labos/layers.zig");
 const orders_mod = @import("labos/orders.zig");
 const reflectance_mod = @import("labos/reflectance.zig");
+const phase_functions = @import("../optics/prepare/phase_functions.zig");
 
 pub const max_gauss = basis.max_gauss;
 pub const max_extra = basis.max_extra;
@@ -229,7 +230,7 @@ fn singleLayerLabos(
         .single_scatter_albedo = input.single_scatter_albedo,
         .solar_mu = mu0,
         .view_mu = muv,
-        .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
     };
     const layers = [_]common.LayerInput{layer};
 
@@ -299,21 +300,21 @@ test "labos multi-layer produces bounded positive reflectance" {
             .single_scatter_albedo = 0.99,
             .solar_mu = 0.5,
             .view_mu = 0.6,
-            .phase_coefficients = .{ 1.0, 0.5, 0.25, 0.125 },
+            .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.5, 0.25, 0.125 }),
         },
         .{
             .optical_depth = 0.3,
             .single_scatter_albedo = 0.8,
             .solar_mu = 0.5,
             .view_mu = 0.6,
-            .phase_coefficients = .{ 1.0, 0.3, 0.09, 0.027 },
+            .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.3, 0.09, 0.027 }),
         },
         .{
             .optical_depth = 0.2,
             .single_scatter_albedo = 0.95,
             .solar_mu = 0.5,
             .view_mu = 0.6,
-            .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+            .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
         },
     };
 
@@ -434,7 +435,7 @@ test "labos optically thin layer has small reflectance" {
         .single_scatter_albedo = 0.9,
         .solar_mu = 0.5,
         .view_mu = 0.6,
-        .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
     }};
     const route = try common.prepareRoute(.{
         .regime = .limb,

@@ -493,7 +493,7 @@ fn quadratureCarrierAtAltitude(
 ) PreparedQuadratureCarrier {
     const default: PreparedQuadratureCarrier = .{
         .ksca = 0.0,
-        .phase_coefficients = [_]f64{ 1.0, 0.0, 0.0, 0.0 },
+        .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
     };
     const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return default;
 
@@ -659,7 +659,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
             .altitude_km = levelAltitudeFromSublayers(sublayers, level),
             .weight = 0.0,
             .ksca = 0.0,
-            .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+            .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
         };
     }
 

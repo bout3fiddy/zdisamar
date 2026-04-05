@@ -6,14 +6,19 @@ const common = @import("../common.zig");
 const labos = @import("../labos.zig");
 const PluginProviders = @import("../../../plugins/providers/root.zig");
 const Types = @import("types.zig");
+const phase_functions = @import("../../optics/prepare/phase_functions.zig");
 
 const Allocator = std.mem.Allocator;
 const PreparedOpticalState = OpticsPreparation.PreparedOpticalState;
 const PreparedLayer = OpticsPreparation.PreparedLayer;
 const PreparedSublayer = OpticsPreparation.PreparedSublayer;
 const ProviderBindings = Types.ProviderBindings;
-const phase_coefficient_count = @import("../../optics/prepare/phase_functions.zig").phase_coefficient_count;
+const phase_coefficient_count = phase_functions.phase_coefficient_count;
 const centimeters_per_kilometer = 1.0e5;
+
+fn legacyPhaseCoefficients(values: [phase_functions.legacy_phase_coefficient_count]f64) [phase_coefficient_count]f64 {
+    return phase_functions.phaseCoefficientsFromLegacy(values);
+}
 
 pub fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState {
     return .{
@@ -46,9 +51,9 @@ pub fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState
                 .cloud_optical_depth = 0.018,
                 .aerosol_single_scatter_albedo = 0.94,
                 .cloud_single_scatter_albedo = 0.96,
-                .aerosol_phase_coefficients = .{ 1.0, 0.20, 0.04, 0.0 },
-                .cloud_phase_coefficients = .{ 1.0, 0.10, 0.02, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.17, 0.035, 0.0 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.20, 0.04, 0.0 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.10, 0.02, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.17, 0.035, 0.0 }),
             },
             .{
                 .parent_layer_index = 0,
@@ -74,9 +79,9 @@ pub fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState
                 .cloud_optical_depth = 0.012,
                 .aerosol_single_scatter_albedo = 0.94,
                 .cloud_single_scatter_albedo = 0.96,
-                .aerosol_phase_coefficients = .{ 1.0, 0.18, 0.03, 0.0 },
-                .cloud_phase_coefficients = .{ 1.0, 0.08, 0.02, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.15, 0.028, 0.0 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.18, 0.03, 0.0 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.08, 0.02, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.15, 0.028, 0.0 }),
             },
             .{
                 .parent_layer_index = 1,
@@ -102,9 +107,9 @@ pub fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState
                 .cloud_optical_depth = 0.006,
                 .aerosol_single_scatter_albedo = 0.96,
                 .cloud_single_scatter_albedo = 0.98,
-                .aerosol_phase_coefficients = .{ 1.0, 0.14, 0.02, 0.0 },
-                .cloud_phase_coefficients = .{ 1.0, 0.05, 0.01, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.11, 0.018, 0.0 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.14, 0.02, 0.0 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.05, 0.01, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.11, 0.018, 0.0 }),
             },
             .{
                 .parent_layer_index = 1,
@@ -130,9 +135,9 @@ pub fn buildTestPreparedOpticalState(allocator: Allocator) !PreparedOpticalState
                 .cloud_optical_depth = 0.004,
                 .aerosol_single_scatter_albedo = 0.96,
                 .cloud_single_scatter_albedo = 0.98,
-                .aerosol_phase_coefficients = .{ 1.0, 0.12, 0.02, 0.0 },
-                .cloud_phase_coefficients = .{ 1.0, 0.05, 0.01, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.10, 0.016, 0.0 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.12, 0.02, 0.0 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.05, 0.01, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.10, 0.016, 0.0 }),
             },
         }),
         .continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
@@ -246,9 +251,9 @@ pub fn buildQuadratureSensitivePreparedOpticalState(allocator: Allocator) !Prepa
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.35, 0.12, 0.03 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.35, 0.12, 0.03 }),
             },
             .{
                 .parent_layer_index = 0,
@@ -274,9 +279,9 @@ pub fn buildQuadratureSensitivePreparedOpticalState(allocator: Allocator) !Prepa
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.32, 0.10, 0.02 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.32, 0.10, 0.02 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.32, 0.10, 0.02 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.32, 0.10, 0.02 }),
             },
             .{
                 .parent_layer_index = 1,
@@ -302,9 +307,9 @@ pub fn buildQuadratureSensitivePreparedOpticalState(allocator: Allocator) !Prepa
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.24, 0.09, 0.02 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.24, 0.09, 0.02 }),
             },
             .{
                 .parent_layer_index = 1,
@@ -330,9 +335,9 @@ pub fn buildQuadratureSensitivePreparedOpticalState(allocator: Allocator) !Prepa
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.21, 0.08, 0.02 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.21, 0.08, 0.02 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.21, 0.08, 0.02 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.21, 0.08, 0.02 }),
             },
         }),
         .continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
@@ -415,9 +420,9 @@ pub fn buildNonuniformQuadraturePreparedOpticalState(allocator: Allocator) !Prep
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.18, 0.04, 0.0 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.18, 0.04, 0.0 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.18, 0.04, 0.0 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.18, 0.04, 0.0 }),
             },
             .{
                 .parent_layer_index = 0,
@@ -443,9 +448,9 @@ pub fn buildNonuniformQuadraturePreparedOpticalState(allocator: Allocator) !Prep
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.24, 0.05, 0.0 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.24, 0.05, 0.0 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.24, 0.05, 0.0 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.24, 0.05, 0.0 }),
             },
             .{
                 .parent_layer_index = 0,
@@ -471,9 +476,9 @@ pub fn buildNonuniformQuadraturePreparedOpticalState(allocator: Allocator) !Prep
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.31, 0.07, 0.01 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.31, 0.07, 0.01 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.31, 0.07, 0.01 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.31, 0.07, 0.01 }),
             },
             .{
                 .parent_layer_index = 0,
@@ -499,9 +504,9 @@ pub fn buildNonuniformQuadraturePreparedOpticalState(allocator: Allocator) !Prep
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.38, 0.09, 0.02 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.38, 0.09, 0.02 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.38, 0.09, 0.02 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.38, 0.09, 0.02 }),
             },
         }),
         .continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
@@ -604,9 +609,9 @@ pub fn buildSingleSubdivisionPreparedOpticalState(allocator: Allocator) !Prepare
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.22, 0.05, 0.0 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.22, 0.05, 0.0 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.22, 0.05, 0.0 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.22, 0.05, 0.0 }),
             },
             .{
                 .parent_layer_index = 1,
@@ -632,9 +637,9 @@ pub fn buildSingleSubdivisionPreparedOpticalState(allocator: Allocator) !Prepare
                 .cloud_optical_depth = 0.0,
                 .aerosol_single_scatter_albedo = 1.0,
                 .cloud_single_scatter_albedo = 0.0,
-                .aerosol_phase_coefficients = .{ 1.0, 0.31, 0.08, 0.01 },
-                .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-                .combined_phase_coefficients = .{ 1.0, 0.31, 0.08, 0.01 },
+                .aerosol_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.31, 0.08, 0.01 }),
+                .cloud_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 }),
+                .combined_phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.31, 0.08, 0.01 }),
             },
         }),
         .continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, &.{
@@ -742,7 +747,7 @@ pub fn fillLegacyMidpointQuadratureLevels(
     for (levels) |*level| {
         level.weight = 0.0;
         level.ksca = 0.0;
-        level.phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 };
+        level.phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.0, 0.0, 0.0 });
     }
 
     for (prepared.layers) |layer| {

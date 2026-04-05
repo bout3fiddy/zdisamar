@@ -1,6 +1,7 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
+const phase_functions = internal.kernels.optics.prepare.phase_functions;
 const ReferenceData = internal.reference_data;
 const OpticsPrepare = internal.kernels.optics.preparation;
 const PreparationTransport = OpticsPrepare.transport;
@@ -3020,9 +3021,9 @@ fn testPreparedSublayer(
         .cloud_optical_depth = 0.0,
         .aerosol_single_scatter_albedo = 0.0,
         .cloud_single_scatter_albedo = 0.0,
-        .aerosol_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-        .cloud_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
-        .combined_phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .aerosol_phase_coefficients = phase_functions.zeroPhaseCoefficients(),
+        .cloud_phase_coefficients = phase_functions.zeroPhaseCoefficients(),
+        .combined_phase_coefficients = phase_functions.zeroPhaseCoefficients(),
     };
 }
 

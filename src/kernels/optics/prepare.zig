@@ -10,6 +10,7 @@ pub const builder = Preparation.builder;
 pub const spectroscopy = Preparation.spectroscopy;
 pub const evaluation = Preparation.evaluation;
 pub const transport = Preparation.transport;
+pub const phase_functions = @import("prepare/phase_functions.zig");
 
 pub const PreparationInputs = Preparation.PreparationInputs;
 pub const PreparedLayer = Preparation.PreparedLayer;
@@ -116,4 +117,5 @@ test "legacy optics prepare shim preserves compatibility entrypoints" {
     try std.testing.expect(@hasDecl(@This(), "prepareWithSpectroscopy"));
     try std.testing.expect(@hasDecl(@This(), "prepareWithSpectroscopyAndCollisionInducedAbsorption"));
     try std.testing.expect(@hasDecl(@This(), "prepareWithParticleTables"));
+    try std.testing.expect(@hasDecl(@This(), "phase_functions"));
 }

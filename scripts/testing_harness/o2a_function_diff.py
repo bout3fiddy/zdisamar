@@ -149,7 +149,7 @@ def main() -> int:
         build_vendor_workspace(vendor_workspace)
         run_vendor_trace(vendor_workspace, fortran_root, wavelengths_nm)
         merge_fortran_spectroscopy_summary(fortran_root)
-        run_zig_trace(trace_root, wavelengths_nm)
+        run_zig_trace(trace_root, wavelengths_nm, args.zig_optimize)
         canonicalize_side(fortran_root)
         canonicalize_side(zig_root)
         verify_expected_csvs(fortran_root, "fortran")
@@ -166,6 +166,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare minimal O2A function outputs between vendored DISAMAR and zdisamar.")
     parser.add_argument("--wavelengths", default=",".join(str(value) for value in DEFAULT_WAVELENGTHS_NM))
     parser.add_argument("--trace-root", default=None)
+    parser.add_argument(
+        "--zig-optimize",
+        choices=("Debug", "ReleaseSafe", "ReleaseFast", "ReleaseSmall"),
+        default="Debug",
+        help="Optimization mode for the Zig trace CLI. Use ReleaseFast for a practical full transport trace run.",
+    )
     parser.add_argument("--keep-vendor-workspace", action="store_true")
     return parser.parse_args()
 
@@ -213,10 +219,12 @@ def run_vendor_trace(vendor_workspace: Path, fortran_root: Path, wavelengths_nm:
     run_command([str(vendor_workspace / "Disamar.exe")], cwd=vendor_workspace, env=env)
 
 
-def run_zig_trace(trace_root: Path, wavelengths_nm: list[float]) -> None:
+def run_zig_trace(trace_root: Path, wavelengths_nm: list[float], zig_optimize: str) -> None:
     command = [
         "zig",
         "run",
+        "-O",
+        zig_optimize,
         "--dep",
         "zdisamar",
         "--dep",

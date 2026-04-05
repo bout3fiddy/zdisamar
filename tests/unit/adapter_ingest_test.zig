@@ -2,6 +2,18 @@ const std = @import("std");
 const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
 
+fn vendorLisaReferenceHalfWidthCm1(rotational_index_m1: i32) f64 {
+    const vendor_nf = if (rotational_index_m1 < 0)
+        @as(f64, @floatFromInt(-rotational_index_m1 - 1))
+    else
+        @as(f64, @floatFromInt(rotational_index_m1));
+    const sbhw = 0.02204 + 0.03749 /
+        (1.0 + 0.05428 * vendor_nf - 1.19e-3 * vendor_nf * vendor_nf +
+            2.073e-6 * std.math.pow(f64, vendor_nf, 4.0));
+    return 1.023 * 1.012 * sbhw /
+        std.math.sqrt(1.0 + std.math.pow(f64, (vendor_nf - 5.0) / 55.0, 2.0));
+}
+
 test "spectral ascii ingest bridges vendor-style input into typed measurement and request summaries" {
     var loaded = try zdisamar.ingest.spectral_ascii.parseFile(
         std.testing.allocator,
@@ -238,6 +250,11 @@ test "reference asset ingest assembles vendor-shaped spectroscopy sidecars into 
     var relaxation_matrix = try rmf_asset.toSpectroscopyRelaxationMatrix(std.testing.allocator);
     defer relaxation_matrix.deinit(std.testing.allocator);
 
+    try std.testing.expectApproxEqAbs(
+        vendorLisaReferenceHalfWidthCm1(strong_lines.lines[0].rotational_index_m1),
+        strong_lines.lines[0].air_half_width_cm1,
+        1.0e-12,
+    );
     try line_list.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
     try line_list.applyRuntimeControls(std.testing.allocator, 7, &.{}, null, null, 1.0);
 

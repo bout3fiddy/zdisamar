@@ -1,6 +1,7 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
+const phase_functions = internal.kernels.optics.prepare.phase_functions;
 const Scene = zdisamar.Scene;
 const common = internal.kernels.transport.common;
 const labos = internal.kernels.transport.labos;
@@ -23,6 +24,10 @@ const buildQuadratureSensitivePreparedOpticalState = MeasurementTestSupport.buil
 const buildNonuniformQuadraturePreparedOpticalState = MeasurementTestSupport.buildNonuniformQuadraturePreparedOpticalState;
 const buildSingleSubdivisionPreparedOpticalState = MeasurementTestSupport.buildSingleSubdivisionPreparedOpticalState;
 const testProviders = MeasurementTestSupport.testProviders;
+
+fn legacyPhaseCoefficients(values: [phase_functions.legacy_phase_coefficient_count]f64) [phase_functions.phase_coefficient_count]f64 {
+    return phase_functions.phaseCoefficientsFromLegacy(values);
+}
 const fillSyntheticIntegratedSourceField = MeasurementTestSupport.fillSyntheticIntegratedSourceField;
 const inputWithQuadrature = MeasurementTestSupport.inputWithQuadrature;
 const fillLegacyMidpointQuadratureLevels = MeasurementTestSupport.fillLegacyMidpointQuadratureLevels;
@@ -571,25 +576,25 @@ test "prepared adding RTM quadrature recomputes node phase from prepared sublaye
             .optical_depth = 0.125,
             .scattering_optical_depth = 0.125,
             .single_scatter_albedo = 1.0,
-            .phase_coefficients = .{ 1.0, 0.95, 0.0, 0.0 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.95, 0.0, 0.0 }),
         },
         .{
             .optical_depth = 0.125,
             .scattering_optical_depth = 0.125,
             .single_scatter_albedo = 1.0,
-            .phase_coefficients = .{ 1.0, 0.95, 0.0, 0.0 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.95, 0.0, 0.0 }),
         },
         .{
             .optical_depth = 0.125,
             .scattering_optical_depth = 0.125,
             .single_scatter_albedo = 1.0,
-            .phase_coefficients = .{ 1.0, 0.95, 0.0, 0.0 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.95, 0.0, 0.0 }),
         },
         .{
             .optical_depth = 0.125,
             .scattering_optical_depth = 0.125,
             .single_scatter_albedo = 1.0,
-            .phase_coefficients = .{ 1.0, 0.95, 0.0, 0.0 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.95, 0.0, 0.0 }),
         },
     };
     var levels: [5]common.RtmQuadratureLevel = undefined;

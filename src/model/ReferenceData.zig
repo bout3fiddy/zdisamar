@@ -277,6 +277,7 @@ pub const SpectroscopyLineList = struct {
     relaxation_matrix: ?RelaxationMatrix = null,
     strong_line_tolerance_nm: f64 = 0.01,
     lines_sorted_ascending: bool = false,
+    preserve_anchor_weak_lines: bool = false,
     strong_line_match_by_line: ?[]?u16 = null,
     runtime_controls: SpectroscopyRuntimeControls = .{},
 
@@ -318,6 +319,7 @@ pub const SpectroscopyLineList = struct {
             .relaxation_matrix = owned_relaxation_matrix,
             .strong_line_tolerance_nm = self.strong_line_tolerance_nm,
             .lines_sorted_ascending = self.lines_sorted_ascending,
+            .preserve_anchor_weak_lines = self.preserve_anchor_weak_lines,
             .strong_line_match_by_line = if (self.strong_line_match_by_line) |matches|
                 try allocator.dupe(?u16, matches)
             else
@@ -950,6 +952,7 @@ pub const SpectroscopyLineList = struct {
     ) bool {
         const strong_index = self.matchedStrongIndexForRelevantLine(start_index, line, line_index) orelse return false;
         if (self.usesVendorStrongLinePartition()) return true;
+        if (self.preserve_anchor_weak_lines) return false;
         if (strong_line_anchors[strong_index]) |anchor_line_index| {
             return anchor_line_index == line_index;
         }
@@ -1218,8 +1221,8 @@ test "spectroscopy line list evaluates bounded temperature and pressure dependen
     try std.testing.expectEqual(@as(f64, 0.0), near_line.line_mixing_sigma_cm2_per_molecule);
 }
 
-test "spectroscopy line metadata scales sigma by abundance and partition surrogate" {
-    var dominant = SpectroscopyLineList{
+test "weak-line sigma treats abundance fraction as metadata for HITRAN strengths" {
+    var reference = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
             .{
                 .gas_index = 7,
@@ -1235,13 +1238,13 @@ test "spectroscopy line metadata scales sigma by abundance and partition surroga
             },
         }),
     };
-    defer dominant.deinit(std.testing.allocator);
+    defer reference.deinit(std.testing.allocator);
 
-    var minor = SpectroscopyLineList{
+    var metadata_only = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
             .{
                 .gas_index = 7,
-                .isotope_number = 2,
+                .isotope_number = 1,
                 .abundance_fraction = 0.0039914,
                 .center_wavelength_nm = 771.3015,
                 .line_strength_cm2_per_molecule = 1.20e-20,
@@ -1253,13 +1256,17 @@ test "spectroscopy line metadata scales sigma by abundance and partition surroga
             },
         }),
     };
-    defer minor.deinit(std.testing.allocator);
+    defer metadata_only.deinit(std.testing.allocator);
 
-    const dominant_eval = dominant.evaluateAt(771.3015, 255.0, 820.0);
-    const minor_eval = minor.evaluateAt(771.3015, 255.0, 820.0);
+    const reference_eval = reference.evaluateAt(771.3015, 255.0, 820.0);
+    const metadata_only_eval = metadata_only.evaluateAt(771.3015, 255.0, 820.0);
 
-    try std.testing.expect(dominant_eval.total_sigma_cm2_per_molecule > minor_eval.total_sigma_cm2_per_molecule);
-    try std.testing.expect(dominant_eval.total_sigma_cm2_per_molecule > 0.0);
+    try std.testing.expect(reference_eval.total_sigma_cm2_per_molecule > 0.0);
+    try std.testing.expectApproxEqAbs(
+        reference_eval.total_sigma_cm2_per_molecule,
+        metadata_only_eval.total_sigma_cm2_per_molecule,
+        1.0e-18,
+    );
 }
 
 test "o2 spectroscopy uses vendor-tabulated partition ratios" {
@@ -1573,6 +1580,63 @@ test "vendor O2A partition removes every assigned strong candidate from the weak
         1.0e-12,
     );
     try std.testing.expect(evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
+}
+
+test "fallback strong-line anchors can preserve weak contributions when requested" {
+    const anchor_proxy = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03 };
+    const weak_neighbor = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.0500, .line_strength_cm2_per_molecule = 1.10e-21, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00 };
+
+    var lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{ anchor_proxy, weak_neighbor }),
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+        .preserve_anchor_weak_lines = true,
+    };
+    defer lines.deinit(std.testing.allocator);
+
+    var strong_lines = SpectroscopyStrongLineSet{
+        .lines = try std.testing.allocator.dupe(SpectroscopyStrongLine, &.{
+            .{
+                .center_wavenumber_cm1 = 12965.1079,
+                .center_wavelength_nm = 771.3015,
+                .population_t0 = 5.10e-05,
+                .dipole_ratio = 0.712,
+                .dipole_t0 = 5.80e-04,
+                .lower_state_energy_cm1 = 1804.8773,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -35,
+            },
+        }),
+    };
+    defer strong_lines.deinit(std.testing.allocator);
+
+    var relaxation_matrix = RelaxationMatrix{
+        .line_count = 1,
+        .wt0 = try std.testing.allocator.dupe(f64, &.{0.02764486}),
+        .bw = try std.testing.allocator.dupe(f64, &.{0.629999646133}),
+    };
+    defer relaxation_matrix.deinit(std.testing.allocator);
+
+    try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
+    try lines.buildStrongLineMatchIndex(std.testing.allocator);
+
+    const preserved = lines.evaluateAt(771.25, 255.0, 820.0);
+    const weak_only_view = SpectroscopyLineList{
+        .lines = lines.lines,
+        .lines_sorted_ascending = lines.lines_sorted_ascending,
+        .runtime_controls = lines.runtime_controls,
+    };
+    const weak_only = weak_only_view.evaluateAt(771.25, 255.0, 820.0);
+
+    try std.testing.expectApproxEqRel(
+        weak_only.weak_line_sigma_cm2_per_molecule,
+        preserved.weak_line_sigma_cm2_per_molecule,
+        1.0e-12,
+    );
+    try std.testing.expect(preserved.strong_line_sigma_cm2_per_molecule > 0.0);
 }
 
 test "vendor O2A strong candidates fail fast when they cannot be matched to a sidecar" {
@@ -2109,8 +2173,10 @@ fn prepareWeakLineVoigtState(
         half_width_cm1_at_t * safe_pressure * cte,
     );
 
+    // PARITY:
+    //   HITRAN line strengths already include isotopic abundance. Keep
+    //   `abundance_fraction` as typed metadata, but do not apply it again here.
     var converted_strength = line.line_strength_cm2_per_molecule *
-        abundanceScale(line) *
         partitionRatioT0OverT(line, safe_temperature, reference_temperature_k) *
         @exp(
             hitran_hc_over_kb_cm_k * line.lower_state_energy_cm1 *
@@ -2427,10 +2493,6 @@ fn prepareStrongLineConvTPState(
     }
 
     return state;
-}
-
-fn abundanceScale(line: SpectroscopyLine) f64 {
-    return std.math.clamp(line.abundance_fraction, 0.0, 1.0);
 }
 
 fn shiftedLineCenterWavenumberCm1(line: SpectroscopyLine, pressure_atm: f64) f64 {

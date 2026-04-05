@@ -89,6 +89,11 @@ const AdaptiveIntervalPlan = struct {
     intervals: [max_integration_sample_count]AdaptiveIntervalDescriptor = undefined,
 };
 
+const AdaptiveSupportRange = struct {
+    start_index: usize,
+    end_index: usize,
+};
+
 /// Builtin instrument-response provider contract.
 pub const Provider = struct {
     id: []const u8,
@@ -313,8 +318,8 @@ fn buildAdaptiveIntegrationKernel(
         &plan,
         response,
         nominal_wavelength_nm,
-        support_window.window_start_nm,
-        support_window.window_end_nm,
+        support_window.global_start_nm,
+        support_window.global_end_nm,
         &sample_wavelengths_nm,
         &sample_raw_weights,
         &sample_count,
@@ -361,8 +366,8 @@ pub fn traceAdaptiveIntegrationKernel(
         &plan,
         response,
         nominal_wavelength_nm,
-        support_window.window_start_nm,
-        support_window.window_end_nm,
+        support_window.global_start_nm,
+        support_window.global_end_nm,
         &sample_wavelengths_nm,
         &sample_raw_weights,
         &sample_count,
@@ -544,13 +549,22 @@ fn appendAdaptiveSamplesFromPlan(
     plan: *const AdaptiveIntervalPlan,
     response: InstrumentModel.SpectralResponse,
     nominal_wavelength_nm: f64,
-    window_start_nm: f64,
-    window_end_nm: f64,
+    global_start_nm: f64,
+    global_end_nm: f64,
     sample_wavelengths_nm: *[max_integration_sample_count]f64,
     sample_raw_weights: *[max_integration_sample_count]f64,
     sample_count: *usize,
     selected_intervals: ?[]bool,
 ) bool {
+    const support_half_span_nm = adaptiveKernelHalfSpanNm(response);
+    const generation_start_nm = @max(global_start_nm, nominal_wavelength_nm - support_half_span_nm - @max(response.fwhm_nm, 1.0e-4));
+    const generation_end_nm = @min(global_end_nm, nominal_wavelength_nm + support_half_span_nm + @max(response.fwhm_nm, 1.0e-4));
+
+    var candidate_wavelengths_nm: [max_integration_sample_count]f64 = undefined;
+    var candidate_raw_weights: [max_integration_sample_count]f64 = undefined;
+    var candidate_interval_indices: [max_integration_sample_count]usize = undefined;
+    var candidate_count: usize = 0;
+
     sample_count.* = 0;
     if (selected_intervals) |selected| @memset(selected, false);
 
@@ -558,6 +572,8 @@ fn appendAdaptiveSamplesFromPlan(
     var gauss_weights: [max_integration_sample_count]f64 = undefined;
 
     for (plan.intervals[0..plan.count], 0..) |interval, interval_index| {
+        if (interval.interval_end_nm < generation_start_nm - 1.0e-12) continue;
+        if (interval.interval_start_nm > generation_end_nm + 1.0e-12) continue;
         const order = interval.division_count;
         if (order == 0) continue;
         gauss_legendre.fillNodesAndWeights(
@@ -568,22 +584,45 @@ fn appendAdaptiveSamplesFromPlan(
 
         const half_width_nm = 0.5 * (interval.interval_end_nm - interval.interval_start_nm);
         const center_nm = 0.5 * (interval.interval_end_nm + interval.interval_start_nm);
-        var interval_selected = false;
         for (0..order) |gauss_index| {
             const wavelength_nm = center_nm + (half_width_nm * gauss_nodes[gauss_index]);
-            if (wavelength_nm < window_start_nm - 1.0e-12 or wavelength_nm > window_end_nm + 1.0e-12) continue;
-            if (!appendAdaptiveSample(
-                sample_wavelengths_nm,
-                sample_raw_weights,
-                sample_count,
+            if (!appendAdaptiveCandidateSample(
+                &candidate_wavelengths_nm,
+                &candidate_raw_weights,
+                &candidate_interval_indices,
+                &candidate_count,
                 wavelength_nm,
                 spectralResponseWeight(response, wavelength_nm - nominal_wavelength_nm) *
                     (half_width_nm * gauss_weights[gauss_index]),
+                interval_index,
             )) return false;
-            interval_selected = true;
         }
-        if (selected_intervals) |selected| selected[interval_index] = interval_selected;
     }
+    if (candidate_count == 0) return false;
+
+    insertionSortSamplesWithIntervalIndices(
+        candidate_wavelengths_nm[0..candidate_count],
+        candidate_raw_weights[0..candidate_count],
+        candidate_interval_indices[0..candidate_count],
+    );
+
+    const support_range = selectVendorSupportRange(
+        candidate_wavelengths_nm[0..candidate_count],
+        nominal_wavelength_nm,
+        support_half_span_nm,
+    );
+    var selected_count: usize = 0;
+    for (support_range.start_index..support_range.end_index + 1) |candidate_index| {
+        if (!appendAdaptiveSample(
+            sample_wavelengths_nm,
+            sample_raw_weights,
+            &selected_count,
+            candidate_wavelengths_nm[candidate_index],
+            candidate_raw_weights[candidate_index],
+        )) return false;
+        if (selected_intervals) |selected| selected[candidate_interval_indices[candidate_index]] = true;
+    }
+    sample_count.* = selected_count;
     return sample_count.* != 0;
 }
 
@@ -629,12 +668,73 @@ fn appendAdaptiveSample(
     wavelength_nm: f64,
     raw_weight: f64,
 ) bool {
-    if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(raw_weight) or raw_weight <= 0.0) return true;
+    if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(raw_weight) or raw_weight < 0.0) return true;
     if (sample_count.* >= max_integration_sample_count) return false;
     sample_wavelengths_nm[sample_count.*] = wavelength_nm;
     sample_raw_weights[sample_count.*] = raw_weight;
     sample_count.* += 1;
     return true;
+}
+
+fn appendAdaptiveCandidateSample(
+    candidate_wavelengths_nm: *[max_integration_sample_count]f64,
+    candidate_raw_weights: *[max_integration_sample_count]f64,
+    candidate_interval_indices: *[max_integration_sample_count]usize,
+    candidate_count: *usize,
+    wavelength_nm: f64,
+    raw_weight: f64,
+    interval_index: usize,
+) bool {
+    if (!std.math.isFinite(wavelength_nm) or !std.math.isFinite(raw_weight) or raw_weight < 0.0) return true;
+    if (candidate_count.* >= max_integration_sample_count) return false;
+    candidate_wavelengths_nm[candidate_count.*] = wavelength_nm;
+    candidate_raw_weights[candidate_count.*] = raw_weight;
+    candidate_interval_indices[candidate_count.*] = interval_index;
+    candidate_count.* += 1;
+    return true;
+}
+
+fn selectVendorSupportRange(
+    sample_wavelengths_nm: []const f64,
+    nominal_wavelength_nm: f64,
+    support_half_span_nm: f64,
+) AdaptiveSupportRange {
+    std.debug.assert(sample_wavelengths_nm.len != 0);
+
+    var closest_index: usize = 0;
+    var closest_distance_nm = @abs(sample_wavelengths_nm[0] - nominal_wavelength_nm);
+    for (sample_wavelengths_nm[1..], 1..) |wavelength_nm, index| {
+        const distance_nm = @abs(wavelength_nm - nominal_wavelength_nm);
+        if (distance_nm < closest_distance_nm) {
+            closest_distance_nm = distance_nm;
+            closest_index = index;
+        }
+    }
+
+    var start_index: usize = 0;
+    var left_index = closest_index;
+    while (left_index > 0) {
+        left_index -= 1;
+        if (@abs(nominal_wavelength_nm - sample_wavelengths_nm[left_index]) > support_half_span_nm) {
+            start_index = left_index;
+            break;
+        }
+    }
+
+    var end_index = sample_wavelengths_nm.len - 1;
+    var right_index = closest_index;
+    while (right_index + 1 < sample_wavelengths_nm.len) {
+        right_index += 1;
+        if (@abs(sample_wavelengths_nm[right_index] - nominal_wavelength_nm) > support_half_span_nm) {
+            end_index = right_index;
+            break;
+        }
+    }
+
+    return .{
+        .start_index = start_index,
+        .end_index = end_index,
+    };
 }
 
 fn finalizeAdaptiveKernel(
@@ -684,6 +784,23 @@ fn insertionSortSamples(sample_wavelengths_nm: []f64, sample_raw_weights: []f64)
     }
 }
 
+fn insertionSortSamplesWithIntervalIndices(
+    sample_wavelengths_nm: []f64,
+    sample_raw_weights: []f64,
+    sample_interval_indices: []usize,
+) void {
+    if (sample_wavelengths_nm.len != sample_raw_weights.len or
+        sample_wavelengths_nm.len != sample_interval_indices.len) return;
+    for (1..sample_wavelengths_nm.len) |index| {
+        var cursor = index;
+        while (cursor > 0 and sample_wavelengths_nm[cursor] < sample_wavelengths_nm[cursor - 1]) : (cursor -= 1) {
+            std.mem.swap(f64, &sample_wavelengths_nm[cursor], &sample_wavelengths_nm[cursor - 1]);
+            std.mem.swap(f64, &sample_raw_weights[cursor], &sample_raw_weights[cursor - 1]);
+            std.mem.swap(usize, &sample_interval_indices[cursor], &sample_interval_indices[cursor - 1]);
+        }
+    }
+}
+
 fn resetKernel(kernel: *IntegrationKernel) void {
     kernel.enabled = false;
     kernel.sample_count = 0;
@@ -723,6 +840,13 @@ fn defaultKernelHalfSpanNm(fwhm_nm: f64) f64 {
     //   Half-span is expressed in nanometers and clamped to keep the fallback
     //   kernel away from degenerate widths.
     return @max(3.0 * @max(fwhm_nm, 1.0e-4), 1.0e-4);
+}
+
+fn adaptiveKernelHalfSpanNm(response: InstrumentModel.SpectralResponse) f64 {
+    return if (response.high_resolution_half_span_nm > 0.0)
+        response.high_resolution_half_span_nm
+    else
+        defaultKernelHalfSpanNm(response.fwhm_nm);
 }
 
 fn spectralResponseWeight(response: InstrumentModel.SpectralResponse, offset_nm: f64) f64 {
@@ -963,4 +1087,57 @@ test "adaptive interval construction follows vendor FWHM stepping and strong-lin
     try std.testing.expectEqual(@as(usize, 5), trace.intervals[0].division_count);
     try std.testing.expectApproxEqAbs(@as(f64, 759.55), trace.intervals[1].interval_start_nm, 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 759.95), trace.intervals[1].interval_end_nm, 1.0e-12);
+}
+
+test "adaptive support keeps vendor tail samples and boundary interval at the band edge" {
+    var prepared = std.mem.zeroInit(PreparedOpticalState, .{
+        .layers = &.{},
+        .continuum_points = &.{},
+        .spectroscopy_lines = ReferenceData.SpectroscopyLineList{
+            .lines = try std.testing.allocator.dupe(ReferenceData.SpectroscopyLine, &.{
+                .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 760.52, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.001, .temperature_exponent = 0.7, .lower_state_energy_cm1 = 120.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0 },
+            }),
+        },
+    });
+    defer if (prepared.spectroscopy_lines) |*line_list| line_list.deinit(std.testing.allocator);
+
+    const scene: Scene = .{
+        .spectral_grid = .{
+            .start_nm = 755.0,
+            .end_nm = 765.0,
+            .sample_count = 101,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .instrument_line_fwhm_nm = 0.38,
+            .high_resolution_half_span_nm = 1.14,
+            .adaptive_reference_grid = .{
+                .points_per_fwhm = 40,
+                .strong_line_min_divisions = 40,
+                .strong_line_max_divisions = 40,
+            },
+        },
+    };
+
+    const trace = try traceAdaptiveIntegrationKernel(
+        std.testing.allocator,
+        &scene,
+        &prepared,
+        .radiance,
+        755.0,
+    ) orelse return error.ExpectedAdaptiveTrace;
+    defer {
+        var owned = trace;
+        owned.deinit(std.testing.allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 6), trace.intervals.len);
+    try std.testing.expectEqual(@as(usize, 201), trace.kernel.sample_count);
+    try std.testing.expectApproxEqAbs(@as(f64, -0.759665164845), trace.kernel.offsets_nm[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.1403348351549), trace.kernel.offsets_nm[trace.kernel.sample_count - 1], 1.0e-12);
+    try std.testing.expectEqual(@as(f64, 0.0), trace.kernel.weights[trace.kernel.sample_count - 1]);
+    try std.testing.expectApproxEqAbs(@as(f64, 756.14), trace.intervals[5].interval_start_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 756.52), trace.intervals[5].interval_end_nm, 1.0e-12);
 }

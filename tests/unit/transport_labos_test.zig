@@ -1,9 +1,14 @@
 const std = @import("std");
 const internal = @import("zdisamar_internal");
+const phase_functions = internal.kernels.optics.prepare.phase_functions;
 
 const common = internal.kernels.transport.common;
 const labos = internal.kernels.transport.labos;
 const execute = labos.execute;
+
+fn legacyPhaseCoefficients(values: [phase_functions.legacy_phase_coefficient_count]f64) [phase_functions.phase_coefficient_count]f64 {
+    return phase_functions.phaseCoefficientsFromLegacy(values);
+}
 
 test "labos reflectance increases with surface albedo" {
     const layers = [_]common.LayerInput{.{
@@ -11,7 +16,7 @@ test "labos reflectance increases with surface albedo" {
         .single_scatter_albedo = 0.9,
         .solar_mu = 0.6,
         .view_mu = 0.7,
-        .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
     }};
 
     const route = try common.prepareRoute(.{
@@ -46,7 +51,7 @@ test "labos reflectance increases with single scatter albedo" {
                 .single_scatter_albedo = ssa,
                 .solar_mu = 0.5,
                 .view_mu = 0.6,
-                .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+                .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
             };
         }
     }.f;
@@ -91,9 +96,9 @@ test "labos supports 48 transport layers without collapsing to the synthetic sin
             .solar_mu = 0.52,
             .view_mu = 0.63,
             .phase_coefficients = if (lower_haze)
-                .{ 1.0, 0.02, 0.0, 0.0 }
+                legacyPhaseCoefficients(.{ 1.0, 0.02, 0.0, 0.0 })
             else
-                .{ 1.0, 0.58, 0.21, 0.07 },
+                legacyPhaseCoefficients(.{ 1.0, 0.58, 0.21, 0.07 }),
         };
     }
 
@@ -141,9 +146,9 @@ test "labos supports 80 transport layers without collapsing to the synthetic sin
             .solar_mu = 0.48,
             .view_mu = 0.61,
             .phase_coefficients = if (lower_haze)
-                .{ 1.0, 0.03, 0.0, 0.0 }
+                legacyPhaseCoefficients(.{ 1.0, 0.03, 0.0, 0.0 })
             else
-                .{ 1.0, 0.51, 0.18, 0.06 },
+                legacyPhaseCoefficients(.{ 1.0, 0.51, 0.18, 0.06 }),
         };
     }
 
@@ -352,7 +357,7 @@ test "labos anisotropic layers respond to relative azimuth once Fourier terms ar
             .single_scatter_albedo = 0.93,
             .solar_mu = 0.58,
             .view_mu = 0.64,
-            .phase_coefficients = .{ 1.0, 0.55, 0.24, 0.08 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.55, 0.24, 0.08 }),
         },
         .{
             .optical_depth = 0.22,
@@ -360,7 +365,7 @@ test "labos anisotropic layers respond to relative azimuth once Fourier terms ar
             .single_scatter_albedo = 0.91,
             .solar_mu = 0.61,
             .view_mu = 0.67,
-            .phase_coefficients = .{ 1.0, 0.42, 0.16, 0.05 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.42, 0.16, 0.05 }),
         },
     };
 
@@ -394,7 +399,7 @@ test "labos raw-layer integrated source-function fallback stays close to direct 
             .single_scatter_albedo = 0.90,
             .solar_mu = 0.58,
             .view_mu = 0.64,
-            .phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.35, 0.12, 0.03 }),
         },
         .{
             .optical_depth = 0.17,
@@ -402,7 +407,7 @@ test "labos raw-layer integrated source-function fallback stays close to direct 
             .single_scatter_albedo = 0.88,
             .solar_mu = 0.61,
             .view_mu = 0.67,
-            .phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.24, 0.09, 0.02 }),
         },
     };
 
@@ -454,7 +459,7 @@ test "labos single-layer integrated source-function falls back to direct TOA ext
             .single_scatter_albedo = 0.91,
             .solar_mu = 0.59,
             .view_mu = 0.65,
-            .phase_coefficients = .{ 1.0, 0.28, 0.07, 0.01 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.28, 0.07, 0.01 }),
         },
     };
 
@@ -506,7 +511,7 @@ test "labos integrated source-function path uses explicit source interface metad
             .single_scatter_albedo = 0.90,
             .solar_mu = 0.58,
             .view_mu = 0.64,
-            .phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.35, 0.12, 0.03 }),
         },
         .{
             .optical_depth = 0.17,
@@ -514,7 +519,7 @@ test "labos integrated source-function path uses explicit source interface metad
             .single_scatter_albedo = 0.88,
             .solar_mu = 0.61,
             .view_mu = 0.67,
-            .phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.24, 0.09, 0.02 }),
         },
     };
     var source_interfaces: [3]common.SourceInterfaceInput = undefined;
@@ -600,7 +605,7 @@ test "labos prepared RTM quadrature participates in integrated source-function r
             .single_scatter_albedo = 0.90,
             .solar_mu = 0.58,
             .view_mu = 0.64,
-            .phase_coefficients = .{ 1.0, 0.35, 0.12, 0.03 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.35, 0.12, 0.03 }),
         },
         .{
             .optical_depth = 0.17,
@@ -608,14 +613,14 @@ test "labos prepared RTM quadrature participates in integrated source-function r
             .single_scatter_albedo = 0.88,
             .solar_mu = 0.61,
             .view_mu = 0.67,
-            .phase_coefficients = .{ 1.0, 0.24, 0.09, 0.02 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.24, 0.09, 0.02 }),
         },
     };
 
     const rtm_quadrature = [_]common.RtmQuadratureLevel{
-        .{ .altitude_km = 0.0, .weight = 0.0, .ksca = 0.0, .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 } },
-        .{ .altitude_km = 3.5, .weight = 4.0, .ksca = 0.055, .phase_coefficients = .{ 1.0, 0.31, 0.10, 0.02 } },
-        .{ .altitude_km = 8.0, .weight = 0.0, .ksca = 0.0, .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 } },
+        .{ .altitude_km = 0.0, .weight = 0.0, .ksca = 0.0, .phase_coefficients = phase_functions.zeroPhaseCoefficients() },
+        .{ .altitude_km = 3.5, .weight = 4.0, .ksca = 0.055, .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.31, 0.10, 0.02 }) },
+        .{ .altitude_km = 8.0, .weight = 0.0, .ksca = 0.0, .phase_coefficients = phase_functions.zeroPhaseCoefficients() },
     };
 
     const route_integrated = try common.prepareRoute(.{
@@ -695,7 +700,7 @@ test "labos spherical correction changes reflectance for layered scalar scenes" 
             .single_scatter_albedo = 0.88,
             .solar_mu = 0.42,
             .view_mu = 0.54,
-            .phase_coefficients = .{ 1.0, 0.31, 0.10, 0.02 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.31, 0.10, 0.02 }),
         },
         .{
             .optical_depth = 0.16,
@@ -703,7 +708,7 @@ test "labos spherical correction changes reflectance for layered scalar scenes" 
             .single_scatter_albedo = 0.90,
             .solar_mu = 0.48,
             .view_mu = 0.60,
-            .phase_coefficients = .{ 1.0, 0.26, 0.08, 0.02 },
+            .phase_coefficients = legacyPhaseCoefficients(.{ 1.0, 0.26, 0.08, 0.02 }),
         },
     };
 

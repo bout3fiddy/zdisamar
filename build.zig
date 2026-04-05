@@ -209,6 +209,46 @@ pub fn build(b: *std.Build) void {
         .root_module = bench_module,
     });
 
+    const o2a_vendor_dump_module = b.createModule(.{
+        .root_source_file = b.path("tests/validation/o2a_vendor_reflectance_support.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "zdisamar",
+                .module = test_lib_module,
+            },
+            .{
+                .name = "zdisamar_internal",
+                .module = internal_module,
+            },
+        },
+    });
+
+    const o2a_vendor_dump_tool_module = b.createModule(.{
+        .root_source_file = b.path("scripts/testing_harness/o2a_vendor_spectrum_dump.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "zdisamar",
+                .module = test_lib_module,
+            },
+            .{
+                .name = "zdisamar_internal",
+                .module = internal_module,
+            },
+            .{
+                .name = "o2a_vendor_support",
+                .module = o2a_vendor_dump_module,
+            },
+        },
+    });
+    const o2a_vendor_dump_exe = b.addExecutable(.{
+        .name = "zdisamar-o2a-vendor-spectrum",
+        .root_module = o2a_vendor_dump_tool_module,
+    });
+
     const test_module = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -583,6 +623,18 @@ pub fn build(b: *std.Build) void {
     bench_run.addArg("out/ci/bench/summary.json");
     const bench_step = b.step("bench", "Run the non-gating benchmark harness and emit summaries");
     bench_step.dependOn(&bench_run.step);
+
+    const o2a_vendor_dump_run = b.addRunArtifact(o2a_vendor_dump_exe);
+    const o2a_vendor_plot_cmd = b.addSystemCommand(&.{
+        "python3",
+        "scripts/testing_harness/plot_o2a_vendor_spectrum.py",
+    });
+    o2a_vendor_plot_cmd.step.dependOn(&o2a_vendor_dump_run.step);
+    const o2a_vendor_plot_step = b.step(
+        "o2a-vendor-plot",
+        "Generate a fresh O2A vendor comparison CSV and plot",
+    );
+    o2a_vendor_plot_step.dependOn(&o2a_vendor_plot_cmd.step);
 
     const tidy_cmd = b.addSystemCommand(&.{
         "python3",

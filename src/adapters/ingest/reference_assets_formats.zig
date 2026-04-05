@@ -317,13 +317,18 @@ fn parseLisaSdf(
         const dipole_ratio = try parseFixedFloat(line[25..34]);
         const dipole_t0 = try parseFixedFloat(line[35..44]);
         const lower_state_energy_cm1 = try parseFixedFloat(line[46..56]);
-        const air_half_width_cm1 = try parseFixedFloat(line[58..63]);
         const temperature_exponent = try parseFixedFloat(line[65..69]);
         const pressure_shift_cm1 = try parseFixedFloat(line[71..79]);
-        const rotational_index_m1 = rotationalIndexFromLisaBranch(
-            trimWhitespace(line[83..84]),
-            trimWhitespace(line[84..87]),
-        ) catch return error.InvalidAssetFormat;
+        const branch_token = trimWhitespace(line[83..84]);
+        const nf_token = trimWhitespace(line[84..87]);
+        const rotational_index_m1 = rotationalIndexFromLisaBranch(branch_token, nf_token) catch return error.InvalidAssetFormat;
+
+        // PARITY:
+        //   `HITRANModule::readSDF` does not trust the tabulated `HWT0` field. It reconstructs
+        //   the reference half-width from the LISA branch/Nf quantum numbers using the
+        //   Tran/Hartmann-Yang parameterization before any temperature scaling happens.
+        _ = try parseFixedFloat(line[58..63]);
+        const air_half_width_cm1 = vendorLisaReferenceHalfWidthCm1(branch_token, nf_token) catch return error.InvalidAssetFormat;
 
         // UNITS:
         //   Strong-line fields are stored in cm^-1 and converted to nm where the typed loader
@@ -541,4 +546,20 @@ fn rotationalIndexFromLisaBranch(branch_token: []const u8, nf_token: []const u8)
         'R' => nf + 1,
         else => return error.InvalidAssetFormat,
     };
+}
+
+fn vendorLisaReferenceHalfWidthCm1(branch_token: []const u8, nf_token: []const u8) !f64 {
+    if (branch_token.len != 1) return error.InvalidAssetFormat;
+    const raw_nf = std.fmt.parseInt(i32, nf_token, 10) catch return error.InvalidNumber;
+    const vendor_nf = switch (branch_token[0]) {
+        'P' => raw_nf - 1,
+        'R' => raw_nf + 1,
+        else => return error.InvalidAssetFormat,
+    };
+    const vendor_nf_f64 = @as(f64, @floatFromInt(vendor_nf));
+    const sbhw = 0.02204 + 0.03749 /
+        (1.0 + 0.05428 * vendor_nf_f64 - 1.19e-3 * vendor_nf_f64 * vendor_nf_f64 +
+            2.073e-6 * std.math.pow(f64, vendor_nf_f64, 4.0));
+    return 1.023 * 1.012 * sbhw /
+        std.math.sqrt(1.0 + std.math.pow(f64, (vendor_nf_f64 - 5.0) / 55.0, 2.0));
 }

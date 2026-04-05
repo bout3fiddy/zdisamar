@@ -24,12 +24,13 @@
 //!   phase-basis smoke coverage.
 
 const gauss_legendre = @import("../../quadrature/gauss_legendre.zig");
+const phase_functions = @import("../../optics/prepare/phase_functions.zig");
 
 pub const max_gauss: usize = 10;
 pub const max_extra: usize = 2; // viewing + solar
 pub const max_nmutot: usize = max_gauss + max_extra;
 pub const max_n2: usize = max_nmutot * max_nmutot;
-pub const max_phase_coef: usize = @import("../../optics/prepare/phase_functions.zig").phase_coefficient_count;
+pub const max_phase_coef: usize = phase_functions.phase_coefficient_count;
 
 const threshold_q: f64 = 1.0e-3;
 
@@ -112,6 +113,8 @@ pub const Geometry = struct {
     nmutot: usize,
     u: [max_nmutot]f64,
     w: [max_nmutot]f64,
+    ug: [max_gauss]f64,
+    wg: [max_gauss]f64,
     mu0: f64,
     muv: f64,
 
@@ -128,6 +131,8 @@ pub const Geometry = struct {
             const wg = rule.weights[i] * 0.5;
             geo.u[i] = ug;
             geo.w[i] = @sqrt(2.0 * ug * wg);
+            geo.ug[i] = ug;
+            geo.wg[i] = wg;
         }
         geo.u[n_gauss] = muv;
         geo.w[n_gauss] = 1.0;
@@ -137,6 +142,10 @@ pub const Geometry = struct {
         for (geo.nmutot..max_nmutot) |i| {
             geo.u[i] = 0.0;
             geo.w[i] = 0.0;
+        }
+        for (geo.n_gauss..max_gauss) |i| {
+            geo.ug[i] = 0.0;
+            geo.wg[i] = 0.0;
         }
         return geo;
     }
@@ -337,7 +346,7 @@ fn computePlm(
     }
 
     var sqlm: [max_phase_coef]f64 = .{0.0} ** max_phase_coef;
-    for (i_fourier + 1..max_phase_coef) |l| {
+    for (i_fourier + 1..coef_idx + 1) |l| {
         const lf: f64 = @floatFromInt(l);
         const mf: f64 = @floatFromInt(i_fourier);
         sqlm[l] = @sqrt(lf * lf - mf * mf);
@@ -414,8 +423,12 @@ pub fn fillZplusZmin(
     const n = geo.nmutot;
     var zplus = Mat.zero(n);
     var zmin = Mat.zero(n);
+    const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);
+    if (i_fourier > max_phase_index) {
+        return .{ .Zplus = zplus, .Zmin = zmin };
+    }
 
-    for (i_fourier..max_phase_coef) |l| {
+    for (i_fourier..max_phase_index + 1) |l| {
         const plm = computePlm(i_fourier, l, geo);
         const alpha1 = phase_coefs[l];
         for (0..n) |j| {
