@@ -40,6 +40,54 @@ fn recordPhaseLap(timer: ?*std.time.Timer, target: *u64) void {
     if (timer) |resolved_timer| target.* = resolved_timer.lap();
 }
 
+fn collectUniqueForwardMisses(
+    allocator: Allocator,
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    resolved_axis: *const grid.ResolvedAxis,
+    radiance_calibration: calibration.Calibration,
+    providers: Types.ProviderBindings,
+) ![]SpectralEval.ForwardCacheMiss {
+    const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
+    var seen = std.AutoHashMap(i64, void).init(allocator);
+    defer seen.deinit();
+    var misses = std.ArrayList(SpectralEval.ForwardCacheMiss).empty;
+    errdefer misses.deinit(allocator);
+
+    for (0..sample_count) |index| {
+        const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
+        const evaluation_wavelength_nm = calibration.shiftedWavelength(
+            radiance_calibration,
+            nominal_wavelength_nm,
+        );
+        var integration: @import("../../../plugins/providers/instrument.zig").IntegrationKernel = undefined;
+        providers.instrument.integrationForWavelength(
+            scene,
+            prepared,
+            .radiance,
+            nominal_wavelength_nm,
+            &integration,
+        );
+
+        const integration_sample_count = if (integration.enabled) integration.sample_count else 1;
+        for (0..integration_sample_count) |sample_index| {
+            const wavelength_nm = if (integration.enabled)
+                evaluation_wavelength_nm + integration.offsets_nm[sample_index]
+            else
+                evaluation_wavelength_nm;
+            const key = SpectralEval.SpectralEvaluationCache.keyFor(wavelength_nm);
+            const entry = try seen.getOrPut(key);
+            if (entry.found_existing) continue;
+            try misses.append(allocator, .{
+                .key = key,
+                .wavelength_nm = wavelength_nm,
+            });
+        }
+    }
+
+    return misses.toOwnedSlice(allocator);
+}
+
 /// Purpose:
 ///   Execute the transport solver across the scene spectral grid.
 ///
@@ -97,6 +145,25 @@ fn simulateInternal(
     const uses_integrated_irradiance_sampling = providers.instrument.usesIntegratedSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
+    const forward_misses = try collectUniqueForwardMisses(
+        allocator,
+        scene,
+        prepared,
+        &resolved_axis,
+        radiance_calibration,
+        providers,
+    );
+    defer allocator.free(forward_misses);
+    try SpectralEval.prefetchForwardSamples(
+        allocator,
+        scene,
+        route,
+        prepared,
+        providers,
+        safe_span,
+        forward_misses,
+        &evaluation_cache,
+    );
 
     var radiance_sum: f64 = 0.0;
     var irradiance_sum: f64 = 0.0;

@@ -56,6 +56,73 @@ pub const ForwardIntegratedSample = struct {
     jacobian: f64 = 0.0,
 };
 
+pub const ForwardCacheMiss = struct {
+    key: i64,
+    wavelength_nm: f64,
+};
+
+const ForwardSampleScratch = struct {
+    layer_inputs: []common.LayerInput,
+    pseudo_spherical_layers: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
+    pseudo_spherical_level_altitudes: []f64,
+
+    fn init(
+        allocator: Allocator,
+        scene: *const Scene,
+        route: common.Route,
+        prepared: *const OpticsPreparation.PreparedOpticalState,
+    ) !ForwardSampleScratch {
+        const layer_count = Workspace.resolvedTransportLayerCount(route, prepared);
+        const pseudo_spherical_sample_count = Workspace.resolvedPseudoSphericalSampleCount(scene, route, prepared);
+        return .{
+            .layer_inputs = try allocator.alloc(common.LayerInput, layer_count),
+            .pseudo_spherical_layers = try allocator.alloc(common.LayerInput, pseudo_spherical_sample_count),
+            .source_interfaces = try allocator.alloc(common.SourceInterfaceInput, layer_count + 1),
+            .rtm_quadrature_levels = try allocator.alloc(common.RtmQuadratureLevel, layer_count + 1),
+            .pseudo_spherical_samples = try allocator.alloc(common.PseudoSphericalSample, pseudo_spherical_sample_count),
+            .pseudo_spherical_level_starts = try allocator.alloc(usize, layer_count + 1),
+            .pseudo_spherical_level_altitudes = try allocator.alloc(f64, layer_count + 1),
+        };
+    }
+
+    fn deinit(self: *ForwardSampleScratch, allocator: Allocator) void {
+        allocator.free(self.layer_inputs);
+        allocator.free(self.pseudo_spherical_layers);
+        allocator.free(self.source_interfaces);
+        allocator.free(self.rtm_quadrature_levels);
+        allocator.free(self.pseudo_spherical_samples);
+        allocator.free(self.pseudo_spherical_level_starts);
+        allocator.free(self.pseudo_spherical_level_altitudes);
+        self.* = undefined;
+    }
+};
+
+const ForwardPrefetchErrorState = struct {
+    mutex: std.Thread.Mutex = .{},
+    err: ?Error = null,
+
+    fn store(self: *ForwardPrefetchErrorState, err: Error) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.err == null) self.err = err;
+    }
+};
+
+const ForwardPrefetchWorker = struct {
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    providers: Types.ProviderBindings,
+    safe_span: f64,
+    misses: []const ForwardCacheMiss,
+    results: []ForwardIntegratedSample,
+    error_state: *ForwardPrefetchErrorState,
+};
+
 /// Quantized spectral cache for repeated forward and irradiance samples.
 pub const SpectralEvaluationCache = struct {
     allocator: Allocator,
@@ -291,6 +358,159 @@ pub fn integrateIrradianceAtNominal(
     return irradiance_sum;
 }
 
+fn computeForwardSampleAtWavelength(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    wavelength_nm: f64,
+    safe_span: f64,
+    providers: Types.ProviderBindings,
+    scratch: *ForwardSampleScratch,
+) Error!ForwardIntegratedSample {
+    const input = ForwardInput.configuredForwardInput(
+        scene,
+        route,
+        prepared,
+        wavelength_nm,
+        scratch.layer_inputs,
+        scratch.pseudo_spherical_layers,
+        scratch.source_interfaces,
+        scratch.rtm_quadrature_levels,
+        scratch.pseudo_spherical_samples,
+        scratch.pseudo_spherical_level_starts,
+        scratch.pseudo_spherical_level_altitudes,
+    );
+    var effective_route = route;
+    effective_route.rtm_controls = input.rtm_controls;
+    const forward = try providers.transport.executePrepared(allocator, effective_route, input);
+    return .{
+        .radiance = radianceFromForward(scene, prepared, providers, wavelength_nm, safe_span, 0.0, forward),
+        .jacobian = if (forward.jacobian_column) |value| value else 0.0,
+    };
+}
+
+fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const worker_allocator = gpa.allocator();
+    var scratch = ForwardSampleScratch.init(
+        worker_allocator,
+        worker.scene,
+        worker.route,
+        worker.prepared,
+    ) catch |err| {
+        worker.error_state.store(err);
+        return;
+    };
+    defer scratch.deinit(worker_allocator);
+
+    for (worker.misses, worker.results) |miss, *result| {
+        result.* = computeForwardSampleAtWavelength(
+            worker_allocator,
+            worker.scene,
+            worker.route,
+            worker.prepared,
+            miss.wavelength_nm,
+            worker.safe_span,
+            worker.providers,
+            &scratch,
+        ) catch |err| {
+            worker.error_state.store(err);
+            return;
+        };
+    }
+}
+
+/// Purpose:
+///   Prefill the forward cache by solving each unique quantized wavelength miss
+///   exactly once, optionally in parallel.
+///
+/// Physics:
+///   Keeps the cache-key contract exact by solving the first encountered sample
+///   wavelength for each quantized miss and then inserting the finished samples
+///   back into the main-thread cache in deterministic order.
+pub fn prefetchForwardSamples(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    providers: Types.ProviderBindings,
+    safe_span: f64,
+    misses: []const ForwardCacheMiss,
+    cache: *SpectralEvaluationCache,
+) Error!void {
+    if (misses.len == 0) return;
+
+    const cpu_count = std.Thread.getCpuCount() catch 1;
+    const worker_count = @max(@min(cpu_count, misses.len), 1);
+    const results = try allocator.alloc(ForwardIntegratedSample, misses.len);
+    defer allocator.free(results);
+
+    if (worker_count == 1) {
+        var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared);
+        defer scratch.deinit(allocator);
+        for (misses, results) |miss, *result| {
+            result.* = try computeForwardSampleAtWavelength(
+                allocator,
+                scene,
+                route,
+                prepared,
+                miss.wavelength_nm,
+                safe_span,
+                providers,
+                &scratch,
+            );
+        }
+    } else {
+        var error_state = ForwardPrefetchErrorState{};
+        const workers = try allocator.alloc(ForwardPrefetchWorker, worker_count);
+        defer allocator.free(workers);
+        const threads = try allocator.alloc(std.Thread, worker_count - 1);
+        defer allocator.free(threads);
+
+        const base_count = misses.len / worker_count;
+        const remainder = misses.len % worker_count;
+        var start_index: usize = 0;
+        var started_thread_count: usize = 0;
+        for (0..worker_count) |worker_index| {
+            const batch_count = base_count + @as(usize, if (worker_index < remainder) 1 else 0);
+            const end_index = start_index + batch_count;
+            workers[worker_index] = .{
+                .scene = scene,
+                .route = route,
+                .prepared = prepared,
+                .providers = providers,
+                .safe_span = safe_span,
+                .misses = misses[start_index..end_index],
+                .results = results[start_index..end_index],
+                .error_state = &error_state,
+            };
+            if (worker_index + 1 < worker_count) {
+                threads[started_thread_count] = std.Thread.spawn(
+                    .{},
+                    prefetchForwardWorkerMain,
+                    .{&workers[worker_index]},
+                ) catch {
+                    prefetchForwardWorkerMain(&workers[worker_index]);
+                    start_index = end_index;
+                    continue;
+                };
+                started_thread_count += 1;
+            } else {
+                prefetchForwardWorkerMain(&workers[worker_index]);
+            }
+            start_index = end_index;
+        }
+        for (threads[0..started_thread_count]) |thread| thread.join();
+        if (error_state.err) |err| return err;
+    }
+
+    for (misses, results) |miss, result| {
+        try cache.forward.put(miss.key, result);
+    }
+}
+
 /// Purpose:
 ///   Cache and return a forward sample at one wavelength.
 ///
@@ -319,26 +539,25 @@ pub fn cachedForwardAtWavelength(
     // GOTCHA:
     //   Cache keys are quantized, so nearby samples share the same storage
     //   entry to match the measurement-space reuse contract.
-    const input = ForwardInput.configuredForwardInput(
+    var scratch = ForwardSampleScratch{
+        .layer_inputs = layer_inputs,
+        .pseudo_spherical_layers = pseudo_spherical_layers,
+        .source_interfaces = source_interfaces,
+        .rtm_quadrature_levels = rtm_quadrature_levels,
+        .pseudo_spherical_samples = pseudo_spherical_samples,
+        .pseudo_spherical_level_starts = pseudo_spherical_level_starts,
+        .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
+    };
+    const sample = try computeForwardSampleAtWavelength(
+        allocator,
         scene,
         route,
         prepared,
         wavelength_nm,
-        layer_inputs,
-        pseudo_spherical_layers,
-        source_interfaces,
-        rtm_quadrature_levels,
-        pseudo_spherical_samples,
-        pseudo_spherical_level_starts,
-        pseudo_spherical_level_altitudes,
+        safe_span,
+        providers,
+        &scratch,
     );
-    var effective_route = route;
-    effective_route.rtm_controls = input.rtm_controls;
-    const forward = try providers.transport.executePrepared(allocator, effective_route, input);
-    const sample = ForwardIntegratedSample{
-        .radiance = radianceFromForward(scene, prepared, providers, wavelength_nm, safe_span, 0.0, forward),
-        .jacobian = if (forward.jacobian_column) |value| value else 0.0,
-    };
     try cache.forward.put(key, sample);
     return sample;
 }

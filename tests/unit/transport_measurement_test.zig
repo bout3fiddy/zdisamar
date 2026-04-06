@@ -1238,6 +1238,114 @@ test "prepared adding live route consumes RTM quadrature while the lower boundar
     ) > 1.0e-6);
 }
 
+test "configured forward input aligns RTM quadrature and pseudo-spherical levels on the shared RTM grid" {
+    const scene: Scene = .{
+        .id = "measurement-shared-rtm-grid-alignment",
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .surface = .{
+            .albedo = 0.05,
+        },
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 53.13,
+            .viewing_zenith_deg = 48.19,
+            .relative_azimuth_deg = 75.0,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 2,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+            .use_spherical_correction = true,
+        },
+    });
+
+    var prepared = try buildQuadratureSensitivePreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+    prepared.interval_semantics = .explicit_pressure_bounds;
+    try prepared.ensureSharedRtmGeometryCache(std.testing.allocator);
+
+    var layer_inputs: [4]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [8]common.LayerInput = undefined;
+    var source_interfaces: [5]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [5]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [8]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [5]usize = undefined;
+    var pseudo_spherical_level_altitudes: [5]f64 = undefined;
+    const input = configuredForwardInput(
+        &scene,
+        route,
+        &prepared,
+        435.0,
+        &layer_inputs,
+        &pseudo_spherical_layers,
+        &source_interfaces,
+        &rtm_quadrature_levels,
+        &pseudo_spherical_samples,
+        &pseudo_spherical_level_starts,
+        &pseudo_spherical_level_altitudes,
+    );
+
+    try std.testing.expect(input.rtm_quadrature.isValidFor(input.layers.len));
+    try std.testing.expect(input.pseudo_spherical_grid.isValidFor(input.layers.len));
+    try std.testing.expectEqual(@as(usize, 4), input.layers.len);
+    try std.testing.expectEqual(@as(usize, 8), input.pseudo_spherical_grid.samples.len);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 2, 4, 6, 8 }, input.pseudo_spherical_grid.level_sample_starts);
+
+    const expected_level_altitudes = [_]f64{ 0.75, 3.75, 6.75, 8.0, 9.25 };
+    for (expected_level_altitudes, 0..) |expected_altitude_km, index| {
+        try std.testing.expectApproxEqRel(
+            expected_altitude_km,
+            input.rtm_quadrature.levels[index].altitude_km,
+            1.0e-12,
+        );
+        try std.testing.expectApproxEqRel(
+            expected_altitude_km,
+            input.pseudo_spherical_grid.level_altitudes_km[index],
+            1.0e-12,
+        );
+    }
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[0].weight, 1.0e-12);
+    try std.testing.expect(input.rtm_quadrature.levels[1].weight > 0.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[2].weight, 1.0e-12);
+    try std.testing.expect(input.rtm_quadrature.levels[3].weight > 0.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), input.rtm_quadrature.levels[4].weight, 1.0e-12);
+    try std.testing.expect(prepared.shared_rtm_geometry.isValidFor(input.layers.len));
+
+    for (input.layers, 0..) |layer_input, layer_index| {
+        const active_sample_index = 2 * layer_index + 1;
+        try std.testing.expectApproxEqRel(
+            layer_input.optical_depth,
+            input.pseudo_spherical_grid.samples[active_sample_index].optical_depth,
+            1.0e-12,
+        );
+    }
+
+    // The shared RTM grid should replace the legacy support-level altitude at
+    // the first interior transport level.
+    try std.testing.expect(@abs(input.rtm_quadrature.levels[1].altitude_km - @as(f64, 2.75)) > 1.0e-3);
+}
+
 test "summary workspace sizes adding transport buffers from sublayer hints" {
     const scene: Scene = .{
         .id = "measurement-adding-grid-hint",

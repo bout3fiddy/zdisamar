@@ -239,12 +239,30 @@ fn doDouble(
 /// Physics:
 ///   Turns each transport layer into its Fourier-specific single-scatter or
 ///   doubled response on the LABOS grid.
-pub fn calcRTlayersInto(
+fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
+    var max_index: usize = 0;
+    for (layers) |layer| {
+        max_index = @max(max_index, phase_functions.maxPhaseCoefficientIndex(layer.phase_coefficients));
+    }
+    return max_index;
+}
+
+/// Purpose:
+///   Build the layer reflection and transmission operators in place using a
+///   caller-provided Fourier basis cache.
+///
+/// Physics:
+///   Reuses one Fourier-specific associated-Legendre basis across all layers so
+///   the phase-kernel build stays exact without rebuilding the same basis work.
+pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
     i_fourier: usize,
     geo: *const basis.Geometry,
     controls: common.RtmControls,
+    plm_basis: *const basis.FourierPlmBasis,
+    phase_kernel_cache: ?[]basis.PhaseKernel,
+    phase_kernel_valid: ?[]bool,
 ) void {
     const nlayer = layers.len;
 
@@ -254,19 +272,26 @@ pub fn calcRTlayersInto(
             .T = basis.Mat.zero(geo.nmutot),
         };
     }
+    if (phase_kernel_valid) |valid| @memset(valid, false);
 
     for (0..nlayer) |layer_idx| {
         const rt_idx = layer_idx + 1;
         const layer = layers[layer_idx];
-
-        if (layer.optical_depth < 1.0e-20) continue;
         if (i_fourier >= basis.max_phase_coef) continue;
 
-        const b = layer.optical_depth;
-        const a = layer.single_scatter_albedo;
         const phase_coefs = layer.phase_coefficients;
         const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);
         if (i_fourier > max_phase_index) continue;
+
+        var z = basis.fillZplusZminFromBasis(i_fourier, phase_coefs, geo, plm_basis);
+        if (phase_kernel_cache) |cache| {
+            cache[rt_idx] = z;
+            if (phase_kernel_valid) |valid| valid[rt_idx] = true;
+        }
+        if (layer.optical_depth < 1.0e-20) continue;
+
+        const b = layer.optical_depth;
+        const a = layer.single_scatter_albedo;
 
         var max_beta_eff: f64 = 0.0;
         for (i_fourier..max_phase_index + 1) |ic| {
@@ -275,8 +300,6 @@ pub fn calcRTlayersInto(
             if (beta_eff > max_beta_eff) max_beta_eff = beta_eff;
         }
         const a_eff = a * max_beta_eff;
-
-        var z = basis.fillZplusZmin(i_fourier, phase_coefs, geo);
 
         var use_doubling = false;
         var b_start = b;
@@ -316,6 +339,36 @@ pub fn calcRTlayersInto(
         rt[rt_idx].R = R;
         rt[rt_idx].T = T;
     }
+}
+
+/// Purpose:
+///   Build the layer reflection and transmission operators in place.
+///
+/// Physics:
+///   Turns each transport layer into its Fourier-specific single-scatter or
+///   doubled response on the LABOS grid.
+pub fn calcRTlayersInto(
+    rt: []LayerRT,
+    layers: []const common.LayerInput,
+    i_fourier: usize,
+    geo: *const basis.Geometry,
+    controls: common.RtmControls,
+) void {
+    const plm_basis = basis.FourierPlmBasis.init(
+        i_fourier,
+        maxLayerPhaseCoefficientIndex(layers),
+        geo,
+    );
+    calcRTlayersIntoWithBasis(
+        rt,
+        layers,
+        i_fourier,
+        geo,
+        controls,
+        &plm_basis,
+        null,
+        null,
+    );
 }
 
 test "zero-Fourier renormalization restores Gaussian quadrature closure" {

@@ -21,6 +21,7 @@
 //!   See `tests/unit/transport_labos_test.zig` for reflectance and Fourier
 //!   selection coverage.
 
+const std = @import("std");
 const basis = @import("basis.zig");
 const common = @import("../common.zig");
 
@@ -57,6 +58,23 @@ fn maxInterfacePhaseCoefficientIndex(
     if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return above_max;
     const below_max = maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients);
     return @max(above_max, below_max);
+}
+
+fn reuseLayerKernelIndex(
+    layers: []const common.LayerInput,
+    source_interface: common.SourceInterfaceInput,
+    ilevel: usize,
+) ?usize {
+    if (layers.len == 0) return null;
+    const above_index = @min(ilevel, layers.len - 1);
+    if (!std.mem.eql(
+        f64,
+        source_interface.phase_coefficients_above[0..],
+        layers[above_index].phase_coefficients[0..],
+    )) {
+        return null;
+    }
+    return above_index;
 }
 
 /// Purpose:
@@ -105,6 +123,45 @@ pub fn calcIntegratedReflectance(
     i_fourier: usize,
     geo: *const basis.Geometry,
 ) f64 {
+    const max_phase_index = if (rtm_quadrature.isValidFor(layers.len))
+        @max(maxFourierIndex(layers), maxFourierIndexQuadrature(rtm_quadrature))
+    else
+        @max(maxFourierIndex(layers), maxFourierIndexInterfaces(source_interfaces));
+    const plm_basis = basis.FourierPlmBasis.init(i_fourier, max_phase_index, geo);
+    return calcIntegratedReflectanceWithBasis(
+        layers,
+        source_interfaces,
+        rtm_quadrature,
+        ud,
+        end_level,
+        i_fourier,
+        geo,
+        &plm_basis,
+        null,
+        null,
+    );
+}
+
+/// Purpose:
+///   Compute the integrated reflectance using a caller-provided Fourier basis
+///   and optional layer phase-kernel cache.
+///
+/// Physics:
+///   Reuses the exact phase-kernel basis across interfaces and reuses already
+///   materialized layer kernels when the source-interface carrier is identical
+///   to the layer-above phase contract.
+pub fn calcIntegratedReflectanceWithBasis(
+    layers: []const common.LayerInput,
+    source_interfaces: []const common.SourceInterfaceInput,
+    rtm_quadrature: common.RtmQuadratureGrid,
+    ud: []const basis.UDField,
+    end_level: usize,
+    i_fourier: usize,
+    geo: *const basis.Geometry,
+    plm_basis: *const basis.FourierPlmBasis,
+    layer_phase_kernel_cache: ?[]const basis.PhaseKernel,
+    layer_phase_kernel_valid: ?[]const bool,
+) f64 {
     const solar_col: usize = 1;
     const view_idx = geo.viewIdx();
     const solar_idx = geo.n_gauss + 1;
@@ -140,7 +197,21 @@ pub fn calcIntegratedReflectance(
             continue;
         }
 
-        const z = basis.fillZplusZmin(i_fourier, phase_coefficients, geo);
+        const z = blk: {
+            if (!use_rtm_quadrature) {
+                if (reuseLayerKernelIndex(layers, source_interface, ilevel)) |above_index| {
+                    if (layer_phase_kernel_cache) |cache| {
+                        if (layer_phase_kernel_valid) |valid| {
+                            const cache_index = above_index + 1;
+                            if (cache_index < cache.len and cache_index < valid.len and valid[cache_index]) {
+                                break :blk cache[cache_index];
+                            }
+                        }
+                    }
+                }
+            }
+            break :blk basis.fillZplusZminFromBasis(i_fourier, phase_coefficients, geo, plm_basis);
+        };
         var pmin_ed: f64 = 0.0;
         var pplusst_u: f64 = 0.0;
 
@@ -204,6 +275,19 @@ fn maxFourierIndexQuadrature(rtm_quadrature: common.RtmQuadratureGrid) usize {
 }
 
 /// Purpose:
+///   Resolve the highest phase-coefficient index needed by the current
+///   transport input.
+pub fn resolvedPhaseCoefficientMax(input: common.ForwardInput) usize {
+    var max_index = maxFourierIndex(input.layers);
+    if (input.rtm_quadrature.isValidFor(input.layers.len)) {
+        max_index = @max(max_index, maxFourierIndexQuadrature(input.rtm_quadrature));
+    } else if (input.source_interfaces.len == input.layers.len + 1) {
+        max_index = @max(max_index, maxFourierIndexInterfaces(input.source_interfaces));
+    }
+    return max_index;
+}
+
+/// Purpose:
 ///   Resolve the highest Fourier term needed by the active transport input.
 ///
 /// Vendor:
@@ -228,4 +312,81 @@ pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RtmContro
         return maxFourierIndexInterfaces(input.source_interfaces);
     }
     return maxFourierIndex(input.layers);
+}
+
+test "cached layer kernels preserve integrated reflectance when source interfaces mirror layers" {
+    const geo = basis.Geometry.init(4, 0.58, 0.64);
+    const layers = [_]common.LayerInput{
+        .{
+            .scattering_optical_depth = 0.22,
+            .phase_coefficients = .{ 1.0, 0.56, 0.24, 0.09 } ++
+                .{0.0} ** (basis.max_phase_coef - 4),
+        },
+        .{
+            .scattering_optical_depth = 0.18,
+            .phase_coefficients = .{ 1.0, 0.41, 0.17, 0.05 } ++
+                .{0.0} ** (basis.max_phase_coef - 4),
+        },
+    };
+    var ud: [3]basis.UDField = undefined;
+    for (&ud) |*field| {
+        field.* = .{
+            .E = basis.Vec.zero(geo.nmutot),
+            .U = basis.Vec2.zero(geo.nmutot),
+            .D = basis.Vec2.zero(geo.nmutot),
+        };
+    }
+    for (0..ud.len) |ilevel| {
+        for (0..geo.nmutot) |imu| {
+            ud[ilevel].E.set(imu, 0.8 - 0.1 * @as(f64, @floatFromInt(ilevel)));
+            for (0..2) |imu0| {
+                ud[ilevel].U.col[imu0].set(imu, 0.02 * @as(f64, @floatFromInt((ilevel + 1) * (imu + 1) * (imu0 + 1))));
+                ud[ilevel].D.col[imu0].set(imu, 0.01 * @as(f64, @floatFromInt((ilevel + 2) * (imu + 1) * (imu0 + 1))));
+            }
+        }
+    }
+
+    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
+    common.fillSourceInterfacesFromLayers(&layers, &source_interfaces);
+    const input: common.ForwardInput = .{
+        .layers = &layers,
+        .source_interfaces = &source_interfaces,
+    };
+    const i_fourier: usize = 1;
+    const plm_basis = basis.FourierPlmBasis.init(i_fourier, resolvedPhaseCoefficientMax(input), &geo);
+    var kernel_cache: [3]basis.PhaseKernel = undefined;
+    var kernel_valid = [_]bool{false} ** 3;
+    for (0..layers.len) |layer_idx| {
+        kernel_cache[layer_idx + 1] = basis.fillZplusZminFromBasis(
+            i_fourier,
+            layers[layer_idx].phase_coefficients,
+            &geo,
+            &plm_basis,
+        );
+        kernel_valid[layer_idx + 1] = true;
+    }
+
+    const baseline = calcIntegratedReflectance(
+        &layers,
+        &source_interfaces,
+        .{},
+        &ud,
+        layers.len,
+        i_fourier,
+        &geo,
+    );
+    const cached = calcIntegratedReflectanceWithBasis(
+        &layers,
+        &source_interfaces,
+        .{},
+        &ud,
+        layers.len,
+        i_fourier,
+        &geo,
+        &plm_basis,
+        &kernel_cache,
+        &kernel_valid,
+    );
+
+    try std.testing.expectApproxEqAbs(baseline, cached, 1.0e-12);
 }

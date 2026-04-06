@@ -289,6 +289,40 @@ pub const EvaluatedLayer = struct {
     view_mu: f64 = 1.0,
 };
 
+/// Shared RTM layer geometry reused by the explicit shared-grid transport path.
+pub const SharedRtmLayerGeometry = struct {
+    lower_altitude_km: f64 = 0.0,
+    upper_altitude_km: f64 = 0.0,
+    midpoint_altitude_km: f64 = 0.0,
+    thickness_km: f64 = 0.0,
+    support_start_index: u32 = 0,
+    support_count: u32 = 0,
+};
+
+/// Shared RTM level geometry reused by the explicit shared-grid transport path.
+pub const SharedRtmLevelGeometry = struct {
+    altitude_km: f64 = 0.0,
+    weight_km: f64 = 0.0,
+    support_start_index: u32 = 0,
+    support_count: u32 = 0,
+};
+
+/// Shared RTM geometry cache reused across wavelength sweeps.
+pub const SharedRtmGeometry = struct {
+    layers: []SharedRtmLayerGeometry = &.{},
+    levels: []SharedRtmLevelGeometry = &.{},
+
+    pub fn isValidFor(self: SharedRtmGeometry, layer_count: usize) bool {
+        return self.layers.len == layer_count and self.levels.len == layer_count + 1;
+    }
+
+    pub fn deinit(self: *SharedRtmGeometry, allocator: Allocator) void {
+        if (self.layers.len != 0) allocator.free(self.layers);
+        if (self.levels.len != 0) allocator.free(self.levels);
+        self.* = .{};
+    }
+};
+
 pub const GeneratedLutAssetKind = enum {
     reflectance,
     correction,
@@ -322,6 +356,7 @@ pub const PreparedOpticalState = struct {
     layers: []PreparedLayer,
     sublayers: ?[]PreparedSublayer = null,
     strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
+    shared_rtm_geometry: SharedRtmGeometry = .{},
     continuum_points: []ReferenceData.CrossSectionPoint,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
@@ -376,6 +411,7 @@ pub const PreparedOpticalState = struct {
     pub fn deinit(self: *PreparedOpticalState, allocator: Allocator) void {
         allocator.free(self.layers);
         if (self.sublayers) |sublayers| allocator.free(sublayers);
+        self.shared_rtm_geometry.deinit(allocator);
         allocator.free(self.continuum_points);
         if (self.collision_induced_absorption) |cia| {
             var owned_cia = cia;
@@ -428,6 +464,26 @@ pub const PreparedOpticalState = struct {
     pub fn transportLayerCount(self: *const PreparedOpticalState) usize {
         if (self.sublayers) |sublayers| return sublayers.len;
         return self.layers.len;
+    }
+
+    /// Purpose:
+    ///   Materialize the shared RTM geometry cache for explicit shared-grid
+    ///   transport paths.
+    ///
+    /// Physics:
+    ///   Hoists wavelength-invariant RTM level and layer geometry out of the
+    ///   per-sample transport loop so the shared-grid path can reuse one
+    ///   physical vertical contract across all wavelengths.
+    ///
+    /// Validation:
+    ///   Shared-grid measurement-space tests and O2A profiling harnesses.
+    pub fn ensureSharedRtmGeometryCache(
+        self: *PreparedOpticalState,
+        allocator: Allocator,
+    ) !void {
+        if (self.shared_rtm_geometry.isValidFor(self.transportLayerCount())) return;
+        self.shared_rtm_geometry.deinit(allocator);
+        self.shared_rtm_geometry = try @import("transport.zig").buildSharedRtmGeometry(allocator, self);
     }
 
     /// Purpose:

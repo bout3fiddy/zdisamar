@@ -968,7 +968,7 @@ fn prepareWithInputs(
     else
         0.0;
 
-    return .{
+    var prepared: PreparedOpticalState = .{
         .layers = layers,
         .sublayers = sublayers,
         .strong_line_states = strong_line_states,
@@ -1020,6 +1020,9 @@ fn prepareWithInputs(
         .aerosol_fraction_control = aerosol_fraction_control,
         .cloud_fraction_control = cloud_fraction_control,
     };
+    errdefer prepared.deinit(allocator);
+    try prepared.ensureSharedRtmGeometryCache(allocator);
+    return prepared;
 }
 
 const OwnedVerticalGrid = struct {

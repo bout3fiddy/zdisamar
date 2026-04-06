@@ -35,10 +35,300 @@ const Evaluation = @import("evaluation.zig");
 
 const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const centimeters_per_kilometer = 1.0e5;
+const max_dynamic_gauss_order: usize = 128;
 
 const PreparedOpticalState = State.PreparedOpticalState;
 const PreparedSublayer = State.PreparedSublayer;
 const OpticalDepthBreakdown = State.OpticalDepthBreakdown;
+const EvaluatedLayer = State.EvaluatedLayer;
+const SharedRtmGeometry = State.SharedRtmGeometry;
+const SharedRtmLayerGeometry = State.SharedRtmLayerGeometry;
+const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
+
+const ResolvedGaussRule = struct {
+    nodes: []const f64,
+    weights: []const f64,
+};
+
+const GaussRuleScratch = struct {
+    nodes: [max_dynamic_gauss_order]f64 = [_]f64{0.0} ** max_dynamic_gauss_order,
+    weights: [max_dynamic_gauss_order]f64 = [_]f64{0.0} ** max_dynamic_gauss_order,
+};
+
+const SharedOpticalCarrier = struct {
+    gas_absorption_optical_depth_per_km: f64 = 0.0,
+    gas_scattering_optical_depth_per_km: f64 = 0.0,
+    cia_optical_depth_per_km: f64 = 0.0,
+    aerosol_optical_depth_per_km: f64 = 0.0,
+    aerosol_scattering_optical_depth_per_km: f64 = 0.0,
+    cloud_optical_depth_per_km: f64 = 0.0,
+    cloud_scattering_optical_depth_per_km: f64 = 0.0,
+    phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+
+    fn totalScatteringOpticalDepthPerKm(self: SharedOpticalCarrier) f64 {
+        return self.gas_scattering_optical_depth_per_km +
+            self.aerosol_scattering_optical_depth_per_km +
+            self.cloud_scattering_optical_depth_per_km;
+    }
+
+    fn totalOpticalDepthPerKm(self: SharedOpticalCarrier) f64 {
+        return self.gas_absorption_optical_depth_per_km +
+            self.gas_scattering_optical_depth_per_km +
+            self.cia_optical_depth_per_km +
+            self.aerosol_optical_depth_per_km +
+            self.cloud_optical_depth_per_km;
+    }
+};
+
+const SharedRtmInterval = struct {
+    lower_altitude_km: f64,
+    upper_altitude_km: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState = null,
+};
+
+const SharedSupportSlices = struct {
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+};
+
+fn usesSharedRtmGrid(self: *const PreparedOpticalState, transport_layer_count: usize) bool {
+    if (self.interval_semantics == .none) return false;
+    const sublayers = self.sublayers orelse return false;
+    return transport_layer_count == sublayers.len;
+}
+
+fn cachedSharedRtmGeometry(
+    self: *const PreparedOpticalState,
+    transport_layer_count: usize,
+) ?*const SharedRtmGeometry {
+    if (!self.shared_rtm_geometry.isValidFor(transport_layer_count)) return null;
+    return &self.shared_rtm_geometry;
+}
+
+fn resolveGaussRule(order: usize, scratch: *GaussRuleScratch) ResolvedGaussRule {
+    if (order == 0) unreachable;
+    if (order > max_dynamic_gauss_order) {
+        @panic("gauss-legendre order exceeds shared RTM scratch capacity");
+    }
+
+    if (order <= 10) {
+        const rule = gauss_legendre.rule(@intCast(order)) catch unreachable;
+        @memcpy(scratch.nodes[0..order], rule.nodes[0..order]);
+        @memcpy(scratch.weights[0..order], rule.weights[0..order]);
+    } else {
+        gauss_legendre.fillNodesAndWeights(
+            @intCast(order),
+            scratch.nodes[0..order],
+            scratch.weights[0..order],
+        ) catch unreachable;
+    }
+
+    return .{
+        .nodes = scratch.nodes[0..order],
+        .weights = scratch.weights[0..order],
+    };
+}
+
+fn intervalAltitudeAtNode(
+    lower_altitude_km: f64,
+    upper_altitude_km: f64,
+    normalized_node: f64,
+) f64 {
+    const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+    return lower_altitude_km + 0.5 * (normalized_node + 1.0) * altitude_span_km;
+}
+
+fn intervalWeightKm(
+    lower_altitude_km: f64,
+    upper_altitude_km: f64,
+    normalized_weight: f64,
+) f64 {
+    const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+    return 0.5 * normalized_weight * altitude_span_km;
+}
+
+fn sharedRtmInterval(
+    self: *const PreparedOpticalState,
+    sublayers: []const PreparedSublayer,
+    layer: State.PreparedLayer,
+) SharedRtmInterval {
+    const start_index: usize = @intCast(layer.sublayer_start_index);
+    const count: usize = @intCast(layer.sublayer_count);
+    const stop_index = start_index + count;
+    return .{
+        .lower_altitude_km = levelAltitudeFromSublayers(sublayers, start_index),
+        .upper_altitude_km = levelAltitudeFromSublayers(sublayers, stop_index),
+        .support_sublayers = sublayers[start_index..stop_index],
+        .strong_line_states = if (self.strong_line_states) |states|
+            states[start_index..stop_index]
+        else
+            null,
+    };
+}
+
+fn sharedSupportSlices(
+    self: *const PreparedOpticalState,
+    sublayers: []const PreparedSublayer,
+    support_start_index: usize,
+    support_count: usize,
+) SharedSupportSlices {
+    const support_stop_index = support_start_index + support_count;
+    return .{
+        .sublayers = sublayers[support_start_index..support_stop_index],
+        .strong_line_states = if (self.strong_line_states) |states|
+            states[support_start_index..support_stop_index]
+        else
+            null,
+    };
+}
+
+/// Purpose:
+///   Build the wavelength-invariant shared RTM geometry cache.
+///
+/// Physics:
+///   Resolves the explicit shared-grid transport path onto one RTM level grid
+///   so level and layer indices carry the same physical altitudes for every
+///   wavelength evaluation.
+///
+/// Vendor:
+///   `integrated source-function RTM grid` stage
+///
+/// Validation:
+///   Shared-grid measurement-space tests and O2A forward profiles.
+pub fn buildSharedRtmGeometry(
+    allocator: std.mem.Allocator,
+    self: *const PreparedOpticalState,
+) !SharedRtmGeometry {
+    const transport_layer_count = self.transportLayerCount();
+    if (!usesSharedRtmGrid(self, transport_layer_count)) return .{};
+    const sublayers = self.sublayers orelse return .{};
+
+    const layers = try allocator.alloc(SharedRtmLayerGeometry, transport_layer_count);
+    errdefer allocator.free(layers);
+    const levels = try allocator.alloc(SharedRtmLevelGeometry, transport_layer_count + 1);
+    errdefer allocator.free(levels);
+    @memset(layers, .{});
+    @memset(levels, .{});
+
+    var interval_rule_scratch: GaussRuleScratch = .{};
+    for (self.layers) |layer| {
+        const start_index: usize = @intCast(layer.sublayer_start_index);
+        const count: usize = @intCast(layer.sublayer_count);
+        if (count == 0) continue;
+
+        const interval = sharedRtmInterval(self, sublayers, layer);
+        const level_node_count = count - 1;
+        const level_rule = if (level_node_count > 0)
+            resolveGaussRule(level_node_count, &interval_rule_scratch)
+        else
+            null;
+
+        levels[start_index] = .{
+            .altitude_km = interval.lower_altitude_km,
+            .weight_km = 0.0,
+            .support_start_index = @intCast(start_index),
+            .support_count = @intCast(count),
+        };
+        for (0..level_node_count) |node_index| {
+            levels[start_index + 1 + node_index] = .{
+                .altitude_km = intervalAltitudeAtNode(
+                    interval.lower_altitude_km,
+                    interval.upper_altitude_km,
+                    level_rule.?.nodes[node_index],
+                ),
+                .weight_km = intervalWeightKm(
+                    interval.lower_altitude_km,
+                    interval.upper_altitude_km,
+                    level_rule.?.weights[node_index],
+                ),
+                .support_start_index = @intCast(start_index),
+                .support_count = @intCast(count),
+            };
+        }
+
+        const stop_index = start_index + count;
+        levels[stop_index] = .{
+            .altitude_km = interval.upper_altitude_km,
+            .weight_km = 0.0,
+            .support_start_index = @intCast(start_index),
+            .support_count = @intCast(count),
+        };
+
+        for (0..count) |local_layer_index| {
+            const lower_altitude_km = levels[start_index + local_layer_index].altitude_km;
+            const upper_altitude_km = levels[start_index + local_layer_index + 1].altitude_km;
+            layers[start_index + local_layer_index] = .{
+                .lower_altitude_km = lower_altitude_km,
+                .upper_altitude_km = upper_altitude_km,
+                .midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km),
+                .thickness_km = @max(upper_altitude_km - lower_altitude_km, 0.0),
+                .support_start_index = @intCast(start_index),
+                .support_count = @intCast(count),
+            };
+        }
+    }
+
+    return .{
+        .layers = layers,
+        .levels = levels,
+    };
+}
+
+fn accumulateSharedCarrier(
+    breakdown: *OpticalDepthBreakdown,
+    phase_numerator: *[phase_coefficient_count]f64,
+    carrier: SharedOpticalCarrier,
+    weight_km: f64,
+) void {
+    const weighted_gas_absorption = carrier.gas_absorption_optical_depth_per_km * weight_km;
+    const weighted_gas_scattering = carrier.gas_scattering_optical_depth_per_km * weight_km;
+    const weighted_cia = carrier.cia_optical_depth_per_km * weight_km;
+    const weighted_aerosol = carrier.aerosol_optical_depth_per_km * weight_km;
+    const weighted_aerosol_scattering = carrier.aerosol_scattering_optical_depth_per_km * weight_km;
+    const weighted_cloud = carrier.cloud_optical_depth_per_km * weight_km;
+    const weighted_cloud_scattering = carrier.cloud_scattering_optical_depth_per_km * weight_km;
+
+    breakdown.gas_absorption_optical_depth += weighted_gas_absorption;
+    breakdown.gas_scattering_optical_depth += weighted_gas_scattering;
+    breakdown.cia_optical_depth += weighted_cia;
+    breakdown.aerosol_optical_depth += weighted_aerosol;
+    breakdown.aerosol_scattering_optical_depth += weighted_aerosol_scattering;
+    breakdown.cloud_optical_depth += weighted_cloud;
+    breakdown.cloud_scattering_optical_depth += weighted_cloud_scattering;
+
+    const weighted_scattering = weighted_gas_scattering +
+        weighted_aerosol_scattering +
+        weighted_cloud_scattering;
+    if (weighted_scattering <= 0.0) return;
+
+    for (0..phase_coefficient_count) |index| {
+        phase_numerator[index] += weighted_scattering * carrier.phase_coefficients[index];
+    }
+}
+
+fn evaluatedLayerFromSharedCarrier(
+    scene: *const Scene,
+    altitude_km: f64,
+    breakdown: OpticalDepthBreakdown,
+    phase_numerator: [phase_coefficient_count]f64,
+) EvaluatedLayer {
+    const total_scattering = breakdown.totalScatteringOpticalDepth();
+    var phase_coefficients = PhaseFunctions.gasPhaseCoefficients();
+    if (total_scattering > 0.0) {
+        for (0..phase_coefficient_count) |index| {
+            phase_coefficients[index] = phase_numerator[index] / total_scattering;
+        }
+        phase_coefficients[0] = 1.0;
+    }
+
+    return .{
+        .breakdown = breakdown,
+        .phase_coefficients = phase_coefficients,
+        .solar_mu = scene.geometry.solarCosineAtAltitude(altitude_km),
+        .view_mu = scene.geometry.viewingCosineAtAltitude(altitude_km),
+    };
+}
 
 /// Purpose:
 ///   Convert the prepared state into a forward-input carrier.
@@ -138,6 +428,111 @@ pub fn fillForwardLayersAtWavelength(
     if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
 
     if (self.sublayers) |sublayers| {
+        if (usesSharedRtmGrid(self, layer_inputs.len)) {
+            if (cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
+                var totals: OpticalDepthBreakdown = .{};
+                for (geometry.layers, layer_inputs) |layer_geometry, *layer_input| {
+                    const support_start_index: usize = @intCast(layer_geometry.support_start_index);
+                    const support_count: usize = @intCast(layer_geometry.support_count);
+                    const support = sharedSupportSlices(
+                        self,
+                        sublayers,
+                        support_start_index,
+                        support_count,
+                    );
+
+                    var breakdown: OpticalDepthBreakdown = .{};
+                    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
+                    const carrier = sharedOpticalCarrierAtAltitude(
+                        self,
+                        wavelength_nm,
+                        support.sublayers,
+                        support.strong_line_states,
+                        layer_geometry.midpoint_altitude_km,
+                    );
+                    accumulateSharedCarrier(
+                        &breakdown,
+                        &phase_numerator,
+                        carrier,
+                        layer_geometry.thickness_km,
+                    );
+
+                    const evaluated = evaluatedLayerFromSharedCarrier(
+                        scene,
+                        layer_geometry.midpoint_altitude_km,
+                        breakdown,
+                        phase_numerator,
+                    );
+                    layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
+                    Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                }
+                return totals;
+            }
+
+            var totals: OpticalDepthBreakdown = .{};
+            var interval_rule_scratch: GaussRuleScratch = .{};
+
+            for (self.layers) |layer| {
+                const start_index: usize = @intCast(layer.sublayer_start_index);
+                const count: usize = @intCast(layer.sublayer_count);
+                if (count == 0) continue;
+
+                const interval = sharedRtmInterval(self, sublayers, layer);
+                const level_node_count = count - 1;
+                const level_rule = if (level_node_count > 0)
+                    resolveGaussRule(level_node_count, &interval_rule_scratch)
+                else
+                    null;
+
+                for (0..count) |local_layer_index| {
+                    const lower_altitude_km = if (local_layer_index == 0)
+                        interval.lower_altitude_km
+                    else
+                        intervalAltitudeAtNode(
+                            interval.lower_altitude_km,
+                            interval.upper_altitude_km,
+                            level_rule.?.nodes[local_layer_index - 1],
+                        );
+                    const upper_altitude_km = if (local_layer_index + 1 == count)
+                        interval.upper_altitude_km
+                    else
+                        intervalAltitudeAtNode(
+                            interval.lower_altitude_km,
+                            interval.upper_altitude_km,
+                            level_rule.?.nodes[local_layer_index],
+                        );
+                    const midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km);
+                    const layer_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+
+                    var breakdown: OpticalDepthBreakdown = .{};
+                    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
+                    const carrier = sharedOpticalCarrierAtAltitude(
+                        self,
+                        wavelength_nm,
+                        interval.support_sublayers,
+                        interval.strong_line_states,
+                        midpoint_altitude_km,
+                    );
+                    accumulateSharedCarrier(
+                        &breakdown,
+                        &phase_numerator,
+                        carrier,
+                        layer_span_km,
+                    );
+
+                    const evaluated = evaluatedLayerFromSharedCarrier(
+                        scene,
+                        midpoint_altitude_km,
+                        breakdown,
+                        phase_numerator,
+                    );
+                    layer_inputs[start_index + local_layer_index] = Evaluation.layerInputFromEvaluated(evaluated);
+                    Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                }
+            }
+            return totals;
+        }
+
         if (layer_inputs.len == sublayers.len) {
             var totals: OpticalDepthBreakdown = .{};
             for (sublayers, 0..) |sublayer, sublayer_index| {
@@ -245,11 +640,117 @@ pub fn fillForwardLayersAtWavelength(
 ///   Materialize source-interface carriers at one wavelength.
 pub fn fillSourceInterfacesAtWavelengthWithLayers(
     self: *const PreparedOpticalState,
-    _: f64,
+    wavelength_nm: f64,
     layer_inputs: []const transport_common.LayerInput,
     source_interfaces: []transport_common.SourceInterfaceInput,
 ) void {
     if (layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1) return;
+
+    if (self.sublayers) |sublayers| {
+        if (usesSharedRtmGrid(self, layer_inputs.len)) {
+            if (cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
+                for (source_interfaces, geometry.levels) |*source_interface, level_geometry| {
+                    const support_start_index: usize = @intCast(level_geometry.support_start_index);
+                    const support_count: usize = @intCast(level_geometry.support_count);
+                    const support = sharedSupportSlices(
+                        self,
+                        sublayers,
+                        support_start_index,
+                        support_count,
+                    );
+                    const carrier = sharedOpticalCarrierAtAltitude(
+                        self,
+                        wavelength_nm,
+                        support.sublayers,
+                        support.strong_line_states,
+                        level_geometry.altitude_km,
+                    );
+                    source_interface.* = .{
+                        .source_weight = 0.0,
+                        .rtm_weight = level_geometry.weight_km,
+                        .ksca_above = if (level_geometry.weight_km > 0.0)
+                            carrier.totalScatteringOpticalDepthPerKm()
+                        else
+                            0.0,
+                        .phase_coefficients_above = carrier.phase_coefficients,
+                    };
+                }
+                return;
+            }
+
+            for (source_interfaces) |*source_interface| source_interface.* = .{};
+
+            var interval_rule_scratch: GaussRuleScratch = .{};
+            for (self.layers) |layer| {
+                const start_index: usize = @intCast(layer.sublayer_start_index);
+                const count: usize = @intCast(layer.sublayer_count);
+                if (count == 0) continue;
+
+                const interval = sharedRtmInterval(self, sublayers, layer);
+                const level_node_count = count - 1;
+                const level_rule = if (level_node_count > 0)
+                    resolveGaussRule(level_node_count, &interval_rule_scratch)
+                else
+                    null;
+
+                const lower_carrier = sharedOpticalCarrierAtAltitude(
+                    self,
+                    wavelength_nm,
+                    interval.support_sublayers,
+                    interval.strong_line_states,
+                    interval.lower_altitude_km,
+                );
+                source_interfaces[start_index] = .{
+                    .source_weight = 0.0,
+                    .rtm_weight = 0.0,
+                    .ksca_above = 0.0,
+                    .phase_coefficients_above = lower_carrier.phase_coefficients,
+                };
+
+                for (0..level_node_count) |node_index| {
+                    const altitude_km = intervalAltitudeAtNode(
+                        interval.lower_altitude_km,
+                        interval.upper_altitude_km,
+                        level_rule.?.nodes[node_index],
+                    );
+                    const weight_km = intervalWeightKm(
+                        interval.lower_altitude_km,
+                        interval.upper_altitude_km,
+                        level_rule.?.weights[node_index],
+                    );
+                    const carrier = sharedOpticalCarrierAtAltitude(
+                        self,
+                        wavelength_nm,
+                        interval.support_sublayers,
+                        interval.strong_line_states,
+                        altitude_km,
+                    );
+                    source_interfaces[start_index + 1 + node_index] = .{
+                        .source_weight = 0.0,
+                        .rtm_weight = weight_km,
+                        .ksca_above = carrier.totalScatteringOpticalDepthPerKm(),
+                        .phase_coefficients_above = carrier.phase_coefficients,
+                    };
+                }
+
+                const stop_index = start_index + count;
+                const upper_carrier = sharedOpticalCarrierAtAltitude(
+                    self,
+                    wavelength_nm,
+                    interval.support_sublayers,
+                    interval.strong_line_states,
+                    interval.upper_altitude_km,
+                );
+                source_interfaces[stop_index] = .{
+                    .source_weight = 0.0,
+                    .rtm_weight = 0.0,
+                    .ksca_above = 0.0,
+                    .phase_coefficients_above = upper_carrier.phase_coefficients,
+                };
+            }
+            return;
+        }
+    }
 
     transport_common.fillSourceInterfacesFromLayers(layer_inputs, source_interfaces);
 
@@ -331,10 +832,6 @@ fn levelAltitudeFromSublayers(
 const PreparedQuadratureCarrier = struct {
     ksca: f64,
     phase_coefficients: [phase_coefficient_count]f64,
-};
-
-const PseudoSphericalCarrier = struct {
-    optical_depth: f64,
 };
 
 const PseudoSphericalInterval = struct {
@@ -497,58 +994,30 @@ fn quadratureCarrierAtAltitude(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
     sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     altitude_km: f64,
 ) PreparedQuadratureCarrier {
-    const default: PreparedQuadratureCarrier = .{
-        .ksca = 0.0,
-        .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
-    };
-    const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return default;
-
-    const gas_scattering_optical_depth_per_km =
-        Rayleigh.crossSectionCm2(wavelength_nm) *
-        state.number_density_cm3 *
-        centimeters_per_kilometer;
-    const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
-        state.aerosol_optical_depth_per_km,
-        self.aerosol_reference_wavelength_nm,
-        self.aerosol_angstrom_exponent,
+    const carrier = sharedOpticalCarrierAtAltitude(
+        self,
         wavelength_nm,
+        sublayers,
+        strong_line_states,
+        altitude_km,
     );
-    const cloud_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
-        state.cloud_optical_depth_per_km,
-        self.cloud_reference_wavelength_nm,
-        self.cloud_angstrom_exponent,
-        wavelength_nm,
-    );
-    const aerosol_scattering_optical_depth_per_km =
-        aerosol_optical_depth_per_km * state.aerosol_single_scatter_albedo;
-    const cloud_scattering_optical_depth_per_km =
-        cloud_optical_depth_per_km * state.cloud_single_scatter_albedo;
-
     return .{
-        .ksca = gas_scattering_optical_depth_per_km +
-            aerosol_scattering_optical_depth_per_km +
-            cloud_scattering_optical_depth_per_km,
-        .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
-            gas_scattering_optical_depth_per_km,
-            aerosol_scattering_optical_depth_per_km,
-            cloud_scattering_optical_depth_per_km,
-            state.aerosol_phase_coefficients,
-            state.cloud_phase_coefficients,
-        ),
+        .ksca = carrier.totalScatteringOpticalDepthPerKm(),
+        .phase_coefficients = carrier.phase_coefficients,
     };
 }
 
-fn pseudoSphericalCarrierAtAltitude(
+fn sharedOpticalCarrierAtAltitude(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
     sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     altitude_km: f64,
-    weight_km: f64,
-) PseudoSphericalCarrier {
-    const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{ .optical_depth = 0.0 };
+) SharedOpticalCarrier {
+    const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{};
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
     const continuum_sigma = if (self.cross_section_absorbers.len == 0)
         continuum_table.interpolateSigma(wavelength_nm)
@@ -641,13 +1110,26 @@ fn pseudoSphericalCarrierAtAltitude(
         self.cloud_angstrom_exponent,
         wavelength_nm,
     );
+    const aerosol_scattering_optical_depth_per_km =
+        aerosol_optical_depth_per_km * state.aerosol_single_scatter_albedo;
+    const cloud_scattering_optical_depth_per_km =
+        cloud_optical_depth_per_km * state.cloud_single_scatter_albedo;
 
     return .{
-        .optical_depth = weight_km * (gas_absorption_optical_depth_per_km +
-            gas_scattering_optical_depth_per_km +
-            cia_optical_depth_per_km +
-            aerosol_optical_depth_per_km +
-            cloud_optical_depth_per_km),
+        .gas_absorption_optical_depth_per_km = gas_absorption_optical_depth_per_km,
+        .gas_scattering_optical_depth_per_km = gas_scattering_optical_depth_per_km,
+        .cia_optical_depth_per_km = cia_optical_depth_per_km,
+        .aerosol_optical_depth_per_km = aerosol_optical_depth_per_km,
+        .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
+        .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
+        .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
+        .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
+            gas_scattering_optical_depth_per_km,
+            aerosol_scattering_optical_depth_per_km,
+            cloud_scattering_optical_depth_per_km,
+            state.aerosol_phase_coefficients,
+            state.cloud_phase_coefficients,
+        ),
     };
 }
 
@@ -661,6 +1143,124 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
 ) bool {
     const sublayers = self.sublayers orelse return false;
     if (layer_inputs.len != sublayers.len or rtm_levels.len != layer_inputs.len + 1) return false;
+
+    if (usesSharedRtmGrid(self, layer_inputs.len)) {
+        if (cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
+            var has_active_quadrature = false;
+            for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
+                const support_start_index: usize = @intCast(level_geometry.support_start_index);
+                const support_count: usize = @intCast(level_geometry.support_count);
+                const support = sharedSupportSlices(
+                    self,
+                    sublayers,
+                    support_start_index,
+                    support_count,
+                );
+                const carrier = sharedOpticalCarrierAtAltitude(
+                    self,
+                    wavelength_nm,
+                    support.sublayers,
+                    support.strong_line_states,
+                    level_geometry.altitude_km,
+                );
+                const ksca = if (level_geometry.weight_km > 0.0)
+                    carrier.totalScatteringOpticalDepthPerKm()
+                else
+                    0.0;
+                rtm_level.* = .{
+                    .altitude_km = level_geometry.altitude_km,
+                    .weight = level_geometry.weight_km,
+                    .ksca = ksca,
+                    .phase_coefficients = carrier.phase_coefficients,
+                };
+                has_active_quadrature = has_active_quadrature or
+                    (level_geometry.weight_km > 0.0 and ksca > 0.0);
+            }
+            return has_active_quadrature;
+        }
+
+        for (rtm_levels) |*rtm_level| {
+            rtm_level.* = .{
+                .altitude_km = 0.0,
+                .weight = 0.0,
+                .ksca = 0.0,
+                .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
+            };
+        }
+
+        var has_active_quadrature = false;
+        var interval_rule_scratch: GaussRuleScratch = .{};
+        for (self.layers) |layer| {
+            const start_index: usize = @intCast(layer.sublayer_start_index);
+            const count: usize = @intCast(layer.sublayer_count);
+            if (count == 0) continue;
+
+            const interval = sharedRtmInterval(self, sublayers, layer);
+            const level_node_count = count - 1;
+            const level_rule = if (level_node_count > 0)
+                resolveGaussRule(level_node_count, &interval_rule_scratch)
+            else
+                null;
+
+            const lower_carrier = sharedOpticalCarrierAtAltitude(
+                self,
+                wavelength_nm,
+                interval.support_sublayers,
+                interval.strong_line_states,
+                interval.lower_altitude_km,
+            );
+            rtm_levels[start_index] = .{
+                .altitude_km = interval.lower_altitude_km,
+                .weight = 0.0,
+                .ksca = 0.0,
+                .phase_coefficients = lower_carrier.phase_coefficients,
+            };
+
+            for (0..level_node_count) |node_index| {
+                const altitude_km = intervalAltitudeAtNode(
+                    interval.lower_altitude_km,
+                    interval.upper_altitude_km,
+                    level_rule.?.nodes[node_index],
+                );
+                const weight_km = intervalWeightKm(
+                    interval.lower_altitude_km,
+                    interval.upper_altitude_km,
+                    level_rule.?.weights[node_index],
+                );
+                const carrier = sharedOpticalCarrierAtAltitude(
+                    self,
+                    wavelength_nm,
+                    interval.support_sublayers,
+                    interval.strong_line_states,
+                    altitude_km,
+                );
+                rtm_levels[start_index + 1 + node_index] = .{
+                    .altitude_km = altitude_km,
+                    .weight = weight_km,
+                    .ksca = carrier.totalScatteringOpticalDepthPerKm(),
+                    .phase_coefficients = carrier.phase_coefficients,
+                };
+                has_active_quadrature = has_active_quadrature or weight_km > 0.0 and carrier.totalScatteringOpticalDepthPerKm() > 0.0;
+            }
+
+            const stop_index = start_index + count;
+            const upper_carrier = sharedOpticalCarrierAtAltitude(
+                self,
+                wavelength_nm,
+                interval.support_sublayers,
+                interval.strong_line_states,
+                interval.upper_altitude_km,
+            );
+            rtm_levels[stop_index] = .{
+                .altitude_km = interval.upper_altitude_km,
+                .weight = 0.0,
+                .ksca = 0.0,
+                .phase_coefficients = upper_carrier.phase_coefficients,
+            };
+        }
+
+        return has_active_quadrature;
+    }
 
     for (rtm_levels, 0..) |*rtm_level, level| {
         rtm_level.* = .{
@@ -706,6 +1306,7 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
                 self,
                 wavelength_nm,
                 sublayers[start..stop],
+                if (self.strong_line_states) |states| states[start..stop] else null,
                 node_altitude_km,
             );
             rtm_levels[level].altitude_km = node_altitude_km;
@@ -740,6 +1341,92 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
 }
 
 /// Purpose:
+///   Materialize pseudo-spherical samples from already prepared shared-grid
+///   layer inputs.
+///
+/// Physics:
+///   Reuses the explicit shared-grid layer optical depths so the
+///   pseudo-spherical attenuation path does not re-evaluate the same midpoint
+///   carriers that already define the transport layers.
+///
+/// Vendor:
+///   `pseudo-spherical attenuation on the shared RTM grid`
+///
+/// Validation:
+///   Shared-grid measurement-space tests and O2A forward profiles.
+pub fn fillSharedPseudoSphericalGridFromLayerInputs(
+    self: *const PreparedOpticalState,
+    scene: *const Scene,
+    layer_inputs: []const transport_common.LayerInput,
+    attenuation_layers: []transport_common.LayerInput,
+    attenuation_samples: []transport_common.PseudoSphericalSample,
+    level_sample_starts: []usize,
+    level_altitudes_km: []f64,
+) bool {
+    const geometry = cachedSharedRtmGeometry(self, layer_inputs.len) orelse return false;
+    const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
+    const sample_count = layer_inputs.len * subgrid_divisions;
+    if (attenuation_samples.len < sample_count or
+        level_sample_starts.len != layer_inputs.len + 1 or
+        level_altitudes_km.len != layer_inputs.len + 1)
+    {
+        return false;
+    }
+
+    for (level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
+        altitude_km.* = level_geometry.altitude_km;
+    }
+
+    var sample_index: usize = 0;
+    for (geometry.layers, layer_inputs, 0..) |layer_geometry, layer_input, layer_index| {
+        level_sample_starts[layer_index] = sample_index;
+        if (subgrid_divisions <= 1) {
+            attenuation_samples[sample_index] = .{
+                .altitude_km = layer_geometry.midpoint_altitude_km,
+                .thickness_km = layer_geometry.thickness_km,
+                .optical_depth = layer_input.optical_depth,
+            };
+            if (sample_index < attenuation_layers.len) {
+                attenuation_layers[sample_index] = .{ .optical_depth = layer_input.optical_depth };
+            }
+            sample_index += 1;
+            continue;
+        }
+
+        attenuation_samples[sample_index] = .{
+            .altitude_km = layer_geometry.lower_altitude_km,
+            .thickness_km = 0.0,
+            .optical_depth = 0.0,
+        };
+        if (sample_index < attenuation_layers.len) attenuation_layers[sample_index] = .{};
+        sample_index += 1;
+
+        attenuation_samples[sample_index] = .{
+            .altitude_km = layer_geometry.midpoint_altitude_km,
+            .thickness_km = layer_geometry.thickness_km,
+            .optical_depth = layer_input.optical_depth,
+        };
+        if (sample_index < attenuation_layers.len) {
+            attenuation_layers[sample_index] = .{ .optical_depth = layer_input.optical_depth };
+        }
+        sample_index += 1;
+
+        for (2..subgrid_divisions) |_| {
+            attenuation_samples[sample_index] = .{
+                .altitude_km = layer_geometry.upper_altitude_km,
+                .thickness_km = 0.0,
+                .optical_depth = 0.0,
+            };
+            if (sample_index < attenuation_layers.len) attenuation_layers[sample_index] = .{};
+            sample_index += 1;
+        }
+    }
+
+    level_sample_starts[layer_inputs.len] = sample_index;
+    return true;
+}
+
+/// Purpose:
 ///   Materialize pseudo-spherical samples at one wavelength.
 pub fn fillPseudoSphericalGridAtWavelength(
     self: *const PreparedOpticalState,
@@ -763,6 +1450,112 @@ pub fn fillPseudoSphericalGridAtWavelength(
 
     if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
         return false;
+    }
+
+    if (usesSharedRtmGrid(self, solver_layer_count)) {
+        var sample_index: usize = 0;
+        var interval_rule_scratch: GaussRuleScratch = .{};
+
+        for (self.layers) |layer| {
+            const start_index: usize = @intCast(layer.sublayer_start_index);
+            const count: usize = @intCast(layer.sublayer_count);
+            if (count == 0) return false;
+
+            const interval = sharedRtmInterval(self, sublayers, layer);
+            const level_node_count = count - 1;
+            const level_rule = if (level_node_count > 0)
+                resolveGaussRule(level_node_count, &interval_rule_scratch)
+            else
+                null;
+
+            level_altitudes_km[start_index] = interval.lower_altitude_km;
+
+            for (0..count) |local_layer_index| {
+                const lower_altitude_km = if (local_layer_index == 0)
+                    interval.lower_altitude_km
+                else
+                    intervalAltitudeAtNode(
+                        interval.lower_altitude_km,
+                        interval.upper_altitude_km,
+                        level_rule.?.nodes[local_layer_index - 1],
+                    );
+                const upper_altitude_km = if (local_layer_index + 1 == count)
+                    interval.upper_altitude_km
+                else
+                    intervalAltitudeAtNode(
+                        interval.lower_altitude_km,
+                        interval.upper_altitude_km,
+                        level_rule.?.nodes[local_layer_index],
+                    );
+                const global_layer_index = start_index + local_layer_index;
+                level_sample_starts[global_layer_index] = sample_index;
+                level_altitudes_km[global_layer_index + 1] = upper_altitude_km;
+
+                const layer_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+                if (subgrid_divisions <= 1) {
+                    const midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km);
+                    const carrier = sharedOpticalCarrierAtAltitude(
+                        self,
+                        wavelength_nm,
+                        interval.support_sublayers,
+                        interval.strong_line_states,
+                        midpoint_altitude_km,
+                    );
+                    const optical_depth = layer_span_km * carrier.totalOpticalDepthPerKm();
+                    attenuation_samples[sample_index] = .{
+                        .altitude_km = midpoint_altitude_km,
+                        .thickness_km = layer_span_km,
+                        .optical_depth = optical_depth,
+                    };
+                    if (sample_index < attenuation_layers.len) {
+                        attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+                    }
+                    sample_index += 1;
+                } else {
+                    attenuation_samples[sample_index] = .{
+                        .altitude_km = lower_altitude_km,
+                        .thickness_km = 0.0,
+                        .optical_depth = 0.0,
+                    };
+                    if (sample_index < attenuation_layers.len) attenuation_layers[sample_index] = .{};
+                    sample_index += 1;
+
+                    const midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km);
+                    const carrier = sharedOpticalCarrierAtAltitude(
+                        self,
+                        wavelength_nm,
+                        interval.support_sublayers,
+                        interval.strong_line_states,
+                        midpoint_altitude_km,
+                    );
+                    const optical_depth = layer_span_km * carrier.totalOpticalDepthPerKm();
+                    attenuation_samples[sample_index] = .{
+                        .altitude_km = midpoint_altitude_km,
+                        .thickness_km = layer_span_km,
+                        .optical_depth = optical_depth,
+                    };
+                    if (sample_index < attenuation_layers.len) {
+                        attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+                    }
+                    sample_index += 1;
+
+                    for (2..subgrid_divisions) |_| {
+                        attenuation_samples[sample_index] = .{
+                            .altitude_km = upper_altitude_km,
+                            .thickness_km = 0.0,
+                            .optical_depth = 0.0,
+                        };
+                        if (sample_index < attenuation_layers.len) {
+                            attenuation_layers[sample_index] = .{};
+                        }
+                        sample_index += 1;
+                    }
+                }
+            }
+        }
+
+        level_sample_starts[solver_layer_count] = sample_index;
+        return true;
     }
 
     var sample_index: usize = 0;
@@ -816,14 +1609,13 @@ pub fn fillPseudoSphericalGridAtWavelength(
                 interval.lower_altitude_km + 0.5 * altitude_span_km
             else
                 interval.lower_altitude_km;
-            const optical_depth = pseudoSphericalCarrierAtAltitude(
+            const optical_depth = sharedOpticalCarrierAtAltitude(
                 self,
                 wavelength_nm,
                 interval.support_sublayers,
                 interval.strong_line_states,
                 sample_altitude_km,
-                altitude_span_km,
-            ).optical_depth;
+            ).totalOpticalDepthPerKm() * altitude_span_km;
             attenuation_samples[sample_index] = .{
                 .altitude_km = sample_altitude_km,
                 .thickness_km = altitude_span_km,
@@ -868,14 +1660,13 @@ pub fn fillPseudoSphericalGridAtWavelength(
             const normalized_position = 0.5 * (rule.nodes[node_index] + 1.0);
             const node_altitude_km = interval.lower_altitude_km + normalized_position * altitude_span_km;
             const weight_km = 0.5 * rule.weights[node_index] * altitude_span_km;
-            const optical_depth = pseudoSphericalCarrierAtAltitude(
+            const optical_depth = sharedOpticalCarrierAtAltitude(
                 self,
                 wavelength_nm,
                 interval.support_sublayers,
                 interval.strong_line_states,
                 node_altitude_km,
-                weight_km,
-            ).optical_depth;
+            ).totalOpticalDepthPerKm() * weight_km;
             attenuation_samples[sample_index] = .{
                 .altitude_km = node_altitude_km,
                 .thickness_km = weight_km,
