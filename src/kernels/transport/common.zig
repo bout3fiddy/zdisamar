@@ -391,6 +391,7 @@ pub const PrepareError = error{
 /// Errors that can arise while preparing or executing transport.
 pub const ExecuteError = PrepareError || error{
     SingularDoublingDenominator,
+    MissingExplicitRtmQuadrature,
     OutOfMemory,
 };
 

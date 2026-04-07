@@ -69,7 +69,7 @@ test "configured forward input preserves prepared source-function boundary weigh
     var pseudo_spherical_samples: [8]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -167,7 +167,7 @@ test "configured forward input wires pseudo-spherical attenuation samples from p
     var pseudo_spherical_samples: [8]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -244,7 +244,7 @@ test "configured forward input builds adding pseudo-spherical subgrid within pre
     var pseudo_spherical_samples: [8]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -318,7 +318,7 @@ test "configured forward input leaves pseudo-spherical attenuation grid empty wh
     var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [3]usize = undefined;
     var pseudo_spherical_level_altitudes: [3]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -374,7 +374,7 @@ test "configured forward input builds prepared adding RTM quadrature on sublayer
     var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -455,7 +455,7 @@ test "configured forward input builds prepared labos RTM quadrature on sublayer 
     var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -517,7 +517,7 @@ test "configured forward input builds prepared adding RTM quadrature from nonuni
     var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -659,7 +659,7 @@ test "prepared adding live route uses nonuniform quadrature weights instead of t
     var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -698,6 +698,75 @@ test "prepared adding live route uses nonuniform quadrature weights instead of t
     try std.testing.expect(@abs(
         forward_new.toa_reflectance_factor - forward_legacy.toa_reflectance_factor,
     ) > 1.0e-8);
+}
+
+test "prepared explicit shared-grid layers accumulate dense RTM subnodes instead of midpoint surrogates" {
+    const midpoint_scene: Scene = .{
+        .id = "measurement-explicit-midpoint-surrogate",
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 54.0,
+            .viewing_zenith_deg = 46.0,
+            .relative_azimuth_deg = 78.0,
+        },
+        .atmosphere = .{
+            .layer_count = 1,
+            .sublayer_divisions = 1,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+    };
+    var dense_scene = midpoint_scene;
+    dense_scene.id = "measurement-explicit-dense-subgrid";
+    dense_scene.atmosphere.sublayer_divisions = 4;
+
+    var prepared = try buildTestPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+    prepared.interval_semantics = .explicit_pressure_bounds;
+    try prepared.ensureSharedRtmGeometryCache(std.testing.allocator);
+
+    var midpoint_layers: [4]common.LayerInput = undefined;
+    var dense_layers: [4]common.LayerInput = undefined;
+    _ = internal.kernels.optics.preparation.transport.fillForwardLayersAtWavelength(
+        &prepared,
+        &midpoint_scene,
+        435.0,
+        &midpoint_layers,
+    );
+    const dense_totals = internal.kernels.optics.preparation.transport.fillForwardLayersAtWavelength(
+        &prepared,
+        &dense_scene,
+        435.0,
+        &dense_layers,
+    );
+
+    var found_dense_difference = false;
+    for (dense_layers, midpoint_layers) |dense_layer, midpoint_layer| {
+        if (@abs(dense_layer.optical_depth - midpoint_layer.optical_depth) > 1.0e-8 or
+            @abs(dense_layer.phase_coefficients[1] - midpoint_layer.phase_coefficients[1]) > 1.0e-8)
+        {
+            found_dense_difference = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_dense_difference);
+
+    var summed_dense_optical_depth: f64 = 0.0;
+    for (dense_layers) |layer| summed_dense_optical_depth += layer.optical_depth;
+    try std.testing.expectApproxEqRel(
+        summed_dense_optical_depth,
+        dense_totals.totalOpticalDepth(),
+        1.0e-12,
+    );
 }
 
 test "prepared adding live route falls back when no explicit RTM quadrature nodes exist" {
@@ -750,7 +819,7 @@ test "prepared adding live route falls back when no explicit RTM quadrature node
     var pseudo_spherical_samples: [2]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [3]usize = undefined;
     var pseudo_spherical_level_altitudes: [3]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -790,6 +859,74 @@ test "prepared adding live route falls back when no explicit RTM quadrature node
     try std.testing.expect(@abs(
         forward_fallback.toa_reflectance_factor - forward_bad.toa_reflectance_factor,
     ) > 1.0e-8);
+}
+
+test "configured forward input rejects explicit integrated-source routes without active RTM quadrature" {
+    const scene: Scene = .{
+        .id = "measurement-explicit-missing-quadrature",
+        .observation_model = .{
+            .instrument = .synthetic,
+            .regime = .nadir,
+            .sampling = .operational,
+            .noise_model = .none,
+        },
+        .geometry = .{
+            .model = .plane_parallel,
+            .solar_zenith_deg = 52.0,
+            .viewing_zenith_deg = 44.0,
+            .relative_azimuth_deg = 70.0,
+        },
+        .atmosphere = .{
+            .layer_count = 2,
+            .sublayer_divisions = 1,
+        },
+        .spectral_grid = .{
+            .start_nm = 430.0,
+            .end_nm = 440.0,
+            .sample_count = 3,
+        },
+    };
+    const route = try common.prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{
+            .use_adding = true,
+            .n_streams = 8,
+            .num_orders_max = 6,
+            .integrate_source_function = true,
+        },
+    });
+
+    var prepared = try buildSingleSubdivisionPreparedOpticalState(std.testing.allocator);
+    defer prepared.deinit(std.testing.allocator);
+    prepared.interval_semantics = .explicit_pressure_bounds;
+    try prepared.ensureSharedRtmGeometryCache(std.testing.allocator);
+
+    var layer_inputs: [2]common.LayerInput = undefined;
+    var pseudo_spherical_layers: [2]common.LayerInput = undefined;
+    var source_interfaces: [3]common.SourceInterfaceInput = undefined;
+    var rtm_quadrature_levels: [3]common.RtmQuadratureLevel = undefined;
+    var pseudo_spherical_samples: [2]common.PseudoSphericalSample = undefined;
+    var pseudo_spherical_level_starts: [3]usize = undefined;
+    var pseudo_spherical_level_altitudes: [3]f64 = undefined;
+
+    try std.testing.expectError(
+        error.MissingExplicitRtmQuadrature,
+        configuredForwardInput(
+            &scene,
+            route,
+            &prepared,
+            435.0,
+            &layer_inputs,
+            &pseudo_spherical_layers,
+            &source_interfaces,
+            &rtm_quadrature_levels,
+            &pseudo_spherical_samples,
+            &pseudo_spherical_level_starts,
+            &pseudo_spherical_level_altitudes,
+        ),
+    );
 }
 
 test "configured forward input preserves pseudo-spherical attenuation when only one sublayer division is requested" {
@@ -835,7 +972,7 @@ test "configured forward input preserves pseudo-spherical attenuation when only 
     var pseudo_spherical_samples: [2]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [3]usize = undefined;
     var pseudo_spherical_level_altitudes: [3]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -955,7 +1092,7 @@ test "cached forward execution preserves prepared adding RTM quadrature and its 
         &direct_cache,
     );
 
-    const explicit_input = configuredForwardInput(
+    const explicit_input = try configuredForwardInput(
         &scene,
         route_integrated,
         &prepared,
@@ -1061,7 +1198,7 @@ test "prepared adding RTM quadrature keeps the lower boundary inert and activate
     var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const baseline_input = configuredForwardInput(
+    const baseline_input = try configuredForwardInput(
         &scene,
         route_integrated,
         &prepared,
@@ -1177,7 +1314,7 @@ test "prepared adding live route consumes RTM quadrature while the lower boundar
     var pseudo_spherical_samples: [4]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route_integrated,
         &prepared,
@@ -1291,7 +1428,7 @@ test "configured forward input aligns RTM quadrature and pseudo-spherical levels
     var pseudo_spherical_samples: [8]common.PseudoSphericalSample = undefined;
     var pseudo_spherical_level_starts: [5]usize = undefined;
     var pseudo_spherical_level_altitudes: [5]f64 = undefined;
-    const input = configuredForwardInput(
+    const input = try configuredForwardInput(
         &scene,
         route,
         &prepared,
@@ -1333,10 +1470,23 @@ test "configured forward input aligns RTM quadrature and pseudo-spherical levels
     try std.testing.expect(prepared.shared_rtm_geometry.isValidFor(input.layers.len));
 
     for (input.layers, 0..) |layer_input, layer_index| {
-        const active_sample_index = 2 * layer_index + 1;
+        const sample_start = input.pseudo_spherical_grid.level_sample_starts[layer_index];
+        const sample_stop = input.pseudo_spherical_grid.level_sample_starts[layer_index + 1];
+        var layer_optical_depth: f64 = 0.0;
+        var previous_altitude_km: f64 = input.pseudo_spherical_grid.level_altitudes_km[layer_index];
+        try std.testing.expectEqual(@as(usize, 2), sample_stop - sample_start);
+        for (input.pseudo_spherical_grid.samples[sample_start..sample_stop], 0..) |sample, sample_offset| {
+            try std.testing.expect(sample.thickness_km > 0.0);
+            try std.testing.expect(sample.optical_depth > 0.0);
+            if (sample_offset != 0) {
+                try std.testing.expect(sample.altitude_km > previous_altitude_km);
+            }
+            previous_altitude_km = sample.altitude_km;
+            layer_optical_depth += sample.optical_depth;
+        }
         try std.testing.expectApproxEqRel(
             layer_input.optical_depth,
-            input.pseudo_spherical_grid.samples[active_sample_index].optical_depth,
+            layer_optical_depth,
             1.0e-12,
         );
     }

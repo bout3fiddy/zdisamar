@@ -653,6 +653,30 @@ pub fn build(b: *std.Build) void {
         "Run O2A vendor reflectance assessment lane",
         "tests/validation/o2a_vendor_reflectance_assessment_test.zig",
     );
+    _ = addSuiteRunStep(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-o2a-vendor-profile",
+        "Run opt-in O2A vendor profile and reporting smoke tests",
+        "tests/validation/o2a_vendor_reflectance_profile_smoke_test.zig",
+    );
+    _ = addSuiteRunStep(
+        b,
+        target,
+        optimize,
+        test_lib_module,
+        internal_module,
+        test_legacy_config_module,
+        test_cli_app_module,
+        "test-validation-o2a-vendor-line-list",
+        "Run opt-in O2A vendor line-list helper smoke tests",
+        "tests/validation/o2a_vendor_line_list_smoke_test.zig",
+    );
 
     const fmt_check_cmd = b.addFmt(.{
         .check = true,

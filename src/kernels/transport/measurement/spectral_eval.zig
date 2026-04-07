@@ -368,7 +368,7 @@ fn computeForwardSampleAtWavelength(
     providers: Types.ProviderBindings,
     scratch: *ForwardSampleScratch,
 ) Error!ForwardIntegratedSample {
-    const input = ForwardInput.configuredForwardInput(
+    const input = try ForwardInput.configuredForwardInput(
         scene,
         route,
         prepared,

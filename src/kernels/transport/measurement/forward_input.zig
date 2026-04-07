@@ -71,7 +71,7 @@ pub fn configuredForwardInput(
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
-) common.ForwardInput {
+) common.ExecuteError!common.ForwardInput {
     var input = OpticsPreparation.transport.toForwardInputAtWavelengthWithLayers(
         prepared,
         scene,
@@ -84,15 +84,22 @@ pub fn configuredForwardInput(
         // DECISION:
         //   Only attach RTM quadrature when the route requests integrated
         //   source-function evaluation.
-        if (OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayers(
+        const has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayers(
             prepared,
             wavelength_nm,
             input.layers,
             rtm_quadrature_levels[0 .. input.layers.len + 1],
-        )) {
+        );
+        if (has_rtm_quadrature) {
             input.rtm_quadrature = .{
                 .levels = rtm_quadrature_levels[0 .. input.layers.len + 1],
             };
+        } else if (prepared.interval_semantics != .none) {
+            // INVARIANT:
+            //   The explicit-interval integrated-source route must stay on
+            //   the RTM-native carrier path instead of silently drifting back
+            //   to the coarse source-interface fallback.
+            return error.MissingExplicitRtmQuadrature;
         }
     }
     if (prepared.interval_semantics != .none and input.rtm_quadrature.isValidFor(input.layers.len)) {
@@ -115,37 +122,19 @@ pub fn configuredForwardInput(
     if (route.rtm_controls.use_spherical_correction) {
         // DECISION:
         //   Pseudo-spherical samples are only attached for routes that request
-        //   the geometric correction.
-        const has_pseudo_spherical_grid = if (prepared.interval_semantics != .none)
-            OpticsPreparation.transport.fillSharedPseudoSphericalGridFromLayerInputs(
-                prepared,
-                scene,
-                input.layers,
-                pseudo_spherical_layers,
-                pseudo_spherical_samples,
-                pseudo_spherical_level_starts,
-                pseudo_spherical_level_altitudes,
-            ) or OpticsPreparation.transport.fillPseudoSphericalGridAtWavelength(
-                prepared,
-                scene,
-                wavelength_nm,
-                input.layers.len,
-                pseudo_spherical_layers,
-                pseudo_spherical_samples,
-                pseudo_spherical_level_starts,
-                pseudo_spherical_level_altitudes,
-            )
-        else
-            OpticsPreparation.transport.fillPseudoSphericalGridAtWavelength(
-                prepared,
-                scene,
-                wavelength_nm,
-                input.layers.len,
-                pseudo_spherical_layers,
-                pseudo_spherical_samples,
-                pseudo_spherical_level_starts,
-                pseudo_spherical_level_altitudes,
-            );
+        //   the geometric correction. Explicit shared-grid routes rebuild the
+        //   dense wavelength-specific attenuation contract directly from the
+        //   RTM subgrid instead of reusing midpoint-style layer surrogates.
+        const has_pseudo_spherical_grid = OpticsPreparation.transport.fillPseudoSphericalGridAtWavelength(
+            prepared,
+            scene,
+            wavelength_nm,
+            input.layers.len,
+            pseudo_spherical_layers,
+            pseudo_spherical_samples,
+            pseudo_spherical_level_starts,
+            pseudo_spherical_level_altitudes,
+        );
         if (has_pseudo_spherical_grid) {
             input.pseudo_spherical_grid = .{
                 .samples = pseudo_spherical_samples[0..Workspace.resolvedPseudoSphericalSampleCount(scene, route, prepared)],

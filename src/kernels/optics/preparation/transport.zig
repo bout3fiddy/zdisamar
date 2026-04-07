@@ -55,6 +55,12 @@ const GaussRuleScratch = struct {
     weights: [max_dynamic_gauss_order]f64 = [_]f64{0.0} ** max_dynamic_gauss_order,
 };
 
+const SharedRtmSubgrid = struct {
+    altitudes_km: [max_dynamic_gauss_order]f64 = [_]f64{0.0} ** max_dynamic_gauss_order,
+    weights_km: [max_dynamic_gauss_order]f64 = [_]f64{0.0} ** max_dynamic_gauss_order,
+    count: usize = 0,
+};
+
 const SharedOpticalCarrier = struct {
     gas_absorption_optical_depth_per_km: f64 = 0.0,
     gas_scattering_optical_depth_per_km: f64 = 0.0,
@@ -330,6 +336,127 @@ fn evaluatedLayerFromSharedCarrier(
     };
 }
 
+fn sharedRtmSubgridSampleCount(scene: *const Scene) usize {
+    return @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
+}
+
+fn resolveSharedRtmSubgrid(
+    lower_altitude_km: f64,
+    upper_altitude_km: f64,
+    sample_count: usize,
+    scratch: *GaussRuleScratch,
+) SharedRtmSubgrid {
+    var subgrid: SharedRtmSubgrid = .{ .count = sample_count };
+    if (sample_count == 0) return subgrid;
+
+    if (sample_count == 1) {
+        subgrid.altitudes_km[0] = 0.5 * (lower_altitude_km + upper_altitude_km);
+        subgrid.weights_km[0] = @max(upper_altitude_km - lower_altitude_km, 0.0);
+        return subgrid;
+    }
+
+    const rule = resolveGaussRule(sample_count, scratch);
+    for (0..sample_count) |node_index| {
+        subgrid.altitudes_km[node_index] = intervalAltitudeAtNode(
+            lower_altitude_km,
+            upper_altitude_km,
+            rule.nodes[node_index],
+        );
+        subgrid.weights_km[node_index] = intervalWeightKm(
+            lower_altitude_km,
+            upper_altitude_km,
+            rule.weights[node_index],
+        );
+    }
+    return subgrid;
+}
+
+fn evaluateSharedLayerOnSubgrid(
+    self: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    scratch: *GaussRuleScratch,
+) EvaluatedLayer {
+    const subgrid = resolveSharedRtmSubgrid(
+        layer_geometry.lower_altitude_km,
+        layer_geometry.upper_altitude_km,
+        sharedRtmSubgridSampleCount(scene),
+        scratch,
+    );
+    var breakdown: OpticalDepthBreakdown = .{};
+    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
+    for (0..subgrid.count) |node_index| {
+        const weight_km = subgrid.weights_km[node_index];
+        if (weight_km <= 0.0) continue;
+        const carrier = sharedOpticalCarrierAtAltitude(
+            self,
+            wavelength_nm,
+            support_sublayers,
+            strong_line_states,
+            subgrid.altitudes_km[node_index],
+        );
+        accumulateSharedCarrier(
+            &breakdown,
+            &phase_numerator,
+            carrier,
+            weight_km,
+        );
+    }
+    return evaluatedLayerFromSharedCarrier(
+        scene,
+        layer_geometry.midpoint_altitude_km,
+        breakdown,
+        phase_numerator,
+    );
+}
+
+fn fillSharedPseudoSphericalSamplesOnSubgrid(
+    self: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    attenuation_layers: []transport_common.LayerInput,
+    attenuation_samples: []transport_common.PseudoSphericalSample,
+    sample_index_start: usize,
+    scratch: *GaussRuleScratch,
+) usize {
+    const subgrid = resolveSharedRtmSubgrid(
+        layer_geometry.lower_altitude_km,
+        layer_geometry.upper_altitude_km,
+        sharedRtmSubgridSampleCount(scene),
+        scratch,
+    );
+    var sample_index = sample_index_start;
+    for (0..subgrid.count) |node_index| {
+        const weight_km = subgrid.weights_km[node_index];
+        const optical_depth = if (weight_km > 0.0)
+            weight_km * sharedOpticalCarrierAtAltitude(
+                self,
+                wavelength_nm,
+                support_sublayers,
+                strong_line_states,
+                subgrid.altitudes_km[node_index],
+            ).totalOpticalDepthPerKm()
+        else
+            0.0;
+        attenuation_samples[sample_index] = .{
+            .altitude_km = subgrid.altitudes_km[node_index],
+            .thickness_km = weight_km,
+            .optical_depth = optical_depth,
+        };
+        if (sample_index < attenuation_layers.len) {
+            attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+        }
+        sample_index += 1;
+    }
+    return sample_index;
+}
+
 /// Purpose:
 ///   Convert the prepared state into a forward-input carrier.
 pub fn toForwardInput(
@@ -431,6 +558,7 @@ pub fn fillForwardLayersAtWavelength(
         if (usesSharedRtmGrid(self, layer_inputs.len)) {
             if (cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 var totals: OpticalDepthBreakdown = .{};
+                var subgrid_rule_scratch: GaussRuleScratch = .{};
                 for (geometry.layers, layer_inputs) |layer_geometry, *layer_input| {
                     const support_start_index: usize = @intCast(layer_geometry.support_start_index);
                     const support_count: usize = @intCast(layer_geometry.support_count);
@@ -441,27 +569,14 @@ pub fn fillForwardLayersAtWavelength(
                         support_count,
                     );
 
-                    var breakdown: OpticalDepthBreakdown = .{};
-                    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
-                    const carrier = sharedOpticalCarrierAtAltitude(
+                    const evaluated = evaluateSharedLayerOnSubgrid(
                         self,
+                        scene,
                         wavelength_nm,
                         support.sublayers,
                         support.strong_line_states,
-                        layer_geometry.midpoint_altitude_km,
-                    );
-                    accumulateSharedCarrier(
-                        &breakdown,
-                        &phase_numerator,
-                        carrier,
-                        layer_geometry.thickness_km,
-                    );
-
-                    const evaluated = evaluatedLayerFromSharedCarrier(
-                        scene,
-                        layer_geometry.midpoint_altitude_km,
-                        breakdown,
-                        phase_numerator,
+                        layer_geometry,
+                        &subgrid_rule_scratch,
                     );
                     layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
                     Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
@@ -502,29 +617,21 @@ pub fn fillForwardLayersAtWavelength(
                             level_rule.?.nodes[local_layer_index],
                         );
                     const midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km);
-                    const layer_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
-
-                    var breakdown: OpticalDepthBreakdown = .{};
-                    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
-                    const carrier = sharedOpticalCarrierAtAltitude(
+                    const evaluated = evaluateSharedLayerOnSubgrid(
                         self,
+                        scene,
                         wavelength_nm,
                         interval.support_sublayers,
                         interval.strong_line_states,
-                        midpoint_altitude_km,
-                    );
-                    accumulateSharedCarrier(
-                        &breakdown,
-                        &phase_numerator,
-                        carrier,
-                        layer_span_km,
-                    );
-
-                    const evaluated = evaluatedLayerFromSharedCarrier(
-                        scene,
-                        midpoint_altitude_km,
-                        breakdown,
-                        phase_numerator,
+                        .{
+                            .lower_altitude_km = lower_altitude_km,
+                            .upper_altitude_km = upper_altitude_km,
+                            .midpoint_altitude_km = midpoint_altitude_km,
+                            .thickness_km = @max(upper_altitude_km - lower_altitude_km, 0.0),
+                            .support_start_index = @intCast(start_index),
+                            .support_count = @intCast(count),
+                        },
+                        &interval_rule_scratch,
                     );
                     layer_inputs[start_index + local_layer_index] = Evaluation.layerInputFromEvaluated(evaluated);
                     Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
@@ -1453,8 +1560,44 @@ pub fn fillPseudoSphericalGridAtWavelength(
     }
 
     if (usesSharedRtmGrid(self, solver_layer_count)) {
+        if (cachedSharedRtmGeometry(self, solver_layer_count)) |geometry| {
+            for (level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
+                altitude_km.* = level_geometry.altitude_km;
+            }
+
+            var sample_index: usize = 0;
+            var subgrid_rule_scratch: GaussRuleScratch = .{};
+            for (geometry.layers, 0..) |layer_geometry, layer_index| {
+                level_sample_starts[layer_index] = sample_index;
+                const support_start_index: usize = @intCast(layer_geometry.support_start_index);
+                const support_count: usize = @intCast(layer_geometry.support_count);
+                const support = sharedSupportSlices(
+                    self,
+                    sublayers,
+                    support_start_index,
+                    support_count,
+                );
+                sample_index = fillSharedPseudoSphericalSamplesOnSubgrid(
+                    self,
+                    scene,
+                    wavelength_nm,
+                    support.sublayers,
+                    support.strong_line_states,
+                    layer_geometry,
+                    attenuation_layers,
+                    attenuation_samples,
+                    sample_index,
+                    &subgrid_rule_scratch,
+                );
+            }
+
+            level_sample_starts[solver_layer_count] = sample_index;
+            return true;
+        }
+
         var sample_index: usize = 0;
         var interval_rule_scratch: GaussRuleScratch = .{};
+        var subgrid_rule_scratch: GaussRuleScratch = .{};
 
         for (self.layers) |layer| {
             const start_index: usize = @intCast(layer.sublayer_start_index);
@@ -1490,67 +1633,25 @@ pub fn fillPseudoSphericalGridAtWavelength(
                 const global_layer_index = start_index + local_layer_index;
                 level_sample_starts[global_layer_index] = sample_index;
                 level_altitudes_km[global_layer_index + 1] = upper_altitude_km;
-
-                const layer_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
-                if (subgrid_divisions <= 1) {
-                    const midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km);
-                    const carrier = sharedOpticalCarrierAtAltitude(
-                        self,
-                        wavelength_nm,
-                        interval.support_sublayers,
-                        interval.strong_line_states,
-                        midpoint_altitude_km,
-                    );
-                    const optical_depth = layer_span_km * carrier.totalOpticalDepthPerKm();
-                    attenuation_samples[sample_index] = .{
-                        .altitude_km = midpoint_altitude_km,
-                        .thickness_km = layer_span_km,
-                        .optical_depth = optical_depth,
-                    };
-                    if (sample_index < attenuation_layers.len) {
-                        attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
-                    }
-                    sample_index += 1;
-                } else {
-                    attenuation_samples[sample_index] = .{
-                        .altitude_km = lower_altitude_km,
-                        .thickness_km = 0.0,
-                        .optical_depth = 0.0,
-                    };
-                    if (sample_index < attenuation_layers.len) attenuation_layers[sample_index] = .{};
-                    sample_index += 1;
-
-                    const midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km);
-                    const carrier = sharedOpticalCarrierAtAltitude(
-                        self,
-                        wavelength_nm,
-                        interval.support_sublayers,
-                        interval.strong_line_states,
-                        midpoint_altitude_km,
-                    );
-                    const optical_depth = layer_span_km * carrier.totalOpticalDepthPerKm();
-                    attenuation_samples[sample_index] = .{
-                        .altitude_km = midpoint_altitude_km,
-                        .thickness_km = layer_span_km,
-                        .optical_depth = optical_depth,
-                    };
-                    if (sample_index < attenuation_layers.len) {
-                        attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
-                    }
-                    sample_index += 1;
-
-                    for (2..subgrid_divisions) |_| {
-                        attenuation_samples[sample_index] = .{
-                            .altitude_km = upper_altitude_km,
-                            .thickness_km = 0.0,
-                            .optical_depth = 0.0,
-                        };
-                        if (sample_index < attenuation_layers.len) {
-                            attenuation_layers[sample_index] = .{};
-                        }
-                        sample_index += 1;
-                    }
-                }
+                sample_index = fillSharedPseudoSphericalSamplesOnSubgrid(
+                    self,
+                    scene,
+                    wavelength_nm,
+                    interval.support_sublayers,
+                    interval.strong_line_states,
+                    .{
+                        .lower_altitude_km = lower_altitude_km,
+                        .upper_altitude_km = upper_altitude_km,
+                        .midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km),
+                        .thickness_km = @max(upper_altitude_km - lower_altitude_km, 0.0),
+                        .support_start_index = @intCast(start_index),
+                        .support_count = @intCast(count),
+                    },
+                    attenuation_layers,
+                    attenuation_samples,
+                    sample_index,
+                    &subgrid_rule_scratch,
+                );
             }
         }
 
