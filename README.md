@@ -66,6 +66,7 @@ belongs in adapters or runtime preparation.
 
 - Zig `0.15.2` or newer. The repo currently declares `minimum_zig_version =
   "0.15.2"` in [`build.zig.zon`](./build.zig.zon).
+- [`uv`](https://docs.astral.sh/uv/) for Python-based harness helpers. Python helper scripts in this repo are run via `uv run ...`.
 
 ## Build And Verification
 
@@ -101,6 +102,12 @@ Run the optional O2A vendor trend assessment lane when you need a vendor compari
 zig build test-validation-o2a-vendor
 ```
 
+Regenerate the tracked O2A comparison bundle that is meant to be committed:
+
+```bash
+zig build o2a-plot-bundle
+```
+
 Run the full verification baseline:
 
 ```bash
@@ -128,6 +135,14 @@ after the build finishes:
 
 That deletes `.zig-cache`, `.zig-cache-int`, and the repo's disposable
 `zig-cache/` test-output directory.
+
+## Tracked O2A Plot Bundle
+
+The committed O2A comparison evidence lives under `validation/compatibility/o2a_plots/`.
+
+- Canonical refresh command: `zig build o2a-plot-bundle`
+- Default vendor input: `validation/reference/o2a_with_cia_disamar_reference.csv`
+- Default policy: refresh the tracked plots from the committed vendor reference; do not rerun vendored DISAMAR unless you explicitly call `zig build o2a-vendor-reference-refresh`
 
 Targeted suites are also available:
 

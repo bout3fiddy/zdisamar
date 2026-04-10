@@ -23,6 +23,9 @@
 
 - The verification harness is layered; keep the current suite split and validation assets as the base layer instead of replacing them with one monolithic runner.
 - `zig build` is the front door for local verification. Prefer adding or changing build steps before adding ad hoc shell commands.
+- Python helper scripts in this repo are invoked with `uv run ...`, not `python3 ...`.
+- When the user asks to "update O2A plots", run `zig build o2a-plot-bundle` and stage the changed tracked files under `validation/compatibility/o2a_plots/`.
+- The default O2A plot refresh uses the committed vendor reference in `validation/reference/o2a_with_cia_disamar_reference.csv` and does not rerun vendored DISAMAR.
 - `zig build check` is the fast baseline: format check, compile the shipped artifacts and suite roots, then run unit tests.
 - `zig build test-fast` is the broader presubmit lane: unit plus integration, including the leak/lifecycle coverage that uses allocation-failure and `DebugAllocator` checks.
 - `zig build bench` is non-gating. It reuses `validation/perf/perf_matrix.json` and writes disposable benchmark summaries to `out/ci/bench/summary.json`.
@@ -47,10 +50,13 @@
 - `zig build test-fast` is the fast presubmit verification command.
 - `zig build bench` emits the non-gating benchmark summary at `out/ci/bench/summary.json`.
 - `zig build tidy` runs advisory architecture checks and writes `out/ci/tidy/report.json`.
+- `zig build o2a-plot-bundle` regenerates the tracked O2A comparison bundle under `validation/compatibility/o2a_plots/`.
+- `zig build o2a-vendor-reference-refresh` explicitly reruns vendored DISAMAR to refresh `validation/reference/o2a_with_cia_disamar_reference.csv`.
 - `zig build test-transport` is the focused transport/parity verification command.
 - `zig build test-validation-compatibility` is the fast compatibility smoke command.
 - `zig build test-validation-compatibility-full` runs the full DISAMAR compatibility harness.
 - `zig build test-validation-o2a-vendor` runs the opt-in O2A vendor trend assessment lane.
+- `zig build test-validation-o2a-plot-bundle` runs the O2A plot bundle harness smoke test.
 - `zig build test` is the full verification command.
 - `zig build` builds the scaffold CLI and library.
 - `./scripts/clean-zig-caches.sh` removes repo-local Zig caches after a run.

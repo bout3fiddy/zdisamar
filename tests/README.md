@@ -13,11 +13,15 @@ Use `zig build check` for the fast local loop.
 Use `zig build test-fast` for the fast presubmit lane.
 Use `zig build bench` for the non-gating benchmark summary lane.
 Use `zig build tidy` for architecture and policy checks.
+Python-backed harness helpers are run through `uv run ...` behind the build steps; do not add `python3 ...` wrappers.
 Use `zig build test-transport` for the focused transport/parity loop, including the operational measured-input compatibility classification proof.
 Use `zig build test-validation-compatibility` for fast compatibility smoke checks.
 Use `zig build test-validation-o2a-vendor` only for the opt-in O2A vendor trend assessment lane.
+Use `zig build test-validation-o2a-plot-bundle` for the tracked O2A plot-bundle harness smoke test.
 Use `zig build o2a-forward-profile-bin` to install the O2A forward profiling binary.
 Use `zig build o2a-forward-profile` to emit `out/analysis/o2a/profile/summary.json`.
+Use `zig build o2a-plot-bundle` to regenerate the tracked O2A comparison bundle under `validation/compatibility/o2a_plots/`.
+Use `zig build o2a-vendor-reference-refresh` only when you explicitly want to rerun vendored DISAMAR and refresh `validation/reference/o2a_with_cia_disamar_reference.csv`.
 
 Run all suites with `zig build test`, or targeted suites with:
 
@@ -38,6 +42,7 @@ Run all suites with `zig build test`, or targeted suites with:
 - `zig build test-validation-compatibility-full`
 - `zig build test-validation-o2a`
 - `zig build test-validation-o2a-vendor`
+- `zig build test-validation-o2a-plot-bundle`
 
 ## O2A Profiling
 
@@ -48,6 +53,13 @@ The O2A speed workflow is opt-in and stays outside the default local lanes.
 - Installed binary path: `zig-out/bin/zdisamar-o2a-forward-profile`
 - Summary artifact: `out/analysis/o2a/profile/summary.json`
 - Optional generated spectrum: `out/analysis/o2a/profile/generated_spectrum.csv` when `--write-spectrum` is used
+
+## Tracked O2A Plot Bundle
+
+- Canonical regeneration command: `zig build o2a-plot-bundle`
+- Tracked output directory: `validation/compatibility/o2a_plots/`
+- Default vendor input: `validation/reference/o2a_with_cia_disamar_reference.csv`
+- Default refresh policy: use the committed vendor reference and do not rerun vendored DISAMAR
 
 On macOS, capture a flame graph with Time Profiler against the installed binary.
 This requires full Xcode, not just Command Line Tools. If `xctrace` reports that

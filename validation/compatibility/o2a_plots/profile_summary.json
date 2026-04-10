@@ -1,0 +1,103 @@
+{
+  "optimize_mode": "ReleaseFast",
+  "repeat_count": 1,
+  "sample_count": 701,
+  "summary_path": "validation/compatibility/o2a_plots/profile_summary.json",
+  "spectrum_path": "validation/compatibility/o2a_plots/generated_spectrum.csv",
+  "runs": [
+    {
+      "run_index": 1,
+      "sample_count": 701,
+      "preparation": {
+        "input_loading_ns": 10932209,
+        "scene_assembly_ns": 15666,
+        "optics_preparation_ns": 115385375,
+        "plan_preparation_ns": 73042
+      },
+      "forward": {
+        "radiance_integration_ns": 49158042833,
+        "radiance_postprocess_ns": 8125,
+        "irradiance_integration_ns": 71073875,
+        "irradiance_postprocess_ns": 1792,
+        "reduction_ns": 708
+      },
+      "total_prepare_ns": 126406292,
+      "total_forward_ns": 49229127333,
+      "total_end_to_end_ns": 49362298583
+    }
+  ],
+  "preparation": {
+    "input_loading_ns": {
+      "mean_ns": 10932209,
+      "min_ns": 10932209,
+      "max_ns": 10932209
+    },
+    "scene_assembly_ns": {
+      "mean_ns": 15666,
+      "min_ns": 15666,
+      "max_ns": 15666
+    },
+    "optics_preparation_ns": {
+      "mean_ns": 115385375,
+      "min_ns": 115385375,
+      "max_ns": 115385375
+    },
+    "plan_preparation_ns": {
+      "mean_ns": 73042,
+      "min_ns": 73042,
+      "max_ns": 73042
+    },
+    "total_ns": {
+      "mean_ns": 126406292,
+      "min_ns": 126406292,
+      "max_ns": 126406292
+    }
+  },
+  "forward": {
+    "radiance_integration_ns": {
+      "mean_ns": 49158042833,
+      "min_ns": 49158042833,
+      "max_ns": 49158042833
+    },
+    "radiance_postprocess_ns": {
+      "mean_ns": 8125,
+      "min_ns": 8125,
+      "max_ns": 8125
+    },
+    "irradiance_integration_ns": {
+      "mean_ns": 71073875,
+      "min_ns": 71073875,
+      "max_ns": 71073875
+    },
+    "irradiance_postprocess_ns": {
+      "mean_ns": 1792,
+      "min_ns": 1792,
+      "max_ns": 1792
+    },
+    "reduction_ns": {
+      "mean_ns": 708,
+      "min_ns": 708,
+      "max_ns": 708
+    },
+    "total_ns": {
+      "mean_ns": 49229127333,
+      "min_ns": 49229127333,
+      "max_ns": 49229127333
+    }
+  },
+  "total_prepare_ns": {
+    "mean_ns": 126406292,
+    "min_ns": 126406292,
+    "max_ns": 126406292
+  },
+  "total_forward_ns": {
+    "mean_ns": 49229127333,
+    "min_ns": 49229127333,
+    "max_ns": 49229127333
+  },
+  "total_end_to_end_ns": {
+    "mean_ns": 49362298583,
+    "min_ns": 49362298583,
+    "max_ns": 49362298583
+  }
+}

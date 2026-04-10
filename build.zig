@@ -704,8 +704,61 @@ pub fn build(b: *std.Build) void {
     );
     o2a_forward_profile_step.dependOn(&o2a_forward_profile_install.step);
     o2a_forward_profile_step.dependOn(&o2a_forward_profile_run.step);
+
+    const o2a_plot_bundle_profile_run = b.addRunArtifact(o2a_forward_profile_exe);
+    o2a_plot_bundle_profile_run.addArg("--output-dir");
+    o2a_plot_bundle_profile_run.addArg("out/analysis/o2a/plot_bundle_tmp");
+    o2a_plot_bundle_profile_run.addArg("--repeat");
+    o2a_plot_bundle_profile_run.addArg("1");
+    o2a_plot_bundle_profile_run.addArg("--write-spectrum");
+    const o2a_plot_bundle_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_plot_bundle.py",
+        "--current-spectrum",
+        "out/analysis/o2a/plot_bundle_tmp/generated_spectrum.csv",
+        "--profile-summary",
+        "out/analysis/o2a/plot_bundle_tmp/summary.json",
+        "--vendor-reference",
+        "validation/reference/o2a_with_cia_disamar_reference.csv",
+        "--output-dir",
+        "validation/compatibility/o2a_plots",
+        "--canonical-command",
+        "zig build o2a-plot-bundle",
+    });
+    o2a_plot_bundle_cmd.step.dependOn(&o2a_forward_profile_install.step);
+    o2a_plot_bundle_cmd.step.dependOn(&o2a_plot_bundle_profile_run.step);
+    const o2a_plot_bundle_step = b.step(
+        "o2a-plot-bundle",
+        "Generate the tracked O2A plot bundle under validation/compatibility/o2a_plots",
+    );
+    o2a_plot_bundle_step.dependOn(&o2a_plot_bundle_cmd.step);
+
+    const o2a_vendor_reference_refresh_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_vendor_reference_refresh.py",
+    });
+    const o2a_vendor_reference_refresh_step = b.step(
+        "o2a-vendor-reference-refresh",
+        "Regenerate the tracked O2A vendor reference CSV from the vendored DISAMAR executable",
+    );
+    o2a_vendor_reference_refresh_step.dependOn(&o2a_vendor_reference_refresh_cmd.step);
+
+    const o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_plot_bundle_test.py",
+    });
+    const o2a_plot_bundle_test_step = b.step(
+        "test-validation-o2a-plot-bundle",
+        "Run the O2A plot bundle harness smoke test",
+    );
+    o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
+
     const o2a_vendor_plot_cmd = b.addSystemCommand(&.{
-        "python3",
+        "uv",
+        "run",
         "scripts/testing_harness/plot_o2a_vendor_spectrum.py",
     });
     o2a_vendor_plot_cmd.step.dependOn(&o2a_vendor_dump_run.step);
@@ -716,7 +769,8 @@ pub fn build(b: *std.Build) void {
     o2a_vendor_plot_step.dependOn(&o2a_vendor_plot_cmd.step);
 
     const tidy_cmd = b.addSystemCommand(&.{
-        "python3",
+        "uv",
+        "run",
         "scripts/testing_harness/tidy.py",
         "--report",
         "out/ci/tidy/report.json",
