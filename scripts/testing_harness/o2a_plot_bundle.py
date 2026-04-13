@@ -63,6 +63,22 @@ def load_csv(path: Path) -> dict[str, np.ndarray]:
     }
 
 
+def interpolate_vendor_to_current_grid(
+    current_wavelength_nm: np.ndarray,
+    vendor: dict[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    vendor_wavelength_nm = vendor["wavelength_nm"]
+    if current_wavelength_nm[0] < vendor_wavelength_nm[0] or current_wavelength_nm[-1] > vendor_wavelength_nm[-1]:
+        raise ValueError("Current spectrum grid extends outside the tracked vendor reference grid")
+
+    resampled: dict[str, np.ndarray] = {"wavelength_nm": current_wavelength_nm}
+    for key, values in vendor.items():
+        if key == "wavelength_nm":
+            continue
+        resampled[key] = np.interp(current_wavelength_nm, vendor_wavelength_nm, values)
+    return resampled
+
+
 def stable_repo_path(path: Path) -> str:
     resolved = path.resolve()
     cwd = Path.cwd().resolve()
@@ -229,11 +245,8 @@ def build_bundle(
 ) -> None:
     current = load_csv(current_spectrum_path)
     vendor = load_csv(vendor_reference_path)
-    wavelength_nm = vendor["wavelength_nm"]
-    if len(current["wavelength_nm"]) != len(wavelength_nm) or not np.allclose(
-        current["wavelength_nm"], wavelength_nm, rtol=0.0, atol=1.0e-12
-    ):
-        raise ValueError("Current spectrum grid does not match the tracked vendor reference grid")
+    wavelength_nm = current["wavelength_nm"]
+    vendor_resampled = interpolate_vendor_to_current_grid(wavelength_nm, vendor)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -249,12 +262,12 @@ def build_bundle(
         output_dir / "comparison_metrics.json",
         wavelength_nm,
         current,
-        vendor,
+        vendor_resampled,
         vendor_reference_path,
         generated_spectrum_path,
         tracked_summary_path,
     )
-    create_plots(output_dir, wavelength_nm, current, vendor)
+    create_plots(output_dir, wavelength_nm, current, vendor_resampled)
     write_manifest(output_dir / "bundle_manifest.json", canonical_command, vendor_reference_path, output_dir)
 
 

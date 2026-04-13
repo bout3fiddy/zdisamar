@@ -20,10 +20,10 @@
 //!   Measurement-space summary and product tests.
 
 const std = @import("std");
-const InstrumentProviders = @import("../../../plugins/providers/instrument.zig");
-const NoiseProviders = @import("../../../plugins/providers/noise.zig");
-const SurfaceProviders = @import("../../../plugins/providers/surface.zig");
-const TransportProviders = @import("../../../plugins/providers/transport.zig");
+const InstrumentProviders = @import("../../../o2a/providers/instrument.zig");
+const NoiseProviders = @import("../../../o2a/providers/noise.zig");
+const SurfaceProviders = @import("../../../o2a/providers/surface.zig");
+const TransportProviders = @import("../../../o2a/providers/transport.zig");
 
 const Allocator = std.mem.Allocator;
 

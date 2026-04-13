@@ -27,7 +27,7 @@ FORTRAN_TRACE_ASSET_DIR = REPO_ROOT / "scripts" / "testing_harness" / "vendor_o2
 FORTRAN_TRACE_MODULE = FORTRAN_TRACE_ASSET_DIR / "o2aFunctionTraceModule.f90"
 ZIG_TRACE_CLI = REPO_ROOT / "scripts" / "testing_harness" / "o2a_function_trace.zig"
 ZIG_BUILD_OPTIONS = REPO_ROOT / "scripts" / "testing_harness" / "build_options_test_support.zig"
-ZIG_VENDOR_SUPPORT = REPO_ROOT / "tests" / "validation" / "o2a_vendor_reflectance_support.zig"
+ZIG_VENDOR_SUPPORT = REPO_ROOT / "src" / "o2a" / "data" / "vendor_case.zig"
 EXPECTED_CSVS = (
     "line_catalog.csv",
     "strong_state.csv",

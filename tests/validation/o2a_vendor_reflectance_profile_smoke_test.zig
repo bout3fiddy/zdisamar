@@ -1,6 +1,7 @@
 const std = @import("std");
-const o2a_vendor = @import("o2a_vendor_reflectance_support.zig");
-const o2a_profile_support = @import("o2a_forward_profile_support.zig");
+const zdisamar = @import("zdisamar");
+const o2a_vendor = zdisamar.vendor_case;
+const o2a_profile_support = zdisamar.profile;
 
 const ProfileStats = struct {
     mean_ns: f64,

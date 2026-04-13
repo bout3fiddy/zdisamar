@@ -30,7 +30,7 @@ const Types = @import("types.zig");
 const Workspace = @import("workspace.zig");
 
 const Allocator = std.mem.Allocator;
-const OperationalInstrumentIntegration = @import("../../../plugins/providers/instrument.zig").IntegrationKernel;
+const OperationalInstrumentIntegration = @import("../../../o2a/providers/instrument.zig").IntegrationKernel;
 const Error = Workspace.Error;
 
 // DECISION:

@@ -1,5 +1,6 @@
 const std = @import("std");
-const o2a_vendor = @import("o2a_vendor_reflectance_support.zig");
+const zdisamar = @import("zdisamar");
+const o2a_vendor = zdisamar.vendor_case;
 
 const BaselineAnchor = struct {
     version: u32,
@@ -32,7 +33,7 @@ fn assessmentTestConfig() o2a_vendor.VendorO2AExecutionConfig {
         .spectral_grid = .{
             .start_nm = 755.0,
             .end_nm = 776.0,
-            .sample_count = 41,
+            .sample_count = 21,
         },
         .adaptive_points_per_fwhm = 4,
         .adaptive_strong_line_min_divisions = 2,

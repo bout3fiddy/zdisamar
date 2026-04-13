@@ -1,8 +1,7 @@
 const std = @import("std");
-const internal = @import("zdisamar_internal");
-const o2a_vendor = @import("o2a_vendor_reflectance_support.zig");
-
-const ReferenceData = internal.reference_data;
+const zdisamar = @import("zdisamar");
+const ReferenceData = zdisamar.vendor_case.ReferenceData;
+const o2a_vendor = zdisamar.vendor_case;
 
 test "vendor parity O2A helper preserves fallback anchor lines in the weak sum" {
     var line_list = try o2a_vendor.loadVendorParityO2ASpectroscopyLineList(std.testing.allocator);

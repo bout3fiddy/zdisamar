@@ -1,14 +1,8 @@
-const build_options = @import("build_options");
-
 pub const types = @import("measurement/types.zig");
 pub const workspace = @import("measurement/workspace.zig");
 pub const forward_input = @import("measurement/forward_input.zig");
 pub const spectral_eval = @import("measurement/spectral_eval.zig");
 pub const simulate = @import("measurement/simulate.zig");
-pub const test_support = if (build_options.enable_test_support)
-    @import("measurement/test_support.zig")
-else
-    struct {};
 
 pub const reflectance_export_name = types.reflectance_export_name;
 pub const fitted_reflectance_export_name = types.fitted_reflectance_export_name;

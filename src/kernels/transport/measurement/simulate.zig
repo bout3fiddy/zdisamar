@@ -60,7 +60,7 @@ fn collectUniqueForwardMisses(
             radiance_calibration,
             nominal_wavelength_nm,
         );
-        var integration: @import("../../../plugins/providers/instrument.zig").IntegrationKernel = undefined;
+        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
         providers.instrument.integrationForWavelength(
             scene,
             prepared,
@@ -187,7 +187,7 @@ fn simulateInternal(
         );
         buffers.wavelengths[index] = nominal_wavelength_nm;
 
-        var integration: @import("../../../plugins/providers/instrument.zig").IntegrationKernel = undefined;
+        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
         providers.instrument.integrationForWavelength(scene, prepared, .radiance, nominal_wavelength_nm, &integration);
 
         const integrated = try SpectralEval.integrateForwardAtNominal(
@@ -237,7 +237,7 @@ fn simulateInternal(
             irradiance_calibration,
             nominal_wavelength_nm,
         );
-        var integration: @import("../../../plugins/providers/instrument.zig").IntegrationKernel = undefined;
+        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
         providers.instrument.integrationForWavelength(scene, prepared, .irradiance, nominal_wavelength_nm, &integration);
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,

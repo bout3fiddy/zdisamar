@@ -777,8 +777,6 @@ fn inferSquareDimension(row_count: u32) !usize {
 }
 
 test "reference asset loader validates hashes and parses numeric tables" {
-    const Engine = @import("../../core/Engine.zig").Engine;
-
     var asset = try loadBundleAsset(
         std.testing.allocator,
         .cross_section_table,
@@ -792,13 +790,6 @@ test "reference asset loader validates hashes and parses numeric tables" {
     try std.testing.expectEqual(@as(usize, 2), asset.columnCount());
     try std.testing.expectApproxEqAbs(@as(f64, 405.0), asset.value(0, 0), 1e-9);
     try std.testing.expectApproxEqAbs(@as(f64, 4.17e-19), asset.value(4, 1), 1e-25);
-
-    var engine = Engine.init(std.testing.allocator, .{});
-    defer engine.deinit();
-    try asset.registerWithEngine(&engine);
-
-    const cached = engine.dataset_cache.get(asset.dataset_id).?;
-    try std.testing.expectEqualStrings(asset.dataset_hash, cached.dataset_hash);
 
     var cross_sections = try asset.toCrossSectionTable(std.testing.allocator);
     defer cross_sections.deinit(std.testing.allocator);

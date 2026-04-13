@@ -26,9 +26,7 @@ const errors = @import("../core/errors.zig");
 const Binding = @import("Binding.zig").Binding;
 const ReferenceData = @import("ReferenceData.zig");
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
-const document_fields = @import("../adapters/canonical_config/document_fields.zig");
-
-pub const AbsorberSpecies = document_fields.AbsorberSpecies;
+pub const AbsorberSpecies = @import("../o2a/support/enums.zig").AbsorberSpecies;
 
 pub const SpectroscopyMode = enum {
     none,
