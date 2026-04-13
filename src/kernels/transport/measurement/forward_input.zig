@@ -25,6 +25,21 @@ const OpticsPreparation = @import("../../optics/preparation.zig");
 const common = @import("../common.zig");
 const Workspace = @import("workspace.zig");
 
+fn fillSourceInterfacesFromQuadrature(
+    source_interfaces: []common.SourceInterfaceInput,
+    levels: []const common.RtmQuadratureLevel,
+) void {
+    if (source_interfaces.len != levels.len) return;
+    for (source_interfaces, levels) |*source_interface, level| {
+        source_interface.* = .{
+            .source_weight = 0.0,
+            .rtm_weight = level.weight,
+            .ksca_above = level.ksca,
+            .phase_coefficients_above = level.phase_coefficients,
+        };
+    }
+}
+
 /// Purpose:
 ///   Materialize the transport forward-input carrier for one wavelength.
 ///
@@ -56,40 +71,61 @@ pub fn configuredForwardInput(
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
-) common.ForwardInput {
+) common.ExecuteError!common.ForwardInput {
     var input = OpticsPreparation.transport.toForwardInputAtWavelengthWithLayers(
         prepared,
         scene,
         wavelength_nm,
         layer_inputs,
     );
-    OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayers(
-        prepared,
-        wavelength_nm,
-        input.layers,
-        source_interfaces[0 .. input.layers.len + 1],
-    );
-    input.source_interfaces = source_interfaces[0 .. input.layers.len + 1];
+    const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
+    input.source_interfaces = source_interface_slice;
     if (route.rtm_controls.integrate_source_function) {
         // DECISION:
         //   Only attach RTM quadrature when the route requests integrated
         //   source-function evaluation.
-        if (OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayers(
+        const has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayers(
             prepared,
             wavelength_nm,
             input.layers,
             rtm_quadrature_levels[0 .. input.layers.len + 1],
-        )) {
+        );
+        if (has_rtm_quadrature) {
             input.rtm_quadrature = .{
                 .levels = rtm_quadrature_levels[0 .. input.layers.len + 1],
             };
+        } else if (prepared.interval_semantics != .none) {
+            // INVARIANT:
+            //   The explicit-interval integrated-source route must stay on
+            //   the RTM-native carrier path instead of silently drifting back
+            //   to the coarse source-interface fallback.
+            return error.MissingExplicitRtmQuadrature;
         }
+    }
+    if (prepared.interval_semantics != .none and input.rtm_quadrature.isValidFor(input.layers.len)) {
+        // DECISION:
+        //   Shared-grid explicit intervals already encode the aligned RTM
+        //   source carriers in the quadrature levels, so avoid rebuilding the
+        //   same carrier set a second time.
+        fillSourceInterfacesFromQuadrature(
+            source_interface_slice,
+            input.rtm_quadrature.levels,
+        );
+    } else {
+        OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayers(
+            prepared,
+            wavelength_nm,
+            input.layers,
+            source_interface_slice,
+        );
     }
     if (route.rtm_controls.use_spherical_correction) {
         // DECISION:
         //   Pseudo-spherical samples are only attached for routes that request
-        //   the geometric correction.
-        if (OpticsPreparation.transport.fillPseudoSphericalGridAtWavelength(
+        //   the geometric correction. Explicit shared-grid routes rebuild the
+        //   dense wavelength-specific attenuation contract directly from the
+        //   RTM subgrid instead of reusing midpoint-style layer surrogates.
+        const has_pseudo_spherical_grid = OpticsPreparation.transport.fillPseudoSphericalGridAtWavelength(
             prepared,
             scene,
             wavelength_nm,
@@ -98,7 +134,8 @@ pub fn configuredForwardInput(
             pseudo_spherical_samples,
             pseudo_spherical_level_starts,
             pseudo_spherical_level_altitudes,
-        )) {
+        );
+        if (has_pseudo_spherical_grid) {
             input.pseudo_spherical_grid = .{
                 .samples = pseudo_spherical_samples[0..Workspace.resolvedPseudoSphericalSampleCount(scene, route, prepared)],
                 .level_sample_starts = pseudo_spherical_level_starts[0 .. input.layers.len + 1],

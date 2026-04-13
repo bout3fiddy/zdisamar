@@ -62,7 +62,7 @@
       "id": "o2a_hitran_07_hit08_tropomi",
       "path": "data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
       "format": "hitran_160",
-      "sha256": "sha256:a380be78be60379201a397117eee58fbcd8ae228e8372449ddc8b6707c711507",
+      "sha256": "sha256:b377eb68225a652595996c2149b626f3051a108b04ee85d91ba9fc5e3c29fb4d",
       "columns": [
         "gas_index",
         "isotope_number",
@@ -73,7 +73,10 @@
         "temperature_exponent",
         "lower_state_energy_cm1",
         "pressure_shift_nm",
-        "line_mixing_coefficient"
+        "line_mixing_coefficient",
+        "branch_ic1",
+        "branch_ic2",
+        "rotational_nf"
       ]
     },
     {

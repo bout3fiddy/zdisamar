@@ -20,10 +20,10 @@
 //!   Measurement-space summary and product tests.
 
 const std = @import("std");
-const InstrumentProviders = @import("../../../plugins/providers/instrument.zig");
-const NoiseProviders = @import("../../../plugins/providers/noise.zig");
-const SurfaceProviders = @import("../../../plugins/providers/surface.zig");
-const TransportProviders = @import("../../../plugins/providers/transport.zig");
+const InstrumentProviders = @import("../../../o2a/providers/instrument.zig");
+const NoiseProviders = @import("../../../o2a/providers/noise.zig");
+const SurfaceProviders = @import("../../../o2a/providers/surface.zig");
+const TransportProviders = @import("../../../o2a/providers/transport.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -48,6 +48,27 @@ pub const MeasurementSpaceSummary = struct {
     mean_reflectance: f64,
     mean_noise_sigma: f64,
     mean_jacobian: ?f64 = null,
+};
+
+/// Coarse phase timings for one forward measurement-space sweep.
+pub const ForwardProfile = struct {
+    radiance_integration_ns: u64 = 0,
+    radiance_postprocess_ns: u64 = 0,
+    irradiance_integration_ns: u64 = 0,
+    irradiance_postprocess_ns: u64 = 0,
+    reduction_ns: u64 = 0,
+
+    pub fn reset(self: *ForwardProfile) void {
+        self.* = .{};
+    }
+
+    pub fn totalNs(self: ForwardProfile) u64 {
+        return self.radiance_integration_ns +
+            self.radiance_postprocess_ns +
+            self.irradiance_integration_ns +
+            self.irradiance_postprocess_ns +
+            self.reduction_ns;
+    }
 };
 
 /// Measurement-space product arrays and associated bulk optical properties.

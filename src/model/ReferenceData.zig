@@ -33,10 +33,6 @@ const demo_builders = @import("reference/demo_builders.zig");
 const Allocator = std.mem.Allocator;
 const max_strong_line_sidecars: usize = 128;
 // UNITS:
-//   `weak_line_window_half_width_nm` is expressed in nanometers because the weak-line search
-//   window operates in the scene wavelength domain before conversion to wavenumber space.
-const weak_line_window_half_width_nm: f64 = 1.0;
-// UNITS:
 //   HITRAN constants below are kept in the units used by the vendor tabulations: Kelvin, Joules,
 //   `cm^3 * hPa / K`, `cm * K`, `J / (mol * K)`, and `m / s`.
 const hitran_reference_temperature_k = 296.0;
@@ -45,6 +41,7 @@ const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;
 const hitran_hc_over_kb_cm_k = 1.4387770;
 const hitran_gas_constant_j_per_mol_k = 8.3144621;
 const hitran_speed_of_light_m_per_s = 2.99792458e8;
+const min_spectroscopy_pressure_atm = 1.0e-12;
 
 pub const ClimatologyPoint = climatology.ClimatologyPoint;
 pub const ClimatologyProfile = climatology.ClimatologyProfile;
@@ -68,6 +65,9 @@ pub const SpectroscopyLine = struct {
     lower_state_energy_cm1: f64,
     pressure_shift_nm: f64,
     line_mixing_coefficient: f64,
+    branch_ic1: ?u8 = null,
+    branch_ic2: ?u8 = null,
+    rotational_nf: ?u8 = null,
 };
 
 /// Purpose:
@@ -152,6 +152,51 @@ pub const SpectroscopyEvaluation = struct {
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 
+pub const SpectroscopyTraceContributionKind = enum {
+    weak_included,
+    weak_excluded_anchor,
+    weak_excluded_vendor_partition,
+    strong_sidecar,
+};
+
+pub const SpectroscopyTraceRow = struct {
+    contribution_kind: SpectroscopyTraceContributionKind,
+    wavelength_nm: f64,
+    global_line_index: ?usize = null,
+    strong_index: ?usize = null,
+    matched_strong_index: ?usize = null,
+    gas_index: u16 = 0,
+    isotope_number: u8 = 0,
+    center_wavelength_nm: f64,
+    center_wavenumber_cm1: f64,
+    shifted_center_wavenumber_cm1: f64,
+    line_strength_cm2_per_molecule: f64 = 0.0,
+    air_half_width_nm: f64 = 0.0,
+    lower_state_energy_cm1: f64 = 0.0,
+    pressure_shift_nm: f64 = 0.0,
+    line_mixing_coefficient: f64 = 0.0,
+    branch_ic1: ?u8 = null,
+    branch_ic2: ?u8 = null,
+    rotational_nf: ?u8 = null,
+    weak_line_sigma_cm2_per_molecule: f64 = 0.0,
+    strong_line_sigma_cm2_per_molecule: f64 = 0.0,
+    line_mixing_sigma_cm2_per_molecule: f64 = 0.0,
+    total_sigma_cm2_per_molecule: f64 = 0.0,
+};
+
+pub const SpectroscopyTrace = struct {
+    wavelength_nm: f64,
+    temperature_k: f64,
+    pressure_hpa: f64,
+    evaluation: SpectroscopyEvaluation,
+    rows: []SpectroscopyTraceRow,
+
+    pub fn deinit(self: *SpectroscopyTrace, allocator: Allocator) void {
+        allocator.free(self.rows);
+        self.* = undefined;
+    }
+};
+
 /// Purpose:
 ///   Describe runtime filtering and line-mixing controls applied to a spectroscopy line list.
 pub const SpectroscopyRuntimeControls = struct {
@@ -232,6 +277,7 @@ pub const SpectroscopyLineList = struct {
     relaxation_matrix: ?RelaxationMatrix = null,
     strong_line_tolerance_nm: f64 = 0.01,
     lines_sorted_ascending: bool = false,
+    preserve_anchor_weak_lines: bool = false,
     strong_line_match_by_line: ?[]?u16 = null,
     runtime_controls: SpectroscopyRuntimeControls = .{},
 
@@ -273,6 +319,7 @@ pub const SpectroscopyLineList = struct {
             .relaxation_matrix = owned_relaxation_matrix,
             .strong_line_tolerance_nm = self.strong_line_tolerance_nm,
             .lines_sorted_ascending = self.lines_sorted_ascending,
+            .preserve_anchor_weak_lines = self.preserve_anchor_weak_lines,
             .strong_line_match_by_line = if (self.strong_line_match_by_line) |matches|
                 try allocator.dupe(?u16, matches)
             else
@@ -303,6 +350,7 @@ pub const SpectroscopyLineList = struct {
             self.strong_lines = null;
         }
         self.relaxation_matrix = try relaxation_matrix.clone(allocator);
+        try self.validateStrongLinePartition();
     }
 
     /// Purpose:
@@ -313,10 +361,15 @@ pub const SpectroscopyLineList = struct {
             self.strong_line_match_by_line = null;
         }
         if (!self.hasStrongLineSidecars() or self.lines.len == 0) return;
+        try self.validateStrongLinePartition();
 
         const matches = try allocator.alloc(?u16, self.lines.len);
         errdefer allocator.free(matches);
         for (self.lines, 0..) |line, line_index| {
+            if (self.usesVendorStrongLinePartition() and !isVendorO2AStrongCandidate(line)) {
+                matches[line_index] = null;
+                continue;
+            }
             matches[line_index] = if (self.findStrongLineMatch(line.center_wavelength_nm)) |strong_index|
                 @intCast(strong_index)
             else
@@ -359,24 +412,24 @@ pub const SpectroscopyLineList = struct {
             .line_mixing_factor = line_mixing_factor,
         };
 
-        if (gas_index == null and active_isotopes.len == 0) return;
-
-        var retained_count: usize = 0;
-        for (self.lines) |line| {
-            if (runtimeControlsMatchLine(gas_index, active_isotopes, line)) retained_count += 1;
-        }
-        if (retained_count != self.lines.len) {
-            const retained = try allocator.alloc(SpectroscopyLine, retained_count);
-            errdefer allocator.free(retained);
-            var write_index: usize = 0;
+        if (gas_index != null or active_isotopes.len != 0) {
+            var retained_count: usize = 0;
             for (self.lines) |line| {
-                if (!runtimeControlsMatchLine(gas_index, active_isotopes, line)) continue;
-                retained[write_index] = line;
-                write_index += 1;
+                if (runtimeControlsMatchLine(gas_index, active_isotopes, line)) retained_count += 1;
             }
-            allocator.free(self.lines);
-            self.lines = retained;
-            self.lines_sorted_ascending = false;
+            if (retained_count != self.lines.len) {
+                const retained = try allocator.alloc(SpectroscopyLine, retained_count);
+                errdefer allocator.free(retained);
+                var write_index: usize = 0;
+                for (self.lines) |line| {
+                    if (!runtimeControlsMatchLine(gas_index, active_isotopes, line)) continue;
+                    retained[write_index] = line;
+                    write_index += 1;
+                }
+                allocator.free(self.lines);
+                self.lines = retained;
+                self.lines_sorted_ascending = false;
+            }
         }
 
         if (self.strong_line_match_by_line) |matches| {
@@ -388,7 +441,9 @@ pub const SpectroscopyLineList = struct {
             //   The bundled strong-line sidecars are only valid for O2 main-isotope selections.
             //   Filtering to a different gas or isotope disables the sidecars entirely.
             self.disableStrongLineSidecars(allocator);
+            return;
         }
+        try self.validateStrongLinePartition();
     }
 
     /// Purpose:
@@ -448,7 +503,7 @@ pub const SpectroscopyLineList = struct {
         pressure_hpa: f64,
     ) !?StrongLinePreparedState {
         if (!self.hasStrongLineSidecars()) return null;
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
         const stack_state = prepareStrongLineConvTPState(
             self.strong_lines.?,
             self.relaxation_matrix.?,
@@ -476,6 +531,142 @@ pub const SpectroscopyLineList = struct {
         };
     }
 
+    pub fn traceAt(
+        self: SpectroscopyLineList,
+        allocator: Allocator,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        prepared_state: ?*const StrongLinePreparedState,
+    ) !SpectroscopyTrace {
+        var rows = std.ArrayList(SpectroscopyTraceRow).empty;
+        errdefer rows.deinit(allocator);
+
+        const safe_temperature = @max(temperature_k, 150.0);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
+
+        if (!self.hasStrongLineSidecars()) {
+            const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
+            for (relevant_window.lines, 0..) |line, line_index| {
+                const contribution = weakLineContribution(
+                    wavelength_nm,
+                    line,
+                    safe_temperature,
+                    pressure_scale,
+                    hitran_reference_temperature_k,
+                    self.runtime_controls.cutoff_cm1,
+                );
+                try rows.append(allocator, traceRowForWeakLine(
+                    wavelength_nm,
+                    relevant_window.start_index + line_index,
+                    line,
+                    null,
+                    .weak_included,
+                    contribution,
+                    pressure_scale,
+                ));
+            }
+        } else {
+            const strong_lines = self.strong_lines.?;
+            const relaxation_matrix = self.relaxation_matrix.?;
+            const convtp_state = if (prepared_state == null)
+                prepareStrongLineConvTPState(strong_lines, relaxation_matrix, safe_temperature, pressure_scale)
+            else
+                null;
+            const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
+            const relevant_lines = relevant_window.lines;
+            const strong_line_anchors = self.selectStrongLineAnchors(relevant_lines, relevant_window.start_index);
+
+            for (relevant_lines, 0..) |line, line_index| {
+                const matched_strong_index = self.matchedStrongIndexForRelevantLine(
+                    relevant_window.start_index,
+                    line,
+                    line_index,
+                );
+                if (self.shouldExcludeWeakLine(relevant_window.start_index, line, line_index, &strong_line_anchors)) {
+                    const exclusion_kind: SpectroscopyTraceContributionKind = if (self.usesVendorStrongLinePartition())
+                        .weak_excluded_vendor_partition
+                    else
+                        .weak_excluded_anchor;
+                    try rows.append(allocator, traceRowForWeakLine(
+                        wavelength_nm,
+                        relevant_window.start_index + line_index,
+                        line,
+                        matched_strong_index,
+                        exclusion_kind,
+                        zeroEvaluation(),
+                        pressure_scale,
+                    ));
+                    continue;
+                }
+                const contribution = weakLineContribution(
+                    wavelength_nm,
+                    line,
+                    safe_temperature,
+                    pressure_scale,
+                    hitran_reference_temperature_k,
+                    self.runtime_controls.cutoff_cm1,
+                );
+                try rows.append(allocator, traceRowForWeakLine(
+                    wavelength_nm,
+                    relevant_window.start_index + line_index,
+                    line,
+                    matched_strong_index,
+                    .weak_included,
+                    contribution,
+                    pressure_scale,
+                ));
+            }
+
+            for (strong_line_anchors[0..strong_lines.len], 0..) |anchor_line_index, strong_index| {
+                const line_index = anchor_line_index orelse continue;
+                const anchor_line = relevant_lines[line_index];
+                const contribution = if (prepared_state) |state|
+                    strongLineContributionPrepared(
+                        wavelength_nm,
+                        anchor_line,
+                        strong_lines,
+                        strong_index,
+                        state,
+                        safe_temperature,
+                        pressure_scale,
+                        self.runtime_controls.cutoff_cm1,
+                    )
+                else
+                    strongLineContribution(
+                        wavelength_nm,
+                        anchor_line,
+                        strong_lines,
+                        strong_index,
+                        convtp_state.?,
+                        safe_temperature,
+                        pressure_scale,
+                        self.runtime_controls.cutoff_cm1,
+                    );
+                try rows.append(allocator, traceRowForStrongLine(
+                    wavelength_nm,
+                    relevant_window.start_index + line_index,
+                    strong_index,
+                    anchor_line,
+                    strong_lines[strong_index],
+                    contribution,
+                    pressure_scale,
+                ));
+            }
+        }
+
+        return .{
+            .wavelength_nm = wavelength_nm,
+            .temperature_k = safe_temperature,
+            .pressure_hpa = pressure_hpa,
+            .evaluation = if (prepared_state) |state|
+                self.evaluateAtPrepared(wavelength_nm, safe_temperature, pressure_hpa, state)
+            else
+                self.evaluateAt(wavelength_nm, safe_temperature, pressure_hpa),
+            .rows = try rows.toOwnedSlice(allocator),
+        };
+    }
+
     fn totalSigmaAt(self: SpectroscopyLineList, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) SpectroscopyEvaluation {
         if (self.strong_lines != null and self.relaxation_matrix != null) {
             return self.totalSigmaWithStrongLineSidecars(wavelength_nm, temperature_k, pressure_hpa);
@@ -497,7 +688,7 @@ pub const SpectroscopyLineList = struct {
 
         const reference_temperature_k = hitran_reference_temperature_k;
         const safe_temperature = @max(temperature_k, 150.0);
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
 
         const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
         var line_sigma: f64 = 0.0;
@@ -538,7 +729,7 @@ pub const SpectroscopyLineList = struct {
 
         const strong_lines = self.strong_lines.?;
         const relaxation_matrix = self.relaxation_matrix.?;
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
         const safe_temperature = @max(temperature_k, 150.0);
         const convtp_state = prepareStrongLineConvTPState(
             strong_lines,
@@ -555,11 +746,7 @@ pub const SpectroscopyLineList = struct {
         var line_mixing_sigma: f64 = 0.0;
 
         for (relevant_lines, 0..) |line, line_index| {
-            if (self.matchedStrongIndexForRelevantLine(relevant_window.start_index, line, line_index)) |strong_index| {
-                if (strong_line_anchors[strong_index]) |anchor_line_index| {
-                    if (anchor_line_index == line_index) continue;
-                }
-            }
+            if (self.shouldExcludeWeakLine(relevant_window.start_index, line, line_index, &strong_line_anchors)) continue;
             const contribution = weakLineContribution(
                 wavelength_nm,
                 line,
@@ -617,7 +804,7 @@ pub const SpectroscopyLineList = struct {
         }
 
         const strong_lines = self.strong_lines.?;
-        const pressure_scale = @max(pressure_hpa / 1013.25, 0.05);
+        const pressure_scale = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
         const safe_temperature = @max(temperature_k, 150.0);
         const relevant_window = self.relevantLineWindowForWavelength(wavelength_nm);
         const relevant_lines = relevant_window.lines;
@@ -628,11 +815,7 @@ pub const SpectroscopyLineList = struct {
         var line_mixing_sigma: f64 = 0.0;
 
         for (relevant_lines, 0..) |line, line_index| {
-            if (self.matchedStrongIndexForRelevantLine(relevant_window.start_index, line, line_index)) |strong_index| {
-                if (strong_line_anchors[strong_index]) |anchor_line_index| {
-                    if (anchor_line_index == line_index) continue;
-                }
-            }
+            if (self.shouldExcludeWeakLine(relevant_window.start_index, line, line_index, &strong_line_anchors)) continue;
             const contribution = weakLineContribution(
                 wavelength_nm,
                 line,
@@ -698,8 +881,19 @@ pub const SpectroscopyLineList = struct {
                 .start_index = 0,
             };
         }
-        const lower = lowerBoundLineIndex(self.lines, wavelength_nm - weak_line_window_half_width_nm);
-        const upper = upperBoundLineIndex(self.lines, wavelength_nm + weak_line_window_half_width_nm);
+        const cutoff_cm1 = self.runtime_controls.cutoff_cm1 orelse {
+            return .{
+                .lines = self.lines,
+                .start_index = 0,
+            };
+        };
+        const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
+        const minimum_wavenumber_cm1 = @max(evaluation_wavenumber_cm1 - cutoff_cm1, 1.0e-6);
+        const maximum_wavenumber_cm1 = evaluation_wavenumber_cm1 + cutoff_cm1;
+        const minimum_wavelength_nm = wavenumberCm1ToWavelengthNm(maximum_wavenumber_cm1);
+        const maximum_wavelength_nm = wavenumberCm1ToWavelengthNm(minimum_wavenumber_cm1);
+        const lower = lowerBoundLineIndex(self.lines, minimum_wavelength_nm);
+        const upper = upperBoundLineIndex(self.lines, maximum_wavelength_nm);
         return .{
             .lines = self.lines[lower..upper],
             .start_index = lower,
@@ -742,7 +936,62 @@ pub const SpectroscopyLineList = struct {
                 return null;
             }
         }
+        if (self.usesVendorStrongLinePartition()) {
+            if (!isVendorO2AStrongCandidate(line)) return null;
+            return self.findStrongLineMatch(line.center_wavelength_nm);
+        }
         return self.findStrongLineMatch(line.center_wavelength_nm);
+    }
+
+    fn shouldExcludeWeakLine(
+        self: SpectroscopyLineList,
+        start_index: usize,
+        line: SpectroscopyLine,
+        line_index: usize,
+        strong_line_anchors: *const [max_strong_line_sidecars]?usize,
+    ) bool {
+        const strong_index = self.matchedStrongIndexForRelevantLine(start_index, line, line_index) orelse return false;
+        if (self.usesVendorStrongLinePartition()) return true;
+        if (self.preserve_anchor_weak_lines) return false;
+        if (strong_line_anchors[strong_index]) |anchor_line_index| {
+            return anchor_line_index == line_index;
+        }
+        return false;
+    }
+
+    fn validateStrongLinePartition(self: SpectroscopyLineList) !void {
+        if (!self.usesVendorStrongLinePartition()) return;
+
+        const strong_lines = self.strong_lines orelse return;
+        if (strong_lines.len > max_strong_line_sidecars) return error.TooManyStrongLineSidecars;
+
+        var matched_counts = [_]usize{0} ** max_strong_line_sidecars;
+        for (self.lines) |line| {
+            if (line.gas_index == 7 and self.findStrongLineMatch(line.center_wavelength_nm) != null and !lineHasVendorStrongLineMetadata(line)) {
+                return error.MissingStrongLineMetadata;
+            }
+            if (!isVendorO2AStrongCandidate(line)) continue;
+            const strong_index = self.findStrongLineMatch(line.center_wavelength_nm) orelse {
+                return error.UnmatchedStrongLineCandidate;
+            };
+            matched_counts[strong_index] += 1;
+        }
+
+        for (strong_lines, 0..) |_, strong_index| {
+            if (matched_counts[strong_index] == 0) return error.UnmatchedStrongLineSidecar;
+        }
+    }
+
+    fn usesVendorStrongLinePartition(self: SpectroscopyLineList) bool {
+        if (!self.hasStrongLineSidecars()) return false;
+        if (self.runtime_controls.gas_index) |gas_index| {
+            if (gas_index != 7) return false;
+        }
+        for (self.lines) |line| {
+            if (line.gas_index != 7) continue;
+            if (lineHasVendorStrongLineMetadata(line)) return true;
+        }
+        return false;
     }
 
     fn disableStrongLineSidecars(self: *SpectroscopyLineList, allocator: Allocator) void {
@@ -761,6 +1010,106 @@ fn lineIndexIsStrongAnchor(anchor_indices: []const ?usize, line_index: usize) bo
         if (anchor.? == line_index) return true;
     }
     return false;
+}
+
+fn zeroEvaluation() SpectroscopyEvaluation {
+    return .{
+        .weak_line_sigma_cm2_per_molecule = 0.0,
+        .strong_line_sigma_cm2_per_molecule = 0.0,
+        .line_sigma_cm2_per_molecule = 0.0,
+        .line_mixing_sigma_cm2_per_molecule = 0.0,
+        .total_sigma_cm2_per_molecule = 0.0,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+    };
+}
+
+fn traceRowForWeakLine(
+    wavelength_nm: f64,
+    global_line_index: usize,
+    line: SpectroscopyLine,
+    matched_strong_index: ?usize,
+    contribution_kind: SpectroscopyTraceContributionKind,
+    contribution: SpectroscopyEvaluation,
+    pressure_atm: f64,
+) SpectroscopyTraceRow {
+    return .{
+        .contribution_kind = contribution_kind,
+        .wavelength_nm = wavelength_nm,
+        .global_line_index = global_line_index,
+        .strong_index = null,
+        .matched_strong_index = matched_strong_index,
+        .gas_index = line.gas_index,
+        .isotope_number = line.isotope_number,
+        .center_wavelength_nm = line.center_wavelength_nm,
+        .center_wavenumber_cm1 = wavelengthToWavenumberCm1(line.center_wavelength_nm),
+        .shifted_center_wavenumber_cm1 = shiftedLineCenterWavenumberCm1(line, pressure_atm),
+        .line_strength_cm2_per_molecule = line.line_strength_cm2_per_molecule,
+        .air_half_width_nm = line.air_half_width_nm,
+        .lower_state_energy_cm1 = line.lower_state_energy_cm1,
+        .pressure_shift_nm = line.pressure_shift_nm,
+        .line_mixing_coefficient = line.line_mixing_coefficient,
+        .branch_ic1 = line.branch_ic1,
+        .branch_ic2 = line.branch_ic2,
+        .rotational_nf = line.rotational_nf,
+        .weak_line_sigma_cm2_per_molecule = contribution.weak_line_sigma_cm2_per_molecule,
+        .strong_line_sigma_cm2_per_molecule = contribution.strong_line_sigma_cm2_per_molecule,
+        .line_mixing_sigma_cm2_per_molecule = contribution.line_mixing_sigma_cm2_per_molecule,
+        .total_sigma_cm2_per_molecule = contribution.total_sigma_cm2_per_molecule,
+    };
+}
+
+fn traceRowForStrongLine(
+    wavelength_nm: f64,
+    global_line_index: usize,
+    strong_index: usize,
+    anchor_line: SpectroscopyLine,
+    strong_line: SpectroscopyStrongLine,
+    contribution: SpectroscopyEvaluation,
+    pressure_atm: f64,
+) SpectroscopyTraceRow {
+    return .{
+        .contribution_kind = .strong_sidecar,
+        .wavelength_nm = wavelength_nm,
+        .global_line_index = global_line_index,
+        .strong_index = strong_index,
+        .matched_strong_index = strong_index,
+        .gas_index = anchor_line.gas_index,
+        .isotope_number = anchor_line.isotope_number,
+        .center_wavelength_nm = strong_line.center_wavelength_nm,
+        .center_wavenumber_cm1 = strong_line.center_wavenumber_cm1,
+        .shifted_center_wavenumber_cm1 = strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1,
+        .line_strength_cm2_per_molecule = anchor_line.line_strength_cm2_per_molecule,
+        .air_half_width_nm = strong_line.air_half_width_nm,
+        .lower_state_energy_cm1 = strong_line.lower_state_energy_cm1,
+        .pressure_shift_nm = anchor_line.pressure_shift_nm,
+        .line_mixing_coefficient = anchor_line.line_mixing_coefficient,
+        .branch_ic1 = anchor_line.branch_ic1,
+        .branch_ic2 = anchor_line.branch_ic2,
+        .rotational_nf = anchor_line.rotational_nf,
+        .weak_line_sigma_cm2_per_molecule = contribution.weak_line_sigma_cm2_per_molecule,
+        .strong_line_sigma_cm2_per_molecule = contribution.strong_line_sigma_cm2_per_molecule,
+        .line_mixing_sigma_cm2_per_molecule = contribution.line_mixing_sigma_cm2_per_molecule,
+        .total_sigma_cm2_per_molecule = contribution.total_sigma_cm2_per_molecule,
+    };
+}
+
+fn lineHasVendorStrongLineMetadata(line: SpectroscopyLine) bool {
+    return line.branch_ic1 != null and line.branch_ic2 != null and line.rotational_nf != null;
+}
+
+fn wavenumberCm1ToWavelengthNm(wavenumber_cm1: f64) f64 {
+    return 1.0e7 / @max(wavenumber_cm1, 1.0);
+}
+
+fn isVendorO2AStrongCandidate(line: SpectroscopyLine) bool {
+    return line.gas_index == 7 and
+        line.isotope_number == 1 and
+        line.branch_ic1 != null and
+        line.branch_ic2 != null and
+        line.rotational_nf != null and
+        line.branch_ic1.? == 5 and
+        line.branch_ic2.? == 1 and
+        line.rotational_nf.? <= 35;
 }
 
 fn runtimeControlsMatchLine(gas_index: ?u16, active_isotopes: []const u8, line: SpectroscopyLine) bool {
@@ -872,8 +1221,8 @@ test "spectroscopy line list evaluates bounded temperature and pressure dependen
     try std.testing.expectEqual(@as(f64, 0.0), near_line.line_mixing_sigma_cm2_per_molecule);
 }
 
-test "spectroscopy line metadata scales sigma by abundance and partition surrogate" {
-    var dominant = SpectroscopyLineList{
+test "weak-line sigma treats abundance fraction as metadata for HITRAN strengths" {
+    var reference = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
             .{
                 .gas_index = 7,
@@ -889,13 +1238,13 @@ test "spectroscopy line metadata scales sigma by abundance and partition surroga
             },
         }),
     };
-    defer dominant.deinit(std.testing.allocator);
+    defer reference.deinit(std.testing.allocator);
 
-    var minor = SpectroscopyLineList{
+    var metadata_only = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
             .{
                 .gas_index = 7,
-                .isotope_number = 2,
+                .isotope_number = 1,
                 .abundance_fraction = 0.0039914,
                 .center_wavelength_nm = 771.3015,
                 .line_strength_cm2_per_molecule = 1.20e-20,
@@ -907,13 +1256,17 @@ test "spectroscopy line metadata scales sigma by abundance and partition surroga
             },
         }),
     };
-    defer minor.deinit(std.testing.allocator);
+    defer metadata_only.deinit(std.testing.allocator);
 
-    const dominant_eval = dominant.evaluateAt(771.3015, 255.0, 820.0);
-    const minor_eval = minor.evaluateAt(771.3015, 255.0, 820.0);
+    const reference_eval = reference.evaluateAt(771.3015, 255.0, 820.0);
+    const metadata_only_eval = metadata_only.evaluateAt(771.3015, 255.0, 820.0);
 
-    try std.testing.expect(dominant_eval.total_sigma_cm2_per_molecule > minor_eval.total_sigma_cm2_per_molecule);
-    try std.testing.expect(dominant_eval.total_sigma_cm2_per_molecule > 0.0);
+    try std.testing.expect(reference_eval.total_sigma_cm2_per_molecule > 0.0);
+    try std.testing.expectApproxEqAbs(
+        reference_eval.total_sigma_cm2_per_molecule,
+        metadata_only_eval.total_sigma_cm2_per_molecule,
+        1.0e-18,
+    );
 }
 
 test "o2 spectroscopy uses vendor-tabulated partition ratios" {
@@ -1047,9 +1400,9 @@ test "runtime controls preserve prior isotope storage across allocation failure"
 test "spectroscopy line list partitions strong and weak lanes when sidecars are attached" {
     var lines = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
-            .{ .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03 },
-            .{ .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03 },
-            .{ .center_wavelength_nm = 769.9000, .line_strength_cm2_per_molecule = 2.50e-21, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 769.9000, .line_strength_cm2_per_molecule = 2.50e-21, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00, .branch_ic1 = 4, .branch_ic2 = 1, .rotational_nf = 40 },
         }),
     };
     defer lines.deinit(std.testing.allocator);
@@ -1121,10 +1474,10 @@ test "spectroscopy line list partitions strong and weak lanes when sidecars are 
 test "strong-line sidecars choose one anchor line per strong feature" {
     var lines = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
-            .{ .center_wavelength_nm = 759.594000, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0 },
-            .{ .center_wavelength_nm = 759.594150, .line_strength_cm2_per_molecule = 2.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0 },
-            .{ .center_wavelength_nm = 759.594260, .line_strength_cm2_per_molecule = 3.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0 },
-            .{ .center_wavelength_nm = 759.594500, .line_strength_cm2_per_molecule = 1.5e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594000, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594150, .line_strength_cm2_per_molecule = 2.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594260, .line_strength_cm2_per_molecule = 3.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 33 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594500, .line_strength_cm2_per_molecule = 1.5e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 32 },
         }),
     };
     defer lines.deinit(std.testing.allocator);
@@ -1162,6 +1515,234 @@ test "strong-line sidecars choose one anchor line per strong feature" {
     try std.testing.expectEqual(@as(?usize, 2), anchors[0]);
     try std.testing.expect(!lineIndexIsStrongAnchor(anchors[0..1], 1));
     try std.testing.expect(!lineIndexIsStrongAnchor(anchors[0..1], 3));
+}
+
+test "cutoff-based prewindow keeps far-wing O2A lines beyond one nanometer" {
+    var lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03 },
+        }),
+        .lines_sorted_ascending = true,
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+    };
+    defer lines.deinit(std.testing.allocator);
+
+    const far_wing = lines.evaluateAt(775.0, 255.0, 820.0);
+    try std.testing.expect(far_wing.total_sigma_cm2_per_molecule > 0.0);
+}
+
+test "vendor O2A partition removes every assigned strong candidate from the weak-line sum" {
+    const strong_candidate_a = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 };
+    const strong_candidate_b = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34 };
+    const weak_candidate = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.0500, .line_strength_cm2_per_molecule = 1.10e-21, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00, .branch_ic1 = 4, .branch_ic2 = 1, .rotational_nf = 40 };
+
+    var lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{ strong_candidate_a, strong_candidate_b, weak_candidate }),
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+    };
+    defer lines.deinit(std.testing.allocator);
+
+    var strong_lines = SpectroscopyStrongLineSet{
+        .lines = try std.testing.allocator.dupe(SpectroscopyStrongLine, &.{
+            .{
+                .center_wavenumber_cm1 = 12965.1079,
+                .center_wavelength_nm = 771.3015,
+                .population_t0 = 5.10e-05,
+                .dipole_ratio = 0.712,
+                .dipole_t0 = 5.80e-04,
+                .lower_state_energy_cm1 = 1804.8773,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -35,
+            },
+        }),
+    };
+    defer strong_lines.deinit(std.testing.allocator);
+
+    var relaxation_matrix = RelaxationMatrix{
+        .line_count = 1,
+        .wt0 = try std.testing.allocator.dupe(f64, &.{0.02764486}),
+        .bw = try std.testing.allocator.dupe(f64, &.{0.629999646133}),
+    };
+    defer relaxation_matrix.deinit(std.testing.allocator);
+
+    try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
+
+    const evaluation = lines.evaluateAt(771.25, 255.0, 820.0);
+    const weak_only = weakLineContribution(771.25, weak_candidate, 255.0, 820.0 / 1013.25, hitran_reference_temperature_k, 200.0);
+
+    try std.testing.expectApproxEqRel(
+        weak_only.line_sigma_cm2_per_molecule,
+        evaluation.weak_line_sigma_cm2_per_molecule,
+        1.0e-12,
+    );
+    try std.testing.expect(evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
+}
+
+test "fallback strong-line anchors can preserve weak contributions when requested" {
+    const anchor_proxy = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03 };
+    const weak_neighbor = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.0500, .line_strength_cm2_per_molecule = 1.10e-21, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00 };
+
+    var lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{ anchor_proxy, weak_neighbor }),
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+        .preserve_anchor_weak_lines = true,
+    };
+    defer lines.deinit(std.testing.allocator);
+
+    var strong_lines = SpectroscopyStrongLineSet{
+        .lines = try std.testing.allocator.dupe(SpectroscopyStrongLine, &.{
+            .{
+                .center_wavenumber_cm1 = 12965.1079,
+                .center_wavelength_nm = 771.3015,
+                .population_t0 = 5.10e-05,
+                .dipole_ratio = 0.712,
+                .dipole_t0 = 5.80e-04,
+                .lower_state_energy_cm1 = 1804.8773,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -35,
+            },
+        }),
+    };
+    defer strong_lines.deinit(std.testing.allocator);
+
+    var relaxation_matrix = RelaxationMatrix{
+        .line_count = 1,
+        .wt0 = try std.testing.allocator.dupe(f64, &.{0.02764486}),
+        .bw = try std.testing.allocator.dupe(f64, &.{0.629999646133}),
+    };
+    defer relaxation_matrix.deinit(std.testing.allocator);
+
+    try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
+    try lines.buildStrongLineMatchIndex(std.testing.allocator);
+
+    const preserved = lines.evaluateAt(771.25, 255.0, 820.0);
+    const weak_only_view = SpectroscopyLineList{
+        .lines = lines.lines,
+        .lines_sorted_ascending = lines.lines_sorted_ascending,
+        .runtime_controls = lines.runtime_controls,
+    };
+    const weak_only = weak_only_view.evaluateAt(771.25, 255.0, 820.0);
+
+    try std.testing.expectApproxEqRel(
+        weak_only.weak_line_sigma_cm2_per_molecule,
+        preserved.weak_line_sigma_cm2_per_molecule,
+        1.0e-12,
+    );
+    try std.testing.expect(preserved.strong_line_sigma_cm2_per_molecule > 0.0);
+}
+
+test "vendor O2A strong candidates fail fast when they cannot be matched to a sidecar" {
+    var lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 760.0, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
+        }),
+    };
+    defer lines.deinit(std.testing.allocator);
+
+    var strong_lines = SpectroscopyStrongLineSet{
+        .lines = try std.testing.allocator.dupe(SpectroscopyStrongLine, &.{
+            .{
+                .center_wavenumber_cm1 = 12965.1079,
+                .center_wavelength_nm = 771.3015,
+                .population_t0 = 5.10e-05,
+                .dipole_ratio = 0.712,
+                .dipole_t0 = 5.80e-04,
+                .lower_state_energy_cm1 = 1804.8773,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -35,
+            },
+        }),
+    };
+    defer strong_lines.deinit(std.testing.allocator);
+
+    var relaxation_matrix = RelaxationMatrix{
+        .line_count = 1,
+        .wt0 = try std.testing.allocator.dupe(f64, &.{0.02764486}),
+        .bw = try std.testing.allocator.dupe(f64, &.{0.629999646133}),
+    };
+    defer relaxation_matrix.deinit(std.testing.allocator);
+
+    try std.testing.expectError(
+        error.UnmatchedStrongLineCandidate,
+        lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix),
+    );
+}
+
+test "vendor O2A sidecars fail fast when no tagged candidate maps to a sidecar" {
+    var lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
+        }),
+    };
+    defer lines.deinit(std.testing.allocator);
+
+    var strong_lines = SpectroscopyStrongLineSet{
+        .lines = try std.testing.allocator.dupe(SpectroscopyStrongLine, &.{
+            .{
+                .center_wavenumber_cm1 = 12965.1079,
+                .center_wavelength_nm = 771.3015,
+                .population_t0 = 5.10e-05,
+                .dipole_ratio = 0.712,
+                .dipole_t0 = 5.80e-04,
+                .lower_state_energy_cm1 = 1804.8773,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -35,
+            },
+            .{
+                .center_wavenumber_cm1 = 12966.8087,
+                .center_wavelength_nm = 771.2004,
+                .population_t0 = 4.99e-05,
+                .dipole_ratio = -0.702,
+                .dipole_t0 = -5.78e-04,
+                .lower_state_energy_cm1 = 1803.1765,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -34,
+            },
+        }),
+    };
+    defer strong_lines.deinit(std.testing.allocator);
+
+    var relaxation_matrix = RelaxationMatrix{
+        .line_count = 2,
+        .wt0 = try std.testing.allocator.dupe(f64, &.{
+            0.02764486,
+            0.0004338554,
+            0.0004338554,
+            0.02655312,
+        }),
+        .bw = try std.testing.allocator.dupe(f64, &.{
+            0.629999646133,
+            1.169364903905,
+            1.169364903905,
+            0.629999646133,
+        }),
+    };
+    defer relaxation_matrix.deinit(std.testing.allocator);
+
+    try std.testing.expectError(
+        error.UnmatchedStrongLineSidecar,
+        lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix),
+    );
 }
 
 test "strong-line convtp state applies detailed-balance and pressure-scaled line mixing" {
@@ -1209,6 +1790,68 @@ test "strong-line convtp state applies detailed-balance and pressure-scaled line
     try std.testing.expect(@abs(low_pressure.weightAt(1, 0) - low_pressure.weightAt(0, 1)) > 1.0e-10);
     try std.testing.expect(@abs(high_pressure.line_mixing_coefficients[0]) > @abs(low_pressure.line_mixing_coefficients[0]));
     try std.testing.expect(high_pressure.half_width_cm1_at_t[0] > relaxation_matrix.weightAt(0, 0));
+}
+
+test "prepared strong-line state preserves upper-atmosphere pressure scaling" {
+    var line_list = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{}),
+        .strong_lines = try std.testing.allocator.dupe(SpectroscopyStrongLine, &.{
+            .{
+                .center_wavenumber_cm1 = 12965.1079,
+                .center_wavelength_nm = 771.3015,
+                .population_t0 = 5.10e-05,
+                .dipole_ratio = 0.712,
+                .dipole_t0 = 5.80e-04,
+                .lower_state_energy_cm1 = 1804.8773,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -35,
+            },
+            .{
+                .center_wavenumber_cm1 = 12966.8087,
+                .center_wavelength_nm = 771.2004,
+                .population_t0 = 4.99e-05,
+                .dipole_ratio = -0.702,
+                .dipole_t0 = -5.78e-04,
+                .lower_state_energy_cm1 = 1803.1765,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -34,
+            },
+        }),
+        .relaxation_matrix = RelaxationMatrix{
+            .line_count = 2,
+            .wt0 = try std.testing.allocator.dupe(f64, &.{ 0.02764486, 0.0004338554, 0.0004338554, 0.02655312 }),
+            .bw = try std.testing.allocator.dupe(f64, &.{ 0.629999646133, 1.169364903905, 1.169364903905, 0.629999646133 }),
+        },
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var prepared_state = (try line_list.prepareStrongLineState(std.testing.allocator, 190.5, 0.000258)).?;
+    defer prepared_state.deinit(std.testing.allocator);
+
+    const pressure_atm = 0.000258 / 1013.25;
+    const expected_state = prepareStrongLineConvTPState(
+        line_list.strong_lines.?,
+        line_list.relaxation_matrix.?,
+        190.5,
+        pressure_atm,
+    );
+
+    try std.testing.expectApproxEqAbs(expected_state.sig_moy_cm1, prepared_state.sig_moy_cm1, 1.0e-12);
+    try std.testing.expectApproxEqAbs(expected_state.mod_sig_cm1[0], prepared_state.mod_sig_cm1[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(expected_state.half_width_cm1_at_t[0], prepared_state.half_width_cm1_at_t[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(
+        expected_state.line_mixing_coefficients[0],
+        prepared_state.line_mixing_coefficients[0],
+        1.0e-18,
+    );
 }
 
 test "demo reference assets are allocatable and physically ordered" {
@@ -1502,7 +2145,7 @@ fn prepareWeakLineVoigtState(
     reference_temperature_k: f64,
 ) WeakLineVoigtState {
     const safe_temperature = @max(temperature_k, 150.0);
-    const safe_pressure = @max(pressure_atm, 0.05);
+    const safe_pressure = @max(pressure_atm, min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
     const center_wavenumber_cm1 = wavelengthToWavenumberCm1(line.center_wavelength_nm);
     const temperature_ratio = reference_temperature_k / safe_temperature;
@@ -1530,8 +2173,10 @@ fn prepareWeakLineVoigtState(
         half_width_cm1_at_t * safe_pressure * cte,
     );
 
+    // PARITY:
+    //   HITRAN line strengths already include isotopic abundance. Keep
+    //   `abundance_fraction` as typed metadata, but do not apply it again here.
     var converted_strength = line.line_strength_cm2_per_molecule *
-        abundanceScale(line) *
         partitionRatioT0OverT(line, safe_temperature, reference_temperature_k) *
         @exp(
             hitran_hc_over_kb_cm_k * line.lower_state_energy_cm1 *
@@ -1616,7 +2261,7 @@ fn strongLineContribution(
 ) SpectroscopyEvaluation {
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
-    const safe_pressure = @max(pressure_scale, 0.05);
+    const safe_pressure = @max(pressure_scale, min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
     if (cutoff_cm1) |window_cm1| {
         if (@abs(convtp_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) > window_cm1) {
@@ -1676,7 +2321,7 @@ fn strongLineContributionPrepared(
 ) SpectroscopyEvaluation {
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
-    const safe_pressure = @max(pressure_scale, 0.05);
+    const safe_pressure = @max(pressure_scale, min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
     if (cutoff_cm1) |window_cm1| {
         if (@abs(prepared_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) > window_cm1) {
@@ -1848,10 +2493,6 @@ fn prepareStrongLineConvTPState(
     }
 
     return state;
-}
-
-fn abundanceScale(line: SpectroscopyLine) f64 {
-    return std.math.clamp(line.abundance_fraction, 0.0, 1.0);
 }
 
 fn shiftedLineCenterWavenumberCm1(line: SpectroscopyLine, pressure_atm: f64) f64 {

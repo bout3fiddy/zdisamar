@@ -5,73 +5,34 @@ const SuiteSteps = struct {
     run_step: *std.Build.Step,
 };
 
-fn addSuiteRunStep(
+fn addTestStep(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    test_lib_module: *std.Build.Module,
-    internal_module: *std.Build.Module,
-    test_legacy_config_module: *std.Build.Module,
-    test_cli_app_module: *std.Build.Module,
+    zdisamar_module: *std.Build.Module,
+    build_options_module: *std.Build.Module,
     step_name: []const u8,
     step_description: []const u8,
     root_source_file: []const u8,
 ) SuiteSteps {
-    return addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        step_name,
-        step_description,
-        root_source_file,
-        &.{},
-    );
-}
-
-fn addSuiteRunStepWithArgs(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    test_lib_module: *std.Build.Module,
-    internal_module: *std.Build.Module,
-    test_legacy_config_module: *std.Build.Module,
-    test_cli_app_module: *std.Build.Module,
-    step_name: []const u8,
-    step_description: []const u8,
-    root_source_file: []const u8,
-    filters: []const []const u8,
-) SuiteSteps {
-    const suite_module = b.createModule(.{
+    const test_module = b.createModule(.{
         .root_source_file = b.path(root_source_file),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{
                 .name = "zdisamar",
-                .module = test_lib_module,
+                .module = zdisamar_module,
             },
             .{
-                .name = "zdisamar_internal",
-                .module = internal_module,
-            },
-            .{
-                .name = "legacy_config",
-                .module = test_legacy_config_module,
-            },
-            .{
-                .name = "cli_app",
-                .module = test_cli_app_module,
+                .name = "build_options",
+                .module = build_options_module,
             },
         },
     });
 
     const suite_tests = b.addTest(.{
-        .root_module = suite_module,
-        .filters = filters,
+        .root_module = test_module,
     });
     const run_suite_tests = b.addRunArtifact(suite_tests);
 
@@ -86,10 +47,11 @@ fn addSuiteRunStepWithArgs(
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const public_build_options = b.addOptions();
-    public_build_options.addOption(bool, "enable_test_support", false);
-    const test_build_options = b.addOptions();
-    test_build_options.addOption(bool, "enable_test_support", true);
+    const runtime_optimize: std.builtin.OptimizeMode = .ReleaseFast;
+
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "enable_test_support", false);
+    const build_options_module = build_options.createModule();
 
     const lib_module = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -98,29 +60,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{
                 .name = "build_options",
-                .module = public_build_options.createModule(),
-            },
-        },
-    });
-    const test_lib_module = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "build_options",
-                .module = test_build_options.createModule(),
-            },
-        },
-    });
-    const internal_module = b.createModule(.{
-        .root_source_file = b.path("src/internal.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "zdisamar",
-                .module = test_lib_module,
+                .module = build_options_module,
             },
         },
     });
@@ -132,500 +72,177 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
-    const legacy_config_module = b.createModule(.{
-        .root_source_file = b.path("src/adapters/legacy_config/Adapter.zig"),
+    const profile_module = b.createModule(.{
+        .root_source_file = b.path("src/o2a/cli/profile.zig"),
         .target = target,
-        .optimize = optimize,
+        .optimize = runtime_optimize,
         .imports = &.{
             .{
                 .name = "zdisamar",
                 .module = lib_module,
             },
-        },
-    });
-    const test_legacy_config_module = b.createModule(.{
-        .root_source_file = b.path("src/adapters/legacy_config/Adapter.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "zdisamar",
-                .module = test_lib_module,
-            },
-        },
-    });
-
-    const exe_module = b.createModule(.{
-        .root_source_file = b.path("src/adapters/cli/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "zdisamar",
-                .module = lib_module,
-            },
-            .{
-                .name = "legacy_config",
-                .module = legacy_config_module,
-            },
-        },
-    });
-
-    const test_cli_app_module = b.createModule(.{
-        .root_source_file = b.path("src/adapters/cli/App.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "zdisamar",
-                .module = test_lib_module,
-            },
-            .{
-                .name = "legacy_config",
-                .module = test_legacy_config_module,
-            },
-        },
-    });
-
-    const exe = b.addExecutable(.{
-        .name = "zdisamar",
-        .root_module = exe_module,
-    });
-    b.installArtifact(exe);
-
-    const bench_module = b.createModule(.{
-        .root_source_file = b.path("tests/perf/bench_main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "zdisamar",
-                .module = lib_module,
-            },
-        },
-    });
-    const bench_exe = b.addExecutable(.{
-        .name = "zdisamar-bench",
-        .root_module = bench_module,
-    });
-
-    const test_module = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
             .{
                 .name = "build_options",
-                .module = public_build_options.createModule(),
+                .module = build_options_module,
             },
         },
     });
+    const profile_exe = b.addExecutable(.{
+        .name = "zdisamar-o2a-forward-profile",
+        .root_module = profile_module,
+    });
+    b.installArtifact(profile_exe);
 
     const lib_tests = b.addTest(.{
-        .root_module = test_module,
+        .root_module = lib_module,
     });
-
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
-    const run_unit_suite = addSuiteRunStep(
+    const validation_o2a = addTestStep(
         b,
         target,
         optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-unit",
-        "Run unit verification suite",
-        "tests/unit/main.zig",
-    );
-    const run_integration_suite = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-integration",
-        "Run integration verification suite",
-        "tests/integration/main.zig",
-    );
-    const run_integration_forward_model = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-integration-forward-model",
-        "Run focused forward-model integration tests",
-        "tests/integration/forward_model_integration_test.zig",
-    );
-    const run_golden_suite = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-golden",
-        "Run golden validation suite",
-        "tests/golden/main.zig",
-    );
-    const run_perf_suite = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-perf",
-        "Run performance smoke suite",
-        "tests/perf/main.zig",
-    );
-    const run_validation_asset_suite = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-assets",
-        "Run non-compatibility validation asset suite",
-        "tests/validation/main.zig",
-    );
-    _ = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-lut-assets",
-        "Run focused WP-08 LUT asset provenance and cache checks",
-        "tests/validation/main.zig",
-        &.{
-            "generated LUT assets register typed cache entries and provenance labels",
-            "consume-mode LUT execution records provenance without creating cache entries",
-        },
-    );
-    const run_validation_compatibility = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility",
-        "Run fast DISAMAR compatibility smoke tests",
-        "tests/validation/disamar_compatibility_smoke_test.zig",
-    );
-    const run_validation_compatibility_transport_measurement = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility-transport-measurement",
-        "Run DISAMAR compatibility transport and measurement-space shards",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness executes transport and measurement-space parity cases against vendor anchors",
-        },
-    );
-    _ = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility-retrieval",
-        "Run DISAMAR compatibility retrieval shard",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness executes retrieval parity cases against vendor anchors",
-        },
-    );
-    _ = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility-optics",
-        "Run DISAMAR compatibility optics shard",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness executes optics parity cases against vendor anchors",
-        },
-    );
-    _ = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility-rtm-controls",
-        "Run DISAMAR compatibility RTM-controls harness check",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness execution honors RTM controls in prepared routes",
-        },
-    );
-    _ = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility-asciihdf",
-        "Run DISAMAR compatibility asciiHDF harness check",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness parses bounded vendor retrieval diagnostics from asciiHDF",
-        },
-    );
-    const run_validation_compatibility_operational_measured_input = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility-operational-measured-input",
-        "Run DISAMAR compatibility operational measured-input classification proof",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness classifies operational measured-input S5P flows distinctly from synthetic scenes",
-        },
-    );
-    _ = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility-lut-parity",
-        "Run WP-08 direct-vs-LUT compatibility parity checks",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness keeps Config_O2A_XsecLUT direct and generated runs within bounded parity",
-            "compatibility harness keeps non-o2 LUT-backed NO2 parity within bounded tolerance",
-        },
-    );
-    const run_validation_compatibility_full = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-compatibility-full",
-        "Run full DISAMAR compatibility harness validation",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness executes the full parity matrix against vendor anchors",
-        },
-    );
-    const run_validation_cross_section_routes = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-cross-section-routes",
-        "Run focused cross-section route validation proofs",
-        "tests/validation/disamar_compatibility_harness_test.zig",
-        &.{
-            "compatibility harness routes explicit cross-section fixtures away from O2A defaults",
-        },
-    );
-    const run_validation_cross_section_doas = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-cross-section-doas",
-        "Run focused NO2 cross-section DOAS validation proof",
-        "tests/validation/main.zig",
-        &.{
-            "doas validation routes a NO2 cross-section scene through explicit effective-xsec optics",
-        },
-    );
-    const run_validation_cross_section_oe = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-cross-section-oe",
-        "Run focused O3 cross-section OE validation proof",
-        "tests/validation/main.zig",
-        &.{
-            "oe parity executes an O3 cross-section scene through the explicit LUT path",
-        },
-    );
-    const run_validation_cross_section_parity = b.step(
-        "test-validation-cross-section-parity",
-        "Run focused WP-04 cross-section parity validation proofs",
-    );
-    run_validation_cross_section_parity.dependOn(run_validation_cross_section_routes.run_step);
-    run_validation_cross_section_parity.dependOn(run_validation_cross_section_doas.run_step);
-    run_validation_cross_section_parity.dependOn(run_validation_cross_section_oe.run_step);
-    const validation_step = b.step("test-validation", "Run compatibility and validation asset suite");
-    validation_step.dependOn(run_validation_asset_suite.run_step);
-    validation_step.dependOn(run_validation_cross_section_parity);
-    validation_step.dependOn(run_validation_compatibility_operational_measured_input.run_step);
-    validation_step.dependOn(run_validation_compatibility_full.run_step);
-    const run_validation_o2a = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
+        lib_module,
+        build_options_module,
         "test-validation-o2a",
         "Run focused O2A forward-shape validation tests",
         "tests/validation/o2a_forward_shape_test.zig",
     );
-    _ = addSuiteRunStepWithArgs(
+    const validation_o2a_vendor = addTestStep(
         b,
         target,
         optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-o2a-adaptive",
-        "Run focused O2A adaptive strong-line sampling validation",
-        "tests/validation/o2a_forward_shape_test.zig",
-        &.{
-            "o2a adaptive strong-line sampling is used in execution when adaptive grid is enabled",
-        },
-    );
-    _ = addSuiteRunStepWithArgs(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-o2a-controls",
-        "Run focused O2A line-gas control and CIA sensitivity validation",
-        "tests/validation/o2a_forward_shape_test.zig",
-        &.{
-            "o2a validation responds to line mixing, isotope selection, cutoff, and CIA toggles",
-        },
-    );
-    _ = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
-        "test-validation-line-gas",
-        "Run focused line-gas family validation tests",
-        "tests/validation/line_gas_family_validation_test.zig",
-    );
-    _ = addSuiteRunStep(
-        b,
-        target,
-        optimize,
-        test_lib_module,
-        internal_module,
-        test_legacy_config_module,
-        test_cli_app_module,
+        lib_module,
+        build_options_module,
         "test-validation-o2a-vendor",
         "Run O2A vendor reflectance assessment lane",
         "tests/validation/o2a_vendor_reflectance_assessment_test.zig",
     );
+    const validation_o2a_vendor_profile = addTestStep(
+        b,
+        target,
+        optimize,
+        lib_module,
+        build_options_module,
+        "test-validation-o2a-vendor-profile",
+        "Run O2A vendor profile and reporting smoke tests",
+        "tests/validation/o2a_vendor_reflectance_profile_smoke_test.zig",
+    );
+    const validation_o2a_vendor_line_list = addTestStep(
+        b,
+        target,
+        optimize,
+        lib_module,
+        build_options_module,
+        "test-validation-o2a-vendor-line-list",
+        "Run O2A vendor line-list helper smoke tests",
+        "tests/validation/o2a_vendor_line_list_smoke_test.zig",
+    );
+    const transport_smoke = addTestStep(
+        b,
+        target,
+        optimize,
+        lib_module,
+        build_options_module,
+        "test-validation-o2a-transport-smoke",
+        "Run a small exact O2A transport smoke test",
+        "tests/validation/o2a_transport_smoke_test.zig",
+    );
 
     const fmt_check_cmd = b.addFmt(.{
         .check = true,
-        .paths = &.{ "build.zig", "src", "tests" },
+        .paths = &.{ "build.zig", "src", "tests", "scripts" },
     });
     const fmt_check_step = b.step("fmt-check", "Verify Zig formatting without rewriting files");
     fmt_check_step.dependOn(&fmt_check_cmd.step);
 
-    const bench_run = b.addRunArtifact(bench_exe);
-    bench_run.addArg("out/ci/bench/summary.json");
-    const bench_step = b.step("bench", "Run the non-gating benchmark harness and emit summaries");
-    bench_step.dependOn(&bench_run.step);
+    const profile_install = b.addInstallArtifact(profile_exe, .{});
+    const profile_run = b.addRunArtifact(profile_exe);
+    const o2a_forward_profile_step = b.step(
+        "o2a-forward-profile",
+        "Run the O2A forward profiler and emit summary artifacts",
+    );
+    o2a_forward_profile_step.dependOn(&profile_install.step);
+    o2a_forward_profile_step.dependOn(&profile_run.step);
 
-    const tidy_cmd = b.addSystemCommand(&.{
-        "python3",
-        "scripts/testing_harness/tidy.py",
-        "--report",
-        "out/ci/tidy/report.json",
+    const o2a_plot_bundle_profile_run = b.addRunArtifact(profile_exe);
+    o2a_plot_bundle_profile_run.addArg("--output-dir");
+    o2a_plot_bundle_profile_run.addArg("out/analysis/o2a/plot_bundle_tmp");
+    o2a_plot_bundle_profile_run.addArg("--repeat");
+    o2a_plot_bundle_profile_run.addArg("1");
+    o2a_plot_bundle_profile_run.addArg("--write-spectrum");
+    o2a_plot_bundle_profile_run.addArg("--plot-bundle-grid");
+    const o2a_plot_bundle_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_plot_bundle.py",
+        "--current-spectrum",
+        "out/analysis/o2a/plot_bundle_tmp/generated_spectrum.csv",
+        "--profile-summary",
+        "out/analysis/o2a/plot_bundle_tmp/summary.json",
+        "--vendor-reference",
+        "validation/reference/o2a_with_cia_disamar_reference.csv",
+        "--output-dir",
+        "validation/compatibility/o2a_plots",
+        "--canonical-command",
+        "zig build o2a-plot-bundle",
     });
-    const tidy_step = b.step("tidy", "Run architecture and policy checks");
-    tidy_step.dependOn(&tidy_cmd.step);
+    o2a_plot_bundle_cmd.step.dependOn(&profile_install.step);
+    o2a_plot_bundle_cmd.step.dependOn(&o2a_plot_bundle_profile_run.step);
+    const o2a_plot_bundle_step = b.step(
+        "o2a-plot-bundle",
+        "Generate the tracked O2A plot bundle under validation/compatibility/o2a_plots",
+    );
+    o2a_plot_bundle_step.dependOn(&o2a_plot_bundle_cmd.step);
+
+    const o2a_vendor_reference_refresh_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_vendor_reference_refresh.py",
+    });
+    const o2a_vendor_reference_refresh_step = b.step(
+        "o2a-vendor-reference-refresh",
+        "Regenerate the tracked O2A vendor reference CSV from the vendored DISAMAR executable",
+    );
+    o2a_vendor_reference_refresh_step.dependOn(&o2a_vendor_reference_refresh_cmd.step);
+
+    const o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_plot_bundle_test.py",
+    });
+    const o2a_plot_bundle_test_step = b.step(
+        "test-validation-o2a-plot-bundle",
+        "Run the O2A plot bundle harness smoke test",
+    );
+    o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
 
     const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(fmt_check_step);
     check_step.dependOn(&lib.step);
-    check_step.dependOn(&exe.step);
+    check_step.dependOn(&profile_exe.step);
     check_step.dependOn(&lib_tests.step);
-    check_step.dependOn(run_unit_suite.compile_step);
-    check_step.dependOn(run_integration_suite.compile_step);
-    check_step.dependOn(run_golden_suite.compile_step);
-    check_step.dependOn(run_perf_suite.compile_step);
-    check_step.dependOn(run_validation_asset_suite.compile_step);
-    check_step.dependOn(run_validation_compatibility.compile_step);
-    check_step.dependOn(run_validation_compatibility_full.compile_step);
-    check_step.dependOn(run_unit_suite.run_step);
+    check_step.dependOn(validation_o2a.compile_step);
+    check_step.dependOn(validation_o2a_vendor.compile_step);
+    check_step.dependOn(validation_o2a_vendor_profile.compile_step);
+    check_step.dependOn(validation_o2a_vendor_line_list.compile_step);
+    check_step.dependOn(&run_lib_tests.step);
 
-    const test_fast_step = b.step("test-fast", "Run the fast presubmit suites");
-    test_fast_step.dependOn(run_unit_suite.run_step);
-    test_fast_step.dependOn(run_integration_suite.run_step);
+    const test_fast_step = b.step("test-fast", "Run the fast O2A verification suites");
+    test_fast_step.dependOn(&lib_tests.step);
+    test_fast_step.dependOn(validation_o2a.compile_step);
+    test_fast_step.dependOn(validation_o2a_vendor_line_list.run_step);
 
-    const transport_step = b.step("test-transport", "Run focused transport parity verification");
-    transport_step.dependOn(run_unit_suite.run_step);
-    transport_step.dependOn(run_integration_forward_model.run_step);
-    transport_step.dependOn(run_validation_compatibility_transport_measurement.run_step);
-    transport_step.dependOn(run_validation_compatibility_operational_measured_input.run_step);
-    transport_step.dependOn(run_validation_o2a.run_step);
+    const test_transport_step = b.step("test-transport", "Run focused O2A exact transport verification");
+    test_transport_step.dependOn(validation_o2a.compile_step);
+    test_transport_step.dependOn(validation_o2a_vendor.compile_step);
+    test_transport_step.dependOn(transport_smoke.run_step);
 
-    const test_suites_step = b.step("test-suites", "Run all verification suites");
-    test_suites_step.dependOn(run_unit_suite.run_step);
-    test_suites_step.dependOn(run_integration_suite.run_step);
-    test_suites_step.dependOn(run_golden_suite.run_step);
-    test_suites_step.dependOn(run_perf_suite.run_step);
-    test_suites_step.dependOn(validation_step);
-
-    const test_step = b.step("test", "Run full verification baseline");
+    const test_step = b.step("test", "Run the retained O2A verification baseline");
     test_step.dependOn(&run_lib_tests.step);
-    test_step.dependOn(test_suites_step);
+    test_step.dependOn(validation_o2a.run_step);
+    test_step.dependOn(validation_o2a_vendor.run_step);
+    test_step.dependOn(validation_o2a_vendor_profile.run_step);
+    test_step.dependOn(validation_o2a_vendor_line_list.run_step);
+    test_step.dependOn(o2a_plot_bundle_test_step);
 }

@@ -19,6 +19,7 @@ pub const fitted_reflectance_export_name = Measurement.fitted_reflectance_export
 pub const ProviderBindings = Measurement.ProviderBindings;
 pub const MeasurementSpaceSummary = Measurement.MeasurementSpaceSummary;
 pub const MeasurementSpaceProduct = Measurement.MeasurementSpaceProduct;
+pub const ForwardProfile = Measurement.ForwardProfile;
 pub const Buffers = Workspace.Buffers;
 pub const SummaryWorkspace = Workspace.SummaryWorkspace;
 pub const Error = Measurement.Error;
@@ -70,6 +71,24 @@ pub fn simulateProduct(
     providers: ProviderBindings,
 ) !MeasurementSpaceProduct {
     return Measurement.simulateProduct(allocator, scene, route, prepared, providers);
+}
+
+pub fn simulateProductWithProfile(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const PreparedOpticalState,
+    providers: ProviderBindings,
+    forward_profile: ?*ForwardProfile,
+) !MeasurementSpaceProduct {
+    return Measurement.simulateProductWithProfile(
+        allocator,
+        scene,
+        route,
+        prepared,
+        providers,
+        forward_profile,
+    );
 }
 
 test "legacy measurement space shim preserves scratch entrypoints" {

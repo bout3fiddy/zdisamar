@@ -1,18 +1,16 @@
 # Documentation
 
-This directory explains DISAMAR as an atmospheric radiative-transfer and retrieval model family and documents the current implementation in `zdisamar`. Earlier operational implementations were developed in Fortran at KNMI, but the material here is written about the present codebase: its scientific scope, execution model, operational interfaces, extension boundaries, and bounded validation surfaces. Where the current code still uses surrogate transport or retrieval lanes, the docs should say so directly instead of implying completed method-faithful parity.
+This directory documents the current `zdisamar` codebase as an O2 A forward-model lab. Earlier operational implementations were developed in Fortran at KNMI, but the material here is written about the present codebase: its scientific scope, retained execution model, bundled reference-data path, and bounded validation surfaces against the local DISAMAR reference.
 
 ## Recommended Reading Order
 
 1. [DISAMAR Overview](./disamar-overview.md)
-2. [Architecture and Execution Model](./zig-architecture.md)
-3. [Plugin System End-To-End Flow](./plugin-system-end-to-end.md)
-4. [Operational O2 A-Band Path](./operational-o2a.md)
-5. [Reference Data and Runtime Bundles](./reference-data-and-bundles.md)
-6. [Retrieval and Measurement-Space Outputs](./retrieval-and-measurement-space.md)
-7. [Exporters and Result Artifacts](./exporters-and-artifacts.md)
-8. [Plugins and Extension Boundaries](./plugins-and-extension-boundaries.md)
-9. [Validation and Scientific Scope](./validation-and-parity.md)
+2. [O2A Forward Architecture](./o2a-forward-architecture.md)
+3. [O2A Telemetry](./o2a-telemetry.md)
+4. [O2A Vendor Stage Map](./o2a-vendor-stage-map.md)
+5. [Operational O2 A-Band Path](./operational-o2a.md)
+6. [Reference Data and Runtime Bundles](./reference-data-and-bundles.md)
+7. [Validation and Scientific Scope](./validation-and-parity.md)
 
 ## Scope
 
@@ -23,9 +21,9 @@ This directory explains DISAMAR as an atmospheric radiative-transfer and retriev
 ## Canonical Implementation References
 
 - [Source tree router](../src/AGENTS.md)
-- [Engine lifecycle](../src/core/Engine.zig)
-- [Reference-data runtime bridge](../src/runtime/reference/BundledOptics.zig)
-- [Plugin registry and freeze snapshot](../src/plugins/registry/CapabilityRegistry.zig)
+- [O2A public surface](../src/o2a.zig)
+- [O2A data loader](../src/o2a/data/load.zig)
+- [O2A vendor case support](../src/o2a/data/vendor_case.zig)
 
 ## Selected Scientific References
 

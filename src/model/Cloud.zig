@@ -27,9 +27,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const errors = @import("../core/errors.zig");
 const AtmosphereModel = @import("Atmosphere.zig");
-const document_fields = @import("../adapters/canonical_config/document_fields.zig");
-
-pub const CloudType = document_fields.CloudType;
+pub const CloudType = @import("../o2a/support/enums.zig").CloudType;
 pub const Placement = AtmosphereModel.IntervalPlacement;
 pub const FractionControl = AtmosphereModel.FractionControl;
 

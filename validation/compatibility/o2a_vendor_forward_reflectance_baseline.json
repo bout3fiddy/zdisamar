@@ -18,7 +18,7 @@
   },
   "guidance": {
     "allowed_to_fail": true,
-    "summary": "This lane is intentionally allowed to fail until the stored vendor residual collapses to numerical zero. Agents should focus on whether mean/rms/max differences improved, regressed, or stayed flat relative to the committed baseline, and only treat regressions as urgent when the change touched forward-physics code or O2A reference assets.",
+    "summary": "This lane is intentionally allowed to fail until the stored vendor residual collapses to numerical zero. It uses a coarsened vendor-shaped execution grid so the assessment stays usable in the local development loop; use the full vendor plot/profile helpers for deeper full-band inspection. Agents should focus on whether mean/rms/max differences improved, regressed, or stayed flat relative to the committed baseline, and only treat regressions as urgent when the change touched forward-physics code or O2A reference assets.",
     "expect_improvement_when_touched": [
       "src/kernels/transport",
       "src/kernels/optics",
@@ -32,17 +32,17 @@
     "sample_count": 701,
     "nonzero_sample_count": 701,
     "exact_match_within_zero_tolerance": false,
-    "mean_signed_difference": 0.03684819304797354,
-    "mean_abs_difference": 0.03684819304797354,
-    "root_mean_square_difference": 0.03925387031310611,
-    "max_abs_difference": 0.06890529080329479,
-    "max_abs_difference_wavelength_nm": 762.29,
-    "correlation": 0.990940222673214,
-    "blue_wing_mean_difference": 0.026178527937584767,
-    "trough_wavelength_difference_nm": 0.0,
-    "trough_value_difference": 0.025997747867673712,
-    "rebound_peak_difference": 0.0631352476065063,
-    "mid_band_mean_difference": 0.06001810391924883,
-    "red_wing_mean_difference": 0.02889145635248122
+    "mean_signed_difference": 0.00586695689875252,
+    "mean_abs_difference": 0.009242599063500261,
+    "root_mean_square_difference": 0.015710459661891028,
+    "max_abs_difference": 0.07021287473403681,
+    "max_abs_difference_wavelength_nm": 762.05,
+    "correlation": 0.9837852371397875,
+    "blue_wing_mean_difference": 0.0013215702901985815,
+    "trough_wavelength_difference_nm": 0.014999999999986358,
+    "trough_value_difference": 0.0019397918090883204,
+    "rebound_peak_difference": -0.06815764236769316,
+    "mid_band_mean_difference": 0.01912386366192461,
+    "red_wing_mean_difference": 0.006162238657835273
   }
 }

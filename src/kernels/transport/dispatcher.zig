@@ -22,6 +22,7 @@ const std = @import("std");
 const adding = @import("adding.zig");
 const common = @import("common.zig");
 const labos = @import("labos.zig");
+const phase_functions = @import("../optics/prepare/phase_functions.zig");
 
 /// Purpose:
 ///   Resolve the dispatch request into a concrete transport route.
@@ -70,7 +71,7 @@ test "dispatcher picks adding lane when use_adding is set" {
         .single_scatter_albedo = 0.82,
         .solar_mu = 0.71,
         .view_mu = 0.66,
-        .phase_coefficients = .{ 1.0, 0.15, 0.03, 0.0 },
+        .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.15, 0.03, 0.0 }),
     }};
     const result = try executePrepared(std.testing.allocator, route, .{
         .spectral_weight = 1.5,

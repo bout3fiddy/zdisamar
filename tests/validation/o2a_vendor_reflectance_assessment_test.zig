@@ -1,5 +1,6 @@
 const std = @import("std");
-const o2a_vendor = @import("o2a_vendor_reflectance_support.zig");
+const zdisamar = @import("zdisamar");
+const o2a_vendor = zdisamar.vendor_case;
 
 const BaselineAnchor = struct {
     version: u32,
@@ -26,6 +27,24 @@ const LoadedBaselineAnchor = struct {
         self.* = undefined;
     }
 };
+
+fn assessmentTestConfig() o2a_vendor.VendorO2AExecutionConfig {
+    return .{
+        .spectral_grid = .{
+            .start_nm = 755.0,
+            .end_nm = 776.0,
+            .sample_count = 21,
+        },
+        .adaptive_points_per_fwhm = 4,
+        .adaptive_strong_line_min_divisions = 2,
+        .adaptive_strong_line_max_divisions = 8,
+        .use_vendor_parity_fixture = true,
+        .line_mixing_factor = 1.0,
+        .isotopes_sim = &.{ 1, 2, 3 },
+        .threshold_line_sim = 3.0e-5,
+        .cutoff_sim_cm1 = 200.0,
+    };
+}
 
 fn loadBaselineAnchor(allocator: std.mem.Allocator) !LoadedBaselineAnchor {
     const raw = try std.fs.cwd().readFileAlloc(
@@ -231,7 +250,10 @@ test "o2a vendor forward reflectance assessment reports trend against stored bas
     try std.testing.expect(anchor.parsed.value.upstream_config.len != 0);
     try std.fs.cwd().access(anchor.parsed.value.reference_path, .{});
 
-    var vendor_case = try o2a_vendor.runVendorO2AReflectanceCase(std.testing.allocator);
+    var vendor_case = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(
+        std.testing.allocator,
+        assessmentTestConfig(),
+    );
     defer vendor_case.deinit(std.testing.allocator);
 
     const current = o2a_vendor.computeComparisonMetrics(

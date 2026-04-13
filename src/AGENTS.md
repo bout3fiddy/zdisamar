@@ -1,19 +1,16 @@
 # Source Tree
 
-- `src/core/` owns engine lifecycle, typed requests/results, provenance, and explicit ownership boundaries.
-- `src/model/` owns canonical scene and observation-domain types. Do not fork separate simulation and retrieval object trees.
-- `src/kernels/` is for reusable numeric kernels only. Keep hot paths free of I/O and coarse-grained plugin dispatch.
-- `src/retrieval/` layers inverse methods on the canonical scene model.
-- `src/runtime/` owns caches, schedulers, and per-thread execution support.
-- `src/plugins/` owns manifests, capability registration, and plugin ABI boundaries.
-- `src/api/` owns the stable C ABI and Zig-facing wrappers.
-- `src/adapters/` owns CLI, legacy config import, mission wiring, and export shims.
+- `src/o2a/` owns the product surface. Keep it shaped around `case -> data -> optics -> solver -> spectrum -> report`.
+- `src/model/` owns the retained typed atmosphere, geometry, surface, spectroscopy, and instrument structures that still feed the O2 A forward path.
+- `src/kernels/` is for reusable numeric kernels only. Keep hot paths free of I/O and coarse-grained orchestration.
+- `src/core/` is reduced support code only. Do not grow it back into an engine/planner layer.
+- `src/adapters/` is reduced to narrow ingestion helpers that still support the retained O2 A data path.
 
 ## Local Rules
 
 - Push domain-heavy guidance into the nearest scoped `AGENTS.md` before expanding this file.
-- Prefer moving legacy behavior to `src/adapters/` instead of leaking it back into `src/core/`.
-- When a feature exists in both legacy and explicit/typed forms, name the source of truth clearly and keep derived hints, prepared state, and runtime consumers synchronized by tests rather than convention.
+- Prefer moving O2 A-specific behavior into `src/o2a/` instead of leaking new product wiring back into `src/core/` or `src/model/`.
+- When a feature exists in both exact and alternate forms, name the source of truth clearly and keep derived hints, prepared state, and runtime consumers synchronized by tests rather than convention.
 - Do not add typed fields whose only consumer is an eventual TODO. New scene/request/model controls must either affect runtime behavior now or be rejected explicitly.
 
 ## Scientific Port Commenting Contract
@@ -25,7 +22,7 @@
 ### Scope
 
 - This contract applies to vendor-derived or vendor-validated scientific code under `src/`.
-- It is especially important in `src/kernels/`, `src/retrieval/`, `src/runtime/`, and any adapter or preparation code that translates vendor atmospheric, spectroscopy, optics, or inversion behavior into typed Zig structures.
+- It is especially important in `src/o2a/`, `src/kernels/`, and any retained adapter or preparation code that translates vendor atmospheric, spectroscopy, optics, or transport behavior into typed Zig structures.
 - More specific subtrees may add stricter variants, but they should not weaken this contract.
 
 ### Comment Forms

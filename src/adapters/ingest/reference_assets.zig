@@ -22,6 +22,45 @@ const std = @import("std");
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const formats = @import("reference_assets_formats.zig");
 
+const hitran_extended_columns = [_][]const u8{
+    "gas_index",
+    "isotope_number",
+    "abundance_fraction",
+    "center_wavelength_nm",
+    "line_strength_cm2_per_molecule",
+    "air_half_width_nm",
+    "temperature_exponent",
+    "lower_state_energy_cm1",
+    "pressure_shift_nm",
+    "line_mixing_coefficient",
+};
+
+const hitran_vendor_o2a_columns = [_][]const u8{
+    "gas_index",
+    "isotope_number",
+    "abundance_fraction",
+    "center_wavelength_nm",
+    "line_strength_cm2_per_molecule",
+    "air_half_width_nm",
+    "temperature_exponent",
+    "lower_state_energy_cm1",
+    "pressure_shift_nm",
+    "line_mixing_coefficient",
+    "branch_ic1",
+    "branch_ic2",
+    "rotational_nf",
+};
+
+const hitran_legacy_columns = [_][]const u8{
+    "center_wavelength_nm",
+    "line_strength_cm2_per_molecule",
+    "air_half_width_nm",
+    "temperature_exponent",
+    "lower_state_energy_cm1",
+    "pressure_shift_nm",
+    "line_mixing_coefficient",
+};
+
 /// Purpose:
 ///   Describe the supported hydrated asset kinds.
 pub const AssetKind = enum {
@@ -199,34 +238,19 @@ pub const LoadedAsset = struct {
     ///   Preserve the line-center, width, energy, and mixing fields used by the spectroscopy
     ///   kernels and their parity checks.
     pub fn toSpectroscopyLineList(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLineList {
-        const extended_columns = [_][]const u8{
-            "gas_index",
-            "isotope_number",
-            "abundance_fraction",
-            "center_wavelength_nm",
-            "line_strength_cm2_per_molecule",
-            "air_half_width_nm",
-            "temperature_exponent",
-            "lower_state_energy_cm1",
-            "pressure_shift_nm",
-            "line_mixing_coefficient",
-        };
-        const legacy_columns = [_][]const u8{
-            "center_wavelength_nm",
-            "line_strength_cm2_per_molecule",
-            "air_half_width_nm",
-            "temperature_exponent",
-            "lower_state_energy_cm1",
-            "pressure_shift_nm",
-            "line_mixing_coefficient",
-        };
-        if (self.kind != .spectroscopy_line_list or (self.columnCount() != legacy_columns.len and self.columnCount() != extended_columns.len)) {
+        if (self.kind != .spectroscopy_line_list or
+            (self.columnCount() != hitran_legacy_columns.len and
+                self.columnCount() != hitran_extended_columns.len and
+                self.columnCount() != hitran_vendor_o2a_columns.len))
+        {
             return error.InvalidAssetKind;
         }
-        if (self.columnCount() == extended_columns.len) {
-            try expectColumns(self.column_names, &extended_columns);
+        if (self.columnCount() == hitran_vendor_o2a_columns.len) {
+            try expectColumns(self.column_names, &hitran_vendor_o2a_columns);
+        } else if (self.columnCount() == hitran_extended_columns.len) {
+            try expectColumns(self.column_names, &hitran_extended_columns);
         } else {
-            try expectColumns(self.column_names, &legacy_columns);
+            try expectColumns(self.column_names, &hitran_legacy_columns);
         }
 
         const lines = try allocator.alloc(ReferenceData.SpectroscopyLine, self.row_count);
@@ -234,16 +258,19 @@ pub const LoadedAsset = struct {
 
         for (lines, 0..) |*line, index| {
             line.* = .{
-                .gas_index = if (self.columnCount() == extended_columns.len) @intFromFloat(self.value(index, 0)) else 0,
-                .isotope_number = if (self.columnCount() == extended_columns.len) @intFromFloat(self.value(index, 1)) else 1,
-                .abundance_fraction = if (self.columnCount() == extended_columns.len) self.value(index, 2) else 1.0,
-                .center_wavelength_nm = self.value(index, if (self.columnCount() == extended_columns.len) 3 else 0),
-                .line_strength_cm2_per_molecule = self.value(index, if (self.columnCount() == extended_columns.len) 4 else 1),
-                .air_half_width_nm = self.value(index, if (self.columnCount() == extended_columns.len) 5 else 2),
-                .temperature_exponent = self.value(index, if (self.columnCount() == extended_columns.len) 6 else 3),
-                .lower_state_energy_cm1 = self.value(index, if (self.columnCount() == extended_columns.len) 7 else 4),
-                .pressure_shift_nm = self.value(index, if (self.columnCount() == extended_columns.len) 8 else 5),
-                .line_mixing_coefficient = self.value(index, if (self.columnCount() == extended_columns.len) 9 else 6),
+                .gas_index = if (self.columnCount() >= hitran_extended_columns.len) @intFromFloat(self.value(index, 0)) else 0,
+                .isotope_number = if (self.columnCount() >= hitran_extended_columns.len) @intFromFloat(self.value(index, 1)) else 1,
+                .abundance_fraction = if (self.columnCount() >= hitran_extended_columns.len) self.value(index, 2) else 1.0,
+                .center_wavelength_nm = self.value(index, if (self.columnCount() >= hitran_extended_columns.len) 3 else 0),
+                .line_strength_cm2_per_molecule = self.value(index, if (self.columnCount() >= hitran_extended_columns.len) 4 else 1),
+                .air_half_width_nm = self.value(index, if (self.columnCount() >= hitran_extended_columns.len) 5 else 2),
+                .temperature_exponent = self.value(index, if (self.columnCount() >= hitran_extended_columns.len) 6 else 3),
+                .lower_state_energy_cm1 = self.value(index, if (self.columnCount() >= hitran_extended_columns.len) 7 else 4),
+                .pressure_shift_nm = self.value(index, if (self.columnCount() >= hitran_extended_columns.len) 8 else 5),
+                .line_mixing_coefficient = self.value(index, if (self.columnCount() >= hitran_extended_columns.len) 9 else 6),
+                .branch_ic1 = if (self.columnCount() == hitran_vendor_o2a_columns.len and !std.math.isNan(self.value(index, 10))) @intFromFloat(self.value(index, 10)) else null,
+                .branch_ic2 = if (self.columnCount() == hitran_vendor_o2a_columns.len and !std.math.isNan(self.value(index, 11))) @intFromFloat(self.value(index, 11)) else null,
+                .rotational_nf = if (self.columnCount() == hitran_vendor_o2a_columns.len and !std.math.isNan(self.value(index, 12))) @intFromFloat(self.value(index, 12)) else null,
             };
         }
 
@@ -506,18 +533,13 @@ fn externalAssetSpec(kind: AssetKind, asset_format: []const u8) formats.AssetSpe
     if (std.mem.eql(u8, asset_format, "hitran_par")) {
         return .{
             .format = "hitran_160",
-            .columns = &.{
-                "gas_index",
-                "isotope_number",
-                "abundance_fraction",
-                "center_wavelength_nm",
-                "line_strength_cm2_per_molecule",
-                "air_half_width_nm",
-                "temperature_exponent",
-                "lower_state_energy_cm1",
-                "pressure_shift_nm",
-                "line_mixing_coefficient",
-            },
+            .columns = &hitran_extended_columns,
+        };
+    }
+    if (std.mem.eql(u8, asset_format, "hitran_par_o2a")) {
+        return .{
+            .format = "hitran_160",
+            .columns = &hitran_vendor_o2a_columns,
         };
     }
     if (std.mem.eql(u8, asset_format, "bira_cia")) {
@@ -579,18 +601,7 @@ fn externalAssetSpec(kind: AssetKind, asset_format: []const u8) formats.AssetSpe
         },
         .spectroscopy_line_list => .{
             .format = "hitran_160",
-            .columns = &.{
-                "gas_index",
-                "isotope_number",
-                "abundance_fraction",
-                "center_wavelength_nm",
-                "line_strength_cm2_per_molecule",
-                "air_half_width_nm",
-                "temperature_exponent",
-                "lower_state_energy_cm1",
-                "pressure_shift_nm",
-                "line_mixing_coefficient",
-            },
+            .columns = &hitran_extended_columns,
         },
         .spectroscopy_strong_line_set => .{
             .format = "lisa_sdf",
@@ -766,8 +777,6 @@ fn inferSquareDimension(row_count: u32) !usize {
 }
 
 test "reference asset loader validates hashes and parses numeric tables" {
-    const Engine = @import("../../core/Engine.zig").Engine;
-
     var asset = try loadBundleAsset(
         std.testing.allocator,
         .cross_section_table,
@@ -781,13 +790,6 @@ test "reference asset loader validates hashes and parses numeric tables" {
     try std.testing.expectEqual(@as(usize, 2), asset.columnCount());
     try std.testing.expectApproxEqAbs(@as(f64, 405.0), asset.value(0, 0), 1e-9);
     try std.testing.expectApproxEqAbs(@as(f64, 4.17e-19), asset.value(4, 1), 1e-25);
-
-    var engine = Engine.init(std.testing.allocator, .{});
-    defer engine.deinit();
-    try asset.registerWithEngine(&engine);
-
-    const cached = engine.dataset_cache.get(asset.dataset_id).?;
-    try std.testing.expectEqualStrings(asset.dataset_hash, cached.dataset_hash);
 
     var cross_sections = try asset.toCrossSectionTable(std.testing.allocator);
     defer cross_sections.deinit(std.testing.allocator);
@@ -816,6 +818,28 @@ test "reference asset loader parses HITRAN-style line lists into spectroscopy ro
     const off_line = lines.evaluateAt(420.0, 250.0, 800.0);
     try std.testing.expect(near_line.total_sigma_cm2_per_molecule > off_line.total_sigma_cm2_per_molecule);
     try std.testing.expectEqual(@as(f64, 0.0), near_line.line_mixing_sigma_cm2_per_molecule);
+}
+
+test "reference asset loader preserves vendor O2A filter metadata for bundled JPL line lists" {
+    var asset = try loadBundleAsset(
+        std.testing.allocator,
+        .spectroscopy_line_list,
+        "data/cross_sections/bundle_manifest.json",
+        "o2a_hitran_subset_07_hit08_tropomi",
+    );
+    defer asset.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 52), asset.row_count);
+    try std.testing.expectEqual(@as(usize, 13), asset.columnCount());
+
+    var lines = try asset.toSpectroscopyLineList(std.testing.allocator);
+    defer lines.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u16, 7), lines.lines[0].gas_index);
+    try std.testing.expectEqual(@as(u8, 1), lines.lines[0].isotope_number);
+    try std.testing.expectEqual(@as(u8, 5), lines.lines[2].branch_ic1.?);
+    try std.testing.expectEqual(@as(u8, 1), lines.lines[2].branch_ic2.?);
+    try std.testing.expect(lines.lines[2].rotational_nf.? <= 35);
 }
 
 test "reference asset loader parses vendor strong-line and relaxation sidecars" {

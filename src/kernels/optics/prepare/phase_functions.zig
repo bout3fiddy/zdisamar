@@ -1,10 +1,69 @@
+//! Purpose:
+//!   Define the typed phase-function coefficient carriers used by optics
+//!   preparation and scalar transport.
+//!
+//! Physics:
+//!   Encodes the Rayleigh proxy coefficients, vendor-style analytic HG
+//!   expansion, and weighted coefficient mixing used to prepare transport
+//!   layers.
+//!
+//! Vendor:
+//!   `propAtmosphereModule::getNumberPhasefcoef` and
+//!   `propAtmosphereModule::getOptPropAtm`
+//!
+//! Design:
+//!   The Zig path keeps a fixed-capacity coefficient carrier so the transport
+//!   API remains typed while still allowing the active HG tail to follow the
+//!   DISAMAR truncation rule instead of a hard four-term cutoff.
+//!
+//! Invariants:
+//!   Coefficient index `0` remains `1.0`, inactive tail entries remain zero,
+//!   and the active HG budget follows the vendor truncation recurrence.
+//!
+//! Validation:
+//!   `tests/unit/optics_preparation_test.zig`,
+//!   `tests/validation/disamar_compatibility_harness_test.zig`, and the O2A
+//!   vendor-parity function-diff harness.
+
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 
-pub const phase_coefficient_count: usize = 4;
+pub const legacy_phase_coefficient_count: usize = 4;
+pub const vendor_hg_max_phase_index: usize = 150;
+pub const vendor_hg_truncation_threshold: f64 = 1.0e-8;
+pub const phase_coefficient_count: usize = vendor_hg_max_phase_index + 1;
+
+pub fn zeroPhaseCoefficients() [phase_coefficient_count]f64 {
+    var coefficients = [_]f64{0.0} ** phase_coefficient_count;
+    coefficients[0] = 1.0;
+    return coefficients;
+}
+
+pub fn phaseCoefficientsFromLegacy(
+    legacy_coefficients: [legacy_phase_coefficient_count]f64,
+) [phase_coefficient_count]f64 {
+    var coefficients = zeroPhaseCoefficients();
+    inline for (0..legacy_phase_coefficient_count) |index| {
+        coefficients[index] = legacy_coefficients[index];
+    }
+    coefficients[0] = 1.0;
+    return coefficients;
+}
+
+pub fn maxPhaseCoefficientIndex(phase_coefficients: [phase_coefficient_count]f64) usize {
+    var max_index: usize = 0;
+    for (1..phase_coefficient_count) |idx| {
+        if (@abs(phase_coefficients[idx]) > 1.0e-12) {
+            max_index = idx;
+        }
+    }
+    return max_index;
+}
 
 pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
-    return .{ 1.0, 0.0, 0.05, 0.0 };
+    var coefficients = zeroPhaseCoefficients();
+    coefficients[2] = 0.05;
+    return coefficients;
 }
 
 pub fn computeSingleScatterAlbedo(scene: *const Scene, wavelength_nm: f64) f64 {
@@ -26,10 +85,18 @@ pub fn computeSingleScatterAlbedo(scene: *const Scene, wavelength_nm: f64) f64 {
 }
 
 pub fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
-    var coefficients = [_]f64{0.0} ** phase_coefficient_count;
-    coefficients[0] = 1.0;
+    var coefficients = zeroPhaseCoefficients();
+    const truncation_g = @abs(asymmetry_factor);
+    if (truncation_g <= 0.0) return coefficients;
+
+    var normalized_tail: f64 = 1.0;
     for (1..phase_coefficient_count) |index| {
-        coefficients[index] = std.math.pow(f64, asymmetry_factor, @as(f64, @floatFromInt(index)));
+        const order: f64 = @floatFromInt(index);
+        normalized_tail *= truncation_g * (2.0 * order - 1.0) / (2.0 * order + 1.0);
+        if (normalized_tail < vendor_hg_truncation_threshold) break;
+        coefficients[index] =
+            (2.0 * order + 1.0) *
+            std.math.pow(f64, asymmetry_factor, order);
     }
     return coefficients;
 }
@@ -45,7 +112,7 @@ pub fn combinePhaseCoefficients(
     const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
     if (total_scattering == 0.0) return gas_phase_coefficients;
 
-    var combined = [_]f64{0.0} ** phase_coefficient_count;
+    var combined = zeroPhaseCoefficients();
     for (0..phase_coefficient_count) |index| {
         combined[index] =
             (gas_scattering_optical_depth * gas_phase_coefficients[index] +
@@ -112,4 +179,23 @@ test "layer depolarization uses already-fraction-scaled particle taus" {
         0.20 * (0.01 + 0.01 * (1.0 - scene.cloud.asymmetry_factor));
 
     try std.testing.expectApproxEqRel(expected, depolarization, 1.0e-12);
+}
+
+test "analytic HG phase coefficients follow vendor normalization" {
+    const coefficients = hgPhaseCoefficients(0.7);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), coefficients[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0 * 0.7), coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 5.0 * 0.7 * 0.7), coefficients[2], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 7.0 * 0.7 * 0.7 * 0.7), coefficients[3], 1.0e-12);
+}
+
+test "analytic HG phase coefficients follow vendor truncation budget" {
+    const coefficients = hgPhaseCoefficients(0.7);
+    try std.testing.expectEqual(@as(usize, 39), maxPhaseCoefficientIndex(coefficients));
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 79.0 * std.math.pow(f64, 0.7, 39.0)),
+        coefficients[39],
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefficients[40], 1.0e-12);
 }

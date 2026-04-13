@@ -23,13 +23,15 @@
 //!   See `tests/unit/transport_labos_test.zig` for geometry, matrix, and
 //!   phase-basis smoke coverage.
 
+const std = @import("std");
 const gauss_legendre = @import("../../quadrature/gauss_legendre.zig");
+const phase_functions = @import("../../optics/prepare/phase_functions.zig");
 
 pub const max_gauss: usize = 10;
 pub const max_extra: usize = 2; // viewing + solar
 pub const max_nmutot: usize = max_gauss + max_extra;
 pub const max_n2: usize = max_nmutot * max_nmutot;
-pub const max_phase_coef: usize = @import("../../optics/prepare/phase_functions.zig").phase_coefficient_count;
+pub const max_phase_coef: usize = phase_functions.phase_coefficient_count;
 
 const threshold_q: f64 = 1.0e-3;
 
@@ -112,6 +114,8 @@ pub const Geometry = struct {
     nmutot: usize,
     u: [max_nmutot]f64,
     w: [max_nmutot]f64,
+    ug: [max_gauss]f64,
+    wg: [max_gauss]f64,
     mu0: f64,
     muv: f64,
 
@@ -128,6 +132,8 @@ pub const Geometry = struct {
             const wg = rule.weights[i] * 0.5;
             geo.u[i] = ug;
             geo.w[i] = @sqrt(2.0 * ug * wg);
+            geo.ug[i] = ug;
+            geo.wg[i] = wg;
         }
         geo.u[n_gauss] = muv;
         geo.w[n_gauss] = 1.0;
@@ -137,6 +143,10 @@ pub const Geometry = struct {
         for (geo.nmutot..max_nmutot) |i| {
             geo.u[i] = 0.0;
             geo.w[i] = 0.0;
+        }
+        for (geo.n_gauss..max_gauss) |i| {
+            geo.ug[i] = 0.0;
+            geo.wg[i] = 0.0;
         }
         return geo;
     }
@@ -323,6 +333,125 @@ const PlmArrays = struct {
     minus: [max_nmutot]f64,
 };
 
+pub const PhaseKernel = struct {
+    Zplus: Mat,
+    Zmin: Mat,
+};
+
+pub const FourierPlmBasis = struct {
+    i_fourier: usize,
+    max_phase_index: usize,
+    plus: [max_phase_coef][max_nmutot]f64,
+    minus: [max_phase_coef][max_nmutot]f64,
+
+    fn storeWeighted(
+        self: *FourierPlmBasis,
+        coef_idx: usize,
+        p_l_plus: *const [max_nmutot]f64,
+        p_l_minus: *const [max_nmutot]f64,
+        geo: *const Geometry,
+    ) void {
+        for (0..geo.nmutot) |imu| {
+            self.plus[coef_idx][imu] = p_l_plus[imu] * geo.w[imu];
+            self.minus[coef_idx][imu] = p_l_minus[imu] * geo.w[imu];
+        }
+    }
+
+    /// Purpose:
+    ///   Precompute the weighted associated-Legendre basis for one Fourier term.
+    ///
+    /// Physics:
+    ///   Carries the Fourier-specific `P_l^m(mu) * w(mu)` basis used by the
+    ///   LABOS phase-kernel builders.
+    ///
+    /// Vendor:
+    ///   `labosModule phase-basis preparation`
+    ///
+    /// Inputs:
+    ///   `i_fourier` selects the azimuthal Fourier order, `max_phase_index`
+    ///   bounds the highest phase coefficient needed by the current transport
+    ///   execution, and `geo` supplies the discrete-ordinate directions.
+    ///
+    /// Outputs:
+    ///   Returns a stack-backed cache covering all coefficients in
+    ///   `[i_fourier, max_phase_index]`.
+    ///
+    /// Decisions:
+    ///   The vendor path keeps this basis work outside the inner kernel loops.
+    ///   Zig preserves the explicit call graph by precomputing the basis once
+    ///   per `(geometry, Fourier, max_phase_index)` context instead of
+    ///   rebuilding it inside every `fillZplusZmin(...)` call.
+    pub fn init(
+        i_fourier: usize,
+        max_phase_index: usize,
+        geo: *const Geometry,
+    ) FourierPlmBasis {
+        var result = FourierPlmBasis{
+            .i_fourier = i_fourier,
+            .max_phase_index = max_phase_index,
+            .plus = [_][max_nmutot]f64{.{0.0} ** max_nmutot} ** max_phase_coef,
+            .minus = [_][max_nmutot]f64{.{0.0} ** max_nmutot} ** max_phase_coef,
+        };
+        if (max_phase_index < i_fourier) return result;
+
+        var sqlm: [max_phase_coef]f64 = .{0.0} ** max_phase_coef;
+        for (i_fourier + 1..max_phase_index + 1) |l| {
+            const lf: f64 = @floatFromInt(l);
+            const mf: f64 = @floatFromInt(i_fourier);
+            sqlm[l] = @sqrt(lf * lf - mf * mf);
+        }
+
+        var p_lm1_plus: [max_nmutot]f64 = .{0.0} ** max_nmutot;
+        var p_l_plus: [max_nmutot]f64 = undefined;
+        var p_lm1_minus: [max_nmutot]f64 = .{0.0} ** max_nmutot;
+        var p_l_minus: [max_nmutot]f64 = undefined;
+
+        for (0..geo.nmutot) |imu| {
+            const u = geo.u[imu];
+            const one_minus_uu = 1.0 - u * u;
+            const squu = @sqrt(@max(one_minus_uu, 0.0));
+
+            const start_val: f64 = switch (i_fourier) {
+                0 => 1.0,
+                1 => squu / @sqrt(2.0),
+                2 => 0.25 * @sqrt(6.0) * one_minus_uu,
+                else => blk: {
+                    var f: f64 = 0.375 * one_minus_uu * one_minus_uu;
+                    for (3..i_fourier + 1) |m_idx| {
+                        const mf: f64 = @floatFromInt(m_idx);
+                        f *= one_minus_uu * (mf - 0.5) / mf;
+                    }
+                    break :blk @sqrt(@max(f, 0.0));
+                },
+            };
+            p_l_plus[imu] = start_val;
+            p_l_minus[imu] = start_val;
+        }
+
+        result.storeWeighted(i_fourier, &p_l_plus, &p_l_minus, geo);
+        if (max_phase_index == i_fourier) return result;
+
+        for (i_fourier..max_phase_index) |l| {
+            const a_coef = sqlm[l + 1];
+            const c_coef = -sqlm[l];
+            for (0..geo.nmutot) |imu| {
+                const b_plus = (2.0 * @as(f64, @floatFromInt(l)) + 1.0) * geo.u[imu];
+                const p_lp1 = (b_plus * p_l_plus[imu] + c_coef * p_lm1_plus[imu]) / a_coef;
+                p_lm1_plus[imu] = p_l_plus[imu];
+                p_l_plus[imu] = p_lp1;
+
+                const b_minus = -(2.0 * @as(f64, @floatFromInt(l)) + 1.0) * geo.u[imu];
+                const p_lp1_m = (b_minus * p_l_minus[imu] + c_coef * p_lm1_minus[imu]) / a_coef;
+                p_lm1_minus[imu] = p_l_minus[imu];
+                p_l_minus[imu] = p_lp1_m;
+            }
+            result.storeWeighted(l + 1, &p_l_plus, &p_l_minus, geo);
+        }
+
+        return result;
+    }
+};
+
 fn computePlm(
     i_fourier: usize,
     coef_idx: usize,
@@ -337,7 +466,7 @@ fn computePlm(
     }
 
     var sqlm: [max_phase_coef]f64 = .{0.0} ** max_phase_coef;
-    for (i_fourier + 1..max_phase_coef) |l| {
+    for (i_fourier + 1..coef_idx + 1) |l| {
         const lf: f64 = @floatFromInt(l);
         const mf: f64 = @floatFromInt(i_fourier);
         sqlm[l] = @sqrt(lf * lf - mf * mf);
@@ -406,26 +535,100 @@ fn computePlm(
 }
 
 /// Build Zplus(i,j) and Zmin(i,j) for scalar case.
-pub fn fillZplusZmin(
+pub fn fillZplusZminFromBasis(
     i_fourier: usize,
     phase_coefs: [max_phase_coef]f64,
     geo: *const Geometry,
-) struct { Zplus: Mat, Zmin: Mat } {
+    plm_basis: *const FourierPlmBasis,
+) PhaseKernel {
     const n = geo.nmutot;
     var zplus = Mat.zero(n);
     var zmin = Mat.zero(n);
+    const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);
+    if (i_fourier > max_phase_index) {
+        return .{ .Zplus = zplus, .Zmin = zmin };
+    }
 
-    for (i_fourier..max_phase_coef) |l| {
-        const plm = computePlm(i_fourier, l, geo);
+    for (i_fourier..max_phase_index + 1) |l| {
         const alpha1 = phase_coefs[l];
-        for (0..n) |j| {
-            const pj = plm.plus[j];
-            for (0..n) |i| {
-                zplus.addTo(i, j, alpha1 * plm.plus[i] * pj);
-                zmin.addTo(i, j, alpha1 * plm.minus[i] * pj);
+        if (l <= plm_basis.max_phase_index) {
+            for (0..n) |j| {
+                const pj = plm_basis.plus[l][j];
+                for (0..n) |i| {
+                    zplus.addTo(i, j, alpha1 * plm_basis.plus[l][i] * pj);
+                    zmin.addTo(i, j, alpha1 * plm_basis.minus[l][i] * pj);
+                }
+            }
+        } else {
+            const plm = computePlm(i_fourier, l, geo);
+            for (0..n) |j| {
+                const pj = plm.plus[j];
+                for (0..n) |i| {
+                    zplus.addTo(i, j, alpha1 * plm.plus[i] * pj);
+                    zmin.addTo(i, j, alpha1 * plm.minus[i] * pj);
+                }
             }
         }
     }
 
     return .{ .Zplus = zplus, .Zmin = zmin };
+}
+
+/// Build Zplus(i,j) and Zmin(i,j) for scalar case.
+pub fn fillZplusZmin(
+    i_fourier: usize,
+    phase_coefs: [max_phase_coef]f64,
+    geo: *const Geometry,
+) PhaseKernel {
+    const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);
+    const plm_basis = FourierPlmBasis.init(i_fourier, max_phase_index, geo);
+    return fillZplusZminFromBasis(i_fourier, phase_coefs, geo, &plm_basis);
+}
+
+test "FourierPlmBasis reproduces direct Zplus/Zmin construction" {
+    const geo = Geometry.init(8, 0.54, 0.67);
+    const phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{
+        1.0,
+        0.62,
+        0.31,
+        0.15,
+    });
+
+    var baseline: PhaseKernel = .{
+        .Zplus = Mat.zero(geo.nmutot),
+        .Zmin = Mat.zero(geo.nmutot),
+    };
+    const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefficients);
+    for (1..max_phase_index + 1) |l| {
+        const plm = computePlm(1, l, &geo);
+        const alpha1 = phase_coefficients[l];
+        for (0..geo.nmutot) |j| {
+            const pj = plm.plus[j];
+            for (0..geo.nmutot) |i| {
+                baseline.Zplus.addTo(i, j, alpha1 * plm.plus[i] * pj);
+                baseline.Zmin.addTo(i, j, alpha1 * plm.minus[i] * pj);
+            }
+        }
+    }
+    const basis_cache = FourierPlmBasis.init(
+        1,
+        max_phase_index,
+        &geo,
+    );
+    const cached = fillZplusZminFromBasis(1, phase_coefficients, &geo, &basis_cache);
+
+    for (0..geo.nmutot) |j| {
+        for (0..geo.nmutot) |i| {
+            try std.testing.expectApproxEqAbs(
+                baseline.Zplus.get(i, j),
+                cached.Zplus.get(i, j),
+                1.0e-12,
+            );
+            try std.testing.expectApproxEqAbs(
+                baseline.Zmin.get(i, j),
+                cached.Zmin.get(i, j),
+                1.0e-12,
+            );
+        }
+    }
 }

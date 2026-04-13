@@ -36,6 +36,58 @@ const Workspace = @import("workspace.zig");
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
 
+fn recordPhaseLap(timer: ?*std.time.Timer, target: *u64) void {
+    if (timer) |resolved_timer| target.* = resolved_timer.lap();
+}
+
+fn collectUniqueForwardMisses(
+    allocator: Allocator,
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    resolved_axis: *const grid.ResolvedAxis,
+    radiance_calibration: calibration.Calibration,
+    providers: Types.ProviderBindings,
+) ![]SpectralEval.ForwardCacheMiss {
+    const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
+    var seen = std.AutoHashMap(i64, void).init(allocator);
+    defer seen.deinit();
+    var misses = std.ArrayList(SpectralEval.ForwardCacheMiss).empty;
+    errdefer misses.deinit(allocator);
+
+    for (0..sample_count) |index| {
+        const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
+        const evaluation_wavelength_nm = calibration.shiftedWavelength(
+            radiance_calibration,
+            nominal_wavelength_nm,
+        );
+        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
+        providers.instrument.integrationForWavelength(
+            scene,
+            prepared,
+            .radiance,
+            nominal_wavelength_nm,
+            &integration,
+        );
+
+        const integration_sample_count = if (integration.enabled) integration.sample_count else 1;
+        for (0..integration_sample_count) |sample_index| {
+            const wavelength_nm = if (integration.enabled)
+                evaluation_wavelength_nm + integration.offsets_nm[sample_index]
+            else
+                evaluation_wavelength_nm;
+            const key = SpectralEval.SpectralEvaluationCache.keyFor(wavelength_nm);
+            const entry = try seen.getOrPut(key);
+            if (entry.found_existing) continue;
+            try misses.append(allocator, .{
+                .key = key,
+                .wavelength_nm = wavelength_nm,
+            });
+        }
+    }
+
+    return misses.toOwnedSlice(allocator);
+}
+
 /// Purpose:
 ///   Execute the transport solver across the scene spectral grid.
 ///
@@ -54,19 +106,25 @@ const max_summary_samples: u32 = 128;
 ///
 /// Validation:
 ///   Measurement-space summary and product tests.
-pub fn simulate(
+fn simulateInternal(
     allocator: Allocator,
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     providers: Types.ProviderBindings,
     buffers: Workspace.Buffers,
+    forward_profile: ?*Types.ForwardProfile,
 ) Workspace.Error!Types.MeasurementSpaceSummary {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try Workspace.validateBuffers(sample_count, buffers);
     var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
     defer evaluation_cache.deinit();
+    if (forward_profile) |profile| profile.reset();
+    var phase_timer = if (forward_profile != null)
+        std.time.Timer.start() catch unreachable
+    else
+        null;
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
@@ -87,6 +145,25 @@ pub fn simulate(
     const uses_integrated_irradiance_sampling = providers.instrument.usesIntegratedSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
+    const forward_misses = try collectUniqueForwardMisses(
+        allocator,
+        scene,
+        prepared,
+        &resolved_axis,
+        radiance_calibration,
+        providers,
+    );
+    defer allocator.free(forward_misses);
+    try SpectralEval.prefetchForwardSamples(
+        allocator,
+        scene,
+        route,
+        prepared,
+        providers,
+        safe_span,
+        forward_misses,
+        &evaluation_cache,
+    );
 
     var radiance_sum: f64 = 0.0;
     var irradiance_sum: f64 = 0.0;
@@ -110,7 +187,7 @@ pub fn simulate(
         );
         buffers.wavelengths[index] = nominal_wavelength_nm;
 
-        var integration: @import("../../../plugins/providers/instrument.zig").IntegrationKernel = undefined;
+        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
         providers.instrument.integrationForWavelength(scene, prepared, .radiance, nominal_wavelength_nm, &integration);
 
         const integrated = try SpectralEval.integrateForwardAtNominal(
@@ -134,6 +211,7 @@ pub fn simulate(
         buffers.scratch[index] = integrated.radiance;
         if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
     }
+    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.radiance_integration_ns);
     if (uses_integrated_radiance_sampling) {
         // DECISION:
         //   Integrated sampling bypasses slit convolution because the
@@ -151,6 +229,7 @@ pub fn simulate(
         buffers.radiance,
         buffers.scratch_aux,
     );
+    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.radiance_postprocess_ns);
 
     for (0..sample_count) |index| {
         const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
@@ -158,7 +237,7 @@ pub fn simulate(
             irradiance_calibration,
             nominal_wavelength_nm,
         );
-        var integration: @import("../../../plugins/providers/instrument.zig").IntegrationKernel = undefined;
+        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
         providers.instrument.integrationForWavelength(scene, prepared, .irradiance, nominal_wavelength_nm, &integration);
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,
@@ -169,6 +248,7 @@ pub fn simulate(
             &integration,
         );
     }
+    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.irradiance_integration_ns);
     if (uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
@@ -190,6 +270,7 @@ pub fn simulate(
         buffers.radiance,
         buffers.scratch_aux,
     );
+    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.irradiance_postprocess_ns);
 
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
@@ -276,6 +357,7 @@ pub fn simulate(
         for (jacobian) |value| jacobian_sum += value;
         mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
     }
+    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.reduction_ns);
 
     return .{
         .sample_count = @intCast(sample_count),
@@ -290,6 +372,17 @@ pub fn simulate(
             0.0,
         .mean_jacobian = mean_jacobian,
     };
+}
+
+pub fn simulate(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    providers: Types.ProviderBindings,
+    buffers: Workspace.Buffers,
+) Workspace.Error!Types.MeasurementSpaceSummary {
+    return simulateInternal(allocator, scene, route, prepared, providers, buffers, null);
 }
 
 fn materializeChannelSigma(
@@ -338,13 +431,14 @@ pub fn simulateSummaryWithWorkspace(
     if (summary_scene.spectral_grid.sample_count > max_summary_samples) {
         summary_scene.spectral_grid.sample_count = max_summary_samples;
     }
-    return simulate(
+    return simulateInternal(
         allocator,
         &summary_scene,
         route,
         prepared,
         providers,
         try workspace.buffers(allocator, &summary_scene, route, providers),
+        null,
     );
 }
 
@@ -356,6 +450,24 @@ pub fn simulateProduct(
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     providers: Types.ProviderBindings,
+) Workspace.Error!Types.MeasurementSpaceProduct {
+    return simulateProductWithProfile(
+        allocator,
+        scene,
+        route,
+        prepared,
+        providers,
+        null,
+    );
+}
+
+pub fn simulateProductWithProfile(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    providers: Types.ProviderBindings,
+    forward_profile: ?*Types.ForwardProfile,
 ) Workspace.Error!Types.MeasurementSpaceProduct {
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     const transport_layer_count = Workspace.resolvedTransportLayerCount(route, prepared);
@@ -414,7 +526,7 @@ pub fn simulateProduct(
     const pseudo_spherical_level_altitudes = try allocator.alloc(f64, transport_layer_count + 1);
     defer allocator.free(pseudo_spherical_level_altitudes);
 
-    const summary = try simulate(allocator, scene, route, prepared, providers, .{
+    const summary = try simulateInternal(allocator, scene, route, prepared, providers, .{
         .wavelengths = wavelengths,
         .radiance = radiance,
         .irradiance = irradiance,
@@ -433,7 +545,7 @@ pub fn simulateProduct(
         .radiance_noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
         .irradiance_noise_sigma = if (irradiance_noise_sigma.len == 0) null else irradiance_noise_sigma,
         .reflectance_noise_sigma = if (reflectance_noise_sigma.len == 0) null else reflectance_noise_sigma,
-    });
+    }, forward_profile);
 
     return .{
         .summary = summary,

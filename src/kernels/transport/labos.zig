@@ -30,6 +30,7 @@ const attenuation = @import("labos/attenuation.zig");
 const layers_mod = @import("labos/layers.zig");
 const orders_mod = @import("labos/orders.zig");
 const reflectance_mod = @import("labos/reflectance.zig");
+const phase_functions = @import("../optics/prepare/phase_functions.zig");
 
 pub const max_gauss = basis.max_gauss;
 pub const max_extra = basis.max_extra;
@@ -53,12 +54,14 @@ pub const semul = basis.semul;
 pub const matAdd = basis.matAdd;
 pub const qseries = basis.qseries;
 pub const fillZplusZmin = basis.fillZplusZmin;
+pub const PhaseKernel = basis.PhaseKernel;
 
 pub const fillAttenuation = attenuation.fillAttenuation;
 pub const fillAttenuationDynamic = attenuation.fillAttenuationDynamic;
 pub const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWithGrid;
 
 pub const calcRTlayersInto = layers_mod.calcRTlayersInto;
+pub const calcRTlayersIntoWithBasis = layers_mod.calcRTlayersIntoWithBasis;
 pub const calcRTlayers = layers_mod.calcRTlayers;
 pub const fillSurface = layers_mod.fillSurface;
 
@@ -66,7 +69,9 @@ pub const dotGauss = orders_mod.dotGauss;
 
 pub const calcReflectance = reflectance_mod.calcReflectance;
 pub const calcIntegratedReflectance = reflectance_mod.calcIntegratedReflectance;
+pub const calcIntegratedReflectanceWithBasis = reflectance_mod.calcIntegratedReflectanceWithBasis;
 pub const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
+pub const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 pub const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
 fn directSurfaceOnlyReflectance(input: common.ForwardInput) f64 {
@@ -179,6 +184,7 @@ fn layerResolvedLabos(
     const end_level: usize = nlayer;
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
+    const phase_max = resolvedPhaseCoefficientMax(input);
     // DECISION:
     //   Only use the integrated source-function carrier when the route
     //   supplies the aligned source interfaces or RTM quadrature grid.
@@ -189,13 +195,54 @@ fn layerResolvedLabos(
             input.rtm_quadrature.isValidFor(input.layers.len));
 
     var reflectance: f64 = 0.0;
+    var orders_workspace = try orders_mod.OrdersWorkspace.init(allocator, nlevel);
+    defer orders_workspace.deinit();
+    const layer_phase_kernels: ?[]basis.PhaseKernel = if (use_integrated_source)
+        try allocator.alloc(basis.PhaseKernel, nlevel)
+    else
+        null;
+    defer if (layer_phase_kernels) |cache| allocator.free(cache);
+    const layer_phase_kernel_valid: ?[]bool = if (use_integrated_source)
+        try allocator.alloc(bool, nlevel)
+    else
+        null;
+    defer if (layer_phase_kernel_valid) |valid| allocator.free(valid);
     for (0..fourier_max + 1) |i_fourier| {
-        calcRTlayersInto(rt, input.layers, i_fourier, &geo, controls);
+        const plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, &geo);
+        calcRTlayersIntoWithBasis(
+            rt,
+            input.layers,
+            i_fourier,
+            &geo,
+            controls,
+            &plm_basis,
+            layer_phase_kernels,
+            layer_phase_kernel_valid,
+        );
         rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
-        var orders_result = try orders_mod.ordersScat(allocator, start_level, end_level, &geo, &atten, rt, controls, num_orders_max);
-        defer orders_result.deinit();
+        const orders_result = orders_mod.ordersScatInto(
+            &orders_workspace,
+            start_level,
+            end_level,
+            &geo,
+            &atten,
+            rt,
+            controls,
+            num_orders_max,
+        );
         const refl_fc = if (use_integrated_source)
-            calcIntegratedReflectance(input.layers, input.source_interfaces, input.rtm_quadrature, orders_result.ud, end_level, i_fourier, &geo)
+            calcIntegratedReflectanceWithBasis(
+                input.layers,
+                input.source_interfaces,
+                input.rtm_quadrature,
+                orders_result.ud,
+                end_level,
+                i_fourier,
+                &geo,
+                &plm_basis,
+                layer_phase_kernels,
+                layer_phase_kernel_valid,
+            )
         else
             calcReflectance(orders_result.ud, end_level, &geo);
         // PARITY:
@@ -229,7 +276,7 @@ fn singleLayerLabos(
         .single_scatter_albedo = input.single_scatter_albedo,
         .solar_mu = mu0,
         .view_mu = muv,
-        .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
     };
     const layers = [_]common.LayerInput{layer};
 
@@ -238,11 +285,21 @@ fn singleLayerLabos(
     const fourier_max = resolvedFourierMax(input, controls);
 
     var reflectance: f64 = 0.0;
+    var orders_workspace = try orders_mod.OrdersWorkspace.init(allocator, 2);
+    defer orders_workspace.deinit();
     for (0..fourier_max + 1) |i_fourier| {
         var rt = calcRTlayers(&layers, i_fourier, &geo, controls);
         rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
-        var orders_result = try orders_mod.ordersScat(allocator, 0, 1, &geo, &atten, rt[0..2], controls, num_orders_max);
-        defer orders_result.deinit();
+        const orders_result = orders_mod.ordersScatInto(
+            &orders_workspace,
+            0,
+            1,
+            &geo,
+            &atten,
+            rt[0..2],
+            controls,
+            num_orders_max,
+        );
         const refl_fc = calcReflectance(orders_result.ud, 1, &geo);
         const fourier_weight = if (i_fourier == 0)
             1.0
@@ -299,21 +356,21 @@ test "labos multi-layer produces bounded positive reflectance" {
             .single_scatter_albedo = 0.99,
             .solar_mu = 0.5,
             .view_mu = 0.6,
-            .phase_coefficients = .{ 1.0, 0.5, 0.25, 0.125 },
+            .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.5, 0.25, 0.125 }),
         },
         .{
             .optical_depth = 0.3,
             .single_scatter_albedo = 0.8,
             .solar_mu = 0.5,
             .view_mu = 0.6,
-            .phase_coefficients = .{ 1.0, 0.3, 0.09, 0.027 },
+            .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.3, 0.09, 0.027 }),
         },
         .{
             .optical_depth = 0.2,
             .single_scatter_albedo = 0.95,
             .solar_mu = 0.5,
             .view_mu = 0.6,
-            .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+            .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
         },
     };
 
@@ -434,7 +491,7 @@ test "labos optically thin layer has small reflectance" {
         .single_scatter_albedo = 0.9,
         .solar_mu = 0.5,
         .view_mu = 0.6,
-        .phase_coefficients = .{ 1.0, 0.0, 0.0, 0.0 },
+        .phase_coefficients = phase_functions.zeroPhaseCoefficients(),
     }};
     const route = try common.prepareRoute(.{
         .regime = .limb,

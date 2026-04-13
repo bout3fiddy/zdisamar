@@ -24,7 +24,8 @@
 
 const std = @import("std");
 const SceneModel = @import("../../model/Scene.zig");
-const phase_coefficient_count = @import("../optics/prepare/phase_functions.zig").phase_coefficient_count;
+const phase_functions = @import("../optics/prepare/phase_functions.zig");
+const phase_coefficient_count = phase_functions.phase_coefficient_count;
 
 /// Atmospheric scattering treatment.
 ///
@@ -251,7 +252,7 @@ pub const LayerInput = struct {
     single_scatter_albedo: f64 = 0.0,
     solar_mu: f64 = 1.0,
     view_mu: f64 = 1.0,
-    phase_coefficients: [phase_coefficient_count]f64 = .{ 1.0, 0.0, 0.0, 0.0 },
+    phase_coefficients: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
 };
 
 /// Source-function metadata on the transport interface grid.
@@ -264,7 +265,7 @@ pub const SourceInterfaceInput = struct {
     source_weight: f64 = 0.0,
     rtm_weight: f64 = 0.0,
     ksca_above: f64 = 0.0,
-    phase_coefficients_above: [phase_coefficient_count]f64 = .{ 1.0, 0.0, 0.0, 0.0 },
+    phase_coefficients_above: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
 
     /// Purpose:
     ///   Resolve the effective source weight for the current interface.
@@ -289,7 +290,7 @@ pub const RtmQuadratureLevel = struct {
     altitude_km: f64 = 0.0,
     weight: f64 = 0.0,
     ksca: f64 = 0.0,
-    phase_coefficients: [phase_coefficient_count]f64 = .{ 1.0, 0.0, 0.0, 0.0 },
+    phase_coefficients: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
 
     /// Purpose:
     ///   Return the scattering weight carried by one quadrature node.
@@ -390,6 +391,7 @@ pub const PrepareError = error{
 /// Errors that can arise while preparing or executing transport.
 pub const ExecuteError = PrepareError || error{
     SingularDoublingDenominator,
+    MissingExplicitRtmQuadrature,
     OutOfMemory,
 };
 
@@ -547,11 +549,11 @@ test "source interface builder preserves the top boundary weight and halves the 
     const layers = [_]LayerInput{
         .{
             .scattering_optical_depth = 0.20,
-            .phase_coefficients = .{ 1.0, 0.10, 0.0, 0.0 },
+            .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.10, 0.0, 0.0 }),
         },
         .{
             .scattering_optical_depth = 0.40,
-            .phase_coefficients = .{ 1.0, 0.30, 0.0, 0.0 },
+            .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.30, 0.0, 0.0 }),
         },
     };
     var source_interfaces: [3]SourceInterfaceInput = undefined;

@@ -424,8 +424,14 @@ fn prepareWithInputs(
     defer allocator.free(cloud_sublayer_distribution);
     const aerosol_mie_point = if (aerosol_mie) |table| table.interpolate(midpoint_nm) else null;
     const cloud_mie_point = if (cloud_mie) |table| table.interpolate(midpoint_nm) else null;
-    const aerosol_phase_coefficients = if (aerosol_mie_point) |point| point.phase_coefficients else PhaseFunctions.hgPhaseCoefficients(scene.aerosol.asymmetry_factor);
-    const cloud_phase_coefficients = if (cloud_mie_point) |point| point.phase_coefficients else PhaseFunctions.hgPhaseCoefficients(scene.cloud.asymmetry_factor);
+    const aerosol_phase_coefficients = if (aerosol_mie_point) |point|
+        PhaseFunctions.phaseCoefficientsFromLegacy(point.phase_coefficients)
+    else
+        PhaseFunctions.hgPhaseCoefficients(scene.aerosol.asymmetry_factor);
+    const cloud_phase_coefficients = if (cloud_mie_point) |point|
+        PhaseFunctions.phaseCoefficientsFromLegacy(point.phase_coefficients)
+    else
+        PhaseFunctions.hgPhaseCoefficients(scene.cloud.asymmetry_factor);
     const aerosol_single_scatter_albedo = if (aerosol_mie_point) |point| point.single_scatter_albedo else scene.aerosol.single_scatter_albedo;
     const cloud_single_scatter_albedo = if (cloud_mie_point) |point| point.single_scatter_albedo else scene.cloud.single_scatter_albedo;
     const aerosol_extinction_scale = if (aerosol_mie_point) |point| point.extinction_scale else 1.0;
@@ -962,7 +968,7 @@ fn prepareWithInputs(
     else
         0.0;
 
-    return .{
+    var prepared: PreparedOpticalState = .{
         .layers = layers,
         .sublayers = sublayers,
         .strong_line_states = strong_line_states,
@@ -1014,6 +1020,9 @@ fn prepareWithInputs(
         .aerosol_fraction_control = aerosol_fraction_control,
         .cloud_fraction_control = cloud_fraction_control,
     };
+    errdefer prepared.deinit(allocator);
+    try prepared.ensureSharedRtmGeometryCache(allocator);
+    return prepared;
 }
 
 const OwnedVerticalGrid = struct {

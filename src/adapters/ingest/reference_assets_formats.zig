@@ -149,6 +149,8 @@ fn parseHitran160(
     contents: []const u8,
     columns: []const []const u8,
 ) Error!ParsedTable {
+    const has_vendor_o2a_fields = columns.len == 13;
+    const minimum_line_length: usize = 67;
     const owned_columns = try dupColumns(allocator, columns);
     errdefer freeColumns(allocator, owned_columns);
 
@@ -161,7 +163,7 @@ fn parseHitran160(
         const line = trimLineEnding(raw_line);
         const stripped = trimWhitespace(line);
         if (stripped.len == 0 or stripped[0] == '#' or stripped[0] == '!') continue;
-        if (line.len < 67) return error.InvalidAssetFormat;
+        if (line.len < minimum_line_length) return error.InvalidAssetFormat;
 
         const gas_index = try parseFixedInt(line[0..2]);
         const isotope_number = try parseFixedInt(line[2..3]);
@@ -171,6 +173,7 @@ fn parseHitran160(
         const lower_state_energy_cm1 = try parseFixedFloat(line[45..55]);
         const temperature_exponent = try parseFixedFloat(line[55..59]);
         const pressure_shift_cm1 = try parseFixedFloat(line[59..67]);
+        const has_inline_vendor_fields = has_vendor_o2a_fields and line.len >= 85;
 
         // UNITS:
         //   The fixed-width cm^-1 fields are converted to the nm values expected by the typed
@@ -179,6 +182,9 @@ fn parseHitran160(
         const air_half_width_nm = spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
         const pressure_shift_nm = -spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
         const line_mixing_coefficient = deriveLineMixingCoefficient(air_half_width_cm1, pressure_shift_cm1);
+        const branch_ic1 = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[67..70]) else null;
+        const branch_ic2 = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[70..73]) else null;
+        const rotational_nf = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[83..85]) else null;
 
         try values.appendSlice(allocator, &.{
             @as(f64, @floatFromInt(gas_index)),
@@ -192,6 +198,13 @@ fn parseHitran160(
             pressure_shift_nm,
             line_mixing_coefficient,
         });
+        if (has_vendor_o2a_fields) {
+            try values.appendSlice(allocator, &.{
+                if (branch_ic1) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
+                if (branch_ic2) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
+                if (rotational_nf) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
+            });
+        }
         row_count += 1;
     }
     if (row_count == 0) return error.InvalidAssetFormat;
@@ -304,13 +317,18 @@ fn parseLisaSdf(
         const dipole_ratio = try parseFixedFloat(line[25..34]);
         const dipole_t0 = try parseFixedFloat(line[35..44]);
         const lower_state_energy_cm1 = try parseFixedFloat(line[46..56]);
-        const air_half_width_cm1 = try parseFixedFloat(line[58..63]);
         const temperature_exponent = try parseFixedFloat(line[65..69]);
         const pressure_shift_cm1 = try parseFixedFloat(line[71..79]);
-        const rotational_index_m1 = rotationalIndexFromLisaBranch(
-            trimWhitespace(line[83..84]),
-            trimWhitespace(line[84..87]),
-        ) catch return error.InvalidAssetFormat;
+        const branch_token = trimWhitespace(line[83..84]);
+        const nf_token = trimWhitespace(line[84..87]);
+        const rotational_index_m1 = rotationalIndexFromLisaBranch(branch_token, nf_token) catch return error.InvalidAssetFormat;
+
+        // PARITY:
+        //   `HITRANModule::readSDF` does not trust the tabulated `HWT0` field. It reconstructs
+        //   the reference half-width from the LISA branch/Nf quantum numbers using the
+        //   Tran/Hartmann-Yang parameterization before any temperature scaling happens.
+        _ = try parseFixedFloat(line[58..63]);
+        const air_half_width_cm1 = vendorLisaReferenceHalfWidthCm1(branch_token, nf_token) catch return error.InvalidAssetFormat;
 
         // UNITS:
         //   Strong-line fields are stored in cm^-1 and converted to nm where the typed loader
@@ -409,6 +427,14 @@ fn parseFixedFloat(slice: []const u8) Error!f64 {
 ///   Parse one integer field from a fixed-width slice.
 fn parseFixedInt(slice: []const u8) Error!u16 {
     return std.fmt.parseInt(u16, trimWhitespace(slice), 10) catch error.InvalidNumber;
+}
+
+/// Purpose:
+///   Parse one optional integer field from a fixed-width slice, leaving blank fields unset.
+fn parseOptionalFixedInt(slice: []const u8) Error!?u16 {
+    const trimmed = trimWhitespace(slice);
+    if (trimmed.len == 0) return null;
+    return std.fmt.parseInt(u16, trimmed, 10) catch error.InvalidNumber;
 }
 
 /// Purpose:
@@ -520,4 +546,20 @@ fn rotationalIndexFromLisaBranch(branch_token: []const u8, nf_token: []const u8)
         'R' => nf + 1,
         else => return error.InvalidAssetFormat,
     };
+}
+
+fn vendorLisaReferenceHalfWidthCm1(branch_token: []const u8, nf_token: []const u8) !f64 {
+    if (branch_token.len != 1) return error.InvalidAssetFormat;
+    const raw_nf = std.fmt.parseInt(i32, nf_token, 10) catch return error.InvalidNumber;
+    const vendor_nf = switch (branch_token[0]) {
+        'P' => raw_nf - 1,
+        'R' => raw_nf + 1,
+        else => return error.InvalidAssetFormat,
+    };
+    const vendor_nf_f64 = @as(f64, @floatFromInt(vendor_nf));
+    const sbhw = 0.02204 + 0.03749 /
+        (1.0 + 0.05428 * vendor_nf_f64 - 1.19e-3 * vendor_nf_f64 * vendor_nf_f64 +
+            2.073e-6 * std.math.pow(f64, vendor_nf_f64, 4.0));
+    return 1.023 * 1.012 * sbhw /
+        std.math.sqrt(1.0 + std.math.pow(f64, (vendor_nf_f64 - 5.0) / 55.0, 2.0));
 }
