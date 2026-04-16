@@ -18,9 +18,13 @@ fast executable tests in `tests/`.
 - `zig build test`
 - `zig build test-validation`
 - `zig build test-golden`
+- `zig build o2a-plots`
 
-## Canonical Config Coverage
+## YAML Runtime Coverage
 
-- Tracked canonical YAML examples live under `data/examples/`.
+- The live executable YAML surface is currently the retained O2A parity case at
+  `data/examples/vendor_o2a_parity.yaml`.
+- Older YAML examples under `data/examples/` are design-only reference shapes
+  until they are backed by a real runtime path again.
 - Validation-lane tests should keep release-readiness artifacts aligned with the
-  canonical YAML CLI contract and importer-only legacy policy.
+  live YAML contract instead of the broader historical canonical-config story.

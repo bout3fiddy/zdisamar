@@ -9,7 +9,9 @@ full upstream scientific databases.
 - `data/climatologies/`: atmospheric profile bundle metadata and baseline tables.
 - `data/cross_sections/`: absorber cross-section bundle metadata and baseline tables.
 - `data/luts/`: LUT bundle metadata and baseline tables.
-- `data/examples/`: small adapter-ingest fixtures, including vendor-style irradiance/radiance channel text.
+- `data/examples/`: tracked YAML and ingest fixtures. `vendor_o2a_parity.yaml`
+  is the current executable YAML example; the broader example set remains
+  design/reference material until a wider runtime path is restored.
 
 ## Provenance
 

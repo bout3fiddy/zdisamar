@@ -27,7 +27,7 @@ FORTRAN_TRACE_ASSET_DIR = REPO_ROOT / "scripts" / "testing_harness" / "vendor_o2
 FORTRAN_TRACE_MODULE = FORTRAN_TRACE_ASSET_DIR / "o2aFunctionTraceModule.f90"
 ZIG_TRACE_CLI = REPO_ROOT / "scripts" / "testing_harness" / "o2a_function_trace.zig"
 ZIG_BUILD_OPTIONS = REPO_ROOT / "scripts" / "testing_harness" / "build_options_test_support.zig"
-ZIG_VENDOR_SUPPORT = REPO_ROOT / "src" / "o2a" / "data" / "vendor_case.zig"
+ZIG_TRACE_SUPPORT = REPO_ROOT / "src" / "o2a" / "data" / "vendor_parity_yaml.zig"
 EXPECTED_CSVS = (
     "line_catalog.csv",
     "strong_state.csv",
@@ -37,6 +37,7 @@ EXPECTED_CSVS = (
     "transport_samples.csv",
     "transport_summary.csv",
 )
+PAIRWISE_DIFFS = (("vendor", "yaml"),)
 
 
 @dataclass(frozen=True)
@@ -137,27 +138,27 @@ def main() -> int:
     wavelengths_nm = parse_wavelengths(args.wavelengths)
     trace_root = resolve_trace_root(args.trace_root)
     vendor_workspace = trace_root / "vendor_workspace"
-    fortran_root = trace_root / "fortran"
-    zig_root = trace_root / "zig"
+    vendor_root = trace_root / "vendor"
+    yaml_root = trace_root / "yaml"
     diff_root = trace_root / "diff"
 
     if trace_root.exists():
         shutil.rmtree(trace_root)
-    for path in (trace_root, fortran_root, zig_root, diff_root):
+    for path in (trace_root, vendor_root, yaml_root, diff_root):
         path.mkdir(parents=True, exist_ok=True)
 
     copy_vendor_workspace(vendor_workspace)
     try:
         prepare_vendor_workspace(vendor_workspace)
         build_vendor_workspace(vendor_workspace)
-        run_vendor_trace(vendor_workspace, fortran_root, wavelengths_nm)
-        merge_fortran_spectroscopy_summary(fortran_root)
+        run_vendor_trace(vendor_workspace, vendor_root, wavelengths_nm)
+        merge_fortran_spectroscopy_summary(vendor_root)
         run_zig_trace(trace_root, wavelengths_nm, args.zig_optimize)
-        canonicalize_side(fortran_root)
-        canonicalize_side(zig_root)
-        verify_expected_csvs(fortran_root, "fortran")
-        verify_expected_csvs(zig_root, "zig")
-        write_diff_summary(fortran_root, zig_root, diff_root)
+        canonicalize_side(vendor_root)
+        verify_expected_csvs(vendor_root, "vendor")
+        canonicalize_side(yaml_root)
+        verify_expected_csvs(yaml_root, "yaml")
+        write_diff_summaries(trace_root, diff_root)
     finally:
         if not args.keep_vendor_workspace and vendor_workspace.exists():
             shutil.rmtree(vendor_workspace)
@@ -239,7 +240,7 @@ def run_zig_trace(trace_root: Path, wavelengths_nm: list[float], zig_optimize: s
         "zdisamar",
         "--dep",
         "zdisamar_internal",
-        f"-Mvendor_o2a_trace_support={ZIG_VENDOR_SUPPORT}",
+        f"-Mvendor_o2a_trace_support={ZIG_TRACE_SUPPORT}",
         "--dep",
         "build_options",
         f"-Mzdisamar={REPO_ROOT / 'src' / 'root.zig'}",
@@ -318,69 +319,115 @@ def verify_expected_csvs(side_root: Path, label: str) -> None:
         raise RuntimeError(f"Missing {label} CSVs: {', '.join(missing)}")
 
 
-def write_diff_summary(fortran_root: Path, zig_root: Path, diff_root: Path) -> None:
-    summary_path = diff_root / "summary.txt"
-    lines: list[str] = []
+def write_diff_summaries(trace_root: Path, diff_root: Path) -> None:
+    combined_lines: list[str] = []
+    for left_label, right_label in PAIRWISE_DIFFS:
+        summary_lines = summarize_pairwise_diff(
+            trace_root / left_label,
+            trace_root / right_label,
+            left_label,
+            right_label,
+        )
+        summary_path = diff_root / f"{left_label}_vs_{right_label}.txt"
+        summary_path.write_text("\n".join(summary_lines).rstrip() + "\n", encoding="utf-8")
+        if combined_lines:
+            combined_lines.append("")
+        combined_lines.extend(summary_lines)
+
+    if combined_lines:
+        (diff_root / "summary.txt").write_text(
+            "\n".join(combined_lines).rstrip() + "\n",
+            encoding="utf-8",
+        )
+
+
+def summarize_pairwise_diff(
+    left_root: Path,
+    right_root: Path,
+    left_label: str,
+    right_label: str,
+) -> list[str]:
+    lines = [f"{left_label}_vs_{right_label}"]
     for file_name in EXPECTED_CSVS:
         lines.append(file_name)
         comparison = compare_csv_files(
-            fortran_root / file_name,
-            zig_root / file_name,
+            left_root / file_name,
+            right_root / file_name,
             CSV_SPECS[file_name],
+            left_label=left_label,
+            right_label=right_label,
         )
         for line in comparison:
             lines.append(f"  {line}")
         lines.append("")
-    summary_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return lines
 
 
-def compare_csv_files(fortran_path: Path, zig_path: Path, spec: CsvSpec) -> list[str]:
-    fortran_headers = read_csv_headers(fortran_path)
-    zig_headers = read_csv_headers(zig_path)
-    if fortran_headers != zig_headers:
-        raise RuntimeError(f"Schema mismatch for {fortran_path.name}: {fortran_headers} != {zig_headers}")
+def compare_csv_files(
+    left_path: Path,
+    right_path: Path,
+    spec: CsvSpec,
+    *,
+    left_label: str = "vendor",
+    right_label: str = "yaml",
+) -> list[str]:
+    left_headers = read_csv_headers(left_path)
+    right_headers = read_csv_headers(right_path)
+    if left_headers != right_headers:
+        raise RuntimeError(f"Schema mismatch for {left_path.name}: {left_headers} != {right_headers}")
 
-    fortran_rows = read_csv_rows(fortran_path)
-    zig_rows = read_csv_rows(zig_path)
-    output = [f"rows: fortran={len(fortran_rows)} zig={len(zig_rows)}"]
-    if len(fortran_rows) != len(zig_rows):
+    left_rows = read_csv_rows(left_path)
+    right_rows = read_csv_rows(right_path)
+    output = [f"rows: {left_label}={len(left_rows)} {right_label}={len(right_rows)}"]
+    if len(left_rows) != len(right_rows):
         output.append("row-count mismatch")
 
-    paired_count = min(len(fortran_rows), len(zig_rows))
+    paired_count = min(len(left_rows), len(right_rows))
     first_key_mismatch = None
     for index in range(paired_count):
-        if row_key(fortran_rows[index], spec) != row_key(zig_rows[index], spec):
+        if row_key(left_rows[index], spec) != row_key(right_rows[index], spec):
             first_key_mismatch = index
             break
     if first_key_mismatch is not None:
         output.append(
             "first key mismatch at row "
             f"{first_key_mismatch + 1}: "
-            f"fortran={row_key(fortran_rows[first_key_mismatch], spec)} "
-            f"zig={row_key(zig_rows[first_key_mismatch], spec)}"
+            f"{left_label}={row_key(left_rows[first_key_mismatch], spec)} "
+            f"{right_label}={row_key(right_rows[first_key_mismatch], spec)}"
         )
     else:
         output.append("keys/order: match")
 
+    first_nonzero_delta = None
     for column in spec.numeric_columns:
         max_abs_diff = 0.0
         first_numeric_mismatch = None
         for index in range(paired_count):
-            left = parse_float(fortran_rows[index][column])
-            right = parse_float(zig_rows[index][column])
+            left = parse_float(left_rows[index][column])
+            right = parse_float(right_rows[index][column])
             diff = numeric_difference(left, right)
             if diff > max_abs_diff:
                 max_abs_diff = diff
             if first_numeric_mismatch is None and diff > 0.0:
                 first_numeric_mismatch = (index, left, right)
+            if first_nonzero_delta is None and diff > 0.0:
+                first_nonzero_delta = (column, index, left, right)
         if first_numeric_mismatch is None:
             output.append(f"{column}: max_abs_diff=0.0 first_diff=none")
         else:
             index, left, right = first_numeric_mismatch
             output.append(
                 f"{column}: max_abs_diff={max_abs_diff:.12e} "
-                f"first_diff_row={index + 1} fortran={left!r} zig={right!r}"
+                f"first_diff_row={index + 1} {left_label}={left!r} {right_label}={right!r}"
             )
+    if first_nonzero_delta is None:
+        output.append("first_nonzero_delta: none")
+    else:
+        column, index, left, right = first_nonzero_delta
+        output.append(
+            f"first_nonzero_delta: column={column} row={index + 1} "
+            f"{left_label}={left!r} {right_label}={right!r}"
+        )
     return output
 
 

@@ -1,7 +1,6 @@
 const load = @import("data/load.zig");
 
 pub const Data = load.Data;
-pub const vendor_case = @import("data/vendor_case.zig");
 
 pub fn loadData(
     allocator: @import("std").mem.Allocator,

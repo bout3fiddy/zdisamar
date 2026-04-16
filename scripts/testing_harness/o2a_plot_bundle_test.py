@@ -109,12 +109,14 @@ def main() -> int:
         summary_rel = profile_summary.relative_to(REPO_ROOT)
         output_rel = output_dir.relative_to(REPO_ROOT)
 
-        build_bundle(current_rel, summary_rel, vendor_rel, output_rel, "zig build o2a-plot-bundle")
+        build_bundle(current_rel, summary_rel, vendor_rel, output_rel, "zig build o2a-plots")
 
         expected_files = [
             output_dir / "bundle_manifest.json",
             output_dir / "comparison_metrics.json",
-            output_dir / "current_vs_vendor_overlay.png",
+            output_dir / "current_vs_vendor_reflectance.png",
+            output_dir / "current_vs_vendor_radiance.png",
+            output_dir / "current_vs_vendor_irradiance.png",
             output_dir / "current_vs_vendor_residuals.png",
             output_dir / "generated_spectrum.csv",
             output_dir / "profile_summary.json",
@@ -129,12 +131,14 @@ def main() -> int:
         assert metrics["profile_summary_path"] == f"{output_rel.as_posix()}/profile_summary.json"
 
         manifest = json.loads((output_dir / "bundle_manifest.json").read_text())
-        assert manifest["canonical_command"] == "zig build o2a-plot-bundle"
+        assert manifest["canonical_command"] == "zig build o2a-plots"
         assert manifest["tracked_output_dir"] == output_rel.as_posix()
         assert manifest["tracked_outputs"] == [
             f"{output_rel.as_posix()}/bundle_manifest.json",
             f"{output_rel.as_posix()}/comparison_metrics.json",
-            f"{output_rel.as_posix()}/current_vs_vendor_overlay.png",
+            f"{output_rel.as_posix()}/current_vs_vendor_reflectance.png",
+            f"{output_rel.as_posix()}/current_vs_vendor_radiance.png",
+            f"{output_rel.as_posix()}/current_vs_vendor_irradiance.png",
             f"{output_rel.as_posix()}/current_vs_vendor_residuals.png",
             f"{output_rel.as_posix()}/generated_spectrum.csv",
             f"{output_rel.as_posix()}/profile_summary.json",
@@ -154,7 +158,7 @@ def main() -> int:
             output_dir / "profile_summary.json",
         ]
         before = read_bytes_map(stable_files)
-        build_bundle(current_rel, summary_rel, vendor_rel, output_rel, "zig build o2a-plot-bundle")
+        build_bundle(current_rel, summary_rel, vendor_rel, output_rel, "zig build o2a-plots")
         after = read_bytes_map(stable_files)
         assert before == after
 

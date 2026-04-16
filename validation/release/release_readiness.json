@@ -3,7 +3,7 @@
   "required_commands": [
     "zig build",
     "zig build test",
-    "./zig-out/bin/zdisamar run data/examples/canonical_config.yaml"
+    "./zig-out/bin/zdisamar run data/examples/vendor_o2a_parity.yaml"
   ],
   "required_packages": [
     {
@@ -29,9 +29,7 @@
     "builtin.zarr@0.1.0"
   ],
   "required_artifacts": [
-    "data/examples/canonical_config.yaml",
-    "data/examples/zdisamar_common_use.yaml",
-    "data/examples/zdisamar_expert_o2a.yaml",
+    "data/examples/vendor_o2a_parity.yaml",
     "data/climatologies/bundle_manifest.json",
     "data/cross_sections/bundle_manifest.json",
     "data/luts/bundle_manifest.json",

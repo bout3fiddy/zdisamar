@@ -1,6 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const zdisamar = @import("zdisamar");
-const o2a_vendor = zdisamar.vendor_case;
+const o2a_parity = zdisamar.parity;
 const o2a_profile_support = zdisamar.profile;
 
 const ProfileStats = struct {
@@ -20,7 +21,7 @@ const ParsedForwardProfile = struct {
 const ParsedProfileRun = struct {
     run_index: u32,
     sample_count: u32,
-    preparation: o2a_vendor.VendorO2APreparationProfile,
+    preparation: o2a_parity.VendorO2APreparationProfile,
     forward: ParsedForwardProfile,
     total_prepare_ns: u64,
     total_forward_ns: u64,
@@ -58,14 +59,16 @@ const ParsedProfileSummary = struct {
     total_end_to_end_ns: ProfileStats,
 };
 
-fn profiledTestConfig() o2a_vendor.VendorO2AExecutionConfig {
+fn profiledTestOverrides() o2a_profile_support.ExecutionOverrides {
     return .{
         .spectral_grid = .{
             .start_nm = 760.0,
             .end_nm = 761.5,
             .sample_count = 24,
         },
-        .use_vendor_parity_fixture = true,
+        .adaptive_points_per_fwhm = 20,
+        .adaptive_strong_line_min_divisions = 8,
+        .adaptive_strong_line_max_divisions = 40,
         .line_mixing_factor = 1.0,
         .isotopes_sim = &.{ 1, 2, 3 },
         .threshold_line_sim = 3.0e-5,
@@ -81,17 +84,17 @@ fn expectApproxEqSlices(expected: []const f64, actual: []const f64, tolerance: f
 }
 
 test "profiled and non-profiled O2A forward paths remain identical" {
-    const config = profiledTestConfig();
+    const overrides = profiledTestOverrides();
 
-    var unprofiled = try o2a_vendor.runConfiguredVendorO2AReflectanceCase(
+    var unprofiled = try o2a_parity.runDefaultReflectanceCase(
         std.testing.allocator,
-        config,
+        overrides,
     );
     defer unprofiled.deinit(std.testing.allocator);
 
-    var profiled = try o2a_vendor.runConfiguredVendorO2AProfileCase(
+    var profiled = try o2a_parity.runDefaultProfileCase(
         std.testing.allocator,
-        config,
+        overrides,
     );
     defer profiled.deinit(std.testing.allocator);
 
@@ -149,14 +152,14 @@ test "o2a forward profile workflow writes a valid summary report" {
     );
     defer std.testing.allocator.free(output_dir);
 
-    try o2a_profile_support.runProfileWorkflowWithExecutionConfig(
+    try o2a_profile_support.runProfileWorkflowWithExecutionOverrides(
         std.testing.allocator,
         .{
             .output_dir = output_dir,
             .repeat_count = 1,
             .write_spectrum = true,
         },
-        profiledTestConfig(),
+        profiledTestOverrides(),
     );
 
     const summary_path = try std.fmt.allocPrint(
@@ -176,7 +179,7 @@ test "o2a forward profile workflow writes a valid summary report" {
     );
     defer parsed.deinit();
 
-    try std.testing.expectEqualStrings("ReleaseFast", parsed.value.optimize_mode);
+    try std.testing.expectEqualStrings(@tagName(builtin.mode), parsed.value.optimize_mode);
     try std.testing.expectEqual(@as(u32, 1), parsed.value.repeat_count);
     try std.testing.expect(parsed.value.sample_count > 0);
     try std.testing.expectEqual(@as(usize, 1), parsed.value.runs.len);

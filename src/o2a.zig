@@ -13,7 +13,7 @@ pub const Report = report.Report;
 pub const ForwardProfile = spectrum.ForwardProfile;
 pub const RtmControls = @import("o2a/solver.zig").RtmControls;
 
-pub const vendor_case = data.vendor_case;
+pub const parity = @import("o2a/data/vendor_parity_yaml.zig");
 pub const profile = report.json;
 
 pub fn loadData(

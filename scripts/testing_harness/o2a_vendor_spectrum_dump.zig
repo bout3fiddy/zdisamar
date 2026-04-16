@@ -33,8 +33,8 @@ pub fn main() !void {
     const config = try parseArgs(allocator, args);
     defer allocator.free(config.output_dir);
 
-    var vendor_case = try support.runVendorO2AReflectanceCase(allocator);
-    defer vendor_case.deinit(allocator);
+    var yaml_case = try support.runDefaultReflectanceCase(allocator, .{});
+    defer yaml_case.deinit(allocator);
 
     const reference = try loadFullReferenceSamples(allocator, reference_csv_path);
     defer allocator.free(reference);
@@ -43,11 +43,11 @@ pub fn main() !void {
 
     const output_csv_path = try std.fs.path.join(allocator, &.{ config.output_dir, output_csv_name });
     defer allocator.free(output_csv_path);
-    try writeComparisonCsv(output_csv_path, reference, &vendor_case.product);
+    try writeComparisonCsv(output_csv_path, reference, &yaml_case.product);
 
     const summary_path = try std.fs.path.join(allocator, &.{ config.output_dir, summary_name });
     defer allocator.free(summary_path);
-    const metrics = support.computeComparisonMetrics(&vendor_case.product, vendor_case.reference, 1.0e-12);
+    const metrics = support.computeComparisonMetrics(&yaml_case.product, yaml_case.reference, 1.0e-12);
     try writeSummary(summary_path, output_csv_path, metrics);
 
     std.debug.print("wrote {s}\n", .{output_csv_path});
