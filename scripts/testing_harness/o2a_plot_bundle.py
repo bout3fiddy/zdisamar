@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--canonical-command",
-        default="zig build o2a-plot-bundle",
+        default="zig build o2a-plots",
         help="Canonical regeneration command recorded in the bundle manifest.",
     )
     return parser.parse_args()
@@ -146,7 +146,9 @@ def write_manifest(
     tracked_outputs = [
         "bundle_manifest.json",
         "comparison_metrics.json",
-        "current_vs_vendor_overlay.png",
+        "current_vs_vendor_reflectance.png",
+        "current_vs_vendor_radiance.png",
+        "current_vs_vendor_irradiance.png",
         "current_vs_vendor_residuals.png",
         "generated_spectrum.csv",
         "profile_summary.json",
@@ -171,44 +173,53 @@ def create_plots(
     current: dict[str, np.ndarray],
     vendor: dict[str, np.ndarray],
 ) -> None:
+    obsolete_paths = [
+        output_dir / "current_vs_vendor_overlay.png",
+    ]
+    for obsolete_path in obsolete_paths:
+        if obsolete_path.exists():
+            obsolete_path.unlink()
+
     reflectance_residual = current["reflectance"] - vendor["reflectance"]
     radiance_residual = current["radiance"] - vendor["radiance"]
     irradiance_residual = current["irradiance"] - vendor["irradiance"]
-    reflectance_ratio = np.divide(
-        current["reflectance"],
-        vendor["reflectance"],
-        out=np.full_like(current["reflectance"], np.nan),
-        where=np.abs(vendor["reflectance"]) > 1.0e-30,
-    )
 
-    overlay_path = output_dir / "current_vs_vendor_overlay.png"
-    fig, axes = plt.subplots(3, 1, figsize=(12, 12), sharex=True, constrained_layout=True)
+    plot_specs = [
+        (
+            "current_vs_vendor_reflectance.png",
+            "reflectance",
+            "Reflectance",
+            "O2A reflectance: current zdisamar vs vendored DISAMAR reference",
+        ),
+        (
+            "current_vs_vendor_radiance.png",
+            "radiance",
+            "Radiance",
+            "O2A radiance: current zdisamar vs vendored DISAMAR reference",
+        ),
+        (
+            "current_vs_vendor_irradiance.png",
+            "irradiance",
+            "Irradiance",
+            "O2A irradiance: current zdisamar vs vendored DISAMAR reference",
+        ),
+    ]
 
-    axes[0].plot(wavelength_nm, vendor["reflectance"], label="Vendored DISAMAR reference", linewidth=1.8)
-    axes[0].plot(wavelength_nm, current["reflectance"], label="Current zdisamar", linewidth=1.4)
-    axes[0].set_ylabel("Reflectance")
-    axes[0].set_title("O2A reflectance: current zdisamar vs vendored DISAMAR reference")
-    axes[0].grid(True, alpha=0.25)
-    axes[0].legend(loc="best")
-
-    axes[1].plot(wavelength_nm, vendor["radiance"], label="Vendored DISAMAR reference", linewidth=1.8)
-    axes[1].plot(wavelength_nm, current["radiance"], label="Current zdisamar", linewidth=1.4)
-    axes[1].set_ylabel("Radiance")
-    axes[1].grid(True, alpha=0.25)
-    axes[1].legend(loc="best")
-
-    axes[2].plot(wavelength_nm, vendor["irradiance"], label="Vendored DISAMAR reference", linewidth=1.8)
-    axes[2].plot(wavelength_nm, current["irradiance"], label="Current zdisamar", linewidth=1.4)
-    axes[2].set_ylabel("Irradiance")
-    axes[2].set_xlabel("Wavelength (nm)")
-    axes[2].grid(True, alpha=0.25)
-    axes[2].legend(loc="best")
-
-    fig.savefig(overlay_path, dpi=160)
-    plt.close(fig)
+    for file_name, key, ylabel, title in plot_specs:
+        figure_path = output_dir / file_name
+        fig, axis = plt.subplots(1, 1, figsize=(12, 4.8), constrained_layout=True)
+        axis.plot(wavelength_nm, vendor[key], label="Vendored DISAMAR reference", linewidth=1.8)
+        axis.plot(wavelength_nm, current[key], label="Current zdisamar", linewidth=1.4)
+        axis.set_ylabel(ylabel)
+        axis.set_xlabel("Wavelength (nm)")
+        axis.set_title(title)
+        axis.grid(True, alpha=0.25)
+        axis.legend(loc="best")
+        fig.savefig(figure_path, dpi=160)
+        plt.close(fig)
 
     residual_path = output_dir / "current_vs_vendor_residuals.png"
-    fig, axes = plt.subplots(4, 1, figsize=(12, 13), sharex=True, constrained_layout=True)
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True, constrained_layout=True)
 
     axes[0].plot(wavelength_nm, reflectance_residual, color="tab:red", linewidth=1.3)
     axes[0].axhline(0.0, color="black", linewidth=0.8, alpha=0.7)
@@ -216,21 +227,16 @@ def create_plots(
     axes[0].set_title("O2A residuals: current zdisamar minus vendored DISAMAR reference")
     axes[0].grid(True, alpha=0.25)
 
-    axes[1].plot(wavelength_nm, reflectance_ratio, color="tab:green", linewidth=1.3)
-    axes[1].axhline(1.0, color="black", linewidth=0.8, alpha=0.7)
-    axes[1].set_ylabel("Reflectance\nratio")
+    axes[1].plot(wavelength_nm, radiance_residual, color="tab:orange", linewidth=1.3)
+    axes[1].axhline(0.0, color="black", linewidth=0.8, alpha=0.7)
+    axes[1].set_ylabel("Radiance\nresidual")
     axes[1].grid(True, alpha=0.25)
 
-    axes[2].plot(wavelength_nm, radiance_residual, color="tab:orange", linewidth=1.3)
+    axes[2].plot(wavelength_nm, irradiance_residual, color="tab:blue", linewidth=1.3)
     axes[2].axhline(0.0, color="black", linewidth=0.8, alpha=0.7)
-    axes[2].set_ylabel("Radiance\nresidual")
+    axes[2].set_ylabel("Irradiance\nresidual")
     axes[2].grid(True, alpha=0.25)
-
-    axes[3].plot(wavelength_nm, irradiance_residual, color="tab:blue", linewidth=1.3)
-    axes[3].axhline(0.0, color="black", linewidth=0.8, alpha=0.7)
-    axes[3].set_ylabel("Irradiance\nresidual")
-    axes[3].set_xlabel("Wavelength (nm)")
-    axes[3].grid(True, alpha=0.25)
+    axes[2].set_xlabel("Wavelength (nm)")
 
     fig.savefig(residual_path, dpi=160)
     plt.close(fig)

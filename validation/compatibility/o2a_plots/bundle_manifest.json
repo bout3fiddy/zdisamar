@@ -1,12 +1,14 @@
 {
   "schema_version": 1,
-  "canonical_command": "zig build o2a-plot-bundle",
+  "canonical_command": "zig build o2a-plots",
   "tracked_output_dir": "validation/compatibility/o2a_plots",
   "vendor_reference_path": "validation/reference/o2a_with_cia_disamar_reference.csv",
   "tracked_outputs": [
     "validation/compatibility/o2a_plots/bundle_manifest.json",
     "validation/compatibility/o2a_plots/comparison_metrics.json",
-    "validation/compatibility/o2a_plots/current_vs_vendor_overlay.png",
+    "validation/compatibility/o2a_plots/current_vs_vendor_reflectance.png",
+    "validation/compatibility/o2a_plots/current_vs_vendor_radiance.png",
+    "validation/compatibility/o2a_plots/current_vs_vendor_irradiance.png",
     "validation/compatibility/o2a_plots/current_vs_vendor_residuals.png",
     "validation/compatibility/o2a_plots/generated_spectrum.csv",
     "validation/compatibility/o2a_plots/profile_summary.json"

@@ -4,6 +4,8 @@
 zig-cache/
 zig-out/
 out/
+__pycache__/
+*.py[cod]
 *.bundle
 disamar.asciiHDF
 disamar.imed
