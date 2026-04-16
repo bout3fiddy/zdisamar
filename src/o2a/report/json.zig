@@ -8,7 +8,7 @@
 
 const builtin = @import("builtin");
 const std = @import("std");
-const o2a_vendor = @import("../data/vendor_case.zig");
+const o2a_parity = @import("../data/vendor_parity_yaml.zig");
 
 const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 
@@ -55,12 +55,14 @@ const ForwardStats = struct {
 const RunRecord = struct {
     run_index: u32,
     sample_count: u32,
-    preparation: o2a_vendor.VendorO2APreparationProfile,
+    preparation: o2a_parity.VendorO2APreparationProfile,
     forward: MeasurementSpace.ForwardProfile,
     total_prepare_ns: u64,
     total_forward_ns: u64,
     total_end_to_end_ns: u64,
 };
+
+pub const ExecutionOverrides = o2a_parity.ExecutionOverrides;
 
 pub const SummaryReport = struct {
     optimize_mode: []const u8,
@@ -161,14 +163,14 @@ pub fn runProfileWorkflow(
     allocator: std.mem.Allocator,
     config: CliConfig,
 ) !void {
-    try runProfileWorkflowWithExecutionConfig(
+    try runProfileWorkflowWithExecutionOverrides(
         allocator,
         config,
-        executionConfigForPreset(config.preset),
+        executionOverridesForPreset(config.preset),
     );
 }
 
-fn executionConfigForPreset(preset: Preset) o2a_vendor.VendorO2AExecutionConfig {
+fn executionOverridesForPreset(preset: Preset) ExecutionOverrides {
     return switch (preset) {
         .quick => .{
             .spectral_grid = .{
@@ -176,7 +178,6 @@ fn executionConfigForPreset(preset: Preset) o2a_vendor.VendorO2AExecutionConfig 
                 .end_nm = 776.0,
                 .sample_count = 5,
             },
-            .use_vendor_parity_fixture = true,
             .adaptive_points_per_fwhm = 4,
             .adaptive_strong_line_min_divisions = 2,
             .adaptive_strong_line_max_divisions = 6,
@@ -191,10 +192,9 @@ fn executionConfigForPreset(preset: Preset) o2a_vendor.VendorO2AExecutionConfig 
                 .end_nm = 776.0,
                 .sample_count = 701,
             },
-            .use_vendor_parity_fixture = true,
-            .adaptive_points_per_fwhm = 8,
-            .adaptive_strong_line_min_divisions = 4,
-            .adaptive_strong_line_max_divisions = 12,
+            .adaptive_points_per_fwhm = 20,
+            .adaptive_strong_line_min_divisions = 8,
+            .adaptive_strong_line_max_divisions = 40,
             .line_mixing_factor = 1.0,
             .isotopes_sim = &.{ 1, 2, 3 },
             .threshold_line_sim = 3.0e-5,
@@ -203,11 +203,11 @@ fn executionConfigForPreset(preset: Preset) o2a_vendor.VendorO2AExecutionConfig 
     };
 }
 
-/// Run the O2A forward profiler with an explicit execution configuration.
-pub fn runProfileWorkflowWithExecutionConfig(
+/// Run the O2A forward profiler with explicit YAML-case overrides.
+pub fn runProfileWorkflowWithExecutionOverrides(
     allocator: std.mem.Allocator,
     config: CliConfig,
-    execution_config: o2a_vendor.VendorO2AExecutionConfig,
+    execution_overrides: ExecutionOverrides,
 ) !void {
     if (config.repeat_count == 0) return error.InvalidRepeatCount;
 
@@ -228,9 +228,9 @@ pub fn runProfileWorkflowWithExecutionConfig(
     var accumulator: ReportAccumulator = .{};
     for (0..config.repeat_count) |run_index| {
         var total_timer = std.time.Timer.start() catch unreachable;
-        var profile_case = try o2a_vendor.runConfiguredVendorO2AProfileCase(
+        var profile_case = try o2a_parity.runDefaultProfileCase(
             allocator,
-            execution_config,
+            execution_overrides,
         );
         defer profile_case.deinit(allocator);
 

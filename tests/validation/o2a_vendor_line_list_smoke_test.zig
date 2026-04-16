@@ -1,10 +1,10 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const ReferenceData = zdisamar.vendor_case.ReferenceData;
-const o2a_vendor = zdisamar.vendor_case;
+const o2a_parity = zdisamar.parity;
+const ReferenceData = o2a_parity.ReferenceData;
 
 test "vendor parity O2A helper preserves fallback anchor lines in the weak sum" {
-    var line_list = try o2a_vendor.loadVendorParityO2ASpectroscopyLineList(std.testing.allocator);
+    var line_list = try o2a_parity.loadVendorParityO2ASpectroscopyLineList(std.testing.allocator);
     defer line_list.deinit(std.testing.allocator);
 
     try line_list.buildStrongLineMatchIndex(std.testing.allocator);

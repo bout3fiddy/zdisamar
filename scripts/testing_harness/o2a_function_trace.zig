@@ -1,5 +1,4 @@
 const std = @import("std");
-const zdisamar = @import("zdisamar");
 const internal = @import("zdisamar_internal");
 const vendor_support = @import("vendor_o2a_trace_support");
 
@@ -104,19 +103,22 @@ const TraceFiles = struct {
     transport_samples: std.fs.File,
     transport_summary: std.fs.File,
 
-    fn init(allocator: std.mem.Allocator, trace_root: []const u8) !TraceFiles {
-        const zig_root = try std.fs.path.join(allocator, &.{ trace_root, "zig" });
-        defer allocator.free(zig_root);
-        try std.fs.cwd().makePath(zig_root);
+    fn init(
+        allocator: std.mem.Allocator,
+        trace_root: []const u8,
+    ) !TraceFiles {
+        const side_root = try std.fs.path.join(allocator, &.{ trace_root, "yaml" });
+        defer allocator.free(side_root);
+        try std.fs.cwd().makePath(side_root);
 
         return .{
-            .line_catalog = try createCsvFile(allocator, zig_root, "line_catalog.csv", "source_row_index,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf\n"),
-            .strong_state = try createCsvFile(allocator, zig_root, "strong_state.csv", "pressure_hpa,temperature_k,strong_index,center_wavelength_nm,center_wavenumber_cm1,sig_moy_cm1,population_t,dipole_t,mod_sig_cm1,half_width_cm1_at_t,line_mixing_coefficient\n"),
-            .spectroscopy_summary = try createCsvFile(allocator, zig_root, "spectroscopy_summary.csv", "pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule,total_sigma_cm2_per_molecule\n"),
-            .adaptive_grid = try createCsvFile(allocator, zig_root, "adaptive_grid.csv", "nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count\n"),
-            .kernel_samples = try createCsvFile(allocator, zig_root, "kernel_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,weight\n"),
-            .transport_samples = try createCsvFile(allocator, zig_root, "transport_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,radiance,irradiance,weight\n"),
-            .transport_summary = try createCsvFile(allocator, zig_root, "transport_summary.csv", "nominal_wavelength_nm,final_radiance,final_irradiance,final_reflectance\n"),
+            .line_catalog = try createCsvFile(allocator, side_root, "line_catalog.csv", "source_row_index,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf\n"),
+            .strong_state = try createCsvFile(allocator, side_root, "strong_state.csv", "pressure_hpa,temperature_k,strong_index,center_wavelength_nm,center_wavenumber_cm1,sig_moy_cm1,population_t,dipole_t,mod_sig_cm1,half_width_cm1_at_t,line_mixing_coefficient\n"),
+            .spectroscopy_summary = try createCsvFile(allocator, side_root, "spectroscopy_summary.csv", "pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule,total_sigma_cm2_per_molecule\n"),
+            .adaptive_grid = try createCsvFile(allocator, side_root, "adaptive_grid.csv", "nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count\n"),
+            .kernel_samples = try createCsvFile(allocator, side_root, "kernel_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,weight\n"),
+            .transport_samples = try createCsvFile(allocator, side_root, "transport_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,radiance,irradiance,weight\n"),
+            .transport_summary = try createCsvFile(allocator, side_root, "transport_summary.csv", "nominal_wavelength_nm,final_radiance,final_irradiance,final_reflectance\n"),
         };
     }
 
@@ -144,7 +146,7 @@ const TransportBuffers = struct {
 
     fn init(
         allocator: std.mem.Allocator,
-        scene: *const zdisamar.Scene,
+        scene: *const internal.Scene,
         route: TransportCommon.Route,
         prepared: *const OpticsPrepare.PreparedOpticalState,
     ) !TransportBuffers {
@@ -187,7 +189,7 @@ pub fn main() !void {
     defer allocator.free(config.trace_root);
     defer allocator.free(config.wavelengths_nm);
 
-    var prepared_case = try vendor_support.prepareVendorO2ATraceCase(allocator);
+    var prepared_case = try vendor_support.prepareTraceCase(allocator);
     defer prepared_case.deinit(allocator);
 
     var files = try TraceFiles.init(allocator, config.trace_root);
@@ -239,23 +241,20 @@ pub fn main() !void {
     var transport_buffers = try TransportBuffers.init(
         allocator,
         &prepared_case.scene,
-        prepared_case.plan.transport_route,
+        prepared_case.route,
         &prepared_case.prepared,
     );
     defer transport_buffers.deinit(allocator);
+
+    const providers = internal.plugin_internal.providers.exact();
 
     try emitTransportTraces(
         allocator,
         &files,
         &prepared_case.scene,
-        prepared_case.plan.transport_route,
+        prepared_case.route,
         &prepared_case.prepared,
-        .{
-            .transport = prepared_case.plan.providers.transport,
-            .surface = prepared_case.plan.providers.surface,
-            .instrument = prepared_case.plan.providers.instrument,
-            .noise = prepared_case.plan.providers.noise,
-        },
+        providers,
         &transport_buffers,
         config.wavelengths_nm,
     );
@@ -597,7 +596,7 @@ fn emitSpectroscopySummariesAtThermodynamicGrid(
 fn emitTransportTraces(
     allocator: std.mem.Allocator,
     files: *TraceFiles,
-    scene: *const zdisamar.Scene,
+    scene: *const internal.Scene,
     route: TransportCommon.Route,
     prepared: *const OpticsPrepare.PreparedOpticalState,
     providers: Measurement.ProviderBindings,
@@ -897,7 +896,7 @@ fn loadComparisonThermodynamicStates(
 ) ![]ThermodynamicState {
     const path = try std.fs.path.join(
         allocator,
-        &.{ trace_root, "fortran", "spectroscopy_summary.csv" },
+        &.{ trace_root, "vendor", "spectroscopy_summary.csv" },
     );
     defer allocator.free(path);
 

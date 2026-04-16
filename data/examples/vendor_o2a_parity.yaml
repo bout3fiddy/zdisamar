@@ -1,0 +1,176 @@
+schema_version: 1
+
+metadata:
+  id: vendor_o2a_parity
+  workspace: vendor-o2a-parity
+  description: "Executable retained O2A parity case compiled from YAML."
+
+inputs:
+  assets:
+    atmosphere_profile:
+      kind: file
+      path: data/climatologies/us_standard_1976_profile.csv
+      format: profile_csv
+    vendor_reference_csv:
+      kind: file
+      path: validation/reference/o2a_with_cia_disamar_reference.csv
+      format: disamar_o2a_reference_csv
+    airmass_factor_lut:
+      kind: file
+      path: data/luts/airmass_factor_nadir_demo.csv
+      format: csv
+    o2_hitran:
+      kind: file
+      path: vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par
+      format: hitran_par_o2a
+    o2_line_mixing:
+      kind: file
+      path: data/cross_sections/o2a_lisa_rmf.dat
+      format: lisa_rmf
+    o2_strong_lines:
+      kind: file
+      path: data/cross_sections/o2a_lisa_sdf.dat
+      format: lisa_sdf
+    o2o2_cia:
+      kind: file
+      path: data/cross_sections/o2o2_bira_o2a.dat
+      format: bira_cia
+
+templates:
+  vendor_o2a_base:
+    plan:
+      model_family: disamar_standard
+      transport:
+        solver: dispatcher
+      execution:
+        solver_mode: scalar
+        derivative_mode: none
+    scene:
+      id: vendor_o2a_parity_template
+      geometry:
+        model: pseudo_spherical
+        solar_zenith_deg: 60.0
+        viewing_zenith_deg: 30.0
+        relative_azimuth_deg: 120.0
+      atmosphere:
+        layering:
+          layer_count: 3
+          sublayer_divisions: 4
+        thermodynamics:
+          profile:
+            source:
+              asset: atmosphere_profile
+        boundary:
+          surface_pressure_hpa: 1013.25
+        interval_grid:
+          semantics: explicit_pressure_bounds
+          fit_interval_index_1based: 2
+          intervals:
+            - index_1based: 1
+              top_pressure_hpa: 0.3
+              bottom_pressure_hpa: 500.0
+              altitude_divisions: 28
+            - index_1based: 2
+              top_pressure_hpa: 500.0
+              bottom_pressure_hpa: 520.0
+              altitude_divisions: 6
+            - index_1based: 3
+              top_pressure_hpa: 520.0
+              bottom_pressure_hpa: 1013.25
+              altitude_divisions: 8
+      bands:
+        o2a:
+          start_nm: 755.0
+          end_nm: 776.0
+          sample_count: 21
+      absorbers:
+        o2:
+          species: o2
+          spectroscopy:
+            model: line_by_line
+            line_list_asset: o2_hitran
+            line_mixing_asset: o2_line_mixing
+            strong_lines_asset: o2_strong_lines
+            line_mixing_factor: 1.0
+            isotopes_sim: [1, 2, 3]
+            threshold_line_sim: 3.0e-5
+            cutoff_sim_cm1: 200.0
+        o2o2:
+          species: o2o2
+          spectroscopy:
+            model: cia
+            cia_asset: o2o2_cia
+            enabled: true
+      surface:
+        model: lambertian
+        provider: builtin.lambertian_surface
+        albedo: 0.2
+      aerosols:
+        plume:
+          model: hg_scattering
+          optical_depth_550_nm: 0.3
+          single_scatter_albedo: 1.0
+          asymmetry_factor: 0.7
+          angstrom_exponent: 0.0
+          layer_center_km: 5.4
+          layer_width_km: 0.4
+          placement:
+            semantics: explicit_interval_bounds
+            interval_index_1based: 2
+            top_pressure_hpa: 500.0
+            bottom_pressure_hpa: 520.0
+      measurement_model:
+        regime: nadir
+        instrument:
+          name: disamar-o2a-compare
+        sampling:
+          mode: native
+          high_resolution_step_nm: 0.01
+          high_resolution_half_span_nm: 1.14
+          adaptive_reference_grid:
+            points_per_fwhm: 20
+            strong_line_min_divisions: 8
+            strong_line_max_divisions: 40
+        spectral_response:
+          shape: flat_top_n4
+          fwhm_nm: 0.38
+        illumination:
+          solar_spectrum:
+            from_reference_asset: vendor_reference_csv
+        calibration:
+          wavelength_shift_nm: 0.0
+          multiplicative_offset: 1.0
+          stray_light: 0.0
+        noise:
+          model: none
+      rtm:
+        scattering: multiple
+        n_streams: 20
+        use_adding: false
+        num_orders_max: 0
+        fourier_floor_scalar: 2
+        threshold_conv_first: 1.5e-7
+        threshold_conv_mult: 1.5e-9
+        threshold_doubl: 1.0e-6
+        threshold_mul: 1.0e-8
+        use_spherical_correction: true
+        integrate_source_function: true
+        renorm_phase_function: true
+        stokes_dimension: 1
+
+experiment:
+  simulation:
+    from: vendor_o2a_base
+    scene:
+      id: o2a_vendor_parity_yaml
+
+outputs:
+  - kind: summary_json
+    path: out/analysis/o2a/yaml_run/summary.json
+  - kind: generated_spectrum_csv
+    path: out/analysis/o2a/yaml_run/generated_spectrum.csv
+
+validation:
+  strict_unknown_fields: true
+  require_resolved_assets: true
+  require_resolved_stage_references: true
