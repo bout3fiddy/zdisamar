@@ -17,10 +17,8 @@
 //! Validation:
 //!   Ingest unit tests and the reference-asset loader tests.
 
-pub const spectral_ascii = @import("spectral_ascii.zig");
 pub const reference_assets = @import("reference_assets.zig");
 
-test "ingest package includes spectral and reference loaders" {
-    _ = @import("spectral_ascii.zig");
+test "ingest package includes retained reference loaders" {
     _ = @import("reference_assets.zig");
 }

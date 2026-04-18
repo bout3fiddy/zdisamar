@@ -7,7 +7,12 @@
 //!   local harnesses can bind the same internal module paths without widening
 //!   the shipped library surface.
 
-pub const Scene = @import("model/Scene.zig").Scene;
+pub const scene = @import("model/Scene.zig");
+pub const Scene = scene.Scene;
+pub const absorber = @import("model/Absorber.zig");
+pub const atmosphere = @import("model/Atmosphere.zig");
+pub const instrument = @import("model/Instrument.zig");
+pub const hitran_partition_tables = @import("model/hitran_partition_tables.zig");
 pub const reference_data = @import("model/ReferenceData.zig");
 
 pub const kernels = struct {
@@ -31,6 +36,7 @@ pub const plugin_internal = struct {
 
         pub const Bindings = root.Bindings;
         pub const Instrument = @import("o2a/providers/instrument.zig");
+        pub const instrument_integration = @import("o2a/providers/instrument/integration.zig");
 
         pub fn exact() Bindings {
             return root.exact();

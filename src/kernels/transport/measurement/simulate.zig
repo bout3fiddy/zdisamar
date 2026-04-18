@@ -29,6 +29,8 @@ const calibration = @import("../../spectra/calibration.zig");
 const convolution = @import("../../spectra/convolution.zig");
 const grid = @import("../../spectra/grid.zig");
 const common = @import("../common.zig");
+const Postprocess = @import("postprocess.zig");
+const SamplePlan = @import("sample_plan.zig");
 const SpectralEval = @import("spectral_eval.zig");
 const Types = @import("types.zig");
 const Workspace = @import("workspace.zig");
@@ -38,54 +40,6 @@ const max_summary_samples: u32 = 128;
 
 fn recordPhaseLap(timer: ?*std.time.Timer, target: *u64) void {
     if (timer) |resolved_timer| target.* = resolved_timer.lap();
-}
-
-fn collectUniqueForwardMisses(
-    allocator: Allocator,
-    scene: *const Scene,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    resolved_axis: *const grid.ResolvedAxis,
-    radiance_calibration: calibration.Calibration,
-    providers: Types.ProviderBindings,
-) ![]SpectralEval.ForwardCacheMiss {
-    const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    var seen = std.AutoHashMap(i64, void).init(allocator);
-    defer seen.deinit();
-    var misses = std.ArrayList(SpectralEval.ForwardCacheMiss).empty;
-    errdefer misses.deinit(allocator);
-
-    for (0..sample_count) |index| {
-        const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
-        const evaluation_wavelength_nm = calibration.shiftedWavelength(
-            radiance_calibration,
-            nominal_wavelength_nm,
-        );
-        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
-        providers.instrument.integrationForWavelength(
-            scene,
-            prepared,
-            .radiance,
-            nominal_wavelength_nm,
-            &integration,
-        );
-
-        const integration_sample_count = if (integration.enabled) integration.sample_count else 1;
-        for (0..integration_sample_count) |sample_index| {
-            const wavelength_nm = if (integration.enabled)
-                evaluation_wavelength_nm + integration.offsets_nm[sample_index]
-            else
-                evaluation_wavelength_nm;
-            const key = SpectralEval.SpectralEvaluationCache.keyFor(wavelength_nm);
-            const entry = try seen.getOrPut(key);
-            if (entry.found_existing) continue;
-            try misses.append(allocator, .{
-                .key = key,
-                .wavelength_nm = wavelength_nm,
-            });
-        }
-    }
-
-    return misses.toOwnedSlice(allocator);
 }
 
 /// Purpose:
@@ -106,7 +60,7 @@ fn collectUniqueForwardMisses(
 ///
 /// Validation:
 ///   Measurement-space summary and product tests.
-fn simulateInternal(
+pub fn simulateInternal(
     allocator: Allocator,
     scene: *const Scene,
     route: common.Route,
@@ -145,13 +99,19 @@ fn simulateInternal(
     const uses_integrated_irradiance_sampling = providers.instrument.usesIntegratedSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
-    const forward_misses = try collectUniqueForwardMisses(
+    const sample_plans = try SamplePlan.buildSamplePlans(
         allocator,
         scene,
         prepared,
         &resolved_axis,
         radiance_calibration,
+        irradiance_calibration,
         providers,
+    );
+    defer allocator.free(sample_plans);
+    const forward_misses = try SamplePlan.collectUniqueForwardMisses(
+        allocator,
+        sample_plans,
     );
     defer allocator.free(forward_misses);
     try SpectralEval.prefetchForwardSamples(
@@ -179,23 +139,16 @@ fn simulateInternal(
         return error.ShapeMismatch;
     }
 
-    for (0..sample_count) |index| {
-        const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
-        const evaluation_wavelength_nm = calibration.shiftedWavelength(
-            radiance_calibration,
-            nominal_wavelength_nm,
-        );
+    for (sample_plans, 0..) |plan, index| {
+        const nominal_wavelength_nm = plan.nominal_wavelength_nm;
         buffers.wavelengths[index] = nominal_wavelength_nm;
-
-        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
-        providers.instrument.integrationForWavelength(scene, prepared, .radiance, nominal_wavelength_nm, &integration);
 
         const integrated = try SpectralEval.integrateForwardAtNominal(
             allocator,
             scene,
             route,
             prepared,
-            evaluation_wavelength_nm,
+            plan.radiance_wavelength_nm,
             safe_span,
             providers,
             buffers.layer_inputs[0..transport_layer_count],
@@ -206,7 +159,7 @@ fn simulateInternal(
             buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1],
             buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1],
             &evaluation_cache,
-            &integration,
+            &plan.radiance_integration,
         );
         buffers.scratch[index] = integrated.radiance;
         if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
@@ -220,7 +173,7 @@ fn simulateInternal(
     } else {
         try convolution.apply(buffers.scratch, radiance_slit_kernel[0..], buffers.radiance);
     }
-    try applyChannelCorrections(
+    try Postprocess.applyChannelCorrections(
         scene,
         .radiance,
         radiance_calibration,
@@ -231,21 +184,14 @@ fn simulateInternal(
     );
     if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.radiance_postprocess_ns);
 
-    for (0..sample_count) |index| {
-        const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
-        const evaluation_wavelength_nm = calibration.shiftedWavelength(
-            irradiance_calibration,
-            nominal_wavelength_nm,
-        );
-        var integration: @import("../../../o2a/providers/instrument.zig").IntegrationKernel = undefined;
-        providers.instrument.integrationForWavelength(scene, prepared, .irradiance, nominal_wavelength_nm, &integration);
+    for (sample_plans, 0..) |plan, index| {
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,
             prepared,
-            evaluation_wavelength_nm,
+            plan.irradiance_wavelength_nm,
             safe_span,
             &evaluation_cache,
-            &integration,
+            &plan.irradiance_integration,
         );
     }
     if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.irradiance_integration_ns);
@@ -254,7 +200,7 @@ fn simulateInternal(
     } else {
         try convolution.apply(buffers.scratch, irradiance_slit_kernel[0..], buffers.irradiance);
     }
-    try applyChannelCorrections(
+    try Postprocess.applyChannelCorrections(
         scene,
         .irradiance,
         irradiance_calibration,
@@ -290,7 +236,7 @@ fn simulateInternal(
     else
         null;
     if (radiance_noise_sigma) |sigma| {
-        try materializeChannelSigma(providers, scene, .radiance, buffers.wavelengths, buffers.radiance, sigma);
+        try Postprocess.materializeChannelSigma(providers, scene, .radiance, buffers.wavelengths, buffers.radiance, sigma);
     }
     if (buffers.noise_sigma) |noise_sigma| {
         const sigma = radiance_noise_sigma orelse return error.ShapeMismatch;
@@ -306,7 +252,7 @@ fn simulateInternal(
     else
         null;
     if (irradiance_noise_sigma) |sigma| {
-        try materializeChannelSigma(providers, scene, .irradiance, buffers.wavelengths, buffers.irradiance, sigma);
+        try Postprocess.materializeChannelSigma(providers, scene, .irradiance, buffers.wavelengths, buffers.irradiance, sigma);
     }
 
     if (buffers.reflectance_noise_sigma) |reflectance_noise_sigma| {
@@ -342,7 +288,7 @@ fn simulateInternal(
             try convolution.apply(jacobian, radiance_slit_kernel[0..], buffers.scratch);
             @memcpy(jacobian, buffers.scratch);
         }
-        try applyChannelJacobianCorrections(
+        try Postprocess.applyChannelJacobianCorrections(
             scene,
             .radiance,
             radiance_calibration,
@@ -385,21 +331,6 @@ pub fn simulate(
     return simulateInternal(allocator, scene, route, prepared, providers, buffers, null);
 }
 
-fn materializeChannelSigma(
-    providers: Types.ProviderBindings,
-    scene: *const Scene,
-    channel: SpectralChannel,
-    wavelengths_nm: []const f64,
-    signal: []const f64,
-    output: []f64,
-) Workspace.Error!void {
-    if (providers.noise.materializesSigma(scene, channel)) {
-        try providers.noise.materializeSigma(scene, channel, wavelengths_nm, signal, output);
-    } else {
-        @memset(output, 0.0);
-    }
-}
-
 /// Purpose:
 ///   Materialize a summary-only measurement-space product.
 pub fn simulateSummary(
@@ -440,219 +371,4 @@ pub fn simulateSummaryWithWorkspace(
         try workspace.buffers(allocator, &summary_scene, route, providers),
         null,
     );
-}
-
-/// Purpose:
-///   Materialize the full measurement-space product arrays.
-pub fn simulateProduct(
-    allocator: Allocator,
-    scene: *const Scene,
-    route: common.Route,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-) Workspace.Error!Types.MeasurementSpaceProduct {
-    return simulateProductWithProfile(
-        allocator,
-        scene,
-        route,
-        prepared,
-        providers,
-        null,
-    );
-}
-
-pub fn simulateProductWithProfile(
-    allocator: Allocator,
-    scene: *const Scene,
-    route: common.Route,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-    forward_profile: ?*Types.ForwardProfile,
-) Workspace.Error!Types.MeasurementSpaceProduct {
-    const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    const transport_layer_count = Workspace.resolvedTransportLayerCount(route, prepared);
-    const pseudo_spherical_sample_count = Workspace.resolvedPseudoSphericalSampleCount(scene, route, prepared);
-
-    const wavelengths = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(wavelengths);
-    const radiance = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(radiance);
-    const irradiance = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(irradiance);
-    const reflectance = try allocator.alloc(f64, sample_count);
-    errdefer allocator.free(reflectance);
-    const scratch = try allocator.alloc(f64, sample_count);
-    defer allocator.free(scratch);
-    const scratch_aux = try allocator.alloc(f64, sample_count);
-    defer allocator.free(scratch_aux);
-    const wants_radiance_noise = providers.noise.materializesSigma(scene, .radiance);
-    const wants_irradiance_noise = providers.noise.materializesSigma(scene, .irradiance);
-    const wants_noise_buffers = wants_radiance_noise or
-        wants_irradiance_noise or
-        Workspace.reflectanceCalibrationEnabled(scene);
-    const noise_sigma = if (wants_noise_buffers)
-        try allocator.alloc(f64, sample_count)
-    else
-        try allocator.alloc(f64, 0);
-    errdefer allocator.free(noise_sigma);
-    const irradiance_noise_sigma = if (wants_noise_buffers)
-        try allocator.alloc(f64, sample_count)
-    else
-        try allocator.alloc(f64, 0);
-    errdefer allocator.free(irradiance_noise_sigma);
-    const reflectance_noise_sigma = if (wants_noise_buffers)
-        try allocator.alloc(f64, sample_count)
-    else
-        try allocator.alloc(f64, 0);
-    errdefer allocator.free(reflectance_noise_sigma);
-
-    const jacobian = if (route.derivative_mode == .none)
-        null
-    else
-        try allocator.alloc(f64, sample_count);
-    errdefer if (jacobian) |values| allocator.free(values);
-    const layer_inputs = try allocator.alloc(common.LayerInput, transport_layer_count);
-    defer allocator.free(layer_inputs);
-    const pseudo_spherical_layers = try allocator.alloc(common.LayerInput, pseudo_spherical_sample_count);
-    defer allocator.free(pseudo_spherical_layers);
-    const source_interfaces = try allocator.alloc(common.SourceInterfaceInput, transport_layer_count + 1);
-    defer allocator.free(source_interfaces);
-    const rtm_quadrature_levels = try allocator.alloc(common.RtmQuadratureLevel, transport_layer_count + 1);
-    defer allocator.free(rtm_quadrature_levels);
-    const pseudo_spherical_samples = try allocator.alloc(common.PseudoSphericalSample, pseudo_spherical_sample_count);
-    defer allocator.free(pseudo_spherical_samples);
-    const pseudo_spherical_level_starts = try allocator.alloc(usize, transport_layer_count + 1);
-    defer allocator.free(pseudo_spherical_level_starts);
-    const pseudo_spherical_level_altitudes = try allocator.alloc(f64, transport_layer_count + 1);
-    defer allocator.free(pseudo_spherical_level_altitudes);
-
-    const summary = try simulateInternal(allocator, scene, route, prepared, providers, .{
-        .wavelengths = wavelengths,
-        .radiance = radiance,
-        .irradiance = irradiance,
-        .reflectance = reflectance,
-        .scratch = scratch,
-        .scratch_aux = scratch_aux,
-        .layer_inputs = layer_inputs,
-        .pseudo_spherical_layers = pseudo_spherical_layers,
-        .source_interfaces = source_interfaces,
-        .rtm_quadrature_levels = rtm_quadrature_levels,
-        .pseudo_spherical_samples = pseudo_spherical_samples,
-        .pseudo_spherical_level_starts = pseudo_spherical_level_starts,
-        .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
-        .jacobian = jacobian,
-        .noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
-        .radiance_noise_sigma = if (noise_sigma.len == 0) null else noise_sigma,
-        .irradiance_noise_sigma = if (irradiance_noise_sigma.len == 0) null else irradiance_noise_sigma,
-        .reflectance_noise_sigma = if (reflectance_noise_sigma.len == 0) null else reflectance_noise_sigma,
-    }, forward_profile);
-
-    return .{
-        .summary = summary,
-        .wavelengths = wavelengths,
-        .radiance = radiance,
-        .irradiance = irradiance,
-        .reflectance = reflectance,
-        .noise_sigma = noise_sigma,
-        .radiance_noise_sigma = noise_sigma,
-        .irradiance_noise_sigma = irradiance_noise_sigma,
-        .reflectance_noise_sigma = reflectance_noise_sigma,
-        .jacobian = jacobian,
-        .effective_air_mass_factor = prepared.effective_air_mass_factor,
-        .effective_single_scatter_albedo = prepared.effective_single_scatter_albedo,
-        .effective_temperature_k = prepared.effective_temperature_k,
-        .effective_pressure_hpa = prepared.effective_pressure_hpa,
-        .gas_optical_depth = prepared.gas_optical_depth,
-        .cia_optical_depth = prepared.cia_optical_depth,
-        .aerosol_optical_depth = prepared.aerosol_optical_depth,
-        .cloud_optical_depth = prepared.cloud_optical_depth,
-        .total_optical_depth = prepared.total_optical_depth,
-        .depolarization_factor = prepared.depolarization_factor,
-        .d_optical_depth_d_temperature = prepared.d_optical_depth_d_temperature,
-    };
-}
-
-fn applyChannelCorrections(
-    scene: *const Scene,
-    channel: SpectralChannel,
-    calibration_config: calibration.Calibration,
-    depolarization_factor: f64,
-    wavelengths_nm: []const f64,
-    signal: []f64,
-    scratch: []f64,
-) !void {
-    const controls = scene.observation_model.resolvedChannelControls(channel);
-    try calibration.applySignal(calibration_config, signal, signal);
-    try calibration.applySimpleOffsets(controls.simple_offsets, signal);
-    try calibration.applySpectralFeatures(controls.spectral_features, wavelengths_nm, signal);
-    if (controls.smear_percent != 0.0) {
-        try calibration.applySmear(controls.smear_percent, signal, scratch);
-    }
-    try calibration.applyMultiplicativeNodes(controls.multiplicative_nodes, wavelengths_nm, signal, scratch);
-    const stray_reference = if (controls.stray_light_nodes.use_reference_spectrum)
-        correctionReferenceSignal(scene, channel, signal.len) orelse signal
-    else
-        signal;
-    try calibration.applyStrayLightNodes(controls.stray_light_nodes, wavelengths_nm, stray_reference, signal, scratch);
-    if (channel == .radiance) {
-        try calibration.applyPolarizationScramblerBias(
-            controls.use_polarization_scrambler,
-            depolarization_factor,
-            wavelengths_nm,
-            signal,
-        );
-    }
-}
-
-fn applyChannelJacobianCorrections(
-    scene: *const Scene,
-    channel: SpectralChannel,
-    calibration_config: calibration.Calibration,
-    depolarization_factor: f64,
-    wavelengths_nm: []const f64,
-    jacobian: []f64,
-    scratch: []f64,
-) !void {
-    const controls = scene.observation_model.resolvedChannelControls(channel);
-    try calibration.applySignalDerivative(calibration_config, jacobian, jacobian);
-    try calibration.applySimpleOffsetDerivatives(controls.simple_offsets, jacobian);
-    try calibration.applySpectralFeatureDerivatives(controls.spectral_features, wavelengths_nm, jacobian);
-    if (controls.smear_percent != 0.0) {
-        try calibration.applySmear(controls.smear_percent, jacobian, scratch);
-    }
-    try calibration.applyMultiplicativeNodes(controls.multiplicative_nodes, wavelengths_nm, jacobian, scratch);
-
-    const external_reference = correctionReferenceSignal(scene, channel, jacobian.len);
-    if (!controls.stray_light_nodes.use_reference_spectrum or external_reference == null) {
-        try calibration.applyStrayLightNodes(
-            controls.stray_light_nodes,
-            wavelengths_nm,
-            jacobian,
-            jacobian,
-            scratch,
-        );
-    }
-    if (channel == .radiance) {
-        try calibration.applyPolarizationScramblerBias(
-            controls.use_polarization_scrambler,
-            depolarization_factor,
-            wavelengths_nm,
-            jacobian,
-        );
-    }
-}
-
-fn correctionReferenceSignal(
-    scene: *const Scene,
-    channel: SpectralChannel,
-    sample_count: usize,
-) ?[]const f64 {
-    const controls = scene.observation_model.resolvedChannelControls(channel);
-    if (controls.noise.reference_signal.len == sample_count) {
-        return controls.noise.reference_signal;
-    }
-    if (channel == .radiance and scene.observation_model.reference_radiance.len == sample_count) {
-        return scene.observation_model.reference_radiance;
-    }
-    return null;
 }

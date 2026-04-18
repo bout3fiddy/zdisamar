@@ -27,6 +27,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const errors = @import("../core/errors.zig");
 const AtmosphereModel = @import("Atmosphere.zig");
+const particle_compat = @import("../compat/optics/particle_support.zig");
 pub const CloudType = @import("../o2a/support/enums.zig").CloudType;
 pub const Placement = AtmosphereModel.IntervalPlacement;
 pub const FractionControl = AtmosphereModel.FractionControl;
@@ -55,12 +56,7 @@ pub const Cloud = struct {
     ///   Resolve the active cloud placement, using the legacy altitude geometry
     ///   only when explicit interval bounds are absent.
     pub fn resolvedPlacement(self: Cloud) Placement {
-        if (self.placement.enabled()) return self.placement;
-        return .{
-            .semantics = .altitude_center_width_approximation,
-            .top_altitude_km = self.top_altitude_km,
-            .bottom_altitude_km = @max(self.top_altitude_km - self.thickness_km, 0.0),
-        };
+        return particle_compat.cloudPlacement(self);
     }
 
     /// Purpose:

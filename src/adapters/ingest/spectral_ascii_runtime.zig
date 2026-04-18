@@ -30,6 +30,7 @@ const MeasurementQuantity = @import("../../model/Measurement.zig").Quantity;
 const OperationalBandSupport = @import("../../model/Instrument.zig").Instrument.OperationalBandSupport;
 const OperationalSolarSpectrum = @import("../../model/Instrument.zig").OperationalSolarSpectrum;
 const OperationalMetadata = @import("spectral_ascii_metadata.zig").OperationalMetadata;
+const solar_compat = @import("../../compat/ingest/solar_support.zig");
 pub const ParseError = @import("spectral_ascii_metadata.zig").Error;
 
 pub const wavelength_alignment_threshold_nm: f64 = 1.0e-3;
@@ -280,13 +281,7 @@ pub fn operationalArtifacts(
         cleanup.deinitOwned(allocator);
     }
 
-    const fallback_solar = if (measured_input.irradiance) |irradiance|
-        OperationalSolarSpectrum{
-            .wavelengths_nm = irradiance.wavelengths_nm,
-            .irradiance = irradiance.values,
-        }
-    else
-        OperationalSolarSpectrum{};
+    const fallback_solar = solar_compat.fallbackSolarFromMeasuredIrradiance(measured_input.irradiance);
 
     const band_support = try buildOperationalBandSupport(
         allocator,
@@ -431,10 +426,11 @@ fn buildOperationalBandSupport(
     band_support.instrument_line_shape = try metadata.instrument_line_shape.clone(allocator);
     band_support.instrument_line_shape_table = try metadata.instrument_line_shape_table.clone(allocator);
     band_support.operational_refspec_grid = try metadata.operational_refspec_grid.clone(allocator);
-    band_support.operational_solar_spectrum = if (metadata.operational_solar_spectrum.enabled())
-        try metadata.operational_solar_spectrum.clone(allocator)
-    else
-        try fallback_solar.clone(allocator);
+    band_support.operational_solar_spectrum = try solar_compat.resolveOperationalSolarSpectrum(
+        allocator,
+        metadata.operational_solar_spectrum,
+        fallback_solar,
+    );
     band_support.o2_operational_lut = try metadata.o2_operational_lut.clone(allocator);
     band_support.o2o2_operational_lut = try metadata.o2o2_operational_lut.clone(allocator);
 

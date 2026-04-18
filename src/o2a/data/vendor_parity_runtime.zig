@@ -38,157 +38,33 @@ const ObservationModel = @import("../../model/ObservationModel.zig");
 const ReferenceDataModel = @import("../../model/ReferenceData.zig");
 const Scene = @import("../../model/Scene.zig").Scene;
 const SpectralGrid = @import("../../model/Spectrum.zig").SpectralGrid;
-const bundled_optics = @import("assets.zig");
+const spectroscopy_support = @import("../../model/reference/spectroscopy/support.zig");
+const bundled_optics = @import("../../data/bundled/assets.zig");
 const providers = @import("../providers/root.zig");
 const reference_assets = @import("../../adapters/ingest/reference_assets.zig");
 const transport_common = @import("../../kernels/transport/common.zig");
+const parity_types = @import("vendor_parity_types.zig");
 
-const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 const Allocator = std.mem.Allocator;
-const BuiltinLineShapeKind = InstrumentModel.BuiltinLineShapeKind;
-const Route = transport_common.Route;
-const RtmControls = transport_common.RtmControls;
-
-pub const PreparationPhaseProfile = struct {
-    input_loading_ns: u64,
-    scene_assembly_ns: u64,
-    optics_preparation_ns: u64,
-    plan_preparation_ns: u64,
-};
-
-pub const ReferenceSample = struct {
-    wavelength_nm: f64,
-    irradiance: f64,
-    reflectance: f64,
-};
-
-pub const ExternalAsset = struct {
-    id: []const u8,
-    path: []const u8,
-    format: []const u8,
-};
-
-pub const OutputKind = enum {
-    summary_json,
-    generated_spectrum_csv,
-};
-
-pub const OutputRequest = struct {
-    kind: OutputKind,
-    path: []const u8,
-};
-
-pub const ValidationPolicy = struct {
-    strict_unknown_fields: bool,
-    require_resolved_assets: bool,
-    require_resolved_stage_references: bool,
-};
-
-pub const PlanSpec = struct {
-    model_family: []const u8,
-    transport_solver: []const u8,
-    execution_solver_mode: []const u8,
-    execution_derivative_mode: []const u8,
-};
-
-pub const Metadata = struct {
-    id: []const u8,
-    workspace: []const u8,
-    description: []const u8,
-};
-
-pub const GeometrySpec = struct {
-    model: @TypeOf(@as(Scene, .{}).geometry.model),
-    solar_zenith_deg: f64,
-    viewing_zenith_deg: f64,
-    relative_azimuth_deg: f64,
-};
-
-pub const AerosolSpec = struct {
-    optical_depth: f64,
-    single_scatter_albedo: f64,
-    asymmetry_factor: f64,
-    angstrom_exponent: f64,
-    reference_wavelength_nm: f64,
-    layer_center_km: f64,
-    layer_width_km: f64,
-    placement: AtmosphereModel.IntervalPlacement,
-};
-
-pub const ObservationSpec = struct {
-    instrument_name: []const u8,
-    regime: ObservationModel.ObservationRegime,
-    sampling: Instrument.SamplingMode,
-    noise_model: Instrument.NoiseModelKind,
-    instrument_line_fwhm_nm: f64,
-    builtin_line_shape: BuiltinLineShapeKind,
-    high_resolution_step_nm: f64,
-    high_resolution_half_span_nm: f64,
-    adaptive_reference_grid: InstrumentModel.AdaptiveReferenceGrid,
-    solar_reference_asset_id: []const u8,
-};
-
-pub const LineGasSpec = struct {
-    line_list_asset: ExternalAsset,
-    line_mixing_asset: ExternalAsset,
-    strong_lines_asset: ExternalAsset,
-    line_mixing_factor: ?f64,
-    isotopes_sim: []const u8,
-    threshold_line_sim: ?f64,
-    cutoff_sim_cm1: ?f64,
-};
-
-pub const CiaSpec = struct {
-    enabled: bool,
-    cia_asset: ?ExternalAsset,
-};
-
-pub const InputsSpec = struct {
-    atmosphere_profile: ExternalAsset,
-    vendor_reference_csv: ExternalAsset,
-    airmass_factor_lut: ExternalAsset,
-};
-
-pub const ResolvedVendorO2ACase = struct {
-    metadata: Metadata,
-    plan: PlanSpec,
-    inputs: InputsSpec,
-    scene_id: []const u8,
-    spectral_grid: SpectralGrid,
-    layer_count: u32,
-    sublayer_divisions: u8,
-    surface_pressure_hpa: f64,
-    fit_interval_index_1based: u32,
-    intervals: []const AtmosphereModel.VerticalInterval,
-    surface_albedo: f64,
-    geometry: GeometrySpec,
-    aerosol: AerosolSpec,
-    observation: ObservationSpec,
-    o2: LineGasSpec,
-    o2o2: CiaSpec,
-    rtm_controls: RtmControls,
-    outputs: []const OutputRequest,
-    validation: ValidationPolicy,
-};
-
-pub const LoadedVendorO2AInputs = struct {
-    profile: ReferenceDataModel.ClimatologyProfile,
-    cross_sections: ReferenceDataModel.CrossSectionTable,
-    line_list: ReferenceDataModel.SpectroscopyLineList,
-    cia_table: ?ReferenceDataModel.CollisionInducedAbsorptionTable,
-    lut: ReferenceDataModel.AirmassFactorLut,
-    reference: []ReferenceSample,
-
-    pub fn deinit(self: *LoadedVendorO2AInputs, allocator: Allocator) void {
-        self.profile.deinit(allocator);
-        self.cross_sections.deinit(allocator);
-        self.line_list.deinit(allocator);
-        if (self.cia_table) |*table| table.deinit(allocator);
-        self.lut.deinit(allocator);
-        if (self.reference.len != 0) allocator.free(self.reference);
-        self.* = undefined;
-    }
-};
+pub const AbsorberSpecies = parity_types.AbsorberSpecies;
+pub const Route = parity_types.Route;
+pub const RtmControls = parity_types.RtmControls;
+pub const PreparationPhaseProfile = parity_types.PreparationPhaseProfile;
+pub const ReferenceSample = parity_types.ReferenceSample;
+pub const ExternalAsset = parity_types.ExternalAsset;
+pub const OutputKind = parity_types.OutputKind;
+pub const OutputRequest = parity_types.OutputRequest;
+pub const ValidationPolicy = parity_types.ValidationPolicy;
+pub const PlanSpec = parity_types.PlanSpec;
+pub const Metadata = parity_types.Metadata;
+pub const GeometrySpec = parity_types.GeometrySpec;
+pub const AerosolSpec = parity_types.AerosolSpec;
+pub const ObservationSpec = parity_types.ObservationSpec;
+pub const LineGasSpec = parity_types.LineGasSpec;
+pub const CiaSpec = parity_types.CiaSpec;
+pub const InputsSpec = parity_types.InputsSpec;
+pub const ResolvedVendorO2ACase = parity_types.ResolvedVendorO2ACase;
+pub const LoadedVendorO2AInputs = parity_types.LoadedVendorO2AInputs;
 
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -535,7 +411,72 @@ pub fn loadResolvedVendorO2ALineList(
     var relaxation_matrix = try relaxation_asset.toSpectroscopyRelaxationMatrix(allocator);
     defer relaxation_matrix.deinit(allocator);
 
+    try filterVendorStrongLineSidecars(
+        allocator,
+        &line_list,
+        &strong_lines,
+        &relaxation_matrix,
+    );
     try line_list.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
     line_list.preserve_anchor_weak_lines = true;
     return line_list;
+}
+
+fn filterVendorStrongLineSidecars(
+    allocator: Allocator,
+    line_list: *const ReferenceDataModel.SpectroscopyLineList,
+    strong_lines: *ReferenceDataModel.SpectroscopyStrongLineSet,
+    relaxation_matrix: *ReferenceDataModel.RelaxationMatrix,
+) !void {
+    var matched_indices = std.ArrayList(usize).empty;
+    defer matched_indices.deinit(allocator);
+
+    for (strong_lines.lines, 0..) |strong_line, strong_index| {
+        if (hasVendorStrongLineAnchor(line_list.*, strong_line)) {
+            try matched_indices.append(allocator, strong_index);
+        }
+    }
+
+    if (matched_indices.items.len == 0) return error.UnmatchedStrongLineSidecar;
+    if (matched_indices.items.len == strong_lines.lines.len) return;
+
+    const retained_count = matched_indices.items.len;
+    const retained_lines = try allocator.alloc(ReferenceDataModel.SpectroscopyStrongLine, retained_count);
+    errdefer allocator.free(retained_lines);
+    const retained_wt0 = try allocator.alloc(f64, retained_count * retained_count);
+    errdefer allocator.free(retained_wt0);
+    const retained_bw = try allocator.alloc(f64, retained_count * retained_count);
+    errdefer allocator.free(retained_bw);
+
+    for (matched_indices.items, 0..) |old_row_index, new_row_index| {
+        retained_lines[new_row_index] = strong_lines.lines[old_row_index];
+        for (matched_indices.items, 0..) |old_col_index, new_col_index| {
+            const flat_index = new_row_index * retained_count + new_col_index;
+            retained_wt0[flat_index] = relaxation_matrix.weightAt(old_row_index, old_col_index);
+            retained_bw[flat_index] = relaxation_matrix.temperatureExponentAt(old_row_index, old_col_index);
+        }
+    }
+
+    strong_lines.deinit(allocator);
+    strong_lines.* = .{ .lines = retained_lines };
+    relaxation_matrix.deinit(allocator);
+    relaxation_matrix.* = .{
+        .line_count = retained_count,
+        .wt0 = retained_wt0,
+        .bw = retained_bw,
+    };
+}
+
+fn hasVendorStrongLineAnchor(
+    line_list: ReferenceDataModel.SpectroscopyLineList,
+    strong_line: ReferenceDataModel.SpectroscopyStrongLine,
+) bool {
+    for (line_list.lines) |line| {
+        if (!spectroscopy_support.isVendorO2AStrongCandidate(line)) continue;
+        const tolerance_nm = @max(line_list.strong_line_tolerance_nm, strong_line.air_half_width_nm * 4.0);
+        if (@abs(line.center_wavelength_nm - strong_line.center_wavelength_nm) <= tolerance_nm) {
+            return true;
+        }
+    }
+    return false;
 }
