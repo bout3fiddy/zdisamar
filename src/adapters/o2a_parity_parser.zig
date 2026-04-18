@@ -200,13 +200,6 @@ fn isSequenceLine(text: []const u8) bool {
     return text.len != 0 and text[0] == '-';
 }
 
-fn unquoteScalar(text: []const u8) []const u8 {
-    if (text.len >= 2 and ((text[0] == '"' and text[text.len - 1] == '"') or (text[0] == '\'' and text[text.len - 1] == '\''))) {
-        return text[1 .. text.len - 1];
-    }
-    return text;
-}
-
 test "parity yaml parser rejects unknown root fields" {
     const yaml =
         \\schema_version: 1

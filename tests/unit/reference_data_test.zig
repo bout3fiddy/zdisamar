@@ -521,6 +521,43 @@ test "fallback strong-line anchors can preserve weak contributions when requeste
     try std.testing.expect(preserved.strong_line_sigma_cm2_per_molecule > 0.0);
 }
 
+test "vendor strong-line partitions ignore nearby O2 lines without vendor metadata" {
+    var lines = try makeLineList(&.{
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3019, .line_strength_cm2_per_molecule = 8.50e-22, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00 },
+    });
+    defer lines.deinit(std.testing.allocator);
+
+    var strong_lines = try makeStrongLineSet(&.{
+        .{
+            .center_wavenumber_cm1 = 12965.1079,
+            .center_wavelength_nm = 771.3015,
+            .population_t0 = 5.10e-05,
+            .dipole_ratio = 0.712,
+            .dipole_t0 = 5.80e-04,
+            .lower_state_energy_cm1 = 1804.8773,
+            .air_half_width_cm1 = 0.0276,
+            .air_half_width_nm = 0.00164,
+            .temperature_exponent = 0.63,
+            .pressure_shift_cm1 = -0.009,
+            .pressure_shift_nm = 0.00053,
+            .rotational_index_m1 = -35,
+        },
+    });
+    defer strong_lines.deinit(std.testing.allocator);
+
+    var relaxation_matrix = try makeRelaxationMatrix(1, &.{0.02764486}, &.{0.629999646133});
+    defer relaxation_matrix.deinit(std.testing.allocator);
+
+    try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
+    try lines.buildStrongLineMatchIndex(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), lines.strong_lines.?.len);
+    try std.testing.expectEqual(@as(usize, 2), lines.strong_line_match_by_line.?.len);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[0]);
+    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[1]);
+}
+
 test "vendor O2A strong candidates fail fast when they cannot be matched to a sidecar" {
     var lines = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{

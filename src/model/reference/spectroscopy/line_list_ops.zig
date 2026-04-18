@@ -234,9 +234,6 @@ pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
 
     var matched_counts = [_]usize{0} ** Types.max_strong_line_sidecars;
     for (self.lines) |line| {
-        if (line.gas_index == 7 and findStrongLineMatch(self.*, line.center_wavelength_nm) != null and !Support.lineHasVendorStrongLineMetadata(line)) {
-            return error.MissingStrongLineMetadata;
-        }
         if (!Support.isVendorO2AStrongCandidate(line)) continue;
         const strong_index = findStrongLineMatch(self.*, line.center_wavelength_nm) orelse continue;
         matched_counts[strong_index] += 1;

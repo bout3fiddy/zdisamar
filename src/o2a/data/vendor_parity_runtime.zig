@@ -428,6 +428,12 @@ fn filterVendorStrongLineSidecars(
     strong_lines: *ReferenceDataModel.SpectroscopyStrongLineSet,
     relaxation_matrix: *ReferenceDataModel.RelaxationMatrix,
 ) !void {
+    // DECISION:
+    //   The retained vendor-parity assets keep the full vendor strong-line
+    //   sidecar tables even when the bundled line list is a wavelength subset.
+    //   Trim the sidecars to anchors present in the loaded line list before
+    //   attaching them so the retained O2A helper preserves the committed
+    //   subset semantics exercised by the vendor smoke tests.
     var matched_indices = std.ArrayList(usize).empty;
     defer matched_indices.deinit(allocator);
 
@@ -479,4 +485,84 @@ fn hasVendorStrongLineAnchor(
         }
     }
     return false;
+}
+
+test "vendor parity loader trims unmatched strong-line sidecars to the loaded subset" {
+    var line_list = ReferenceDataModel.SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(ReferenceDataModel.SpectroscopyLine, &.{
+            .{
+                .gas_index = 7,
+                .isotope_number = 1,
+                .center_wavelength_nm = 771.3015,
+                .line_strength_cm2_per_molecule = 1.0e-20,
+                .air_half_width_nm = 0.0015,
+                .temperature_exponent = 0.63,
+                .lower_state_energy_cm1 = 1800.0,
+                .pressure_shift_nm = 0.0,
+                .line_mixing_coefficient = 0.0,
+                .branch_ic1 = 5,
+                .branch_ic2 = 1,
+                .rotational_nf = 35,
+            },
+        }),
+    };
+    defer line_list.deinit(std.testing.allocator);
+
+    var strong_lines = ReferenceDataModel.SpectroscopyStrongLineSet{
+        .lines = try std.testing.allocator.dupe(ReferenceDataModel.SpectroscopyStrongLine, &.{
+            .{
+                .center_wavenumber_cm1 = 12965.1079,
+                .center_wavelength_nm = 771.3015,
+                .population_t0 = 5.10e-05,
+                .dipole_ratio = 0.712,
+                .dipole_t0 = 5.80e-04,
+                .lower_state_energy_cm1 = 1804.8773,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -35,
+            },
+            .{
+                .center_wavenumber_cm1 = 12966.8087,
+                .center_wavelength_nm = 771.2004,
+                .population_t0 = 4.99e-05,
+                .dipole_ratio = -0.702,
+                .dipole_t0 = -5.78e-04,
+                .lower_state_energy_cm1 = 1803.1765,
+                .air_half_width_cm1 = 0.0276,
+                .air_half_width_nm = 0.00164,
+                .temperature_exponent = 0.63,
+                .pressure_shift_cm1 = -0.009,
+                .pressure_shift_nm = 0.00053,
+                .rotational_index_m1 = -34,
+            },
+        }),
+    };
+    defer strong_lines.deinit(std.testing.allocator);
+
+    var relaxation_matrix = ReferenceDataModel.RelaxationMatrix{
+        .line_count = 2,
+        .wt0 = try std.testing.allocator.dupe(f64, &.{
+            0.02764486,
+            0.0004338554,
+            0.0004338554,
+            0.02655312,
+        }),
+        .bw = try std.testing.allocator.dupe(f64, &.{
+            0.629999646133,
+            1.169364903905,
+            1.169364903905,
+            0.629999646133,
+        }),
+    };
+    defer relaxation_matrix.deinit(std.testing.allocator);
+
+    try filterVendorStrongLineSidecars(std.testing.allocator, &line_list, &strong_lines, &relaxation_matrix);
+    try std.testing.expectEqual(@as(usize, 1), strong_lines.lines.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 771.3015), strong_lines.lines[0].center_wavelength_nm, 1.0e-9);
+    try std.testing.expectEqual(@as(usize, 1), relaxation_matrix.line_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.02764486), relaxation_matrix.weightAt(0, 0), 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.629999646133), relaxation_matrix.temperatureExponentAt(0, 0), 1.0e-12);
 }

@@ -319,21 +319,5 @@ pub const OperationalMetadata = struct {
     }
 };
 
-pub const ParseState = struct {
-    metadata: OperationalMetadata = .{},
-    operational_refspec_grid_builder: OperationalReferenceGridBuilder = .{},
-    operational_solar_spectrum_builder: OperationalSolarSpectrumBuilder = .{},
-    operational_lut_builders: std.ArrayList(NamedOperationalLutBuilder) = .empty,
-
-    pub fn deinit(self: *ParseState, allocator: std.mem.Allocator) void {
-        self.metadata.deinitOwned(allocator);
-        self.operational_refspec_grid_builder.deinit(allocator);
-        self.operational_solar_spectrum_builder.deinit(allocator);
-        for (self.operational_lut_builders.items) |*builder| builder.deinit(allocator);
-        self.operational_lut_builders.deinit(allocator);
-        self.* = .{};
-    }
-};
-
 pub const line_shape_sample_capacity = max_line_shape_samples;
 pub const line_shape_nominal_capacity = max_line_shape_nominals;
