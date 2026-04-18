@@ -27,6 +27,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const errors = @import("../core/errors.zig");
 const AtmosphereModel = @import("Atmosphere.zig");
+const particle_compat = @import("../compat/optics/particle_support.zig");
 pub const AerosolType = @import("../o2a/support/enums.zig").AerosolType;
 pub const Placement = AtmosphereModel.IntervalPlacement;
 pub const FractionControl = AtmosphereModel.FractionControl;
@@ -55,12 +56,7 @@ pub const Aerosol = struct {
     ///   Resolve the active placement, keeping the legacy altitude-centered
     ///   fields available as a compatibility fallback.
     pub fn resolvedPlacement(self: Aerosol) Placement {
-        if (self.placement.enabled()) return self.placement;
-        return .{
-            .semantics = .altitude_center_width_approximation,
-            .top_altitude_km = self.layer_center_km + 0.5 * self.layer_width_km,
-            .bottom_altitude_km = @max(self.layer_center_km - 0.5 * self.layer_width_km, 0.0),
-        };
+        return particle_compat.aerosolPlacement(self);
     }
 
     /// Purpose:

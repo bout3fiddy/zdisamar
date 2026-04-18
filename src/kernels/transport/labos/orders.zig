@@ -1,28 +1,3 @@
-//! Purpose:
-//!   Own LABOS orders-of-scattering transport and the internal radiation field
-//!   accumulation logic.
-//!
-//! Physics:
-//!   Propagates local layer sources through the level grid, accumulates the
-//!   diffuse field across successive scattering orders, and applies convergence
-//!   control.
-//!
-//! Vendor:
-//!   LABOS orders-of-scattering stage
-//!
-//! Design:
-//!   The transport recursion is isolated from the layer operator generation so
-//!   the higher-level solver can combine the stages without one monolithic
-//!   implementation file.
-//!
-//! Invariants:
-//!   Upward diffuse light is accumulated from the start level toward TOA while
-//!   downward diffuse light propagates from TOA toward the surface.
-//!
-//! Validation:
-//!   See `tests/unit/transport_labos_test.zig` for orders-of-scattering and
-//!   end-to-end execution coverage.
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
@@ -52,20 +27,6 @@ pub const OrdersWorkspace = struct {
     ud_orde: []basis.UDField,
     ud_local: []basis.UDLocal,
 
-    /// Purpose:
-    ///   Own reusable orders-of-scattering work arrays for one transport solve.
-    ///
-    /// Physics:
-    ///   Carries the accumulated diffuse field and per-order local source terms
-    ///   across Fourier terms on one fixed level grid.
-    ///
-    /// Vendor:
-    ///   `labosModule::ordersScat` work arrays
-    ///
-    /// Decisions:
-    ///   The vendor path keeps these arrays outside the routine. Zig preserves
-    ///   explicit ownership by putting them in a caller-owned workspace instead
-    ///   of reintroducing hidden shared state.
     pub fn init(
         allocator: Allocator,
         nlevel: usize,

@@ -114,6 +114,50 @@ pub fn build(b: *std.Build) void {
     });
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
+    const unit_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/unit/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "zdisamar",
+                .module = lib_module,
+            },
+        },
+    });
+    const unit_tests = b.addTest(.{
+        .root_module = unit_test_module,
+    });
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    const internal_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/unit/internal_root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "internal",
+                .module = b.createModule(.{
+                    .root_source_file = b.path("src/internal.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .imports = &.{
+                        .{
+                            .name = "build_options",
+                            .module = build_options_module,
+                        },
+                    },
+                }),
+            },
+        },
+    });
+    const internal_tests = b.addTest(.{
+        .root_module = internal_test_module,
+    });
+    const run_internal_tests = b.addRunArtifact(internal_tests);
+    const test_unit_step = b.step("test-unit", "Run the unit-test harness under tests/unit");
+    test_unit_step.dependOn(&run_unit_tests.step);
+    test_unit_step.dependOn(&run_internal_tests.step);
+
     const validation_o2a = addTestStep(
         b,
         target,
@@ -279,15 +323,21 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&profile_exe.step);
     check_step.dependOn(&cli_exe.step);
     check_step.dependOn(&lib_tests.step);
+    check_step.dependOn(&unit_tests.step);
+    check_step.dependOn(&internal_tests.step);
     check_step.dependOn(validation_o2a.compile_step);
     check_step.dependOn(validation_o2a_vendor.compile_step);
     check_step.dependOn(validation_o2a_vendor_profile.compile_step);
     check_step.dependOn(validation_o2a_vendor_line_list.compile_step);
     check_step.dependOn(validation_o2a_yaml.compile_step);
     check_step.dependOn(&run_lib_tests.step);
+    check_step.dependOn(&run_unit_tests.step);
+    check_step.dependOn(&run_internal_tests.step);
 
     const test_fast_step = b.step("test-fast", "Run the fast O2A verification suites");
     test_fast_step.dependOn(&lib_tests.step);
+    test_fast_step.dependOn(&run_unit_tests.step);
+    test_fast_step.dependOn(&run_internal_tests.step);
     test_fast_step.dependOn(validation_o2a.compile_step);
     test_fast_step.dependOn(validation_o2a_vendor_line_list.run_step);
     test_fast_step.dependOn(validation_o2a_yaml.run_step);
@@ -299,6 +349,8 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run the retained O2A verification baseline");
     test_step.dependOn(&run_lib_tests.step);
+    test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_internal_tests.step);
     test_step.dependOn(validation_o2a.run_step);
     test_step.dependOn(validation_o2a_vendor.run_step);
     test_step.dependOn(validation_o2a_vendor_profile.run_step);

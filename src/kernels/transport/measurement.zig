@@ -2,6 +2,7 @@ pub const types = @import("measurement/types.zig");
 pub const workspace = @import("measurement/workspace.zig");
 pub const forward_input = @import("measurement/forward_input.zig");
 pub const spectral_eval = @import("measurement/spectral_eval.zig");
+pub const product = @import("measurement/product.zig");
 pub const simulate = @import("measurement/simulate.zig");
 
 pub const reflectance_export_name = types.reflectance_export_name;
@@ -9,8 +10,10 @@ pub const fitted_reflectance_export_name = types.fitted_reflectance_export_name;
 pub const ProviderBindings = types.ProviderBindings;
 pub const MeasurementSpaceSummary = types.MeasurementSpaceSummary;
 pub const MeasurementSpaceProduct = types.MeasurementSpaceProduct;
+pub const MeasurementSpaceProductView = types.MeasurementSpaceProductView;
 pub const ForwardProfile = types.ForwardProfile;
 pub const SummaryWorkspace = workspace.SummaryWorkspace;
+pub const ProductWorkspace = workspace.ProductWorkspace;
 pub const Error = workspace.Error;
 
 pub fn simulateSummary(
@@ -48,7 +51,7 @@ pub fn simulateProduct(
     prepared: *const @import("../optics/preparation.zig").PreparedOpticalState,
     providers: ProviderBindings,
 ) !MeasurementSpaceProduct {
-    return simulate.simulateProduct(allocator, scene, route, prepared, providers);
+    return product.simulateProduct(allocator, scene, route, prepared, providers);
 }
 
 pub fn simulateProductWithProfile(
@@ -59,8 +62,28 @@ pub fn simulateProductWithProfile(
     providers: ProviderBindings,
     forward_profile: ?*ForwardProfile,
 ) !MeasurementSpaceProduct {
-    return simulate.simulateProductWithProfile(
+    return product.simulateProductWithProfile(
         allocator,
+        scene,
+        route,
+        prepared,
+        providers,
+        forward_profile,
+    );
+}
+
+pub fn simulateProductWithWorkspace(
+    allocator: @import("std").mem.Allocator,
+    product_workspace: *ProductWorkspace,
+    scene: *const @import("../../model/Scene.zig").Scene,
+    route: @import("common.zig").Route,
+    prepared: *const @import("../optics/preparation.zig").PreparedOpticalState,
+    providers: ProviderBindings,
+    forward_profile: ?*ForwardProfile,
+) !MeasurementSpaceProductView {
+    return product.simulateProductWithWorkspace(
+        allocator,
+        product_workspace,
         scene,
         route,
         prepared,
@@ -74,5 +97,6 @@ test {
     _ = workspace;
     _ = forward_input;
     _ = spectral_eval;
+    _ = product;
     _ = simulate;
 }

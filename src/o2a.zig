@@ -1,26 +1,25 @@
-const data = @import("o2a/data.zig");
-const optics = @import("o2a/optics.zig");
-const report = @import("o2a/report.zig");
+const bundled_data = @import("data/bundled/load.zig");
+const report_json = @import("o2a/report/json.zig");
 const spectrum = @import("o2a/spectrum.zig");
 
-pub const Case = @import("o2a/case.zig").Case;
-pub const Data = data.Data;
-pub const Optics = optics.Optics;
+pub const Case = @import("model/Scene.zig").Scene;
+pub const Data = bundled_data.Data;
+pub const Optics = @import("kernels/optics/preparation.zig").PreparedOpticalState;
 pub const Method = @import("o2a/method.zig").Method;
-pub const Work = @import("o2a/work.zig").Work;
+pub const Work = @import("kernels/transport/measurement/workspace.zig").SummaryWorkspace;
 pub const Result = spectrum.Result;
-pub const Report = report.Report;
+pub const Report = report_json.SummaryReport;
 pub const ForwardProfile = spectrum.ForwardProfile;
-pub const RtmControls = @import("o2a/solver.zig").RtmControls;
+pub const RtmControls = @import("kernels/transport/common.zig").RtmControls;
 
 pub const parity = @import("o2a/data/vendor_parity_yaml.zig");
-pub const profile = report.json;
+pub const profile = report_json;
 
 pub fn loadData(
     allocator: @import("std").mem.Allocator,
     case: *const Case,
 ) !Data {
-    return data.loadData(allocator, case);
+    return bundled_data.load(allocator, case);
 }
 
 pub fn buildOptics(
@@ -28,7 +27,7 @@ pub fn buildOptics(
     case: *const Case,
     loaded: *Data,
 ) !Optics {
-    return data.buildOptics(allocator, case, loaded);
+    return bundled_data.buildOptics(allocator, case, loaded);
 }
 
 pub fn runSpectrum(
@@ -52,5 +51,5 @@ pub fn runSpectrum(
 }
 
 pub fn writeReport(summary_path: []const u8, summary: Report) !void {
-    return report.writeReport(summary_path, summary);
+    return report_json.writeSummaryReport(summary_path, summary);
 }

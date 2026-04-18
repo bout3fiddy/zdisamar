@@ -19,6 +19,7 @@
 //!   Reference-asset loader tests and the O2A bundled optics tests.
 
 const std = @import("std");
+const helpers = @import("reference_assets_formats_helpers.zig");
 
 /// Purpose:
 ///   Describe the expected format and column contract for one asset.
@@ -78,7 +79,7 @@ fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!Par
 
     var header_line: ?[]const u8 = null;
     while (line_iter.next()) |raw_line| {
-        const line = trimWhitespace(raw_line);
+        const line = helpers.trimWhitespace(raw_line);
         if (line.len == 0) continue;
         header_line = line;
         break;
@@ -93,7 +94,7 @@ fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!Par
     }
 
     while (header_tokens.next()) |token| {
-        const name = try allocator.dupe(u8, trimWhitespace(token));
+        const name = try allocator.dupe(u8, helpers.trimWhitespace(token));
         errdefer allocator.free(name);
         try header_names.append(allocator, name);
     }
@@ -104,14 +105,14 @@ fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!Par
 
     var row_count: u32 = 0;
     while (line_iter.next()) |raw_line| {
-        const line = trimWhitespace(raw_line);
+        const line = helpers.trimWhitespace(raw_line);
         if (line.len == 0) continue;
 
         var token_iter = std.mem.splitScalar(u8, line, ',');
         var column_index: usize = 0;
         while (token_iter.next()) |token| {
             if (column_index >= header_names.items.len) return error.InvalidCsv;
-            const value = std.fmt.parseFloat(f64, trimWhitespace(token)) catch return error.InvalidNumber;
+            const value = std.fmt.parseFloat(f64, helpers.trimWhitespace(token)) catch return error.InvalidNumber;
             try values.append(allocator, value);
             column_index += 1;
         }
@@ -151,8 +152,8 @@ fn parseHitran160(
 ) Error!ParsedTable {
     const has_vendor_o2a_fields = columns.len == 13;
     const minimum_line_length: usize = 67;
-    const owned_columns = try dupColumns(allocator, columns);
-    errdefer freeColumns(allocator, owned_columns);
+    const owned_columns = try helpers.dupColumns(allocator, columns);
+    errdefer helpers.freeColumns(allocator, owned_columns);
 
     var values = std.ArrayList(f64).empty;
     defer values.deinit(allocator);
@@ -160,36 +161,61 @@ fn parseHitran160(
     var row_count: u32 = 0;
     var line_iter = std.mem.splitScalar(u8, contents, '\n');
     while (line_iter.next()) |raw_line| {
-        const line = trimLineEnding(raw_line);
-        const stripped = trimWhitespace(line);
+        const line = helpers.trimLineEnding(raw_line);
+        const stripped = helpers.trimWhitespace(line);
         if (stripped.len == 0 or stripped[0] == '#' or stripped[0] == '!') continue;
         if (line.len < minimum_line_length) return error.InvalidAssetFormat;
 
-        const gas_index = try parseFixedInt(line[0..2]);
-        const isotope_number = try parseFixedInt(line[2..3]);
-        const center_wavenumber_cm1 = try parseFixedFloat(line[3..15]);
-        const line_strength = try parseFixedFloat(line[15..25]);
-        const air_half_width_cm1 = try parseFixedFloat(line[35..40]);
-        const lower_state_energy_cm1 = try parseFixedFloat(line[45..55]);
-        const temperature_exponent = try parseFixedFloat(line[55..59]);
-        const pressure_shift_cm1 = try parseFixedFloat(line[59..67]);
+        const gas_index = try helpers.parseFixedInt(line[0..2]);
+        const isotope_number = try helpers.parseFixedInt(line[2..3]);
+        const center_wavenumber_cm1 = try helpers.parseFixedFloat(line[3..15]);
+        const line_strength = try helpers.parseFixedFloat(line[15..25]);
+        const air_half_width_cm1 = try helpers.parseFixedFloat(line[35..40]);
+        const lower_state_energy_cm1 = try helpers.parseFixedFloat(line[45..55]);
+        const temperature_exponent = try helpers.parseFixedFloat(line[55..59]);
+        const pressure_shift_cm1 = try helpers.parseFixedFloat(line[59..67]);
         const has_inline_vendor_fields = has_vendor_o2a_fields and line.len >= 85;
 
         // UNITS:
         //   The fixed-width cm^-1 fields are converted to the nm values expected by the typed
         //   spectroscopy loader.
-        const center_wavelength_nm = wavenumberToWavelengthNm(center_wavenumber_cm1);
-        const air_half_width_nm = spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
-        const pressure_shift_nm = -spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
-        const line_mixing_coefficient = deriveLineMixingCoefficient(air_half_width_cm1, pressure_shift_cm1);
-        const branch_ic1 = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[67..70]) else null;
-        const branch_ic2 = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[70..73]) else null;
-        const rotational_nf = if (has_inline_vendor_fields) try parseOptionalFixedInt(line[83..85]) else null;
+        const center_wavelength_nm = helpers.wavenumberToWavelengthNm(center_wavenumber_cm1);
+        const air_half_width_nm = helpers.spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
+        const pressure_shift_nm = -helpers.spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
+        const line_mixing_coefficient = helpers.deriveLineMixingCoefficient(air_half_width_cm1, pressure_shift_cm1);
+        const inline_branch_ic1 = if (has_inline_vendor_fields) try helpers.parseOptionalFixedInt(line[67..70]) else null;
+        const inline_branch_ic2 = if (has_inline_vendor_fields) try helpers.parseOptionalFixedInt(line[70..73]) else null;
+        const inline_rotational_nf = if (has_inline_vendor_fields) try helpers.parseOptionalFixedInt(line[83..85]) else null;
+        const fallback_vendor_metadata = if (has_vendor_o2a_fields and
+            inline_branch_ic1 == null and
+            inline_branch_ic2 == null and
+            inline_rotational_nf == null)
+            try helpers.fallbackVendorO2ABranchMetadata(line, center_wavenumber_cm1)
+        else
+            null;
+        const branch_ic1 = if (inline_branch_ic1) |value|
+            value
+        else if (fallback_vendor_metadata) |metadata|
+            metadata.branch_ic1
+        else
+            null;
+        const branch_ic2 = if (inline_branch_ic2) |value|
+            value
+        else if (fallback_vendor_metadata) |metadata|
+            metadata.branch_ic2
+        else
+            null;
+        const rotational_nf = if (inline_rotational_nf) |value|
+            value
+        else if (fallback_vendor_metadata) |metadata|
+            metadata.rotational_nf
+        else
+            null;
 
         try values.appendSlice(allocator, &.{
             @as(f64, @floatFromInt(gas_index)),
             @as(f64, @floatFromInt(isotope_number)),
-            deriveIsotopicAbundanceFraction(gas_index, isotope_number),
+            helpers.deriveIsotopicAbundanceFraction(gas_index, isotope_number),
             center_wavelength_nm,
             line_strength,
             air_half_width_nm,
@@ -226,8 +252,8 @@ fn parseBiraCiaPolynomial(
     contents: []const u8,
     columns: []const []const u8,
 ) Error!ParsedTable {
-    const owned_columns = try dupColumns(allocator, columns);
-    errdefer freeColumns(allocator, owned_columns);
+    const owned_columns = try helpers.dupColumns(allocator, columns);
+    errdefer helpers.freeColumns(allocator, owned_columns);
 
     var values = std.ArrayList(f64).empty;
     defer values.deinit(allocator);
@@ -239,8 +265,8 @@ fn parseBiraCiaPolynomial(
     var row_count: u32 = 0;
 
     while (line_iter.next()) |raw_line| {
-        const line = trimLineEnding(raw_line);
-        const stripped = trimWhitespace(line);
+        const line = helpers.trimLineEnding(raw_line);
+        const stripped = helpers.trimWhitespace(line);
         if (stripped.len == 0 or stripped[0] == '#') continue;
 
         var token_iter = std.mem.tokenizeAny(u8, stripped, " \t");
@@ -298,8 +324,8 @@ fn parseLisaSdf(
     contents: []const u8,
     columns: []const []const u8,
 ) Error!ParsedTable {
-    const owned_columns = try dupColumns(allocator, columns);
-    errdefer freeColumns(allocator, owned_columns);
+    const owned_columns = try helpers.dupColumns(allocator, columns);
+    errdefer helpers.freeColumns(allocator, owned_columns);
 
     var values = std.ArrayList(f64).empty;
     defer values.deinit(allocator);
@@ -307,35 +333,35 @@ fn parseLisaSdf(
     var row_count: u32 = 0;
     var line_iter = std.mem.splitScalar(u8, contents, '\n');
     while (line_iter.next()) |raw_line| {
-        const line = trimLineEnding(raw_line);
-        const stripped = trimWhitespace(line);
+        const line = helpers.trimLineEnding(raw_line);
+        const stripped = helpers.trimWhitespace(line);
         if (stripped.len == 0 or stripped[0] == '#' or stripped[0] == '!') continue;
         if (line.len < 87) return error.InvalidAssetFormat;
 
-        const center_wavenumber_cm1 = try parseFixedFloat(line[0..12]);
-        const population_t0 = try parseFixedFloat(line[14..23]);
-        const dipole_ratio = try parseFixedFloat(line[25..34]);
-        const dipole_t0 = try parseFixedFloat(line[35..44]);
-        const lower_state_energy_cm1 = try parseFixedFloat(line[46..56]);
-        const temperature_exponent = try parseFixedFloat(line[65..69]);
-        const pressure_shift_cm1 = try parseFixedFloat(line[71..79]);
-        const branch_token = trimWhitespace(line[83..84]);
-        const nf_token = trimWhitespace(line[84..87]);
-        const rotational_index_m1 = rotationalIndexFromLisaBranch(branch_token, nf_token) catch return error.InvalidAssetFormat;
+        const center_wavenumber_cm1 = try helpers.parseFixedFloat(line[0..12]);
+        const population_t0 = try helpers.parseFixedFloat(line[14..23]);
+        const dipole_ratio = try helpers.parseFixedFloat(line[25..34]);
+        const dipole_t0 = try helpers.parseFixedFloat(line[35..44]);
+        const lower_state_energy_cm1 = try helpers.parseFixedFloat(line[46..56]);
+        const temperature_exponent = try helpers.parseFixedFloat(line[65..69]);
+        const pressure_shift_cm1 = try helpers.parseFixedFloat(line[71..79]);
+        const branch_token = helpers.trimWhitespace(line[83..84]);
+        const nf_token = helpers.trimWhitespace(line[84..87]);
+        const rotational_index_m1 = helpers.rotationalIndexFromLisaBranch(branch_token, nf_token) catch return error.InvalidAssetFormat;
 
         // PARITY:
         //   `HITRANModule::readSDF` does not trust the tabulated `HWT0` field. It reconstructs
         //   the reference half-width from the LISA branch/Nf quantum numbers using the
         //   Tran/Hartmann-Yang parameterization before any temperature scaling happens.
-        _ = try parseFixedFloat(line[58..63]);
-        const air_half_width_cm1 = vendorLisaReferenceHalfWidthCm1(branch_token, nf_token) catch return error.InvalidAssetFormat;
+        _ = try helpers.parseFixedFloat(line[58..63]);
+        const air_half_width_cm1 = helpers.vendorLisaReferenceHalfWidthCm1(branch_token, nf_token) catch return error.InvalidAssetFormat;
 
         // UNITS:
         //   Strong-line fields are stored in cm^-1 and converted to nm where the typed loader
         //   expects wavelength-like values.
-        const center_wavelength_nm = wavenumberToWavelengthNm(center_wavenumber_cm1);
-        const air_half_width_nm = spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
-        const pressure_shift_nm = -spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
+        const center_wavelength_nm = helpers.wavenumberToWavelengthNm(center_wavenumber_cm1);
+        const air_half_width_nm = helpers.spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1);
+        const pressure_shift_nm = -helpers.spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1);
 
         try values.appendSlice(allocator, &.{
             center_wavenumber_cm1,
@@ -369,8 +395,8 @@ fn parseLisaRmf(
     contents: []const u8,
     columns: []const []const u8,
 ) Error!ParsedTable {
-    const owned_columns = try dupColumns(allocator, columns);
-    errdefer freeColumns(allocator, owned_columns);
+    const owned_columns = try helpers.dupColumns(allocator, columns);
+    errdefer helpers.freeColumns(allocator, owned_columns);
 
     var values = std.ArrayList(f64).empty;
     defer values.deinit(allocator);
@@ -378,13 +404,13 @@ fn parseLisaRmf(
     var row_count: u32 = 0;
     var line_iter = std.mem.splitScalar(u8, contents, '\n');
     while (line_iter.next()) |raw_line| {
-        const line = trimLineEnding(raw_line);
-        const stripped = trimWhitespace(line);
+        const line = helpers.trimLineEnding(raw_line);
+        const stripped = helpers.trimWhitespace(line);
         if (stripped.len == 0 or stripped[0] == '#' or stripped[0] == '!') continue;
         if (line.len < 31) return error.InvalidAssetFormat;
 
-        try values.append(allocator, try parseFixedFloat(line[0..15]));
-        try values.append(allocator, try parseFixedFloat(line[15..31]));
+        try values.append(allocator, try helpers.parseFixedFloat(line[0..15]));
+        try values.append(allocator, try helpers.parseFixedFloat(line[15..31]));
         row_count += 1;
     }
     if (row_count == 0) return error.InvalidAssetFormat;
@@ -394,172 +420,4 @@ fn parseLisaRmf(
         .values = try values.toOwnedSlice(allocator),
         .row_count = row_count,
     };
-}
-
-/// Purpose:
-///   Duplicate the declared columns into owned storage.
-fn dupColumns(allocator: std.mem.Allocator, columns: []const []const u8) Error![]const []const u8 {
-    const owned_columns = try allocator.alloc([]const u8, columns.len);
-    errdefer allocator.free(owned_columns);
-    var owned_column_count: usize = 0;
-    errdefer for (owned_columns[0..owned_column_count]) |column| allocator.free(column);
-    for (columns, 0..) |column, index| {
-        owned_columns[index] = try allocator.dupe(u8, column);
-        owned_column_count += 1;
-    }
-    return owned_columns;
-}
-
-/// Purpose:
-///   Release an owned column-name array.
-fn freeColumns(allocator: std.mem.Allocator, columns: []const []const u8) void {
-    for (columns) |column| allocator.free(column);
-    allocator.free(columns);
-}
-
-/// Purpose:
-///   Parse one numeric field from a fixed-width slice.
-fn parseFixedFloat(slice: []const u8) Error!f64 {
-    return std.fmt.parseFloat(f64, trimWhitespace(slice)) catch error.InvalidNumber;
-}
-
-/// Purpose:
-///   Parse one integer field from a fixed-width slice.
-fn parseFixedInt(slice: []const u8) Error!u16 {
-    return std.fmt.parseInt(u16, trimWhitespace(slice), 10) catch error.InvalidNumber;
-}
-
-/// Purpose:
-///   Parse one optional integer field from a fixed-width slice, leaving blank fields unset.
-fn parseOptionalFixedInt(slice: []const u8) Error!?u16 {
-    const trimmed = trimWhitespace(slice);
-    if (trimmed.len == 0) return null;
-    return std.fmt.parseInt(u16, trimmed, 10) catch error.InvalidNumber;
-}
-
-/// Purpose:
-///   Trim the whitespace used by the reference asset formats.
-fn trimWhitespace(value: []const u8) []const u8 {
-    return std.mem.trim(u8, value, " \t\r");
-}
-
-/// Purpose:
-///   Trim the line ending used by the reference asset formats.
-fn trimLineEnding(value: []const u8) []const u8 {
-    return std.mem.trimRight(u8, value, "\r");
-}
-
-/// Purpose:
-///   Convert a wavenumber in cm^-1 into a wavelength in nm.
-///
-/// Units:
-///   Input is cm^-1; output is nm.
-fn wavenumberToWavelengthNm(wavenumber_cm1: f64) f64 {
-    return 1.0e7 / @max(wavenumber_cm1, 1.0);
-}
-
-/// Purpose:
-///   Convert a cm^-1 width into an approximate wavelength width in nm.
-///
-/// Units:
-///   Input width is cm^-1 and the center wavenumber is cm^-1; output is nm.
-fn spectralWidthCm1ToNm(width_cm1: f64, center_wavenumber_cm1: f64) f64 {
-    const safe_center = @max(center_wavenumber_cm1, 1.0);
-    return width_cm1 * 1.0e7 / (safe_center * safe_center);
-}
-
-/// Purpose:
-///   Derive a bounded line-mixing coefficient from width and shift terms.
-fn deriveLineMixingCoefficient(air_half_width_cm1: f64, pressure_shift_cm1: f64) f64 {
-    return std.math.clamp(
-        @abs(pressure_shift_cm1) / @max(@abs(air_half_width_cm1), 1.0e-6),
-        0.0,
-        0.15,
-    );
-}
-
-/// Purpose:
-///   Derive an isotopic abundance fraction for common HITRAN gas/isotope combinations.
-fn deriveIsotopicAbundanceFraction(gas_index: u16, isotope_number: u16) f64 {
-    return switch (gas_index) {
-        1 => switch (isotope_number) {
-            1 => 0.997317,
-            2 => 1.99983e-3,
-            3 => 3.71884e-4,
-            4 => 3.10693e-4,
-            5 => 6.23003e-7,
-            6 => 1.15853e-7,
-            else => 1.0e-8,
-        },
-        2 => switch (isotope_number) {
-            1 => 0.984204,
-            2 => 1.10574e-2,
-            3 => 3.94707e-3,
-            4 => 7.33989e-4,
-            5 => 4.43446e-5,
-            6 => 8.24623e-6,
-            else => 1.0e-8,
-        },
-        5 => switch (isotope_number) {
-            1 => 0.986544,
-            2 => 1.10836e-2,
-            3 => 1.97822e-3,
-            4 => 3.67867e-4,
-            5 => 2.22250e-5,
-            6 => 4.13292e-6,
-            else => 1.0e-8,
-        },
-        6 => switch (isotope_number) {
-            1 => 0.988274,
-            2 => 1.11031e-2,
-            3 => 6.15751e-4,
-            else => 1.0e-8,
-        },
-        7 => switch (isotope_number) {
-            1 => 0.995262,
-            2 => 3.99141e-3,
-            3 => 7.42235e-4,
-            else => 1.0e-8,
-        },
-        11 => switch (isotope_number) {
-            1 => 0.995872,
-            2 => 3.66129e-3,
-            else => 1.0e-8,
-        },
-        10 => switch (isotope_number) {
-            1 => 0.991,
-            2 => 0.006,
-            3 => 0.003,
-            else => 1.0e-8,
-        },
-        else => 1.0,
-    };
-}
-
-/// Purpose:
-///   Convert the LISA branch notation into a signed rotational index.
-fn rotationalIndexFromLisaBranch(branch_token: []const u8, nf_token: []const u8) !i32 {
-    if (branch_token.len != 1) return error.InvalidAssetFormat;
-    const nf = std.fmt.parseInt(i32, nf_token, 10) catch return error.InvalidNumber;
-    return switch (branch_token[0]) {
-        'P' => -nf,
-        'R' => nf + 1,
-        else => return error.InvalidAssetFormat,
-    };
-}
-
-fn vendorLisaReferenceHalfWidthCm1(branch_token: []const u8, nf_token: []const u8) !f64 {
-    if (branch_token.len != 1) return error.InvalidAssetFormat;
-    const raw_nf = std.fmt.parseInt(i32, nf_token, 10) catch return error.InvalidNumber;
-    const vendor_nf = switch (branch_token[0]) {
-        'P' => raw_nf - 1,
-        'R' => raw_nf + 1,
-        else => return error.InvalidAssetFormat,
-    };
-    const vendor_nf_f64 = @as(f64, @floatFromInt(vendor_nf));
-    const sbhw = 0.02204 + 0.03749 /
-        (1.0 + 0.05428 * vendor_nf_f64 - 1.19e-3 * vendor_nf_f64 * vendor_nf_f64 +
-            2.073e-6 * std.math.pow(f64, vendor_nf_f64, 4.0));
-    return 1.023 * 1.012 * sbhw /
-        std.math.sqrt(1.0 + std.math.pow(f64, (vendor_nf_f64 - 5.0) / 55.0, 2.0));
 }

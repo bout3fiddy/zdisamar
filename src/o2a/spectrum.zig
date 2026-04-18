@@ -3,15 +3,18 @@ const common = @import("../kernels/transport/common.zig");
 const measurement = @import("../kernels/transport/measurement.zig");
 const Method = @import("method.zig").Method;
 const providers = @import("providers/root.zig");
+const Scene = @import("../model/Scene.zig").Scene;
+const SummaryWorkspace = @import("../kernels/transport/measurement/workspace.zig").SummaryWorkspace;
+const PreparedOpticalState = @import("../kernels/optics/preparation.zig").PreparedOpticalState;
 
 pub const Result = measurement.MeasurementSpaceProduct;
 pub const ForwardProfile = measurement.ForwardProfile;
 
 pub fn run(
     allocator: std.mem.Allocator,
-    case: *const @import("case.zig").Case,
-    optics: *const @import("optics.zig").Optics,
-    work: ?*@import("work.zig").Work,
+    case: *const Scene,
+    optics: *const PreparedOpticalState,
+    work: ?*SummaryWorkspace,
     method: Method,
     rtm_controls: common.RtmControls,
     profile: ?*ForwardProfile,
@@ -27,7 +30,19 @@ pub fn run(
         .rtm_controls = rtm_controls,
     });
 
-    _ = work;
+    if (work) |workspace| {
+        const view = try measurement.simulateProductWithWorkspace(
+            allocator,
+            workspace,
+            case,
+            route,
+            optics,
+            providers.exact(),
+            profile,
+        );
+        return view.toOwned(allocator);
+    }
+
     return measurement.simulateProductWithProfile(
         allocator,
         case,

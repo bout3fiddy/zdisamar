@@ -177,6 +177,10 @@ pub const SummaryWorkspace = struct {
     }
 };
 
+/// Reusable full-product workspace that shares the same backing buffers as the
+/// summary path.
+pub const ProductWorkspace = SummaryWorkspace;
+
 /// Purpose:
 ///   Estimate the transport-layer count needed for one measurement sweep.
 pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {

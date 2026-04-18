@@ -1,26 +1,9 @@
-//! Purpose:
-//!   Provide embedded HITRAN partition-function tables and interpolation helpers used by
-//!   spectroscopy runtime controls in the canonical reference-data model.
+//! Embedded HITRAN partition-function tables and local interpolation helpers for
+//! spectroscopy runtime controls.
 //!
 //! Physics:
-//!   The tables map isotopologue code and temperature to the molecular partition
-//!   function ratio `Q(T_ref) / Q(T)`, which scales line intensities under temperature
-//!   changes.
-//!
-//! Vendor:
-//!   `HITRAN partition sum tables`
-//!
-//! Design:
-//!   The Zig port embeds the small table set directly and interpolates it locally so
-//!   spectroscopy preparation does not depend on file I/O or mutable process-wide state.
-//!
-//! Invariants:
-//!   Temperatures are expressed in kelvin, isotopologue lookup is exact on the supported
-//!   HITRAN codes, and interpolation clamps to the tabulated temperature domain.
-//!
-//! Validation:
-//!   The regression test at the bottom checks representative isotopologues and the
-//!   identity condition `Q(T_ref) / Q(T_ref) = 1`.
+//!   Maps isotopologue code and temperature to `Q(T_ref) / Q(T)` while clamping
+//!   interpolation to the supported tabulated domain.
 const std = @import("std");
 
 const temperature_grid = [_]f64{
@@ -503,13 +486,4 @@ fn interpolatePartitionTable(table: []const f64, temperature_k: f64) f64 {
     }
 
     return table[table.len - 1];
-}
-
-test "vendor partition tables interpolate representative isotopologues and preserve q(t0)/q(t)" {
-    const representative_codes = [_]i32{ 161, 626, 26, 211, 66, 4111 };
-    for (representative_codes) |code| {
-        const ratio_260 = ratioT0OverT(code, 260.0, 296.0).?;
-        try std.testing.expect(ratio_260 > 1.0);
-        try std.testing.expectApproxEqAbs(@as(f64, 1.0), ratioT0OverT(code, 296.0, 296.0).?, 1e-12);
-    }
 }
