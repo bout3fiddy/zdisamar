@@ -221,6 +221,7 @@ pub fn shouldExcludeWeakLine(
 ) bool {
     if (usesVendorStrongLinePartition(self)) {
         if (self.preserve_anchor_weak_lines) return false;
+        if (!Support.isVendorO2AStrongCandidateFromSource(line)) return false;
         return matchedStrongIndexForRelevantLine(self, start_index, line, line_index) != null;
     }
     const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse return false;
@@ -240,7 +241,7 @@ pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
     var saw_candidate = false;
     var matched_candidate = false;
     for (self.lines) |line| {
-        if (!Support.isVendorO2AStrongCandidate(line)) continue;
+        if (!Support.isVendorO2AStrongCandidateFromSource(line)) continue;
         saw_candidate = true;
         _ = findStrongLineMatch(self.*, line.center_wavelength_nm) orelse continue;
         matched_candidate = true;

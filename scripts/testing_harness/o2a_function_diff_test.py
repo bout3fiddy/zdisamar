@@ -12,11 +12,16 @@ import csv
 from o2a_function_diff import (
     CSV_SPECS,
     EXPECTED_CSVS,
+    WEAK_LINE_CONTRIBUTOR_FILE,
+    WEAK_LINE_CONTRIBUTOR_SPEC,
     align_sublayer_optics_to_yaml,
+    aggregate_weak_line_contributors,
+    canonicalize_optional_csv,
     compare_csv_files,
     merge_fortran_sublayer_optics,
     representative_vendor_indices_for_yaml,
     summarize_pairwise_diff,
+    write_weak_line_contributor_summary,
     write_csv_rows,
 )
 
@@ -412,6 +417,113 @@ def main() -> int:
         assert pair_json["first_mismatching_numeric_column"] == "line_strength_cm2_per_molecule"
         assert pair_json["first_aligned_mismatching_file"] == "line_catalog.csv"
         assert pair_json["first_aligned_mismatching_numeric_column"] == "line_strength_cm2_per_molecule"
+
+        weak_trace_root = root / "weak_trace"
+        weak_vendor_root = weak_trace_root / "vendor"
+        weak_yaml_root = weak_trace_root / "yaml"
+        weak_diff_root = weak_trace_root / "diff"
+        weak_vendor_root.mkdir(parents=True)
+        weak_yaml_root.mkdir(parents=True)
+        weak_diff_root.mkdir(parents=True)
+        weak_headers = [
+            "pressure_hpa",
+            "temperature_k",
+            "wavelength_nm",
+            "sample_wavelength_nm",
+            "source_row_index",
+            "contribution_kind",
+            "gas_index",
+            "isotope_number",
+            "center_wavelength_nm",
+            "center_wavenumber_cm1",
+            "shifted_center_wavenumber_cm1",
+            "line_strength_cm2_per_molecule",
+            "air_half_width_nm",
+            "temperature_exponent",
+            "lower_state_energy_cm1",
+            "pressure_shift_nm",
+            "line_mixing_coefficient",
+            "branch_ic1",
+            "branch_ic2",
+            "rotational_nf",
+            "matched_strong_index",
+            "weak_line_sigma_cm2_per_molecule",
+        ]
+        write_csv_rows(
+            weak_vendor_root / WEAK_LINE_CONTRIBUTOR_FILE,
+            weak_headers,
+            [
+                {
+                    "pressure_hpa": "1.0",
+                    "temperature_k": "200.0",
+                    "wavelength_nm": "764.48",
+                    "sample_wavelength_nm": "764.4801",
+                    "source_row_index": "10",
+                    "contribution_kind": "weak_included",
+                    "gas_index": "7",
+                    "isotope_number": "1",
+                    "center_wavelength_nm": "764.0",
+                    "center_wavenumber_cm1": "13080.0",
+                    "shifted_center_wavenumber_cm1": "13080.1",
+                    "line_strength_cm2_per_molecule": "1.0e-25",
+                    "air_half_width_nm": "1.0e-3",
+                    "temperature_exponent": "0.7",
+                    "lower_state_energy_cm1": "20.0",
+                    "pressure_shift_nm": "1.0e-4",
+                    "line_mixing_coefficient": "0.1",
+                    "branch_ic1": "nan",
+                    "branch_ic2": "nan",
+                    "rotational_nf": "nan",
+                    "matched_strong_index": "nan",
+                    "weak_line_sigma_cm2_per_molecule": "2.5e-33",
+                },
+            ],
+        )
+        write_csv_rows(
+            weak_yaml_root / WEAK_LINE_CONTRIBUTOR_FILE,
+            weak_headers,
+            [
+                {
+                    "pressure_hpa": "1.0",
+                    "temperature_k": "200.0",
+                    "wavelength_nm": "764.48",
+                    "sample_wavelength_nm": "764.48",
+                    "source_row_index": "10",
+                    "contribution_kind": "weak_included",
+                    "gas_index": "7",
+                    "isotope_number": "1",
+                    "center_wavelength_nm": "764.0",
+                    "center_wavenumber_cm1": "13080.0",
+                    "shifted_center_wavenumber_cm1": "13080.1",
+                    "line_strength_cm2_per_molecule": "1.0e-25",
+                    "air_half_width_nm": "1.0e-3",
+                    "temperature_exponent": "0.7",
+                    "lower_state_energy_cm1": "20.0",
+                    "pressure_shift_nm": "1.0e-4",
+                    "line_mixing_coefficient": "0.1",
+                    "branch_ic1": "nan",
+                    "branch_ic2": "nan",
+                    "rotational_nf": "nan",
+                    "matched_strong_index": "nan",
+                    "weak_line_sigma_cm2_per_molecule": "1.0e-33",
+                },
+            ],
+        )
+        canonicalize_optional_csv(weak_vendor_root, WEAK_LINE_CONTRIBUTOR_FILE, WEAK_LINE_CONTRIBUTOR_SPEC)
+        canonicalize_optional_csv(weak_yaml_root, WEAK_LINE_CONTRIBUTOR_FILE, WEAK_LINE_CONTRIBUTOR_SPEC)
+        write_weak_line_contributor_summary(weak_trace_root, weak_diff_root, [764.48])
+        weak_summary = (weak_diff_root / "weak_line_contributors_summary.txt").read_text()
+        assert "wavelength_nm=764.48" in weak_summary
+        assert "vendor_total=2.5000000000000001e-33" in weak_summary
+        weak_json = (weak_diff_root / "weak_line_contributors_summary.json").read_text()
+        assert '"wavelength_nm": 764.48' in weak_json
+        aggregates = aggregate_weak_line_contributors(
+            list(csv.DictReader((weak_vendor_root / WEAK_LINE_CONTRIBUTOR_FILE).open())),
+            764.48,
+        )
+        assert len(aggregates) == 1
+        only_record = next(iter(aggregates.values()))
+        assert abs(only_record["total"] - 2.5e-33) < 1.0e-40
     return 0
 
 

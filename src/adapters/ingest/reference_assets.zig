@@ -58,6 +58,7 @@ const hitran_vendor_o2a_columns = [_][]const u8{
     "branch_ic1",
     "branch_ic2",
     "rotational_nf",
+    "vendor_filter_metadata_from_source",
 };
 
 const hitran_legacy_columns = [_][]const u8{
@@ -347,12 +348,12 @@ test "reference asset loader preserves vendor O2A filter metadata for bundled JP
         std.testing.allocator,
         .spectroscopy_line_list,
         "data/cross_sections/bundle_manifest.json",
-        "o2a_hitran_subset_07_hit08_tropomi",
+        "o2a_hitran_07_hit08_tropomi",
     );
     defer asset.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 52), asset.row_count);
-    try std.testing.expectEqual(@as(usize, 13), asset.columnCount());
+    try std.testing.expect(asset.row_count > 1000);
+    try std.testing.expectEqual(@as(usize, 14), asset.columnCount());
 
     var lines = try asset.toSpectroscopyLineList(std.testing.allocator);
     defer lines.deinit(std.testing.allocator);
@@ -362,6 +363,7 @@ test "reference asset loader preserves vendor O2A filter metadata for bundled JP
     try std.testing.expectEqual(@as(u8, 5), lines.lines[2].branch_ic1.?);
     try std.testing.expectEqual(@as(u8, 1), lines.lines[2].branch_ic2.?);
     try std.testing.expect(lines.lines[2].rotational_nf.? <= 35);
+    try std.testing.expect(lines.lines[2].vendor_filter_metadata_from_source);
 }
 
 test "reference asset loader parses vendor strong-line and relaxation sidecars" {

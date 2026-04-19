@@ -180,7 +180,7 @@ pub const LoadedAsset = struct {
     ///   Convert HITRAN-style line rows into typed spectroscopy lines.
     pub fn toSpectroscopyLineList(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLineList {
         if (self.kind != .spectroscopy_line_list) return error.InvalidAssetKind;
-        const has_vendor_o2a_fields = self.columnCount() == 13;
+        const has_vendor_o2a_fields = self.columnCount() == 14;
         if (has_vendor_o2a_fields) {
             try expectColumns(self.column_names, &.{
                 "gas_index",
@@ -196,6 +196,7 @@ pub const LoadedAsset = struct {
                 "branch_ic1",
                 "branch_ic2",
                 "rotational_nf",
+                "vendor_filter_metadata_from_source",
             });
         } else {
             try expectColumns(self.column_names, &.{
@@ -231,6 +232,7 @@ pub const LoadedAsset = struct {
                 .branch_ic1 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 10]) else null,
                 .branch_ic2 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 11]) else null,
                 .rotational_nf = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 12]) else null,
+                .vendor_filter_metadata_from_source = has_vendor_o2a_fields and self.values[row + 13] != 0.0,
             };
         }
 
@@ -400,7 +402,7 @@ test "spectroscopy line-list conversion preserves null vendor metadata fields" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const column_names = try allocator.alloc([]const u8, 13);
+    const column_names = try allocator.alloc([]const u8, 14);
     for ([_][]const u8{
         "gas_index",
         "isotope_number",
@@ -415,6 +417,7 @@ test "spectroscopy line-list conversion preserves null vendor metadata fields" {
         "branch_ic1",
         "branch_ic2",
         "rotational_nf",
+        "vendor_filter_metadata_from_source",
     }, 0..) |name, index| {
         column_names[index] = try allocator.dupe(u8, name);
     }
@@ -443,6 +446,7 @@ test "spectroscopy line-list conversion preserves null vendor metadata fields" {
             std.math.nan(f64),
             std.math.nan(f64),
             std.math.nan(f64),
+            0.0,
         }),
         .row_count = 1,
     };
@@ -453,4 +457,5 @@ test "spectroscopy line-list conversion preserves null vendor metadata fields" {
     try std.testing.expectEqual(@as(?u8, null), line_list.lines[0].branch_ic1);
     try std.testing.expectEqual(@as(?u8, null), line_list.lines[0].branch_ic2);
     try std.testing.expectEqual(@as(?u8, null), line_list.lines[0].rotational_nf);
+    try std.testing.expect(!line_list.lines[0].vendor_filter_metadata_from_source);
 }

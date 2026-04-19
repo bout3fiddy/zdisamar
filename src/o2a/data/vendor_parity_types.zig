@@ -112,7 +112,13 @@ pub const CiaSpec = struct {
 pub const InputsSpec = struct {
     atmosphere_profile: ExternalAsset,
     vendor_reference_csv: ExternalAsset,
+    raw_solar_reference: ExternalAsset,
     airmass_factor_lut: ExternalAsset,
+};
+
+pub const SolarSpectrumSample = struct {
+    wavelength_nm: f64,
+    irradiance: f64,
 };
 
 pub const ResolvedVendorO2ACase = struct {
@@ -144,6 +150,7 @@ pub const LoadedVendorO2AInputs = struct {
     cia_table: ?ReferenceDataModel.CollisionInducedAbsorptionTable,
     lut: ReferenceDataModel.AirmassFactorLut,
     reference: []ReferenceSample,
+    raw_solar_spectrum: []SolarSpectrumSample,
 
     pub fn deinit(self: *LoadedVendorO2AInputs, allocator: Allocator) void {
         self.profile.deinit(allocator);
@@ -152,6 +159,7 @@ pub const LoadedVendorO2AInputs = struct {
         if (self.cia_table) |*table| table.deinit(allocator);
         self.lut.deinit(allocator);
         if (self.reference.len != 0) allocator.free(self.reference);
+        if (self.raw_solar_spectrum.len != 0) allocator.free(self.raw_solar_spectrum);
         self.* = undefined;
     }
 };

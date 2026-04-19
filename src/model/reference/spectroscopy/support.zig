@@ -45,6 +45,7 @@ pub fn traceRowForWeakLine(
         .shifted_center_wavenumber_cm1 = Physics.shiftedLineCenterWavenumberCm1(line, pressure_atm),
         .line_strength_cm2_per_molecule = line.line_strength_cm2_per_molecule,
         .air_half_width_nm = line.air_half_width_nm,
+        .temperature_exponent = line.temperature_exponent,
         .lower_state_energy_cm1 = line.lower_state_energy_cm1,
         .pressure_shift_nm = line.pressure_shift_nm,
         .line_mixing_coefficient = line.line_mixing_coefficient,
@@ -71,6 +72,7 @@ pub fn traceRowForStrongLine(
     const isotope_number = if (anchor_line) |line| line.isotope_number else 1;
     const line_strength_cm2_per_molecule = if (anchor_line) |line| line.line_strength_cm2_per_molecule else 0.0;
     const line_mixing_coefficient = if (anchor_line) |line| line.line_mixing_coefficient else 0.0;
+    const temperature_exponent = if (anchor_line) |line| line.temperature_exponent else 0.0;
     const branch_ic1 = if (anchor_line) |line| line.branch_ic1 else null;
     const branch_ic2 = if (anchor_line) |line| line.branch_ic2 else null;
     const rotational_nf = if (anchor_line) |line| line.rotational_nf else null;
@@ -87,6 +89,7 @@ pub fn traceRowForStrongLine(
         .shifted_center_wavenumber_cm1 = strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1,
         .line_strength_cm2_per_molecule = line_strength_cm2_per_molecule,
         .air_half_width_nm = strong_line.air_half_width_nm,
+        .temperature_exponent = temperature_exponent,
         .lower_state_energy_cm1 = strong_line.lower_state_energy_cm1,
         .pressure_shift_nm = strong_line.pressure_shift_nm,
         .line_mixing_coefficient = line_mixing_coefficient,
@@ -104,6 +107,10 @@ pub fn lineHasVendorStrongLineMetadata(line: Types.SpectroscopyLine) bool {
     return line.branch_ic1 != null and line.branch_ic2 != null and line.rotational_nf != null;
 }
 
+pub fn lineHasVendorStrongLineMetadataFromSource(line: Types.SpectroscopyLine) bool {
+    return line.vendor_filter_metadata_from_source and lineHasVendorStrongLineMetadata(line);
+}
+
 pub fn wavenumberCm1ToWavelengthNm(wavenumber_cm1: f64) f64 {
     return 1.0e7 / @max(wavenumber_cm1, 1.0);
 }
@@ -117,6 +124,10 @@ pub fn isVendorO2AStrongCandidate(line: Types.SpectroscopyLine) bool {
         line.branch_ic1.? == 5 and
         line.branch_ic2.? == 1 and
         line.rotational_nf.? <= 35;
+}
+
+pub fn isVendorO2AStrongCandidateFromSource(line: Types.SpectroscopyLine) bool {
+    return line.vendor_filter_metadata_from_source and isVendorO2AStrongCandidate(line);
 }
 
 pub fn runtimeControlsMatchLine(

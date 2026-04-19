@@ -287,8 +287,8 @@ test "runtime controls preserve prior isotope storage across allocation failure"
 
 test "spectroscopy line list partitions strong and weak lanes when sidecars are attached" {
     var lines = try makeLineList(&.{
-        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
-        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34 },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34, .vendor_filter_metadata_from_source = true },
         .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 769.9000, .line_strength_cm2_per_molecule = 2.50e-21, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00, .branch_ic1 = 4, .branch_ic2 = 1, .rotational_nf = 40 },
     });
     defer lines.deinit(std.testing.allocator);
@@ -356,10 +356,10 @@ test "spectroscopy line list partitions strong and weak lanes when sidecars are 
 
 test "strong-line sidecars choose one anchor line per strong feature" {
     var lines = try makeLineList(&.{
-        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594000, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
-        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594150, .line_strength_cm2_per_molecule = 2.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34 },
-        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594260, .line_strength_cm2_per_molecule = 3.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 33 },
-        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594500, .line_strength_cm2_per_molecule = 1.5e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 32 },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594000, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594150, .line_strength_cm2_per_molecule = 2.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34, .vendor_filter_metadata_from_source = true },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594260, .line_strength_cm2_per_molecule = 3.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 33, .vendor_filter_metadata_from_source = true },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594500, .line_strength_cm2_per_molecule = 1.5e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 32, .vendor_filter_metadata_from_source = true },
     });
     defer lines.deinit(std.testing.allocator);
 
@@ -425,8 +425,8 @@ test "cutoff-based prewindow keeps far-wing O2A lines beyond one nanometer" {
 }
 
 test "vendor O2A partition removes every assigned strong candidate from the weak-line sum" {
-    const strong_candidate_a = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 };
-    const strong_candidate_b = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34 };
+    const strong_candidate_a = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true };
+    const strong_candidate_b = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34, .vendor_filter_metadata_from_source = true };
     const weak_candidate = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.0500, .line_strength_cm2_per_molecule = 1.10e-21, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00, .branch_ic1 = 4, .branch_ic2 = 1, .rotational_nf = 40 };
 
     var lines = try makeLineList(&.{ strong_candidate_a, strong_candidate_b, weak_candidate });
@@ -524,7 +524,7 @@ test "fallback strong-line anchors can preserve weak contributions when requeste
 
 test "vendor strong-line partitions ignore nearby O2 lines without vendor metadata" {
     var lines = try makeLineList(&.{
-        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true },
         .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3019, .line_strength_cm2_per_molecule = 8.50e-22, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00 },
     });
     defer lines.deinit(std.testing.allocator);
@@ -559,10 +559,56 @@ test "vendor strong-line partitions ignore nearby O2 lines without vendor metada
     try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[1]);
 }
 
+test "vendor O2A partition keeps matched fallback metadata rows in the weak lane" {
+    var lines = try makeLineList(&.{
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true },
+        .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3018, .line_strength_cm2_per_molecule = 8.50e-22, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34, .vendor_filter_metadata_from_source = false },
+    });
+    defer lines.deinit(std.testing.allocator);
+
+    var strong_lines = try makeStrongLineSet(&.{
+        .{
+            .center_wavenumber_cm1 = 12965.1079,
+            .center_wavelength_nm = 771.3015,
+            .population_t0 = 5.10e-05,
+            .dipole_ratio = 0.712,
+            .dipole_t0 = 5.80e-04,
+            .lower_state_energy_cm1 = 1804.8773,
+            .air_half_width_cm1 = 0.0276,
+            .air_half_width_nm = 0.00164,
+            .temperature_exponent = 0.63,
+            .pressure_shift_cm1 = -0.009,
+            .pressure_shift_nm = 0.00053,
+            .rotational_index_m1 = -35,
+        },
+    });
+    defer strong_lines.deinit(std.testing.allocator);
+
+    var relaxation_matrix = try makeRelaxationMatrix(1, &.{0.02764486}, &.{0.629999646133});
+    defer relaxation_matrix.deinit(std.testing.allocator);
+
+    try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
+    try lines.buildStrongLineMatchIndex(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[0]);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[1]);
+
+    const trace = try lines.traceAt(std.testing.allocator, 771.3016, 255.0, 820.0, null);
+    defer trace.deinit(std.testing.allocator);
+
+    var saw_fallback_weak = false;
+    for (trace.rows) |row| {
+        if (row.global_line_index != 1) continue;
+        try std.testing.expectEqual(SpectroscopyTraceContributionKind.weak_included, row.contribution_kind);
+        saw_fallback_weak = true;
+    }
+    try std.testing.expect(saw_fallback_weak);
+}
+
 test "vendor O2A strong candidates fail fast when they cannot be matched to a sidecar" {
     var lines = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
-            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 760.0, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 760.0, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true },
         }),
     };
     defer lines.deinit(std.testing.allocator);
@@ -597,7 +643,7 @@ test "vendor O2A strong candidates fail fast when they cannot be matched to a si
 test "vendor O2A sidecars remain active even when some vendor sidecars have no weak-line anchor" {
     var lines = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
-            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true },
         }),
     };
     defer lines.deinit(std.testing.allocator);
@@ -665,8 +711,8 @@ test "vendor O2A sidecars remain active even when some vendor sidecars have no w
 test "vendor O2A partition keeps unmatched vendor strong candidates in the weak lane" {
     var lines = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{
-            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35 },
-            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 764.4800, .line_strength_cm2_per_molecule = 8.0e-21, .air_half_width_nm = 0.0012, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34 },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true },
+            .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 764.4800, .line_strength_cm2_per_molecule = 8.0e-21, .air_half_width_nm = 0.0012, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34, .vendor_filter_metadata_from_source = false },
         }),
     };
     defer lines.deinit(std.testing.allocator);

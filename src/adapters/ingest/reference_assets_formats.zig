@@ -150,7 +150,7 @@ fn parseHitran160(
     contents: []const u8,
     columns: []const []const u8,
 ) Error!ParsedTable {
-    const has_vendor_o2a_fields = columns.len == 13;
+    const has_vendor_o2a_fields = columns.len == 14;
     const minimum_line_length: usize = 67;
     const owned_columns = try helpers.dupColumns(allocator, columns);
     errdefer helpers.freeColumns(allocator, owned_columns);
@@ -211,6 +211,9 @@ fn parseHitran160(
             metadata.rotational_nf
         else
             null;
+        const vendor_filter_metadata_from_source = inline_branch_ic1 != null and
+            inline_branch_ic2 != null and
+            inline_rotational_nf != null;
 
         try values.appendSlice(allocator, &.{
             @as(f64, @floatFromInt(gas_index)),
@@ -229,6 +232,7 @@ fn parseHitran160(
                 if (branch_ic1) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
                 if (branch_ic2) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
                 if (rotational_nf) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
+                if (vendor_filter_metadata_from_source) 1.0 else 0.0,
             });
         }
         row_count += 1;

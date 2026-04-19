@@ -76,7 +76,8 @@
         "line_mixing_coefficient",
         "branch_ic1",
         "branch_ic2",
-        "rotational_nf"
+        "rotational_nf",
+        "vendor_filter_metadata_from_source"
       ]
     },
     {

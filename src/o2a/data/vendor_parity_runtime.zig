@@ -64,6 +64,7 @@ pub const CiaSpec = parity_types.CiaSpec;
 pub const InputsSpec = parity_types.InputsSpec;
 pub const ResolvedVendorO2ACase = parity_types.ResolvedVendorO2ACase;
 pub const LoadedVendorO2AInputs = parity_types.LoadedVendorO2AInputs;
+pub const SolarSpectrumSample = parity_types.SolarSpectrumSample;
 
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -91,6 +92,40 @@ pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]Reference
             .wavelength_nm = try std.fmt.parseFloat(f64, std.mem.trim(u8, wavelength_text, " \t")),
             .irradiance = try std.fmt.parseFloat(f64, std.mem.trim(u8, irradiance_text, " \t")),
             .reflectance = try std.fmt.parseFloat(f64, std.mem.trim(u8, reflectance_text, " \t")),
+        });
+    }
+
+    return try samples.toOwnedSlice(allocator);
+}
+
+pub fn loadSolarSpectrumSamples(
+    allocator: Allocator,
+    asset: ExternalAsset,
+) ![]SolarSpectrumSample {
+    if (!std.mem.eql(u8, asset.format, "solar_reference_csv")) return error.UnsupportedSolarReferenceAssetFormat;
+
+    const file = try std.fs.cwd().openFile(asset.path, .{});
+    defer file.close();
+
+    const bytes = try file.readToEndAlloc(allocator, 1 << 20);
+    defer allocator.free(bytes);
+
+    var samples = std.ArrayList(SolarSpectrumSample).empty;
+    errdefer samples.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    _ = lines.next();
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, "\r \t");
+        if (trimmed.len == 0) continue;
+
+        var columns = std.mem.splitScalar(u8, trimmed, ',');
+        const wavelength_text = columns.next() orelse return error.InvalidData;
+        const irradiance_text = columns.next() orelse return error.InvalidData;
+
+        try samples.append(allocator, .{
+            .wavelength_nm = try std.fmt.parseFloat(f64, std.mem.trim(u8, wavelength_text, " \t")),
+            .irradiance = try std.fmt.parseFloat(f64, std.mem.trim(u8, irradiance_text, " \t")),
         });
     }
 
@@ -152,6 +187,8 @@ pub fn loadResolvedVendorO2AInputs(
 
     const reference = try loadReferenceSamples(allocator, resolved.inputs.vendor_reference_csv.path);
     errdefer allocator.free(reference);
+    const raw_solar_spectrum = try loadSolarSpectrumSamples(allocator, resolved.inputs.raw_solar_reference);
+    errdefer allocator.free(raw_solar_spectrum);
 
     return .{
         .profile = profile,
@@ -160,6 +197,7 @@ pub fn loadResolvedVendorO2AInputs(
         .cia_table = cia_table,
         .lut = lut,
         .reference = reference,
+        .raw_solar_spectrum = raw_solar_spectrum,
     };
 }
 
@@ -168,15 +206,15 @@ pub fn loadResolvedVendorO2AInputs(
 pub fn buildResolvedVendorO2AScene(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
-    reference: []const ReferenceSample,
+    raw_solar_spectrum: []const SolarSpectrumSample,
 ) !Scene {
-    const reference_wavelengths = try allocator.alloc(f64, reference.len);
-    errdefer allocator.free(reference_wavelengths);
-    const reference_irradiance = try allocator.alloc(f64, reference.len);
-    errdefer allocator.free(reference_irradiance);
-    for (reference, 0..) |sample, index| {
-        reference_wavelengths[index] = sample.wavelength_nm;
-        reference_irradiance[index] = sample.irradiance;
+    const solar_wavelengths = try allocator.alloc(f64, raw_solar_spectrum.len);
+    errdefer allocator.free(solar_wavelengths);
+    const solar_irradiance = try allocator.alloc(f64, raw_solar_spectrum.len);
+    errdefer allocator.free(solar_irradiance);
+    for (raw_solar_spectrum, 0..) |sample, index| {
+        solar_wavelengths[index] = sample.wavelength_nm;
+        solar_irradiance[index] = sample.irradiance;
     }
 
     const absorber_items = try allocator.alloc(AbsorberModel.Absorber, 1);
@@ -252,8 +290,8 @@ pub fn buildResolvedVendorO2AScene(
             .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
             .adaptive_reference_grid = resolved.observation.adaptive_reference_grid,
             .operational_solar_spectrum = .{
-                .wavelengths_nm = reference_wavelengths,
-                .irradiance = reference_irradiance,
+                .wavelengths_nm = solar_wavelengths,
+                .irradiance = solar_irradiance,
             },
         },
     };
@@ -341,7 +379,7 @@ pub fn prepareResolvedVendorO2ATraceCase(
     defer inputs.deinit(allocator);
     if (phase_profile_out) |profile| profile.input_loading_ns = if (timer) |*owned| owned.lap() else 0;
 
-    var scene = try buildResolvedVendorO2AScene(allocator, resolved, inputs.reference);
+    var scene = try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
     errdefer scene.deinitOwned(allocator);
     if (phase_profile_out) |profile| profile.scene_assembly_ns = if (timer) |*owned| owned.lap() else 0;
 

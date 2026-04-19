@@ -52,6 +52,31 @@ const SpectroscopySummaryRow = struct {
     total_sigma_cm2_per_molecule: f64,
 };
 
+const WeakLineContributorRow = struct {
+    pressure_hpa: f64,
+    temperature_k: f64,
+    wavelength_nm: f64,
+    sample_wavelength_nm: f64,
+    source_row_index: f64,
+    contribution_kind: []const u8,
+    gas_index: u16,
+    isotope_number: u8,
+    center_wavelength_nm: f64,
+    center_wavenumber_cm1: f64,
+    shifted_center_wavenumber_cm1: f64,
+    line_strength_cm2_per_molecule: f64,
+    air_half_width_nm: f64,
+    temperature_exponent: f64,
+    lower_state_energy_cm1: f64,
+    pressure_shift_nm: f64,
+    line_mixing_coefficient: f64,
+    branch_ic1: f64,
+    branch_ic2: f64,
+    rotational_nf: f64,
+    matched_strong_index: f64,
+    weak_line_sigma_cm2_per_molecule: f64,
+};
+
 const SublayerOpticsRow = struct {
     wavelength_nm: f64,
     global_sublayer_index: u32,
@@ -115,6 +140,7 @@ const TraceFiles = struct {
     line_catalog: std.fs.File,
     strong_state: std.fs.File,
     spectroscopy_summary: std.fs.File,
+    weak_line_contributors: std.fs.File,
     sublayer_optics: std.fs.File,
     adaptive_grid: std.fs.File,
     kernel_samples: std.fs.File,
@@ -133,6 +159,7 @@ const TraceFiles = struct {
             .line_catalog = try createCsvFile(allocator, side_root, "line_catalog.csv", "source_row_index,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf\n"),
             .strong_state = try createCsvFile(allocator, side_root, "strong_state.csv", "pressure_hpa,temperature_k,strong_index,center_wavelength_nm,center_wavenumber_cm1,sig_moy_cm1,population_t,dipole_t,mod_sig_cm1,half_width_cm1_at_t,line_mixing_coefficient\n"),
             .spectroscopy_summary = try createCsvFile(allocator, side_root, "spectroscopy_summary.csv", "pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule,total_sigma_cm2_per_molecule\n"),
+            .weak_line_contributors = try createCsvFile(allocator, side_root, "weak_line_contributors.csv", "pressure_hpa,temperature_k,wavelength_nm,sample_wavelength_nm,source_row_index,contribution_kind,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,shifted_center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf,matched_strong_index,weak_line_sigma_cm2_per_molecule\n"),
             .sublayer_optics = try createCsvFile(allocator, side_root, "sublayer_optics.csv", "wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm\n"),
             .adaptive_grid = try createCsvFile(allocator, side_root, "adaptive_grid.csv", "nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count\n"),
             .kernel_samples = try createCsvFile(allocator, side_root, "kernel_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,weight\n"),
@@ -145,6 +172,7 @@ const TraceFiles = struct {
         self.line_catalog.close();
         self.strong_state.close();
         self.spectroscopy_summary.close();
+        self.weak_line_contributors.close();
         self.sublayer_optics.close();
         self.adaptive_grid.close();
         self.kernel_samples.close();
@@ -242,6 +270,13 @@ pub fn main() !void {
             comparison_states,
             config.wavelengths_nm,
         );
+        try emitWeakLineContributorsAtThermodynamicGrid(
+            &files.weak_line_contributors,
+            allocator,
+            line_list,
+            comparison_states,
+            config.wavelengths_nm,
+        );
     } else {
         try emitStrongStates(
             &files.strong_state,
@@ -251,6 +286,14 @@ pub fn main() !void {
         );
         try emitSpectroscopySummaries(
             &files.spectroscopy_summary,
+            line_list,
+            prepared_case.prepared.sublayers.?,
+            prepared_case.prepared.strong_line_states.?,
+            config.wavelengths_nm,
+        );
+        try emitWeakLineContributors(
+            &files.weak_line_contributors,
+            allocator,
             line_list,
             prepared_case.prepared.sublayers.?,
             prepared_case.prepared.strong_line_states.?,
@@ -360,7 +403,7 @@ fn emitLineCatalog(
     const vendor_partition = usesVendorStrongLinePartition(line_list);
     var retained_index: usize = 0;
     for (line_list.lines) |line| {
-        if (vendor_partition and isVendorStrongCandidate(line)) continue;
+        if (vendor_partition and isVendorStrongCandidateFromSource(line)) continue;
         if (!lineWithinSupportWindow(line, line_list.runtime_controls.cutoff_cm1, support_start_nm, support_end_nm)) continue;
         retained_index += 1;
         try rows.append(std.heap.page_allocator, .{
@@ -613,6 +656,140 @@ fn emitSpectroscopySummariesAtThermodynamicGrid(
                 row.strong_sigma_cm2_per_molecule,
                 row.line_mixing_sigma_cm2_per_molecule,
                 row.total_sigma_cm2_per_molecule,
+            },
+        );
+    }
+}
+
+fn emitWeakLineContributors(
+    file: *std.fs.File,
+    allocator: std.mem.Allocator,
+    line_list: ReferenceData.SpectroscopyLineList,
+    sublayers: []const OpticsPrepare.PreparedSublayer,
+    states: []const ReferenceData.StrongLinePreparedState,
+    wavelengths_nm: []const f64,
+) !void {
+    var rows = std.ArrayList(WeakLineContributorRow).empty;
+    defer rows.deinit(allocator);
+
+    for (states, 0..) |state, state_index| {
+        const sublayer = sublayers[state_index];
+        for (wavelengths_nm) |wavelength_nm| {
+            var trace = try line_list.traceAt(
+                allocator,
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+                &state,
+            );
+            defer trace.deinit(allocator);
+            try appendWeakContributorTraceRows(allocator, &rows, trace);
+        }
+    }
+
+    try writeWeakLineContributorRows(file, rows.items);
+}
+
+fn emitWeakLineContributorsAtThermodynamicGrid(
+    file: *std.fs.File,
+    allocator: std.mem.Allocator,
+    line_list: ReferenceData.SpectroscopyLineList,
+    thermodynamic_states: []const ThermodynamicState,
+    wavelengths_nm: []const f64,
+) !void {
+    var rows = std.ArrayList(WeakLineContributorRow).empty;
+    defer rows.deinit(allocator);
+
+    for (thermodynamic_states) |thermodynamic_state| {
+        var prepared_state = (try line_list.prepareStrongLineState(
+            allocator,
+            thermodynamic_state.temperature_k,
+            thermodynamic_state.pressure_hpa,
+        )) orelse continue;
+        defer prepared_state.deinit(allocator);
+
+        for (wavelengths_nm) |wavelength_nm| {
+            var trace = try line_list.traceAt(
+                allocator,
+                wavelength_nm,
+                thermodynamic_state.temperature_k,
+                thermodynamic_state.pressure_hpa,
+                &prepared_state,
+            );
+            defer trace.deinit(allocator);
+            try appendWeakContributorTraceRows(allocator, &rows, trace);
+        }
+    }
+
+    try writeWeakLineContributorRows(file, rows.items);
+}
+
+fn appendWeakContributorTraceRows(
+    allocator: std.mem.Allocator,
+    rows: *std.ArrayList(WeakLineContributorRow),
+    trace: ReferenceData.SpectroscopyTrace,
+) !void {
+    for (trace.rows) |row| {
+        if (row.contribution_kind == .strong_sidecar) continue;
+        try rows.append(allocator, .{
+            .pressure_hpa = trace.pressure_hpa,
+            .temperature_k = trace.temperature_k,
+            .wavelength_nm = trace.wavelength_nm,
+            .sample_wavelength_nm = trace.wavelength_nm,
+            .source_row_index = optionalUsizeToF64(row.global_line_index),
+            .contribution_kind = @tagName(row.contribution_kind),
+            .gas_index = row.gas_index,
+            .isotope_number = row.isotope_number,
+            .center_wavelength_nm = row.center_wavelength_nm,
+            .center_wavenumber_cm1 = row.center_wavenumber_cm1,
+            .shifted_center_wavenumber_cm1 = row.shifted_center_wavenumber_cm1,
+            .line_strength_cm2_per_molecule = row.line_strength_cm2_per_molecule,
+            .air_half_width_nm = row.air_half_width_nm,
+            .temperature_exponent = row.temperature_exponent,
+            .lower_state_energy_cm1 = row.lower_state_energy_cm1,
+            .pressure_shift_nm = row.pressure_shift_nm,
+            .line_mixing_coefficient = row.line_mixing_coefficient,
+            .branch_ic1 = optionalU8ToF64(row.branch_ic1),
+            .branch_ic2 = optionalU8ToF64(row.branch_ic2),
+            .rotational_nf = optionalU8ToF64(row.rotational_nf),
+            .matched_strong_index = optionalUsizeToF64(row.matched_strong_index),
+            .weak_line_sigma_cm2_per_molecule = row.weak_line_sigma_cm2_per_molecule,
+        });
+    }
+}
+
+fn writeWeakLineContributorRows(
+    file: *std.fs.File,
+    rows: []WeakLineContributorRow,
+) !void {
+    std.sort.block(WeakLineContributorRow, rows, {}, lessThanWeakLineContributorRow);
+    var writer = file.deprecatedWriter();
+    for (rows) |row| {
+        try writer.print(
+            "{},{},{},{},{},{s},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            .{
+                row.pressure_hpa,
+                row.temperature_k,
+                row.wavelength_nm,
+                row.sample_wavelength_nm,
+                row.source_row_index,
+                row.contribution_kind,
+                row.gas_index,
+                row.isotope_number,
+                row.center_wavelength_nm,
+                row.center_wavenumber_cm1,
+                row.shifted_center_wavenumber_cm1,
+                row.line_strength_cm2_per_molecule,
+                row.air_half_width_nm,
+                row.temperature_exponent,
+                row.lower_state_energy_cm1,
+                row.pressure_shift_nm,
+                row.line_mixing_coefficient,
+                row.branch_ic1,
+                row.branch_ic2,
+                row.rotational_nf,
+                row.matched_strong_index,
+                row.weak_line_sigma_cm2_per_molecule,
             },
         );
     }
@@ -932,6 +1109,10 @@ fn isVendorStrongCandidate(line: ReferenceData.SpectroscopyLine) bool {
         line.rotational_nf.? <= 35;
 }
 
+fn isVendorStrongCandidateFromSource(line: ReferenceData.SpectroscopyLine) bool {
+    return line.vendor_filter_metadata_from_source and isVendorStrongCandidate(line);
+}
+
 fn wavelengthToWavenumberCm1(wavelength_nm: f64) f64 {
     return 1.0e7 / @max(wavelength_nm, 1.0e-12);
 }
@@ -953,6 +1134,13 @@ fn lineWithinSupportWindow(
 fn optionalU8ToF64(value: ?u8) f64 {
     return if (value) |unwrapped|
         @floatFromInt(unwrapped)
+    else
+        std.math.nan(f64);
+}
+
+fn optionalUsizeToF64(value: ?usize) f64 {
+    return if (value) |unwrapped|
+        @floatFromInt(unwrapped + 1)
     else
         std.math.nan(f64);
 }
@@ -982,6 +1170,15 @@ fn lessThanSublayerOpticsRow(_: void, lhs: SublayerOpticsRow, rhs: SublayerOptic
     if (lhs.wavelength_nm != rhs.wavelength_nm) return lhs.wavelength_nm < rhs.wavelength_nm;
     if (lhs.global_sublayer_index != rhs.global_sublayer_index) return lhs.global_sublayer_index < rhs.global_sublayer_index;
     return lhs.interval_index_1based < rhs.interval_index_1based;
+}
+
+fn lessThanWeakLineContributorRow(_: void, lhs: WeakLineContributorRow, rhs: WeakLineContributorRow) bool {
+    if (lhs.wavelength_nm != rhs.wavelength_nm) return lhs.wavelength_nm < rhs.wavelength_nm;
+    if (lhs.pressure_hpa != rhs.pressure_hpa) return lhs.pressure_hpa < rhs.pressure_hpa;
+    if (lhs.temperature_k != rhs.temperature_k) return lhs.temperature_k < rhs.temperature_k;
+    if (lhs.center_wavenumber_cm1 != rhs.center_wavenumber_cm1) return lhs.center_wavenumber_cm1 < rhs.center_wavenumber_cm1;
+    if (lhs.line_strength_cm2_per_molecule != rhs.line_strength_cm2_per_molecule) return lhs.line_strength_cm2_per_molecule < rhs.line_strength_cm2_per_molecule;
+    return lhs.source_row_index < rhs.source_row_index;
 }
 
 fn lessThanAdaptiveGridRow(_: void, lhs: AdaptiveGridRow, rhs: AdaptiveGridRow) bool {

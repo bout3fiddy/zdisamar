@@ -205,15 +205,14 @@ fn compileScene(
 
     const atmosphere_profile_asset = try lookupAsset(assets, try common.requiredString(atmosphere.profile_source_map, "asset"));
     const solar_reference_asset = try lookupAsset(assets, observation.solar_reference_asset_id);
-    if (!std.mem.eql(u8, solar_reference_asset.id, "vendor_reference_csv")) {
-        return error.UnsupportedSolarReferenceAsset;
-    }
+    const vendor_reference_csv = try lookupAsset(assets, "vendor_reference_csv");
     const airmass_factor_lut = try lookupAsset(assets, "airmass_factor_lut");
 
     return .{
         .inputs = .{
             .atmosphere_profile = atmosphere_profile_asset,
-            .vendor_reference_csv = solar_reference_asset,
+            .vendor_reference_csv = vendor_reference_csv,
+            .raw_solar_reference = solar_reference_asset,
             .airmass_factor_lut = airmass_factor_lut,
         },
         .scene_id = try common.requiredString(map, "id"),

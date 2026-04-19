@@ -40,6 +40,7 @@ EXPECTED_CSVS = (
 )
 STAGE_ORDER = EXPECTED_CSVS
 PAIRWISE_DIFFS = (("vendor", "yaml"),)
+WEAK_LINE_CONTRIBUTOR_FILE = "weak_line_contributors.csv"
 
 
 @dataclass(frozen=True)
@@ -172,6 +173,45 @@ CSV_SPECS: dict[str, CsvSpec] = {
     ),
 }
 
+WEAK_LINE_CONTRIBUTOR_SPEC = CsvSpec(
+    key_columns=(
+        "pressure_hpa",
+        "temperature_k",
+        "wavelength_nm",
+        "center_wavenumber_cm1",
+        "line_strength_cm2_per_molecule",
+        "lower_state_energy_cm1",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "pressure_shift_nm",
+        "isotope_number",
+        "gas_index",
+    ),
+    numeric_columns=(
+        "pressure_hpa",
+        "temperature_k",
+        "wavelength_nm",
+        "sample_wavelength_nm",
+        "source_row_index",
+        "gas_index",
+        "isotope_number",
+        "center_wavelength_nm",
+        "center_wavenumber_cm1",
+        "shifted_center_wavenumber_cm1",
+        "line_strength_cm2_per_molecule",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "lower_state_energy_cm1",
+        "pressure_shift_nm",
+        "line_mixing_coefficient",
+        "branch_ic1",
+        "branch_ic2",
+        "rotational_nf",
+        "matched_strong_index",
+        "weak_line_sigma_cm2_per_molecule",
+    ),
+)
+
 
 def main() -> int:
     args = parse_args()
@@ -199,8 +239,11 @@ def main() -> int:
         verify_expected_csvs(vendor_root, "vendor")
         canonicalize_side(yaml_root)
         verify_expected_csvs(yaml_root, "yaml")
+        canonicalize_optional_csv(vendor_root, WEAK_LINE_CONTRIBUTOR_FILE, WEAK_LINE_CONTRIBUTOR_SPEC)
+        canonicalize_optional_csv(yaml_root, WEAK_LINE_CONTRIBUTOR_FILE, WEAK_LINE_CONTRIBUTOR_SPEC)
         align_sublayer_optics_to_yaml(vendor_root, yaml_root)
         write_diff_summaries(trace_root, diff_root, wavelengths_nm)
+        write_weak_line_contributor_summary(trace_root, diff_root, wavelengths_nm)
         update_latest_trace_root(trace_root)
     finally:
         if not args.keep_vendor_workspace and vendor_workspace.exists():
@@ -490,6 +533,15 @@ def canonicalize_side(side_root: Path) -> None:
         write_csv_rows(path, list(rows[0].keys()) if rows else read_csv_headers(path), rows)
 
 
+def canonicalize_optional_csv(side_root: Path, file_name: str, spec: CsvSpec) -> None:
+    path = side_root / file_name
+    if not path.exists():
+        return
+    rows = read_csv_rows(path)
+    sort_rows(rows, spec)
+    write_csv_rows(path, list(rows[0].keys()) if rows else read_csv_headers(path), rows)
+
+
 def verify_expected_csvs(side_root: Path, label: str) -> None:
     missing = [name for name in EXPECTED_CSVS if not (side_root / name).exists()]
     if missing:
@@ -535,6 +587,141 @@ def write_diff_summaries(trace_root: Path, diff_root: Path, wavelengths_nm: list
             json.dumps(summary["json"], indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+
+
+def write_weak_line_contributor_summary(trace_root: Path, diff_root: Path, wavelengths_nm: list[float]) -> None:
+    vendor_path = trace_root / "vendor" / WEAK_LINE_CONTRIBUTOR_FILE
+    yaml_path = trace_root / "yaml" / WEAK_LINE_CONTRIBUTOR_FILE
+    if not vendor_path.exists() or not yaml_path.exists():
+        return
+
+    vendor_rows = read_csv_rows(vendor_path)
+    yaml_rows = read_csv_rows(yaml_path)
+    lines = ["weak_line_contributors"]
+    summary_json: dict[str, object] = {"wavelengths_nm": list(wavelengths_nm), "per_wavelength": []}
+
+    for wavelength_nm in wavelengths_nm:
+        vendor_aggregates = aggregate_weak_line_contributors(vendor_rows, wavelength_nm)
+        yaml_aggregates = aggregate_weak_line_contributors(yaml_rows, wavelength_nm)
+        all_keys = set(vendor_aggregates) | set(yaml_aggregates)
+        ranked: list[dict[str, object]] = []
+        vendor_total = 0.0
+        yaml_total = 0.0
+        for key in all_keys:
+            vendor_record = vendor_aggregates.get(key)
+            yaml_record = yaml_aggregates.get(key)
+            vendor_value = 0.0 if vendor_record is None else vendor_record["total"]
+            yaml_value = 0.0 if yaml_record is None else yaml_record["total"]
+            vendor_total += vendor_value
+            yaml_total += yaml_value
+            metadata = (vendor_record or yaml_record)["metadata"]
+            ranked.append(
+                {
+                    "metadata": metadata,
+                    "vendor_total": vendor_value,
+                    "yaml_total": yaml_value,
+                    "absolute_delta": abs(vendor_value - yaml_value),
+                }
+            )
+        ranked.sort(key=lambda row: row["absolute_delta"], reverse=True)
+        top_ranked = ranked[:12]
+        lines.append(f"wavelength_nm={format_wavelength(wavelength_nm)}")
+        lines.append(
+            "  "
+            f"vendor_total={vendor_total:.16e} "
+            f"yaml_total={yaml_total:.16e} "
+            f"abs_delta={abs(vendor_total - yaml_total):.16e} "
+            f"vendor_only={sum(1 for row in ranked if row['vendor_total'] != 0.0 and row['yaml_total'] == 0.0)} "
+            f"yaml_only={sum(1 for row in ranked if row['yaml_total'] != 0.0 and row['vendor_total'] == 0.0)}"
+        )
+        if not top_ranked:
+            lines.append("  no contributor rows")
+        else:
+            for index, row in enumerate(top_ranked, start=1):
+                metadata = row["metadata"]
+                lines.append(
+                    "  "
+                    f"{index}. center_cm1={metadata['center_wavenumber_cm1']} "
+                    f"center_nm={metadata['center_wavelength_nm']} "
+                    f"isotope={metadata['isotope_number']} "
+                    f"strength={metadata['line_strength_cm2_per_molecule']} "
+                    f"elow={metadata['lower_state_energy_cm1']} "
+                    f"vendor_total={row['vendor_total']:.16e} "
+                    f"yaml_total={row['yaml_total']:.16e} "
+                    f"abs_delta={row['absolute_delta']:.16e}"
+                )
+        summary_json["per_wavelength"].append(
+            {
+                "wavelength_nm": wavelength_nm,
+                "vendor_total": vendor_total,
+                "yaml_total": yaml_total,
+                "absolute_delta": abs(vendor_total - yaml_total),
+                "top_ranked_contributors": top_ranked,
+            }
+        )
+        lines.append("")
+
+    (diff_root / "weak_line_contributors_summary.txt").write_text(
+        "\n".join(lines).rstrip() + "\n",
+        encoding="utf-8",
+    )
+    (diff_root / "weak_line_contributors_summary.json").write_text(
+        json.dumps(summary_json, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def aggregate_weak_line_contributors(
+    rows: list[dict[str, str]],
+    wavelength_nm: float,
+) -> dict[tuple[str, ...], dict[str, object]]:
+    aggregates: dict[tuple[str, ...], dict[str, object]] = {}
+    target_wavelength = f"{wavelength_nm:.12e}"
+    for row in rows:
+        if f"{parse_float(row['wavelength_nm']):.12e}" != target_wavelength:
+            continue
+        contribution_kind = row.get("contribution_kind", "weak_included").strip()
+        if contribution_kind == "strong_sidecar":
+            continue
+        contribution = parse_float(row["weak_line_sigma_cm2_per_molecule"])
+        if contribution == 0.0:
+            continue
+        key = weak_line_contributor_key(row)
+        record = aggregates.setdefault(
+            key,
+            {
+                "total": 0.0,
+                "metadata": {
+                    "center_wavenumber_cm1": row["center_wavenumber_cm1"],
+                    "center_wavelength_nm": row["center_wavelength_nm"],
+                    "isotope_number": row["isotope_number"],
+                    "line_strength_cm2_per_molecule": row["line_strength_cm2_per_molecule"],
+                    "lower_state_energy_cm1": row["lower_state_energy_cm1"],
+                },
+            },
+        )
+        record["total"] += contribution
+    return aggregates
+
+
+def weak_line_contributor_key(row: dict[str, str]) -> tuple[str, ...]:
+    return (
+        normalized_float_key(row["gas_index"]),
+        normalized_float_key(row["isotope_number"]),
+        normalized_float_key(row["center_wavenumber_cm1"]),
+        normalized_float_key(row["line_strength_cm2_per_molecule"]),
+        normalized_float_key(row["lower_state_energy_cm1"]),
+        normalized_float_key(row["air_half_width_nm"]),
+        normalized_float_key(row["temperature_exponent"]),
+        normalized_float_key(row["pressure_shift_nm"]),
+    )
+
+
+def normalized_float_key(raw: str) -> str:
+    value = parse_float(raw)
+    if math.isnan(value):
+        return "nan"
+    return f"{value:.12e}"
 
 
 def summarize_pairwise_diff(
@@ -857,7 +1044,7 @@ def patch_hitran_module(path: Path) -> None:
     text = replace_once(
         text,
         "  use mathTools\n",
-        "  use mathTools\n  use o2aFunctionTraceModule, only: o2a_trace_line_catalog_row, o2a_trace_convtp_state, o2a_trace_weak_spectroscopy, o2a_trace_strong_spectroscopy\n",
+        "  use mathTools\n  use o2aFunctionTraceModule, only: o2a_trace_line_catalog_row, o2a_trace_convtp_state, o2a_trace_weak_spectroscopy, o2a_trace_strong_spectroscopy, o2a_trace_weak_line_contributor, o2a_trace_wavelength_count_value, o2a_trace_wavelength_nm_value\n",
         path,
     )
     text = replace_once(
@@ -897,6 +1084,29 @@ def patch_hitran_module(path: Path) -> None:
         "      end do\n\n"
         "      call o2a_trace_convtp_state(T, P, SigMoy, SDFS%nLines, SDFS%sigLines, SDFS%PopuT, SDFS%Dipo, SDFS%modSigLines, SDFS%HWT, SDFS%YT)\n\n"
         "    end subroutine ConvTP\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      integer :: status, indexMinloc(1)\n"
+        "      integer :: startSig, endSig\n",
+        "      integer :: status, indexMinloc(1)\n"
+        "      integer :: startSig, endSig\n"
+        "      integer :: trace_index, trace_match_count\n"
+        "      integer :: trace_wave_index(16)\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      waveNumber(:) = 1.0d7 / wavel(:)\n\n"
+        "      do iso= 1, hitranS%nISO\n",
+        "      waveNumber(:) = 1.0d7 / wavel(:)\n"
+        "      trace_match_count = o2a_trace_wavelength_count_value()\n"
+        "      do trace_index = 1, trace_match_count\n"
+        "        indexMinloc = minloc(abs(wavel(:) - o2a_trace_wavelength_nm_value(trace_index)))\n"
+        "        trace_wave_index(trace_index) = indexMinloc(1)\n"
+        "      end do\n\n"
+        "      do iso= 1, hitranS%nISO\n",
         path,
     )
     text = replace_once(
@@ -962,6 +1172,10 @@ def patch_hitran_module(path: Path) -> None:
         "                                                       ! for a volume mixing ratio of 1.0\n"
         "          aa = aa * T * 1.380658d-19 / P / 1013.25d0   ! aa is now the absorption cross section in cm2/molecule\n"
         "          absXsec(iSig) = absXsec(iSig) + aa\n"
+        "          do trace_index = 1, trace_match_count\n"
+        "            if (iSig /= trace_wave_index(trace_index)) cycle\n"
+        "            call o2a_trace_weak_line_contributor(T, P, o2a_trace_wavelength_nm_value(trace_index), wavel(iSig), iLine, hitranS%gasIndex, hitranS%isotope(iLine), hitranS%sig(iLine), Lsig, hitranS%S(iLine), hitranS%gam(iLine), hitranS%bet(iLine), hitranS%E(iLine), hitranS%delt(iLine), aa)\n"
+        "          end do\n"
         "        end do ! iSig\n"
         "      end do ! iLine\n\n"
         "      call o2a_trace_weak_spectroscopy(T, P, size(wavel), wavel, absXsec)\n\n"

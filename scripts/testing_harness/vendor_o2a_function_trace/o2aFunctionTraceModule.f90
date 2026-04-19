@@ -18,6 +18,7 @@ module o2aFunctionTraceModule
   integer, save :: strong_state_unit = -1
   integer, save :: spectroscopy_weak_unit = -1
   integer, save :: spectroscopy_strong_unit = -1
+  integer, save :: weak_line_contributors_unit = -1
   integer, save :: sublayer_optics_raw_unit = -1
   integer, save :: adaptive_grid_unit = -1
   integer, save :: kernel_samples_unit = -1
@@ -64,6 +65,8 @@ contains
       'pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule')
     call open_trace_file(spectroscopy_strong_unit, 'spectroscopy_strong_raw.csv', &
       'pressure_hpa,temperature_k,wavelength_nm,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule')
+    call open_trace_file(weak_line_contributors_unit, 'weak_line_contributors.csv', &
+      'pressure_hpa,temperature_k,wavelength_nm,sample_wavelength_nm,source_row_index,contribution_kind,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,shifted_center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf,matched_strong_index,weak_line_sigma_cm2_per_molecule')
     call open_trace_file(sublayer_optics_raw_unit, 'sublayer_optics_raw.csv', &
       'actual_wavelength_nm,wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm')
     call open_trace_file(adaptive_grid_unit, 'adaptive_grid.csv', &
@@ -169,6 +172,47 @@ contains
     end do
     flush(spectroscopy_weak_unit)
   end subroutine o2a_trace_weak_spectroscopy
+
+  subroutine o2a_trace_weak_line_contributor(temperature_k, pressure_atm, nominal_wavelength_nm, sample_wavelength_nm, source_row_index, gas_index, isotope_number, sig_cm1, shifted_sig_cm1, strength, gamma_cm1, beta, lower_state_energy_cm1, delta_cm1, weak_sigma)
+    real(8), intent(in) :: temperature_k
+    real(8), intent(in) :: pressure_atm
+    real(8), intent(in) :: nominal_wavelength_nm
+    real(8), intent(in) :: sample_wavelength_nm
+    integer, intent(in) :: source_row_index
+    integer, intent(in) :: gas_index
+    integer, intent(in) :: isotope_number
+    real(8), intent(in) :: sig_cm1
+    real(8), intent(in) :: shifted_sig_cm1
+    real(8), intent(in) :: strength
+    real(8), intent(in) :: gamma_cm1
+    real(8), intent(in) :: beta
+    real(8), intent(in) :: lower_state_energy_cm1
+    real(8), intent(in) :: delta_cm1
+    real(8), intent(in) :: weak_sigma
+
+    real(8) :: pressure_hpa
+    real(8) :: center_wavelength_nm
+    real(8) :: air_half_width_nm
+    real(8) :: pressure_shift_nm
+    real(8) :: line_mixing_coefficient
+    real(8) :: nan_value
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+
+    pressure_hpa = pressure_atm * 1013.25d0
+    nan_value = ieee_value(0.0d0, ieee_quiet_nan)
+    center_wavelength_nm = 1.0d7 / max(sig_cm1, 1.0d0)
+    air_half_width_nm = gamma_cm1 * 1.0d7 / max(sig_cm1 * sig_cm1, 1.0d0)
+    pressure_shift_nm = -delta_cm1 * 1.0d7 / max(sig_cm1 * sig_cm1, 1.0d0)
+    line_mixing_coefficient = min(0.15d0, abs(delta_cm1) / max(abs(gamma_cm1), 1.0d-6))
+
+    write(weak_line_contributors_unit, '(*(g0,:,","))') pressure_hpa, temperature_k, nominal_wavelength_nm, sample_wavelength_nm, &
+      source_row_index, 'weak_included', gas_index, isotope_number, center_wavelength_nm, sig_cm1, shifted_sig_cm1, strength, &
+      air_half_width_nm, beta, lower_state_energy_cm1, pressure_shift_nm, line_mixing_coefficient, &
+      nan_value, nan_value, nan_value, nan_value, weak_sigma
+    flush(weak_line_contributors_unit)
+  end subroutine o2a_trace_weak_line_contributor
 
   subroutine o2a_trace_strong_spectroscopy(temperature_k, pressure_atm, nvalues, wave_numbers_cm1, xsec_strong, xsec_lm)
     real(8), intent(in) :: temperature_k
@@ -347,6 +391,22 @@ contains
       end if
     end do
   end function find_trace_wavelength_index
+
+  integer function o2a_trace_wavelength_count_value()
+    call o2a_trace_init()
+    o2a_trace_wavelength_count_value = trace_wavelength_count
+  end function o2a_trace_wavelength_count_value
+
+  real(8) function o2a_trace_wavelength_nm_value(index)
+    integer, intent(in) :: index
+
+    call o2a_trace_init()
+    if (index < 1 .or. index > trace_wavelength_count) then
+      o2a_trace_wavelength_nm_value = ieee_value(0.0d0, ieee_quiet_nan)
+      return
+    end if
+    o2a_trace_wavelength_nm_value = trace_wavelengths_nm(index)
+  end function o2a_trace_wavelength_nm_value
 
   subroutine parse_wavelength_list(buffer)
     character(len=*), intent(in) :: buffer
