@@ -97,29 +97,13 @@ pub fn integrationForWavelengthWithAdaptiveCache(
         return;
     }
 
-    if (prepared) |prepared_state| {
-        if (cached_adaptive_kernel) |cache| {
-            if (adaptive_cache.buildAdaptiveIntegrationKernelFromCache(
-                response,
-                nominal_wavelength_nm,
-                cache,
-                kernel,
-            )) {
-                return;
-            }
-        }
-        if (adaptive_plan.buildAdaptiveIntegrationKernel(
-            scene,
-            prepared_state,
-            response,
-            nominal_wavelength_nm,
-            kernel,
-        )) {
-            return;
-        }
-    }
+    const prefer_explicit_hr_grid = switch (response.integration_mode) {
+        .auto, .explicit_hr_grid => true,
+        .adaptive => false,
+    };
+    const prefer_adaptive_grid = response.integration_mode == .adaptive;
 
-    if (response.high_resolution_step_nm > 0.0 and response.high_resolution_half_span_nm > 0.0) {
+    if (prefer_explicit_hr_grid and response.high_resolution_step_nm > 0.0 and response.high_resolution_half_span_nm > 0.0) {
         const step_nm = response.high_resolution_step_nm;
         const half_span_nm = response.high_resolution_half_span_nm;
         var sample_count: usize = 0;
@@ -146,6 +130,30 @@ pub fn integrationForWavelengthWithAdaptiveCache(
         kernel.enabled = true;
         kernel.sample_count = sample_count;
         return;
+    }
+
+    if (prepared) |prepared_state| {
+        if (cached_adaptive_kernel) |cache| {
+            if (adaptive_cache.buildAdaptiveIntegrationKernelFromCache(
+                response,
+                nominal_wavelength_nm,
+                cache,
+                kernel,
+            )) {
+                return;
+            }
+        }
+        if (prefer_adaptive_grid or response.high_resolution_step_nm == 0.0 or response.high_resolution_half_span_nm == 0.0) {
+            if (adaptive_plan.buildAdaptiveIntegrationKernel(
+                scene,
+                prepared_state,
+                response,
+                nominal_wavelength_nm,
+                kernel,
+            )) {
+                return;
+            }
+        }
     }
 
     switch (scene.observation_model.sampling) {
@@ -353,4 +361,61 @@ test "adaptive strong-line sampling injects refined centers from prepared spectr
         }
     }
     try std.testing.expect(found_strong_center);
+}
+
+test "dense adaptive strong-line windows do not fall back to the five-point kernel" {
+    const line_count = 125;
+    const lines = try std.testing.allocator.alloc(@import("../../../model/ReferenceData.zig").SpectroscopyLine, line_count);
+    defer std.testing.allocator.free(lines);
+
+    for (lines, 0..) |*line, index| {
+        line.* = .{
+            .gas_index = 7,
+            .isotope_number = 1,
+            .center_wavelength_nm = 759.575 + (0.0085 * @as(f64, @floatFromInt(index))),
+            .line_strength_cm2_per_molecule = 1.0e-24,
+            .air_half_width_nm = 0.001,
+            .temperature_exponent = 0.7,
+            .lower_state_energy_cm1 = 120.0,
+            .pressure_shift_nm = 0.0,
+            .line_mixing_coefficient = 0.0,
+        };
+    }
+
+    var prepared = std.mem.zeroInit(PreparedOpticalState, .{
+        .layers = &.{},
+        .continuum_points = &.{},
+        .spectroscopy_lines = @import("../../../model/ReferenceData.zig").SpectroscopyLineList{
+            .lines = lines,
+            .runtime_controls = .{
+                .gas_index = 7,
+                .threshold_line_scale = 0.5,
+            },
+        },
+    });
+
+    const scene: Scene = .{
+        .spectral_grid = .{
+            .start_nm = 755.0,
+            .end_nm = 776.0,
+            .sample_count = 701,
+        },
+        .observation_model = .{
+            .instrument = .{ .custom = "dense-adaptive" },
+            .sampling = .native,
+            .noise_model = .none,
+            .instrument_line_fwhm_nm = 0.38,
+            .adaptive_reference_grid = .{
+                .points_per_fwhm = 20,
+                .strong_line_min_divisions = 8,
+                .strong_line_max_divisions = 40,
+            },
+        },
+    };
+
+    var kernel: IntegrationKernel = undefined;
+    integrationForWavelength(&scene, &prepared, .radiance, 759.53, &kernel);
+    try std.testing.expect(kernel.enabled);
+    try std.testing.expect(kernel.sample_count > 1000);
+    try std.testing.expect(kernel.sample_count != default_integration_sample_count);
 }

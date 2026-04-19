@@ -27,26 +27,19 @@ pub const StrongLineConvTPState = struct {
 
 pub fn strongLineContribution(
     wavelength_nm: f64,
-    line: Types.SpectroscopyLine,
     strong_lines: []const Types.SpectroscopyStrongLine,
     strong_index: usize,
     convtp_state: StrongLineConvTPState,
     temperature_k: f64,
     pressure_scale: f64,
-    cutoff_cm1: ?f64,
 ) Types.SpectroscopyEvaluation {
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_scale, Types.min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = Core.wavelengthToWavenumberCm1(wavelength_nm);
-    if (cutoff_cm1) |window_cm1| {
-        if (@abs(convtp_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) > window_cm1) {
-            return zeroContribution();
-        }
-    }
-    const sig_moy_cm1 = @max(convtp_state.sig_moy_cm1, convtp_state.mod_sig_cm1[strong_index]);
+    const sig_moy_cm1 = @max(convtp_state.sig_moy_cm1, 1.0e-6);
     const gam_d = @max(
-        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, molecularWeightForLine(line)),
+        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, o2StrongLineMolecularWeight()),
         1.0e-6,
     );
     const cte = @sqrt(@log(2.0)) / gam_d;
@@ -80,26 +73,19 @@ pub fn strongLineContribution(
 
 pub fn strongLineContributionPrepared(
     wavelength_nm: f64,
-    line: Types.SpectroscopyLine,
     strong_lines: []const Types.SpectroscopyStrongLine,
     strong_index: usize,
     prepared_state: *const Types.StrongLinePreparedState,
     temperature_k: f64,
     pressure_scale: f64,
-    cutoff_cm1: ?f64,
 ) Types.SpectroscopyEvaluation {
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_scale, Types.min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = Core.wavelengthToWavenumberCm1(wavelength_nm);
-    if (cutoff_cm1) |window_cm1| {
-        if (@abs(prepared_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) > window_cm1) {
-            return zeroContribution();
-        }
-    }
-    const sig_moy_cm1 = @max(prepared_state.sig_moy_cm1, prepared_state.mod_sig_cm1[strong_index]);
+    const sig_moy_cm1 = @max(prepared_state.sig_moy_cm1, 1.0e-6);
     const gam_d = @max(
-        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, molecularWeightForLine(line)),
+        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, o2StrongLineMolecularWeight()),
         1.0e-6,
     );
     const cte = @sqrt(@log(2.0)) / gam_d;
@@ -129,6 +115,10 @@ pub fn strongLineContributionPrepared(
         .total_sigma_cm2_per_molecule = @max(line_sigma + line_mixing_sigma, 0.0),
         .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
     };
+}
+
+fn o2StrongLineMolecularWeight() f64 {
+    return 31.989830;
 }
 
 pub fn prepareStrongLineConvTPState(

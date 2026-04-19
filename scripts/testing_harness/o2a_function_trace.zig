@@ -1,6 +1,6 @@
 const std = @import("std");
 const internal = @import("zdisamar_internal");
-const vendor_support = @import("vendor_o2a_trace_support");
+const vendor_support = internal.vendor_o2a_trace_support;
 
 const Measurement = internal.kernels.transport.measurement;
 const TransportCommon = internal.kernels.transport.common;
@@ -9,7 +9,7 @@ const ReferenceData = internal.reference_data;
 const InstrumentProviders = internal.plugin_internal.providers.Instrument;
 const OpticsPrepare = internal.kernels.optics.preparation;
 
-const default_wavelengths_nm = [_]f64{ 762.29, 765.0, 755.0 };
+const default_wavelengths_nm = [_]f64{761.75};
 
 const LineCatalogRow = struct {
     source_row_index: usize,
@@ -50,6 +50,23 @@ const SpectroscopySummaryRow = struct {
     strong_sigma_cm2_per_molecule: f64,
     line_mixing_sigma_cm2_per_molecule: f64,
     total_sigma_cm2_per_molecule: f64,
+};
+
+const SublayerOpticsRow = struct {
+    wavelength_nm: f64,
+    global_sublayer_index: u32,
+    interval_index_1based: u32,
+    pressure_hpa: f64,
+    temperature_k: f64,
+    number_density_cm3: f64,
+    oxygen_number_density_cm3: f64,
+    line_cross_section_cm2_per_molecule: f64,
+    line_mixing_cross_section_cm2_per_molecule: f64,
+    cia_sigma_cm5_per_molecule2: f64,
+    gas_absorption_optical_depth: f64,
+    gas_scattering_optical_depth: f64,
+    cia_optical_depth: f64,
+    path_length_cm: f64,
 };
 
 const AdaptiveGridRow = struct {
@@ -98,6 +115,7 @@ const TraceFiles = struct {
     line_catalog: std.fs.File,
     strong_state: std.fs.File,
     spectroscopy_summary: std.fs.File,
+    sublayer_optics: std.fs.File,
     adaptive_grid: std.fs.File,
     kernel_samples: std.fs.File,
     transport_samples: std.fs.File,
@@ -115,6 +133,7 @@ const TraceFiles = struct {
             .line_catalog = try createCsvFile(allocator, side_root, "line_catalog.csv", "source_row_index,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf\n"),
             .strong_state = try createCsvFile(allocator, side_root, "strong_state.csv", "pressure_hpa,temperature_k,strong_index,center_wavelength_nm,center_wavenumber_cm1,sig_moy_cm1,population_t,dipole_t,mod_sig_cm1,half_width_cm1_at_t,line_mixing_coefficient\n"),
             .spectroscopy_summary = try createCsvFile(allocator, side_root, "spectroscopy_summary.csv", "pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule,total_sigma_cm2_per_molecule\n"),
+            .sublayer_optics = try createCsvFile(allocator, side_root, "sublayer_optics.csv", "wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm\n"),
             .adaptive_grid = try createCsvFile(allocator, side_root, "adaptive_grid.csv", "nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count\n"),
             .kernel_samples = try createCsvFile(allocator, side_root, "kernel_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,weight\n"),
             .transport_samples = try createCsvFile(allocator, side_root, "transport_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,radiance,irradiance,weight\n"),
@@ -126,6 +145,7 @@ const TraceFiles = struct {
         self.line_catalog.close();
         self.strong_state.close();
         self.spectroscopy_summary.close();
+        self.sublayer_optics.close();
         self.adaptive_grid.close();
         self.kernel_samples.close();
         self.transport_samples.close();
@@ -237,6 +257,11 @@ pub fn main() !void {
             config.wavelengths_nm,
         );
     }
+    try emitSublayerOptics(
+        &files.sublayer_optics,
+        &prepared_case.prepared,
+        config.wavelengths_nm,
+    );
 
     var transport_buffers = try TransportBuffers.init(
         allocator,
@@ -593,6 +618,98 @@ fn emitSpectroscopySummariesAtThermodynamicGrid(
     }
 }
 
+fn emitSublayerOptics(
+    file: *std.fs.File,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+    wavelengths_nm: []const f64,
+) !void {
+    const sublayers = prepared.sublayers orelse return;
+    var rows = std.ArrayList(SublayerOpticsRow).empty;
+    defer rows.deinit(std.heap.page_allocator);
+
+    for (wavelengths_nm) |wavelength_nm| {
+        for (sublayers, 0..) |sublayer, index| {
+            var line_sigma: f64 = 0.0;
+            var line_mixing_sigma: f64 = 0.0;
+            if (prepared.spectroscopy_lines) |line_list| {
+                const evaluation = line_list.evaluateAtPrepared(
+                    wavelength_nm,
+                    sublayer.temperature_k,
+                    sublayer.pressure_hpa,
+                    if (prepared.strong_line_states) |states| &states[index] else null,
+                );
+                line_sigma = evaluation.line_sigma_cm2_per_molecule;
+                line_mixing_sigma = evaluation.line_mixing_sigma_cm2_per_molecule;
+            } else if (prepared.operational_o2_lut.enabled()) {
+                line_sigma = prepared.operational_o2_lut.sigmaAt(
+                    wavelength_nm,
+                    sublayer.temperature_k,
+                    sublayer.pressure_hpa,
+                );
+            }
+
+            const cia_sigma = if (prepared.operational_o2o2_lut.enabled())
+                prepared.operational_o2o2_lut.sigmaAt(
+                    wavelength_nm,
+                    sublayer.temperature_k,
+                    sublayer.pressure_hpa,
+                )
+            else if (prepared.collision_induced_absorption) |cia_table|
+                cia_table.sigmaAt(wavelength_nm, sublayer.temperature_k)
+            else
+                0.0;
+
+            try rows.append(std.heap.page_allocator, .{
+                .wavelength_nm = wavelength_nm,
+                .global_sublayer_index = sublayer.global_sublayer_index,
+                .interval_index_1based = sublayer.interval_index_1based,
+                .pressure_hpa = sublayer.pressure_hpa,
+                .temperature_k = sublayer.temperature_k,
+                .number_density_cm3 = sublayer.number_density_cm3,
+                .oxygen_number_density_cm3 = sublayer.oxygen_number_density_cm3,
+                .line_cross_section_cm2_per_molecule = line_sigma,
+                .line_mixing_cross_section_cm2_per_molecule = line_mixing_sigma,
+                .cia_sigma_cm5_per_molecule2 = cia_sigma,
+                .gas_absorption_optical_depth = (line_sigma + line_mixing_sigma) *
+                    sublayer.oxygen_number_density_cm3 *
+                    sublayer.path_length_cm,
+                .gas_scattering_optical_depth = ReferenceData.Rayleigh.crossSectionCm2(wavelength_nm) *
+                    sublayer.number_density_cm3 *
+                    sublayer.path_length_cm,
+                .cia_optical_depth = cia_sigma *
+                    sublayer.oxygen_number_density_cm3 *
+                    sublayer.oxygen_number_density_cm3 *
+                    sublayer.path_length_cm,
+                .path_length_cm = sublayer.path_length_cm,
+            });
+        }
+    }
+
+    std.sort.block(SublayerOpticsRow, rows.items, {}, lessThanSublayerOpticsRow);
+    var writer = file.deprecatedWriter();
+    for (rows.items) |row| {
+        try writer.print(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            .{
+                row.wavelength_nm,
+                row.global_sublayer_index,
+                row.interval_index_1based,
+                row.pressure_hpa,
+                row.temperature_k,
+                row.number_density_cm3,
+                row.oxygen_number_density_cm3,
+                row.line_cross_section_cm2_per_molecule,
+                row.line_mixing_cross_section_cm2_per_molecule,
+                row.cia_sigma_cm5_per_molecule2,
+                row.gas_absorption_optical_depth,
+                row.gas_scattering_optical_depth,
+                row.cia_optical_depth,
+                row.path_length_cm,
+            },
+        );
+    }
+}
+
 fn emitTransportTraces(
     allocator: std.mem.Allocator,
     files: *TraceFiles,
@@ -859,6 +976,12 @@ fn lessThanSpectroscopySummaryRow(_: void, lhs: SpectroscopySummaryRow, rhs: Spe
     if (lhs.pressure_hpa != rhs.pressure_hpa) return lhs.pressure_hpa < rhs.pressure_hpa;
     if (lhs.temperature_k != rhs.temperature_k) return lhs.temperature_k < rhs.temperature_k;
     return lhs.wavelength_nm < rhs.wavelength_nm;
+}
+
+fn lessThanSublayerOpticsRow(_: void, lhs: SublayerOpticsRow, rhs: SublayerOpticsRow) bool {
+    if (lhs.wavelength_nm != rhs.wavelength_nm) return lhs.wavelength_nm < rhs.wavelength_nm;
+    if (lhs.global_sublayer_index != rhs.global_sublayer_index) return lhs.global_sublayer_index < rhs.global_sublayer_index;
+    return lhs.interval_index_1based < rhs.interval_index_1based;
 }
 
 fn lessThanAdaptiveGridRow(_: void, lhs: AdaptiveGridRow, rhs: AdaptiveGridRow) bool {

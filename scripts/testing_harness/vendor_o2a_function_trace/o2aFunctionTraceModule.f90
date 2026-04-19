@@ -18,6 +18,7 @@ module o2aFunctionTraceModule
   integer, save :: strong_state_unit = -1
   integer, save :: spectroscopy_weak_unit = -1
   integer, save :: spectroscopy_strong_unit = -1
+  integer, save :: sublayer_optics_raw_unit = -1
   integer, save :: adaptive_grid_unit = -1
   integer, save :: kernel_samples_unit = -1
   integer, save :: transport_samples_unit = -1
@@ -51,10 +52,8 @@ contains
       call parse_wavelength_list(trim(env_value(1:env_length)))
     end if
     if (trace_wavelength_count <= 0) then
-      trace_wavelength_count = 3
-      trace_wavelengths_nm(1) = 762.29d0
-      trace_wavelengths_nm(2) = 765.0d0
-      trace_wavelengths_nm(3) = 755.0d0
+      trace_wavelength_count = 1
+      trace_wavelengths_nm(1) = 761.75d0
     end if
 
     call open_trace_file(line_catalog_unit, 'line_catalog.csv', &
@@ -65,6 +64,8 @@ contains
       'pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule')
     call open_trace_file(spectroscopy_strong_unit, 'spectroscopy_strong_raw.csv', &
       'pressure_hpa,temperature_k,wavelength_nm,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule')
+    call open_trace_file(sublayer_optics_raw_unit, 'sublayer_optics_raw.csv', &
+      'actual_wavelength_nm,wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm')
     call open_trace_file(adaptive_grid_unit, 'adaptive_grid.csv', &
       'nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count')
     call open_trace_file(kernel_samples_unit, 'kernel_samples.csv', &
@@ -303,6 +304,36 @@ contains
     write(transport_summary_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), radiance, irradiance, reflectance
     flush(transport_summary_unit)
   end subroutine o2a_trace_transport_summary
+
+  subroutine o2a_trace_sublayer_optics(wavelength_nm, global_sublayer_index, interval_index_1based, pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm)
+    real(8), intent(in) :: wavelength_nm
+    integer, intent(in) :: global_sublayer_index
+    integer, intent(in) :: interval_index_1based
+    real(8), intent(in) :: pressure_hpa
+    real(8), intent(in) :: temperature_k
+    real(8), intent(in) :: number_density_cm3
+    real(8), intent(in) :: oxygen_number_density_cm3
+    real(8), intent(in) :: line_cross_section_cm2_per_molecule
+    real(8), intent(in) :: cia_sigma_cm5_per_molecule2
+    real(8), intent(in) :: gas_absorption_optical_depth
+    real(8), intent(in) :: gas_scattering_optical_depth
+    real(8), intent(in) :: cia_optical_depth
+    real(8), intent(in) :: path_length_cm
+
+    integer :: trace_match_index
+    real(8) :: nan_value
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    trace_match_index = find_trace_wavelength_index(wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    nan_value = ieee_value(0.0d0, ieee_quiet_nan)
+    write(sublayer_optics_raw_unit, '(*(g0,:,","))') wavelength_nm, trace_wavelengths_nm(trace_match_index), global_sublayer_index, interval_index_1based, &
+      pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, &
+      nan_value, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm
+    flush(sublayer_optics_raw_unit)
+  end subroutine o2a_trace_sublayer_optics
 
   integer function find_trace_wavelength_index(wavelength_nm)
     real(8), intent(in) :: wavelength_nm

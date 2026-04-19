@@ -3,12 +3,12 @@ const zdisamar = @import("zdisamar");
 const o2a_parity = zdisamar.parity;
 const ReferenceData = o2a_parity.ReferenceData;
 
-test "vendor parity O2A helper preserves fallback anchor lines in the weak sum" {
+test "vendor parity O2A helper excludes vendor-strong weak lines while retaining strong sidecars" {
     var line_list = try o2a_parity.loadVendorParityO2ASpectroscopyLineList(std.testing.allocator);
     defer line_list.deinit(std.testing.allocator);
 
     try line_list.buildStrongLineMatchIndex(std.testing.allocator);
-    try std.testing.expect(line_list.preserve_anchor_weak_lines);
+    try std.testing.expect(!line_list.preserve_anchor_weak_lines);
 
     const probe_wavelength_nm = 762.29;
     const probe_temperature_k = 190.5;
@@ -38,10 +38,6 @@ test "vendor parity O2A helper preserves fallback anchor lines in the weak sum" 
         probe_pressure_hpa,
     );
 
-    try std.testing.expectApproxEqRel(
-        weak_only.weak_line_sigma_cm2_per_molecule,
-        preserved.weak_line_sigma_cm2_per_molecule,
-        1.0e-12,
-    );
+    try std.testing.expect(preserved.weak_line_sigma_cm2_per_molecule < weak_only.weak_line_sigma_cm2_per_molecule);
     try std.testing.expect(preserved.strong_line_sigma_cm2_per_molecule > 0.0);
 }

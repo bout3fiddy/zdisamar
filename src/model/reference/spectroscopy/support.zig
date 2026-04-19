@@ -60,32 +60,39 @@ pub fn traceRowForWeakLine(
 
 pub fn traceRowForStrongLine(
     wavelength_nm: f64,
-    global_line_index: usize,
+    global_line_index: ?usize,
     strong_index: usize,
-    anchor_line: Types.SpectroscopyLine,
+    anchor_line: ?Types.SpectroscopyLine,
     strong_line: Types.SpectroscopyStrongLine,
     contribution: Types.SpectroscopyEvaluation,
     pressure_atm: f64,
 ) Types.SpectroscopyTraceRow {
+    const gas_index = if (anchor_line) |line| line.gas_index else 7;
+    const isotope_number = if (anchor_line) |line| line.isotope_number else 1;
+    const line_strength_cm2_per_molecule = if (anchor_line) |line| line.line_strength_cm2_per_molecule else 0.0;
+    const line_mixing_coefficient = if (anchor_line) |line| line.line_mixing_coefficient else 0.0;
+    const branch_ic1 = if (anchor_line) |line| line.branch_ic1 else null;
+    const branch_ic2 = if (anchor_line) |line| line.branch_ic2 else null;
+    const rotational_nf = if (anchor_line) |line| line.rotational_nf else null;
     return .{
         .contribution_kind = .strong_sidecar,
         .wavelength_nm = wavelength_nm,
         .global_line_index = global_line_index,
         .strong_index = strong_index,
         .matched_strong_index = strong_index,
-        .gas_index = anchor_line.gas_index,
-        .isotope_number = anchor_line.isotope_number,
+        .gas_index = gas_index,
+        .isotope_number = isotope_number,
         .center_wavelength_nm = strong_line.center_wavelength_nm,
         .center_wavenumber_cm1 = strong_line.center_wavenumber_cm1,
         .shifted_center_wavenumber_cm1 = strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1,
-        .line_strength_cm2_per_molecule = anchor_line.line_strength_cm2_per_molecule,
+        .line_strength_cm2_per_molecule = line_strength_cm2_per_molecule,
         .air_half_width_nm = strong_line.air_half_width_nm,
         .lower_state_energy_cm1 = strong_line.lower_state_energy_cm1,
-        .pressure_shift_nm = anchor_line.pressure_shift_nm,
-        .line_mixing_coefficient = anchor_line.line_mixing_coefficient,
-        .branch_ic1 = anchor_line.branch_ic1,
-        .branch_ic2 = anchor_line.branch_ic2,
-        .rotational_nf = anchor_line.rotational_nf,
+        .pressure_shift_nm = strong_line.pressure_shift_nm,
+        .line_mixing_coefficient = line_mixing_coefficient,
+        .branch_ic1 = branch_ic1,
+        .branch_ic2 = branch_ic2,
+        .rotational_nf = rotational_nf,
         .weak_line_sigma_cm2_per_molecule = contribution.weak_line_sigma_cm2_per_molecule,
         .strong_line_sigma_cm2_per_molecule = contribution.strong_line_sigma_cm2_per_molecule,
         .line_mixing_sigma_cm2_per_molecule = contribution.line_mixing_sigma_cm2_per_molecule,

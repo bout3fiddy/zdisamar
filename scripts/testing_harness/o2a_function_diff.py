@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import json
 import math
 import os
 from pathlib import Path
@@ -19,7 +20,7 @@ from typing import Iterable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_WAVELENGTHS_NM = (762.29, 765.0, 755.0)
+DEFAULT_WAVELENGTHS_NM = (761.75,)
 DEFAULT_TRACE_ROOT = REPO_ROOT / "out" / "analysis" / "o2a" / "function_diff"
 VENDOR_SOURCE_ROOT = REPO_ROOT / "vendor" / "disamar-fortran"
 VENDOR_CONFIG_SOURCE = VENDOR_SOURCE_ROOT / "InputFiles" / "Config_O2_with_CIA.in"
@@ -27,16 +28,17 @@ FORTRAN_TRACE_ASSET_DIR = REPO_ROOT / "scripts" / "testing_harness" / "vendor_o2
 FORTRAN_TRACE_MODULE = FORTRAN_TRACE_ASSET_DIR / "o2aFunctionTraceModule.f90"
 ZIG_TRACE_CLI = REPO_ROOT / "scripts" / "testing_harness" / "o2a_function_trace.zig"
 ZIG_BUILD_OPTIONS = REPO_ROOT / "scripts" / "testing_harness" / "build_options_test_support.zig"
-ZIG_TRACE_SUPPORT = REPO_ROOT / "src" / "o2a" / "data" / "vendor_parity_yaml.zig"
 EXPECTED_CSVS = (
     "line_catalog.csv",
     "strong_state.csv",
     "spectroscopy_summary.csv",
+    "sublayer_optics.csv",
     "adaptive_grid.csv",
     "kernel_samples.csv",
     "transport_samples.csv",
     "transport_summary.csv",
 )
+STAGE_ORDER = EXPECTED_CSVS
 PAIRWISE_DIFFS = (("vendor", "yaml"),)
 
 
@@ -46,18 +48,37 @@ class CsvSpec:
     numeric_columns: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class NumericMismatch:
+    file_name: str
+    row_index_1based: int
+    row_key: tuple[object, ...]
+    column: str
+    left_value: float
+    right_value: float
+    absolute_delta: float
+
+
+@dataclass(frozen=True)
+class FileComparison:
+    lines: list[str]
+    first_numeric_mismatch: NumericMismatch | None
+    aligned_numeric_mismatch: NumericMismatch | None
+    keys_aligned: bool
+
+
 CSV_SPECS: dict[str, CsvSpec] = {
     "line_catalog.csv": CsvSpec(
         key_columns=(
-            "center_wavelength_nm",
+            "gas_index",
             "isotope_number",
+            "center_wavelength_nm",
+            "lower_state_energy_cm1",
             "branch_ic1",
             "branch_ic2",
             "rotational_nf",
-            "source_row_index",
         ),
         numeric_columns=(
-            "source_row_index",
             "gas_index",
             "isotope_number",
             "center_wavelength_nm",
@@ -99,6 +120,25 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "strong_sigma_cm2_per_molecule",
             "line_mixing_sigma_cm2_per_molecule",
             "total_sigma_cm2_per_molecule",
+        ),
+    ),
+    "sublayer_optics.csv": CsvSpec(
+        key_columns=("wavelength_nm", "global_sublayer_index"),
+        numeric_columns=(
+            "wavelength_nm",
+            "global_sublayer_index",
+            "interval_index_1based",
+            "pressure_hpa",
+            "temperature_k",
+            "number_density_cm3",
+            "oxygen_number_density_cm3",
+            "line_cross_section_cm2_per_molecule",
+            "line_mixing_cross_section_cm2_per_molecule",
+            "cia_sigma_cm5_per_molecule2",
+            "gas_absorption_optical_depth",
+            "gas_scattering_optical_depth",
+            "cia_optical_depth",
+            "path_length_cm",
         ),
     ),
     "adaptive_grid.csv": CsvSpec(
@@ -153,12 +193,15 @@ def main() -> int:
         build_vendor_workspace(vendor_workspace)
         run_vendor_trace(vendor_workspace, vendor_root, wavelengths_nm)
         merge_fortran_spectroscopy_summary(vendor_root)
+        merge_fortran_sublayer_optics(vendor_root)
         run_zig_trace(trace_root, wavelengths_nm, args.zig_optimize)
         canonicalize_side(vendor_root)
         verify_expected_csvs(vendor_root, "vendor")
         canonicalize_side(yaml_root)
         verify_expected_csvs(yaml_root, "yaml")
-        write_diff_summaries(trace_root, diff_root)
+        align_sublayer_optics_to_yaml(vendor_root, yaml_root)
+        write_diff_summaries(trace_root, diff_root, wavelengths_nm)
+        update_latest_trace_root(trace_root)
     finally:
         if not args.keep_vendor_workspace and vendor_workspace.exists():
             shutil.rmtree(vendor_workspace)
@@ -173,7 +216,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--zig-optimize",
         choices=("Debug", "ReleaseSafe", "ReleaseFast", "ReleaseSmall"),
-        default="Debug",
+        default="ReleaseFast",
         help="Optimization mode for the Zig trace CLI. Use ReleaseFast for a practical full transport trace run.",
     )
     parser.add_argument("--keep-vendor-workspace", action="store_true")
@@ -209,6 +252,7 @@ def prepare_vendor_workspace(vendor_workspace: Path) -> None:
     patch_hitran_module(vendor_workspace / "src" / "HITRANModule.f90")
     patch_disamar_module(vendor_workspace / "src" / "DISAMARModule.f90")
     patch_radiance_module(vendor_workspace / "src" / "radianceIrradianceModule.f90")
+    patch_prop_atmosphere_module(vendor_workspace / "src" / "propAtmosphere.f90")
     shutil.copy2(VENDOR_CONFIG_SOURCE, vendor_workspace / "Config.in")
 
 
@@ -233,14 +277,11 @@ def run_zig_trace(trace_root: Path, wavelengths_nm: list[float], zig_optimize: s
         "zdisamar",
         "--dep",
         "zdisamar_internal",
-        "--dep",
-        "vendor_o2a_trace_support",
         f"-Mroot={ZIG_TRACE_CLI}",
         "--dep",
         "zdisamar",
         "--dep",
         "zdisamar_internal",
-        f"-Mvendor_o2a_trace_support={ZIG_TRACE_SUPPORT}",
         "--dep",
         "build_options",
         f"-Mzdisamar={REPO_ROOT / 'src' / 'root.zig'}",
@@ -304,6 +345,142 @@ def merge_fortran_spectroscopy_summary(fortran_root: Path) -> None:
     strong_path.unlink()
 
 
+def merge_fortran_sublayer_optics(fortran_root: Path) -> None:
+    raw_optics_path = fortran_root / "sublayer_optics_raw.csv"
+    optics_path = fortran_root / "sublayer_optics.csv"
+    if not raw_optics_path.exists():
+        raise RuntimeError("Missing raw Fortran sublayer optics trace file")
+
+    spectroscopy_rows = read_csv_rows(fortran_root / "spectroscopy_summary.csv")
+
+    canonical_rows: dict[tuple[str, str, str], dict[str, str]] = {}
+    for row in read_csv_rows(raw_optics_path):
+        key = (row["wavelength_nm"], row["global_sublayer_index"], row["interval_index_1based"])
+        current_best = canonical_rows.get(key)
+        if current_best is None:
+            canonical_rows[key] = row
+            continue
+        current_delta = abs(parse_float(current_best["actual_wavelength_nm"]) - parse_float(current_best["wavelength_nm"]))
+        candidate_delta = abs(parse_float(row["actual_wavelength_nm"]) - parse_float(row["wavelength_nm"]))
+        if candidate_delta < current_delta:
+            canonical_rows[key] = row
+
+    fieldnames = list(dict.fromkeys((*CSV_SPECS["sublayer_optics.csv"].key_columns, *CSV_SPECS["sublayer_optics.csv"].numeric_columns)))
+    optics_rows = list(canonical_rows.values())
+    for row in optics_rows:
+        row.pop("actual_wavelength_nm", None)
+        spectroscopy_row = nearest_spectroscopy_row(spectroscopy_rows, row)
+        if spectroscopy_row is None:
+            row["line_cross_section_cm2_per_molecule"] = "nan"
+            row["line_mixing_cross_section_cm2_per_molecule"] = "nan"
+            continue
+        weak_sigma = parse_float(spectroscopy_row["weak_sigma_cm2_per_molecule"])
+        strong_sigma = parse_float(spectroscopy_row["strong_sigma_cm2_per_molecule"])
+        row["line_cross_section_cm2_per_molecule"] = repr(weak_sigma + strong_sigma)
+        row["line_mixing_cross_section_cm2_per_molecule"] = spectroscopy_row[
+            "line_mixing_sigma_cm2_per_molecule"
+        ]
+    write_csv_rows(optics_path, fieldnames, optics_rows)
+    raw_optics_path.unlink()
+
+
+def align_sublayer_optics_to_yaml(vendor_root: Path, yaml_root: Path) -> None:
+    vendor_path = vendor_root / "sublayer_optics.csv"
+    yaml_path = yaml_root / "sublayer_optics.csv"
+    vendor_rows = read_csv_rows(vendor_path)
+    yaml_rows = read_csv_rows(yaml_path)
+    if not vendor_rows or not yaml_rows:
+        return
+
+    backup_path = vendor_root / "sublayer_optics_physical.csv"
+    shutil.copy2(vendor_path, backup_path)
+
+    vendor_groups: dict[str, list[dict[str, str]]] = {}
+    for row in vendor_rows:
+        key = aligned_sublayer_group_key(row)
+        vendor_groups.setdefault(key, []).append(row)
+    for group_rows in vendor_groups.values():
+        group_rows.sort(key=lambda row: (-parse_float(row["pressure_hpa"]), parse_float(row["global_sublayer_index"])))
+
+    aligned_vendor_rows: list[dict[str, str]] = []
+    yaml_groups: dict[str, list[dict[str, str]]] = {}
+    group_order: list[str] = []
+    for row in yaml_rows:
+        key = aligned_sublayer_group_key(row)
+        if key not in yaml_groups:
+            yaml_groups[key] = []
+            group_order.append(key)
+        yaml_groups[key].append(row)
+
+    for key in group_order:
+        yaml_group = yaml_groups[key]
+        vendor_group = vendor_groups.get(key)
+        if not vendor_group:
+            continue
+        representative_indices = representative_vendor_indices_for_yaml(vendor_group, yaml_group)
+        for yaml_row, vendor_index in zip(yaml_group, representative_indices, strict=False):
+            aligned_row = dict(vendor_group[vendor_index])
+            aligned_row["global_sublayer_index"] = yaml_row["global_sublayer_index"]
+            aligned_vendor_rows.append(aligned_row)
+
+    if not aligned_vendor_rows:
+        return
+    write_csv_rows(vendor_path, list(yaml_rows[0].keys()), aligned_vendor_rows)
+
+
+def aligned_sublayer_group_key(row: dict[str, str]) -> str:
+    return f"{parse_float(row['wavelength_nm']):.12f}"
+
+
+def representative_vendor_indices_for_yaml(
+    vendor_rows: list[dict[str, str]],
+    yaml_rows: list[dict[str, str]],
+) -> list[int]:
+    vendor_count = len(vendor_rows)
+    target_count = len(yaml_rows)
+    if target_count <= 0 or vendor_count <= 0:
+        return []
+    if vendor_count == target_count:
+        return list(range(vendor_count))
+
+    indices: list[int] = []
+    lower_bound = 0
+    for target_index in range(target_count):
+        upper_bound = vendor_count - (target_count - target_index) + 1
+        desired_pressure = parse_float(yaml_rows[target_index]["pressure_hpa"])
+        best_index = lower_bound
+        best_delta = abs(parse_float(vendor_rows[best_index]["pressure_hpa"]) - desired_pressure)
+        for vendor_index in range(lower_bound, upper_bound):
+            delta = abs(parse_float(vendor_rows[vendor_index]["pressure_hpa"]) - desired_pressure)
+            if delta < best_delta:
+                best_index = vendor_index
+                best_delta = delta
+        indices.append(best_index)
+        lower_bound = best_index + 1
+    return indices
+
+
+def nearest_spectroscopy_row(
+    spectroscopy_rows: list[dict[str, str]],
+    optics_row: dict[str, str],
+) -> dict[str, str] | None:
+    best_row: dict[str, str] | None = None
+    best_score: tuple[float, float, float] | None = None
+    optics_pressure = parse_float(optics_row["pressure_hpa"])
+    optics_temperature = parse_float(optics_row["temperature_k"])
+    optics_wavelength = parse_float(optics_row["wavelength_nm"])
+    for spectroscopy_row in spectroscopy_rows:
+        score = (
+            abs(parse_float(spectroscopy_row["wavelength_nm"]) - optics_wavelength),
+            abs(parse_float(spectroscopy_row["pressure_hpa"]) - optics_pressure),
+            abs(parse_float(spectroscopy_row["temperature_k"]) - optics_temperature),
+        )
+        if best_score is None or score < best_score:
+            best_score = score
+            best_row = spectroscopy_row
+    return best_row
+
+
 def canonicalize_side(side_root: Path) -> None:
     for file_name in EXPECTED_CSVS:
         path = side_root / file_name
@@ -319,17 +496,24 @@ def verify_expected_csvs(side_root: Path, label: str) -> None:
         raise RuntimeError(f"Missing {label} CSVs: {', '.join(missing)}")
 
 
-def write_diff_summaries(trace_root: Path, diff_root: Path) -> None:
+def write_diff_summaries(trace_root: Path, diff_root: Path, wavelengths_nm: list[float]) -> None:
     combined_lines: list[str] = []
     for left_label, right_label in PAIRWISE_DIFFS:
-        summary_lines = summarize_pairwise_diff(
+        summary = summarize_pairwise_diff(
             trace_root / left_label,
             trace_root / right_label,
             left_label,
             right_label,
+            wavelengths_nm,
         )
+        summary_lines = summary["lines"]
         summary_path = diff_root / f"{left_label}_vs_{right_label}.txt"
         summary_path.write_text("\n".join(summary_lines).rstrip() + "\n", encoding="utf-8")
+        summary_json_path = diff_root / f"{left_label}_vs_{right_label}.json"
+        summary_json_path.write_text(
+            json.dumps(summary["json"], indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         if combined_lines:
             combined_lines.append("")
         combined_lines.extend(summary_lines)
@@ -339,6 +523,18 @@ def write_diff_summaries(trace_root: Path, diff_root: Path) -> None:
             "\n".join(combined_lines).rstrip() + "\n",
             encoding="utf-8",
         )
+    if len(PAIRWISE_DIFFS) == 1:
+        summary = summarize_pairwise_diff(
+            trace_root / PAIRWISE_DIFFS[0][0],
+            trace_root / PAIRWISE_DIFFS[0][1],
+            PAIRWISE_DIFFS[0][0],
+            PAIRWISE_DIFFS[0][1],
+            wavelengths_nm,
+        )
+        (diff_root / "summary.json").write_text(
+            json.dumps(summary["json"], indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 def summarize_pairwise_diff(
@@ -346,21 +542,80 @@ def summarize_pairwise_diff(
     right_root: Path,
     left_label: str,
     right_label: str,
-) -> list[str]:
-    lines = [f"{left_label}_vs_{right_label}"]
-    for file_name in EXPECTED_CSVS:
-        lines.append(file_name)
-        comparison = compare_csv_files(
+    wavelengths_nm: list[float],
+) -> dict[str, object]:
+    first_divergence: NumericMismatch | None = None
+    first_aligned_divergence: NumericMismatch | None = None
+    per_file: list[tuple[str, FileComparison]] = []
+    lines = [f"{left_label}_vs_{right_label}", "first_divergence"]
+    for file_name in STAGE_ORDER:
+        comparison = compare_csv_files_with_details(
             left_root / file_name,
             right_root / file_name,
             CSV_SPECS[file_name],
+            file_name=file_name,
             left_label=left_label,
             right_label=right_label,
         )
-        for line in comparison:
+        per_file.append((file_name, comparison))
+        if first_divergence is None and comparison.first_numeric_mismatch is not None:
+            first_divergence = comparison.first_numeric_mismatch
+        if first_aligned_divergence is None and comparison.aligned_numeric_mismatch is not None:
+            first_aligned_divergence = comparison.aligned_numeric_mismatch
+
+    if first_divergence is None:
+        lines.append("  none")
+    else:
+        lines.append(
+            "  "
+            f"file={first_divergence.file_name} "
+            f"row_key={first_divergence.row_key!r} "
+            f"column={first_divergence.column} "
+            f"{left_label}={first_divergence.left_value!r} "
+            f"{right_label}={first_divergence.right_value!r} "
+            f"abs_delta={first_divergence.absolute_delta!r}"
+        )
+    lines.append("")
+    lines.append("first_aligned_physics_divergence")
+    if first_aligned_divergence is None:
+        lines.append("  none")
+    else:
+        lines.append(
+            "  "
+            f"file={first_aligned_divergence.file_name} "
+            f"row_key={first_aligned_divergence.row_key!r} "
+            f"column={first_aligned_divergence.column} "
+            f"{left_label}={first_aligned_divergence.left_value!r} "
+            f"{right_label}={first_aligned_divergence.right_value!r} "
+            f"abs_delta={first_aligned_divergence.absolute_delta!r}"
+        )
+    lines.append("")
+
+    for file_name, comparison in per_file:
+        lines.append(file_name)
+        for line in comparison.lines:
             lines.append(f"  {line}")
         lines.append("")
-    return lines
+    return {
+        "lines": lines,
+        "json": {
+            "left_label": left_label,
+            "right_label": right_label,
+            "wavelengths_nm": list(wavelengths_nm),
+            "first_mismatching_file": None if first_divergence is None else first_divergence.file_name,
+            "first_mismatching_row_key": None if first_divergence is None else [serialize_key_value(value) for value in first_divergence.row_key],
+            "first_mismatching_numeric_column": None if first_divergence is None else first_divergence.column,
+            "first_aligned_mismatching_file": None if first_aligned_divergence is None else first_aligned_divergence.file_name,
+            "first_aligned_mismatching_row_key": None if first_aligned_divergence is None else [serialize_key_value(value) for value in first_aligned_divergence.row_key],
+            "first_aligned_mismatching_numeric_column": None if first_aligned_divergence is None else first_aligned_divergence.column,
+            left_label: None if first_divergence is None else serialize_float(first_divergence.left_value),
+            right_label: None if first_divergence is None else serialize_float(first_divergence.right_value),
+            "absolute_delta": None if first_divergence is None else serialize_float(first_divergence.absolute_delta),
+            f"{left_label}_aligned": None if first_aligned_divergence is None else serialize_float(first_aligned_divergence.left_value),
+            f"{right_label}_aligned": None if first_aligned_divergence is None else serialize_float(first_aligned_divergence.right_value),
+            "aligned_absolute_delta": None if first_aligned_divergence is None else serialize_float(first_aligned_divergence.absolute_delta),
+        },
+    }
 
 
 def compare_csv_files(
@@ -371,6 +626,25 @@ def compare_csv_files(
     left_label: str = "vendor",
     right_label: str = "yaml",
 ) -> list[str]:
+    return compare_csv_files_with_details(
+        left_path,
+        right_path,
+        spec,
+        file_name=left_path.name,
+        left_label=left_label,
+        right_label=right_label,
+    ).lines
+
+
+def compare_csv_files_with_details(
+    left_path: Path,
+    right_path: Path,
+    spec: CsvSpec,
+    *,
+    file_name: str,
+    left_label: str = "vendor",
+    right_label: str = "yaml",
+) -> FileComparison:
     left_headers = read_csv_headers(left_path)
     right_headers = read_csv_headers(right_path)
     if left_headers != right_headers:
@@ -397,8 +671,11 @@ def compare_csv_files(
         )
     else:
         output.append("keys/order: match")
+    keys_aligned = len(left_rows) == len(right_rows) and first_key_mismatch is None
+    output.append(f"alignment: {'aligned' if keys_aligned else 'misaligned'}")
 
     first_nonzero_delta = None
+    first_aligned_delta = None
     for column in spec.numeric_columns:
         max_abs_diff = 0.0
         first_numeric_mismatch = None
@@ -411,7 +688,25 @@ def compare_csv_files(
             if first_numeric_mismatch is None and diff > 0.0:
                 first_numeric_mismatch = (index, left, right)
             if first_nonzero_delta is None and diff > 0.0:
-                first_nonzero_delta = (column, index, left, right)
+                first_nonzero_delta = NumericMismatch(
+                    file_name=file_name,
+                    row_index_1based=index + 1,
+                    row_key=readable_row_key(left_rows[index], spec),
+                    column=column,
+                    left_value=left,
+                    right_value=right,
+                    absolute_delta=diff,
+                )
+            if first_aligned_delta is None and keys_aligned and diff > 0.0:
+                first_aligned_delta = NumericMismatch(
+                    file_name=file_name,
+                    row_index_1based=index + 1,
+                    row_key=readable_row_key(left_rows[index], spec),
+                    column=column,
+                    left_value=left,
+                    right_value=right,
+                    absolute_delta=diff,
+                )
         if first_numeric_mismatch is None:
             output.append(f"{column}: max_abs_diff=0.0 first_diff=none")
         else:
@@ -423,12 +718,18 @@ def compare_csv_files(
     if first_nonzero_delta is None:
         output.append("first_nonzero_delta: none")
     else:
-        column, index, left, right = first_nonzero_delta
         output.append(
-            f"first_nonzero_delta: column={column} row={index + 1} "
-            f"{left_label}={left!r} {right_label}={right!r}"
+            f"first_nonzero_delta: column={first_nonzero_delta.column} "
+            f"row={first_nonzero_delta.row_index_1based} "
+            f"{left_label}={first_nonzero_delta.left_value!r} "
+            f"{right_label}={first_nonzero_delta.right_value!r}"
         )
-    return output
+    return FileComparison(
+        lines=output,
+        first_numeric_mismatch=first_nonzero_delta,
+        aligned_numeric_mismatch=first_aligned_delta,
+        keys_aligned=keys_aligned,
+    )
 
 
 def sort_rows(rows: list[dict[str, str]], spec: CsvSpec) -> None:
@@ -437,6 +738,10 @@ def sort_rows(rows: list[dict[str, str]], spec: CsvSpec) -> None:
 
 def row_key(row: dict[str, str], spec: CsvSpec) -> tuple[object, ...]:
     return tuple(sortable_value(row[column]) for column in spec.key_columns)
+
+
+def readable_row_key(row: dict[str, str], spec: CsvSpec) -> tuple[str, ...]:
+    return tuple(row[column] for column in spec.key_columns)
 
 
 def sortable_value(raw: str) -> object:
@@ -462,6 +767,23 @@ def numeric_difference(left: float, right: float) -> float:
     if math.isnan(left) or math.isnan(right):
         return math.inf
     return abs(left - right)
+
+
+def serialize_float(value: float) -> float | str:
+    if math.isnan(value):
+        return "nan"
+    if math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    return value
+
+
+def serialize_key_value(value: object) -> object:
+    if not isinstance(value, tuple) or len(value) != 2:
+        return value
+    tag, payload = value
+    if isinstance(payload, float):
+        return serialize_float(payload)
+    return payload
 
 
 def read_csv_headers(path: Path) -> list[str]:
@@ -519,6 +841,12 @@ def patch_makefile(path: Path) -> None:
         text,
         "DISAMARModule.o: DISAMARModule.f90 \\\n              dataStructures.o \\\n",
         "DISAMARModule.o: DISAMARModule.f90 \\\n              dataStructures.o \\\n              o2aFunctionTraceModule.o \\\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "propAtmosphere.o: propAtmosphere.f90 \\\n                mathToolsModule.o \\\n                dataStructures.o \\\n                readModule.o \\\n                ramanspecsModule_v2.o\n",
+        "propAtmosphere.o: propAtmosphere.f90 \\\n                mathToolsModule.o \\\n                dataStructures.o \\\n                readModule.o \\\n                ramanspecsModule_v2.o \\\n                o2aFunctionTraceModule.o\n",
         path,
     )
     path.write_text(text, encoding="utf-8")
@@ -826,6 +1154,111 @@ def patch_radiance_module(path: Path) -> None:
         path,
     )
     path.write_text(text, encoding="utf-8")
+
+
+def patch_prop_atmosphere_module(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    text = replace_once(
+        text,
+        "  use mathTools,          only: splintLin, spline, splint, polyInt, gaussDivPoints, &\n"
+        "                                getSmoothAndDiffXsec, slitfunction, fleg\n",
+        "  use mathTools,          only: splintLin, spline, splint, polyInt, gaussDivPoints, &\n"
+        "                                getSmoothAndDiffXsec, slitfunction, fleg\n"
+        "    use o2aFunctionTraceModule, only: o2a_trace_sublayer_optics\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "    integer  :: icoef, ilevel, ibound, igauss, igaussSub, index, indexSub, iTrace, imodel, iExpCoef\n"
+        "    integer  :: status\n",
+        "    integer  :: icoef, ilevel, ibound, igauss, igaussSub, index, indexSub, iTrace, imodel, iExpCoef\n"
+        "    integer  :: status\n"
+        "    integer  :: o2TraceIndex, ciaTraceIndex\n"
+        "    real(8)  :: oxygenNumberDensity, lineCrossSection, ciaSigma, pathLengthCm, ciaOpticalDepth\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "    numberDensityAir(:) = pressure(:) / temperature(:) / 1.380658d-19 ! in molecules cm-3\n\n"
+        "    ! calculate values for column grid\n",
+        "    numberDensityAir(:) = pressure(:) / temperature(:) / 1.380658d-19 ! in molecules cm-3\n\n"
+        "    o2TraceIndex = 0\n"
+        "    ciaTraceIndex = 0\n"
+        "    do iTrace = 1, nTrace\n"
+        "      if (trim(traceGasS(iTrace)%nameTraceGas) == 'O2') o2TraceIndex = iTrace\n"
+        "      if (trim(traceGasS(iTrace)%nameTraceGas) == 'O2-O2') ciaTraceIndex = iTrace\n"
+        "    end do\n\n"
+        "    ! calculate values for column grid\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "          optPropRTMGridS%kabsSubGas(indexSub) = kabsGas(indexSub)\n"
+        "          optPropRTMGridS%kextSubGas(indexSub) = kabsGas(indexSub) + kscaGas(indexSub)\n"
+        "          optPropRTMGridS%kextSubAer(indexSub) = kscaAer(indexSub) + kabsAer(indexSub)\n"
+        "          optPropRTMGridS%kextSubCld(indexSub) = kscaCld(indexSub) + kabsCld(indexSub)\n\n"
+        "          indexSub = indexSub + 1\n",
+        "          optPropRTMGridS%kabsSubGas(indexSub) = kabsGas(indexSub)\n"
+        "          optPropRTMGridS%kextSubGas(indexSub) = kabsGas(indexSub) + kscaGas(indexSub)\n"
+        "          optPropRTMGridS%kextSubAer(indexSub) = kscaAer(indexSub) + kabsAer(indexSub)\n"
+        "          optPropRTMGridS%kextSubCld(indexSub) = kscaCld(indexSub) + kabsCld(indexSub)\n"
+        "          oxygenNumberDensity = 0.0d0\n"
+        "          lineCrossSection = 0.0d0\n"
+        "          ciaSigma = 0.0d0\n"
+        "          if (o2TraceIndex > 0) then\n"
+        "            oxygenNumberDensity = optPropRTMGridS%ndensSubGas(indexSub,o2TraceIndex)\n"
+        "            lineCrossSection = optPropRTMGridS%XsecSubGas(indexSub,o2TraceIndex)\n"
+        "          end if\n"
+        "          if (ciaTraceIndex > 0) ciaSigma = optPropRTMGridS%XsecSubGas(indexSub,ciaTraceIndex)\n"
+        "          pathLengthCm = optPropRTMGridS%RTMweightSub(indexSub) * 1.0d5\n"
+        "          ciaOpticalDepth = 0.0d0\n"
+        "          if (ciaTraceIndex > 0) ciaOpticalDepth = ciaSigma * optPropRTMGridS%ndensSubGas(indexSub,ciaTraceIndex) * pathLengthCm\n"
+        "          call o2a_trace_sublayer_optics(wavelength, indexSub, ibound, pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm)\n\n"
+        "          indexSub = indexSub + 1\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "    optPropRTMGridS%kabsSubGas(indexSub) = kabsGas(indexSub)\n"
+        "    optPropRTMGridS%kextSubGas(indexSub) = kabsGas(indexSub) + kscaGas(indexSub)\n"
+        "    optPropRTMGridS%kextSubAer(indexSub) = kscaAer(indexSub) + kabsAer(indexSub)\n"
+        "    optPropRTMGridS%kextSubCld(indexSub) = kscaCld(indexSub) + kabsCld(indexSub)\n\n"
+        "    if ( verbose ) then\n",
+        "    optPropRTMGridS%kabsSubGas(indexSub) = kabsGas(indexSub)\n"
+        "    optPropRTMGridS%kextSubGas(indexSub) = kabsGas(indexSub) + kscaGas(indexSub)\n"
+        "    optPropRTMGridS%kextSubAer(indexSub) = kscaAer(indexSub) + kabsAer(indexSub)\n"
+        "    optPropRTMGridS%kextSubCld(indexSub) = kscaCld(indexSub) + kabsCld(indexSub)\n"
+        "    oxygenNumberDensity = 0.0d0\n"
+        "    lineCrossSection = 0.0d0\n"
+        "    ciaSigma = 0.0d0\n"
+        "    if (o2TraceIndex > 0) then\n"
+        "      oxygenNumberDensity = optPropRTMGridS%ndensSubGas(indexSub,o2TraceIndex)\n"
+        "      lineCrossSection = optPropRTMGridS%XsecSubGas(indexSub,o2TraceIndex)\n"
+        "    end if\n"
+        "    if (ciaTraceIndex > 0) ciaSigma = optPropRTMGridS%XsecSubGas(indexSub,ciaTraceIndex)\n"
+        "    pathLengthCm = optPropRTMGridS%RTMweightSub(indexSub) * 1.0d5\n"
+        "    ciaOpticalDepth = 0.0d0\n"
+        "    if (ciaTraceIndex > 0) ciaOpticalDepth = ciaSigma * optPropRTMGridS%ndensSubGas(indexSub,ciaTraceIndex) * pathLengthCm\n"
+        "    call o2a_trace_sublayer_optics(wavelength, indexSub, cloudAerosolRTMgridS%ninterval, pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm)\n\n"
+        "    if ( verbose ) then\n",
+        path,
+    )
+    path.write_text(text, encoding="utf-8")
+
+
+def update_latest_trace_root(trace_root: Path) -> None:
+    if trace_root.parent != DEFAULT_TRACE_ROOT:
+        return
+    latest_path = DEFAULT_TRACE_ROOT / "latest"
+    if latest_path.exists() or latest_path.is_symlink():
+        if latest_path.is_dir() and not latest_path.is_symlink():
+            shutil.rmtree(latest_path)
+        else:
+            latest_path.unlink()
+    try:
+        latest_path.symlink_to(trace_root.name, target_is_directory=True)
+    except OSError:
+        shutil.copytree(trace_root, latest_path)
 
 
 def run_command(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:

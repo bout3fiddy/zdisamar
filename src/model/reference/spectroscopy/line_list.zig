@@ -10,6 +10,7 @@ pub const SpectroscopyLineList = struct {
     strong_line_tolerance_nm: f64 = 0.01,
     lines_sorted_ascending: bool = false,
     preserve_anchor_weak_lines: bool = false,
+    vendor_strong_line_partition: bool = false,
     strong_line_match_by_line: ?[]?u16 = null,
     runtime_controls: Types.SpectroscopyRuntimeControls = .{},
 
@@ -48,6 +49,7 @@ pub const SpectroscopyLineList = struct {
             .strong_line_tolerance_nm = self.strong_line_tolerance_nm,
             .lines_sorted_ascending = self.lines_sorted_ascending,
             .preserve_anchor_weak_lines = self.preserve_anchor_weak_lines,
+            .vendor_strong_line_partition = self.vendor_strong_line_partition,
             .strong_line_match_by_line = if (self.strong_line_match_by_line) |matches|
                 try allocator.dupe(?u16, matches)
             else

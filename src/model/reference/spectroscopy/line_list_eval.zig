@@ -117,37 +117,33 @@ pub fn traceAt(
             ));
         }
 
-        for (strong_line_anchors[0..strong_lines.len], 0..) |anchor_line_index, strong_index| {
-            const line_index = anchor_line_index orelse continue;
-            const anchor_line = relevant_lines[line_index];
+        for (strong_lines, 0..) |strong_line, strong_index| {
+            const anchor_line_index = strong_line_anchors[strong_index];
+            const anchor_line = if (anchor_line_index) |line_index| relevant_lines[line_index] else null;
             const contribution = if (prepared_state) |state|
                 Physics.strongLineContributionPrepared(
                     wavelength_nm,
-                    anchor_line,
                     strong_lines,
                     strong_index,
                     state,
                     safe_temperature,
                     pressure_scale,
-                    self.runtime_controls.cutoff_cm1,
                 )
             else
                 Physics.strongLineContribution(
                     wavelength_nm,
-                    anchor_line,
                     strong_lines,
                     strong_index,
                     convtp_state.?,
                     safe_temperature,
                     pressure_scale,
-                    self.runtime_controls.cutoff_cm1,
                 );
             try rows.append(allocator, Support.traceRowForStrongLine(
                 wavelength_nm,
-                relevant_window.start_index + line_index,
+                if (anchor_line_index) |line_index| relevant_window.start_index + line_index else null,
                 strong_index,
                 anchor_line,
-                strong_lines[strong_index],
+                strong_line,
                 contribution,
                 pressure_scale,
             ));
@@ -250,17 +246,14 @@ pub fn totalSigmaWithStrongLineSidecars(
         weak_line_sigma += contribution.line_sigma_cm2_per_molecule;
     }
 
-    for (strong_line_anchors[0..strong_lines.len], 0..) |anchor_line_index, strong_index| {
-        const line_index = anchor_line_index orelse continue;
+    for (strong_lines, 0..) |_, strong_index| {
         const contribution = Physics.strongLineContribution(
             wavelength_nm,
-            relevant_lines[line_index],
             strong_lines,
             strong_index,
             convtp_state,
             safe_temperature,
             pressure_scale,
-            self.runtime_controls.cutoff_cm1,
         );
         strong_line_sigma += contribution.strong_line_sigma_cm2_per_molecule;
         line_mixing_sigma += contribution.line_mixing_sigma_cm2_per_molecule * self.runtime_controls.line_mixing_factor;
@@ -310,17 +303,14 @@ pub fn totalSigmaWithPreparedStrongLineState(
         weak_line_sigma += contribution.line_sigma_cm2_per_molecule;
     }
 
-    for (strong_line_anchors[0..strong_lines.len], 0..) |anchor_line_index, strong_index| {
-        const line_index = anchor_line_index orelse continue;
+    for (strong_lines, 0..) |_, strong_index| {
         const contribution = Physics.strongLineContributionPrepared(
             wavelength_nm,
-            relevant_lines[line_index],
             strong_lines,
             strong_index,
             prepared_state,
             safe_temperature,
             pressure_scale,
-            self.runtime_controls.cutoff_cm1,
         );
         strong_line_sigma += contribution.strong_line_sigma_cm2_per_molecule;
         line_mixing_sigma += contribution.line_mixing_sigma_cm2_per_molecule * self.runtime_controls.line_mixing_factor;

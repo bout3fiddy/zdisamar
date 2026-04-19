@@ -306,6 +306,17 @@ pub fn build(b: *std.Build) void {
     );
     o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
 
+    const o2a_function_diff_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_function_diff.py",
+    });
+    const o2a_function_diff_step = b.step(
+        "o2a-function-diff",
+        "Run the O2A function-diff hotspot probe and write timestamped trace outputs",
+    );
+    o2a_function_diff_step.dependOn(&o2a_function_diff_cmd.step);
+
     const o2a_function_diff_test_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
