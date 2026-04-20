@@ -97,11 +97,22 @@ pub fn integrationForWavelengthWithAdaptiveCache(
         return;
     }
 
+    if (response.integration_mode == .disamar_hr_grid) {
+        if (adaptive_plan.buildDisamarRealizedKernel(
+            scene,
+            response,
+            nominal_wavelength_nm,
+            kernel,
+        )) {
+            return;
+        }
+    }
+
     const prefer_explicit_hr_grid = switch (response.integration_mode) {
-        .auto, .explicit_hr_grid, .disamar_hr_grid => true,
+        .auto, .explicit_hr_grid => true,
         .adaptive => false,
+        .disamar_hr_grid => false,
     };
-    const disamar_hr_grid = response.integration_mode == .disamar_hr_grid;
     const prefer_adaptive_grid = response.integration_mode == .adaptive;
 
     if (prefer_explicit_hr_grid and response.high_resolution_step_nm > 0.0 and response.high_resolution_half_span_nm > 0.0) {
@@ -112,14 +123,7 @@ pub fn integrationForWavelengthWithAdaptiveCache(
         while (offset_nm <= half_span_nm + (step_nm * 0.5) and sample_count < max_integration_sample_count) : (offset_nm += step_nm) {
             kernel.offsets_nm[sample_count] = offset_nm;
             const response_weight = response_support.spectralResponseWeight(response, offset_nm);
-            // PARITY:
-            //   DISAMAR integrates the slit function on an explicit HR grid
-            //   with quadrature weights. For the uniform parity grid the
-            //   quadrature factor is the constant step size.
-            kernel.weights[sample_count] = if (disamar_hr_grid)
-                response_weight * step_nm
-            else
-                response_weight;
+            kernel.weights[sample_count] = response_weight;
             sample_count += 1;
         }
         if (sample_count == 0) sample_count = 1;
@@ -295,6 +299,50 @@ test "flat-top line shape spreads weight more broadly than gaussian for the same
     try std.testing.expectEqual(gaussian_kernel.sample_count, flat_top_kernel.sample_count);
     try std.testing.expect(flat_top_kernel.weights[flat_top_kernel.sample_count / 2] < gaussian_kernel.weights[gaussian_kernel.sample_count / 2]);
     try std.testing.expect(flat_top_kernel.weights[0] > gaussian_kernel.weights[0]);
+}
+
+test "disamar hr grid realizes Gauss-weighted support instead of the uniform explicit lattice" {
+    const scene: Scene = .{
+        .spectral_grid = .{
+            .start_nm = 755.0,
+            .end_nm = 765.0,
+            .sample_count = 101,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .sampling = .native,
+            .noise_model = .shot_noise,
+            .instrument_line_fwhm_nm = 0.38,
+            .high_resolution_step_nm = 0.01,
+            .high_resolution_half_span_nm = 1.14,
+            .adaptive_reference_grid = .{
+                .points_per_fwhm = 40,
+                .strong_line_min_divisions = 40,
+                .strong_line_max_divisions = 40,
+            },
+            .measurement_pipeline = .{
+                .irradiance = .{
+                    .explicit = true,
+                    .response = .{
+                        .explicit = true,
+                        .integration_mode = .disamar_hr_grid,
+                        .fwhm_nm = 0.38,
+                        .high_resolution_step_nm = 0.01,
+                        .high_resolution_half_span_nm = 1.14,
+                    },
+                },
+            },
+        },
+    };
+
+    var kernel: IntegrationKernel = undefined;
+    integrationForWavelength(&scene, null, .irradiance, 755.0, &kernel);
+
+    try std.testing.expect(kernel.enabled);
+    try std.testing.expectEqual(@as(usize, 201), kernel.sample_count);
+    try std.testing.expectApproxEqAbs(@as(f64, -0.759665164845), kernel.offsets_nm[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.1403348351549), kernel.offsets_nm[kernel.sample_count - 1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), kernel.weights[kernel.sample_count - 1], 1.0e-12);
 }
 
 test "measured-channel sampling bypasses legacy post-convolution even without explicit slit metadata" {

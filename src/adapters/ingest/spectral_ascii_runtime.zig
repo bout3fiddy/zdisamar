@@ -176,10 +176,13 @@ pub fn solarSpectrumForKind(
         return .{};
     }
 
-    return .{
+    var spectrum: OperationalSolarSpectrum = .{
         .wavelengths_nm = wavelengths,
         .irradiance = irradiance,
     };
+    errdefer spectrum.deinitOwned(allocator);
+    try spectrum.prepareInterpolation(allocator);
+    return spectrum;
 }
 
 /// Purpose:

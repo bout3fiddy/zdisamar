@@ -603,6 +603,8 @@ def canonicalize_side(side_root: Path) -> None:
         spec = CSV_SPECS[file_name]
         rows = read_csv_rows(path)
         sort_rows(rows, spec)
+        if file_name in {"adaptive_grid.csv", "kernel_samples.csv", "transport_samples.csv"}:
+            rows = dedupe_exact_rows(rows)
         write_csv_rows(path, list(rows[0].keys()) if rows else read_csv_headers(path), rows)
 
 
@@ -613,6 +615,17 @@ def canonicalize_optional_csv(side_root: Path, file_name: str, spec: CsvSpec) ->
     rows = read_csv_rows(path)
     sort_rows(rows, spec)
     write_csv_rows(path, list(rows[0].keys()) if rows else read_csv_headers(path), rows)
+
+
+def dedupe_exact_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    if not rows:
+        return rows
+    deduped: list[dict[str, str]] = [rows[0]]
+    for row in rows[1:]:
+        if row == deduped[-1]:
+            continue
+        deduped.append(row)
+    return deduped
 
 
 def verify_expected_csvs(side_root: Path, label: str) -> None:
@@ -1419,14 +1432,18 @@ def patch_radiance_module(path: Path) -> None:
     text = replace_once(
         text,
         "        do index = startIndex, endIndex\n"
+        "          ! multiply with gaussian weights for integration\n"
         "          slitfunctionValues(index) = wavelHRS%weight(index) * slitfunctionValues(index)\n"
+        "          irradiance = irradiance + slitfunctionValues(index) * solarIrradianceS%solIrrHR(index)\n"
         "        end do\n"
-        "        do iSV = 1, dimSV\n",
+        "        solarIrradianceS%solIrr(iwave) = irradiance\n",
         "        do index = startIndex, endIndex\n"
+        "          ! multiply with gaussian weights for integration\n"
         "          slitfunctionValues(index) = wavelHRS%weight(index) * slitfunctionValues(index)\n"
+        "          irradiance = irradiance + slitfunctionValues(index) * solarIrradianceS%solIrrHR(index)\n"
         "        end do\n"
-        "        call o2a_trace_emit_kernel_and_transport(wavelInstrS%wavel(iwave), startIndex, endIndex, wavelHRS%wavel, slitfunctionValues, earthRadianceS%rad_HR(1,:), solarIrradianceS%solIrrHR)\n"
-        "        do iSV = 1, dimSV\n",
+        "        call o2a_trace_emit_kernel_and_transport(wavelInstrS%wavel(iwave), startIndex, endIndex, wavelHRS%wavel, slitfunctionValues, solarIrradianceS%solIrrHR, solarIrradianceS%solIrrHR)\n"
+        "        solarIrradianceS%solIrr(iwave) = irradiance\n",
         path,
     )
     text = replace_once(

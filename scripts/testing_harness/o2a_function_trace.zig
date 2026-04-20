@@ -910,6 +910,7 @@ fn emitTransportTraces(
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
     const transport_layer_count = Measurement.workspace.resolvedTransportLayerCount(route, prepared);
     const radiance_calibration = providers.instrument.calibrationForScene(scene, .radiance);
+    const irradiance_calibration = providers.instrument.calibrationForScene(scene, .irradiance);
     const irradiance_support = scene.observation_model.primaryOperationalBandSupport().operational_solar_spectrum;
     for (wavelengths_nm) |nominal_wavelength_nm| {
         if (try InstrumentProviders.traceAdaptiveIntegrationKernel(
@@ -953,10 +954,30 @@ fn emitTransportTraces(
                 .weights = [_]f64{1.0} ++ [_]f64{0.0} ** (InstrumentProviders.max_integration_sample_count - 1),
             };
         }
+        const irradiance_evaluation_wavelength_nm = Calibration.shiftedWavelength(
+            irradiance_calibration,
+            nominal_wavelength_nm,
+        );
+        var irradiance_integration: InstrumentProviders.IntegrationKernel = undefined;
+        providers.instrument.integrationForWavelength(
+            scene,
+            prepared,
+            .irradiance,
+            nominal_wavelength_nm,
+            &irradiance_integration,
+        );
+        if (!irradiance_integration.enabled) {
+            irradiance_integration = .{
+                .enabled = true,
+                .sample_count = 1,
+                .offsets_nm = [_]f64{0.0} ++ [_]f64{0.0} ** (InstrumentProviders.max_integration_sample_count - 1),
+                .weights = [_]f64{1.0} ++ [_]f64{0.0} ** (InstrumentProviders.max_integration_sample_count - 1),
+            };
+        }
 
-        for (0..integration.sample_count) |sample_index| {
-            const sample_wavelength_nm = evaluation_wavelength_nm + integration.offsets_nm[sample_index];
-            const weight = integration.weights[sample_index];
+        for (0..irradiance_integration.sample_count) |sample_index| {
+            const sample_wavelength_nm = irradiance_evaluation_wavelength_nm + irradiance_integration.offsets_nm[sample_index];
+            const weight = irradiance_integration.weights[sample_index];
             const sample = try Measurement.spectral_eval.cachedForwardAtWavelength(
                 allocator,
                 scene,
@@ -1015,10 +1036,10 @@ fn emitTransportTraces(
         const integrated_irradiance = try Measurement.spectral_eval.integrateIrradianceAtNominal(
             scene,
             prepared,
-            evaluation_wavelength_nm,
+            irradiance_evaluation_wavelength_nm,
             safe_span,
             &buffers.evaluation_cache,
-            &integration,
+            &irradiance_integration,
         );
         try summary_rows.append(allocator, .{
             .nominal_wavelength_nm = nominal_wavelength_nm,

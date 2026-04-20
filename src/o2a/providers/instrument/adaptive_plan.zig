@@ -84,6 +84,52 @@ pub fn buildAdaptiveIntegrationKernel(
     );
 }
 
+pub fn buildDisamarRealizedKernel(
+    scene: *const Scene,
+    response: InstrumentModel.SpectralResponse,
+    nominal_wavelength_nm: f64,
+    kernel: *types.IntegrationKernel,
+) bool {
+    if (response.fwhm_nm <= 0.0) return false;
+
+    const support_window = adaptiveKernelSupportWindow(scene, response, nominal_wavelength_nm);
+    if (support_window.window_end_nm <= support_window.window_start_nm) return false;
+
+    const division_count = disamarIntervalDivisionCount(scene.observation_model.adaptive_reference_grid, response);
+    if (division_count == 0) return false;
+
+    var plan: AdaptiveIntervalPlan = .{};
+    if (!buildDisamarIntervalPlan(
+        support_window.global_start_nm,
+        support_window.global_end_nm,
+        @max(response.fwhm_nm, 1.0e-4),
+        division_count,
+        &plan,
+    )) return false;
+
+    var sample_wavelengths_nm: [types.max_integration_sample_count]f64 = undefined;
+    var sample_raw_weights: [types.max_integration_sample_count]f64 = undefined;
+    var sample_count: usize = 0;
+    if (!appendAdaptiveSamplesFromPlan(
+        &plan,
+        response,
+        nominal_wavelength_nm,
+        support_window.global_start_nm,
+        support_window.global_end_nm,
+        &sample_wavelengths_nm,
+        &sample_raw_weights,
+        &sample_count,
+        null,
+    )) return false;
+
+    return finalizeAdaptiveKernel(
+        kernel,
+        nominal_wavelength_nm,
+        sample_wavelengths_nm[0..sample_count],
+        sample_raw_weights[0..sample_count],
+    );
+}
+
 pub fn adaptiveKernelSupportWindow(
     scene: *const Scene,
     response: InstrumentModel.SpectralResponse,
@@ -370,6 +416,45 @@ fn adaptiveIntervalDivisionCount(
         @as(f64, @floatFromInt(max_divisions)) * (@max(interval_width_nm, 1.0e-9) / @max(max_interval_nm, 1.0e-9)),
     )));
     return std.math.clamp(@max(scaled, min_divisions), min_divisions, max_divisions);
+}
+
+fn disamarIntervalDivisionCount(
+    adaptive: AdaptiveReferenceGrid,
+    response: InstrumentModel.SpectralResponse,
+) usize {
+    if (adaptive.points_per_fwhm > 0) return adaptive.points_per_fwhm;
+    if (response.high_resolution_step_nm > 0.0 and response.fwhm_nm > 0.0) {
+        return @max(
+            @as(usize, @intFromFloat(std.math.round(response.fwhm_nm / response.high_resolution_step_nm))),
+            1,
+        );
+    }
+    return 1;
+}
+
+fn buildDisamarIntervalPlan(
+    global_start_nm: f64,
+    global_end_nm: f64,
+    interval_width_nm: f64,
+    division_count: usize,
+    plan: *AdaptiveIntervalPlan,
+) bool {
+    if (global_end_nm <= global_start_nm or interval_width_nm <= 0.0 or division_count == 0) return false;
+
+    plan.count = 0;
+    var current_nm = global_start_nm;
+    while (current_nm < global_end_nm - 1.0e-12 and plan.count < types.max_integration_sample_count) {
+        const next_nm = @min(current_nm + interval_width_nm, global_end_nm);
+        plan.intervals[plan.count] = .{
+            .kind = .uniform,
+            .interval_start_nm = current_nm,
+            .interval_end_nm = next_nm,
+            .division_count = division_count,
+        };
+        plan.count += 1;
+        current_nm = next_nm;
+    }
+    return plan.count != 0 and current_nm >= global_end_nm - 1.0e-12;
 }
 
 fn lessThanF64(_: void, lhs: f64, rhs: f64) bool {

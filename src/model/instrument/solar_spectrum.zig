@@ -25,6 +25,8 @@ const Allocator = std.mem.Allocator;
 pub const OperationalSolarSpectrum = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     irradiance: []const f64 = &[_]f64{},
+    spline_second_derivatives: []const f64 = &[_]f64{},
+    owns_spline_state: bool = false,
 
     /// Purpose:
     ///   Report whether the solar spectrum is active.
@@ -39,10 +41,17 @@ pub const OperationalSolarSpectrum = struct {
     ///   Requires monotonic wavelengths and non-negative irradiance samples.
     pub fn validate(self: *const OperationalSolarSpectrum) errors.Error!void {
         if (!self.enabled()) {
-            if (self.irradiance.len != 0) return errors.Error.InvalidRequest;
+            if (self.irradiance.len != 0 or self.spline_second_derivatives.len != 0) {
+                return errors.Error.InvalidRequest;
+            }
             return;
         }
         if (self.irradiance.len != self.wavelengths_nm.len) return errors.Error.InvalidRequest;
+        if (self.spline_second_derivatives.len != 0 and
+            self.spline_second_derivatives.len != self.wavelengths_nm.len)
+        {
+            return errors.Error.InvalidRequest;
+        }
 
         var previous_wavelength: ?f64 = null;
         for (self.wavelengths_nm, self.irradiance) |wavelength_nm, irradiance| {
@@ -54,6 +63,96 @@ pub const OperationalSolarSpectrum = struct {
             }
             previous_wavelength = wavelength_nm;
         }
+        for (self.spline_second_derivatives) |second_derivative| {
+            if (!std.math.isFinite(second_derivative)) return errors.Error.InvalidRequest;
+        }
+    }
+
+    /// Purpose:
+    ///   Prepare owned spline state so repeated irradiance sampling does not
+    ///   rebuild interpolation coefficients at runtime.
+    ///
+    /// Physics:
+    ///   DISAMAR evaluates the raw solar spectrum through a cubic spline whose
+    ///   end derivatives are fixed to the first and last one-sided slopes, so
+    ///   the operational solar carrier caches that spline state after ingest.
+    pub fn prepareInterpolation(
+        self: *OperationalSolarSpectrum,
+        allocator: Allocator,
+    ) errors.Error!void {
+        try self.validate();
+        if (!self.enabled() or self.wavelengths_nm.len < 3) {
+            self.clearSplineState(allocator);
+            return;
+        }
+
+        const second_derivatives = try allocator.alloc(f64, self.wavelengths_nm.len);
+        errdefer allocator.free(second_derivatives);
+        const slopes = try allocator.alloc(f64, self.wavelengths_nm.len);
+        defer allocator.free(slopes);
+        const c3 = try allocator.alloc(f64, self.wavelengths_nm.len);
+        defer allocator.free(c3);
+        const c4 = try allocator.alloc(f64, self.wavelengths_nm.len);
+        defer allocator.free(c4);
+
+        @memset(slopes, 0.0);
+        @memset(c3, 0.0);
+        @memset(c4, 0.0);
+
+        const first_span_nm = self.wavelengths_nm[1] - self.wavelengths_nm[0];
+        const last_span_nm = self.wavelengths_nm[self.wavelengths_nm.len - 1] -
+            self.wavelengths_nm[self.wavelengths_nm.len - 2];
+        if (first_span_nm <= 0.0 or last_span_nm <= 0.0) return errors.Error.InvalidRequest;
+
+        slopes[0] = (self.irradiance[1] - self.irradiance[0]) / first_span_nm;
+        slopes[self.wavelengths_nm.len - 1] = (self.irradiance[self.irradiance.len - 1] -
+            self.irradiance[self.irradiance.len - 2]) / last_span_nm;
+
+        var index: usize = 1;
+        while (index < self.wavelengths_nm.len) : (index += 1) {
+            c3[index] = self.wavelengths_nm[index] - self.wavelengths_nm[index - 1];
+            if (c3[index] <= 0.0) return errors.Error.InvalidRequest;
+            c4[index] = (self.irradiance[index] - self.irradiance[index - 1]) / c3[index];
+        }
+
+        // PARITY:
+        //   Match DISAMAR's `mathTools::spline` wrapper in the only mode used
+        //   for the O2A solar source: first derivatives specified at both ends.
+        c4[0] = 1.0;
+        c3[0] = 0.0;
+
+        if (self.wavelengths_nm.len > 2) {
+            index = 1;
+            while (index + 1 < self.wavelengths_nm.len) : (index += 1) {
+                const g = -c3[index + 1] / c4[index - 1];
+                slopes[index] = g * slopes[index - 1] + 3.0 * (c3[index] * c4[index + 1] + c3[index + 1] * c4[index]);
+                c4[index] = g * c3[index - 1] + 2.0 * (c3[index] + c3[index + 1]);
+            }
+        }
+
+        index = self.wavelengths_nm.len - 1;
+        while (index > 0) : (index -= 1) {
+            slopes[index - 1] = (slopes[index - 1] - c3[index - 1] * slopes[index]) / c4[index - 1];
+        }
+
+        index = 1;
+        while (index < self.wavelengths_nm.len) : (index += 1) {
+            const dtau_nm = c3[index];
+            const first_divided_difference = (self.irradiance[index] - self.irradiance[index - 1]) / dtau_nm;
+            const third_divided_difference = slopes[index - 1] + slopes[index] - (2.0 * first_divided_difference);
+            c3[index - 1] = 2.0 * (first_divided_difference - slopes[index - 1] - third_divided_difference) / dtau_nm;
+            c4[index - 1] = 6.0 * third_divided_difference / (dtau_nm * dtau_nm);
+        }
+
+        second_derivatives[0] = -0.5 * c3[1];
+        for (1..self.wavelengths_nm.len - 1) |interior_index| {
+            second_derivatives[interior_index] = c3[interior_index];
+        }
+        second_derivatives[self.wavelengths_nm.len - 1] = -0.5 * c3[self.wavelengths_nm.len - 2];
+
+        self.clearSplineState(allocator);
+        self.spline_second_derivatives = second_derivatives;
+        self.owns_spline_state = true;
     }
 
     /// Purpose:
@@ -63,12 +162,20 @@ pub const OperationalSolarSpectrum = struct {
         cloned.wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm);
         errdefer allocator.free(cloned.wavelengths_nm);
         cloned.irradiance = try allocator.dupe(f64, self.irradiance);
+        errdefer allocator.free(cloned.irradiance);
+        if (self.spline_second_derivatives.len != 0) {
+            cloned.spline_second_derivatives = try allocator.dupe(f64, self.spline_second_derivatives);
+            cloned.owns_spline_state = true;
+        } else {
+            try cloned.prepareInterpolation(allocator);
+        }
         return cloned;
     }
 
     /// Purpose:
     ///   Release owned spectrum storage.
     pub fn deinitOwned(self: *OperationalSolarSpectrum, allocator: Allocator) void {
+        self.clearSplineState(allocator);
         allocator.free(self.wavelengths_nm);
         allocator.free(self.irradiance);
         self.* = .{};
@@ -78,9 +185,20 @@ pub const OperationalSolarSpectrum = struct {
     ///   Interpolate irradiance at a wavelength.
     ///
     /// Physics:
-    ///   Uses linear interpolation between adjacent monotonic samples.
+    ///   Uses spline interpolation between adjacent monotonic samples, with
+    ///   endpoint clamping when callers sample outside the loaded support.
     pub fn interpolateIrradiance(self: *const OperationalSolarSpectrum, wavelength_nm: f64) f64 {
         return self.interpolateIrradianceWithinBounds(wavelength_nm) orelse {
+            if (!self.enabled()) return 0.0;
+            if (wavelength_nm <= self.wavelengths_nm[0]) return self.irradiance[0];
+            return self.irradiance[self.irradiance.len - 1];
+        };
+    }
+
+    /// Purpose:
+    ///   Interpolate irradiance with the legacy linear helper.
+    pub fn interpolateIrradianceLinear(self: *const OperationalSolarSpectrum, wavelength_nm: f64) f64 {
+        return self.interpolateIrradianceLinearWithinBounds(wavelength_nm) orelse {
             if (!self.enabled()) return 0.0;
             if (wavelength_nm <= self.wavelengths_nm[0]) return self.irradiance[0];
             return self.irradiance[self.irradiance.len - 1];
@@ -110,6 +228,22 @@ pub const OperationalSolarSpectrum = struct {
     ///   Returns `null` when the requested wavelength falls outside the loaded
     ///   solar support so parity callers can detect clipped HR kernels.
     pub fn interpolateIrradianceWithinBounds(
+        self: *const OperationalSolarSpectrum,
+        wavelength_nm: f64,
+    ) ?f64 {
+        if (!self.enabled()) return null;
+        if (wavelength_nm < self.wavelengths_nm[0]) return null;
+        if (wavelength_nm > self.wavelengths_nm[self.wavelengths_nm.len - 1]) return null;
+        if (self.splineReady()) {
+            return self.interpolatePreparedSplineWithinBounds(wavelength_nm);
+        }
+        return self.interpolateIrradianceLinearWithinBounds(wavelength_nm);
+    }
+
+    /// Purpose:
+    ///   Interpolate irradiance linearly without extrapolating outside the
+    ///   stored range.
+    pub fn interpolateIrradianceLinearWithinBounds(
         self: *const OperationalSolarSpectrum,
         wavelength_nm: f64,
     ) ?f64 {
@@ -175,13 +309,60 @@ pub const OperationalSolarSpectrum = struct {
         }
         return corrected;
     }
+
+    fn splineReady(self: *const OperationalSolarSpectrum) bool {
+        return self.spline_second_derivatives.len == self.wavelengths_nm.len and
+            self.wavelengths_nm.len >= 3;
+    }
+
+    fn clearSplineState(self: *OperationalSolarSpectrum, allocator: Allocator) void {
+        if (self.owns_spline_state and self.spline_second_derivatives.len != 0) {
+            allocator.free(@constCast(self.spline_second_derivatives));
+        }
+        self.spline_second_derivatives = &[_]f64{};
+        self.owns_spline_state = false;
+    }
+
+    fn interpolatePreparedSplineWithinBounds(
+        self: *const OperationalSolarSpectrum,
+        wavelength_nm: f64,
+    ) ?f64 {
+        if (wavelength_nm == self.wavelengths_nm[0]) return self.irradiance[0];
+        if (wavelength_nm == self.wavelengths_nm[self.wavelengths_nm.len - 1]) {
+            return self.irradiance[self.irradiance.len - 1];
+        }
+
+        var lower_index: usize = 0;
+        var upper_index: usize = self.wavelengths_nm.len - 1;
+        while (upper_index - lower_index > 1) {
+            const middle_index = (upper_index + lower_index) / 2;
+            if (self.wavelengths_nm[middle_index] > wavelength_nm) {
+                upper_index = middle_index;
+            } else {
+                lower_index = middle_index;
+            }
+        }
+
+        const span_nm = self.wavelengths_nm[upper_index] - self.wavelengths_nm[lower_index];
+        if (span_nm == 0.0) return self.irradiance[upper_index];
+
+        const a = (self.wavelengths_nm[upper_index] - wavelength_nm) / span_nm;
+        const b = (wavelength_nm - self.wavelengths_nm[lower_index]) / span_nm;
+        return a * self.irradiance[lower_index] +
+            b * self.irradiance[upper_index] +
+            (((a * a * a) - a) * self.spline_second_derivatives[lower_index] +
+                ((b * b * b) - b) * self.spline_second_derivatives[upper_index]) *
+                (span_nm * span_nm) / 6.0;
+    }
 };
 
 test "operational solar spectrum interpolates onto measured wavelengths" {
-    const spectrum: OperationalSolarSpectrum = .{
-        .wavelengths_nm = &.{ 760.8, 761.0, 761.2 },
-        .irradiance = &.{ 2.7e14, 2.8e14, 2.9e14 },
+    var spectrum: OperationalSolarSpectrum = .{
+        .wavelengths_nm = try std.testing.allocator.dupe(f64, &.{ 760.8, 761.0, 761.2 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 2.7e14, 2.8e14, 2.9e14 }),
     };
+    try spectrum.prepareInterpolation(std.testing.allocator);
+    defer spectrum.deinitOwned(std.testing.allocator);
 
     const aligned = try spectrum.interpolateOnto(std.testing.allocator, &.{ 760.8, 760.9, 761.15 });
     defer std.testing.allocator.free(aligned);
@@ -192,10 +373,12 @@ test "operational solar spectrum interpolates onto measured wavelengths" {
 }
 
 test "operational solar spectrum corrects measured irradiance onto a shifted radiance grid" {
-    const source_solar: OperationalSolarSpectrum = .{
-        .wavelengths_nm = &.{ 760.8, 761.0, 761.2, 761.4 },
-        .irradiance = &.{ 3.00e14, 2.90e14, 2.80e14, 2.70e14 },
+    var source_solar: OperationalSolarSpectrum = .{
+        .wavelengths_nm = try std.testing.allocator.dupe(f64, &.{ 760.8, 761.0, 761.2, 761.4 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 3.00e14, 2.90e14, 2.80e14, 2.70e14 }),
     };
+    try source_solar.prepareInterpolation(std.testing.allocator);
+    defer source_solar.deinitOwned(std.testing.allocator);
 
     const corrected = try source_solar.correctMeasuredSpectrumOnto(
         std.testing.allocator,
@@ -208,4 +391,36 @@ test "operational solar spectrum corrects measured irradiance onto a shifted rad
     try std.testing.expect(corrected[0] < 2.70e14);
     try std.testing.expect(corrected[1] < 2.68e14);
     try std.testing.expect(corrected[2] < 2.66e14);
+}
+
+test "operational solar spectrum supports spline default and explicit linear fallback" {
+    var spectrum: OperationalSolarSpectrum = .{
+        .wavelengths_nm = try std.testing.allocator.dupe(f64, &.{ 0.0, 1.0, 2.0, 3.0 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 0.0, 1.0, 4.0, 9.0 }),
+    };
+    try spectrum.prepareInterpolation(std.testing.allocator);
+    defer spectrum.deinitOwned(std.testing.allocator);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.2), spectrum.interpolateIrradiance(1.5), 0.2);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), spectrum.interpolateIrradianceLinear(1.5), 1.0e-12);
+}
+
+test "operational solar spectrum clone preserves prepared spline state" {
+    var spectrum: OperationalSolarSpectrum = .{
+        .wavelengths_nm = try std.testing.allocator.dupe(f64, &.{ 760.8, 761.0, 761.2, 761.4 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 3.00e14, 2.90e14, 2.80e14, 2.70e14 }),
+    };
+    try spectrum.prepareInterpolation(std.testing.allocator);
+    defer spectrum.deinitOwned(std.testing.allocator);
+
+    var cloned = try spectrum.clone(std.testing.allocator);
+    defer cloned.deinitOwned(std.testing.allocator);
+
+    try std.testing.expectEqual(spectrum.wavelengths_nm.len, cloned.spline_second_derivatives.len);
+    try std.testing.expect(cloned.owns_spline_state);
+    try std.testing.expectApproxEqAbs(
+        spectrum.interpolateIrradiance(761.1),
+        cloned.interpolateIrradiance(761.1),
+        1.0,
+    );
 }

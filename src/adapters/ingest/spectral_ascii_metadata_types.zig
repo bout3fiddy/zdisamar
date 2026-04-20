@@ -231,7 +231,13 @@ pub const OperationalSolarSpectrumBuilder = struct {
         errdefer if (wavelengths_nm.len > 0) allocator.free(wavelengths_nm);
         const irradiance = try self.irradiance.intoOwnedSlice(allocator);
         errdefer if (irradiance.len > 0) allocator.free(irradiance);
-        return .{ .wavelengths_nm = wavelengths_nm, .irradiance = irradiance };
+        var spectrum: OperationalSolarSpectrum = .{
+            .wavelengths_nm = wavelengths_nm,
+            .irradiance = irradiance,
+        };
+        errdefer spectrum.deinitOwned(allocator);
+        try spectrum.prepareInterpolation(allocator);
+        return spectrum;
     }
 };
 

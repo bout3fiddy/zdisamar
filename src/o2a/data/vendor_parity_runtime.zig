@@ -43,6 +43,7 @@ const providers = @import("../providers/root.zig");
 const reference_assets = @import("../../adapters/ingest/reference_assets.zig");
 const transport_common = @import("../../kernels/transport/common.zig");
 const parity_types = @import("vendor_parity_types.zig");
+const instrument_types = @import("../providers/instrument/types.zig");
 
 const Allocator = std.mem.Allocator;
 pub const AbsorberSpecies = parity_types.AbsorberSpecies;
@@ -208,18 +209,27 @@ pub fn buildResolvedVendorO2AScene(
     resolved: *const ResolvedVendorO2ACase,
     raw_solar_spectrum: []const SolarSpectrumSample,
 ) !Scene {
-    const resolved_slit_index: InstrumentModel.Instrument.SlitIndex = switch (resolved.observation.builtin_line_shape) {
-        .gaussian => .gaussian_modulated,
-        .flat_top_n4 => .flat_top_n4,
-        .triple_flat_top_n4 => .triple_flat_top_n4,
-    };
-    const solar_wavelengths = try allocator.alloc(f64, raw_solar_spectrum.len);
+    const solar_support_start_nm = resolved.spectral_grid.start_nm - (2.0 * resolved.observation.instrument_line_fwhm_nm);
+    const solar_support_end_nm = resolved.spectral_grid.end_nm + (2.0 * resolved.observation.instrument_line_fwhm_nm);
+    var retained_solar_count: usize = 0;
+    for (raw_solar_spectrum) |sample| {
+        if (sample.wavelength_nm <= solar_support_start_nm) continue;
+        if (sample.wavelength_nm >= solar_support_end_nm) continue;
+        retained_solar_count += 1;
+    }
+    if (retained_solar_count < 3) return error.InvalidData;
+
+    const solar_wavelengths = try allocator.alloc(f64, retained_solar_count);
     errdefer allocator.free(solar_wavelengths);
-    const solar_irradiance = try allocator.alloc(f64, raw_solar_spectrum.len);
+    const solar_irradiance = try allocator.alloc(f64, retained_solar_count);
     errdefer allocator.free(solar_irradiance);
-    for (raw_solar_spectrum, 0..) |sample, index| {
-        solar_wavelengths[index] = sample.wavelength_nm;
-        solar_irradiance[index] = sample.irradiance;
+    var solar_index: usize = 0;
+    for (raw_solar_spectrum) |sample| {
+        if (sample.wavelength_nm <= solar_support_start_nm) continue;
+        if (sample.wavelength_nm >= solar_support_end_nm) continue;
+        solar_wavelengths[solar_index] = sample.wavelength_nm;
+        solar_irradiance[solar_index] = sample.irradiance;
+        solar_index += 1;
     }
 
     const absorber_items = try allocator.alloc(AbsorberModel.Absorber, 1);
@@ -298,19 +308,6 @@ pub fn buildResolvedVendorO2AScene(
                 .wavelengths_nm = solar_wavelengths,
                 .irradiance = solar_irradiance,
             },
-            .measurement_pipeline = .{
-                .irradiance = .{
-                    .explicit = true,
-                    .response = .{
-                        .integration_mode = .disamar_hr_grid,
-                        .slit_index = resolved_slit_index,
-                        .fwhm_nm = resolved.observation.instrument_line_fwhm_nm,
-                        .builtin_line_shape = resolved.observation.builtin_line_shape,
-                        .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
-                        .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
-                    },
-                },
-            },
         },
     };
     errdefer scene.deinitOwned(allocator);
@@ -322,6 +319,7 @@ pub fn buildResolvedVendorO2AScene(
             .intervals = resolved.intervals,
         };
     }
+    try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
     return scene;
 }
 
@@ -415,6 +413,8 @@ pub fn prepareResolvedVendorO2ATraceCase(
     errdefer prepared.deinit(allocator);
     if (phase_profile_out) |profile| profile.optics_preparation_ns = if (timer) |*owned| owned.lap() else 0;
 
+    try rewindowParitySolarSupportToRadianceKernel(allocator, &scene, &prepared);
+
     const route = try prepareResolvedVendorO2ARoute(&scene, resolved.rtm_controls);
     if (phase_profile_out) |profile| profile.plan_preparation_ns = if (timer) |*owned| owned.lap() else 0;
 
@@ -424,6 +424,74 @@ pub fn prepareResolvedVendorO2ATraceCase(
         .route = route,
         .prepared = prepared,
     };
+}
+
+/// Purpose:
+///   Re-window the raw solar carrier to the exact radiance HR support used by
+///   the vendor simulation before spline interpolation is prepared.
+///
+/// Physics:
+///   DISAMAR crops the raw solar file to the active `wavelHRSimS` span and
+///   then builds the spline on that cropped support. Keeping extra file rows
+///   outside the active HR band perturbs the cubic spline very slightly, which
+///   is enough to leave `1e4-1e5` irradiance residuals after convolution.
+///
+/// Vendor:
+///   `readModule::getHRSolarIrradiance`
+///
+/// Decisions:
+///   The Zig runtime derives the vendor HR span from the realized radiance
+///   kernel at the first and last nominal wavelengths of the active spectral
+///   grid, then rebuilds the owned solar carrier on just that inclusive range.
+fn rewindowParitySolarSupportToRadianceKernel(
+    allocator: Allocator,
+    scene: *Scene,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+) !void {
+    if (!scene.observation_model.operational_solar_spectrum.enabled()) return;
+
+    const bindings = providers.exact();
+    var start_kernel: instrument_types.IntegrationKernel = undefined;
+    var end_kernel: instrument_types.IntegrationKernel = undefined;
+    bindings.instrument.integrationForWavelength(scene, prepared, .radiance, scene.spectral_grid.start_nm, &start_kernel);
+    bindings.instrument.integrationForWavelength(scene, prepared, .radiance, scene.spectral_grid.end_nm, &end_kernel);
+    if (!start_kernel.enabled or !end_kernel.enabled or start_kernel.sample_count == 0 or end_kernel.sample_count == 0) {
+        return;
+    }
+
+    const support_start_nm = scene.spectral_grid.start_nm + start_kernel.offsets_nm[0];
+    const support_end_nm = scene.spectral_grid.end_nm + end_kernel.offsets_nm[end_kernel.sample_count - 1];
+    if (!(support_end_nm > support_start_nm)) return;
+
+    const current = scene.observation_model.operational_solar_spectrum;
+    var retained_count: usize = 0;
+    for (current.wavelengths_nm) |wavelength_nm| {
+        if (wavelength_nm < support_start_nm) continue;
+        if (wavelength_nm > support_end_nm) continue;
+        retained_count += 1;
+    }
+    if (retained_count < 3) return error.InvalidData;
+
+    const retained_wavelengths_nm = try allocator.alloc(f64, retained_count);
+    errdefer allocator.free(retained_wavelengths_nm);
+    const retained_irradiance = try allocator.alloc(f64, retained_count);
+    errdefer allocator.free(retained_irradiance);
+
+    var retained_index: usize = 0;
+    for (current.wavelengths_nm, current.irradiance) |wavelength_nm, irradiance| {
+        if (wavelength_nm < support_start_nm) continue;
+        if (wavelength_nm > support_end_nm) continue;
+        retained_wavelengths_nm[retained_index] = wavelength_nm;
+        retained_irradiance[retained_index] = irradiance;
+        retained_index += 1;
+    }
+
+    scene.observation_model.operational_solar_spectrum.deinitOwned(allocator);
+    scene.observation_model.operational_solar_spectrum = .{
+        .wavelengths_nm = retained_wavelengths_nm,
+        .irradiance = retained_irradiance,
+    };
+    try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
 }
 
 pub fn loadResolvedVendorO2ALineList(
