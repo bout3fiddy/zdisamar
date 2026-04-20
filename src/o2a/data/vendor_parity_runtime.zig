@@ -208,6 +208,11 @@ pub fn buildResolvedVendorO2AScene(
     resolved: *const ResolvedVendorO2ACase,
     raw_solar_spectrum: []const SolarSpectrumSample,
 ) !Scene {
+    const resolved_slit_index: InstrumentModel.Instrument.SlitIndex = switch (resolved.observation.builtin_line_shape) {
+        .gaussian => .gaussian_modulated,
+        .flat_top_n4 => .flat_top_n4,
+        .triple_flat_top_n4 => .triple_flat_top_n4,
+    };
     const solar_wavelengths = try allocator.alloc(f64, raw_solar_spectrum.len);
     errdefer allocator.free(solar_wavelengths);
     const solar_irradiance = try allocator.alloc(f64, raw_solar_spectrum.len);
@@ -292,6 +297,19 @@ pub fn buildResolvedVendorO2AScene(
             .operational_solar_spectrum = .{
                 .wavelengths_nm = solar_wavelengths,
                 .irradiance = solar_irradiance,
+            },
+            .measurement_pipeline = .{
+                .irradiance = .{
+                    .explicit = true,
+                    .response = .{
+                        .integration_mode = .disamar_hr_grid,
+                        .slit_index = resolved_slit_index,
+                        .fwhm_nm = resolved.observation.instrument_line_fwhm_nm,
+                        .builtin_line_shape = resolved.observation.builtin_line_shape,
+                        .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
+                        .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
+                    },
+                },
             },
         },
     };

@@ -80,8 +80,42 @@ pub const OperationalSolarSpectrum = struct {
     /// Physics:
     ///   Uses linear interpolation between adjacent monotonic samples.
     pub fn interpolateIrradiance(self: *const OperationalSolarSpectrum, wavelength_nm: f64) f64 {
-        if (!self.enabled()) return 0.0;
-        if (wavelength_nm <= self.wavelengths_nm[0]) return self.irradiance[0];
+        return self.interpolateIrradianceWithinBounds(wavelength_nm) orelse {
+            if (!self.enabled()) return 0.0;
+            if (wavelength_nm <= self.wavelengths_nm[0]) return self.irradiance[0];
+            return self.irradiance[self.irradiance.len - 1];
+        };
+    }
+
+    /// Purpose:
+    ///   Report whether the spectrum covers a closed wavelength interval.
+    ///
+    /// Physics:
+    ///   DISAMAR-style HR slit convolution requires the raw solar support to
+    ///   cover the full slit span instead of relying on endpoint clamping.
+    pub fn coversRange(
+        self: *const OperationalSolarSpectrum,
+        lower_wavelength_nm: f64,
+        upper_wavelength_nm: f64,
+    ) bool {
+        if (!self.enabled()) return false;
+        return lower_wavelength_nm >= self.wavelengths_nm[0] and
+            upper_wavelength_nm <= self.wavelengths_nm[self.wavelengths_nm.len - 1];
+    }
+
+    /// Purpose:
+    ///   Interpolate irradiance without extrapolating outside the stored range.
+    ///
+    /// Physics:
+    ///   Returns `null` when the requested wavelength falls outside the loaded
+    ///   solar support so parity callers can detect clipped HR kernels.
+    pub fn interpolateIrradianceWithinBounds(
+        self: *const OperationalSolarSpectrum,
+        wavelength_nm: f64,
+    ) ?f64 {
+        if (!self.enabled()) return null;
+        if (wavelength_nm < self.wavelengths_nm[0]) return null;
+        if (wavelength_nm == self.wavelengths_nm[0]) return self.irradiance[0];
         for (self.wavelengths_nm[0 .. self.wavelengths_nm.len - 1], self.wavelengths_nm[1..], self.irradiance[0 .. self.irradiance.len - 1], self.irradiance[1..]) |left_nm, right_nm, left_irradiance, right_irradiance| {
             if (wavelength_nm <= right_nm) {
                 const span = right_nm - left_nm;
@@ -90,7 +124,10 @@ pub const OperationalSolarSpectrum = struct {
                 return left_irradiance + weight * (right_irradiance - left_irradiance);
             }
         }
-        return self.irradiance[self.irradiance.len - 1];
+        if (wavelength_nm == self.wavelengths_nm[self.wavelengths_nm.len - 1]) {
+            return self.irradiance[self.irradiance.len - 1];
+        }
+        return null;
     }
 
     /// Purpose:

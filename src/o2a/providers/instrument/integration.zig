@@ -98,9 +98,10 @@ pub fn integrationForWavelengthWithAdaptiveCache(
     }
 
     const prefer_explicit_hr_grid = switch (response.integration_mode) {
-        .auto, .explicit_hr_grid => true,
+        .auto, .explicit_hr_grid, .disamar_hr_grid => true,
         .adaptive => false,
     };
+    const disamar_hr_grid = response.integration_mode == .disamar_hr_grid;
     const prefer_adaptive_grid = response.integration_mode == .adaptive;
 
     if (prefer_explicit_hr_grid and response.high_resolution_step_nm > 0.0 and response.high_resolution_half_span_nm > 0.0) {
@@ -110,7 +111,15 @@ pub fn integrationForWavelengthWithAdaptiveCache(
         var offset_nm = -half_span_nm;
         while (offset_nm <= half_span_nm + (step_nm * 0.5) and sample_count < max_integration_sample_count) : (offset_nm += step_nm) {
             kernel.offsets_nm[sample_count] = offset_nm;
-            kernel.weights[sample_count] = response_support.spectralResponseWeight(response, offset_nm);
+            const response_weight = response_support.spectralResponseWeight(response, offset_nm);
+            // PARITY:
+            //   DISAMAR integrates the slit function on an explicit HR grid
+            //   with quadrature weights. For the uniform parity grid the
+            //   quadrature factor is the constant step size.
+            kernel.weights[sample_count] = if (disamar_hr_grid)
+                response_weight * step_nm
+            else
+                response_weight;
             sample_count += 1;
         }
         if (sample_count == 0) sample_count = 1;

@@ -17,7 +17,7 @@ inputs:
       format: disamar_o2a_reference_csv
     raw_solar_reference:
       kind: file
-      path: data/reference/o2a_solar_reference_755_776.csv
+      path: data/reference/o2a_solar_reference_753_778.csv
       format: solar_reference_csv
     airmass_factor_lut:
       kind: file

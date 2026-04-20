@@ -22,6 +22,7 @@ from typing import Iterable
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WAVELENGTHS_NM = (761.75,)
 DEFAULT_TRACE_ROOT = REPO_ROOT / "out" / "analysis" / "o2a" / "function_diff"
+PARITY_CASE_YAML = REPO_ROOT / "data" / "examples" / "vendor_o2a_parity.yaml"
 VENDOR_SOURCE_ROOT = REPO_ROOT / "vendor" / "disamar-fortran"
 VENDOR_CONFIG_SOURCE = VENDOR_SOURCE_ROOT / "InputFiles" / "Config_O2_with_CIA.in"
 FORTRAN_TRACE_ASSET_DIR = REPO_ROOT / "scripts" / "testing_harness" / "vendor_o2a_function_trace"
@@ -244,6 +245,7 @@ def main() -> int:
         align_sublayer_optics_to_yaml(vendor_root, yaml_root)
         write_diff_summaries(trace_root, diff_root, wavelengths_nm)
         write_weak_line_contributor_summary(trace_root, diff_root, wavelengths_nm)
+        write_irradiance_support_diagnostic(diff_root, wavelengths_nm)
         update_latest_trace_root(trace_root)
     finally:
         if not args.keep_vendor_workspace and vendor_workspace.exists():
@@ -281,6 +283,77 @@ def resolve_trace_root(raw: str | None) -> Path:
         return Path(raw).expanduser().resolve()
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return DEFAULT_TRACE_ROOT / run_id
+
+
+def load_parity_irradiance_support() -> tuple[Path, float]:
+    raw_solar_path: Path | None = None
+    half_span_nm: float | None = None
+    in_raw_solar_block = False
+    for raw_line in PARITY_CASE_YAML.read_text(encoding="utf-8").splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped == "raw_solar_reference:":
+            in_raw_solar_block = True
+            continue
+        if in_raw_solar_block and stripped.startswith("path:"):
+            raw_solar_path = (REPO_ROOT / stripped.split(":", 1)[1].strip()).resolve()
+            in_raw_solar_block = False
+            continue
+        if stripped.endswith(":") and not stripped.startswith("path:"):
+            in_raw_solar_block = False
+        if stripped.startswith("high_resolution_half_span_nm:"):
+            half_span_nm = float(stripped.split(":", 1)[1].strip())
+    if raw_solar_path is None or half_span_nm is None:
+        raise RuntimeError("Failed to resolve parity solar support configuration")
+    return raw_solar_path, half_span_nm
+
+
+def write_irradiance_support_diagnostic(diff_root: Path, wavelengths_nm: list[float]) -> None:
+    solar_path, half_span_nm = load_parity_irradiance_support()
+    rows = read_csv_rows(solar_path)
+    if not rows:
+        raise RuntimeError(f"Missing solar support rows in {solar_path}")
+    solar_start_nm = parse_float(rows[0]["wavelength_nm"])
+    solar_end_nm = parse_float(rows[-1]["wavelength_nm"])
+
+    per_wavelength: list[dict[str, object]] = []
+    lines = [
+        "irradiance_hr_support",
+        f"solar_path={solar_path}",
+        f"solar_range_nm={solar_start_nm:.12f}..{solar_end_nm:.12f}",
+        f"half_span_nm={half_span_nm:.12f}",
+    ]
+    for wavelength_nm in wavelengths_nm:
+        support_start_nm = wavelength_nm - half_span_nm
+        support_end_nm = wavelength_nm + half_span_nm
+        covered = support_start_nm >= solar_start_nm and support_end_nm <= solar_end_nm
+        per_wavelength.append(
+            {
+                "wavelength_nm": wavelength_nm,
+                "support_start_nm": support_start_nm,
+                "support_end_nm": support_end_nm,
+                "covered": covered,
+            }
+        )
+        lines.append(
+            "wavelength_nm="
+            f"{wavelength_nm:.12f} support_nm={support_start_nm:.12f}..{support_end_nm:.12f} covered={'yes' if covered else 'no'}"
+        )
+
+    summary = {
+        "solar_path": str(solar_path),
+        "solar_start_nm": solar_start_nm,
+        "solar_end_nm": solar_end_nm,
+        "half_span_nm": half_span_nm,
+        "per_wavelength": per_wavelength,
+    }
+    (diff_root / "irradiance_support_summary.txt").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    (diff_root / "irradiance_support_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def copy_vendor_workspace(destination: Path) -> None:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import tempfile
+import json
 from pathlib import Path
 import csv
 
@@ -18,9 +19,11 @@ from o2a_function_diff import (
     aggregate_weak_line_contributors,
     canonicalize_optional_csv,
     compare_csv_files,
+    load_parity_irradiance_support,
     merge_fortran_sublayer_optics,
     representative_vendor_indices_for_yaml,
     summarize_pairwise_diff,
+    write_irradiance_support_diagnostic,
     write_weak_line_contributor_summary,
     write_csv_rows,
 )
@@ -524,6 +527,15 @@ def main() -> int:
         assert len(aggregates) == 1
         only_record = next(iter(aggregates.values()))
         assert abs(only_record["total"] - 2.5e-33) < 1.0e-40
+
+        solar_path, half_span_nm = load_parity_irradiance_support()
+        assert solar_path.exists()
+        assert half_span_nm > 0.0
+        write_irradiance_support_diagnostic(root, [755.0, 761.75, 776.0])
+        support_json = json.loads((root / "irradiance_support_summary.json").read_text(encoding="utf-8"))
+        assert support_json["solar_start_nm"] <= 753.0
+        assert support_json["solar_end_nm"] >= 778.0
+        assert all(entry["covered"] for entry in support_json["per_wavelength"])
     return 0
 
 

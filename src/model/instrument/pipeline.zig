@@ -153,6 +153,7 @@ pub const SpectralResponse = struct {
     pub const IntegrationMode = enum {
         auto,
         explicit_hr_grid,
+        disamar_hr_grid,
         adaptive,
     };
 

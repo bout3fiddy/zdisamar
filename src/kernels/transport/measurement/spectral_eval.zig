@@ -298,7 +298,14 @@ fn cachedIrradianceAtWavelength(
     const key = SpectralEvaluationCache.keyFor(wavelength_nm);
     if (cache.irradiance.get(key)) |cached| return cached;
 
-    const value = irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
+    const response = scene.observation_model.resolvedChannelControls(.irradiance).response;
+    const operational_band_support = scene.observation_model.primaryOperationalBandSupport();
+    const value = if (response.integration_mode == .disamar_hr_grid and
+        operational_band_support.operational_solar_spectrum.enabled())
+        operational_band_support.operational_solar_spectrum.interpolateIrradianceWithinBounds(wavelength_nm) orelse
+            return error.InvalidRequest
+    else
+        irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
     try cache.irradiance.put(key, value);
     return value;
 }
