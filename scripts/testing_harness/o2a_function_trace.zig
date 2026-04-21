@@ -938,16 +938,16 @@ fn emitTransportTraces(
             radiance_calibration,
             nominal_wavelength_nm,
         );
-        var integration: InstrumentProviders.IntegrationKernel = undefined;
+        var radiance_integration: InstrumentProviders.IntegrationKernel = undefined;
         providers.instrument.integrationForWavelength(
             scene,
             prepared,
             .radiance,
             nominal_wavelength_nm,
-            &integration,
+            &radiance_integration,
         );
-        if (!integration.enabled) {
-            integration = .{
+        if (!radiance_integration.enabled) {
+            radiance_integration = .{
                 .enabled = true,
                 .sample_count = 1,
                 .offsets_nm = [_]f64{0.0} ++ [_]f64{0.0} ** (InstrumentProviders.max_integration_sample_count - 1),
@@ -975,9 +975,9 @@ fn emitTransportTraces(
             };
         }
 
-        for (0..irradiance_integration.sample_count) |sample_index| {
-            const sample_wavelength_nm = irradiance_evaluation_wavelength_nm + irradiance_integration.offsets_nm[sample_index];
-            const weight = irradiance_integration.weights[sample_index];
+        for (0..radiance_integration.sample_count) |sample_index| {
+            const sample_wavelength_nm = evaluation_wavelength_nm + radiance_integration.offsets_nm[sample_index];
+            const weight = radiance_integration.weights[sample_index];
             const sample = try Measurement.spectral_eval.cachedForwardAtWavelength(
                 allocator,
                 scene,
@@ -1031,7 +1031,7 @@ fn emitTransportTraces(
             buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1],
             buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1],
             &buffers.evaluation_cache,
-            &integration,
+            &radiance_integration,
         );
         const integrated_irradiance = try Measurement.spectral_eval.integrateIrradianceAtNominal(
             scene,

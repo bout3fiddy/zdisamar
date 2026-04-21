@@ -121,8 +121,17 @@ pub const PreparedOpticalState = struct {
     }
 
     pub fn transportLayerCount(self: *const PreparedOpticalState) usize {
+        if (self.intervalSemanticsUseReducedSharedRtmLayers()) return self.layers.len;
         if (self.sublayers) |sublayers| return sublayers.len;
         return self.layers.len;
+    }
+
+    pub fn intervalSemanticsUseReducedSharedRtmLayers(self: *const PreparedOpticalState) bool {
+        if (self.interval_semantics == .none) return false;
+        const sublayers = self.sublayers orelse return false;
+        var referenced_support_rows: usize = 0;
+        for (self.layers) |layer| referenced_support_rows += @as(usize, @intCast(layer.sublayer_count));
+        return referenced_support_rows > sublayers.len;
     }
 
     pub fn ensureSharedRtmGeometryCache(

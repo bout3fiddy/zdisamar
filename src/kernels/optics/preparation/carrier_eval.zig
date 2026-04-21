@@ -4,8 +4,10 @@ const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const ParticleProfiles = @import("../prepare/particle_profiles.zig");
 const PhaseFunctions = @import("../prepare/phase_functions.zig");
 const State = @import("state.zig");
+const Scalar = @import("state_scalar.zig");
 
 const PreparedSublayer = State.PreparedSublayer;
+const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
 
 const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 const centimeters_per_kilometer = 1.0e5;
@@ -40,6 +42,28 @@ pub const PreparedQuadratureCarrier = struct {
     phase_coefficients: [phase_coefficient_count]f64,
 };
 
+pub const SharedBoundaryCarrier = struct {
+    gas_scattering_optical_depth_per_km: f64 = 0.0,
+    particle_scattering_optical_depth_above_per_km: f64 = 0.0,
+    particle_scattering_optical_depth_below_per_km: f64 = 0.0,
+    ksca_above: f64 = 0.0,
+    ksca_below: f64 = 0.0,
+    gas_phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.gasPhaseCoefficients(),
+    phase_coefficients_above: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+    phase_coefficients_below: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+};
+
+const ParticleBoundaryCarrier = struct {
+    aerosol_scattering_optical_depth_per_km: f64 = 0.0,
+    cloud_scattering_optical_depth_per_km: f64 = 0.0,
+    aerosol_phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+    cloud_phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
+
+    fn totalScatteringOpticalDepthPerKm(self: ParticleBoundaryCarrier) f64 {
+        return self.aerosol_scattering_optical_depth_per_km + self.cloud_scattering_optical_depth_per_km;
+    }
+};
+
 pub const InterpolatedQuadratureState = struct {
     pressure_hpa: f64,
     temperature_k: f64,
@@ -57,6 +81,100 @@ pub const InterpolatedQuadratureState = struct {
 fn opticalDepthPerKilometer(optical_depth: f64, path_length_cm: f64) f64 {
     const span_km = @max(path_length_cm / centimeters_per_kilometer, 0.0);
     return if (span_km > 0.0) optical_depth / span_km else 0.0;
+}
+
+fn particleBoundaryCarrierAtSupportRow(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+) ParticleBoundaryCarrier {
+    const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
+        opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
+        self.aerosol_reference_wavelength_nm,
+        self.aerosol_angstrom_exponent,
+        wavelength_nm,
+    );
+    const cloud_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
+        opticalDepthPerKilometer(sublayer.cloud_optical_depth, sublayer.path_length_cm),
+        self.cloud_reference_wavelength_nm,
+        self.cloud_angstrom_exponent,
+        wavelength_nm,
+    );
+    return .{
+        .aerosol_scattering_optical_depth_per_km = aerosol_optical_depth_per_km * sublayer.aerosol_single_scatter_albedo,
+        .cloud_scattering_optical_depth_per_km = cloud_optical_depth_per_km * sublayer.cloud_single_scatter_albedo,
+        .aerosol_phase_coefficients = sublayer.aerosol_phase_coefficients,
+        .cloud_phase_coefficients = sublayer.cloud_phase_coefficients,
+    };
+}
+
+fn particleBoundaryCarrierFromIndex(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    support_row_index: u32,
+) ParticleBoundaryCarrier {
+    if (support_row_index == @import("shared_geometry.zig").invalid_support_row_index) return .{};
+    const row_index: usize = @intCast(support_row_index);
+    if (row_index >= sublayers.len) return .{};
+    return particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[row_index]);
+}
+
+pub fn sharedBoundaryCarrierAtLevel(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+) SharedBoundaryCarrier {
+    const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
+    if (boundary_row_index >= sublayers.len) return .{};
+    const strong_line_state = if (strong_line_states) |states|
+        if (boundary_row_index < states.len) &states[boundary_row_index] else null
+    else
+        null;
+    const gas_carrier = sharedOpticalCarrierAtSupportRow(
+        self,
+        wavelength_nm,
+        sublayers[boundary_row_index],
+        boundary_row_index,
+        strong_line_state,
+    );
+    const particle_above = particleBoundaryCarrierFromIndex(
+        self,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_above_support_row_index,
+    );
+    const particle_below = particleBoundaryCarrierFromIndex(
+        self,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_below_support_row_index,
+    );
+    const gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km;
+    return .{
+        .gas_scattering_optical_depth_per_km = gas_scattering_optical_depth_per_km,
+        .particle_scattering_optical_depth_above_per_km = particle_above.totalScatteringOpticalDepthPerKm(),
+        .particle_scattering_optical_depth_below_per_km = particle_below.totalScatteringOpticalDepthPerKm(),
+        .ksca_above = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm(),
+        .ksca_below = gas_scattering_optical_depth_per_km + particle_below.totalScatteringOpticalDepthPerKm(),
+        .gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficients(),
+        .phase_coefficients_above = PhaseFunctions.combinePhaseCoefficients(
+            gas_scattering_optical_depth_per_km,
+            particle_above.aerosol_scattering_optical_depth_per_km,
+            particle_above.cloud_scattering_optical_depth_per_km,
+            particle_above.aerosol_phase_coefficients,
+            particle_above.cloud_phase_coefficients,
+        ),
+        .phase_coefficients_below = PhaseFunctions.combinePhaseCoefficients(
+            gas_scattering_optical_depth_per_km,
+            particle_below.aerosol_scattering_optical_depth_per_km,
+            particle_below.cloud_scattering_optical_depth_per_km,
+            particle_below.aerosol_phase_coefficients,
+            particle_below.cloud_phase_coefficients,
+        ),
+    };
 }
 
 fn interpolatePhaseCoefficientsByScattering(
@@ -203,6 +321,192 @@ pub fn quadratureCarrierAtAltitude(
     return .{
         .ksca = carrier.totalScatteringOpticalDepthPerKm(),
         .phase_coefficients = carrier.phase_coefficients,
+    };
+}
+
+fn weightedSpectroscopyEvaluationAtSupportRow(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+) ReferenceData.SpectroscopyEvaluation {
+    var total_weight: f64 = 0.0;
+    var weighted: ReferenceData.SpectroscopyEvaluation = .{
+        .weak_line_sigma_cm2_per_molecule = 0.0,
+        .strong_line_sigma_cm2_per_molecule = 0.0,
+        .line_sigma_cm2_per_molecule = 0.0,
+        .line_mixing_sigma_cm2_per_molecule = 0.0,
+        .total_sigma_cm2_per_molecule = 0.0,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+    };
+
+    if (self.operational_o2_lut.enabled() and sublayer.oxygen_number_density_cm3 > 0.0) {
+        const o2_evaluation = self.weightedSpectroscopyEvaluationAtWavelength(
+            wavelength_nm,
+            sublayer.temperature_k,
+            sublayer.pressure_hpa,
+        );
+        total_weight += sublayer.oxygen_number_density_cm3;
+        weighted.weak_line_sigma_cm2_per_molecule +=
+            o2_evaluation.weak_line_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
+        weighted.strong_line_sigma_cm2_per_molecule +=
+            o2_evaluation.strong_line_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
+        weighted.line_sigma_cm2_per_molecule +=
+            o2_evaluation.line_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
+        weighted.line_mixing_sigma_cm2_per_molecule +=
+            o2_evaluation.line_mixing_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
+        weighted.total_sigma_cm2_per_molecule +=
+            o2_evaluation.total_sigma_cm2_per_molecule * sublayer.oxygen_number_density_cm3;
+        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
+            o2_evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * sublayer.oxygen_number_density_cm3;
+    }
+
+    for (self.line_absorbers) |line_absorber| {
+        if (self.operational_o2_lut.enabled() and line_absorber.species == .o2) continue;
+        if (global_sublayer_index >= line_absorber.number_densities_cm3.len) continue;
+        const weight = line_absorber.number_densities_cm3[global_sublayer_index];
+        if (weight <= 0.0) continue;
+        const prepared_state = if (line_absorber.strong_line_states) |states|
+            if (global_sublayer_index < states.len) &states[global_sublayer_index] else null
+        else
+            null;
+        const evaluation = line_absorber.line_list.evaluateAtPrepared(
+            wavelength_nm,
+            sublayer.temperature_k,
+            sublayer.pressure_hpa,
+            prepared_state,
+        );
+        total_weight += weight;
+        weighted.weak_line_sigma_cm2_per_molecule += evaluation.weak_line_sigma_cm2_per_molecule * weight;
+        weighted.strong_line_sigma_cm2_per_molecule += evaluation.strong_line_sigma_cm2_per_molecule * weight;
+        weighted.line_sigma_cm2_per_molecule += evaluation.line_sigma_cm2_per_molecule * weight;
+        weighted.line_mixing_sigma_cm2_per_molecule += evaluation.line_mixing_sigma_cm2_per_molecule * weight;
+        weighted.total_sigma_cm2_per_molecule += evaluation.total_sigma_cm2_per_molecule * weight;
+        weighted.d_sigma_d_temperature_cm2_per_molecule_per_k +=
+            evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k * weight;
+    }
+
+    if (total_weight <= 0.0) return weighted;
+    weighted.weak_line_sigma_cm2_per_molecule /= total_weight;
+    weighted.strong_line_sigma_cm2_per_molecule /= total_weight;
+    weighted.line_sigma_cm2_per_molecule /= total_weight;
+    weighted.line_mixing_sigma_cm2_per_molecule /= total_weight;
+    weighted.total_sigma_cm2_per_molecule /= total_weight;
+    weighted.d_sigma_d_temperature_cm2_per_molecule_per_k /= total_weight;
+    return weighted;
+}
+
+pub fn sharedOpticalCarrierAtSupportRow(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
+) SharedOpticalCarrier {
+    const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
+    const continuum_sigma = if (self.cross_section_absorbers.len == 0)
+        continuum_table.interpolateSigma(wavelength_nm)
+    else
+        0.0;
+    const spectroscopy_eval = if (self.line_absorbers.len != 0)
+        weightedSpectroscopyEvaluationAtSupportRow(
+            self,
+            wavelength_nm,
+            sublayer,
+            global_sublayer_index,
+        )
+    else
+        ReferenceData.SpectroscopyEvaluation{
+            .weak_line_sigma_cm2_per_molecule = 0.0,
+            .strong_line_sigma_cm2_per_molecule = 0.0,
+            .line_sigma_cm2_per_molecule = 0.0,
+            .line_mixing_sigma_cm2_per_molecule = 0.0,
+            .total_sigma_cm2_per_molecule = self.spectroscopySigmaAtWavelength(
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+                strong_line_state,
+            ),
+            .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+        };
+    var cross_section_density_cm3: f64 = 0.0;
+    var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
+    for (self.cross_section_absorbers) |cross_section_absorber| {
+        if (global_sublayer_index >= cross_section_absorber.number_densities_cm3.len) continue;
+        const absorber_density_cm3 = cross_section_absorber.number_densities_cm3[global_sublayer_index];
+        if (absorber_density_cm3 <= 0.0) continue;
+        cross_section_density_cm3 += absorber_density_cm3;
+        cross_section_absorption_optical_depth_per_km +=
+            cross_section_absorber.sigmaAt(
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+            ) *
+            absorber_density_cm3 *
+            centimeters_per_kilometer;
+    }
+
+    const line_absorber_density_cm3 = Scalar.lineSpectroscopyCarrierDensityAtSublayer(
+        self,
+        sublayer,
+        global_sublayer_index,
+    );
+    const continuum_density_cm3 = if (self.cross_section_absorbers.len == 0)
+        Scalar.continuumCarrierDensityAtSublayer(
+            self,
+            sublayer,
+            global_sublayer_index,
+        )
+    else
+        0.0;
+    const gas_absorption_optical_depth_per_km =
+        continuum_sigma * continuum_density_cm3 * centimeters_per_kilometer +
+        cross_section_absorption_optical_depth_per_km +
+        spectroscopy_eval.total_sigma_cm2_per_molecule * line_absorber_density_cm3 * centimeters_per_kilometer;
+    const gas_scattering_optical_depth_per_km =
+        Rayleigh.crossSectionCm2(wavelength_nm) *
+        sublayer.number_density_cm3 *
+        centimeters_per_kilometer;
+    const cia_optical_depth_per_km =
+        self.ciaSigmaAtWavelength(
+            wavelength_nm,
+            sublayer.temperature_k,
+            sublayer.pressure_hpa,
+        ) *
+        sublayer.oxygen_number_density_cm3 *
+        sublayer.oxygen_number_density_cm3 *
+        centimeters_per_kilometer;
+    const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
+        opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
+        self.aerosol_reference_wavelength_nm,
+        self.aerosol_angstrom_exponent,
+        wavelength_nm,
+    );
+    const cloud_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
+        opticalDepthPerKilometer(sublayer.cloud_optical_depth, sublayer.path_length_cm),
+        self.cloud_reference_wavelength_nm,
+        self.cloud_angstrom_exponent,
+        wavelength_nm,
+    );
+    const aerosol_scattering_optical_depth_per_km =
+        aerosol_optical_depth_per_km * sublayer.aerosol_single_scatter_albedo;
+    const cloud_scattering_optical_depth_per_km =
+        cloud_optical_depth_per_km * sublayer.cloud_single_scatter_albedo;
+    return .{
+        .gas_absorption_optical_depth_per_km = gas_absorption_optical_depth_per_km,
+        .gas_scattering_optical_depth_per_km = gas_scattering_optical_depth_per_km,
+        .cia_optical_depth_per_km = cia_optical_depth_per_km,
+        .aerosol_optical_depth_per_km = aerosol_optical_depth_per_km,
+        .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
+        .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
+        .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
+        .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
+            gas_scattering_optical_depth_per_km,
+            aerosol_scattering_optical_depth_per_km,
+            cloud_scattering_optical_depth_per_km,
+            sublayer.aerosol_phase_coefficients,
+            sublayer.cloud_phase_coefficients,
+        ),
     };
 }
 

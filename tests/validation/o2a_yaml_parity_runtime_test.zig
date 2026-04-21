@@ -58,6 +58,29 @@ test "yaml parity example resolves key DISAMAR mapping controls" {
     try std.testing.expect(loaded.resolved.rtm_controls.renorm_phase_function);
 }
 
+test "yaml parity runtime resolves symmetric DISAMAR HR integration for both channels" {
+    var loaded = try parity_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
+    defer loaded.deinit();
+
+    var parity_case = try o2a_parity.prepareResolvedVendorO2ATraceCase(std.testing.allocator, &loaded.resolved);
+    defer parity_case.deinit(std.testing.allocator);
+
+    const radiance = parity_case.scene.observation_model.resolvedChannelControls(.radiance).response;
+    const irradiance = parity_case.scene.observation_model.resolvedChannelControls(.irradiance).response;
+
+    try std.testing.expect(radiance.explicit);
+    try std.testing.expect(irradiance.explicit);
+    try std.testing.expectEqual(.disamar_hr_grid, radiance.integration_mode);
+    try std.testing.expectEqual(.disamar_hr_grid, irradiance.integration_mode);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.01), radiance.high_resolution_step_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.14), radiance.high_resolution_half_span_nm, 1.0e-12);
+    try std.testing.expectEqual(radiance.slit_index, irradiance.slit_index);
+    try std.testing.expectEqual(radiance.builtin_line_shape, irradiance.builtin_line_shape);
+    try std.testing.expectApproxEqAbs(radiance.fwhm_nm, irradiance.fwhm_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(radiance.high_resolution_step_nm, irradiance.high_resolution_step_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(radiance.high_resolution_half_span_nm, irradiance.high_resolution_half_span_nm, 1.0e-12);
+}
+
 test "yaml parity output computes vendor comparison metrics on the executable config" {
     var loaded = try parity_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
     defer loaded.deinit();

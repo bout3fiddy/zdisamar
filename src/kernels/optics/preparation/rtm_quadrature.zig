@@ -6,6 +6,10 @@ const shared_geometry = @import("shared_geometry.zig");
 const carrier_eval = @import("carrier_eval.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
+const LevelCarrier = struct {
+    ksca: f64,
+    phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+};
 
 pub fn fillRtmQuadratureAtWavelengthWithLayers(
     self: *const PreparedOpticalState,
@@ -14,39 +18,50 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
     rtm_levels: []transport_common.RtmQuadratureLevel,
 ) bool {
     const sublayers = self.sublayers orelse return false;
-    if (layer_inputs.len != sublayers.len or rtm_levels.len != layer_inputs.len + 1) return false;
+    if (rtm_levels.len != layer_inputs.len + 1) return false;
 
     if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
         if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
             var has_active_quadrature = false;
             for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
-                const support_start_index: usize = @intCast(level_geometry.support_start_index);
-                const support_count: usize = @intCast(level_geometry.support_count);
-                const support = shared_geometry.sharedSupportSlices(
-                    self,
-                    sublayers,
-                    support_start_index,
-                    support_count,
-                );
-                const carrier = carrier_eval.sharedOpticalCarrierAtAltitude(
-                    self,
-                    wavelength_nm,
-                    support.sublayers,
-                    support.strong_line_states,
-                    level_geometry.altitude_km,
-                );
-                const ksca = if (level_geometry.weight_km > 0.0)
-                    carrier.totalScatteringOpticalDepthPerKm()
-                else
-                    0.0;
+                const support_row_index: usize = @intCast(level_geometry.support_row_index);
+                const level_carrier: LevelCarrier = if (level_geometry.weight_km > 0.0) blk: {
+                    const strong_line_state = if (self.strong_line_states) |states|
+                        if (support_row_index < states.len) &states[support_row_index] else null
+                    else
+                        null;
+                    const carrier = carrier_eval.sharedOpticalCarrierAtSupportRow(
+                        self,
+                        wavelength_nm,
+                        sublayers[support_row_index],
+                        support_row_index,
+                        strong_line_state,
+                    );
+                    break :blk LevelCarrier{
+                        .ksca = carrier.totalScatteringOpticalDepthPerKm(),
+                        .phase_coefficients = carrier.phase_coefficients,
+                    };
+                } else blk: {
+                    const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevel(
+                        self,
+                        wavelength_nm,
+                        sublayers,
+                        if (self.strong_line_states) |states| states else null,
+                        level_geometry,
+                    );
+                    break :blk LevelCarrier{
+                        .ksca = boundary_carrier.ksca_above,
+                        .phase_coefficients = boundary_carrier.phase_coefficients_above,
+                    };
+                };
                 rtm_level.* = .{
                     .altitude_km = level_geometry.altitude_km,
                     .weight = level_geometry.weight_km,
-                    .ksca = ksca,
-                    .phase_coefficients = carrier.phase_coefficients,
+                    .ksca = level_carrier.ksca,
+                    .phase_coefficients = level_carrier.phase_coefficients,
                 };
                 has_active_quadrature = has_active_quadrature or
-                    (level_geometry.weight_km > 0.0 and ksca > 0.0);
+                    (level_geometry.weight_km > 0.0 and level_carrier.ksca > 0.0);
             }
             return has_active_quadrature;
         }
@@ -60,80 +75,10 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
             };
         }
 
-        var has_active_quadrature = false;
-        var interval_rule_scratch: shared_geometry.GaussRuleScratch = .{};
-        for (self.layers) |layer| {
-            const start_index: usize = @intCast(layer.sublayer_start_index);
-            const count: usize = @intCast(layer.sublayer_count);
-            if (count == 0) continue;
-
-            const interval = shared_geometry.sharedRtmInterval(self, sublayers, layer);
-            const level_node_count = count - 1;
-            const level_rule = if (level_node_count > 0)
-                shared_geometry.resolveGaussRule(level_node_count, &interval_rule_scratch)
-            else
-                null;
-
-            const lower_carrier = carrier_eval.sharedOpticalCarrierAtAltitude(
-                self,
-                wavelength_nm,
-                interval.support_sublayers,
-                interval.strong_line_states,
-                interval.lower_altitude_km,
-            );
-            rtm_levels[start_index] = .{
-                .altitude_km = interval.lower_altitude_km,
-                .weight = 0.0,
-                .ksca = 0.0,
-                .phase_coefficients = lower_carrier.phase_coefficients,
-            };
-
-            for (0..level_node_count) |node_index| {
-                const altitude_km = shared_geometry.intervalAltitudeAtNode(
-                    interval.lower_altitude_km,
-                    interval.upper_altitude_km,
-                    level_rule.?.nodes[node_index],
-                );
-                const weight_km = shared_geometry.intervalWeightKm(
-                    interval.lower_altitude_km,
-                    interval.upper_altitude_km,
-                    level_rule.?.weights[node_index],
-                );
-                const carrier = carrier_eval.sharedOpticalCarrierAtAltitude(
-                    self,
-                    wavelength_nm,
-                    interval.support_sublayers,
-                    interval.strong_line_states,
-                    altitude_km,
-                );
-                const level = start_index + 1 + node_index;
-                rtm_levels[level] = .{
-                    .altitude_km = altitude_km,
-                    .weight = weight_km,
-                    .ksca = carrier.totalScatteringOpticalDepthPerKm(),
-                    .phase_coefficients = carrier.phase_coefficients,
-                };
-                has_active_quadrature = has_active_quadrature or weight_km > 0.0 and carrier.totalScatteringOpticalDepthPerKm() > 0.0;
-            }
-
-            const stop_index = start_index + count;
-            const upper_carrier = carrier_eval.sharedOpticalCarrierAtAltitude(
-                self,
-                wavelength_nm,
-                interval.support_sublayers,
-                interval.strong_line_states,
-                interval.upper_altitude_km,
-            );
-            rtm_levels[stop_index] = .{
-                .altitude_km = interval.upper_altitude_km,
-                .weight = 0.0,
-                .ksca = 0.0,
-                .phase_coefficients = upper_carrier.phase_coefficients,
-            };
-        }
-
-        return has_active_quadrature;
+        return false;
     }
+
+    if (layer_inputs.len != sublayers.len) return false;
 
     for (rtm_levels, 0..) |*rtm_level, level| {
         rtm_level.* = .{

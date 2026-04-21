@@ -99,7 +99,6 @@ pub fn fillForwardLayersAtWavelength(
         if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 var totals: OpticalDepthBreakdown = .{};
-                var subgrid_rule_scratch: shared_geometry.GaussRuleScratch = .{};
                 for (geometry.layers, layer_inputs) |layer_geometry, *layer_input| {
                     const support_start_index: usize = @intCast(layer_geometry.support_start_index);
                     const support_count: usize = @intCast(layer_geometry.support_count);
@@ -110,14 +109,13 @@ pub fn fillForwardLayersAtWavelength(
                         support_count,
                     );
 
-                    const evaluated = shared_carrier.evaluateSharedLayerOnSubgrid(
+                    const evaluated = shared_carrier.evaluateReducedLayerFromSupportRows(
                         self,
                         scene,
                         wavelength_nm,
                         support.sublayers,
                         support.strong_line_states,
                         layer_geometry,
-                        &subgrid_rule_scratch,
                     );
                     layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
                     Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
@@ -126,57 +124,28 @@ pub fn fillForwardLayersAtWavelength(
             }
 
             var totals: OpticalDepthBreakdown = .{};
-            var interval_rule_scratch: shared_geometry.GaussRuleScratch = .{};
-
-            for (self.layers) |layer| {
+            for (self.layers, layer_inputs) |layer, *layer_input| {
                 const start_index: usize = @intCast(layer.sublayer_start_index);
                 const count: usize = @intCast(layer.sublayer_count);
                 if (count == 0) continue;
-
-                const interval = shared_geometry.sharedRtmInterval(self, sublayers, layer);
-                const level_node_count = count - 1;
-                const level_rule = if (level_node_count > 0)
-                    shared_geometry.resolveGaussRule(level_node_count, &interval_rule_scratch)
-                else
-                    null;
-
-                for (0..count) |local_layer_index| {
-                    const lower_altitude_km = if (local_layer_index == 0)
-                        interval.lower_altitude_km
-                    else
-                        shared_geometry.intervalAltitudeAtNode(
-                            interval.lower_altitude_km,
-                            interval.upper_altitude_km,
-                            level_rule.?.nodes[local_layer_index - 1],
-                        );
-                    const upper_altitude_km = if (local_layer_index + 1 == count)
-                        interval.upper_altitude_km
-                    else
-                        shared_geometry.intervalAltitudeAtNode(
-                            interval.lower_altitude_km,
-                            interval.upper_altitude_km,
-                            level_rule.?.nodes[local_layer_index],
-                        );
-                    const midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km);
-                    const evaluated = shared_carrier.evaluateSharedLayerOnSubgrid(
-                        self,
-                        scene,
-                        wavelength_nm,
-                        interval.support_sublayers,
-                        interval.strong_line_states,
-                        .{
-                            .lower_altitude_km = lower_altitude_km,
-                            .upper_altitude_km = upper_altitude_km,
-                            .midpoint_altitude_km = midpoint_altitude_km,
-                            .thickness_km = @max(upper_altitude_km - lower_altitude_km, 0.0),
-                            .support_start_index = @intCast(start_index),
-                            .support_count = @intCast(count),
-                        },
-                        &interval_rule_scratch,
-                    );
-                    layer_inputs[start_index + local_layer_index] = Evaluation.layerInputFromEvaluated(evaluated);
-                    Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
-                }
+                const support = shared_geometry.sharedSupportSlices(self, sublayers, start_index, count);
+                const evaluated = shared_carrier.evaluateReducedLayerFromSupportRows(
+                    self,
+                    scene,
+                    wavelength_nm,
+                    support.sublayers,
+                    support.strong_line_states,
+                    .{
+                        .lower_altitude_km = layer.bottom_altitude_km,
+                        .upper_altitude_km = layer.top_altitude_km,
+                        .midpoint_altitude_km = layer.altitude_km,
+                        .thickness_km = @max(layer.top_altitude_km - layer.bottom_altitude_km, 0.0),
+                        .support_start_index = layer.sublayer_start_index,
+                        .support_count = layer.sublayer_count,
+                    },
+                );
+                layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
+                Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
             }
             return totals;
         }

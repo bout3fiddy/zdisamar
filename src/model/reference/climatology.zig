@@ -112,6 +112,30 @@ pub const ClimatologyProfile = struct {
     }
 
     /// Purpose:
+    ///   Interpolate pressure at the requested altitude in log-pressure space.
+    ///
+    /// Physics:
+    ///   DISAMAR prepares pressure on the RTM support grid from a spline in
+    ///   `ln(p)`. This helper keeps the parity path closer to that contract
+    ///   than the default linear-in-pressure interpolation used elsewhere.
+    pub fn interpolatePressureLogLinear(self: ClimatologyProfile, altitude_km: f64) f64 {
+        if (self.rows.len == 0) return 0.0;
+        if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].pressure_hpa;
+
+        for (self.rows[0 .. self.rows.len - 1], self.rows[1..]) |left, right| {
+            if (altitude_km <= right.altitude_km) {
+                const span = right.altitude_km - left.altitude_km;
+                if (span == 0.0) return right.pressure_hpa;
+                const weight = (altitude_km - left.altitude_km) / span;
+                const left_log = @log(@max(left.pressure_hpa, 1.0e-9));
+                const right_log = @log(@max(right.pressure_hpa, 1.0e-9));
+                return @exp(left_log + weight * (right_log - left_log));
+            }
+        }
+        return self.rows[self.rows.len - 1].pressure_hpa;
+    }
+
+    /// Purpose:
     ///   Report the highest altitude in the profile.
     pub fn maxAltitude(self: ClimatologyProfile) f64 {
         return if (self.rows.len == 0) 0.0 else self.rows[self.rows.len - 1].altitude_km;
@@ -189,4 +213,29 @@ test "climatology interpolates altitude from pressure with log-pressure spacing"
     try std.testing.expectApproxEqAbs(@as(f64, 5.0), altitude_km, 1.0e-12);
     try std.testing.expect(profile.interpolateAltitudeForPressure(400.0) > 5.0);
     try std.testing.expect(profile.interpolateAltitudeForPressure(800.0) < 5.0);
+}
+
+test "climatology interpolates pressure in log-pressure space" {
+    const profile = ClimatologyProfile{
+        .rows = @constCast(@as([]const ClimatologyPoint, &.{
+            .{
+                .altitude_km = 0.0,
+                .pressure_hpa = 1000.0,
+                .temperature_k = 290.0,
+                .air_number_density_cm3 = 2.5e19,
+            },
+            .{
+                .altitude_km = 10.0,
+                .pressure_hpa = 100.0,
+                .temperature_k = 220.0,
+                .air_number_density_cm3 = 5.0e18,
+            },
+        })),
+    };
+
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 316.22776601683796),
+        profile.interpolatePressureLogLinear(5.0),
+        1.0e-9,
+    );
 }

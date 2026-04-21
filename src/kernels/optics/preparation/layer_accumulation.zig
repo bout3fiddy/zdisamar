@@ -12,6 +12,7 @@ const PhaseFunctions = @import("../prepare/phase_functions.zig");
 const Allocator = std.mem.Allocator;
 const oxygen_volume_mixing_ratio = 0.2095;
 const centimeters_per_kilometer = 1.0e5;
+const boltzmann_hpa_cm3_per_k = 1.380658e-19;
 
 pub const LayerAccumulation = struct {
     base_single_scatter_albedo: f64 = 0.0,
@@ -94,6 +95,35 @@ pub fn populate(
     else
         @as(f64, 0.0);
 
+    if (usesDisamarParitySupportGrid(context)) {
+        try populateParitySupportRows(
+            allocator,
+            context,
+            absorbers,
+            &totals,
+            aerosol_sublayer_distribution,
+            cloud_sublayer_distribution,
+            aerosol_phase_coefficients,
+            cloud_phase_coefficients,
+            totals.aerosol_single_scatter_albedo,
+            totals.cloud_single_scatter_albedo,
+            aerosol_extinction_scale,
+            cloud_extinction_scale,
+            aerosol_fraction,
+            cloud_fraction,
+        );
+        for (context.layers, 0..) |*layer, index| {
+            reduceParityLayer(
+                context,
+                totals.aerosol_single_scatter_albedo,
+                totals.cloud_single_scatter_albedo,
+                layer,
+                index,
+            );
+        }
+        return totals;
+    }
+
     for (context.layers, 0..) |*layer, index| {
         try populateLayer(
             allocator,
@@ -116,6 +146,193 @@ pub fn populate(
     }
 
     return totals;
+}
+
+fn populateParitySupportRows(
+    allocator: Allocator,
+    context: *Context,
+    absorbers: *Absorbers.AbsorberBuildState,
+    totals: *LayerAccumulation,
+    aerosol_sublayer_distribution: []const f64,
+    cloud_sublayer_distribution: []const f64,
+    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+    aerosol_single_scatter_albedo: f64,
+    cloud_single_scatter_albedo: f64,
+    aerosol_extinction_scale: f64,
+    cloud_extinction_scale: f64,
+    aerosol_fraction: f64,
+    cloud_fraction: f64,
+) !void {
+    var current_layer_index: usize = 0;
+    var layer_boundary_index = if (context.layers.len > 1)
+        @as(usize, @intCast(context.layers[1].sublayer_start_index))
+    else
+        context.sublayers.len;
+
+    for (0..context.sublayers.len) |write_index| {
+        while (write_index >= layer_boundary_index and current_layer_index + 1 < context.layers.len) {
+            current_layer_index += 1;
+            layer_boundary_index = if (current_layer_index + 1 < context.layers.len)
+                @as(usize, @intCast(context.layers[current_layer_index + 1].sublayer_start_index))
+            else
+                context.sublayers.len;
+        }
+
+        const layer_thickness_km = @max(
+            context.vertical_grid.layer_top_altitudes_km[current_layer_index] -
+                context.vertical_grid.layer_bottom_altitudes_km[current_layer_index],
+            1.0e-9,
+        );
+        var ignored_density_weight: f64 = 0.0;
+        var ignored_density_sum: f64 = 0.0;
+        var ignored_temperature_sum: f64 = 0.0;
+        var ignored_pressure_sum: f64 = 0.0;
+        var ignored_line_sigma_sum: f64 = 0.0;
+        var ignored_line_mixing_sum: f64 = 0.0;
+        var ignored_d_cross_section_sum: f64 = 0.0;
+        var ignored_gas_optical_depth: f64 = 0.0;
+        var ignored_gas_scattering_optical_depth: f64 = 0.0;
+        var ignored_cia_optical_depth: f64 = 0.0;
+        var ignored_aerosol_optical_depth: f64 = 0.0;
+        var ignored_aerosol_base_optical_depth: f64 = 0.0;
+        var ignored_cloud_optical_depth: f64 = 0.0;
+        var ignored_cloud_base_optical_depth: f64 = 0.0;
+        const layer_start_index = @as(usize, @intCast(context.layers[current_layer_index].sublayer_start_index));
+        try populateSublayer(
+            allocator,
+            context,
+            absorbers,
+            totals,
+            aerosol_sublayer_distribution,
+            cloud_sublayer_distribution,
+            aerosol_phase_coefficients,
+            cloud_phase_coefficients,
+            aerosol_single_scatter_albedo,
+            cloud_single_scatter_albedo,
+            aerosol_extinction_scale,
+            cloud_extinction_scale,
+            aerosol_fraction,
+            cloud_fraction,
+            layer_thickness_km,
+            current_layer_index,
+            if (write_index >= layer_start_index) write_index - layer_start_index else 0,
+            write_index,
+            &ignored_density_weight,
+            &ignored_density_sum,
+            &ignored_temperature_sum,
+            &ignored_pressure_sum,
+            &ignored_line_sigma_sum,
+            &ignored_line_mixing_sum,
+            &ignored_d_cross_section_sum,
+            &ignored_gas_optical_depth,
+            &ignored_gas_scattering_optical_depth,
+            &ignored_cia_optical_depth,
+            &ignored_aerosol_optical_depth,
+            &ignored_aerosol_base_optical_depth,
+            &ignored_cloud_optical_depth,
+            &ignored_cloud_base_optical_depth,
+        );
+    }
+}
+
+fn reduceParityLayer(
+    context: *Context,
+    aerosol_single_scatter_albedo: f64,
+    cloud_single_scatter_albedo: f64,
+    layer: *State.PreparedLayer,
+    index: usize,
+) void {
+    const layer_top_altitude_km = context.vertical_grid.layer_top_altitudes_km[index];
+    const layer_bottom_altitude_km = context.vertical_grid.layer_bottom_altitudes_km[index];
+    const layer_top_pressure_hpa = context.vertical_grid.layer_top_pressures_hpa[index];
+    const layer_bottom_pressure_hpa = context.vertical_grid.layer_bottom_pressures_hpa[index];
+    const layer_sublayer_start_index = context.vertical_grid.layer_sublayer_starts[index];
+    const layer_sublayer_count = context.vertical_grid.layer_sublayer_counts[index];
+    const layer_interval_index_1based = context.vertical_grid.layer_interval_indices_1based[index];
+    const layer_subcolumn_label = context.vertical_grid.layer_subcolumn_labels[index];
+    const start_index: usize = @intCast(layer_sublayer_start_index);
+    const count: usize = @intCast(layer_sublayer_count);
+    const support_rows = context.sublayers[start_index .. start_index + count];
+    const lower_boundary = support_rows[0];
+
+    var layer_line_sigma_sum: f64 = 0.0;
+    var layer_line_mixing_sum: f64 = 0.0;
+    var layer_d_cross_section_sum: f64 = 0.0;
+    var layer_gas_optical_depth: f64 = 0.0;
+    var layer_gas_scattering_optical_depth: f64 = 0.0;
+    var layer_cia_optical_depth: f64 = 0.0;
+    var layer_aerosol_optical_depth: f64 = 0.0;
+    var layer_aerosol_base_optical_depth: f64 = 0.0;
+    var layer_cloud_optical_depth: f64 = 0.0;
+    var layer_cloud_base_optical_depth: f64 = 0.0;
+    var support_point_count: usize = 0;
+
+    if (support_rows.len > 2) {
+        for (support_rows[1 .. support_rows.len - 1]) |support_row| {
+            layer_line_sigma_sum += support_row.line_cross_section_cm2_per_molecule;
+            layer_line_mixing_sum += support_row.line_mixing_cross_section_cm2_per_molecule;
+            layer_d_cross_section_sum += support_row.d_cross_section_d_temperature_cm2_per_molecule_per_k;
+            layer_gas_optical_depth += support_row.gas_absorption_optical_depth + support_row.gas_scattering_optical_depth;
+            layer_gas_scattering_optical_depth += support_row.gas_scattering_optical_depth;
+            layer_cia_optical_depth += support_row.cia_optical_depth;
+            layer_aerosol_optical_depth += support_row.aerosol_optical_depth;
+            layer_aerosol_base_optical_depth += support_row.aerosol_base_optical_depth;
+            layer_cloud_optical_depth += support_row.cloud_optical_depth;
+            layer_cloud_base_optical_depth += support_row.cloud_base_optical_depth;
+            support_point_count += 1;
+        }
+    }
+
+    const aerosol_scattering = layer_aerosol_optical_depth * aerosol_single_scatter_albedo;
+    const cloud_scattering = layer_cloud_optical_depth * cloud_single_scatter_albedo;
+    const gas_scattering = layer_gas_scattering_optical_depth;
+    const optical_depth =
+        layer_gas_optical_depth +
+        layer_cia_optical_depth +
+        layer_aerosol_optical_depth +
+        layer_cloud_optical_depth;
+    const scattering = aerosol_scattering + cloud_scattering + gas_scattering;
+    const absorption = @max(optical_depth - scattering, 1.0e-9);
+    const layer_single_scatter_albedo = scattering / @max(scattering + absorption, 1.0e-9);
+    const depolarization = PhaseFunctions.computeLayerDepolarization(
+        context.scene,
+        gas_scattering,
+        aerosol_scattering,
+        cloud_scattering,
+    );
+
+    layer.* = .{
+        .layer_index = @intCast(index),
+        .sublayer_start_index = layer_sublayer_start_index,
+        .sublayer_count = layer_sublayer_count,
+        .altitude_km = 0.5 * (layer_top_altitude_km + layer_bottom_altitude_km),
+        .pressure_hpa = lower_boundary.pressure_hpa,
+        .temperature_k = lower_boundary.temperature_k,
+        .number_density_cm3 = lower_boundary.number_density_cm3,
+        .continuum_cross_section_cm2_per_molecule = lower_boundary.continuum_cross_section_cm2_per_molecule,
+        .line_cross_section_cm2_per_molecule = if (support_point_count == 0) 0.0 else layer_line_sigma_sum / @as(f64, @floatFromInt(support_point_count)),
+        .line_mixing_cross_section_cm2_per_molecule = if (support_point_count == 0) 0.0 else layer_line_mixing_sum / @as(f64, @floatFromInt(support_point_count)),
+        .cia_optical_depth = layer_cia_optical_depth,
+        .d_cross_section_d_temperature_cm2_per_molecule_per_k = if (support_point_count == 0) 0.0 else layer_d_cross_section_sum / @as(f64, @floatFromInt(support_point_count)),
+        .gas_optical_depth = layer_gas_optical_depth,
+        .gas_scattering_optical_depth = gas_scattering,
+        .aerosol_optical_depth = layer_aerosol_optical_depth,
+        .aerosol_base_optical_depth = layer_aerosol_base_optical_depth,
+        .cloud_optical_depth = layer_cloud_optical_depth,
+        .cloud_base_optical_depth = layer_cloud_base_optical_depth,
+        .layer_single_scatter_albedo = layer_single_scatter_albedo,
+        .depolarization_factor = depolarization,
+        .optical_depth = optical_depth,
+        .top_altitude_km = layer_top_altitude_km,
+        .bottom_altitude_km = layer_bottom_altitude_km,
+        .top_pressure_hpa = layer_top_pressure_hpa,
+        .bottom_pressure_hpa = layer_bottom_pressure_hpa,
+        .interval_index_1based = layer_interval_index_1based,
+        .subcolumn_label = layer_subcolumn_label,
+        .aerosol_fraction = lower_boundary.aerosol_fraction,
+        .cloud_fraction = lower_boundary.cloud_fraction,
+    };
 }
 
 fn populateLayer(
@@ -307,17 +524,29 @@ fn populateSublayer(
     const top_pressure_hpa = context.vertical_grid.sublayer_top_pressures_hpa[write_index];
     const bottom_pressure_hpa = context.vertical_grid.sublayer_bottom_pressures_hpa[write_index];
     const altitude_km = context.vertical_grid.sublayer_mid_altitudes_km[write_index];
-    const density = context.profile.interpolateDensity(altitude_km);
-    const pressure = if (context.scene.atmosphere.interval_grid.enabled() and
+    const disamar_support_grid = usesDisamarParitySupportGrid(context);
+    const pressure = if (disamar_support_grid)
+        context.profile.interpolatePressureLogLinear(altitude_km)
+    else if (context.scene.atmosphere.interval_grid.enabled() and
         top_pressure_hpa > 0.0 and
         bottom_pressure_hpa > 0.0)
         @sqrt(top_pressure_hpa * bottom_pressure_hpa)
     else
         context.profile.interpolatePressure(altitude_km);
     const temperature = context.profile.interpolateTemperature(altitude_km);
-    const sublayer_thickness_km = @max(top_altitude_km - bottom_altitude_km, 0.0);
-    const sublayer_path_length_cm = @max(sublayer_thickness_km, 1.0e-9) * centimeters_per_kilometer;
-    const sublayer_weight = sublayer_thickness_km / layer_thickness_km;
+    const density = if (disamar_support_grid)
+        pressure / @max(temperature, 1.0e-9) / boltzmann_hpa_cm3_per_k
+    else
+        context.profile.interpolateDensity(altitude_km);
+    const support_weight_km = if (disamar_support_grid)
+        context.vertical_grid.sublayer_support_weights_km[write_index]
+    else
+        @max(top_altitude_km - bottom_altitude_km, 0.0);
+    const sublayer_path_length_cm = if (usesDisamarParitySupportGrid(context))
+        @max(support_weight_km, 0.0) * centimeters_per_kilometer
+    else
+        @max(support_weight_km, 1.0e-9) * centimeters_per_kilometer;
+    const sublayer_weight = support_weight_km / layer_thickness_km;
     const oxygen_mixing_ratio = Spectroscopy.speciesMixingRatioAtPressure(
         context.scene,
         .o2,
@@ -488,4 +717,9 @@ fn populateSublayer(
     totals.cia_pair_path_factor_cm5 += o2_density_cm3 * o2_density_cm3 * sublayer_path_length_cm;
     totals.total_d_optical_depth_d_temperature +=
         d_gas_optical_depth_d_temperature + d_cia_optical_depth_d_temperature;
+}
+
+fn usesDisamarParitySupportGrid(context: *const Context) bool {
+    return context.scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode == .disamar_hr_grid or
+        context.scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode == .disamar_hr_grid;
 }

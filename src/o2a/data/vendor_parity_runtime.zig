@@ -261,6 +261,20 @@ pub fn buildResolvedVendorO2AScene(
         },
     };
 
+    const parity_response: Instrument.SpectralResponse = .{
+        .explicit = true,
+        .slit_index = switch (resolved.observation.builtin_line_shape) {
+            .gaussian => .gaussian_modulated,
+            .flat_top_n4 => .flat_top_n4,
+            .triple_flat_top_n4 => .triple_flat_top_n4,
+        },
+        .fwhm_nm = resolved.observation.instrument_line_fwhm_nm,
+        .builtin_line_shape = resolved.observation.builtin_line_shape,
+        .integration_mode = .disamar_hr_grid,
+        .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
+        .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
+    };
+
     var scene: Scene = .{
         .id = resolved.scene_id,
         .surface = .{
@@ -307,6 +321,16 @@ pub fn buildResolvedVendorO2AScene(
             .operational_solar_spectrum = .{
                 .wavelengths_nm = solar_wavelengths,
                 .irradiance = solar_irradiance,
+            },
+            .measurement_pipeline = .{
+                .radiance = .{
+                    .explicit = true,
+                    .response = parity_response,
+                },
+                .irradiance = .{
+                    .explicit = true,
+                    .response = parity_response,
+                },
             },
         },
     };
@@ -413,7 +437,7 @@ pub fn prepareResolvedVendorO2ATraceCase(
     errdefer prepared.deinit(allocator);
     if (phase_profile_out) |profile| profile.optics_preparation_ns = if (timer) |*owned| owned.lap() else 0;
 
-    try rewindowParitySolarSupportToRadianceKernel(allocator, &scene, &prepared);
+    try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
 
     const route = try prepareResolvedVendorO2ARoute(&scene, resolved.rtm_controls);
     if (phase_profile_out) |profile| profile.plan_preparation_ns = if (timer) |*owned| owned.lap() else 0;
@@ -427,8 +451,8 @@ pub fn prepareResolvedVendorO2ATraceCase(
 }
 
 /// Purpose:
-///   Re-window the raw solar carrier to the exact radiance HR support used by
-///   the vendor simulation before spline interpolation is prepared.
+///   Re-window the raw solar carrier to the shared measurement HR support used
+///   by the vendor-faithful parity lane before spline interpolation is prepared.
 ///
 /// Physics:
 ///   DISAMAR crops the raw solar file to the active `wavelHRSimS` span and
@@ -440,27 +464,20 @@ pub fn prepareResolvedVendorO2ATraceCase(
 ///   `readModule::getHRSolarIrradiance`
 ///
 /// Decisions:
-///   The Zig runtime derives the vendor HR span from the realized radiance
-///   kernel at the first and last nominal wavelengths of the active spectral
-///   grid, then rebuilds the owned solar carrier on just that inclusive range.
-fn rewindowParitySolarSupportToRadianceKernel(
+///   The Zig runtime derives the vendor HR span from the realized radiance and
+///   irradiance kernels at the first and last nominal wavelengths of the active
+///   spectral grid, requires those parity kernels to agree, and then rebuilds
+///   the owned solar carrier on just that inclusive range.
+fn rewindowParitySolarSupportToMeasurementKernel(
     allocator: Allocator,
     scene: *Scene,
     prepared: *const OpticsPrepare.PreparedOpticalState,
 ) !void {
     if (!scene.observation_model.operational_solar_spectrum.enabled()) return;
 
-    const bindings = providers.exact();
-    var start_kernel: instrument_types.IntegrationKernel = undefined;
-    var end_kernel: instrument_types.IntegrationKernel = undefined;
-    bindings.instrument.integrationForWavelength(scene, prepared, .radiance, scene.spectral_grid.start_nm, &start_kernel);
-    bindings.instrument.integrationForWavelength(scene, prepared, .radiance, scene.spectral_grid.end_nm, &end_kernel);
-    if (!start_kernel.enabled or !end_kernel.enabled or start_kernel.sample_count == 0 or end_kernel.sample_count == 0) {
-        return;
-    }
-
-    const support_start_nm = scene.spectral_grid.start_nm + start_kernel.offsets_nm[0];
-    const support_end_nm = scene.spectral_grid.end_nm + end_kernel.offsets_nm[end_kernel.sample_count - 1];
+    const support = try sharedParityMeasurementSupport(scene, prepared) orelse return;
+    const support_start_nm = support.start_nm;
+    const support_end_nm = support.end_nm;
     if (!(support_end_nm > support_start_nm)) return;
 
     const current = scene.observation_model.operational_solar_spectrum;
@@ -492,6 +509,49 @@ fn rewindowParitySolarSupportToRadianceKernel(
         .irradiance = retained_irradiance,
     };
     try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
+}
+
+fn sharedParityMeasurementSupport(
+    scene: *const Scene,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+) !?struct { start_nm: f64, end_nm: f64 } {
+    const bindings = providers.exact();
+    var radiance_start: instrument_types.IntegrationKernel = undefined;
+    var radiance_end: instrument_types.IntegrationKernel = undefined;
+    var irradiance_start: instrument_types.IntegrationKernel = undefined;
+    var irradiance_end: instrument_types.IntegrationKernel = undefined;
+
+    bindings.instrument.integrationForWavelength(scene, prepared, .radiance, scene.spectral_grid.start_nm, &radiance_start);
+    bindings.instrument.integrationForWavelength(scene, prepared, .radiance, scene.spectral_grid.end_nm, &radiance_end);
+    bindings.instrument.integrationForWavelength(scene, prepared, .irradiance, scene.spectral_grid.start_nm, &irradiance_start);
+    bindings.instrument.integrationForWavelength(scene, prepared, .irradiance, scene.spectral_grid.end_nm, &irradiance_end);
+
+    if (!radiance_start.enabled or !radiance_end.enabled or
+        !irradiance_start.enabled or !irradiance_end.enabled or
+        radiance_start.sample_count == 0 or radiance_end.sample_count == 0 or
+        irradiance_start.sample_count == 0 or irradiance_end.sample_count == 0)
+    {
+        return null;
+    }
+
+    try expectParityKernelBoundsMatch(radiance_start, irradiance_start);
+    try expectParityKernelBoundsMatch(radiance_end, irradiance_end);
+
+    return .{
+        .start_nm = scene.spectral_grid.start_nm + radiance_start.offsets_nm[0],
+        .end_nm = scene.spectral_grid.end_nm + radiance_end.offsets_nm[radiance_end.sample_count - 1],
+    };
+}
+
+fn expectParityKernelBoundsMatch(
+    lhs: instrument_types.IntegrationKernel,
+    rhs: instrument_types.IntegrationKernel,
+) !void {
+    if (lhs.sample_count != rhs.sample_count) return error.InvalidRequest;
+    if (@abs(lhs.offsets_nm[0] - rhs.offsets_nm[0]) > 1.0e-12) return error.InvalidRequest;
+    if (@abs(lhs.offsets_nm[lhs.sample_count - 1] - rhs.offsets_nm[rhs.sample_count - 1]) > 1.0e-12) {
+        return error.InvalidRequest;
+    }
 }
 
 pub fn loadResolvedVendorO2ALineList(

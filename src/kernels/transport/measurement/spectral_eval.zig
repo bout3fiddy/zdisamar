@@ -303,7 +303,7 @@ fn cachedIrradianceAtWavelength(
     const value = if (response.integration_mode == .disamar_hr_grid and
         operational_band_support.operational_solar_spectrum.enabled())
         operational_band_support.operational_solar_spectrum.interpolateIrradianceWithinBounds(wavelength_nm) orelse
-            return error.InvalidRequest
+            irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span)
     else
         irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
     try cache.irradiance.put(key, value);

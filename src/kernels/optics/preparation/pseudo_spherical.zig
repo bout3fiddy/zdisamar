@@ -119,7 +119,6 @@ pub fn fillPseudoSphericalGridAtWavelength(
             }
 
             var sample_index: usize = 0;
-            var subgrid_rule_scratch: shared_geometry.GaussRuleScratch = .{};
             for (geometry.layers, 0..) |layer_geometry, layer_index| {
                 level_sample_starts[layer_index] = sample_index;
                 const support_start_index: usize = @intCast(layer_geometry.support_start_index);
@@ -130,86 +129,21 @@ pub fn fillPseudoSphericalGridAtWavelength(
                     support_start_index,
                     support_count,
                 );
-                sample_index = shared_carrier.fillSharedPseudoSphericalSamplesOnSubgrid(
+                sample_index = shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRows(
                     self,
-                    scene,
                     wavelength_nm,
                     support.sublayers,
                     support.strong_line_states,
-                    layer_geometry,
                     attenuation_layers,
                     attenuation_samples,
                     sample_index,
-                    &subgrid_rule_scratch,
                 );
             }
 
             level_sample_starts[solver_layer_count] = sample_index;
             return true;
         }
-
-        var sample_index: usize = 0;
-        var interval_rule_scratch: shared_geometry.GaussRuleScratch = .{};
-        var subgrid_rule_scratch: shared_geometry.GaussRuleScratch = .{};
-
-        for (self.layers) |layer| {
-            const start_index: usize = @intCast(layer.sublayer_start_index);
-            const count: usize = @intCast(layer.sublayer_count);
-            if (count == 0) return false;
-
-            const interval = shared_geometry.sharedRtmInterval(self, sublayers, layer);
-            const level_node_count = count - 1;
-            const level_rule = if (level_node_count > 0)
-                shared_geometry.resolveGaussRule(level_node_count, &interval_rule_scratch)
-            else
-                null;
-
-            level_altitudes_km[start_index] = interval.lower_altitude_km;
-
-            for (0..count) |local_layer_index| {
-                const lower_altitude_km = if (local_layer_index == 0)
-                    interval.lower_altitude_km
-                else
-                    shared_geometry.intervalAltitudeAtNode(
-                        interval.lower_altitude_km,
-                        interval.upper_altitude_km,
-                        level_rule.?.nodes[local_layer_index - 1],
-                    );
-                const upper_altitude_km = if (local_layer_index + 1 == count)
-                    interval.upper_altitude_km
-                else
-                    shared_geometry.intervalAltitudeAtNode(
-                        interval.lower_altitude_km,
-                        interval.upper_altitude_km,
-                        level_rule.?.nodes[local_layer_index],
-                    );
-                const global_layer_index = start_index + local_layer_index;
-                level_sample_starts[global_layer_index] = sample_index;
-                level_altitudes_km[global_layer_index + 1] = upper_altitude_km;
-                sample_index = shared_carrier.fillSharedPseudoSphericalSamplesOnSubgrid(
-                    self,
-                    scene,
-                    wavelength_nm,
-                    interval.support_sublayers,
-                    interval.strong_line_states,
-                    .{
-                        .lower_altitude_km = lower_altitude_km,
-                        .upper_altitude_km = upper_altitude_km,
-                        .midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km),
-                        .thickness_km = @max(upper_altitude_km - lower_altitude_km, 0.0),
-                        .support_start_index = @intCast(start_index),
-                        .support_count = @intCast(count),
-                    },
-                    attenuation_layers,
-                    attenuation_samples,
-                    sample_index,
-                    &subgrid_rule_scratch,
-                );
-            }
-        }
-
-        level_sample_starts[solver_layer_count] = sample_index;
-        return true;
+        return false;
     }
 
     var sample_index: usize = 0;

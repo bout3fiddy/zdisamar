@@ -186,11 +186,17 @@ pub const ProductWorkspace = SummaryWorkspace;
 pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
     _ = route;
     if (scene.atmosphere.interval_grid.enabled()) {
-        var total_sublayer_count: usize = 0;
+        const uses_disamar_shared_rtm_grid =
+            scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode == .disamar_hr_grid or
+            scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode == .disamar_hr_grid;
+        var total_count: usize = 0;
         for (scene.atmosphere.interval_grid.intervals) |interval| {
-            total_sublayer_count += @max(@as(usize, interval.altitude_divisions), 1);
+            total_count += if (uses_disamar_shared_rtm_grid)
+                @as(usize, interval.altitude_divisions) + 1
+            else
+                @max(@as(usize, interval.altitude_divisions), 1);
         }
-        return @max(total_sublayer_count, 1);
+        return @max(total_count, 1);
     }
     const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
     return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);

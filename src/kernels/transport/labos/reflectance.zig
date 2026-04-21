@@ -55,8 +55,8 @@ fn maxInterfacePhaseCoefficientIndex(
 ) usize {
     const source_interface = sourceInterfaceAtLevel(layers, source_interfaces, ilevel);
     const above_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_above);
-    if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return above_max;
-    const below_max = maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients);
+    const below_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_below);
+    if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return @max(above_max, below_max);
     return @max(above_max, below_max);
 }
 
@@ -261,6 +261,7 @@ fn maxFourierIndexInterfaces(source_interfaces: []const common.SourceInterfaceIn
     var max_index: usize = 0;
     for (source_interfaces) |source_interface| {
         max_index = @max(max_index, maxPhaseCoefficientIndex(source_interface.phase_coefficients_above));
+        max_index = @max(max_index, maxPhaseCoefficientIndex(source_interface.phase_coefficients_below));
     }
     return max_index;
 }

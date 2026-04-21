@@ -190,8 +190,14 @@ pub const LayerInput = struct {
 pub const SourceInterfaceInput = struct {
     source_weight: f64 = 0.0,
     rtm_weight: f64 = 0.0,
+    gas_ksca: f64 = 0.0,
+    particle_ksca_above: f64 = 0.0,
+    particle_ksca_below: f64 = 0.0,
     ksca_above: f64 = 0.0,
+    ksca_below: f64 = 0.0,
+    gas_phase_coefficients: [phase_coefficient_count]f64 = phase_functions.gasPhaseCoefficients(),
     phase_coefficients_above: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
+    phase_coefficients_below: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
 
     pub fn effectiveWeight(self: SourceInterfaceInput) f64 {
         if (self.rtm_weight > 0.0 and self.ksca_above > 0.0) {

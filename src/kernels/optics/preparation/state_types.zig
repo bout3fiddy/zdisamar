@@ -267,6 +267,9 @@ pub const SharedRtmLevelGeometry = struct {
     weight_km: f64 = 0.0,
     support_start_index: u32 = 0,
     support_count: u32 = 0,
+    support_row_index: u32 = 0,
+    particle_above_support_row_index: u32 = std.math.maxInt(u32),
+    particle_below_support_row_index: u32 = std.math.maxInt(u32),
 };
 
 pub const SharedRtmGeometry = struct {
