@@ -17,6 +17,7 @@
 //!   Tests cover quadratic reproduction at midpoints.
 
 const std = @import("std");
+const max_spline_point_count = 256;
 
 pub const Error = error{
     ShapeMismatch,
@@ -37,7 +38,7 @@ pub const Error = error{
 ///   The input axis is sorted in ascending order and fits within the fixed scratch buffers.
 ///
 /// Decisions:
-///   The spline workspace is capped at 64 points so callers keep control of memory use in hot paths.
+///   The spline workspace is capped at 256 points so callers keep control of memory use in hot paths while still covering the embedded HITRAN tables.
 pub fn sampleNatural(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
     if (x.len != y.len) return Error.ShapeMismatch;
     if (x.len < 3) return Error.NotEnoughPoints;
@@ -45,9 +46,9 @@ pub fn sampleNatural(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
 
     // DECISION:
     //   Fixed scratch buffers keep the helper allocation-free for short spectral windows.
-    var second: [64]f64 = undefined;
+    var second: [max_spline_point_count]f64 = undefined;
     if (x.len > second.len) return Error.NotEnoughPoints;
-    var u: [64]f64 = undefined;
+    var u: [max_spline_point_count]f64 = undefined;
 
     second[0] = 0.0;
     u[0] = 0.0;

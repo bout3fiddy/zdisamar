@@ -170,6 +170,12 @@ pub const PreparedLayer = struct {
     cloud_fraction: f64 = 0.0,
 };
 
+pub const PreparedSupportRowKind = enum {
+    physical,
+    parity_boundary,
+    parity_active,
+};
+
 /// Prepared sublayer state on the fine transport grid.
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
@@ -210,6 +216,7 @@ pub const PreparedSublayer = struct {
     subcolumn_label: AtmosphereModel.PartitionLabel = .unspecified,
     aerosol_fraction: f64 = 0.0,
     cloud_fraction: f64 = 0.0,
+    support_row_kind: PreparedSupportRowKind = .physical,
 };
 
 pub const OpticalDepthBreakdown = struct {

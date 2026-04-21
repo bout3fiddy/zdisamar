@@ -20,18 +20,13 @@ pub fn fillSourceInterfacesAtWavelengthWithLayers(
         if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 for (source_interfaces, geometry.levels) |*source_interface, level_geometry| {
-                    const support_row_index: usize = @intCast(level_geometry.support_row_index);
                     if (level_geometry.weight_km > 0.0) {
-                        const strong_line_state = if (self.strong_line_states) |states|
-                            if (support_row_index < states.len) &states[support_row_index] else null
-                        else
-                            null;
-                        const carrier = carrier_eval.sharedOpticalCarrierAtSupportRow(
+                        const carrier = carrier_eval.sharedActiveCarrierAtLevel(
                             self,
                             wavelength_nm,
-                            sublayers[support_row_index],
-                            support_row_index,
-                            strong_line_state,
+                            sublayers,
+                            if (self.strong_line_states) |states| states else null,
+                            level_geometry,
                         );
                         source_interface.* = .{
                             .source_weight = 0.0,

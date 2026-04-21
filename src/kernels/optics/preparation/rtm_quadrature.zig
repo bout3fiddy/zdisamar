@@ -24,18 +24,13 @@ pub fn fillRtmQuadratureAtWavelengthWithLayers(
         if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
             var has_active_quadrature = false;
             for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
-                const support_row_index: usize = @intCast(level_geometry.support_row_index);
                 const level_carrier: LevelCarrier = if (level_geometry.weight_km > 0.0) blk: {
-                    const strong_line_state = if (self.strong_line_states) |states|
-                        if (support_row_index < states.len) &states[support_row_index] else null
-                    else
-                        null;
-                    const carrier = carrier_eval.sharedOpticalCarrierAtSupportRow(
+                    const carrier = carrier_eval.sharedActiveCarrierAtLevel(
                         self,
                         wavelength_nm,
-                        sublayers[support_row_index],
-                        support_row_index,
-                        strong_line_state,
+                        sublayers,
+                        if (self.strong_line_states) |states| states else null,
+                        level_geometry,
                     );
                     break :blk LevelCarrier{
                         .ksca = carrier.totalScatteringOpticalDepthPerKm(),

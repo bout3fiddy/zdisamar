@@ -7,6 +7,7 @@ const TransportCommon = internal.kernels.transport.common;
 const Calibration = internal.kernels.spectra.calibration;
 const ReferenceData = internal.reference_data;
 const InstrumentProviders = internal.plugin_internal.providers.Instrument;
+const InstrumentIntegration = internal.plugin_internal.providers.instrument_integration;
 const OpticsPrepare = internal.kernels.optics.preparation;
 
 const default_wavelengths_nm = [_]f64{761.75};
@@ -939,7 +940,7 @@ fn emitTransportTraces(
             nominal_wavelength_nm,
         );
         var radiance_integration: InstrumentProviders.IntegrationKernel = undefined;
-        providers.instrument.integrationForWavelength(
+        try InstrumentIntegration.integrationForWavelengthChecked(
             scene,
             prepared,
             .radiance,
@@ -959,7 +960,7 @@ fn emitTransportTraces(
             nominal_wavelength_nm,
         );
         var irradiance_integration: InstrumentProviders.IntegrationKernel = undefined;
-        providers.instrument.integrationForWavelength(
+        try InstrumentIntegration.integrationForWavelengthChecked(
             scene,
             prepared,
             .irradiance,

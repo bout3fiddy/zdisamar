@@ -591,7 +591,7 @@ test "vendor O2A partition keeps matched fallback metadata rows in the weak lane
     try lines.buildStrongLineMatchIndex(std.testing.allocator);
 
     try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[0]);
-    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[1]);
+    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[1]);
 
     const trace = try lines.traceAt(std.testing.allocator, 771.3016, 255.0, 820.0, null);
     defer trace.deinit(std.testing.allocator);

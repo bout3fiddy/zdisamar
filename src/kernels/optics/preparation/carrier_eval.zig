@@ -54,7 +54,9 @@ pub const SharedBoundaryCarrier = struct {
 };
 
 const ParticleBoundaryCarrier = struct {
+    aerosol_optical_depth_per_km: f64 = 0.0,
     aerosol_scattering_optical_depth_per_km: f64 = 0.0,
+    cloud_optical_depth_per_km: f64 = 0.0,
     cloud_scattering_optical_depth_per_km: f64 = 0.0,
     aerosol_phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
     cloud_phase_coefficients: [phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
@@ -101,7 +103,9 @@ fn particleBoundaryCarrierAtSupportRow(
         wavelength_nm,
     );
     return .{
+        .aerosol_optical_depth_per_km = aerosol_optical_depth_per_km,
         .aerosol_scattering_optical_depth_per_km = aerosol_optical_depth_per_km * sublayer.aerosol_single_scatter_albedo,
+        .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = cloud_optical_depth_per_km * sublayer.cloud_single_scatter_albedo,
         .aerosol_phase_coefficients = sublayer.aerosol_phase_coefficients,
         .cloud_phase_coefficients = sublayer.cloud_phase_coefficients,
@@ -173,6 +177,115 @@ pub fn sharedBoundaryCarrierAtLevel(
             particle_below.cloud_scattering_optical_depth_per_km,
             particle_below.aerosol_phase_coefficients,
             particle_below.cloud_phase_coefficients,
+        ),
+    };
+}
+
+pub fn sharedActiveCarrierAtLevel(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+) SharedOpticalCarrier {
+    const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
+    if (boundary_row_index >= sublayers.len) return .{};
+
+    const strong_line_state = if (strong_line_states) |states|
+        if (boundary_row_index < states.len) &states[boundary_row_index] else null
+    else
+        null;
+    const gas_carrier = sharedOpticalCarrierAtSupportRow(
+        self,
+        wavelength_nm,
+        sublayers[boundary_row_index],
+        boundary_row_index,
+        strong_line_state,
+    );
+
+    const below_index_u32 = level_geometry.particle_below_support_row_index;
+    const above_index_u32 = level_geometry.particle_above_support_row_index;
+    const invalid_index = @import("shared_geometry.zig").invalid_support_row_index;
+    if (below_index_u32 == invalid_index and above_index_u32 == invalid_index) return gas_carrier;
+
+    if (below_index_u32 == invalid_index) {
+        const above_index: usize = @intCast(above_index_u32);
+        if (above_index >= sublayers.len) return gas_carrier;
+        const particle = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[above_index]);
+        return composeSharedActiveCarrier(gas_carrier, particle, particle, 0.0);
+    }
+    if (above_index_u32 == invalid_index) {
+        const below_index: usize = @intCast(below_index_u32);
+        if (below_index >= sublayers.len) return gas_carrier;
+        const particle = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[below_index]);
+        return composeSharedActiveCarrier(gas_carrier, particle, particle, 0.0);
+    }
+
+    const below_index: usize = @intCast(below_index_u32);
+    const above_index: usize = @intCast(above_index_u32);
+    if (below_index >= sublayers.len or above_index >= sublayers.len) return gas_carrier;
+
+    const below_row = sublayers[below_index];
+    const above_row = sublayers[above_index];
+    const altitude_span_km = above_row.altitude_km - below_row.altitude_km;
+    const fraction = if (altitude_span_km > 0.0)
+        std.math.clamp((level_geometry.altitude_km - below_row.altitude_km) / altitude_span_km, 0.0, 1.0)
+    else
+        0.5;
+    const particle_below = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, below_row);
+    const particle_above = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, above_row);
+    return composeSharedActiveCarrier(gas_carrier, particle_below, particle_above, fraction);
+}
+
+fn composeSharedActiveCarrier(
+    gas_carrier: SharedOpticalCarrier,
+    particle_below: ParticleBoundaryCarrier,
+    particle_above: ParticleBoundaryCarrier,
+    fraction: f64,
+) SharedOpticalCarrier {
+    const clamped_fraction = std.math.clamp(fraction, 0.0, 1.0);
+    const left_weight = 1.0 - clamped_fraction;
+    const right_weight = clamped_fraction;
+    const aerosol_optical_depth_per_km =
+        left_weight * particle_below.aerosol_optical_depth_per_km +
+        right_weight * particle_above.aerosol_optical_depth_per_km;
+    const aerosol_scattering_optical_depth_per_km =
+        left_weight * particle_below.aerosol_scattering_optical_depth_per_km +
+        right_weight * particle_above.aerosol_scattering_optical_depth_per_km;
+    const cloud_optical_depth_per_km =
+        left_weight * particle_below.cloud_optical_depth_per_km +
+        right_weight * particle_above.cloud_optical_depth_per_km;
+    const cloud_scattering_optical_depth_per_km =
+        left_weight * particle_below.cloud_scattering_optical_depth_per_km +
+        right_weight * particle_above.cloud_scattering_optical_depth_per_km;
+    const aerosol_phase_coefficients = interpolatePhaseCoefficientsByScattering(
+        particle_below.aerosol_scattering_optical_depth_per_km,
+        particle_above.aerosol_scattering_optical_depth_per_km,
+        particle_below.aerosol_phase_coefficients,
+        particle_above.aerosol_phase_coefficients,
+        clamped_fraction,
+    );
+    const cloud_phase_coefficients = interpolatePhaseCoefficientsByScattering(
+        particle_below.cloud_scattering_optical_depth_per_km,
+        particle_above.cloud_scattering_optical_depth_per_km,
+        particle_below.cloud_phase_coefficients,
+        particle_above.cloud_phase_coefficients,
+        clamped_fraction,
+    );
+    return .{
+        .gas_absorption_optical_depth_per_km = gas_carrier.gas_absorption_optical_depth_per_km,
+        .gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km,
+        .cia_optical_depth_per_km = gas_carrier.cia_optical_depth_per_km,
+        .aerosol_optical_depth_per_km = aerosol_optical_depth_per_km,
+        .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
+        .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
+        .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
+        .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
+            gas_carrier.gas_scattering_optical_depth_per_km,
+            aerosol_scattering_optical_depth_per_km,
+            cloud_scattering_optical_depth_per_km,
+            aerosol_phase_coefficients,
+            cloud_phase_coefficients,
         ),
     };
 }
@@ -631,4 +744,261 @@ pub fn sharedOpticalCarrierAtAltitude(
             state.cloud_phase_coefficients,
         ),
     };
+}
+
+test "shared RTM active levels retain particle scattering from adjacent parity support rows" {
+    const allocator = std.testing.allocator;
+    const wavelength_nm = 760.0;
+    const zero_phase = PhaseFunctions.zeroPhaseCoefficients();
+    const aerosol_phase = PhaseFunctions.hgPhaseCoefficients(0.65);
+    const cloud_phase = PhaseFunctions.hgPhaseCoefficients(0.25);
+
+    var layers = [_]State.PreparedLayer{
+        .{
+            .layer_index = 0,
+            .sublayer_start_index = 0,
+            .sublayer_count = 3,
+            .altitude_km = 0.5,
+            .pressure_hpa = 900.0,
+            .temperature_k = 280.0,
+            .number_density_cm3 = 1.0e19,
+            .continuum_cross_section_cm2_per_molecule = 0.0,
+            .line_cross_section_cm2_per_molecule = 0.0,
+            .line_mixing_cross_section_cm2_per_molecule = 0.0,
+            .cia_optical_depth = 0.0,
+            .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+            .gas_optical_depth = 0.0,
+            .aerosol_optical_depth = 0.0,
+            .cloud_optical_depth = 0.0,
+            .layer_single_scatter_albedo = 0.0,
+            .depolarization_factor = 0.0,
+            .optical_depth = 0.0,
+            .top_altitude_km = 1.0,
+            .bottom_altitude_km = 0.0,
+            .top_pressure_hpa = 800.0,
+            .bottom_pressure_hpa = 1000.0,
+            .interval_index_1based = 1,
+        },
+        .{
+            .layer_index = 1,
+            .sublayer_start_index = 2,
+            .sublayer_count = 3,
+            .altitude_km = 1.5,
+            .pressure_hpa = 700.0,
+            .temperature_k = 260.0,
+            .number_density_cm3 = 2.0e19,
+            .continuum_cross_section_cm2_per_molecule = 0.0,
+            .line_cross_section_cm2_per_molecule = 0.0,
+            .line_mixing_cross_section_cm2_per_molecule = 0.0,
+            .cia_optical_depth = 0.0,
+            .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+            .gas_optical_depth = 0.0,
+            .aerosol_optical_depth = 0.0,
+            .cloud_optical_depth = 0.0,
+            .layer_single_scatter_albedo = 0.0,
+            .depolarization_factor = 0.0,
+            .optical_depth = 0.0,
+            .top_altitude_km = 2.0,
+            .bottom_altitude_km = 1.0,
+            .top_pressure_hpa = 600.0,
+            .bottom_pressure_hpa = 800.0,
+            .interval_index_1based = 1,
+        },
+    };
+    var sublayers = [_]State.PreparedSublayer{
+        .{
+            .parent_layer_index = 0,
+            .sublayer_index = 0,
+            .global_sublayer_index = 0,
+            .altitude_km = 0.0,
+            .pressure_hpa = 1000.0,
+            .temperature_k = 290.0,
+            .number_density_cm3 = 1.0e19,
+            .oxygen_number_density_cm3 = 0.0,
+            .path_length_cm = 0.0,
+            .continuum_cross_section_cm2_per_molecule = 0.0,
+            .line_cross_section_cm2_per_molecule = 0.0,
+            .line_mixing_cross_section_cm2_per_molecule = 0.0,
+            .cia_sigma_cm5_per_molecule2 = 0.0,
+            .cia_optical_depth = 0.0,
+            .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+            .gas_absorption_optical_depth = 0.0,
+            .gas_scattering_optical_depth = 0.0,
+            .gas_extinction_optical_depth = 0.0,
+            .d_gas_optical_depth_d_temperature = 0.0,
+            .d_cia_optical_depth_d_temperature = 0.0,
+            .aerosol_optical_depth = 0.0,
+            .cloud_optical_depth = 0.0,
+            .aerosol_single_scatter_albedo = 0.5,
+            .cloud_single_scatter_albedo = 0.5,
+            .aerosol_phase_coefficients = aerosol_phase,
+            .cloud_phase_coefficients = cloud_phase,
+            .combined_phase_coefficients = zero_phase,
+            .support_row_kind = .parity_boundary,
+        },
+        .{
+            .parent_layer_index = 0,
+            .sublayer_index = 1,
+            .global_sublayer_index = 1,
+            .altitude_km = 0.5,
+            .pressure_hpa = 900.0,
+            .temperature_k = 280.0,
+            .number_density_cm3 = 1.5e19,
+            .oxygen_number_density_cm3 = 0.0,
+            .path_length_cm = 1.0e5,
+            .continuum_cross_section_cm2_per_molecule = 0.0,
+            .line_cross_section_cm2_per_molecule = 0.0,
+            .line_mixing_cross_section_cm2_per_molecule = 0.0,
+            .cia_sigma_cm5_per_molecule2 = 0.0,
+            .cia_optical_depth = 0.0,
+            .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+            .gas_absorption_optical_depth = 0.0,
+            .gas_scattering_optical_depth = 0.0,
+            .gas_extinction_optical_depth = 0.0,
+            .d_gas_optical_depth_d_temperature = 0.0,
+            .d_cia_optical_depth_d_temperature = 0.0,
+            .aerosol_optical_depth = 0.4,
+            .cloud_optical_depth = 0.0,
+            .aerosol_single_scatter_albedo = 0.5,
+            .cloud_single_scatter_albedo = 0.0,
+            .aerosol_phase_coefficients = aerosol_phase,
+            .cloud_phase_coefficients = cloud_phase,
+            .combined_phase_coefficients = aerosol_phase,
+            .support_row_kind = .parity_active,
+        },
+        .{
+            .parent_layer_index = 0,
+            .sublayer_index = 2,
+            .global_sublayer_index = 2,
+            .altitude_km = 1.0,
+            .pressure_hpa = 800.0,
+            .temperature_k = 270.0,
+            .number_density_cm3 = 2.0e19,
+            .oxygen_number_density_cm3 = 0.0,
+            .path_length_cm = 0.0,
+            .continuum_cross_section_cm2_per_molecule = 0.0,
+            .line_cross_section_cm2_per_molecule = 0.0,
+            .line_mixing_cross_section_cm2_per_molecule = 0.0,
+            .cia_sigma_cm5_per_molecule2 = 0.0,
+            .cia_optical_depth = 0.0,
+            .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+            .gas_absorption_optical_depth = 0.0,
+            .gas_scattering_optical_depth = 0.0,
+            .gas_extinction_optical_depth = 0.0,
+            .d_gas_optical_depth_d_temperature = 0.0,
+            .d_cia_optical_depth_d_temperature = 0.0,
+            .aerosol_optical_depth = 0.0,
+            .cloud_optical_depth = 0.0,
+            .aerosol_single_scatter_albedo = 0.5,
+            .cloud_single_scatter_albedo = 0.5,
+            .aerosol_phase_coefficients = aerosol_phase,
+            .cloud_phase_coefficients = cloud_phase,
+            .combined_phase_coefficients = zero_phase,
+            .support_row_kind = .parity_boundary,
+        },
+        .{
+            .parent_layer_index = 1,
+            .sublayer_index = 1,
+            .global_sublayer_index = 3,
+            .altitude_km = 1.5,
+            .pressure_hpa = 700.0,
+            .temperature_k = 260.0,
+            .number_density_cm3 = 2.5e19,
+            .oxygen_number_density_cm3 = 0.0,
+            .path_length_cm = 1.0e5,
+            .continuum_cross_section_cm2_per_molecule = 0.0,
+            .line_cross_section_cm2_per_molecule = 0.0,
+            .line_mixing_cross_section_cm2_per_molecule = 0.0,
+            .cia_sigma_cm5_per_molecule2 = 0.0,
+            .cia_optical_depth = 0.0,
+            .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+            .gas_absorption_optical_depth = 0.0,
+            .gas_scattering_optical_depth = 0.0,
+            .gas_extinction_optical_depth = 0.0,
+            .d_gas_optical_depth_d_temperature = 0.0,
+            .d_cia_optical_depth_d_temperature = 0.0,
+            .aerosol_optical_depth = 0.8,
+            .cloud_optical_depth = 0.0,
+            .aerosol_single_scatter_albedo = 0.5,
+            .cloud_single_scatter_albedo = 0.0,
+            .aerosol_phase_coefficients = aerosol_phase,
+            .cloud_phase_coefficients = cloud_phase,
+            .combined_phase_coefficients = aerosol_phase,
+            .support_row_kind = .parity_active,
+        },
+        .{
+            .parent_layer_index = 1,
+            .sublayer_index = 2,
+            .global_sublayer_index = 4,
+            .altitude_km = 2.0,
+            .pressure_hpa = 600.0,
+            .temperature_k = 250.0,
+            .number_density_cm3 = 3.0e19,
+            .oxygen_number_density_cm3 = 0.0,
+            .path_length_cm = 0.0,
+            .continuum_cross_section_cm2_per_molecule = 0.0,
+            .line_cross_section_cm2_per_molecule = 0.0,
+            .line_mixing_cross_section_cm2_per_molecule = 0.0,
+            .cia_sigma_cm5_per_molecule2 = 0.0,
+            .cia_optical_depth = 0.0,
+            .d_cross_section_d_temperature_cm2_per_molecule_per_k = 0.0,
+            .gas_absorption_optical_depth = 0.0,
+            .gas_scattering_optical_depth = 0.0,
+            .gas_extinction_optical_depth = 0.0,
+            .d_gas_optical_depth_d_temperature = 0.0,
+            .d_cia_optical_depth_d_temperature = 0.0,
+            .aerosol_optical_depth = 0.0,
+            .cloud_optical_depth = 0.0,
+            .aerosol_single_scatter_albedo = 0.5,
+            .cloud_single_scatter_albedo = 0.5,
+            .aerosol_phase_coefficients = aerosol_phase,
+            .cloud_phase_coefficients = cloud_phase,
+            .combined_phase_coefficients = zero_phase,
+            .support_row_kind = .parity_boundary,
+        },
+    };
+    var prepared = State.PreparedOpticalState{
+        .layers = layers[0..],
+        .sublayers = sublayers[0..],
+        .continuum_points = &.{},
+        .mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mean_cross_section_cm2_per_molecule = 0.0,
+        .line_mixing_mean_cross_section_cm2_per_molecule = 0.0,
+        .cia_mean_cross_section_cm5_per_molecule2 = 0.0,
+        .effective_air_mass_factor = 1.0,
+        .effective_single_scatter_albedo = 0.0,
+        .effective_temperature_k = 270.0,
+        .effective_pressure_hpa = 800.0,
+        .column_density_factor = 0.0,
+        .cia_pair_path_factor_cm5 = 0.0,
+        .aerosol_reference_wavelength_nm = wavelength_nm,
+        .aerosol_angstrom_exponent = 0.0,
+        .cloud_reference_wavelength_nm = wavelength_nm,
+        .cloud_angstrom_exponent = 0.0,
+        .gas_optical_depth = 0.0,
+        .cia_optical_depth = 0.0,
+        .aerosol_optical_depth = 0.0,
+        .cloud_optical_depth = 0.0,
+        .d_optical_depth_d_temperature = 0.0,
+        .depolarization_factor = 0.0,
+        .total_optical_depth = 0.0,
+        .interval_semantics = .explicit_pressure_bounds,
+    };
+    prepared.shared_rtm_geometry = try @import("shared_geometry.zig").buildSharedRtmGeometry(allocator, &prepared);
+    defer prepared.shared_rtm_geometry.deinit(allocator);
+
+    const level_geometry = prepared.shared_rtm_geometry.levels[1];
+    try std.testing.expect(level_geometry.weight_km > 0.0);
+
+    const carrier = sharedActiveCarrierAtLevel(
+        &prepared,
+        wavelength_nm,
+        sublayers[0..],
+        null,
+        level_geometry,
+    );
+    const gas_middle = Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[2].number_density_cm3 * 1.0e5;
+    try std.testing.expectApproxEqAbs(gas_middle, carrier.gas_scattering_optical_depth_per_km, 1.0e-12);
+    try std.testing.expectApproxEqAbs(0.3, carrier.aerosol_scattering_optical_depth_per_km, 1.0e-12);
+    try std.testing.expect(carrier.totalScatteringOpticalDepthPerKm() > gas_middle);
 }

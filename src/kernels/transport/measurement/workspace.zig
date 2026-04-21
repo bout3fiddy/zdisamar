@@ -22,6 +22,7 @@
 const std = @import("std");
 const core_errors = @import("../../../core/errors.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
+const InstrumentIntegration = @import("../../../o2a/providers/instrument/integration.zig");
 const NoiseProviders = @import("../../../o2a/providers/noise.zig");
 const OpticsPreparation = @import("../../optics/preparation.zig");
 const common = @import("../common.zig");
@@ -36,6 +37,7 @@ pub const Error =
     common.Error ||
     grid.Error ||
     convolution.Error ||
+    InstrumentIntegration.Error ||
     NoiseProviders.Error ||
     error{
         ShapeMismatch,

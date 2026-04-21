@@ -76,7 +76,7 @@ pub fn buildSamplePlans(
         const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
         var radiance_integration: IntegrationKernel = undefined;
         if (can_cache_adaptive_plan) {
-            instrument_integration.integrationForWavelengthWithAdaptiveCache(
+            try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
                 scene,
                 prepared,
                 .radiance,
@@ -85,7 +85,7 @@ pub fn buildSamplePlans(
                 &radiance_integration,
             );
         } else {
-            providers.instrument.integrationForWavelength(
+            try instrument_integration.integrationForWavelengthChecked(
                 scene,
                 prepared,
                 .radiance,
@@ -95,7 +95,7 @@ pub fn buildSamplePlans(
         }
         var irradiance_integration: IntegrationKernel = undefined;
         if (can_cache_adaptive_plan) {
-            instrument_integration.integrationForWavelengthWithAdaptiveCache(
+            try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
                 scene,
                 prepared,
                 .irradiance,
@@ -104,7 +104,7 @@ pub fn buildSamplePlans(
                 &irradiance_integration,
             );
         } else {
-            providers.instrument.integrationForWavelength(
+            try instrument_integration.integrationForWavelengthChecked(
                 scene,
                 prepared,
                 .irradiance,

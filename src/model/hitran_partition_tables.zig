@@ -5,6 +5,7 @@
 //!   Maps isotopologue code and temperature to `Q(T_ref) / Q(T)` while clamping
 //!   interpolation to the supported tabulated domain.
 const std = @import("std");
+const spline = @import("../kernels/interpolation/spline.zig");
 
 const temperature_grid = [_]f64{
     60.0,   85.0,   110.0,  135.0,  160.0,  185.0,  210.0,  235.0,  260.0,  285.0,
@@ -475,15 +476,6 @@ fn interpolatePartitionTable(table: []const f64, temperature_k: f64) f64 {
     //   temperature grid declared at the top of this file.
     const safe_temperature = std.math.clamp(temperature_k, temperature_grid[0], temperature_grid[temperature_grid.len - 1]);
     if (safe_temperature <= temperature_grid[0]) return table[0];
-
-    for (temperature_grid[0 .. temperature_grid.len - 1], temperature_grid[1..], 0..) |left_t, right_t, index| {
-        if (safe_temperature <= right_t) {
-            const span = right_t - left_t;
-            if (span == 0.0) return table[index + 1];
-            const weight = (safe_temperature - left_t) / span;
-            return table[index] + weight * (table[index + 1] - table[index]);
-        }
-    }
-
-    return table[table.len - 1];
+    if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) return table[table.len - 1];
+    return spline.sampleNatural(temperature_grid[0..], table, safe_temperature) catch unreachable;
 }

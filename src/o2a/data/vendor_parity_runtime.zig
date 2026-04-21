@@ -515,16 +515,39 @@ fn sharedParityMeasurementSupport(
     scene: *const Scene,
     prepared: *const OpticsPrepare.PreparedOpticalState,
 ) !?struct { start_nm: f64, end_nm: f64 } {
-    const bindings = providers.exact();
     var radiance_start: instrument_types.IntegrationKernel = undefined;
     var radiance_end: instrument_types.IntegrationKernel = undefined;
     var irradiance_start: instrument_types.IntegrationKernel = undefined;
     var irradiance_end: instrument_types.IntegrationKernel = undefined;
 
-    bindings.instrument.integrationForWavelength(scene, prepared, .radiance, scene.spectral_grid.start_nm, &radiance_start);
-    bindings.instrument.integrationForWavelength(scene, prepared, .radiance, scene.spectral_grid.end_nm, &radiance_end);
-    bindings.instrument.integrationForWavelength(scene, prepared, .irradiance, scene.spectral_grid.start_nm, &irradiance_start);
-    bindings.instrument.integrationForWavelength(scene, prepared, .irradiance, scene.spectral_grid.end_nm, &irradiance_end);
+    try @import("../providers/instrument/integration.zig").integrationForWavelengthChecked(
+        scene,
+        prepared,
+        .radiance,
+        scene.spectral_grid.start_nm,
+        &radiance_start,
+    );
+    try @import("../providers/instrument/integration.zig").integrationForWavelengthChecked(
+        scene,
+        prepared,
+        .radiance,
+        scene.spectral_grid.end_nm,
+        &radiance_end,
+    );
+    try @import("../providers/instrument/integration.zig").integrationForWavelengthChecked(
+        scene,
+        prepared,
+        .irradiance,
+        scene.spectral_grid.start_nm,
+        &irradiance_start,
+    );
+    try @import("../providers/instrument/integration.zig").integrationForWavelengthChecked(
+        scene,
+        prepared,
+        .irradiance,
+        scene.spectral_grid.end_nm,
+        &irradiance_end,
+    );
 
     if (!radiance_start.enabled or !radiance_end.enabled or
         !irradiance_start.enabled or !irradiance_end.enabled or

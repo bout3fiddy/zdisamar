@@ -40,7 +40,7 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
     const matches = try allocator.alloc(?u16, self.lines.len);
     errdefer allocator.free(matches);
     for (self.lines, 0..) |line, line_index| {
-        if (usesVendorStrongLinePartition(self.*) and !Support.isVendorO2AStrongCandidate(line)) {
+        if (usesVendorStrongLinePartition(self.*) and !Support.isVendorO2AStrongCandidateFromSource(line)) {
             matches[line_index] = null;
             continue;
         }
@@ -206,7 +206,7 @@ pub fn matchedStrongIndexForRelevantLine(
         }
     }
     if (usesVendorStrongLinePartition(self)) {
-        if (!Support.isVendorO2AStrongCandidate(line)) return null;
+        if (!Support.isVendorO2AStrongCandidateFromSource(line)) return null;
         return findStrongLineMatch(self, line.center_wavelength_nm);
     }
     return findStrongLineMatch(self, line.center_wavelength_nm);

@@ -695,6 +695,12 @@ fn populateSublayer(
         .subcolumn_label = context.vertical_grid.sublayer_subcolumn_labels[write_index],
         .aerosol_fraction = aerosol_fraction,
         .cloud_fraction = cloud_fraction,
+        .support_row_kind = if (!disamar_support_grid)
+            .physical
+        else if (support_weight_km > 0.0)
+            .parity_active
+        else
+            .parity_boundary,
     };
 
     layer_density_weight.* += density * sublayer_weight;

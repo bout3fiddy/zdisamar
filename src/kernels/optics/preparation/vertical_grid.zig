@@ -55,6 +55,7 @@ pub const OwnedVerticalGrid = struct {
             .sublayer_top_altitudes_km = self.sublayer_top_altitudes_km,
             .sublayer_bottom_altitudes_km = self.sublayer_bottom_altitudes_km,
             .sublayer_mid_altitudes_km = self.sublayer_mid_altitudes_km,
+            .sublayer_support_weights_km = self.sublayer_support_weights_km,
             .sublayer_parent_interval_indices_1based = self.sublayer_interval_indices_1based,
         };
     }
@@ -216,6 +217,7 @@ fn buildExplicitDisamarParity(
     while (source_interval_index > 0) {
         source_interval_index -= 1;
         const interval = intervals[source_interval_index];
+        const parity_interval_index_1based: u32 = @intCast((intervals.len - source_interval_index));
         const has_altitude_bounds = interval.hasAltitudeBounds();
         const interval_top_altitude_km = if (has_altitude_bounds)
             interval.top_altitude_km
@@ -247,9 +249,12 @@ fn buildExplicitDisamarParity(
             grid.sublayer_bottom_pressures_hpa[support_cursor] = interval.bottom_pressure_hpa;
             grid.sublayer_mid_altitudes_km[support_cursor] = interval_bottom_altitude_km;
             grid.sublayer_support_weights_km[support_cursor] = 0.0;
-            grid.sublayer_interval_indices_1based[support_cursor] = interval.index_1based;
-            grid.sublayer_subcolumn_labels[support_cursor] = scene.atmosphere.subcolumns.labelForAltitude(interval_bottom_altitude_km);
         }
+
+        // The shared boundary row between adjacent pressure intervals belongs to
+        // the interval currently being materialized in the vendor trace.
+        grid.sublayer_interval_indices_1based[support_cursor] = parity_interval_index_1based;
+        grid.sublayer_subcolumn_labels[support_cursor] = scene.atmosphere.subcolumns.labelForAltitude(interval_bottom_altitude_km);
 
         var previous_boundary_altitude_km = interval_bottom_altitude_km;
         var previous_boundary_pressure_hpa = interval.bottom_pressure_hpa;
@@ -269,7 +274,7 @@ fn buildExplicitDisamarParity(
             grid.layer_bottom_altitudes_km[global_layer_index] = previous_boundary_altitude_km;
             grid.layer_top_pressures_hpa[global_layer_index] = next_boundary_pressure_hpa;
             grid.layer_bottom_pressures_hpa[global_layer_index] = previous_boundary_pressure_hpa;
-            grid.layer_interval_indices_1based[global_layer_index] = interval.index_1based;
+            grid.layer_interval_indices_1based[global_layer_index] = parity_interval_index_1based;
             grid.layer_sublayer_starts[global_layer_index] = @intCast(support_cursor);
             grid.layer_sublayer_counts[global_layer_index] = @intCast(sublayer_order + 2);
             grid.layer_subcolumn_labels[global_layer_index] = scene.atmosphere.subcolumns.labelForAltitude(
@@ -287,7 +292,7 @@ fn buildExplicitDisamarParity(
                 grid.sublayer_bottom_pressures_hpa[global_support_index] = previous_boundary_pressure_hpa;
                 grid.sublayer_mid_altitudes_km[global_support_index] = support_altitude_km;
                 grid.sublayer_support_weights_km[global_support_index] = 0.5 * support_weights[support_index] * layer_span_km;
-                grid.sublayer_interval_indices_1based[global_support_index] = interval.index_1based;
+                grid.sublayer_interval_indices_1based[global_support_index] = parity_interval_index_1based;
                 grid.sublayer_subcolumn_labels[global_support_index] = scene.atmosphere.subcolumns.labelForAltitude(support_altitude_km);
             }
 
@@ -298,7 +303,7 @@ fn buildExplicitDisamarParity(
             grid.sublayer_bottom_pressures_hpa[upper_boundary_index] = next_boundary_pressure_hpa;
             grid.sublayer_mid_altitudes_km[upper_boundary_index] = next_boundary_altitude_km;
             grid.sublayer_support_weights_km[upper_boundary_index] = 0.0;
-            grid.sublayer_interval_indices_1based[upper_boundary_index] = interval.index_1based;
+            grid.sublayer_interval_indices_1based[upper_boundary_index] = parity_interval_index_1based;
             grid.sublayer_subcolumn_labels[upper_boundary_index] = scene.atmosphere.subcolumns.labelForAltitude(next_boundary_altitude_km);
 
             support_cursor = upper_boundary_index;
