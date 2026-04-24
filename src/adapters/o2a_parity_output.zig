@@ -139,7 +139,7 @@ fn writeGeneratedSpectrumCsv(
     try writer.interface.writeAll("wavelength_nm,irradiance,radiance,reflectance\n");
     for (product.wavelengths, product.irradiance, product.radiance, product.reflectance) |wavelength_nm, irradiance, radiance, reflectance| {
         try writer.interface.print(
-            "{d:.8},{e:.12},{e:.12},{e:.12}\n",
+            "{d:.8},{e:.17},{e:.17},{e:.17}\n",
             .{ wavelength_nm, irradiance, radiance, reflectance },
         );
     }

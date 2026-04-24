@@ -19,6 +19,17 @@ const SpectroscopyStrongLineSet = ReferenceData.SpectroscopyStrongLineSet;
 const RelaxationMatrix = ReferenceData.RelaxationMatrix;
 const SpectroscopyTraceContributionKind = ReferenceData.SpectroscopyTraceContributionKind;
 
+test "spectroscopy constants preserve vendor weak and strong temperature scaling" {
+    try std.testing.expectEqual(
+        @as(f64, 1.4387770),
+        ReferenceData.spectroscopy.Types.hitran_hc_over_kb_cm_k,
+    );
+    try std.testing.expectEqual(
+        @as(f64, 1.43877696),
+        ReferenceData.spectroscopy.Types.hitran_o2_line_mixing_hc_over_kb_cm_k,
+    );
+}
+
 fn makeLineList(lines: []const SpectroscopyLine) !SpectroscopyLineList {
     return .{ .lines = try std.testing.allocator.dupe(SpectroscopyLine, lines) };
 }

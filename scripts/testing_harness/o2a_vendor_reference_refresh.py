@@ -110,15 +110,15 @@ def write_reference_csv(path: Path, arrays: dict[str, list[float]]) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
-        writer = csv.writer(handle)
+        writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(["wavelength_nm", "irradiance", "radiance", "reflectance"])
         for row in zip(wavelength_radiance, irradiance, radiance, reflectance, strict=True):
             writer.writerow(
                 [
                     f"{row[0]:.8f}",
-                    f"{row[1]:.12e}",
-                    f"{row[2]:.12e}",
-                    f"{row[3]:.12e}",
+                    f"{row[1]:.17e}",
+                    f"{row[2]:.17e}",
+                    f"{row[3]:.17e}",
                 ]
             )
 
@@ -152,9 +152,10 @@ def refresh_vendor_reference(
             if path.exists():
                 path.unlink()
 
+        vendor_executable = (vendor_root / "src" / "Disamar.exe").resolve()
         started = time.perf_counter()
         proc = subprocess.run(
-            [str(vendor_root / "src" / "Disamar.exe")],
+            [str(vendor_executable)],
             cwd=vendor_root,
             text=True,
             capture_output=True,

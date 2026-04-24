@@ -477,5 +477,10 @@ fn interpolatePartitionTable(table: []const f64, temperature_k: f64) f64 {
     const safe_temperature = std.math.clamp(temperature_k, temperature_grid[0], temperature_grid[temperature_grid.len - 1]);
     if (safe_temperature <= temperature_grid[0]) return table[0];
     if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) return table[table.len - 1];
-    return spline.sampleNatural(temperature_grid[0..], table, safe_temperature) catch unreachable;
+    return spline.sampleEndpointSecant(temperature_grid[0..], table, safe_temperature) catch unreachable;
+}
+
+test "O2 partition ratio follows DISAMAR endpoint-secant spline" {
+    const ratio = ratioT0OverT(66, 165.1, 296.0) orelse unreachable;
+    try std.testing.expectApproxEqAbs(@as(f64, 1.7894420791035657), ratio, 1.0e-14);
 }

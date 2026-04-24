@@ -9,95 +9,95 @@
       "run_index": 1,
       "sample_count": 701,
       "preparation": {
-        "input_loading_ns": 11799500,
-        "scene_assembly_ns": 104667,
-        "optics_preparation_ns": 1216251500,
-        "plan_preparation_ns": 984958
+        "input_loading_ns": 12870916,
+        "scene_assembly_ns": 53542,
+        "optics_preparation_ns": 2083996125,
+        "plan_preparation_ns": 1055708
       },
       "forward": {
-        "radiance_integration_ns": 22747518375,
-        "radiance_postprocess_ns": 10375,
-        "irradiance_integration_ns": 3811333,
-        "irradiance_postprocess_ns": 1458,
-        "reduction_ns": 584
+        "radiance_integration_ns": 34012315791,
+        "radiance_postprocess_ns": 2584,
+        "irradiance_integration_ns": 3797625,
+        "irradiance_postprocess_ns": 1250,
+        "reduction_ns": 666
       },
-      "total_prepare_ns": 1229140625,
-      "total_forward_ns": 22751342125,
-      "total_end_to_end_ns": 23987834583
+      "total_prepare_ns": 2097976291,
+      "total_forward_ns": 34016117916,
+      "total_end_to_end_ns": 36123531000
     }
   ],
   "preparation": {
     "input_loading_ns": {
-      "mean_ns": 11799500,
-      "min_ns": 11799500,
-      "max_ns": 11799500
+      "mean_ns": 12870916,
+      "min_ns": 12870916,
+      "max_ns": 12870916
     },
     "scene_assembly_ns": {
-      "mean_ns": 104667,
-      "min_ns": 104667,
-      "max_ns": 104667
+      "mean_ns": 53542,
+      "min_ns": 53542,
+      "max_ns": 53542
     },
     "optics_preparation_ns": {
-      "mean_ns": 1216251500,
-      "min_ns": 1216251500,
-      "max_ns": 1216251500
+      "mean_ns": 2083996125,
+      "min_ns": 2083996125,
+      "max_ns": 2083996125
     },
     "plan_preparation_ns": {
-      "mean_ns": 984958,
-      "min_ns": 984958,
-      "max_ns": 984958
+      "mean_ns": 1055708,
+      "min_ns": 1055708,
+      "max_ns": 1055708
     },
     "total_ns": {
-      "mean_ns": 1229140625,
-      "min_ns": 1229140625,
-      "max_ns": 1229140625
+      "mean_ns": 2097976291,
+      "min_ns": 2097976291,
+      "max_ns": 2097976291
     }
   },
   "forward": {
     "radiance_integration_ns": {
-      "mean_ns": 22747518375,
-      "min_ns": 22747518375,
-      "max_ns": 22747518375
+      "mean_ns": 34012315791,
+      "min_ns": 34012315791,
+      "max_ns": 34012315791
     },
     "radiance_postprocess_ns": {
-      "mean_ns": 10375,
-      "min_ns": 10375,
-      "max_ns": 10375
+      "mean_ns": 2584,
+      "min_ns": 2584,
+      "max_ns": 2584
     },
     "irradiance_integration_ns": {
-      "mean_ns": 3811333,
-      "min_ns": 3811333,
-      "max_ns": 3811333
+      "mean_ns": 3797625,
+      "min_ns": 3797625,
+      "max_ns": 3797625
     },
     "irradiance_postprocess_ns": {
-      "mean_ns": 1458,
-      "min_ns": 1458,
-      "max_ns": 1458
+      "mean_ns": 1250,
+      "min_ns": 1250,
+      "max_ns": 1250
     },
     "reduction_ns": {
-      "mean_ns": 584,
-      "min_ns": 584,
-      "max_ns": 584
+      "mean_ns": 666,
+      "min_ns": 666,
+      "max_ns": 666
     },
     "total_ns": {
-      "mean_ns": 22751342125,
-      "min_ns": 22751342125,
-      "max_ns": 22751342125
+      "mean_ns": 34016117916,
+      "min_ns": 34016117916,
+      "max_ns": 34016117916
     }
   },
   "total_prepare_ns": {
-    "mean_ns": 1229140625,
-    "min_ns": 1229140625,
-    "max_ns": 1229140625
+    "mean_ns": 2097976291,
+    "min_ns": 2097976291,
+    "max_ns": 2097976291
   },
   "total_forward_ns": {
-    "mean_ns": 22751342125,
-    "min_ns": 22751342125,
-    "max_ns": 22751342125
+    "mean_ns": 34016117916,
+    "min_ns": 34016117916,
+    "max_ns": 34016117916
   },
   "total_end_to_end_ns": {
-    "mean_ns": 23987834583,
-    "min_ns": 23987834583,
-    "max_ns": 23987834583
+    "mean_ns": 36123531000,
+    "min_ns": 36123531000,
+    "max_ns": 36123531000
   }
 }

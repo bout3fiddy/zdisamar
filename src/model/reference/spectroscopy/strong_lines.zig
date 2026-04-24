@@ -139,7 +139,7 @@ pub fn prepareStrongLineConvTPState(
         const strong_line = strong_lines[row_index];
         state.population_t[row_index] = strong_line.population_t0 *
             partition_ratio *
-            @exp(Types.hitran_hc_over_kb_cm_k * strong_line.lower_state_energy_cm1 * ((1.0 / Types.hitran_reference_temperature_k) - (1.0 / safe_temperature)));
+            @exp(Types.hitran_o2_line_mixing_hc_over_kb_cm_k * strong_line.lower_state_energy_cm1 * ((1.0 / Types.hitran_reference_temperature_k) - (1.0 / safe_temperature)));
         state.dipole_t[row_index] = strong_line.dipole_t0 * std.math.sqrt(temperature_ratio);
         state.mod_sig_cm1[row_index] = strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1;
         state.half_width_cm1_at_t[row_index] = strong_line.air_half_width_cm1 *

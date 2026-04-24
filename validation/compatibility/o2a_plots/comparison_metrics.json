@@ -6,27 +6,27 @@
   "generated_spectrum_path": "validation/compatibility/o2a_plots/generated_spectrum.csv",
   "profile_summary_path": "validation/compatibility/o2a_plots/profile_summary.json",
   "reflectance": {
-    "mae": 5.2869652274625586e-11,
-    "rmse": 6.807967143010902e-11,
-    "max_abs": 2.3790000525103494e-10,
-    "max_abs_wavelength_nm": 766.76,
+    "mae": 6.084576073883986e-13,
+    "rmse": 8.934428336399892e-13,
+    "max_abs": 3.8066702567896016e-12,
+    "max_abs_wavelength_nm": 759.68,
     "correlation": 1.0,
-    "mean_signed": 3.453401749781038e-11
+    "mean_signed": 8.633945664533926e-14
   },
   "radiance": {
-    "mae": 3723.8951498730885,
-    "rmse": 4901.320423924954,
-    "max_abs": 14870.0,
-    "max_abs_wavelength_nm": 766.76,
+    "mae": 46.06930328673881,
+    "rmse": 67.75879629451126,
+    "max_abs": 294.3447265625,
+    "max_abs_wavelength_nm": 759.68,
     "correlation": 1.0,
-    "mean_signed": 2629.5099858217336
+    "mean_signed": 7.066863970137526
   },
   "irradiance": {
-    "mae": 24981.455064194008,
-    "rmse": 28821.795426091212,
-    "max_abs": 50000.0,
-    "max_abs_wavelength_nm": 760.01,
-    "correlation": 0.9999999999999998,
-    "mean_signed": 259.3437945791726
+    "mae": 4.351194721825963,
+    "rmse": 7.297214323617433,
+    "max_abs": 29.25,
+    "max_abs_wavelength_nm": 766.67,
+    "correlation": 1.0,
+    "mean_signed": -0.8166012838801712
   }
 }

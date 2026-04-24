@@ -8,6 +8,12 @@ pub const hitran_reference_temperature_k = 296.0;
 pub const hitran_boltzmann_constant_j_per_k = 1.3806488e-23;
 pub const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;
 pub const hitran_hc_over_kb_cm_k = 1.4387770;
+// PARITY:
+//   DISAMAR keeps the module-wide `hc_kB = 1.4387770D0` for ordinary HITRAN
+//   absorption but `HITRANModule::ConvTP` uses a local `A = 1.43877696D0`
+//   when temperature-scaling O2 line-mixing populations. Keep both constants
+//   literal because the difference is visible at O2 A parity precision.
+pub const hitran_o2_line_mixing_hc_over_kb_cm_k = 1.43877696;
 pub const hitran_gas_constant_j_per_mol_k = 8.3144621;
 pub const hitran_speed_of_light_m_per_s = 2.99792458e8;
 pub const min_spectroscopy_pressure_atm = 1.0e-12;
