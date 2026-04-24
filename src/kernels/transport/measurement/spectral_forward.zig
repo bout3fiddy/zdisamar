@@ -39,7 +39,7 @@ pub const ForwardIntegratedSample = struct {
 };
 
 pub const ForwardCacheMiss = struct {
-    key: i64,
+    key: u64,
     wavelength_nm: f64,
 };
 

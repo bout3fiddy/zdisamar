@@ -11,11 +11,12 @@
 //!   `measurement spectral evaluation` stage
 //!
 //! Design:
-//!   Caches at a fixed wavelength quantization so the measurement reduction
-//!   can reuse forward and irradiance results without changing solver physics.
+//!   Caches by exact wavelength bits so the measurement reduction can reuse
+//!   repeated forward and irradiance samples without collapsing adjacent
+//!   adaptive high-resolution wavelengths.
 //!
 //! Invariants:
-//!   Cache keys must be stable for a given wavelength quantization and the
+//!   Cache keys must distinguish adjacent adaptive O2A samples, and the
 //!   bundled O2A irradiance reference remains band-limited.
 //!
 //! Validation:
@@ -34,26 +35,22 @@ const Allocator = std.mem.Allocator;
 const OperationalInstrumentIntegration = @import("../../../o2a/providers/instrument.zig").IntegrationKernel;
 const Error = Workspace.Error;
 
-// DECISION:
-//   Quantize spectral cache keys at the sub-picometer scale so repeated
-//   transport samples reuse the same cache entry without altering physics.
-const spectral_cache_quantization_nm = 1.0e-6;
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
 pub const ForwardCacheMiss = spectral_forward.ForwardCacheMiss;
 
-/// Quantized spectral cache for repeated forward and irradiance samples.
+/// Exact-wavelength spectral cache for repeated forward and irradiance samples.
 pub const SpectralEvaluationCache = struct {
     allocator: Allocator,
-    forward: std.AutoHashMap(i64, ForwardIntegratedSample),
-    irradiance: std.AutoHashMap(i64, f64),
+    forward: std.AutoHashMap(u64, ForwardIntegratedSample),
+    irradiance: std.AutoHashMap(u64, f64),
 
     /// Purpose:
     ///   Initialize the cache buckets for one measurement-space sweep.
     pub fn init(allocator: Allocator) SpectralEvaluationCache {
         return .{
             .allocator = allocator,
-            .forward = std.AutoHashMap(i64, ForwardIntegratedSample).init(allocator),
-            .irradiance = std.AutoHashMap(i64, f64).init(allocator),
+            .forward = std.AutoHashMap(u64, ForwardIntegratedSample).init(allocator),
+            .irradiance = std.AutoHashMap(u64, f64).init(allocator),
         };
     }
 
@@ -66,9 +63,9 @@ pub const SpectralEvaluationCache = struct {
     }
 
     /// Purpose:
-    ///   Quantize a wavelength into the cache key space.
-    pub fn keyFor(wavelength_nm: f64) i64 {
-        return @as(i64, @intFromFloat(std.math.round(wavelength_nm / spectral_cache_quantization_nm)));
+    ///   Convert an exact finite wavelength value into the cache key space.
+    pub fn keyFor(wavelength_nm: f64) u64 {
+        return @as(u64, @bitCast(wavelength_nm));
     }
 };
 
@@ -260,9 +257,6 @@ pub fn cachedForwardAtWavelength(
     const key = SpectralEvaluationCache.keyFor(wavelength_nm);
     if (cache.forward.get(key)) |cached| return cached;
 
-    // GOTCHA:
-    //   Cache keys are quantized, so nearby samples share the same storage
-    //   entry to match the measurement-space reuse contract.
     const sample = try spectral_forward.computeForwardSampleAtWavelength(
         allocator,
         scene,
@@ -308,4 +302,10 @@ fn cachedIrradianceAtWavelength(
         irradianceAtWavelength(scene, prepared, wavelength_nm, safe_span);
     try cache.irradiance.put(key, value);
     return value;
+}
+
+test "spectral cache key distinguishes adjacent adaptive samples" {
+    const first = 759.637013770239;
+    const second = 759.6370143839599;
+    try std.testing.expect(SpectralEvaluationCache.keyFor(first) != SpectralEvaluationCache.keyFor(second));
 }

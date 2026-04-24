@@ -133,7 +133,7 @@ pub fn collectUniqueForwardMisses(
     allocator: Allocator,
     plans: []const SamplePlan,
 ) ![]SpectralEval.ForwardCacheMiss {
-    var seen = std.AutoHashMap(i64, void).init(allocator);
+    var seen = std.AutoHashMap(u64, void).init(allocator);
     defer seen.deinit();
     var misses = std.ArrayList(SpectralEval.ForwardCacheMiss).empty;
     errdefer misses.deinit(allocator);
