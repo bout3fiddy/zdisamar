@@ -18,6 +18,7 @@ pub const spectrum_name = "generated_spectrum.csv";
 
 pub const CliConfig = struct {
     output_dir: []u8,
+    case_yaml_path: ?[]const u8 = null,
     repeat_count: u32 = 1,
     write_spectrum: bool = false,
     preset: Preset = .full,
@@ -228,8 +229,10 @@ pub fn runProfileWorkflowWithExecutionOverrides(
     var accumulator: ReportAccumulator = .{};
     for (0..config.repeat_count) |run_index| {
         var total_timer = std.time.Timer.start() catch unreachable;
-        var profile_case = try o2a_parity.runDefaultProfileCase(
+        const case_yaml_path = config.case_yaml_path orelse o2a_parity.default_yaml_path;
+        var profile_case = try o2a_parity.runProfileCaseFromFile(
             allocator,
+            case_yaml_path,
             execution_overrides,
         );
         defer profile_case.deinit(allocator);

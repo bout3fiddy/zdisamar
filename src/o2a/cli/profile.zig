@@ -52,6 +52,12 @@ fn parseArgs(
             config.output_dir = try allocator.dupe(u8, args[index]);
             continue;
         }
+        if (std.mem.eql(u8, arg, "--case-yaml")) {
+            index += 1;
+            if (index >= args.len) return error.MissingCaseYaml;
+            config.case_yaml_path = args[index];
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--repeat")) {
             index += 1;
             if (index >= args.len) return error.MissingRepeatCount;

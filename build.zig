@@ -284,6 +284,20 @@ pub fn build(b: *std.Build) void {
     );
     o2a_plots_step.dependOn(&o2a_plot_bundle_cmd.step);
 
+    const o2a_variant_plot_bundle_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_variant_plot_bundle.py",
+        "--profile-exe",
+        "zig-out/bin/zdisamar-o2a-forward-profile",
+    });
+    o2a_variant_plot_bundle_cmd.step.dependOn(&profile_install.step);
+    const o2a_variant_plot_bundle_step = b.step(
+        "o2a-variant-plot-bundle",
+        "Generate an untracked O2A comparison bundle for a perturbed vendor/zdisamar case",
+    );
+    o2a_variant_plot_bundle_step.dependOn(&o2a_variant_plot_bundle_cmd.step);
+
     const o2a_vendor_reference_refresh_cmd = b.addSystemCommand(&.{
         "uv",
         "run",

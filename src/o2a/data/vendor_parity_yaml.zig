@@ -114,7 +114,15 @@ pub fn runDefaultReflectanceCase(
     allocator: std.mem.Allocator,
     overrides: ExecutionOverrides,
 ) !VendorO2AReflectanceCase {
-    var loaded = try loadDefaultResolvedCase(allocator);
+    return runReflectanceCaseFromFile(allocator, default_yaml_path, overrides);
+}
+
+pub fn runReflectanceCaseFromFile(
+    allocator: std.mem.Allocator,
+    yaml_path: []const u8,
+    overrides: ExecutionOverrides,
+) !VendorO2AReflectanceCase {
+    var loaded = try loadResolvedCaseFromFile(allocator, yaml_path);
     defer loaded.deinit();
     applyExecutionOverrides(&loaded.resolved, overrides);
     return parity_support.runResolvedVendorO2AReflectanceCase(allocator, &loaded.resolved);
@@ -124,7 +132,15 @@ pub fn runDefaultProfileCase(
     allocator: std.mem.Allocator,
     overrides: ExecutionOverrides,
 ) !VendorO2AProfileCase {
-    var loaded = try loadDefaultResolvedCase(allocator);
+    return runProfileCaseFromFile(allocator, default_yaml_path, overrides);
+}
+
+pub fn runProfileCaseFromFile(
+    allocator: std.mem.Allocator,
+    yaml_path: []const u8,
+    overrides: ExecutionOverrides,
+) !VendorO2AProfileCase {
+    var loaded = try loadResolvedCaseFromFile(allocator, yaml_path);
     defer loaded.deinit();
     applyExecutionOverrides(&loaded.resolved, overrides);
     return parity_support.runResolvedVendorO2AProfileCase(allocator, &loaded.resolved);
@@ -134,7 +150,15 @@ pub fn prepareDefaultTraceCase(
     allocator: std.mem.Allocator,
     overrides: ExecutionOverrides,
 ) !VendorO2ATracePreparation {
-    var loaded = try loadDefaultResolvedCase(allocator);
+    return prepareTraceCaseFromFile(allocator, default_yaml_path, overrides);
+}
+
+pub fn prepareTraceCaseFromFile(
+    allocator: std.mem.Allocator,
+    yaml_path: []const u8,
+    overrides: ExecutionOverrides,
+) !VendorO2ATracePreparation {
+    var loaded = try loadResolvedCaseFromFile(allocator, yaml_path);
     defer loaded.deinit();
     applyExecutionOverrides(&loaded.resolved, overrides);
     return parity_support.prepareResolvedVendorO2ATraceCase(allocator, &loaded.resolved);
