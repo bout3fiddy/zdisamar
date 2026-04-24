@@ -23,6 +23,9 @@ pub const PreparedOpticalState = struct {
     continuum_points: []ReferenceData.CrossSectionPoint,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
     spectroscopy_lines: ?ReferenceData.SpectroscopyLineList = null,
+    spectroscopy_profile_altitudes_km: []f64 = &.{},
+    spectroscopy_profile_pressures_hpa: []f64 = &.{},
+    spectroscopy_profile_temperatures_k: []f64 = &.{},
     cross_section_absorbers: []Types.PreparedCrossSectionAbsorber = &.{},
     line_absorbers: []Types.PreparedLineAbsorber = &.{},
     continuum_owner_species: ?AbsorberModel.AbsorberSpecies = null,
@@ -99,6 +102,9 @@ pub const PreparedOpticalState = struct {
                 owned.deinit(allocator);
             }
         }
+        if (self.spectroscopy_profile_altitudes_km.len != 0) allocator.free(self.spectroscopy_profile_altitudes_km);
+        if (self.spectroscopy_profile_pressures_hpa.len != 0) allocator.free(self.spectroscopy_profile_pressures_hpa);
+        if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
         self.aerosol_fraction_control.deinitOwned(allocator);
         self.cloud_fraction_control.deinitOwned(allocator);
         if (self.owns_operational_o2_lut) {
@@ -281,6 +287,28 @@ pub const PreparedOpticalState = struct {
         );
     }
 
+    pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
+        self: *const PreparedOpticalState,
+        scene: ?*const Scene,
+        altitude_km: f64,
+        wavelength_nm: f64,
+        sublayer_start_index: usize,
+        sublayers: []const Types.PreparedSublayer,
+        strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+        profile_cache: ?*const @import("state_spectroscopy.zig").ProfileNodeSpectroscopyCache,
+    ) Types.EvaluatedLayer {
+        return @import("state_optical_depth.zig").evaluateLayerAtWavelengthWithSpectroscopyCache(
+            self,
+            scene,
+            altitude_km,
+            wavelength_nm,
+            sublayer_start_index,
+            sublayers,
+            strong_line_states,
+            profile_cache,
+        );
+    }
+
     pub fn spectroscopySigmaAtWavelength(
         self: *const PreparedOpticalState,
         wavelength_nm: f64,
@@ -294,6 +322,82 @@ pub const PreparedOpticalState = struct {
             temperature_k,
             pressure_hpa,
             prepared_state,
+        );
+    }
+
+    pub fn spectroscopyEvaluationAtAltitude(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        altitude_km: f64,
+        prepared_state: ?*const ReferenceData.StrongLinePreparedState,
+    ) ReferenceData.SpectroscopyEvaluation {
+        return @import("state_spectroscopy.zig").spectroscopyEvaluationAtAltitude(
+            self,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+            altitude_km,
+            prepared_state,
+        );
+    }
+
+    pub fn spectroscopyEvaluationAtAltitudeWithCache(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        altitude_km: f64,
+        prepared_state: ?*const ReferenceData.StrongLinePreparedState,
+        profile_cache: ?*const @import("state_spectroscopy.zig").ProfileNodeSpectroscopyCache,
+    ) ReferenceData.SpectroscopyEvaluation {
+        return @import("state_spectroscopy.zig").spectroscopyEvaluationAtAltitudeWithCache(
+            self,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+            altitude_km,
+            prepared_state,
+            profile_cache,
+        );
+    }
+
+    pub fn spectroscopySigmaAtAltitude(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        altitude_km: f64,
+        prepared_state: ?*const ReferenceData.StrongLinePreparedState,
+    ) f64 {
+        return @import("state_spectroscopy.zig").spectroscopyEvaluationAtAltitude(
+            self,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+            altitude_km,
+            prepared_state,
+        ).total_sigma_cm2_per_molecule;
+    }
+
+    pub fn spectroscopySigmaAtAltitudeWithCache(
+        self: *const PreparedOpticalState,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        altitude_km: f64,
+        prepared_state: ?*const ReferenceData.StrongLinePreparedState,
+        profile_cache: ?*const @import("state_spectroscopy.zig").ProfileNodeSpectroscopyCache,
+    ) f64 {
+        return @import("state_spectroscopy.zig").spectroscopySigmaAtAltitudeWithCache(
+            self,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+            altitude_km,
+            prepared_state,
+            profile_cache,
         );
     }
 

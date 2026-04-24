@@ -5,6 +5,7 @@ const ParticleProfiles = @import("../prepare/particle_profiles.zig");
 const PhaseFunctions = @import("../prepare/phase_functions.zig");
 const State = @import("state.zig");
 const Scalar = @import("state_scalar.zig");
+const SpectroscopyState = @import("state_spectroscopy.zig");
 
 const PreparedSublayer = State.PreparedSublayer;
 const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
@@ -71,6 +72,7 @@ pub const InterpolatedQuadratureState = struct {
     temperature_k: f64,
     number_density_cm3: f64,
     oxygen_number_density_cm3: f64,
+    cia_pair_density_cm6: f64 = 0.0,
     absorber_number_density_cm3: f64,
     aerosol_optical_depth_per_km: f64,
     cloud_optical_depth_per_km: f64,
@@ -78,6 +80,13 @@ pub const InterpolatedQuadratureState = struct {
     cloud_single_scatter_albedo: f64,
     aerosol_phase_coefficients: [phase_coefficient_count]f64,
     cloud_phase_coefficients: [phase_coefficient_count]f64,
+
+    fn ciaPairDensityCm6(self: InterpolatedQuadratureState) f64 {
+        return if (self.cia_pair_density_cm6 > 0.0)
+            self.cia_pair_density_cm6
+        else
+            self.oxygen_number_density_cm3 * self.oxygen_number_density_cm3;
+    }
 };
 
 fn opticalDepthPerKilometer(optical_depth: f64, path_length_cm: f64) f64 {
@@ -131,18 +140,37 @@ pub fn sharedBoundaryCarrierAtLevel(
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     level_geometry: SharedRtmLevelGeometry,
 ) SharedBoundaryCarrier {
+    return sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
+        self,
+        wavelength_nm,
+        sublayers,
+        strong_line_states,
+        level_geometry,
+        null,
+    );
+}
+
+pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+) SharedBoundaryCarrier {
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) return .{};
     const strong_line_state = if (strong_line_states) |states|
         if (boundary_row_index < states.len) &states[boundary_row_index] else null
     else
         null;
-    const gas_carrier = sharedOpticalCarrierAtSupportRow(
+    const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
         sublayers[boundary_row_index],
         boundary_row_index,
         strong_line_state,
+        profile_cache,
     );
     const particle_above = particleBoundaryCarrierFromIndex(
         self,
@@ -163,8 +191,9 @@ pub fn sharedBoundaryCarrierAtLevel(
         .particle_scattering_optical_depth_below_per_km = particle_below.totalScatteringOpticalDepthPerKm(),
         .ksca_above = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm(),
         .ksca_below = gas_scattering_optical_depth_per_km + particle_below.totalScatteringOpticalDepthPerKm(),
-        .gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficients(),
+        .gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm),
         .phase_coefficients_above = PhaseFunctions.combinePhaseCoefficients(
+            wavelength_nm,
             gas_scattering_optical_depth_per_km,
             particle_above.aerosol_scattering_optical_depth_per_km,
             particle_above.cloud_scattering_optical_depth_per_km,
@@ -172,6 +201,7 @@ pub fn sharedBoundaryCarrierAtLevel(
             particle_above.cloud_phase_coefficients,
         ),
         .phase_coefficients_below = PhaseFunctions.combinePhaseCoefficients(
+            wavelength_nm,
             gas_scattering_optical_depth_per_km,
             particle_below.aerosol_scattering_optical_depth_per_km,
             particle_below.cloud_scattering_optical_depth_per_km,
@@ -188,6 +218,24 @@ pub fn sharedActiveCarrierAtLevel(
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     level_geometry: SharedRtmLevelGeometry,
 ) SharedOpticalCarrier {
+    return sharedActiveCarrierAtLevelWithSpectroscopyCache(
+        self,
+        wavelength_nm,
+        sublayers,
+        strong_line_states,
+        level_geometry,
+        null,
+    );
+}
+
+pub fn sharedActiveCarrierAtLevelWithSpectroscopyCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+) SharedOpticalCarrier {
     const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
     if (boundary_row_index >= sublayers.len) return .{};
 
@@ -195,12 +243,13 @@ pub fn sharedActiveCarrierAtLevel(
         if (boundary_row_index < states.len) &states[boundary_row_index] else null
     else
         null;
-    const gas_carrier = sharedOpticalCarrierAtSupportRow(
+    const gas_carrier = sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         self,
         wavelength_nm,
         sublayers[boundary_row_index],
         boundary_row_index,
         strong_line_state,
+        profile_cache,
     );
 
     const below_index_u32 = level_geometry.particle_below_support_row_index;
@@ -212,13 +261,13 @@ pub fn sharedActiveCarrierAtLevel(
         const above_index: usize = @intCast(above_index_u32);
         if (above_index >= sublayers.len) return gas_carrier;
         const particle = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[above_index]);
-        return composeSharedActiveCarrier(gas_carrier, particle, particle, 0.0);
+        return composeSharedActiveCarrier(wavelength_nm, gas_carrier, particle, particle, 0.0);
     }
     if (above_index_u32 == invalid_index) {
         const below_index: usize = @intCast(below_index_u32);
         if (below_index >= sublayers.len) return gas_carrier;
         const particle = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, sublayers[below_index]);
-        return composeSharedActiveCarrier(gas_carrier, particle, particle, 0.0);
+        return composeSharedActiveCarrier(wavelength_nm, gas_carrier, particle, particle, 0.0);
     }
 
     const below_index: usize = @intCast(below_index_u32);
@@ -234,10 +283,11 @@ pub fn sharedActiveCarrierAtLevel(
         0.5;
     const particle_below = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, below_row);
     const particle_above = particleBoundaryCarrierAtSupportRow(self, wavelength_nm, above_row);
-    return composeSharedActiveCarrier(gas_carrier, particle_below, particle_above, fraction);
+    return composeSharedActiveCarrier(wavelength_nm, gas_carrier, particle_below, particle_above, fraction);
 }
 
 fn composeSharedActiveCarrier(
+    wavelength_nm: f64,
     gas_carrier: SharedOpticalCarrier,
     particle_below: ParticleBoundaryCarrier,
     particle_above: ParticleBoundaryCarrier,
@@ -281,6 +331,7 @@ fn composeSharedActiveCarrier(
         .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
         .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
+            wavelength_nm,
             gas_carrier.gas_scattering_optical_depth_per_km,
             aerosol_scattering_optical_depth_per_km,
             cloud_scattering_optical_depth_per_km,
@@ -297,8 +348,9 @@ fn interpolatePhaseCoefficientsByScattering(
     right_phase_coefficients: [phase_coefficient_count]f64,
     fraction: f64,
 ) [phase_coefficient_count]f64 {
-    const left_weight = 1.0 - fraction;
-    const right_weight = fraction;
+    const clamped_fraction = std.math.clamp(fraction, 0.0, 1.0);
+    const left_weight = 1.0 - clamped_fraction;
+    const right_weight = clamped_fraction;
     const interpolated_scattering_per_km =
         left_weight * left_scattering_per_km +
         right_weight * right_scattering_per_km;
@@ -331,8 +383,8 @@ fn interpolateQuadratureStateBetweenSublayers(
     else
         0.0;
     const clamped_fraction = std.math.clamp(fraction, 0.0, 1.0);
-    const left_weight = 1.0 - fraction;
-    const right_weight = fraction;
+    const left_weight = 1.0 - clamped_fraction;
+    const right_weight = clamped_fraction;
 
     const left_aerosol_per_km = opticalDepthPerKilometer(left.aerosol_optical_depth, left.path_length_cm);
     const right_aerosol_per_km = opticalDepthPerKilometer(right.aerosol_optical_depth, right.path_length_cm);
@@ -348,6 +400,7 @@ fn interpolateQuadratureStateBetweenSublayers(
         .temperature_k = @max(left_weight * left.temperature_k + right_weight * right.temperature_k, 0.0),
         .number_density_cm3 = @max(left_weight * left.number_density_cm3 + right_weight * right.number_density_cm3, 0.0),
         .oxygen_number_density_cm3 = @max(left_weight * left.oxygen_number_density_cm3 + right_weight * right.oxygen_number_density_cm3, 0.0),
+        .cia_pair_density_cm6 = @max(left_weight * left.ciaPairDensityCm6() + right_weight * right.ciaPairDensityCm6(), 0.0),
         .absorber_number_density_cm3 = @max(left_weight * left.absorber_number_density_cm3 + right_weight * right.absorber_number_density_cm3, 0.0),
         .aerosol_optical_depth_per_km = @max(left_weight * left_aerosol_per_km + right_weight * right_aerosol_per_km, 0.0),
         .cloud_optical_depth_per_km = @max(left_weight * left_cloud_per_km + right_weight * right_cloud_per_km, 0.0),
@@ -391,6 +444,7 @@ fn interpolateQuadratureStateAtAltitude(
             .temperature_k = sublayer.temperature_k,
             .number_density_cm3 = sublayer.number_density_cm3,
             .oxygen_number_density_cm3 = sublayer.oxygen_number_density_cm3,
+            .cia_pair_density_cm6 = sublayer.ciaPairDensityCm6(),
             .absorber_number_density_cm3 = sublayer.absorber_number_density_cm3,
             .aerosol_optical_depth_per_km = opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
             .cloud_optical_depth_per_km = opticalDepthPerKilometer(sublayer.cloud_optical_depth, sublayer.path_length_cm),
@@ -424,12 +478,31 @@ pub fn quadratureCarrierAtAltitude(
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     altitude_km: f64,
 ) PreparedQuadratureCarrier {
-    const carrier = sharedOpticalCarrierAtAltitude(
+    return quadratureCarrierAtAltitudeWithSpectroscopyCache(
         self,
         wavelength_nm,
         sublayers,
         strong_line_states,
         altitude_km,
+        null,
+    );
+}
+
+pub fn quadratureCarrierAtAltitudeWithSpectroscopyCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    altitude_km: f64,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+) PreparedQuadratureCarrier {
+    const carrier = sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
+        self,
+        wavelength_nm,
+        sublayers,
+        strong_line_states,
+        altitude_km,
+        profile_cache,
     );
     return .{
         .ksca = carrier.totalScatteringOpticalDepthPerKm(),
@@ -516,6 +589,24 @@ pub fn sharedOpticalCarrierAtSupportRow(
     global_sublayer_index: usize,
     strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
 ) SharedOpticalCarrier {
+    return sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
+        self,
+        wavelength_nm,
+        sublayer,
+        global_sublayer_index,
+        strong_line_state,
+        null,
+    );
+}
+
+pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+) SharedOpticalCarrier {
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
     const continuum_sigma = if (self.cross_section_absorbers.len == 0)
         continuum_table.interpolateSigma(wavelength_nm)
@@ -529,19 +620,14 @@ pub fn sharedOpticalCarrierAtSupportRow(
             global_sublayer_index,
         )
     else
-        ReferenceData.SpectroscopyEvaluation{
-            .weak_line_sigma_cm2_per_molecule = 0.0,
-            .strong_line_sigma_cm2_per_molecule = 0.0,
-            .line_sigma_cm2_per_molecule = 0.0,
-            .line_mixing_sigma_cm2_per_molecule = 0.0,
-            .total_sigma_cm2_per_molecule = self.spectroscopySigmaAtWavelength(
-                wavelength_nm,
-                sublayer.temperature_k,
-                sublayer.pressure_hpa,
-                strong_line_state,
-            ),
-            .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-        };
+        self.spectroscopyEvaluationAtAltitudeWithCache(
+            wavelength_nm,
+            sublayer.temperature_k,
+            sublayer.pressure_hpa,
+            sublayer.altitude_km,
+            strong_line_state,
+            profile_cache,
+        );
     var cross_section_density_cm3: f64 = 0.0;
     var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
     for (self.cross_section_absorbers) |cross_section_absorber| {
@@ -586,8 +672,7 @@ pub fn sharedOpticalCarrierAtSupportRow(
             sublayer.temperature_k,
             sublayer.pressure_hpa,
         ) *
-        sublayer.oxygen_number_density_cm3 *
-        sublayer.oxygen_number_density_cm3 *
+        sublayer.ciaPairDensityCm6() *
         centimeters_per_kilometer;
     const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
         opticalDepthPerKilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
@@ -614,6 +699,7 @@ pub fn sharedOpticalCarrierAtSupportRow(
         .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
         .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
+            wavelength_nm,
             gas_scattering_optical_depth_per_km,
             aerosol_scattering_optical_depth_per_km,
             cloud_scattering_optical_depth_per_km,
@@ -629,6 +715,24 @@ pub fn sharedOpticalCarrierAtAltitude(
     sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
     altitude_km: f64,
+) SharedOpticalCarrier {
+    return sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
+        self,
+        wavelength_nm,
+        sublayers,
+        strong_line_states,
+        altitude_km,
+        null,
+    );
+}
+
+pub fn sharedOpticalCarrierAtAltitudeWithSpectroscopyCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    altitude_km: f64,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) SharedOpticalCarrier {
     const state = interpolateQuadratureStateAtAltitude(sublayers, altitude_km) orelse return .{};
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
@@ -651,11 +755,13 @@ pub fn sharedOpticalCarrierAtAltitude(
             state.oxygen_number_density_cm3,
         ).total_sigma_cm2_per_molecule
     else
-        self.spectroscopySigmaAtWavelength(
+        self.spectroscopySigmaAtAltitudeWithCache(
             wavelength_nm,
             state.temperature_k,
             state.pressure_hpa,
+            altitude_km,
             prepared_state,
+            profile_cache,
         );
     var cross_section_density_cm3: f64 = 0.0;
     var cross_section_absorption_optical_depth_per_km: f64 = 0.0;
@@ -708,8 +814,7 @@ pub fn sharedOpticalCarrierAtAltitude(
             state.temperature_k,
             state.pressure_hpa,
         ) *
-        state.oxygen_number_density_cm3 *
-        state.oxygen_number_density_cm3 *
+        state.ciaPairDensityCm6() *
         centimeters_per_kilometer;
     const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
         state.aerosol_optical_depth_per_km,
@@ -737,6 +842,7 @@ pub fn sharedOpticalCarrierAtAltitude(
         .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
         .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
+            wavelength_nm,
             gas_scattering_optical_depth_per_km,
             aerosol_scattering_optical_depth_per_km,
             cloud_scattering_optical_depth_per_km,
@@ -1001,4 +1107,51 @@ test "shared RTM active levels retain particle scattering from adjacent parity s
     try std.testing.expectApproxEqAbs(gas_middle, carrier.gas_scattering_optical_depth_per_km, 1.0e-12);
     try std.testing.expectApproxEqAbs(0.3, carrier.aerosol_scattering_optical_depth_per_km, 1.0e-12);
     try std.testing.expect(carrier.totalScatteringOpticalDepthPerKm() > gas_middle);
+}
+
+test "quadrature-state interpolation clamps scalar state at the support-row ends" {
+    const zero_phase = PhaseFunctions.zeroPhaseCoefficients();
+    const aerosol_phase = PhaseFunctions.hgPhaseCoefficients(0.65);
+    const sublayers = [_]PreparedSublayer{
+        .{
+            .altitude_km = 1.0,
+            .pressure_hpa = 900.0,
+            .temperature_k = 280.0,
+            .number_density_cm3 = 2.0e19,
+            .oxygen_number_density_cm3 = 4.0e18,
+            .absorber_number_density_cm3 = 2.0e19,
+            .path_length_cm = 1.0e5,
+            .aerosol_optical_depth = 0.4,
+            .cloud_optical_depth = 0.0,
+            .aerosol_single_scatter_albedo = 0.5,
+            .cloud_single_scatter_albedo = 0.0,
+            .aerosol_phase_coefficients = aerosol_phase,
+            .cloud_phase_coefficients = zero_phase,
+        },
+        .{
+            .altitude_km = 2.0,
+            .pressure_hpa = 700.0,
+            .temperature_k = 260.0,
+            .number_density_cm3 = 1.5e19,
+            .oxygen_number_density_cm3 = 3.0e18,
+            .absorber_number_density_cm3 = 1.5e19,
+            .path_length_cm = 1.0e5,
+            .aerosol_optical_depth = 0.2,
+            .cloud_optical_depth = 0.0,
+            .aerosol_single_scatter_albedo = 0.5,
+            .cloud_single_scatter_albedo = 0.0,
+            .aerosol_phase_coefficients = aerosol_phase,
+            .cloud_phase_coefficients = zero_phase,
+        },
+    };
+
+    const below = interpolateQuadratureStateAtAltitude(sublayers[0..], 0.0).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 900.0), below.pressure_hpa, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 280.0), below.temperature_k, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.4), below.aerosol_optical_depth_per_km, 1.0e-12);
+
+    const above = interpolateQuadratureStateAtAltitude(sublayers[0..], 3.0).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 700.0), above.pressure_hpa, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 260.0), above.temperature_k, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.2), above.aerosol_optical_depth_per_km, 1.0e-12);
 }

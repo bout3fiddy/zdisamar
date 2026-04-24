@@ -43,6 +43,7 @@ const providers = @import("../providers/root.zig");
 const reference_assets = @import("../../adapters/ingest/reference_assets.zig");
 const transport_common = @import("../../kernels/transport/common.zig");
 const parity_types = @import("vendor_parity_types.zig");
+const adaptive_plan = @import("../providers/instrument/adaptive_plan.zig");
 const instrument_types = @import("../providers/instrument/types.zig");
 
 const Allocator = std.mem.Allocator;
@@ -153,6 +154,15 @@ pub fn loadResolvedVendorO2AInputs(
     defer profile_asset.deinit(allocator);
     var profile = try profile_asset.toClimatologyProfile(allocator);
     errdefer profile.deinit(allocator);
+    const dense_profile = try profile.densifyVendorPressureGrid(allocator, resolved.surface_pressure_hpa);
+    var spectroscopy_profile = try buildVendorTraceGasSpectroscopyProfile(
+        allocator,
+        profile,
+        dense_profile,
+    );
+    errdefer spectroscopy_profile.deinit(allocator);
+    profile.deinit(allocator);
+    profile = dense_profile;
 
     var cross_sections = try bundled_optics.zeroContinuumTable(allocator, 758.0, 771.0);
     errdefer cross_sections.deinit(allocator);
@@ -193,6 +203,7 @@ pub fn loadResolvedVendorO2AInputs(
 
     return .{
         .profile = profile,
+        .spectroscopy_profile = spectroscopy_profile,
         .cross_sections = cross_sections,
         .line_list = line_list,
         .cia_table = cia_table,
@@ -200,6 +211,39 @@ pub fn loadResolvedVendorO2AInputs(
         .reference = reference,
         .raw_solar_spectrum = raw_solar_spectrum,
     };
+}
+
+/// Purpose:
+///   Build the trace-gas spectroscopy support grid used by the vendor O2A
+///   parity path.
+///
+/// Physics:
+///   DISAMAR evaluates line absorption at the configured trace-gas pressure
+///   nodes, but maps those nodes onto altitude through the realized dense
+///   pressure-altitude grid before splining cross sections to RTM sublayers.
+///
+/// Vendor:
+///   `propAtmosphere::update_T_z_other_grids`
+fn buildVendorTraceGasSpectroscopyProfile(
+    allocator: Allocator,
+    source_profile: ReferenceDataModel.ClimatologyProfile,
+    dense_profile: ReferenceDataModel.ClimatologyProfile,
+) !ReferenceDataModel.ClimatologyProfile {
+    const rows = try allocator.alloc(ReferenceDataModel.ClimatologyPoint, source_profile.rows.len);
+    errdefer allocator.free(rows);
+
+    for (source_profile.rows, rows) |source_row, *target_row| {
+        const pressure_hpa = source_row.pressure_hpa;
+        const temperature_k = source_row.temperature_k;
+        target_row.* = .{
+            .altitude_km = dense_profile.interpolateAltitudeForPressureSpline(pressure_hpa),
+            .pressure_hpa = pressure_hpa,
+            .temperature_k = temperature_k,
+            .air_number_density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / 1.380658e-19,
+        };
+    }
+
+    return .{ .rows = rows };
 }
 
 /// Purpose:
@@ -429,6 +473,7 @@ pub fn prepareResolvedVendorO2ATraceCase(
 
     var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
         .profile = &inputs.profile,
+        .spectroscopy_profile = &inputs.spectroscopy_profile,
         .cross_sections = &inputs.cross_sections,
         .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
         .spectroscopy_lines = &inputs.line_list,
@@ -437,6 +482,7 @@ pub fn prepareResolvedVendorO2ATraceCase(
     errdefer prepared.deinit(allocator);
     if (phase_profile_out) |profile| profile.optics_preparation_ns = if (timer) |*owned| owned.lap() else 0;
 
+    try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
     try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
 
     const route = try prepareResolvedVendorO2ARoute(&scene, resolved.rtm_controls);
@@ -448,6 +494,66 @@ pub fn prepareResolvedVendorO2ATraceCase(
         .route = route,
         .prepared = prepared,
     };
+}
+
+/// Purpose:
+///   Attach the realized DISAMAR HR support grid to the O2 line list used by
+///   the vendor-parity runtime.
+///
+/// Vendor:
+///   `DISAMARModule::setupHRWavelengthGrid` and
+///   `HITRANModule::CalculatAbsXsec`
+///
+/// Decisions:
+///   The adaptive grid is a runtime consequence of the resolved scene and line
+///   list, not a parsed config field. Keeping it on spectroscopy runtime
+///   controls lets line evaluation preserve DISAMAR's nearest-index weak-line
+///   cutoff rule without making kernels depend on file-driven vendor state.
+fn installVendorWeakCutoffGrid(
+    allocator: Allocator,
+    scene: *const Scene,
+    prepared: *OpticsPrepare.PreparedOpticalState,
+) !void {
+    const response = scene.observation_model.resolvedChannelControls(.radiance).response;
+    var has_cutoff_line_list = false;
+    if (prepared.spectroscopy_lines) |line_list| {
+        has_cutoff_line_list = line_list.runtime_controls.cutoff_cm1 != null;
+    }
+    for (prepared.line_absorbers) |line_absorber| {
+        has_cutoff_line_list = has_cutoff_line_list or line_absorber.line_list.runtime_controls.cutoff_cm1 != null;
+    }
+    if (!has_cutoff_line_list) return;
+
+    const support = try adaptive_plan.buildAdaptiveSupportWavelengths(
+        allocator,
+        scene,
+        prepared,
+        response,
+    ) orelse {
+        return error.DisamarKernelRealizationFailed;
+    };
+    defer allocator.free(support);
+    if (support.len < 2) return error.DisamarKernelRealizationFailed;
+
+    if (prepared.spectroscopy_lines) |*line_list| {
+        try installCutoffGridOnLineList(allocator, line_list, support);
+    }
+    for (prepared.line_absorbers) |*line_absorber| {
+        try installCutoffGridOnLineList(allocator, &line_absorber.line_list, support);
+    }
+}
+
+fn installCutoffGridOnLineList(
+    allocator: Allocator,
+    line_list: *ReferenceDataModel.SpectroscopyLineList,
+    support_wavelengths_nm: []const f64,
+) !void {
+    if (line_list.runtime_controls.cutoff_cm1 == null) return;
+    const owned_support = try allocator.dupe(f64, support_wavelengths_nm);
+    if (line_list.runtime_controls.cutoff_grid_wavelengths_nm.len != 0) {
+        allocator.free(line_list.runtime_controls.cutoff_grid_wavelengths_nm);
+    }
+    line_list.runtime_controls.cutoff_grid_wavelengths_nm = owned_support;
 }
 
 /// Purpose:

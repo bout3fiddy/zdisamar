@@ -38,6 +38,10 @@ test "yaml parity example resolves key DISAMAR mapping controls" {
     defer loaded.deinit();
 
     try std.testing.expectEqualStrings("disamar_standard", loaded.resolved.plan.model_family);
+    try std.testing.expectEqualStrings(
+        "data/climatologies/vendor_config_o2a_profile.csv",
+        loaded.resolved.inputs.atmosphere_profile.path,
+    );
     try std.testing.expectEqual(@as(f64, 755.0), loaded.resolved.spectral_grid.start_nm);
     try std.testing.expectEqual(@as(f64, 776.0), loaded.resolved.spectral_grid.end_nm);
     try std.testing.expectEqual(@as(u32, 21), loaded.resolved.spectral_grid.sample_count);
@@ -79,6 +83,10 @@ test "yaml parity runtime resolves symmetric DISAMAR HR integration for both cha
     try std.testing.expectApproxEqAbs(radiance.fwhm_nm, irradiance.fwhm_nm, 1.0e-12);
     try std.testing.expectApproxEqAbs(radiance.high_resolution_step_nm, irradiance.high_resolution_step_nm, 1.0e-12);
     try std.testing.expectApproxEqAbs(radiance.high_resolution_half_span_nm, irradiance.high_resolution_half_span_nm, 1.0e-12);
+    try std.testing.expectEqual(
+        @as(usize, 47),
+        parity_case.prepared.spectroscopy_profile_altitudes_km.len,
+    );
 }
 
 test "yaml parity output computes vendor comparison metrics on the executable config" {

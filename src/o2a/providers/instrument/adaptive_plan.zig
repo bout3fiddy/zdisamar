@@ -7,6 +7,7 @@ const ReferenceData = @import("../../../model/ReferenceData.zig");
 const AdaptiveReferenceGrid = @import("../../../model/Instrument.zig").AdaptiveReferenceGrid;
 const InstrumentModel = @import("../../../model/Instrument.zig").Instrument;
 const Scene = @import("../../../model/Scene.zig").Scene;
+const Allocator = std.mem.Allocator;
 
 pub const AdaptiveKernelSupportWindow = struct {
     global_start_nm: f64,
@@ -82,6 +83,73 @@ pub fn buildAdaptiveIntegrationKernel(
         sample_wavelengths_nm[0..sample_count],
         sample_raw_weights[0..sample_count],
     );
+}
+
+/// Purpose:
+///   Materialize the full DISAMAR-style adaptive HR wavelength support without
+///   narrowing it to one measured-channel slit window.
+///
+/// Vendor:
+///   `DISAMARModule::setupHRWavelengthGrid`
+///
+/// Decisions:
+///   Integration kernels select a per-nominal support subset from this same
+///   interval plan. Weak-line cutoff parity needs the global index space,
+///   because `HITRANModule::CalculatAbsXsec` compares cutoff endpoints against
+///   indices on the complete high-resolution grid.
+pub fn buildAdaptiveSupportWavelengths(
+    allocator: Allocator,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
+    response: InstrumentModel.SpectralResponse,
+) !?[]f64 {
+    const adaptive = scene.observation_model.adaptive_reference_grid;
+    if (!adaptive.enabled()) return null;
+    if (response.fwhm_nm <= 0.0) return null;
+
+    const has_single_line_list = if (prepared.spectroscopy_lines) |line_list|
+        line_list.lines.len != 0
+    else
+        false;
+    if (!has_single_line_list and prepared.line_absorbers.len == 0) return null;
+
+    var plan: AdaptiveIntervalPlan = .{};
+    if (!buildAdaptiveIntervalPlan(scene, prepared, response, &plan)) return null;
+
+    var support = std.ArrayList(f64).empty;
+    errdefer support.deinit(allocator);
+    var gauss_nodes: [types.max_integration_sample_count]f64 = undefined;
+    var gauss_weights: [types.max_integration_sample_count]f64 = undefined;
+
+    for (plan.intervals[0..plan.count]) |interval| {
+        const order = interval.division_count;
+        if (order == 0) continue;
+        gauss_legendre.fillNodesAndWeights(
+            @intCast(order),
+            gauss_nodes[0..order],
+            gauss_weights[0..order],
+        ) catch return null;
+
+        const half_width_nm = 0.5 * (interval.interval_end_nm - interval.interval_start_nm);
+        const center_nm = 0.5 * (interval.interval_end_nm + interval.interval_start_nm);
+        for (0..order) |gauss_index| {
+            const wavelength_nm = center_nm + (half_width_nm * gauss_nodes[gauss_index]);
+            if (!std.math.isFinite(wavelength_nm)) continue;
+            try support.append(allocator, wavelength_nm);
+        }
+    }
+    if (support.items.len == 0) return null;
+
+    std.sort.block(f64, support.items, {}, lessThanF64);
+
+    var merged_count: usize = 0;
+    for (support.items) |wavelength_nm| {
+        if (merged_count != 0 and @abs(support.items[merged_count - 1] - wavelength_nm) <= 1.0e-9) continue;
+        support.items[merged_count] = wavelength_nm;
+        merged_count += 1;
+    }
+    support.shrinkRetainingCapacity(merged_count);
+    return try support.toOwnedSlice(allocator);
 }
 
 pub fn buildDisamarRealizedKernel(

@@ -26,6 +26,7 @@
 //!   vendor-parity function-diff harness.
 
 const std = @import("std");
+const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
 
 pub const legacy_phase_coefficient_count: usize = 4;
@@ -61,9 +62,33 @@ pub fn maxPhaseCoefficientIndex(phase_coefficients: [phase_coefficient_count]f64
 }
 
 pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
+    return gasPhaseCoefficientsAtWavelength(760.0);
+}
+
+/// Purpose:
+///   Build the scalar Rayleigh phase-function coefficients at a wavelength.
+///
+/// Physics:
+///   DISAMAR computes the scalar gas coefficient from the dry-air
+///   depolarization factor. For `useCabannes = 0`, the `(1,1,2)` coefficient
+///   is `(45 + eps) / (90 + 20 eps)`, where
+///   `eps = 45 depol / (6 - 7 depol)`.
+///
+/// Vendor:
+///   `propAtmosphere::getOptPropAtm`
+///
+/// Units:
+///   `wavelength_nm` is in nanometers.
+pub fn gasPhaseCoefficientsAtWavelength(wavelength_nm: f64) [phase_coefficient_count]f64 {
     var coefficients = zeroPhaseCoefficients();
-    coefficients[2] = 0.05;
+    coefficients[2] = rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
     return coefficients;
+}
+
+pub fn rayleighPhaseCoefficient2AtWavelength(wavelength_nm: f64) f64 {
+    const depolarization = Rayleigh.depolarizationFactorAir(wavelength_nm);
+    const eps = 45.0 * depolarization / (6.0 - 7.0 * depolarization);
+    return (45.0 + eps) / (90.0 + 20.0 * eps);
 }
 
 pub fn computeSingleScatterAlbedo(scene: *const Scene, wavelength_nm: f64) f64 {
@@ -102,13 +127,14 @@ pub fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
 }
 
 pub fn combinePhaseCoefficients(
+    wavelength_nm: f64,
     gas_scattering_optical_depth: f64,
     aerosol_scattering_optical_depth: f64,
     cloud_scattering_optical_depth: f64,
     aerosol_phase_coefficients: [phase_coefficient_count]f64,
     cloud_phase_coefficients: [phase_coefficient_count]f64,
 ) [phase_coefficient_count]f64 {
-    const gas_phase_coefficients = gasPhaseCoefficients();
+    const gas_phase_coefficients = gasPhaseCoefficientsAtWavelength(wavelength_nm);
     const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
     if (total_scattering == 0.0) return gas_phase_coefficients;
 
@@ -187,6 +213,14 @@ test "analytic HG phase coefficients follow vendor normalization" {
     try std.testing.expectApproxEqAbs(@as(f64, 3.0 * 0.7), coefficients[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 5.0 * 0.7 * 0.7), coefficients[2], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 7.0 * 0.7 * 0.7 * 0.7), coefficients[3], 1.0e-12);
+}
+
+test "scalar Rayleigh phase coefficient follows vendor depolarization formula" {
+    const coefficients = gasPhaseCoefficientsAtWavelength(761.75);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), coefficients[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.4795010601166188), coefficients[2], 1.0e-15);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefficients[3], 1.0e-12);
 }
 
 test "analytic HG phase coefficients follow vendor truncation budget" {

@@ -9,10 +9,12 @@ module o2aFunctionTraceModule
   integer, parameter :: max_trace_wavelengths = 16
   integer, parameter :: path_length = 1024
   real(8), parameter :: wavelength_match_tolerance_nm = 1.5d-2
+  real(8), parameter :: wavelength_support_tolerance_nm = 1.25d0
 
   character(len=path_length), save :: trace_root = ''
   integer, save :: trace_wavelength_count = 0
   real(8), save :: trace_wavelengths_nm(max_trace_wavelengths) = 0.0d0
+  real(8), save :: active_wavelength_nm = -1.0d0
 
   integer, save :: line_catalog_unit = -1
   integer, save :: strong_state_unit = -1
@@ -24,6 +26,8 @@ module o2aFunctionTraceModule
   integer, save :: kernel_samples_unit = -1
   integer, save :: transport_samples_unit = -1
   integer, save :: transport_summary_unit = -1
+  integer, save :: fourier_terms_unit = -1
+  integer, save :: transport_layers_unit = -1
   logical, save :: line_catalog_frozen = .false.
   integer, save :: last_line_catalog_source_index = 0
 
@@ -68,7 +72,7 @@ contains
     call open_trace_file(weak_line_contributors_unit, 'weak_line_contributors.csv', &
       'pressure_hpa,temperature_k,wavelength_nm,sample_wavelength_nm,source_row_index,contribution_kind,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,shifted_center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf,matched_strong_index,weak_line_sigma_cm2_per_molecule')
     call open_trace_file(sublayer_optics_raw_unit, 'sublayer_optics_raw.csv', &
-      'actual_wavelength_nm,wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm')
+      'actual_wavelength_nm,wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm,aerosol_optical_depth,aerosol_scattering_optical_depth,cloud_optical_depth,cloud_scattering_optical_depth,total_scattering_optical_depth,total_optical_depth,combined_phase_coef_0,combined_phase_coef_1,combined_phase_coef_2,combined_phase_coef_3,combined_phase_coef_10,combined_phase_coef_20,combined_phase_coef_39')
     call open_trace_file(adaptive_grid_unit, 'adaptive_grid.csv', &
       'nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count')
     call open_trace_file(kernel_samples_unit, 'kernel_samples.csv', &
@@ -77,6 +81,10 @@ contains
       'nominal_wavelength_nm,sample_index,sample_wavelength_nm,radiance,irradiance,weight')
     call open_trace_file(transport_summary_unit, 'transport_summary.csv', &
       'nominal_wavelength_nm,final_radiance,final_irradiance,final_reflectance')
+    call open_trace_file(fourier_terms_unit, 'fourier_terms.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,refl_fc,source_refl_fc,surface_refl_fc,surface_e_view,surface_u_view_solar,fourier_weight,weighted_refl')
+    call open_trace_file(transport_layers_unit, 'transport_layers.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,layer_index,optical_depth,scattering_optical_depth,single_scatter_albedo,phase_coef_0,phase_coef_1,phase_coef_2,phase_coef_3,phase_coef_10,phase_coef_20,phase_coef_39')
 
     trace_enabled = .true.
   end subroutine o2a_trace_init
@@ -349,7 +357,7 @@ contains
     flush(transport_summary_unit)
   end subroutine o2a_trace_transport_summary
 
-  subroutine o2a_trace_sublayer_optics(wavelength_nm, global_sublayer_index, interval_index_1based, pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm)
+  subroutine o2a_trace_sublayer_optics(wavelength_nm, global_sublayer_index, interval_index_1based, pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm, aerosol_optical_depth, aerosol_scattering_optical_depth, cloud_optical_depth, cloud_scattering_optical_depth, total_scattering_optical_depth, total_optical_depth, combined_phase_coef_0, combined_phase_coef_1, combined_phase_coef_2, combined_phase_coef_3, combined_phase_coef_10, combined_phase_coef_20, combined_phase_coef_39)
     real(8), intent(in) :: wavelength_nm
     integer, intent(in) :: global_sublayer_index
     integer, intent(in) :: interval_index_1based
@@ -363,21 +371,87 @@ contains
     real(8), intent(in) :: gas_scattering_optical_depth
     real(8), intent(in) :: cia_optical_depth
     real(8), intent(in) :: path_length_cm
+    real(8), intent(in) :: aerosol_optical_depth
+    real(8), intent(in) :: aerosol_scattering_optical_depth
+    real(8), intent(in) :: cloud_optical_depth
+    real(8), intent(in) :: cloud_scattering_optical_depth
+    real(8), intent(in) :: total_scattering_optical_depth
+    real(8), intent(in) :: total_optical_depth
+    real(8), intent(in) :: combined_phase_coef_0
+    real(8), intent(in) :: combined_phase_coef_1
+    real(8), intent(in) :: combined_phase_coef_2
+    real(8), intent(in) :: combined_phase_coef_3
+    real(8), intent(in) :: combined_phase_coef_10
+    real(8), intent(in) :: combined_phase_coef_20
+    real(8), intent(in) :: combined_phase_coef_39
 
     integer :: trace_match_index
     real(8) :: nan_value
 
     call o2a_trace_init()
     if (.not. trace_enabled) return
+    active_wavelength_nm = wavelength_nm
     trace_match_index = find_trace_wavelength_index(wavelength_nm)
     if (trace_match_index <= 0) return
 
     nan_value = ieee_value(0.0d0, ieee_quiet_nan)
     write(sublayer_optics_raw_unit, '(*(g0,:,","))') wavelength_nm, trace_wavelengths_nm(trace_match_index), global_sublayer_index, interval_index_1based, &
       pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, &
-      nan_value, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm
+      nan_value, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm, &
+      aerosol_optical_depth, aerosol_scattering_optical_depth, cloud_optical_depth, cloud_scattering_optical_depth, &
+      total_scattering_optical_depth, total_optical_depth, combined_phase_coef_0, combined_phase_coef_1, combined_phase_coef_2, &
+      combined_phase_coef_3, combined_phase_coef_10, combined_phase_coef_20, combined_phase_coef_39
     flush(sublayer_optics_raw_unit)
   end subroutine o2a_trace_sublayer_optics
+
+  subroutine o2a_trace_fourier_term(i_fourier, refl_fc, surface_refl_fc, surface_e_view, surface_u_view_solar, fourier_weight)
+    integer, intent(in) :: i_fourier
+    real(8), intent(in) :: refl_fc
+    real(8), intent(in) :: surface_refl_fc
+    real(8), intent(in) :: surface_e_view
+    real(8), intent(in) :: surface_u_view_solar
+    real(8), intent(in) :: fourier_weight
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(fourier_terms_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      i_fourier, refl_fc, refl_fc - surface_refl_fc, surface_refl_fc, surface_e_view, surface_u_view_solar, fourier_weight, fourier_weight * refl_fc
+    flush(fourier_terms_unit)
+  end subroutine o2a_trace_fourier_term
+
+  subroutine o2a_trace_transport_layer(layer_index, optical_depth, scattering_optical_depth, single_scatter_albedo, &
+      phase_coef_0, phase_coef_1, phase_coef_2, phase_coef_3, phase_coef_10, phase_coef_20, phase_coef_39)
+    integer, intent(in) :: layer_index
+    real(8), intent(in) :: optical_depth
+    real(8), intent(in) :: scattering_optical_depth
+    real(8), intent(in) :: single_scatter_albedo
+    real(8), intent(in) :: phase_coef_0
+    real(8), intent(in) :: phase_coef_1
+    real(8), intent(in) :: phase_coef_2
+    real(8), intent(in) :: phase_coef_3
+    real(8), intent(in) :: phase_coef_10
+    real(8), intent(in) :: phase_coef_20
+    real(8), intent(in) :: phase_coef_39
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_layers_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      layer_index, optical_depth, scattering_optical_depth, single_scatter_albedo, &
+      phase_coef_0, phase_coef_1, phase_coef_2, phase_coef_3, phase_coef_10, phase_coef_20, phase_coef_39
+    flush(transport_layers_unit)
+  end subroutine o2a_trace_transport_layer
 
   integer function find_trace_wavelength_index(wavelength_nm)
     real(8), intent(in) :: wavelength_nm
@@ -391,6 +465,23 @@ contains
       end if
     end do
   end function find_trace_wavelength_index
+
+  integer function find_trace_wavelength_support_index(wavelength_nm)
+    real(8), intent(in) :: wavelength_nm
+    integer :: index
+    real(8) :: best_delta
+    real(8) :: delta
+
+    find_trace_wavelength_support_index = 0
+    best_delta = wavelength_support_tolerance_nm
+    do index = 1, trace_wavelength_count
+      delta = abs(wavelength_nm - trace_wavelengths_nm(index))
+      if (delta <= best_delta) then
+        best_delta = delta
+        find_trace_wavelength_support_index = index
+      end if
+    end do
+  end function find_trace_wavelength_support_index
 
   integer function o2a_trace_wavelength_count_value()
     call o2a_trace_init()

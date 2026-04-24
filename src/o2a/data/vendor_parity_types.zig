@@ -145,6 +145,7 @@ pub const ResolvedVendorO2ACase = struct {
 
 pub const LoadedVendorO2AInputs = struct {
     profile: ReferenceDataModel.ClimatologyProfile,
+    spectroscopy_profile: ReferenceDataModel.ClimatologyProfile,
     cross_sections: ReferenceDataModel.CrossSectionTable,
     line_list: ReferenceDataModel.SpectroscopyLineList,
     cia_table: ?ReferenceDataModel.CollisionInducedAbsorptionTable,
@@ -154,6 +155,7 @@ pub const LoadedVendorO2AInputs = struct {
 
     pub fn deinit(self: *LoadedVendorO2AInputs, allocator: Allocator) void {
         self.profile.deinit(allocator);
+        self.spectroscopy_profile.deinit(allocator);
         self.cross_sections.deinit(allocator);
         self.line_list.deinit(allocator);
         if (self.cia_table) |*table| table.deinit(allocator);

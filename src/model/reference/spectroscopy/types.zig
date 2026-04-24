@@ -143,20 +143,29 @@ pub const SpectroscopyRuntimeControls = struct {
     active_isotopes: []const u8 = &.{},
     threshold_line_scale: ?f64 = null,
     cutoff_cm1: ?f64 = null,
+    cutoff_grid_wavelengths_nm: []const f64 = &.{},
     line_mixing_factor: f64 = 1.0,
 
     pub fn clone(self: SpectroscopyRuntimeControls, allocator: Allocator) !SpectroscopyRuntimeControls {
-        return .{
+        var cloned = SpectroscopyRuntimeControls{
             .gas_index = self.gas_index,
-            .active_isotopes = if (self.active_isotopes.len != 0) try allocator.dupe(u8, self.active_isotopes) else &.{},
             .threshold_line_scale = self.threshold_line_scale,
             .cutoff_cm1 = self.cutoff_cm1,
             .line_mixing_factor = self.line_mixing_factor,
         };
+        errdefer cloned.deinitOwned(allocator);
+        if (self.active_isotopes.len != 0) {
+            cloned.active_isotopes = try allocator.dupe(u8, self.active_isotopes);
+        }
+        if (self.cutoff_grid_wavelengths_nm.len != 0) {
+            cloned.cutoff_grid_wavelengths_nm = try allocator.dupe(f64, self.cutoff_grid_wavelengths_nm);
+        }
+        return cloned;
     }
 
     pub fn deinitOwned(self: *SpectroscopyRuntimeControls, allocator: Allocator) void {
         if (self.active_isotopes.len != 0) allocator.free(self.active_isotopes);
+        if (self.cutoff_grid_wavelengths_nm.len != 0) allocator.free(self.cutoff_grid_wavelengths_nm);
         self.* = .{};
     }
 
@@ -171,6 +180,16 @@ pub const SpectroscopyRuntimeControls = struct {
         return max_strength * scale;
     }
 };
+
+/// Fallback margin used only when a DISAMAR high-resolution cutoff grid is not
+/// available. The exact vendor path chooses nearest grid indices to the cutoff
+/// endpoints, then includes both endpoints.
+pub const vendor_cutoff_boundary_margin_cm1: f64 = 0.115;
+
+/// PARITY:
+///   The sorted prewindow has to be wider than the fallback scalar cutoff
+///   because the exact decision is made later against the adaptive HR grid.
+pub const vendor_cutoff_prewindow_margin_cm1: f64 = 0.25;
 
 pub const StrongLinePreparedState = struct {
     line_count: usize,

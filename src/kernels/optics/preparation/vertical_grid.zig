@@ -222,11 +222,11 @@ fn buildExplicitDisamarParity(
         const interval_top_altitude_km = if (has_altitude_bounds)
             interval.top_altitude_km
         else
-            profile.interpolateAltitudeForPressure(interval.top_pressure_hpa);
+            profile.interpolateAltitudeForPressureSpline(interval.top_pressure_hpa);
         const interval_bottom_altitude_km = if (has_altitude_bounds)
             interval.bottom_altitude_km
         else
-            profile.interpolateAltitudeForPressure(interval.bottom_pressure_hpa);
+            profile.interpolateAltitudeForPressureSpline(interval.bottom_pressure_hpa);
         const interval_layer_count: usize = @as(usize, interval.altitude_divisions) + 1;
         const interior_node_count = interval_layer_count - 1;
 
@@ -267,7 +267,7 @@ fn buildExplicitDisamarParity(
             const next_boundary_pressure_hpa = if (local_layer_index == interior_node_count)
                 interval.top_pressure_hpa
             else
-                profile.interpolatePressureLogLinear(next_boundary_altitude_km);
+                profile.interpolatePressureLogSpline(next_boundary_altitude_km);
 
             const global_layer_index = layer_cursor + local_layer_index;
             grid.layer_top_altitudes_km[global_layer_index] = next_boundary_altitude_km;

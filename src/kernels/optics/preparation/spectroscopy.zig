@@ -30,6 +30,7 @@ const State = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
 const default_no2_volume_mixing_ratio = 5.0e-8;
+pub const default_o2_volume_mixing_ratio = 0.20946;
 
 /// Purpose:
 ///   Collect the line-absorbing species active in the scene.

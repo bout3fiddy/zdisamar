@@ -65,7 +65,7 @@ pub fn applyRuntimeControls(
         try allocator.dupe(u8, active_isotopes)
     else
         &.{};
-    if (self.runtime_controls.active_isotopes.len != 0) allocator.free(self.runtime_controls.active_isotopes);
+    self.runtime_controls.deinitOwned(allocator);
     self.runtime_controls = .{
         .gas_index = gas_index,
         .active_isotopes = replacement_active_isotopes,
@@ -156,9 +156,10 @@ pub fn relevantLineWindowForWavelength(self: SpectroscopyLineList, wavelength_nm
             .start_index = 0,
         };
     };
+    const vendor_discrete_cutoff_cm1 = cutoff_cm1 + Types.vendor_cutoff_prewindow_margin_cm1;
     const evaluation_wavenumber_cm1 = Physics.wavelengthToWavenumberCm1(wavelength_nm);
-    const minimum_wavenumber_cm1 = @max(evaluation_wavenumber_cm1 - cutoff_cm1, 1.0e-6);
-    const maximum_wavenumber_cm1 = evaluation_wavenumber_cm1 + cutoff_cm1;
+    const minimum_wavenumber_cm1 = @max(evaluation_wavenumber_cm1 - vendor_discrete_cutoff_cm1, 1.0e-6);
+    const maximum_wavenumber_cm1 = evaluation_wavenumber_cm1 + vendor_discrete_cutoff_cm1;
     const minimum_wavelength_nm = Support.wavenumberCm1ToWavelengthNm(maximum_wavenumber_cm1);
     const maximum_wavelength_nm = Support.wavenumberCm1ToWavelengthNm(minimum_wavenumber_cm1);
     const lower = Physics.lowerBoundLineIndex(self.lines, minimum_wavelength_nm);

@@ -9,7 +9,7 @@ inputs:
   assets:
     atmosphere_profile:
       kind: file
-      path: data/climatologies/us_standard_1976_profile.csv
+      path: data/climatologies/vendor_config_o2a_profile.csv
       format: profile_csv
     vendor_reference_csv:
       kind: file

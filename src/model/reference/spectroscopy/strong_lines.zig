@@ -243,10 +243,14 @@ pub fn prepareStrongLineConvTPState(
 }
 
 pub fn shiftedLineCenterWavenumberCm1(line: Types.SpectroscopyLine, pressure_atm: f64) f64 {
-    return @max(
-        Core.wavelengthToWavenumberCm1(line.center_wavelength_nm + line.pressure_shift_nm * pressure_atm),
-        1.0,
-    );
+    const center_wavenumber_cm1 = Core.wavelengthToWavenumberCm1(line.center_wavelength_nm);
+    const pressure_shift_cm1 = -Core.spectralWidthNmToCm1(line.pressure_shift_nm, center_wavenumber_cm1);
+    // PARITY:
+    //   `HITRANModule::CalculatAbsXsec` applies pressure shift as
+    //   `Sig + delt * P` in wavenumber space. The Zig line payload stores the
+    //   equivalent wavelength-width magnitude, so convert once and keep the
+    //   vendor's linear wavenumber update.
+    return @max(center_wavenumber_cm1 + pressure_shift_cm1 * pressure_atm, 1.0);
 }
 
 pub fn partitionRatioT0OverT(

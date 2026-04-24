@@ -6,20 +6,20 @@
   "generated_spectrum_path": "validation/compatibility/o2a_plots/generated_spectrum.csv",
   "profile_summary_path": "validation/compatibility/o2a_plots/profile_summary.json",
   "reflectance": {
-    "mae": 0.0019459302329287505,
-    "rmse": 0.0022317527373094817,
-    "max_abs": 0.004487000649899986,
-    "max_abs_wavelength_nm": 767.33,
-    "correlation": 0.9999216133175213,
-    "mean_signed": 0.001859031370992953
+    "mae": 5.2869652274625586e-11,
+    "rmse": 6.807967143010902e-11,
+    "max_abs": 2.3790000525103494e-10,
+    "max_abs_wavelength_nm": 766.76,
+    "correlation": 1.0,
+    "mean_signed": 3.453401749781038e-11
   },
   "radiance": {
-    "mae": 146887842290.37976,
-    "rmse": 168229557356.70404,
-    "max_abs": 341552512770.0,
-    "max_abs_wavelength_nm": 767.33,
-    "correlation": 0.9999219608762934,
-    "mean_signed": 140218474647.92184
+    "mae": 3723.8951498730885,
+    "rmse": 4901.320423924954,
+    "max_abs": 14870.0,
+    "max_abs_wavelength_nm": 766.76,
+    "correlation": 1.0,
+    "mean_signed": 2629.5099858217336
   },
   "irradiance": {
     "mae": 24981.455064194008,

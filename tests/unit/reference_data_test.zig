@@ -424,6 +424,145 @@ test "cutoff-based prewindow keeps far-wing O2A lines beyond one nanometer" {
     try std.testing.expect(far_wing.total_sigma_cm2_per_molecule > 0.0);
 }
 
+test "O2A cutoff matches vendor nearest-grid weak-line boundary" {
+    const boundary_line = SpectroscopyLine{
+        .gas_index = 7,
+        .isotope_number = 2,
+        .center_wavelength_nm = 761.1959797053734,
+        .line_strength_cm2_per_molecule = 1.385e-26,
+        .air_half_width_nm = 0.0029955978819164518,
+        .temperature_exponent = 0.74,
+        .lower_state_energy_cm1 = 26.9889,
+        .pressure_shift_nm = 0.00041138771685893244,
+        .line_mixing_coefficient = 0.13733075435203096,
+    };
+    const excluded_boundary_line = SpectroscopyLine{
+        .gas_index = 7,
+        .isotope_number = 1,
+        .center_wavelength_nm = 761.002145522267,
+        .line_strength_cm2_per_molecule = 7.311e-24,
+        .air_half_width_nm = 0.002843500143553414,
+        .temperature_exponent = 0.74,
+        .lower_state_energy_cm1 = 81.5805,
+        .pressure_shift_nm = 0.0003561614232760386,
+        .line_mixing_coefficient = 0.12525458248472507,
+    };
+    const second_included_boundary_line = SpectroscopyLine{
+        .gas_index = 7,
+        .isotope_number = 1,
+        .center_wavelength_nm = 761.138995010687,
+        .line_strength_cm2_per_molecule = 7.984e-24,
+        .air_half_width_nm = 0.0029372161285102037,
+        .temperature_exponent = 0.73,
+        .lower_state_energy_cm1 = 42.224,
+        .pressure_shift_nm = 0.00041132612450537367,
+        .line_mixing_coefficient = 0.14003944773175542,
+    };
+    const grid_excluded_boundary_line = SpectroscopyLine{
+        .gas_index = 7,
+        .isotope_number = 1,
+        .center_wavelength_nm = 760.885417768841,
+        .line_strength_cm2_per_molecule = 8.762e-24,
+        .air_half_width_nm = 0.0028426278991587244,
+        .temperature_exponent = 0.74,
+        .lower_state_energy_cm1 = 79.5646,
+        .pressure_shift_nm = 0.00042263103185048246,
+        .line_mixing_coefficient = 0.14867617107942974,
+    };
+    var lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{boundary_line}),
+        .lines_sorted_ascending = true,
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+    };
+    defer lines.deinit(std.testing.allocator);
+
+    const vendor_boundary_sample_nm = 772.969173559943;
+    const trace = try lines.traceAt(
+        std.testing.allocator,
+        vendor_boundary_sample_nm,
+        294.2,
+        1013.0,
+        null,
+    );
+    defer trace.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), trace.rows.len);
+    try std.testing.expectEqual(.weak_included, trace.rows[0].contribution_kind);
+    try std.testing.expect(trace.evaluation.total_sigma_cm2_per_molecule > 0.0);
+
+    var second_included_lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{second_included_boundary_line}),
+        .lines_sorted_ascending = true,
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+    };
+    defer second_included_lines.deinit(std.testing.allocator);
+
+    const second_included_sample_nm = 772.9113261319951;
+    const second_included = second_included_lines.evaluateAt(
+        second_included_sample_nm,
+        294.2,
+        1013.0,
+    );
+    try std.testing.expect(second_included.total_sigma_cm2_per_molecule > 0.0);
+
+    var excluded_lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{excluded_boundary_line}),
+        .lines_sorted_ascending = true,
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+    };
+    defer excluded_lines.deinit(std.testing.allocator);
+
+    const excluded_boundary_sample_nm = 772.771013862351;
+    const excluded = excluded_lines.evaluateAt(
+        excluded_boundary_sample_nm,
+        294.2,
+        1013.0,
+    );
+    try std.testing.expectEqual(@as(f64, 0.0), excluded.total_sigma_cm2_per_molecule);
+
+    const vendor_cutoff_grid_nm = [_]f64{
+        1.0e7 / 13342.6,
+        1.0e7 / 12942.64,
+        772.6493541560737,
+        1.0e7 / 12938.35,
+        772.9113261319951,
+    };
+
+    var grid_excluded_lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{grid_excluded_boundary_line}),
+        .lines_sorted_ascending = true,
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+    };
+    errdefer grid_excluded_lines.deinit(std.testing.allocator);
+    grid_excluded_lines.runtime_controls.cutoff_grid_wavelengths_nm =
+        try std.testing.allocator.dupe(f64, vendor_cutoff_grid_nm[0..]);
+    defer grid_excluded_lines.deinit(std.testing.allocator);
+
+    const grid_excluded = grid_excluded_lines.evaluateAt(
+        772.6493541560737,
+        294.2,
+        1013.0,
+    );
+    try std.testing.expectEqual(@as(f64, 0.0), grid_excluded.total_sigma_cm2_per_molecule);
+
+    var grid_included_lines = SpectroscopyLineList{
+        .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{second_included_boundary_line}),
+        .lines_sorted_ascending = true,
+        .runtime_controls = .{ .cutoff_cm1 = 200.0 },
+    };
+    errdefer grid_included_lines.deinit(std.testing.allocator);
+    grid_included_lines.runtime_controls.cutoff_grid_wavelengths_nm =
+        try std.testing.allocator.dupe(f64, vendor_cutoff_grid_nm[0..]);
+    defer grid_included_lines.deinit(std.testing.allocator);
+
+    const grid_included = grid_included_lines.evaluateAt(
+        772.9113261319951,
+        294.2,
+        1013.0,
+    );
+    try std.testing.expect(grid_included.total_sigma_cm2_per_molecule > 0.0);
+}
+
 test "vendor O2A partition removes every assigned strong candidate from the weak-line sum" {
     const strong_candidate_a = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true };
     const strong_candidate_b = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34, .vendor_filter_metadata_from_source = true };

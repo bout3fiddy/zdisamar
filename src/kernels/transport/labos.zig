@@ -22,6 +22,7 @@ pub const LayerRT = basis.LayerRT;
 pub const UDField = basis.UDField;
 pub const UDLocal = basis.UDLocal;
 pub const PhaseKernel = basis.PhaseKernel;
+pub const FourierPlmBasis = basis.FourierPlmBasis;
 pub const AttenArray = attenuation.AttenArray;
 pub const DynamicAttenArray = attenuation.DynamicAttenArray;
 
@@ -42,6 +43,8 @@ pub const calcRTlayers = layers_mod.calcRTlayers;
 pub const fillSurface = layers_mod.fillSurface;
 
 pub const dotGauss = orders_mod.dotGauss;
+pub const OrdersWorkspace = orders_mod.OrdersWorkspace;
+pub const ordersScatInto = orders_mod.ordersScatInto;
 
 pub const calcReflectance = reflectance_mod.calcReflectance;
 pub const calcIntegratedReflectance = reflectance_mod.calcIntegratedReflectance;

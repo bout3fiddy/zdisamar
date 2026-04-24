@@ -38,6 +38,8 @@ EXPECTED_CSVS = (
     "kernel_samples.csv",
     "transport_samples.csv",
     "transport_summary.csv",
+    "fourier_terms.csv",
+    "transport_layers.csv",
 )
 STAGE_ORDER = EXPECTED_CSVS
 PAIRWISE_DIFFS = (("vendor", "yaml"),)
@@ -141,6 +143,19 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "gas_scattering_optical_depth",
             "cia_optical_depth",
             "path_length_cm",
+            "aerosol_optical_depth",
+            "aerosol_scattering_optical_depth",
+            "cloud_optical_depth",
+            "cloud_scattering_optical_depth",
+            "total_scattering_optical_depth",
+            "total_optical_depth",
+            "combined_phase_coef_0",
+            "combined_phase_coef_1",
+            "combined_phase_coef_2",
+            "combined_phase_coef_3",
+            "combined_phase_coef_10",
+            "combined_phase_coef_20",
+            "combined_phase_coef_39",
         ),
     ),
     "adaptive_grid.csv": CsvSpec(
@@ -171,6 +186,39 @@ CSV_SPECS: dict[str, CsvSpec] = {
     "transport_summary.csv": CsvSpec(
         key_columns=("nominal_wavelength_nm",),
         numeric_columns=("nominal_wavelength_nm", "final_radiance", "final_irradiance", "final_reflectance"),
+    ),
+    "fourier_terms.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_wavelength_nm", "fourier_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_wavelength_nm",
+            "fourier_index",
+            "refl_fc",
+            "source_refl_fc",
+            "surface_refl_fc",
+            "surface_e_view",
+            "surface_u_view_solar",
+            "fourier_weight",
+            "weighted_refl",
+        ),
+    ),
+    "transport_layers.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_wavelength_nm", "layer_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_wavelength_nm",
+            "layer_index",
+            "optical_depth",
+            "scattering_optical_depth",
+            "single_scatter_albedo",
+            "phase_coef_0",
+            "phase_coef_1",
+            "phase_coef_2",
+            "phase_coef_3",
+            "phase_coef_10",
+            "phase_coef_20",
+            "phase_coef_39",
+        ),
     ),
 }
 
@@ -367,6 +415,7 @@ def prepare_vendor_workspace(vendor_workspace: Path) -> None:
     patch_makefile(vendor_workspace / "src" / "makefile")
     patch_hitran_module(vendor_workspace / "src" / "HITRANModule.f90")
     patch_disamar_module(vendor_workspace / "src" / "DISAMARModule.f90")
+    patch_labos_module(vendor_workspace / "src" / "LabosModule.f90")
     patch_radiance_module(vendor_workspace / "src" / "radianceIrradianceModule.f90")
     patch_prop_atmosphere_module(vendor_workspace / "src" / "propAtmosphere.f90")
     shutil.copy2(VENDOR_CONFIG_SOURCE, vendor_workspace / "Config.in")
@@ -1112,6 +1161,12 @@ def patch_makefile(path: Path) -> None:
     )
     text = replace_once(
         text,
+        "LabosModule.o: LabosModule.f90 \\\n              mathToolsModule.o \\\n              dataStructures.o \\\n              addingToolsModule.o\n",
+        "LabosModule.o: LabosModule.f90 \\\n              mathToolsModule.o \\\n              dataStructures.o \\\n              addingToolsModule.o \\\n              o2aFunctionTraceModule.o\n",
+        path,
+    )
+    text = replace_once(
+        text,
         "DISAMARModule.o: DISAMARModule.f90 \\\n              dataStructures.o \\\n",
         "DISAMARModule.o: DISAMARModule.f90 \\\n              dataStructures.o \\\n              o2aFunctionTraceModule.o \\\n",
         path,
@@ -1442,8 +1497,20 @@ def patch_radiance_module(path: Path) -> None:
         "          slitfunctionValues(index) = wavelHRS%weight(index) * slitfunctionValues(index)\n"
         "          irradiance = irradiance + slitfunctionValues(index) * solarIrradianceS%solIrrHR(index)\n"
         "        end do\n"
-        "        call o2a_trace_emit_kernel_and_transport(wavelInstrS%wavel(iwave), startIndex, endIndex, wavelHRS%wavel, slitfunctionValues, solarIrradianceS%solIrrHR, solarIrradianceS%solIrrHR)\n"
         "        solarIrradianceS%solIrr(iwave) = irradiance\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "        do index = startIndex, endIndex\n"
+        "          slitfunctionValues(index) = wavelHRS%weight(index) * slitfunctionValues(index)\n"
+        "        end do\n"
+        "        do iSV = 1, dimSV\n",
+        "        do index = startIndex, endIndex\n"
+        "          slitfunctionValues(index) = wavelHRS%weight(index) * slitfunctionValues(index)\n"
+        "        end do\n"
+        "        call o2a_trace_emit_kernel_and_transport(wavelInstrS%wavel(iwave), startIndex, endIndex, wavelHRS%wavel, slitfunctionValues, earthRadianceS%rad_HR(1,:), solarIrradianceS%solIrrHR)\n"
+        "        do iSV = 1, dimSV\n",
         path,
     )
     text = replace_once(
@@ -1455,6 +1522,68 @@ def patch_radiance_module(path: Path) -> None:
         "                               / solarIrradianceSimS(iband)%solIrrMeas(iwave)\n"
         "        call o2a_trace_transport_summary(wavelInstrSimS(iband)%wavel(iwave), earthRadianceSimS(iband)%rad_meas(1,iwave), solarIrradianceSimS(iband)%solIrrMeas(iwave), retrS%reflMeas(index))\n"
         "        retrS%reflNoiseError(index) = retrS%reflMeas(index) * sqrt(  &\n",
+        path,
+    )
+    path.write_text(text, encoding="utf-8")
+
+
+def patch_labos_module(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    text = replace_once(
+        text,
+        "  use mathTools,   only : GaussDivPoints, LU_decomposition, locate, solve_lin_system_LU_based\n",
+        "  use mathTools,   only : GaussDivPoints, LU_decomposition, locate, solve_lin_system_LU_based\n"
+        "  use o2aFunctionTraceModule, only: o2a_trace_fourier_term, o2a_trace_transport_layer\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      real(8) :: factor \n",
+        "      real(8) :: factor \n"
+        "      real(8) :: trace_surface_e_view\n"
+        "      real(8) :: trace_surface_u_view_solar\n"
+        "      real(8) :: trace_surface_refl\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "        call CalcRTlayers(errS, fcCoef, iFourier, maxExpCoef, RTMnlevelCloud, RTMnlayer, dimSV, dimSV_fc, nmutot, &\n"
+        "                          nGauss, controlS, geometryS, optPropRTMGridS, RT_fc)\n"
+        "        if (errorCheck(errS)) return\n\n"
+        "        call fillsurface(errS, iFourier, dimSV_fc, nmutot, albedo, geometryS, RT_fc(RTMnlevelCloud)%R,     &\n",
+        "        call CalcRTlayers(errS, fcCoef, iFourier, maxExpCoef, RTMnlevelCloud, RTMnlayer, dimSV, dimSV_fc, nmutot, &\n"
+        "                          nGauss, controlS, geometryS, optPropRTMGridS, RT_fc)\n"
+        "        if (errorCheck(errS)) return\n\n"
+        "        if (iFourier == 0) then\n"
+        "          do ilevel = 1, RTMnlayer\n"
+        "            call o2a_trace_transport_layer(ilevel - 1, optPropRTMGridS%opticalThicknLay(ilevel), &\n"
+        "              optPropRTMGridS%opticalThicknLay(ilevel) * optPropRTMGridS%ssaLay(ilevel), optPropRTMGridS%ssaLay(ilevel), &\n"
+        "              optPropRTMGridS%phasefCoefLay(1,1,0,ilevel), optPropRTMGridS%phasefCoefLay(1,1,1,ilevel), &\n"
+        "              optPropRTMGridS%phasefCoefLay(1,1,2,ilevel), optPropRTMGridS%phasefCoefLay(1,1,3,ilevel), &\n"
+        "              optPropRTMGridS%phasefCoefLay(1,1,10,ilevel), optPropRTMGridS%phasefCoefLay(1,1,20,ilevel), &\n"
+        "              optPropRTMGridS%phasefCoefLay(1,1,39,ilevel))\n"
+        "          end do\n"
+        "        end if\n\n"
+        "        call fillsurface(errS, iFourier, dimSV_fc, nmutot, albedo, geometryS, RT_fc(RTMnlevelCloud)%R,     &\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "        factor = 2.0d0\n"
+        "        if (iFourier == 0) factor = 1.0d0\n\n\n"
+        "        wfAlbedo               = wfAlbedo                + factor * wfAlbedo_fc                * cos_m_dphi\n",
+        "        factor = 2.0d0\n"
+        "        if (iFourier == 0) factor = 1.0d0\n\n"
+        "        trace_surface_refl = 0.0d0\n"
+        "        trace_surface_e_view = 0.0d0\n"
+        "        trace_surface_u_view_solar = 0.0d0\n"
+        "        if (iFourier == 0) then\n"
+        "          trace_surface_e_view = UD_fc(RTMnlevelCloud)%E(1 + nGauss * dimSV_fc)\n"
+        "          trace_surface_u_view_solar = UD_fc(RTMnlevelCloud)%U(1 + nGauss * dimSV_fc, 2)\n"
+        "          trace_surface_refl = trace_surface_e_view * trace_surface_u_view_solar\n"
+        "        end if\n"
+        "        call o2a_trace_fourier_term(iFourier, refl_fc(1), trace_surface_refl, trace_surface_e_view, trace_surface_u_view_solar, factor * cos_m_dphi)\n\n"
+        "        wfAlbedo               = wfAlbedo                + factor * wfAlbedo_fc                * cos_m_dphi\n",
         path,
     )
     path.write_text(text, encoding="utf-8")
@@ -1478,7 +1607,9 @@ def patch_prop_atmosphere_module(path: Path) -> None:
         "    integer  :: icoef, ilevel, ibound, igauss, igaussSub, index, indexSub, iTrace, imodel, iExpCoef\n"
         "    integer  :: status\n"
         "    integer  :: o2TraceIndex, ciaTraceIndex\n"
-        "    real(8)  :: oxygenNumberDensity, lineCrossSection, ciaSigma, pathLengthCm, ciaOpticalDepth\n",
+        "    real(8)  :: oxygenNumberDensity, lineCrossSection, ciaSigma, pathLengthCm, ciaOpticalDepth\n"
+        "    real(8)  :: aerosolOpticalDepth, aerosolScatteringOpticalDepth, cloudOpticalDepth, cloudScatteringOpticalDepth\n"
+        "    real(8)  :: totalScatteringOpticalDepth, totalOpticalDepth\n",
         path,
     )
     text = replace_once(
@@ -1517,7 +1648,13 @@ def patch_prop_atmosphere_module(path: Path) -> None:
         "          pathLengthCm = optPropRTMGridS%RTMweightSub(indexSub) * 1.0d5\n"
         "          ciaOpticalDepth = 0.0d0\n"
         "          if (ciaTraceIndex > 0) ciaOpticalDepth = ciaSigma * optPropRTMGridS%ndensSubGas(indexSub,ciaTraceIndex) * pathLengthCm\n"
-        "          call o2a_trace_sublayer_optics(wavelength, indexSub, ibound, pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm)\n\n"
+        "          aerosolOpticalDepth = (kscaAer(indexSub) + kabsAer(indexSub)) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+        "          aerosolScatteringOpticalDepth = kscaAer(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+        "          cloudOpticalDepth = (kscaCld(indexSub) + kabsCld(indexSub)) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+        "          cloudScatteringOpticalDepth = kscaCld(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+        "          totalScatteringOpticalDepth = ksca(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+        "          totalOpticalDepth = (ksca(indexSub) + kabs(indexSub)) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+        "          call o2a_trace_sublayer_optics(wavelength, indexSub, ibound, pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub) - ciaOpticalDepth, kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm, aerosolOpticalDepth, aerosolScatteringOpticalDepth, cloudOpticalDepth, cloudScatteringOpticalDepth, totalScatteringOpticalDepth, totalOpticalDepth, expCoef(1,1,0,indexSub), expCoef(1,1,1,indexSub), expCoef(1,1,2,indexSub), expCoef(1,1,3,indexSub), expCoef(1,1,10,indexSub), expCoef(1,1,20,indexSub), expCoef(1,1,39,indexSub))\n\n"
         "          indexSub = indexSub + 1\n",
         path,
     )
@@ -1540,11 +1677,17 @@ def patch_prop_atmosphere_module(path: Path) -> None:
         "      lineCrossSection = optPropRTMGridS%XsecSubGas(indexSub,o2TraceIndex)\n"
         "    end if\n"
         "    if (ciaTraceIndex > 0) ciaSigma = optPropRTMGridS%XsecSubGas(indexSub,ciaTraceIndex)\n"
-        "    pathLengthCm = optPropRTMGridS%RTMweightSub(indexSub) * 1.0d5\n"
-        "    ciaOpticalDepth = 0.0d0\n"
-        "    if (ciaTraceIndex > 0) ciaOpticalDepth = ciaSigma * optPropRTMGridS%ndensSubGas(indexSub,ciaTraceIndex) * pathLengthCm\n"
-        "    call o2a_trace_sublayer_optics(wavelength, indexSub, cloudAerosolRTMgridS%ninterval, pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm)\n\n"
-        "    if ( verbose ) then\n",
+    "    pathLengthCm = optPropRTMGridS%RTMweightSub(indexSub) * 1.0d5\n"
+    "    ciaOpticalDepth = 0.0d0\n"
+    "    if (ciaTraceIndex > 0) ciaOpticalDepth = ciaSigma * optPropRTMGridS%ndensSubGas(indexSub,ciaTraceIndex) * pathLengthCm\n"
+    "    aerosolOpticalDepth = (kscaAer(indexSub) + kabsAer(indexSub)) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+    "    aerosolScatteringOpticalDepth = kscaAer(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+    "    cloudOpticalDepth = (kscaCld(indexSub) + kabsCld(indexSub)) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+    "    cloudScatteringOpticalDepth = kscaCld(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+    "    totalScatteringOpticalDepth = ksca(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+    "    totalOpticalDepth = (ksca(indexSub) + kabs(indexSub)) * optPropRTMGridS%RTMweightSub(indexSub)\n"
+    "    call o2a_trace_sublayer_optics(wavelength, indexSub, cloudAerosolRTMgridS%ninterval, pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub) - ciaOpticalDepth, kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm, aerosolOpticalDepth, aerosolScatteringOpticalDepth, cloudOpticalDepth, cloudScatteringOpticalDepth, totalScatteringOpticalDepth, totalOpticalDepth, expCoef(1,1,0,indexSub), expCoef(1,1,1,indexSub), expCoef(1,1,2,indexSub), expCoef(1,1,3,indexSub), expCoef(1,1,10,indexSub), expCoef(1,1,20,indexSub), expCoef(1,1,39,indexSub))\n\n"
+    "    if ( verbose ) then\n",
         path,
     )
     path.write_text(text, encoding="utf-8")

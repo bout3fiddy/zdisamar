@@ -11,6 +11,14 @@
       ]
     },
     {
+      "bundle_manifest": "data/climatologies/bundle_manifest.json",
+      "local_asset": "data/climatologies/vendor_config_o2a_profile.csv",
+      "upstream_candidates": [
+        "InputFiles/Config_O2_with_CIA.in",
+        "out/vendor_config_o2a_profile.csv"
+      ]
+    },
+    {
       "bundle_manifest": "data/cross_sections/bundle_manifest.json",
       "local_asset": "data/cross_sections/no2_405_465_demo.csv",
       "upstream_candidates": [

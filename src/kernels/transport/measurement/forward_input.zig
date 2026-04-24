@@ -22,6 +22,7 @@
 
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
+const OpticsSpectroscopyState = @import("../../optics/preparation/state_spectroscopy.zig");
 const common = @import("../common.zig");
 const Workspace = @import("workspace.zig");
 
@@ -57,11 +58,13 @@ pub fn configuredForwardInput(
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
 ) common.ExecuteError!common.ForwardInput {
-    var input = OpticsPreparation.transport.toForwardInputAtWavelengthWithLayers(
+    var profile_cache = OpticsSpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm);
+    var input = OpticsPreparation.transport.toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
         prepared,
         scene,
         wavelength_nm,
         layer_inputs,
+        &profile_cache,
     );
     const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
     input.source_interfaces = source_interface_slice;
@@ -69,11 +72,12 @@ pub fn configuredForwardInput(
         // DECISION:
         //   Only attach RTM quadrature when the route requests integrated
         //   source-function evaluation.
-        const has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayers(
+        const has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             prepared,
             wavelength_nm,
             input.layers,
             rtm_quadrature_levels[0 .. input.layers.len + 1],
+            &profile_cache,
         );
         if (has_rtm_quadrature) {
             input.rtm_quadrature = .{
@@ -87,11 +91,12 @@ pub fn configuredForwardInput(
             return error.MissingExplicitRtmQuadrature;
         }
     }
-    OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayers(
+    OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
         prepared,
         wavelength_nm,
         input.layers,
         source_interface_slice,
+        &profile_cache,
     );
     if (route.rtm_controls.use_spherical_correction) {
         // DECISION:
@@ -99,7 +104,7 @@ pub fn configuredForwardInput(
         //   the geometric correction. Explicit shared-grid routes rebuild the
         //   dense wavelength-specific attenuation contract directly from the
         //   RTM subgrid instead of reusing midpoint-style layer surrogates.
-        const has_pseudo_spherical_grid = OpticsPreparation.transport.fillPseudoSphericalGridAtWavelength(
+        const has_pseudo_spherical_grid = OpticsPreparation.transport.fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
             prepared,
             scene,
             wavelength_nm,
@@ -108,6 +113,7 @@ pub fn configuredForwardInput(
             pseudo_spherical_samples,
             pseudo_spherical_level_starts,
             pseudo_spherical_level_altitudes,
+            &profile_cache,
         );
         if (has_pseudo_spherical_grid) {
             input.pseudo_spherical_grid = .{

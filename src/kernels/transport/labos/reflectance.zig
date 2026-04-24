@@ -60,6 +60,19 @@ fn maxInterfacePhaseCoefficientIndex(
     return @max(above_max, below_max);
 }
 
+fn adjacentLayerPhaseCoefficientIndex(
+    layers: []const common.LayerInput,
+    ilevel: usize,
+) usize {
+    if (layers.len == 0) return 0;
+    if (ilevel == 0) return maxPhaseCoefficientIndex(layers[0].phase_coefficients);
+    if (ilevel >= layers.len) return maxPhaseCoefficientIndex(layers[layers.len - 1].phase_coefficients);
+    return @max(
+        maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients),
+        maxPhaseCoefficientIndex(layers[ilevel].phase_coefficients),
+    );
+}
+
 fn reuseLayerKernelIndex(
     layers: []const common.LayerInput,
     source_interface: common.SourceInterfaceInput,
@@ -186,14 +199,17 @@ pub fn calcIntegratedReflectanceWithBasis(
             rtm_quadrature.levels[ilevel].phase_coefficients
         else
             source_interface.phase_coefficients_above;
-        if (i_fourier > if (use_rtm_quadrature)
-            maxPhaseCoefficientIndex(phase_coefficients)
+        const source_max_phase_index = if (use_rtm_quadrature)
+            adjacentLayerPhaseCoefficientIndex(layers, ilevel)
+        else if (layers.len != 0)
+            adjacentLayerPhaseCoefficientIndex(layers, ilevel)
         else
-            maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel))
-        {
+            maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel);
+        if (i_fourier > source_max_phase_index) {
             // PARITY:
-            //   Higher Fourier orders are skipped when the active phase
-            //   coefficients cannot support them.
+            //   DISAMAR gates an integrated-source level by the max phase
+            //   order of its adjacent reduced layers, then uses the interface
+            //   carrier only up to that same ceiling.
             continue;
         }
 
@@ -210,7 +226,13 @@ pub fn calcIntegratedReflectanceWithBasis(
                     }
                 }
             }
-            break :blk basis.fillZplusZminFromBasis(i_fourier, phase_coefficients, geo, plm_basis);
+            break :blk basis.fillZplusZminFromBasisLimited(
+                i_fourier,
+                phase_coefficients,
+                source_max_phase_index,
+                geo,
+                plm_basis,
+            );
         };
         var pmin_ed: f64 = 0.0;
         var pplusst_u: f64 = 0.0;
@@ -390,4 +412,84 @@ test "cached layer kernels preserve integrated reflectance when source interface
     );
 
     try std.testing.expectApproxEqAbs(baseline, cached, 1.0e-12);
+}
+
+test "integrated source truncates quadrature phase kernels by adjacent layers" {
+    const geo = basis.Geometry.init(4, 0.58, 0.64);
+    const layer_phase = .{ 1.0, 0.18, 0.31 } ++ .{0.0} ** (basis.max_phase_coef - 3);
+    const source_phase_with_tail = .{ 1.0, 0.18, 0.31, 4.0 } ++ .{0.0} ** (basis.max_phase_coef - 4);
+    const source_phase_truncated = .{ 1.0, 0.18, 0.31 } ++ .{0.0} ** (basis.max_phase_coef - 3);
+    const layers = [_]common.LayerInput{
+        .{
+            .scattering_optical_depth = 0.1,
+            .phase_coefficients = layer_phase,
+        },
+        .{
+            .scattering_optical_depth = 0.1,
+            .phase_coefficients = layer_phase,
+        },
+    };
+    var ud: [3]basis.UDField = undefined;
+    for (&ud, 0..) |*field, ilevel| {
+        field.* = .{
+            .E = basis.Vec.zero(geo.nmutot),
+            .U = basis.Vec2.zero(geo.nmutot),
+            .D = basis.Vec2.zero(geo.nmutot),
+        };
+        for (0..geo.nmutot) |imu| {
+            field.E.set(imu, 0.8 + 0.03 * @as(f64, @floatFromInt(ilevel + imu)));
+            for (0..2) |col| {
+                field.U.col[col].set(imu, 0.015 * @as(f64, @floatFromInt((ilevel + 1) * (imu + 2) * (col + 1))));
+                field.D.col[col].set(imu, 0.011 * @as(f64, @floatFromInt((ilevel + 2) * (imu + 1) * (col + 1))));
+            }
+        }
+    }
+
+    const rtm_quadrature_with_tail = common.RtmQuadratureGrid{ .levels = &.{
+        .{},
+        .{
+            .weight = 1.0,
+            .ksca = 1.0,
+            .phase_coefficients = source_phase_with_tail,
+        },
+        .{},
+    } };
+    const rtm_quadrature_truncated = common.RtmQuadratureGrid{ .levels = &.{
+        .{},
+        .{
+            .weight = 1.0,
+            .ksca = 1.0,
+            .phase_coefficients = source_phase_truncated,
+        },
+        .{},
+    } };
+    const i_fourier: usize = 0;
+    const plm_basis = basis.FourierPlmBasis.init(i_fourier, 3, &geo);
+
+    const actual = calcIntegratedReflectanceWithBasis(
+        &layers,
+        &.{},
+        rtm_quadrature_with_tail,
+        &ud,
+        layers.len,
+        i_fourier,
+        &geo,
+        &plm_basis,
+        null,
+        null,
+    );
+    const expected = calcIntegratedReflectanceWithBasis(
+        &layers,
+        &.{},
+        rtm_quadrature_truncated,
+        &ud,
+        layers.len,
+        i_fourier,
+        &geo,
+        &plm_basis,
+        null,
+        null,
+    );
+
+    try std.testing.expectApproxEqAbs(expected, actual, 1.0e-12);
 }

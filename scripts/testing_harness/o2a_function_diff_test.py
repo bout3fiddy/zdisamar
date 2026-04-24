@@ -102,7 +102,35 @@ def main() -> int:
             "gas_scattering_optical_depth",
             "cia_optical_depth",
             "path_length_cm",
+            "aerosol_optical_depth",
+            "aerosol_scattering_optical_depth",
+            "cloud_optical_depth",
+            "cloud_scattering_optical_depth",
+            "total_scattering_optical_depth",
+            "total_optical_depth",
+            "combined_phase_coef_0",
+            "combined_phase_coef_1",
+            "combined_phase_coef_2",
+            "combined_phase_coef_3",
+            "combined_phase_coef_10",
+            "combined_phase_coef_20",
+            "combined_phase_coef_39",
         ]
+        sublayer_extra_defaults = {
+            "aerosol_optical_depth": "0.0",
+            "aerosol_scattering_optical_depth": "0.0",
+            "cloud_optical_depth": "0.0",
+            "cloud_scattering_optical_depth": "0.0",
+            "total_scattering_optical_depth": "0.0",
+            "total_optical_depth": "0.0",
+            "combined_phase_coef_0": "1.0",
+            "combined_phase_coef_1": "0.0",
+            "combined_phase_coef_2": "0.0",
+            "combined_phase_coef_3": "0.0",
+            "combined_phase_coef_10": "0.0",
+            "combined_phase_coef_20": "0.0",
+            "combined_phase_coef_39": "0.0",
+        }
         left_sublayer = root / "left_sublayer.csv"
         right_sublayer = root / "right_sublayer.csv"
         write_csv_rows(
@@ -124,6 +152,7 @@ def main() -> int:
                     "gas_scattering_optical_depth": "0.1",
                     "cia_optical_depth": "0.02",
                     "path_length_cm": "100.0",
+                    **sublayer_extra_defaults,
                 },
             ],
         )
@@ -146,6 +175,7 @@ def main() -> int:
                     "gas_scattering_optical_depth": "0.125",
                     "cia_optical_depth": "0.02",
                     "path_length_cm": "100.0",
+                    **sublayer_extra_defaults,
                 },
             ],
         )
@@ -203,6 +233,19 @@ def main() -> int:
                 "gas_scattering_optical_depth",
                 "cia_optical_depth",
                 "path_length_cm",
+                "aerosol_optical_depth",
+                "aerosol_scattering_optical_depth",
+                "cloud_optical_depth",
+                "cloud_scattering_optical_depth",
+                "total_scattering_optical_depth",
+                "total_optical_depth",
+                "combined_phase_coef_0",
+                "combined_phase_coef_1",
+                "combined_phase_coef_2",
+                "combined_phase_coef_3",
+                "combined_phase_coef_10",
+                "combined_phase_coef_20",
+                "combined_phase_coef_39",
             ],
             [
                 {
@@ -221,6 +264,7 @@ def main() -> int:
                     "gas_scattering_optical_depth": "0.10",
                     "cia_optical_depth": "0.02",
                     "path_length_cm": "100.0",
+                    **sublayer_extra_defaults,
                 },
                 {
                     "actual_wavelength_nm": "761.749",
@@ -238,6 +282,7 @@ def main() -> int:
                     "gas_scattering_optical_depth": "0.20",
                     "cia_optical_depth": "0.03",
                     "path_length_cm": "100.0",
+                    **sublayer_extra_defaults,
                 },
             ],
         )
@@ -279,6 +324,7 @@ def main() -> int:
                     "gas_scattering_optical_depth": "0.1",
                     "cia_optical_depth": "0.02",
                     "path_length_cm": "100.0",
+                    **sublayer_extra_defaults,
                 }
                 for index in range(7)
             ],
@@ -302,6 +348,7 @@ def main() -> int:
                     "gas_scattering_optical_depth": "0.1",
                     "cia_optical_depth": "0.02",
                     "path_length_cm": "100.0",
+                    **sublayer_extra_defaults,
                 },
                 {
                     "wavelength_nm": "761.75",
@@ -318,6 +365,7 @@ def main() -> int:
                     "gas_scattering_optical_depth": "0.1",
                     "cia_optical_depth": "0.02",
                     "path_length_cm": "100.0",
+                    **sublayer_extra_defaults,
                 },
                 {
                     "wavelength_nm": "761.75",
@@ -334,6 +382,7 @@ def main() -> int:
                     "gas_scattering_optical_depth": "0.1",
                     "cia_optical_depth": "0.02",
                     "path_length_cm": "100.0",
+                    **sublayer_extra_defaults,
                 },
             ],
         )

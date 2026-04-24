@@ -186,6 +186,7 @@ pub const PreparedSublayer = struct {
     temperature_k: f64,
     number_density_cm3: f64,
     oxygen_number_density_cm3: f64,
+    cia_pair_density_cm6: f64 = 0.0,
     absorber_number_density_cm3: f64 = 0.0,
     path_length_cm: f64,
     continuum_cross_section_cm2_per_molecule: f64,
@@ -217,6 +218,13 @@ pub const PreparedSublayer = struct {
     aerosol_fraction: f64 = 0.0,
     cloud_fraction: f64 = 0.0,
     support_row_kind: PreparedSupportRowKind = .physical,
+
+    pub fn ciaPairDensityCm6(self: PreparedSublayer) f64 {
+        return if (self.cia_pair_density_cm6 > 0.0)
+            self.cia_pair_density_cm6
+        else
+            self.oxygen_number_density_cm3 * self.oxygen_number_density_cm3;
+    }
 };
 
 pub const OpticalDepthBreakdown = struct {

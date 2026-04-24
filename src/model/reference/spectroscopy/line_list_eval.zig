@@ -52,7 +52,7 @@ pub fn traceAt(
                 safe_temperature,
                 pressure_scale,
                 Types.hitran_reference_temperature_k,
-                self.runtime_controls.cutoff_cm1,
+                self.runtime_controls,
             );
             try rows.append(allocator, Support.traceRowForWeakLine(
                 wavelength_nm,
@@ -104,7 +104,7 @@ pub fn traceAt(
                 safe_temperature,
                 pressure_scale,
                 Types.hitran_reference_temperature_k,
-                self.runtime_controls.cutoff_cm1,
+                self.runtime_controls,
             );
             try rows.append(allocator, Support.traceRowForWeakLine(
                 wavelength_nm,
@@ -193,7 +193,7 @@ pub fn totalSigmaFromLineListOnly(
             safe_temperature,
             pressure_scale,
             Types.hitran_reference_temperature_k,
-            self.runtime_controls.cutoff_cm1,
+            self.runtime_controls,
         );
         line_sigma += contribution.line_sigma_cm2_per_molecule;
     }
@@ -241,7 +241,7 @@ pub fn totalSigmaWithStrongLineSidecars(
             safe_temperature,
             pressure_scale,
             Types.hitran_reference_temperature_k,
-            self.runtime_controls.cutoff_cm1,
+            self.runtime_controls,
         );
         weak_line_sigma += contribution.line_sigma_cm2_per_molecule;
     }
@@ -298,7 +298,7 @@ pub fn totalSigmaWithPreparedStrongLineState(
             safe_temperature,
             pressure_scale,
             Types.hitran_reference_temperature_k,
-            self.runtime_controls.cutoff_cm1,
+            self.runtime_controls,
         );
         weak_line_sigma += contribution.line_sigma_cm2_per_molecule;
     }

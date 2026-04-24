@@ -4,6 +4,7 @@ const vendor_support = internal.vendor_o2a_trace_support;
 
 const Measurement = internal.kernels.transport.measurement;
 const TransportCommon = internal.kernels.transport.common;
+const Labos = internal.kernels.transport.labos;
 const Calibration = internal.kernels.spectra.calibration;
 const ReferenceData = internal.reference_data;
 const InstrumentProviders = internal.plugin_internal.providers.Instrument;
@@ -93,6 +94,19 @@ const SublayerOpticsRow = struct {
     gas_scattering_optical_depth: f64,
     cia_optical_depth: f64,
     path_length_cm: f64,
+    aerosol_optical_depth: f64,
+    aerosol_scattering_optical_depth: f64,
+    cloud_optical_depth: f64,
+    cloud_scattering_optical_depth: f64,
+    total_scattering_optical_depth: f64,
+    total_optical_depth: f64,
+    combined_phase_coef_0: f64,
+    combined_phase_coef_1: f64,
+    combined_phase_coef_2: f64,
+    combined_phase_coef_3: f64,
+    combined_phase_coef_10: f64,
+    combined_phase_coef_20: f64,
+    combined_phase_coef_39: f64,
 };
 
 const AdaptiveGridRow = struct {
@@ -127,6 +141,35 @@ const TransportSummaryRow = struct {
     final_reflectance: f64,
 };
 
+const FourierTermRow = struct {
+    nominal_wavelength_nm: f64,
+    sample_wavelength_nm: f64,
+    fourier_index: usize,
+    refl_fc: f64,
+    source_refl_fc: f64,
+    surface_refl_fc: f64,
+    surface_e_view: f64,
+    surface_u_view_solar: f64,
+    fourier_weight: f64,
+    weighted_refl: f64,
+};
+
+const TransportLayerRow = struct {
+    nominal_wavelength_nm: f64,
+    sample_wavelength_nm: f64,
+    layer_index: usize,
+    optical_depth: f64,
+    scattering_optical_depth: f64,
+    single_scatter_albedo: f64,
+    phase_coef_0: f64,
+    phase_coef_1: f64,
+    phase_coef_2: f64,
+    phase_coef_3: f64,
+    phase_coef_10: f64,
+    phase_coef_20: f64,
+    phase_coef_39: f64,
+};
+
 const ThermodynamicState = struct {
     pressure_hpa: f64,
     temperature_k: f64,
@@ -135,6 +178,11 @@ const ThermodynamicState = struct {
 const CliConfig = struct {
     trace_root: []const u8,
     wavelengths_nm: []f64,
+};
+
+const TraceWavelength = struct {
+    nominal_nm: f64,
+    sample_nm: f64,
 };
 
 const TraceFiles = struct {
@@ -147,6 +195,8 @@ const TraceFiles = struct {
     kernel_samples: std.fs.File,
     transport_samples: std.fs.File,
     transport_summary: std.fs.File,
+    fourier_terms: std.fs.File,
+    transport_layers: std.fs.File,
 
     fn init(
         allocator: std.mem.Allocator,
@@ -161,11 +211,13 @@ const TraceFiles = struct {
             .strong_state = try createCsvFile(allocator, side_root, "strong_state.csv", "pressure_hpa,temperature_k,strong_index,center_wavelength_nm,center_wavenumber_cm1,sig_moy_cm1,population_t,dipole_t,mod_sig_cm1,half_width_cm1_at_t,line_mixing_coefficient\n"),
             .spectroscopy_summary = try createCsvFile(allocator, side_root, "spectroscopy_summary.csv", "pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule,total_sigma_cm2_per_molecule\n"),
             .weak_line_contributors = try createCsvFile(allocator, side_root, "weak_line_contributors.csv", "pressure_hpa,temperature_k,wavelength_nm,sample_wavelength_nm,source_row_index,contribution_kind,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,shifted_center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf,matched_strong_index,weak_line_sigma_cm2_per_molecule\n"),
-            .sublayer_optics = try createCsvFile(allocator, side_root, "sublayer_optics.csv", "wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm\n"),
+            .sublayer_optics = try createCsvFile(allocator, side_root, "sublayer_optics.csv", "wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm,aerosol_optical_depth,aerosol_scattering_optical_depth,cloud_optical_depth,cloud_scattering_optical_depth,total_scattering_optical_depth,total_optical_depth,combined_phase_coef_0,combined_phase_coef_1,combined_phase_coef_2,combined_phase_coef_3,combined_phase_coef_10,combined_phase_coef_20,combined_phase_coef_39\n"),
             .adaptive_grid = try createCsvFile(allocator, side_root, "adaptive_grid.csv", "nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count\n"),
             .kernel_samples = try createCsvFile(allocator, side_root, "kernel_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,weight\n"),
             .transport_samples = try createCsvFile(allocator, side_root, "transport_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,radiance,irradiance,weight\n"),
             .transport_summary = try createCsvFile(allocator, side_root, "transport_summary.csv", "nominal_wavelength_nm,final_radiance,final_irradiance,final_reflectance\n"),
+            .fourier_terms = try createCsvFile(allocator, side_root, "fourier_terms.csv", "nominal_wavelength_nm,sample_wavelength_nm,fourier_index,refl_fc,source_refl_fc,surface_refl_fc,surface_e_view,surface_u_view_solar,fourier_weight,weighted_refl\n"),
+            .transport_layers = try createCsvFile(allocator, side_root, "transport_layers.csv", "nominal_wavelength_nm,sample_wavelength_nm,layer_index,optical_depth,scattering_optical_depth,single_scatter_albedo,phase_coef_0,phase_coef_1,phase_coef_2,phase_coef_3,phase_coef_10,phase_coef_20,phase_coef_39\n"),
         };
     }
 
@@ -179,6 +231,8 @@ const TraceFiles = struct {
         self.kernel_samples.close();
         self.transport_samples.close();
         self.transport_summary.close();
+        self.fourier_terms.close();
+        self.transport_layers.close();
         self.* = undefined;
     }
 };
@@ -248,6 +302,16 @@ pub fn main() !void {
     defer line_list.deinit(allocator);
     try line_list.buildStrongLineMatchIndex(allocator);
 
+    const providers = internal.plugin_internal.providers.exact();
+    const trace_wavelengths = try resolveTraceWavelengths(
+        allocator,
+        &prepared_case.scene,
+        &prepared_case.prepared,
+        providers,
+        config.wavelengths_nm,
+    );
+    defer allocator.free(trace_wavelengths);
+
     const comparison_states = try loadComparisonThermodynamicStates(allocator, config.trace_root);
     defer if (comparison_states.len != 0) allocator.free(comparison_states);
 
@@ -269,14 +333,14 @@ pub fn main() !void {
             allocator,
             line_list,
             comparison_states,
-            config.wavelengths_nm,
+            trace_wavelengths,
         );
         try emitWeakLineContributorsAtThermodynamicGrid(
             &files.weak_line_contributors,
             allocator,
             line_list,
             comparison_states,
-            config.wavelengths_nm,
+            trace_wavelengths,
         );
     } else {
         try emitStrongStates(
@@ -290,7 +354,7 @@ pub fn main() !void {
             line_list,
             prepared_case.prepared.sublayers.?,
             prepared_case.prepared.strong_line_states.?,
-            config.wavelengths_nm,
+            trace_wavelengths,
         );
         try emitWeakLineContributors(
             &files.weak_line_contributors,
@@ -298,13 +362,13 @@ pub fn main() !void {
             line_list,
             prepared_case.prepared.sublayers.?,
             prepared_case.prepared.strong_line_states.?,
-            config.wavelengths_nm,
+            trace_wavelengths,
         );
     }
     try emitSublayerOptics(
         &files.sublayer_optics,
         &prepared_case.prepared,
-        config.wavelengths_nm,
+        trace_wavelengths,
     );
 
     var transport_buffers = try TransportBuffers.init(
@@ -314,8 +378,6 @@ pub fn main() !void {
         &prepared_case.prepared,
     );
     defer transport_buffers.deinit(allocator);
-
-    const providers = internal.plugin_internal.providers.exact();
 
     try emitTransportTraces(
         allocator,
@@ -327,6 +389,53 @@ pub fn main() !void {
         &transport_buffers,
         config.wavelengths_nm,
     );
+}
+
+fn resolveTraceWavelengths(
+    allocator: std.mem.Allocator,
+    scene: *const internal.Scene,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+    providers: Measurement.ProviderBindings,
+    nominal_wavelengths_nm: []const f64,
+) ![]TraceWavelength {
+    const resolved = try allocator.alloc(TraceWavelength, nominal_wavelengths_nm.len);
+    errdefer allocator.free(resolved);
+
+    const radiance_calibration = providers.instrument.calibrationForScene(scene, .radiance);
+    for (nominal_wavelengths_nm, resolved) |nominal_wavelength_nm, *trace_wavelength| {
+        const evaluation_wavelength_nm = Calibration.shiftedWavelength(
+            radiance_calibration,
+            nominal_wavelength_nm,
+        );
+        var integration: InstrumentProviders.IntegrationKernel = undefined;
+        try InstrumentIntegration.integrationForWavelengthChecked(
+            scene,
+            prepared,
+            .radiance,
+            nominal_wavelength_nm,
+            &integration,
+        );
+
+        var sample_wavelength_nm = evaluation_wavelength_nm;
+        if (integration.enabled and integration.sample_count != 0) {
+            var best_delta = std.math.inf(f64);
+            for (0..integration.sample_count) |sample_index| {
+                const candidate = evaluation_wavelength_nm + integration.offsets_nm[sample_index];
+                const delta = @abs(candidate - nominal_wavelength_nm);
+                if (delta < best_delta) {
+                    best_delta = delta;
+                    sample_wavelength_nm = candidate;
+                }
+            }
+        }
+
+        trace_wavelength.* = .{
+            .nominal_nm = nominal_wavelength_nm,
+            .sample_nm = sample_wavelength_nm,
+        };
+    }
+
+    return resolved;
 }
 
 fn parseArgs(allocator: std.mem.Allocator, args: []const []const u8) !CliConfig {
@@ -506,16 +615,16 @@ fn emitSpectroscopySummaries(
     line_list: ReferenceData.SpectroscopyLineList,
     sublayers: []const OpticsPrepare.PreparedSublayer,
     states: []const ReferenceData.StrongLinePreparedState,
-    wavelengths_nm: []const f64,
+    trace_wavelengths: []const TraceWavelength,
 ) !void {
     var rows = std.ArrayList(SpectroscopySummaryRow).empty;
     defer rows.deinit(std.heap.page_allocator);
 
     for (states, 0..) |state, state_index| {
         const sublayer = sublayers[state_index];
-        for (wavelengths_nm) |wavelength_nm| {
+        for (trace_wavelengths) |trace_wavelength| {
             const evaluation = line_list.evaluateAtPrepared(
-                wavelength_nm,
+                trace_wavelength.sample_nm,
                 sublayer.temperature_k,
                 sublayer.pressure_hpa,
                 &state,
@@ -523,7 +632,7 @@ fn emitSpectroscopySummaries(
             try rows.append(std.heap.page_allocator, .{
                 .pressure_hpa = sublayer.pressure_hpa,
                 .temperature_k = sublayer.temperature_k,
-                .wavelength_nm = wavelength_nm,
+                .wavelength_nm = trace_wavelength.nominal_nm,
                 .weak_sigma_cm2_per_molecule = evaluation.weak_line_sigma_cm2_per_molecule,
                 .strong_sigma_cm2_per_molecule = evaluation.strong_line_sigma_cm2_per_molecule,
                 .line_mixing_sigma_cm2_per_molecule = evaluation.line_mixing_sigma_cm2_per_molecule,
@@ -612,7 +721,7 @@ fn emitSpectroscopySummariesAtThermodynamicGrid(
     allocator: std.mem.Allocator,
     line_list: ReferenceData.SpectroscopyLineList,
     thermodynamic_states: []const ThermodynamicState,
-    wavelengths_nm: []const f64,
+    trace_wavelengths: []const TraceWavelength,
 ) !void {
     var rows = std.ArrayList(SpectroscopySummaryRow).empty;
     defer rows.deinit(allocator);
@@ -625,9 +734,9 @@ fn emitSpectroscopySummariesAtThermodynamicGrid(
         )) orelse continue;
         defer prepared_state.deinit(allocator);
 
-        for (wavelengths_nm) |wavelength_nm| {
+        for (trace_wavelengths) |trace_wavelength| {
             const evaluation = line_list.evaluateAtPrepared(
-                wavelength_nm,
+                trace_wavelength.sample_nm,
                 thermodynamic_state.temperature_k,
                 thermodynamic_state.pressure_hpa,
                 &prepared_state,
@@ -635,7 +744,7 @@ fn emitSpectroscopySummariesAtThermodynamicGrid(
             try rows.append(allocator, .{
                 .pressure_hpa = thermodynamic_state.pressure_hpa,
                 .temperature_k = thermodynamic_state.temperature_k,
-                .wavelength_nm = wavelength_nm,
+                .wavelength_nm = trace_wavelength.nominal_nm,
                 .weak_sigma_cm2_per_molecule = evaluation.weak_line_sigma_cm2_per_molecule,
                 .strong_sigma_cm2_per_molecule = evaluation.strong_line_sigma_cm2_per_molecule,
                 .line_mixing_sigma_cm2_per_molecule = evaluation.line_mixing_sigma_cm2_per_molecule,
@@ -668,23 +777,23 @@ fn emitWeakLineContributors(
     line_list: ReferenceData.SpectroscopyLineList,
     sublayers: []const OpticsPrepare.PreparedSublayer,
     states: []const ReferenceData.StrongLinePreparedState,
-    wavelengths_nm: []const f64,
+    trace_wavelengths: []const TraceWavelength,
 ) !void {
     var rows = std.ArrayList(WeakLineContributorRow).empty;
     defer rows.deinit(allocator);
 
     for (states, 0..) |state, state_index| {
         const sublayer = sublayers[state_index];
-        for (wavelengths_nm) |wavelength_nm| {
+        for (trace_wavelengths) |trace_wavelength| {
             var trace = try line_list.traceAt(
                 allocator,
-                wavelength_nm,
+                trace_wavelength.sample_nm,
                 sublayer.temperature_k,
                 sublayer.pressure_hpa,
                 &state,
             );
             defer trace.deinit(allocator);
-            try appendWeakContributorTraceRows(allocator, &rows, trace);
+            try appendWeakContributorTraceRows(allocator, &rows, trace, trace_wavelength.nominal_nm);
         }
     }
 
@@ -696,7 +805,7 @@ fn emitWeakLineContributorsAtThermodynamicGrid(
     allocator: std.mem.Allocator,
     line_list: ReferenceData.SpectroscopyLineList,
     thermodynamic_states: []const ThermodynamicState,
-    wavelengths_nm: []const f64,
+    trace_wavelengths: []const TraceWavelength,
 ) !void {
     var rows = std.ArrayList(WeakLineContributorRow).empty;
     defer rows.deinit(allocator);
@@ -709,16 +818,16 @@ fn emitWeakLineContributorsAtThermodynamicGrid(
         )) orelse continue;
         defer prepared_state.deinit(allocator);
 
-        for (wavelengths_nm) |wavelength_nm| {
+        for (trace_wavelengths) |trace_wavelength| {
             var trace = try line_list.traceAt(
                 allocator,
-                wavelength_nm,
+                trace_wavelength.sample_nm,
                 thermodynamic_state.temperature_k,
                 thermodynamic_state.pressure_hpa,
                 &prepared_state,
             );
             defer trace.deinit(allocator);
-            try appendWeakContributorTraceRows(allocator, &rows, trace);
+            try appendWeakContributorTraceRows(allocator, &rows, trace, trace_wavelength.nominal_nm);
         }
     }
 
@@ -729,13 +838,14 @@ fn appendWeakContributorTraceRows(
     allocator: std.mem.Allocator,
     rows: *std.ArrayList(WeakLineContributorRow),
     trace: ReferenceData.SpectroscopyTrace,
+    nominal_wavelength_nm: f64,
 ) !void {
     for (trace.rows) |row| {
         if (row.contribution_kind == .strong_sidecar) continue;
         try rows.append(allocator, .{
             .pressure_hpa = trace.pressure_hpa,
             .temperature_k = trace.temperature_k,
-            .wavelength_nm = trace.wavelength_nm,
+            .wavelength_nm = nominal_wavelength_nm,
             .sample_wavelength_nm = trace.wavelength_nm,
             .source_row_index = optionalUsizeToF64(row.global_line_index),
             .contribution_kind = @tagName(row.contribution_kind),
@@ -799,28 +909,31 @@ fn writeWeakLineContributorRows(
 fn emitSublayerOptics(
     file: *std.fs.File,
     prepared: *const OpticsPrepare.PreparedOpticalState,
-    wavelengths_nm: []const f64,
+    trace_wavelengths: []const TraceWavelength,
 ) !void {
     const sublayers = prepared.sublayers orelse return;
     var rows = std.ArrayList(SublayerOpticsRow).empty;
     defer rows.deinit(std.heap.page_allocator);
 
-    for (wavelengths_nm) |wavelength_nm| {
+    for (trace_wavelengths) |trace_wavelength| {
+        const evaluation_wavelength_nm = trace_wavelength.sample_nm;
         for (sublayers, 0..) |sublayer, index| {
             var line_sigma: f64 = 0.0;
             var line_mixing_sigma: f64 = 0.0;
             if (prepared.spectroscopy_lines) |line_list| {
-                const evaluation = line_list.evaluateAtPrepared(
-                    wavelength_nm,
+                _ = line_list;
+                const evaluation = prepared.spectroscopyEvaluationAtAltitude(
+                    evaluation_wavelength_nm,
                     sublayer.temperature_k,
                     sublayer.pressure_hpa,
+                    sublayer.altitude_km,
                     if (prepared.strong_line_states) |states| &states[index] else null,
                 );
                 line_sigma = evaluation.line_sigma_cm2_per_molecule;
                 line_mixing_sigma = evaluation.line_mixing_sigma_cm2_per_molecule;
             } else if (prepared.operational_o2_lut.enabled()) {
                 line_sigma = prepared.operational_o2_lut.sigmaAt(
-                    wavelength_nm,
+                    evaluation_wavelength_nm,
                     sublayer.temperature_k,
                     sublayer.pressure_hpa,
                 );
@@ -828,17 +941,39 @@ fn emitSublayerOptics(
 
             const cia_sigma = if (prepared.operational_o2o2_lut.enabled())
                 prepared.operational_o2o2_lut.sigmaAt(
-                    wavelength_nm,
+                    evaluation_wavelength_nm,
                     sublayer.temperature_k,
                     sublayer.pressure_hpa,
                 )
             else if (prepared.collision_induced_absorption) |cia_table|
-                cia_table.sigmaAt(wavelength_nm, sublayer.temperature_k)
+                cia_table.sigmaAt(evaluation_wavelength_nm, sublayer.temperature_k)
             else
                 0.0;
 
+            const gas_scattering_optical_depth = ReferenceData.Rayleigh.crossSectionCm2(evaluation_wavelength_nm) *
+                sublayer.number_density_cm3 *
+                sublayer.path_length_cm;
+            const aerosol_scattering_optical_depth = sublayer.aerosol_optical_depth * sublayer.aerosol_single_scatter_albedo;
+            const cloud_scattering_optical_depth = sublayer.cloud_optical_depth * sublayer.cloud_single_scatter_albedo;
+            const gas_absorption_optical_depth = (line_sigma + line_mixing_sigma) *
+                sublayer.oxygen_number_density_cm3 *
+                sublayer.path_length_cm;
+            const cia_optical_depth = cia_sigma *
+                sublayer.ciaPairDensityCm6() *
+                sublayer.path_length_cm;
+            const total_scattering_optical_depth =
+                gas_scattering_optical_depth +
+                aerosol_scattering_optical_depth +
+                cloud_scattering_optical_depth;
+            const total_optical_depth =
+                gas_absorption_optical_depth +
+                gas_scattering_optical_depth +
+                cia_optical_depth +
+                sublayer.aerosol_optical_depth +
+                sublayer.cloud_optical_depth;
+
             try rows.append(std.heap.page_allocator, .{
-                .wavelength_nm = wavelength_nm,
+                .wavelength_nm = trace_wavelength.nominal_nm,
                 .global_sublayer_index = sublayer.global_sublayer_index,
                 .interval_index_1based = sublayer.interval_index_1based,
                 .pressure_hpa = sublayer.pressure_hpa,
@@ -848,17 +983,23 @@ fn emitSublayerOptics(
                 .line_cross_section_cm2_per_molecule = line_sigma,
                 .line_mixing_cross_section_cm2_per_molecule = line_mixing_sigma,
                 .cia_sigma_cm5_per_molecule2 = cia_sigma,
-                .gas_absorption_optical_depth = (line_sigma + line_mixing_sigma) *
-                    sublayer.oxygen_number_density_cm3 *
-                    sublayer.path_length_cm,
-                .gas_scattering_optical_depth = ReferenceData.Rayleigh.crossSectionCm2(wavelength_nm) *
-                    sublayer.number_density_cm3 *
-                    sublayer.path_length_cm,
-                .cia_optical_depth = cia_sigma *
-                    sublayer.oxygen_number_density_cm3 *
-                    sublayer.oxygen_number_density_cm3 *
-                    sublayer.path_length_cm,
+                .gas_absorption_optical_depth = gas_absorption_optical_depth,
+                .gas_scattering_optical_depth = gas_scattering_optical_depth,
+                .cia_optical_depth = cia_optical_depth,
                 .path_length_cm = sublayer.path_length_cm,
+                .aerosol_optical_depth = sublayer.aerosol_optical_depth,
+                .aerosol_scattering_optical_depth = aerosol_scattering_optical_depth,
+                .cloud_optical_depth = sublayer.cloud_optical_depth,
+                .cloud_scattering_optical_depth = cloud_scattering_optical_depth,
+                .total_scattering_optical_depth = total_scattering_optical_depth,
+                .total_optical_depth = total_optical_depth,
+                .combined_phase_coef_0 = sublayer.combined_phase_coefficients[0],
+                .combined_phase_coef_1 = sublayer.combined_phase_coefficients[1],
+                .combined_phase_coef_2 = sublayer.combined_phase_coefficients[2],
+                .combined_phase_coef_3 = sublayer.combined_phase_coefficients[3],
+                .combined_phase_coef_10 = sublayer.combined_phase_coefficients[10],
+                .combined_phase_coef_20 = sublayer.combined_phase_coefficients[20],
+                .combined_phase_coef_39 = sublayer.combined_phase_coefficients[39],
             });
         }
     }
@@ -867,7 +1008,7 @@ fn emitSublayerOptics(
     var writer = file.deprecatedWriter();
     for (rows.items) |row| {
         try writer.print(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             .{
                 row.wavelength_nm,
                 row.global_sublayer_index,
@@ -883,6 +1024,19 @@ fn emitSublayerOptics(
                 row.gas_scattering_optical_depth,
                 row.cia_optical_depth,
                 row.path_length_cm,
+                row.aerosol_optical_depth,
+                row.aerosol_scattering_optical_depth,
+                row.cloud_optical_depth,
+                row.cloud_scattering_optical_depth,
+                row.total_scattering_optical_depth,
+                row.total_optical_depth,
+                row.combined_phase_coef_0,
+                row.combined_phase_coef_1,
+                row.combined_phase_coef_2,
+                row.combined_phase_coef_3,
+                row.combined_phase_coef_10,
+                row.combined_phase_coef_20,
+                row.combined_phase_coef_39,
             },
         );
     }
@@ -906,6 +1060,10 @@ fn emitTransportTraces(
     defer transport_rows.deinit(allocator);
     var summary_rows = std.ArrayList(TransportSummaryRow).empty;
     defer summary_rows.deinit(allocator);
+    var fourier_rows = std.ArrayList(FourierTermRow).empty;
+    defer fourier_rows.deinit(allocator);
+    var transport_layer_rows = std.ArrayList(TransportLayerRow).empty;
+    defer transport_layer_rows.deinit(allocator);
 
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
@@ -996,6 +1154,18 @@ fn emitTransportTraces(
                 buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1],
                 &buffers.evaluation_cache,
             );
+            try emitLabosFourierRowsForSample(
+                allocator,
+                &fourier_rows,
+                &transport_layer_rows,
+                scene,
+                route,
+                prepared,
+                sample_wavelength_nm,
+                nominal_wavelength_nm,
+                buffers,
+                transport_layer_count,
+            );
             const irradiance = if (irradiance_support.enabled())
                 irradiance_support.interpolateIrradiance(sample_wavelength_nm)
             else
@@ -1055,6 +1225,8 @@ fn emitTransportTraces(
     std.sort.block(KernelSampleRow, kernel_rows.items, {}, lessThanKernelSampleRow);
     std.sort.block(TransportSampleRow, transport_rows.items, {}, lessThanTransportSampleRow);
     std.sort.block(TransportSummaryRow, summary_rows.items, {}, lessThanTransportSummaryRow);
+    std.sort.block(FourierTermRow, fourier_rows.items, {}, lessThanFourierTermRow);
+    std.sort.block(TransportLayerRow, transport_layer_rows.items, {}, lessThanTransportLayerRow);
 
     var adaptive_writer = files.adaptive_grid.deprecatedWriter();
     for (adaptive_rows.items) |row| {
@@ -1105,6 +1277,201 @@ fn emitTransportTraces(
                 row.final_reflectance,
             },
         );
+    }
+
+    var fourier_writer = files.fourier_terms.deprecatedWriter();
+    for (fourier_rows.items) |row| {
+        try fourier_writer.print(
+            "{},{},{},{},{},{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.sample_wavelength_nm,
+                row.fourier_index,
+                row.refl_fc,
+                row.source_refl_fc,
+                row.surface_refl_fc,
+                row.surface_e_view,
+                row.surface_u_view_solar,
+                row.fourier_weight,
+                row.weighted_refl,
+            },
+        );
+    }
+
+    var transport_layer_writer = files.transport_layers.deprecatedWriter();
+    for (transport_layer_rows.items) |row| {
+        try transport_layer_writer.print(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.sample_wavelength_nm,
+                row.layer_index,
+                row.optical_depth,
+                row.scattering_optical_depth,
+                row.single_scatter_albedo,
+                row.phase_coef_0,
+                row.phase_coef_1,
+                row.phase_coef_2,
+                row.phase_coef_3,
+                row.phase_coef_10,
+                row.phase_coef_20,
+                row.phase_coef_39,
+            },
+        );
+    }
+}
+
+fn emitLabosFourierRowsForSample(
+    allocator: std.mem.Allocator,
+    rows: *std.ArrayList(FourierTermRow),
+    layer_rows: *std.ArrayList(TransportLayerRow),
+    scene: *const internal.Scene,
+    route: TransportCommon.Route,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+    sample_wavelength_nm: f64,
+    nominal_wavelength_nm: f64,
+    buffers: *TransportBuffers,
+    transport_layer_count: usize,
+) !void {
+    if (route.family != .labos) return;
+    const input = try Measurement.forward_input.configuredForwardInput(
+        scene,
+        route,
+        prepared,
+        sample_wavelength_nm,
+        buffers.layer_inputs[0..transport_layer_count],
+        buffers.pseudo_spherical_layers,
+        buffers.source_interfaces[0 .. transport_layer_count + 1],
+        buffers.rtm_quadrature_levels[0 .. transport_layer_count + 1],
+        buffers.pseudo_spherical_samples,
+        buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1],
+        buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1],
+    );
+    if (input.layers.len == 0 or route.rtm_controls.scattering == .none) return;
+
+    for (input.layers, 0..) |layer, layer_index| {
+        try layer_rows.append(allocator, .{
+            .nominal_wavelength_nm = nominal_wavelength_nm,
+            .sample_wavelength_nm = sample_wavelength_nm,
+            .layer_index = layer_index,
+            .optical_depth = layer.optical_depth,
+            .scattering_optical_depth = layer.scattering_optical_depth,
+            .single_scatter_albedo = layer.single_scatter_albedo,
+            .phase_coef_0 = layer.phase_coefficients[0],
+            .phase_coef_1 = layer.phase_coefficients[1],
+            .phase_coef_2 = layer.phase_coefficients[2],
+            .phase_coef_3 = layer.phase_coefficients[3],
+            .phase_coef_10 = layer.phase_coefficients[10],
+            .phase_coef_20 = layer.phase_coefficients[20],
+            .phase_coef_39 = layer.phase_coefficients[39],
+        });
+    }
+
+    const controls = route.rtm_controls;
+    const mu0 = @max(input.mu0, 0.05);
+    const muv = @max(input.muv, 0.05);
+    const geo = Labos.Geometry.init(controls.nGauss(), mu0, muv);
+    var atten = try Labos.fillAttenuationDynamicWithGrid(
+        allocator,
+        input.layers,
+        input.pseudo_spherical_grid,
+        &geo,
+        controls.use_spherical_correction,
+    );
+    defer atten.deinit();
+
+    var rt = try allocator.alloc(Labos.LayerRT, input.layers.len + 1);
+    defer allocator.free(rt);
+
+    var orders_workspace = try Labos.OrdersWorkspace.init(allocator, input.layers.len + 1);
+    defer orders_workspace.deinit();
+    const use_integrated_source =
+        controls.integrate_source_function and
+        input.layers.len > 1 and
+        (input.source_interfaces.len == input.layers.len + 1 or
+            input.rtm_quadrature.isValidFor(input.layers.len));
+    const layer_phase_kernels: ?[]Labos.PhaseKernel = if (use_integrated_source)
+        try allocator.alloc(Labos.PhaseKernel, input.layers.len + 1)
+    else
+        null;
+    defer if (layer_phase_kernels) |cache| allocator.free(cache);
+    const layer_phase_kernel_valid: ?[]bool = if (use_integrated_source)
+        try allocator.alloc(bool, input.layers.len + 1)
+    else
+        null;
+    defer if (layer_phase_kernel_valid) |valid| allocator.free(valid);
+
+    const fourier_max = Labos.resolvedFourierMax(input, controls);
+    const phase_max = Labos.resolvedPhaseCoefficientMax(input);
+    const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(Labos.totalScatteringOpticalDepth(input.layers)));
+    for (0..fourier_max + 1) |i_fourier| {
+        const plm_basis = Labos.FourierPlmBasis.init(i_fourier, phase_max, &geo);
+        Labos.calcRTlayersIntoWithBasis(
+            rt,
+            input.layers,
+            i_fourier,
+            &geo,
+            controls,
+            &plm_basis,
+            layer_phase_kernels,
+            layer_phase_kernel_valid,
+        );
+        rt[0] = Labos.fillSurface(i_fourier, input.surface_albedo, &geo);
+        const orders_result = Labos.ordersScatInto(
+            &orders_workspace,
+            0,
+            input.layers.len,
+            &geo,
+            &atten,
+            rt,
+            controls,
+            num_orders_max,
+        );
+        const refl_fc = if (use_integrated_source)
+            Labos.calcIntegratedReflectanceWithBasis(
+                input.layers,
+                input.source_interfaces,
+                input.rtm_quadrature,
+                orders_result.ud,
+                input.layers.len,
+                i_fourier,
+                &geo,
+                &plm_basis,
+                layer_phase_kernels,
+                layer_phase_kernel_valid,
+            )
+        else
+            Labos.calcReflectance(orders_result.ud, input.layers.len, &geo);
+        const solar_col: usize = 1;
+        const view_idx = geo.viewIdx();
+        const surface_e_view = if (i_fourier == 0)
+            orders_result.ud[0].E.get(view_idx)
+        else
+            0.0;
+        const surface_u_view_solar = if (i_fourier == 0)
+            orders_result.ud[0].U.col[solar_col].get(view_idx)
+        else
+            0.0;
+        const surface_refl_fc = if (i_fourier == 0)
+            surface_e_view * surface_u_view_solar
+        else
+            0.0;
+        const fourier_weight = if (i_fourier == 0)
+            1.0
+        else
+            2.0 * std.math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+        try rows.append(allocator, .{
+            .nominal_wavelength_nm = nominal_wavelength_nm,
+            .sample_wavelength_nm = sample_wavelength_nm,
+            .fourier_index = i_fourier,
+            .refl_fc = refl_fc,
+            .source_refl_fc = refl_fc - surface_refl_fc,
+            .surface_refl_fc = surface_refl_fc,
+            .surface_e_view = surface_e_view,
+            .surface_u_view_solar = surface_u_view_solar,
+            .fourier_weight = fourier_weight,
+            .weighted_refl = fourier_weight * refl_fc,
+        });
     }
 }
 
@@ -1221,6 +1588,18 @@ fn lessThanTransportSampleRow(_: void, lhs: TransportSampleRow, rhs: TransportSa
 
 fn lessThanTransportSummaryRow(_: void, lhs: TransportSummaryRow, rhs: TransportSummaryRow) bool {
     return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+}
+
+fn lessThanFourierTermRow(_: void, lhs: FourierTermRow, rhs: FourierTermRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    if (lhs.sample_wavelength_nm != rhs.sample_wavelength_nm) return lhs.sample_wavelength_nm < rhs.sample_wavelength_nm;
+    return lhs.fourier_index < rhs.fourier_index;
+}
+
+fn lessThanTransportLayerRow(_: void, lhs: TransportLayerRow, rhs: TransportLayerRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    if (lhs.sample_wavelength_nm != rhs.sample_wavelength_nm) return lhs.sample_wavelength_nm < rhs.sample_wavelength_nm;
+    return lhs.layer_index < rhs.layer_index;
 }
 
 fn sortNanLast(lhs: f64, rhs: f64) ?bool {
