@@ -22,12 +22,16 @@ module o2aFunctionTraceModule
   integer, save :: spectroscopy_strong_unit = -1
   integer, save :: weak_line_contributors_unit = -1
   integer, save :: sublayer_optics_raw_unit = -1
+  integer, save :: interval_bounds_unit = -1
   integer, save :: adaptive_grid_unit = -1
   integer, save :: kernel_samples_unit = -1
   integer, save :: transport_samples_unit = -1
   integer, save :: transport_summary_unit = -1
   integer, save :: fourier_terms_unit = -1
   integer, save :: transport_layers_unit = -1
+  integer, save :: transport_source_terms_unit = -1
+  integer, save :: transport_attenuation_terms_unit = -1
+  integer, save :: transport_pseudo_spherical_samples_unit = -1
   logical, save :: line_catalog_frozen = .false.
   integer, save :: last_line_catalog_source_index = 0
 
@@ -72,7 +76,9 @@ contains
     call open_trace_file(weak_line_contributors_unit, 'weak_line_contributors.csv', &
       'pressure_hpa,temperature_k,wavelength_nm,sample_wavelength_nm,source_row_index,contribution_kind,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,shifted_center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf,matched_strong_index,weak_line_sigma_cm2_per_molecule')
     call open_trace_file(sublayer_optics_raw_unit, 'sublayer_optics_raw.csv', &
-      'actual_wavelength_nm,wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm,aerosol_optical_depth,aerosol_scattering_optical_depth,cloud_optical_depth,cloud_scattering_optical_depth,total_scattering_optical_depth,total_optical_depth,combined_phase_coef_0,combined_phase_coef_1,combined_phase_coef_2,combined_phase_coef_3,combined_phase_coef_10,combined_phase_coef_20,combined_phase_coef_39')
+      'actual_wavelength_nm,wavelength_nm,global_sublayer_index,interval_index_1based,altitude_km,support_weight_km,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm,aerosol_optical_depth,aerosol_scattering_optical_depth,cloud_optical_depth,cloud_scattering_optical_depth,total_scattering_optical_depth,total_optical_depth,combined_phase_coef_0,combined_phase_coef_1,combined_phase_coef_2,combined_phase_coef_3,combined_phase_coef_10,combined_phase_coef_20,combined_phase_coef_39')
+    call open_trace_file(interval_bounds_unit, 'interval_bounds.csv', &
+      'nominal_wavelength_nm,boundary_index_0based,interval_index_1based,pressure_hpa,altitude_km')
     call open_trace_file(adaptive_grid_unit, 'adaptive_grid.csv', &
       'nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count')
     call open_trace_file(kernel_samples_unit, 'kernel_samples.csv', &
@@ -85,6 +91,12 @@ contains
       'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,refl_fc,source_refl_fc,surface_refl_fc,surface_e_view,surface_u_view_solar,fourier_weight,weighted_refl')
     call open_trace_file(transport_layers_unit, 'transport_layers.csv', &
       'nominal_wavelength_nm,sample_wavelength_nm,layer_index,optical_depth,scattering_optical_depth,single_scatter_albedo,phase_coef_0,phase_coef_1,phase_coef_2,phase_coef_3,phase_coef_10,phase_coef_20,phase_coef_39')
+    call open_trace_file(transport_source_terms_unit, 'transport_source_terms.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,level_index,rtm_weight,ksca,source_contribution,weighted_source_contribution')
+    call open_trace_file(transport_attenuation_terms_unit, 'transport_attenuation_terms.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,direction_kind,direction_index,level_index,sumkext,attenuation_top_to_level,grid_valid')
+    call open_trace_file(transport_pseudo_spherical_samples_unit, 'transport_pseudo_spherical_samples.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,global_sample_index,altitude_km,support_weight_km,optical_depth,radius_weighted_optical_depth,grid_valid')
 
     trace_enabled = .true.
   end subroutine o2a_trace_init
@@ -357,10 +369,12 @@ contains
     flush(transport_summary_unit)
   end subroutine o2a_trace_transport_summary
 
-  subroutine o2a_trace_sublayer_optics(wavelength_nm, global_sublayer_index, interval_index_1based, pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm, aerosol_optical_depth, aerosol_scattering_optical_depth, cloud_optical_depth, cloud_scattering_optical_depth, total_scattering_optical_depth, total_optical_depth, combined_phase_coef_0, combined_phase_coef_1, combined_phase_coef_2, combined_phase_coef_3, combined_phase_coef_10, combined_phase_coef_20, combined_phase_coef_39)
+  subroutine o2a_trace_sublayer_optics(wavelength_nm, global_sublayer_index, interval_index_1based, altitude_km, support_weight_km, pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm, aerosol_optical_depth, aerosol_scattering_optical_depth, cloud_optical_depth, cloud_scattering_optical_depth, total_scattering_optical_depth, total_optical_depth, combined_phase_coef_0, combined_phase_coef_1, combined_phase_coef_2, combined_phase_coef_3, combined_phase_coef_10, combined_phase_coef_20, combined_phase_coef_39)
     real(8), intent(in) :: wavelength_nm
     integer, intent(in) :: global_sublayer_index
     integer, intent(in) :: interval_index_1based
+    real(8), intent(in) :: altitude_km
+    real(8), intent(in) :: support_weight_km
     real(8), intent(in) :: pressure_hpa
     real(8), intent(in) :: temperature_k
     real(8), intent(in) :: number_density_cm3
@@ -396,13 +410,30 @@ contains
 
     nan_value = ieee_value(0.0d0, ieee_quiet_nan)
     write(sublayer_optics_raw_unit, '(*(g0,:,","))') wavelength_nm, trace_wavelengths_nm(trace_match_index), global_sublayer_index, interval_index_1based, &
-      pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, &
+      altitude_km, support_weight_km, pressure_hpa, temperature_k, number_density_cm3, oxygen_number_density_cm3, line_cross_section_cm2_per_molecule, &
       nan_value, cia_sigma_cm5_per_molecule2, gas_absorption_optical_depth, gas_scattering_optical_depth, cia_optical_depth, path_length_cm, &
       aerosol_optical_depth, aerosol_scattering_optical_depth, cloud_optical_depth, cloud_scattering_optical_depth, &
       total_scattering_optical_depth, total_optical_depth, combined_phase_coef_0, combined_phase_coef_1, combined_phase_coef_2, &
       combined_phase_coef_3, combined_phase_coef_10, combined_phase_coef_20, combined_phase_coef_39
     flush(sublayer_optics_raw_unit)
   end subroutine o2a_trace_sublayer_optics
+
+  subroutine o2a_trace_interval_bound(boundary_index_0based, pressure_hpa, altitude_km)
+    integer, intent(in) :: boundary_index_0based
+    real(8), intent(in) :: pressure_hpa
+    real(8), intent(in) :: altitude_km
+
+    integer :: trace_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+
+    do trace_index = 1, trace_wavelength_count
+      write(interval_bounds_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_index), boundary_index_0based, &
+        boundary_index_0based, pressure_hpa, altitude_km
+    end do
+    flush(interval_bounds_unit)
+  end subroutine o2a_trace_interval_bound
 
   subroutine o2a_trace_fourier_term(i_fourier, refl_fc, surface_refl_fc, surface_e_view, surface_u_view_solar, fourier_weight)
     integer, intent(in) :: i_fourier
@@ -452,6 +483,68 @@ contains
       phase_coef_0, phase_coef_1, phase_coef_2, phase_coef_3, phase_coef_10, phase_coef_20, phase_coef_39
     flush(transport_layers_unit)
   end subroutine o2a_trace_transport_layer
+
+  subroutine o2a_trace_transport_source_term(i_fourier, level_index, rtm_weight, ksca, source_contribution)
+    integer, intent(in) :: i_fourier
+    integer, intent(in) :: level_index
+    real(8), intent(in) :: rtm_weight
+    real(8), intent(in) :: ksca
+    real(8), intent(in) :: source_contribution
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_source_terms_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      i_fourier, level_index, rtm_weight, ksca, source_contribution, rtm_weight * source_contribution
+    flush(transport_source_terms_unit)
+  end subroutine o2a_trace_transport_source_term
+
+  subroutine o2a_trace_transport_attenuation_term(direction_kind, direction_index, level_index, sumkext, attenuation_top_to_level, grid_valid)
+    character(len=*), intent(in) :: direction_kind
+    integer, intent(in) :: direction_index
+    integer, intent(in) :: level_index
+    real(8), intent(in) :: sumkext
+    real(8), intent(in) :: attenuation_top_to_level
+    integer, intent(in) :: grid_valid
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_attenuation_terms_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      trim(direction_kind), direction_index, level_index, sumkext, attenuation_top_to_level, grid_valid
+    flush(transport_attenuation_terms_unit)
+  end subroutine o2a_trace_transport_attenuation_term
+
+  subroutine o2a_trace_transport_pseudo_spherical_sample(global_sample_index, altitude_km, support_weight_km, optical_depth, radius_weighted_optical_depth, grid_valid)
+    integer, intent(in) :: global_sample_index
+    real(8), intent(in) :: altitude_km
+    real(8), intent(in) :: support_weight_km
+    real(8), intent(in) :: optical_depth
+    real(8), intent(in) :: radius_weighted_optical_depth
+    integer, intent(in) :: grid_valid
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_pseudo_spherical_samples_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      global_sample_index, altitude_km, support_weight_km, optical_depth, radius_weighted_optical_depth, grid_valid
+    flush(transport_pseudo_spherical_samples_unit)
+  end subroutine o2a_trace_transport_pseudo_spherical_sample
 
   integer function find_trace_wavelength_index(wavelength_nm)
     real(8), intent(in) :: wavelength_nm

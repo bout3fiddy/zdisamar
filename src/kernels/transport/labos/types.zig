@@ -92,7 +92,14 @@ pub const Geometry = struct {
     muv: f64,
 
     pub fn init(n_gauss: usize, mu0: f64, muv: f64) Geometry {
-        const rule = gauss_legendre.rule(@intCast(n_gauss)) catch unreachable;
+        var nodes_01: [max_gauss]f64 = undefined;
+        var weights_01: [max_gauss]f64 = undefined;
+        gauss_legendre.fillDisamarDivPoints01(
+            @intCast(n_gauss),
+            nodes_01[0..],
+            weights_01[0..],
+        ) catch unreachable;
+
         var geo: Geometry = undefined;
         geo.n_gauss = n_gauss;
         geo.nmutot = n_gauss + max_extra;
@@ -100,8 +107,8 @@ pub const Geometry = struct {
         geo.muv = muv;
 
         for (0..n_gauss) |i| {
-            const ug = (rule.nodes[i] + 1.0) * 0.5;
-            const wg = rule.weights[i] * 0.5;
+            const ug = nodes_01[i];
+            const wg = weights_01[i];
             geo.u[i] = ug;
             geo.w[i] = @sqrt(2.0 * ug * wg);
             geo.ug[i] = ug;

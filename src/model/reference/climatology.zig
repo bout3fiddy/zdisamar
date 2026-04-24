@@ -17,6 +17,7 @@
 //!   Tests cover density and temperature interpolation over the demo profile data.
 
 const std = @import("std");
+const gauss_legendre = @import("../../kernels/quadrature/gauss_legendre.zig");
 const spline = @import("../../kernels/interpolation/spline.zig");
 const Allocator = std.mem.Allocator;
 
@@ -103,8 +104,9 @@ pub const ClimatologyProfile = struct {
             dense_temperatures_k[index] = self.interpolateTemperatureForPressureSpline(pressure_hpa);
         }
 
-        const gauss_nodes_01 = [_]f64{ 0.21132486540518713, 0.7886751345948129 };
-        const gauss_weights_01 = [_]f64{ 0.5, 0.5 };
+        var gauss_nodes_01: [2]f64 = undefined;
+        var gauss_weights_01: [2]f64 = undefined;
+        try gauss_legendre.fillDisamarDivPoints01(2, gauss_nodes_01[0..], gauss_weights_01[0..]);
         const universal_gas_constant = 8.3144621;
         const mean_molecular_weight_air = 28.964e-3;
         const safe_surface_pressure_hpa = @max(surface_pressure_hpa, 1.0e-9);

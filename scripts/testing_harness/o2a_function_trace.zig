@@ -83,6 +83,8 @@ const SublayerOpticsRow = struct {
     wavelength_nm: f64,
     global_sublayer_index: u32,
     interval_index_1based: u32,
+    altitude_km: f64,
+    support_weight_km: f64,
     pressure_hpa: f64,
     temperature_k: f64,
     number_density_cm3: f64,
@@ -107,6 +109,14 @@ const SublayerOpticsRow = struct {
     combined_phase_coef_10: f64,
     combined_phase_coef_20: f64,
     combined_phase_coef_39: f64,
+};
+
+const IntervalBoundRow = struct {
+    nominal_wavelength_nm: f64,
+    boundary_index_0based: usize,
+    interval_index_1based: u32,
+    pressure_hpa: f64,
+    altitude_km: f64,
 };
 
 const AdaptiveGridRow = struct {
@@ -143,7 +153,9 @@ const TransportSummaryRow = struct {
 
 const FourierTermRow = struct {
     nominal_wavelength_nm: f64,
+    sample_index: usize,
     sample_wavelength_nm: f64,
+    kernel_weight: f64,
     fourier_index: usize,
     refl_fc: f64,
     source_refl_fc: f64,
@@ -156,7 +168,9 @@ const FourierTermRow = struct {
 
 const TransportLayerRow = struct {
     nominal_wavelength_nm: f64,
+    sample_index: usize,
     sample_wavelength_nm: f64,
+    kernel_weight: f64,
     layer_index: usize,
     optical_depth: f64,
     scattering_optical_depth: f64,
@@ -168,6 +182,45 @@ const TransportLayerRow = struct {
     phase_coef_10: f64,
     phase_coef_20: f64,
     phase_coef_39: f64,
+};
+
+const SourceTermRow = struct {
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+    fourier_index: usize,
+    level_index: usize,
+    rtm_weight: f64,
+    ksca: f64,
+    source_contribution: f64,
+    weighted_source_contribution: f64,
+};
+
+const AttenuationTermRow = struct {
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+    direction_kind: []const u8,
+    direction_index: usize,
+    level_index: usize,
+    sumkext: f64,
+    attenuation_top_to_level: f64,
+    grid_valid: u8,
+};
+
+const PseudoSphericalSampleRow = struct {
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+    global_sample_index: usize,
+    altitude_km: f64,
+    support_weight_km: f64,
+    optical_depth: f64,
+    radius_weighted_optical_depth: f64,
+    grid_valid: u8,
 };
 
 const ThermodynamicState = struct {
@@ -191,12 +244,16 @@ const TraceFiles = struct {
     spectroscopy_summary: std.fs.File,
     weak_line_contributors: std.fs.File,
     sublayer_optics: std.fs.File,
+    interval_bounds: std.fs.File,
     adaptive_grid: std.fs.File,
     kernel_samples: std.fs.File,
     transport_samples: std.fs.File,
     transport_summary: std.fs.File,
     fourier_terms: std.fs.File,
     transport_layers: std.fs.File,
+    transport_source_terms: std.fs.File,
+    transport_attenuation_terms: std.fs.File,
+    transport_pseudo_spherical_samples: std.fs.File,
 
     fn init(
         allocator: std.mem.Allocator,
@@ -211,13 +268,17 @@ const TraceFiles = struct {
             .strong_state = try createCsvFile(allocator, side_root, "strong_state.csv", "pressure_hpa,temperature_k,strong_index,center_wavelength_nm,center_wavenumber_cm1,sig_moy_cm1,population_t,dipole_t,mod_sig_cm1,half_width_cm1_at_t,line_mixing_coefficient\n"),
             .spectroscopy_summary = try createCsvFile(allocator, side_root, "spectroscopy_summary.csv", "pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule,total_sigma_cm2_per_molecule\n"),
             .weak_line_contributors = try createCsvFile(allocator, side_root, "weak_line_contributors.csv", "pressure_hpa,temperature_k,wavelength_nm,sample_wavelength_nm,source_row_index,contribution_kind,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,shifted_center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf,matched_strong_index,weak_line_sigma_cm2_per_molecule\n"),
-            .sublayer_optics = try createCsvFile(allocator, side_root, "sublayer_optics.csv", "wavelength_nm,global_sublayer_index,interval_index_1based,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm,aerosol_optical_depth,aerosol_scattering_optical_depth,cloud_optical_depth,cloud_scattering_optical_depth,total_scattering_optical_depth,total_optical_depth,combined_phase_coef_0,combined_phase_coef_1,combined_phase_coef_2,combined_phase_coef_3,combined_phase_coef_10,combined_phase_coef_20,combined_phase_coef_39\n"),
+            .sublayer_optics = try createCsvFile(allocator, side_root, "sublayer_optics.csv", "wavelength_nm,global_sublayer_index,interval_index_1based,altitude_km,support_weight_km,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm,aerosol_optical_depth,aerosol_scattering_optical_depth,cloud_optical_depth,cloud_scattering_optical_depth,total_scattering_optical_depth,total_optical_depth,combined_phase_coef_0,combined_phase_coef_1,combined_phase_coef_2,combined_phase_coef_3,combined_phase_coef_10,combined_phase_coef_20,combined_phase_coef_39\n"),
+            .interval_bounds = try createCsvFile(allocator, side_root, "interval_bounds.csv", "nominal_wavelength_nm,boundary_index_0based,interval_index_1based,pressure_hpa,altitude_km\n"),
             .adaptive_grid = try createCsvFile(allocator, side_root, "adaptive_grid.csv", "nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count\n"),
             .kernel_samples = try createCsvFile(allocator, side_root, "kernel_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,weight\n"),
             .transport_samples = try createCsvFile(allocator, side_root, "transport_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,radiance,irradiance,weight\n"),
             .transport_summary = try createCsvFile(allocator, side_root, "transport_summary.csv", "nominal_wavelength_nm,final_radiance,final_irradiance,final_reflectance\n"),
-            .fourier_terms = try createCsvFile(allocator, side_root, "fourier_terms.csv", "nominal_wavelength_nm,sample_wavelength_nm,fourier_index,refl_fc,source_refl_fc,surface_refl_fc,surface_e_view,surface_u_view_solar,fourier_weight,weighted_refl\n"),
-            .transport_layers = try createCsvFile(allocator, side_root, "transport_layers.csv", "nominal_wavelength_nm,sample_wavelength_nm,layer_index,optical_depth,scattering_optical_depth,single_scatter_albedo,phase_coef_0,phase_coef_1,phase_coef_2,phase_coef_3,phase_coef_10,phase_coef_20,phase_coef_39\n"),
+            .fourier_terms = try createCsvFile(allocator, side_root, "fourier_terms.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,refl_fc,source_refl_fc,surface_refl_fc,surface_e_view,surface_u_view_solar,fourier_weight,weighted_refl\n"),
+            .transport_layers = try createCsvFile(allocator, side_root, "transport_layers.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,layer_index,optical_depth,scattering_optical_depth,single_scatter_albedo,phase_coef_0,phase_coef_1,phase_coef_2,phase_coef_3,phase_coef_10,phase_coef_20,phase_coef_39\n"),
+            .transport_source_terms = try createCsvFile(allocator, side_root, "transport_source_terms.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,level_index,rtm_weight,ksca,source_contribution,weighted_source_contribution\n"),
+            .transport_attenuation_terms = try createCsvFile(allocator, side_root, "transport_attenuation_terms.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,direction_kind,direction_index,level_index,sumkext,attenuation_top_to_level,grid_valid\n"),
+            .transport_pseudo_spherical_samples = try createCsvFile(allocator, side_root, "transport_pseudo_spherical_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,global_sample_index,altitude_km,support_weight_km,optical_depth,radius_weighted_optical_depth,grid_valid\n"),
         };
     }
 
@@ -227,12 +288,16 @@ const TraceFiles = struct {
         self.spectroscopy_summary.close();
         self.weak_line_contributors.close();
         self.sublayer_optics.close();
+        self.interval_bounds.close();
         self.adaptive_grid.close();
         self.kernel_samples.close();
         self.transport_samples.close();
         self.transport_summary.close();
         self.fourier_terms.close();
         self.transport_layers.close();
+        self.transport_source_terms.close();
+        self.transport_attenuation_terms.close();
+        self.transport_pseudo_spherical_samples.close();
         self.* = undefined;
     }
 };
@@ -367,6 +432,11 @@ pub fn main() !void {
     }
     try emitSublayerOptics(
         &files.sublayer_optics,
+        &prepared_case.prepared,
+        trace_wavelengths,
+    );
+    try emitIntervalBounds(
+        &files.interval_bounds,
         &prepared_case.prepared,
         trace_wavelengths,
     );
@@ -976,6 +1046,8 @@ fn emitSublayerOptics(
                 .wavelength_nm = trace_wavelength.nominal_nm,
                 .global_sublayer_index = sublayer.global_sublayer_index,
                 .interval_index_1based = sublayer.interval_index_1based,
+                .altitude_km = sublayer.altitude_km,
+                .support_weight_km = sublayer.path_length_cm / 1.0e5,
                 .pressure_hpa = sublayer.pressure_hpa,
                 .temperature_k = sublayer.temperature_k,
                 .number_density_cm3 = sublayer.number_density_cm3,
@@ -1008,11 +1080,13 @@ fn emitSublayerOptics(
     var writer = file.deprecatedWriter();
     for (rows.items) |row| {
         try writer.print(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             .{
                 row.wavelength_nm,
                 row.global_sublayer_index,
                 row.interval_index_1based,
+                row.altitude_km,
+                row.support_weight_km,
                 row.pressure_hpa,
                 row.temperature_k,
                 row.number_density_cm3,
@@ -1042,6 +1116,65 @@ fn emitSublayerOptics(
     }
 }
 
+fn emitIntervalBounds(
+    file: *std.fs.File,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+    trace_wavelengths: []const TraceWavelength,
+) !void {
+    if (prepared.layers.len == 0) return;
+
+    var rows = std.ArrayList(IntervalBoundRow).empty;
+    defer rows.deinit(std.heap.page_allocator);
+
+    for (trace_wavelengths) |trace_wavelength| {
+        const first_layer = prepared.layers[0];
+        try rows.append(std.heap.page_allocator, .{
+            .nominal_wavelength_nm = trace_wavelength.nominal_nm,
+            .boundary_index_0based = 0,
+            .interval_index_1based = 0,
+            .pressure_hpa = first_layer.bottom_pressure_hpa,
+            .altitude_km = first_layer.bottom_altitude_km,
+        });
+
+        var interval_start: usize = 0;
+        var boundary_index: usize = 1;
+        while (interval_start < prepared.layers.len) : (boundary_index += 1) {
+            const interval_index_1based = prepared.layers[interval_start].interval_index_1based;
+            var interval_stop = interval_start + 1;
+            while (interval_stop < prepared.layers.len and
+                prepared.layers[interval_stop].interval_index_1based == interval_index_1based)
+            {
+                interval_stop += 1;
+            }
+
+            const last_layer = prepared.layers[interval_stop - 1];
+            try rows.append(std.heap.page_allocator, .{
+                .nominal_wavelength_nm = trace_wavelength.nominal_nm,
+                .boundary_index_0based = boundary_index,
+                .interval_index_1based = interval_index_1based,
+                .pressure_hpa = last_layer.top_pressure_hpa,
+                .altitude_km = last_layer.top_altitude_km,
+            });
+            interval_start = interval_stop;
+        }
+    }
+
+    std.sort.block(IntervalBoundRow, rows.items, {}, lessThanIntervalBoundRow);
+    var writer = file.deprecatedWriter();
+    for (rows.items) |row| {
+        try writer.print(
+            "{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.boundary_index_0based,
+                row.interval_index_1based,
+                row.pressure_hpa,
+                row.altitude_km,
+            },
+        );
+    }
+}
+
 fn emitTransportTraces(
     allocator: std.mem.Allocator,
     files: *TraceFiles,
@@ -1064,6 +1197,12 @@ fn emitTransportTraces(
     defer fourier_rows.deinit(allocator);
     var transport_layer_rows = std.ArrayList(TransportLayerRow).empty;
     defer transport_layer_rows.deinit(allocator);
+    var source_rows = std.ArrayList(SourceTermRow).empty;
+    defer source_rows.deinit(allocator);
+    var attenuation_rows = std.ArrayList(AttenuationTermRow).empty;
+    defer attenuation_rows.deinit(allocator);
+    var pseudo_spherical_rows = std.ArrayList(PseudoSphericalSampleRow).empty;
+    defer pseudo_spherical_rows.deinit(allocator);
 
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
@@ -1158,10 +1297,15 @@ fn emitTransportTraces(
                 allocator,
                 &fourier_rows,
                 &transport_layer_rows,
+                &source_rows,
+                &attenuation_rows,
+                &pseudo_spherical_rows,
                 scene,
                 route,
                 prepared,
                 sample_wavelength_nm,
+                sample_index,
+                weight,
                 nominal_wavelength_nm,
                 buffers,
                 transport_layer_count,
@@ -1227,6 +1371,9 @@ fn emitTransportTraces(
     std.sort.block(TransportSummaryRow, summary_rows.items, {}, lessThanTransportSummaryRow);
     std.sort.block(FourierTermRow, fourier_rows.items, {}, lessThanFourierTermRow);
     std.sort.block(TransportLayerRow, transport_layer_rows.items, {}, lessThanTransportLayerRow);
+    std.sort.block(SourceTermRow, source_rows.items, {}, lessThanSourceTermRow);
+    std.sort.block(AttenuationTermRow, attenuation_rows.items, {}, lessThanAttenuationTermRow);
+    std.sort.block(PseudoSphericalSampleRow, pseudo_spherical_rows.items, {}, lessThanPseudoSphericalSampleRow);
 
     var adaptive_writer = files.adaptive_grid.deprecatedWriter();
     for (adaptive_rows.items) |row| {
@@ -1282,10 +1429,12 @@ fn emitTransportTraces(
     var fourier_writer = files.fourier_terms.deprecatedWriter();
     for (fourier_rows.items) |row| {
         try fourier_writer.print(
-            "{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{}\n",
             .{
                 row.nominal_wavelength_nm,
+                row.sample_index,
                 row.sample_wavelength_nm,
+                row.kernel_weight,
                 row.fourier_index,
                 row.refl_fc,
                 row.source_refl_fc,
@@ -1301,10 +1450,12 @@ fn emitTransportTraces(
     var transport_layer_writer = files.transport_layers.deprecatedWriter();
     for (transport_layer_rows.items) |row| {
         try transport_layer_writer.print(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             .{
                 row.nominal_wavelength_nm,
+                row.sample_index,
                 row.sample_wavelength_nm,
+                row.kernel_weight,
                 row.layer_index,
                 row.optical_depth,
                 row.scattering_optical_depth,
@@ -1319,16 +1470,78 @@ fn emitTransportTraces(
             },
         );
     }
+
+    var source_writer = files.transport_source_terms.deprecatedWriter();
+    for (source_rows.items) |row| {
+        try source_writer.print(
+            "{},{},{},{},{},{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.sample_index,
+                row.sample_wavelength_nm,
+                row.kernel_weight,
+                row.fourier_index,
+                row.level_index,
+                row.rtm_weight,
+                row.ksca,
+                row.source_contribution,
+                row.weighted_source_contribution,
+            },
+        );
+    }
+
+    var attenuation_writer = files.transport_attenuation_terms.deprecatedWriter();
+    for (attenuation_rows.items) |row| {
+        try attenuation_writer.print(
+            "{},{},{},{},{s},{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.sample_index,
+                row.sample_wavelength_nm,
+                row.kernel_weight,
+                row.direction_kind,
+                row.direction_index,
+                row.level_index,
+                row.sumkext,
+                row.attenuation_top_to_level,
+                row.grid_valid,
+            },
+        );
+    }
+
+    var pseudo_spherical_writer = files.transport_pseudo_spherical_samples.deprecatedWriter();
+    for (pseudo_spherical_rows.items) |row| {
+        try pseudo_spherical_writer.print(
+            "{},{},{},{},{},{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.sample_index,
+                row.sample_wavelength_nm,
+                row.kernel_weight,
+                row.global_sample_index,
+                row.altitude_km,
+                row.support_weight_km,
+                row.optical_depth,
+                row.radius_weighted_optical_depth,
+                row.grid_valid,
+            },
+        );
+    }
 }
 
 fn emitLabosFourierRowsForSample(
     allocator: std.mem.Allocator,
     rows: *std.ArrayList(FourierTermRow),
     layer_rows: *std.ArrayList(TransportLayerRow),
+    source_rows: *std.ArrayList(SourceTermRow),
+    attenuation_rows: *std.ArrayList(AttenuationTermRow),
+    pseudo_spherical_rows: *std.ArrayList(PseudoSphericalSampleRow),
     scene: *const internal.Scene,
     route: TransportCommon.Route,
     prepared: *const OpticsPrepare.PreparedOpticalState,
     sample_wavelength_nm: f64,
+    sample_index: usize,
+    kernel_weight: f64,
     nominal_wavelength_nm: f64,
     buffers: *TransportBuffers,
     transport_layer_count: usize,
@@ -1352,7 +1565,9 @@ fn emitLabosFourierRowsForSample(
     for (input.layers, 0..) |layer, layer_index| {
         try layer_rows.append(allocator, .{
             .nominal_wavelength_nm = nominal_wavelength_nm,
+            .sample_index = sample_index,
             .sample_wavelength_nm = sample_wavelength_nm,
+            .kernel_weight = kernel_weight,
             .layer_index = layer_index,
             .optical_depth = layer.optical_depth,
             .scattering_optical_depth = layer.scattering_optical_depth,
@@ -1379,6 +1594,28 @@ fn emitLabosFourierRowsForSample(
         controls.use_spherical_correction,
     );
     defer atten.deinit();
+    try appendAttenuationRowsForSample(
+        allocator,
+        attenuation_rows,
+        input,
+        &geo,
+        &atten,
+        controls.use_spherical_correction,
+        nominal_wavelength_nm,
+        sample_index,
+        sample_wavelength_nm,
+        kernel_weight,
+    );
+    try appendPseudoSphericalRowsForSample(
+        allocator,
+        pseudo_spherical_rows,
+        input,
+        controls.use_spherical_correction,
+        nominal_wavelength_nm,
+        sample_index,
+        sample_wavelength_nm,
+        kernel_weight,
+    );
 
     var rt = try allocator.alloc(Labos.LayerRT, input.layers.len + 1);
     defer allocator.free(rt);
@@ -1427,6 +1664,23 @@ fn emitLabosFourierRowsForSample(
             controls,
             num_orders_max,
         );
+        if (use_integrated_source) {
+            try appendSourceTermRowsForFourier(
+                allocator,
+                source_rows,
+                input,
+                orders_result.ud,
+                i_fourier,
+                &geo,
+                &plm_basis,
+                layer_phase_kernels,
+                layer_phase_kernel_valid,
+                nominal_wavelength_nm,
+                sample_index,
+                sample_wavelength_nm,
+                kernel_weight,
+            );
+        }
         const refl_fc = if (use_integrated_source)
             Labos.calcIntegratedReflectanceWithBasis(
                 input.layers,
@@ -1462,7 +1716,9 @@ fn emitLabosFourierRowsForSample(
             2.0 * std.math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
         try rows.append(allocator, .{
             .nominal_wavelength_nm = nominal_wavelength_nm,
+            .sample_index = sample_index,
             .sample_wavelength_nm = sample_wavelength_nm,
+            .kernel_weight = kernel_weight,
             .fourier_index = i_fourier,
             .refl_fc = refl_fc,
             .source_refl_fc = refl_fc - surface_refl_fc,
@@ -1473,6 +1729,328 @@ fn emitLabosFourierRowsForSample(
             .weighted_refl = fourier_weight * refl_fc,
         });
     }
+}
+
+fn appendAttenuationRowsForSample(
+    allocator: std.mem.Allocator,
+    rows: *std.ArrayList(AttenuationTermRow),
+    input: TransportCommon.ForwardInput,
+    geo: *const Labos.Geometry,
+    atten: *const Labos.DynamicAttenArray,
+    use_spherical_correction: bool,
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+) !void {
+    const Direction = struct {
+        label: []const u8,
+        index: usize,
+    };
+    const directions = [_]Direction{
+        .{ .label = "view", .index = geo.viewIdx() },
+        .{ .label = "solar", .index = geo.n_gauss + 1 },
+    };
+    const top_level = input.layers.len;
+    const grid_valid = use_spherical_correction and input.pseudo_spherical_grid.isValidFor(input.layers.len);
+
+    for (directions) |direction| {
+        for (0..top_level + 1) |level| {
+            const attenuation_top_to_level = atten.get(direction.index, top_level, level);
+            const sumkext = if (grid_valid)
+                pseudoSphericalSumkextForLevel(input.pseudo_spherical_grid, geo, direction.index, level)
+            else
+                -@log(@max(attenuation_top_to_level, 1.0e-300));
+            try rows.append(allocator, .{
+                .nominal_wavelength_nm = nominal_wavelength_nm,
+                .sample_index = sample_index,
+                .sample_wavelength_nm = sample_wavelength_nm,
+                .kernel_weight = kernel_weight,
+                .direction_kind = direction.label,
+                .direction_index = direction.index,
+                .level_index = level,
+                .sumkext = sumkext,
+                .attenuation_top_to_level = attenuation_top_to_level,
+                .grid_valid = if (grid_valid) 1 else 0,
+            });
+        }
+    }
+}
+
+fn appendPseudoSphericalRowsForSample(
+    allocator: std.mem.Allocator,
+    rows: *std.ArrayList(PseudoSphericalSampleRow),
+    input: TransportCommon.ForwardInput,
+    use_spherical_correction: bool,
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+) !void {
+    const rearth_km = 6371.0;
+    const grid_valid = use_spherical_correction and input.pseudo_spherical_grid.isValidFor(input.layers.len);
+    for (input.pseudo_spherical_grid.samples, 0..) |sample, global_sample_index| {
+        if (sample.optical_depth <= 0.0 and sample.thickness_km <= 0.0) continue;
+        const radius_weighted_optical_depth = sample.optical_depth * (rearth_km + sample.altitude_km);
+        try rows.append(allocator, .{
+            .nominal_wavelength_nm = nominal_wavelength_nm,
+            .sample_index = sample_index,
+            .sample_wavelength_nm = sample_wavelength_nm,
+            .kernel_weight = kernel_weight,
+            .global_sample_index = global_sample_index,
+            .altitude_km = sample.altitude_km,
+            .support_weight_km = sample.thickness_km,
+            .optical_depth = sample.optical_depth,
+            .radius_weighted_optical_depth = radius_weighted_optical_depth,
+            .grid_valid = if (grid_valid) 1 else 0,
+        });
+    }
+}
+
+fn pseudoSphericalSumkextForLevel(
+    pseudo_spherical_grid: TransportCommon.PseudoSphericalGrid,
+    geo: *const Labos.Geometry,
+    direction_index: usize,
+    level: usize,
+) f64 {
+    const rearth_km = 6371.0;
+    const top_level = pseudo_spherical_grid.level_sample_starts.len - 1;
+    if (level >= top_level) return 0.0;
+
+    const u = std.math.clamp(geo.u[direction_index], -1.0, 1.0);
+    const sin2theta = @max(1.0 - u * u, 0.0);
+    const level_radius = rearth_km + pseudoSphericalLevelAltitude(pseudo_spherical_grid, level);
+    const sqrx_sin2theta = sin2theta * level_radius * level_radius;
+    var sumkext: f64 = 0.0;
+    for (pseudo_spherical_grid.level_sample_starts[level]..pseudo_spherical_grid.samples.len) |sample_index| {
+        const sample = pseudo_spherical_grid.samples[sample_index];
+        if (sample.optical_depth <= 0.0) continue;
+        const sample_radius = rearth_km + sample.altitude_km;
+        const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
+        sumkext += (sample.optical_depth * sample_radius) / @max(denominator, 1.0e-12);
+    }
+    return sumkext;
+}
+
+fn pseudoSphericalLevelAltitude(
+    pseudo_spherical_grid: TransportCommon.PseudoSphericalGrid,
+    level: usize,
+) f64 {
+    if (pseudo_spherical_grid.level_altitudes_km.len != 0) {
+        return pseudo_spherical_grid.level_altitudes_km[level];
+    }
+    if (level == 0) {
+        const first = pseudo_spherical_grid.samples[0];
+        return @max(first.altitude_km - 0.5 * first.thickness_km, 0.0);
+    }
+
+    const start_index = pseudo_spherical_grid.level_sample_starts[level];
+    if (start_index >= pseudo_spherical_grid.samples.len) {
+        const last = pseudo_spherical_grid.samples[pseudo_spherical_grid.samples.len - 1];
+        return @max(last.altitude_km + 0.5 * last.thickness_km, 0.0);
+    }
+
+    const sample = pseudo_spherical_grid.samples[start_index];
+    return @max(sample.altitude_km - 0.5 * sample.thickness_km, 0.0);
+}
+
+fn appendSourceTermRowsForFourier(
+    allocator: std.mem.Allocator,
+    rows: *std.ArrayList(SourceTermRow),
+    input: TransportCommon.ForwardInput,
+    ud: []const Labos.UDField,
+    i_fourier: usize,
+    geo: *const Labos.Geometry,
+    plm_basis: *const Labos.FourierPlmBasis,
+    layer_phase_kernel_cache: ?[]const Labos.PhaseKernel,
+    layer_phase_kernel_valid: ?[]const bool,
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+) !void {
+    const solar_col: usize = 1;
+    const view_idx = geo.viewIdx();
+    const solar_idx = geo.n_gauss + 1;
+    const view_mu = @max(geo.u[view_idx], 1.0e-12);
+    const use_rtm_quadrature = input.rtm_quadrature.isValidFor(input.layers.len);
+
+    for (0..input.layers.len + 1) |ilevel| {
+        const source_interface = if (use_rtm_quadrature)
+            TransportCommon.SourceInterfaceInput{}
+        else
+            sourceInterfaceAtLevel(input.layers, input.source_interfaces, ilevel);
+        const source_rtm_weight = if (use_rtm_quadrature)
+            input.rtm_quadrature.levels[ilevel].weight
+        else if (source_interface.rtm_weight > 0.0 and source_interface.ksca_above > 0.0)
+            source_interface.rtm_weight
+        else
+            source_interface.source_weight;
+        const source_ksca = if (use_rtm_quadrature)
+            input.rtm_quadrature.levels[ilevel].ksca
+        else if (source_interface.rtm_weight > 0.0 and source_interface.ksca_above > 0.0)
+            source_interface.ksca_above
+        else
+            1.0;
+        if (source_rtm_weight <= 0.0 or source_ksca <= 0.0) continue;
+
+        const phase_coefficients = if (use_rtm_quadrature)
+            input.rtm_quadrature.levels[ilevel].phase_coefficients
+        else
+            source_interface.phase_coefficients_above;
+        const source_max_phase_index = if (use_rtm_quadrature)
+            adjacentLayerPhaseCoefficientIndex(input.layers, ilevel)
+        else if (input.layers.len != 0)
+            adjacentLayerPhaseCoefficientIndex(input.layers, ilevel)
+        else
+            maxInterfacePhaseCoefficientIndex(input.layers, input.source_interfaces, ilevel);
+        if (i_fourier > source_max_phase_index) continue;
+
+        const z = blk: {
+            if (!use_rtm_quadrature) {
+                if (reuseLayerKernelIndex(input.layers, source_interface, ilevel)) |above_index| {
+                    if (layer_phase_kernel_cache) |cache| {
+                        if (layer_phase_kernel_valid) |valid| {
+                            const cache_index = above_index + 1;
+                            if (cache_index < cache.len and cache_index < valid.len and valid[cache_index]) {
+                                break :blk cache[cache_index];
+                            }
+                        }
+                    }
+                }
+            }
+            break :blk fillZplusZminFromBasisLimited(
+                i_fourier,
+                phase_coefficients,
+                source_max_phase_index,
+                geo,
+                plm_basis,
+            );
+        };
+
+        var pmin_ed: f64 = 0.0;
+        for (0..geo.n_gauss) |imu| {
+            const mu = @max(geo.u[imu], 1.0e-12);
+            const pmin = 0.25 * z.Zmin.get(view_idx, imu) / (view_mu * mu);
+            pmin_ed += pmin * ud[ilevel].D.col[solar_col].get(imu);
+        }
+
+        const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
+        const pmin_direct = 0.25 * z.Zmin.get(view_idx, solar_idx) / (view_mu * solar_mu);
+        pmin_ed += pmin_direct * ud[ilevel].E.get(solar_idx);
+
+        var pplusst_u: f64 = 0.0;
+        for (0..geo.n_gauss) |imu| {
+            const mu = @max(geo.u[imu], 1.0e-12);
+            const pplusst = 0.25 * z.Zplus.get(view_idx, imu) / (view_mu * mu);
+            pplusst_u += pplusst * ud[ilevel].U.col[solar_col].get(imu);
+        }
+
+        const contribution = ud[ilevel].E.get(view_idx) *
+            source_ksca *
+            (pmin_ed + pplusst_u);
+        try rows.append(allocator, .{
+            .nominal_wavelength_nm = nominal_wavelength_nm,
+            .sample_index = sample_index,
+            .sample_wavelength_nm = sample_wavelength_nm,
+            .kernel_weight = kernel_weight,
+            .fourier_index = i_fourier,
+            .level_index = ilevel,
+            .rtm_weight = source_rtm_weight,
+            .ksca = source_ksca,
+            .source_contribution = contribution,
+            .weighted_source_contribution = source_rtm_weight * contribution,
+        });
+    }
+}
+
+fn sourceInterfaceAtLevel(
+    layers: []const TransportCommon.LayerInput,
+    source_interfaces: []const TransportCommon.SourceInterfaceInput,
+    ilevel: usize,
+) TransportCommon.SourceInterfaceInput {
+    if (source_interfaces.len == layers.len + 1 and ilevel < source_interfaces.len) {
+        return source_interfaces[ilevel];
+    }
+    return TransportCommon.sourceInterfaceFromLayers(layers, ilevel);
+}
+
+fn maxPhaseCoefficientIndex(phase_coefficients: [TransportCommon.phase_coefficient_count]f64) usize {
+    var max_index: usize = 0;
+    for (1..TransportCommon.phase_coefficient_count) |idx| {
+        if (@abs(phase_coefficients[idx]) > 1.0e-12) {
+            max_index = idx;
+        }
+    }
+    return max_index;
+}
+
+fn maxInterfacePhaseCoefficientIndex(
+    layers: []const TransportCommon.LayerInput,
+    source_interfaces: []const TransportCommon.SourceInterfaceInput,
+    ilevel: usize,
+) usize {
+    const source_interface = sourceInterfaceAtLevel(layers, source_interfaces, ilevel);
+    const above_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_above);
+    const below_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_below);
+    if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return @max(above_max, below_max);
+    return @max(above_max, below_max);
+}
+
+fn adjacentLayerPhaseCoefficientIndex(
+    layers: []const TransportCommon.LayerInput,
+    ilevel: usize,
+) usize {
+    if (layers.len == 0) return 0;
+    if (ilevel == 0) return maxPhaseCoefficientIndex(layers[0].phase_coefficients);
+    if (ilevel >= layers.len) return maxPhaseCoefficientIndex(layers[layers.len - 1].phase_coefficients);
+    return @max(
+        maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients),
+        maxPhaseCoefficientIndex(layers[ilevel].phase_coefficients),
+    );
+}
+
+fn reuseLayerKernelIndex(
+    layers: []const TransportCommon.LayerInput,
+    source_interface: TransportCommon.SourceInterfaceInput,
+    ilevel: usize,
+) ?usize {
+    if (layers.len == 0) return null;
+    const above_index = @min(ilevel, layers.len - 1);
+    if (!std.mem.eql(
+        f64,
+        source_interface.phase_coefficients_above[0..],
+        layers[above_index].phase_coefficients[0..],
+    )) {
+        return null;
+    }
+    return above_index;
+}
+
+fn fillZplusZminFromBasisLimited(
+    i_fourier: usize,
+    phase_coefficients: [TransportCommon.phase_coefficient_count]f64,
+    max_phase_index: usize,
+    geo: *const Labos.Geometry,
+    plm_basis: *const Labos.FourierPlmBasis,
+) Labos.PhaseKernel {
+    const n = geo.nmutot;
+    var zplus = Labos.Mat.zero(n);
+    var zmin = Labos.Mat.zero(n);
+    const bounded_max_phase_index = @min(max_phase_index, maxPhaseCoefficientIndex(phase_coefficients));
+    if (i_fourier > bounded_max_phase_index) return .{ .Zplus = zplus, .Zmin = zmin };
+
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
+        const alpha1 = phase_coefficients[l];
+        for (0..n) |j| {
+            const pj = plm_basis.plus[l][j];
+            for (0..n) |i| {
+                zplus.addTo(i, j, alpha1 * plm_basis.plus[l][i] * pj);
+                zmin.addTo(i, j, alpha1 * plm_basis.minus[l][i] * pj);
+            }
+        }
+    }
+    return .{ .Zplus = zplus, .Zmin = zmin };
 }
 
 fn usesVendorStrongLinePartition(line_list: ReferenceData.SpectroscopyLineList) bool {
@@ -1561,6 +2139,11 @@ fn lessThanSublayerOpticsRow(_: void, lhs: SublayerOpticsRow, rhs: SublayerOptic
     return lhs.interval_index_1based < rhs.interval_index_1based;
 }
 
+fn lessThanIntervalBoundRow(_: void, lhs: IntervalBoundRow, rhs: IntervalBoundRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    return lhs.boundary_index_0based < rhs.boundary_index_0based;
+}
+
 fn lessThanWeakLineContributorRow(_: void, lhs: WeakLineContributorRow, rhs: WeakLineContributorRow) bool {
     if (lhs.wavelength_nm != rhs.wavelength_nm) return lhs.wavelength_nm < rhs.wavelength_nm;
     if (lhs.pressure_hpa != rhs.pressure_hpa) return lhs.pressure_hpa < rhs.pressure_hpa;
@@ -1592,14 +2175,35 @@ fn lessThanTransportSummaryRow(_: void, lhs: TransportSummaryRow, rhs: Transport
 
 fn lessThanFourierTermRow(_: void, lhs: FourierTermRow, rhs: FourierTermRow) bool {
     if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
-    if (lhs.sample_wavelength_nm != rhs.sample_wavelength_nm) return lhs.sample_wavelength_nm < rhs.sample_wavelength_nm;
+    if (lhs.sample_index != rhs.sample_index) return lhs.sample_index < rhs.sample_index;
     return lhs.fourier_index < rhs.fourier_index;
 }
 
 fn lessThanTransportLayerRow(_: void, lhs: TransportLayerRow, rhs: TransportLayerRow) bool {
     if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
-    if (lhs.sample_wavelength_nm != rhs.sample_wavelength_nm) return lhs.sample_wavelength_nm < rhs.sample_wavelength_nm;
+    if (lhs.sample_index != rhs.sample_index) return lhs.sample_index < rhs.sample_index;
     return lhs.layer_index < rhs.layer_index;
+}
+
+fn lessThanSourceTermRow(_: void, lhs: SourceTermRow, rhs: SourceTermRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    if (lhs.sample_index != rhs.sample_index) return lhs.sample_index < rhs.sample_index;
+    if (lhs.fourier_index != rhs.fourier_index) return lhs.fourier_index < rhs.fourier_index;
+    return lhs.level_index < rhs.level_index;
+}
+
+fn lessThanAttenuationTermRow(_: void, lhs: AttenuationTermRow, rhs: AttenuationTermRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    if (lhs.sample_index != rhs.sample_index) return lhs.sample_index < rhs.sample_index;
+    const direction_order = std.mem.order(u8, lhs.direction_kind, rhs.direction_kind);
+    if (direction_order != .eq) return direction_order == .lt;
+    return lhs.level_index < rhs.level_index;
+}
+
+fn lessThanPseudoSphericalSampleRow(_: void, lhs: PseudoSphericalSampleRow, rhs: PseudoSphericalSampleRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    if (lhs.sample_index != rhs.sample_index) return lhs.sample_index < rhs.sample_index;
+    return lhs.global_sample_index < rhs.global_sample_index;
 }
 
 fn sortNanLast(lhs: f64, rhs: f64) ?bool {

@@ -34,12 +34,16 @@ EXPECTED_CSVS = (
     "strong_state.csv",
     "spectroscopy_summary.csv",
     "sublayer_optics.csv",
+    "interval_bounds.csv",
     "adaptive_grid.csv",
     "kernel_samples.csv",
     "transport_samples.csv",
     "transport_summary.csv",
     "fourier_terms.csv",
     "transport_layers.csv",
+    "transport_source_terms.csv",
+    "transport_attenuation_terms.csv",
+    "transport_pseudo_spherical_samples.csv",
 )
 STAGE_ORDER = EXPECTED_CSVS
 PAIRWISE_DIFFS = (("vendor", "yaml"),)
@@ -132,6 +136,8 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "wavelength_nm",
             "global_sublayer_index",
             "interval_index_1based",
+            "altitude_km",
+            "support_weight_km",
             "pressure_hpa",
             "temperature_k",
             "number_density_cm3",
@@ -156,6 +162,16 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "combined_phase_coef_10",
             "combined_phase_coef_20",
             "combined_phase_coef_39",
+        ),
+    ),
+    "interval_bounds.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "boundary_index_0based"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "boundary_index_0based",
+            "interval_index_1based",
+            "pressure_hpa",
+            "altitude_km",
         ),
     ),
     "adaptive_grid.csv": CsvSpec(
@@ -188,10 +204,12 @@ CSV_SPECS: dict[str, CsvSpec] = {
         numeric_columns=("nominal_wavelength_nm", "final_radiance", "final_irradiance", "final_reflectance"),
     ),
     "fourier_terms.csv": CsvSpec(
-        key_columns=("nominal_wavelength_nm", "sample_wavelength_nm", "fourier_index"),
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index"),
         numeric_columns=(
             "nominal_wavelength_nm",
+            "sample_index",
             "sample_wavelength_nm",
+            "kernel_weight",
             "fourier_index",
             "refl_fc",
             "source_refl_fc",
@@ -203,10 +221,12 @@ CSV_SPECS: dict[str, CsvSpec] = {
         ),
     ),
     "transport_layers.csv": CsvSpec(
-        key_columns=("nominal_wavelength_nm", "sample_wavelength_nm", "layer_index"),
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "layer_index"),
         numeric_columns=(
             "nominal_wavelength_nm",
+            "sample_index",
             "sample_wavelength_nm",
+            "kernel_weight",
             "layer_index",
             "optical_depth",
             "scattering_optical_depth",
@@ -218,6 +238,50 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "phase_coef_10",
             "phase_coef_20",
             "phase_coef_39",
+        ),
+    ),
+    "transport_source_terms.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index", "level_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "level_index",
+            "rtm_weight",
+            "ksca",
+            "source_contribution",
+            "weighted_source_contribution",
+        ),
+    ),
+    "transport_attenuation_terms.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "direction_kind", "level_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "direction_index",
+            "level_index",
+            "sumkext",
+            "attenuation_top_to_level",
+            "grid_valid",
+        ),
+    ),
+    "transport_pseudo_spherical_samples.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "global_sample_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "global_sample_index",
+            "altitude_km",
+            "support_weight_km",
+            "optical_depth",
+            "radius_weighted_optical_depth",
+            "grid_valid",
         ),
     ),
 }
@@ -284,6 +348,8 @@ def main() -> int:
         merge_fortran_spectroscopy_summary(vendor_root)
         merge_fortran_sublayer_optics(vendor_root)
         run_zig_trace(trace_root, wavelengths_nm, args.zig_optimize)
+        annotate_transport_support_rows(vendor_root)
+        annotate_transport_support_rows(yaml_root)
         canonicalize_side(vendor_root)
         verify_expected_csvs(vendor_root, "vendor")
         canonicalize_side(yaml_root)
@@ -593,6 +659,62 @@ def align_sublayer_optics_to_yaml(vendor_root: Path, yaml_root: Path) -> None:
     write_csv_rows(vendor_path, list(yaml_rows[0].keys()), aligned_vendor_rows)
 
 
+def annotate_transport_support_rows(side_root: Path) -> None:
+    kernel_path = side_root / "kernel_samples.csv"
+    if not kernel_path.exists():
+        return
+
+    support_by_wavelength = {
+        support_join_key(row["nominal_wavelength_nm"], row["sample_wavelength_nm"]): row
+        for row in read_csv_rows(kernel_path)
+    }
+    for file_name in (
+        "fourier_terms.csv",
+        "transport_layers.csv",
+        "transport_source_terms.csv",
+        "transport_attenuation_terms.csv",
+        "transport_pseudo_spherical_samples.csv",
+    ):
+        path = side_root / file_name
+        if not path.exists():
+            continue
+        headers = read_csv_headers(path)
+        rows = read_csv_rows(path)
+        fieldnames = [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+        ] + [
+            header
+            for header in headers
+            if header
+            not in {
+                "nominal_wavelength_nm",
+                "sample_index",
+                "sample_wavelength_nm",
+                "kernel_weight",
+            }
+        ]
+
+        annotated_rows: list[dict[str, str]] = []
+        for row in rows:
+            support_row = support_by_wavelength.get(
+                support_join_key(row["nominal_wavelength_nm"], row["sample_wavelength_nm"])
+            )
+            if support_row is None:
+                continue
+            annotated_row = dict(row)
+            annotated_row["sample_index"] = support_row["sample_index"]
+            annotated_row["kernel_weight"] = support_row["weight"]
+            annotated_rows.append(annotated_row)
+        write_csv_rows(path, fieldnames, annotated_rows)
+
+
+def support_join_key(nominal_wavelength_nm: str, sample_wavelength_nm: str) -> tuple[str, str]:
+    return (normalized_float_key(nominal_wavelength_nm), normalized_float_key(sample_wavelength_nm))
+
+
 def aligned_sublayer_group_key(row: dict[str, str]) -> str:
     return f"{parse_float(row['wavelength_nm']):.12f}"
 
@@ -652,7 +774,12 @@ def canonicalize_side(side_root: Path) -> None:
         spec = CSV_SPECS[file_name]
         rows = read_csv_rows(path)
         sort_rows(rows, spec)
-        if file_name in {"adaptive_grid.csv", "kernel_samples.csv", "transport_samples.csv"}:
+        if file_name in {
+            "adaptive_grid.csv",
+            "kernel_samples.csv",
+            "transport_samples.csv",
+            "interval_bounds.csv",
+        }:
             rows = dedupe_exact_rows(rows)
         write_csv_rows(path, list(rows[0].keys()) if rows else read_csv_headers(path), rows)
 
@@ -1533,7 +1660,62 @@ def patch_labos_module(path: Path) -> None:
         text,
         "  use mathTools,   only : GaussDivPoints, LU_decomposition, locate, solve_lin_system_LU_based\n",
         "  use mathTools,   only : GaussDivPoints, LU_decomposition, locate, solve_lin_system_LU_based\n"
-        "  use o2aFunctionTraceModule, only: o2a_trace_fourier_term, o2a_trace_transport_layer\n",
+        "  use o2aFunctionTraceModule, only: o2a_trace_fourier_term, o2a_trace_transport_layer, &\n"
+        "    o2a_trace_transport_source_term, o2a_trace_transport_attenuation_term, &\n"
+        "    o2a_trace_transport_pseudo_spherical_sample\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      integer    :: ilFrom, ilTo, ilayer, imu, index\n",
+        "      integer    :: ilFrom, ilTo, ilayer, imu, index\n"
+        "      integer    :: trace_sample_index\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "        numerator = optPropRTMGridS%RTMweightSub * x &\n"
+        "                  * ( optPropRTMGridS%kextSubGas + optPropRTMGridS%kextSubAer + optPropRTMGridS%kextSubCld )\n\n"
+        "        ! slant optical distances for the levels with standard geometry at level ilTo\n",
+        "        numerator = optPropRTMGridS%RTMweightSub * x &\n"
+        "                  * ( optPropRTMGridS%kextSubGas + optPropRTMGridS%kextSubAer + optPropRTMGridS%kextSubCld )\n\n"
+        "        trace_sample_index = 0\n"
+        "        do index = 0, optPropRTMGridS%RTMnlayerSub\n"
+        "          if (optPropRTMGridS%RTMweightSub(index) > 0.0d0) then\n"
+        "            call o2a_trace_transport_pseudo_spherical_sample(trace_sample_index, optPropRTMGridS%RTMaltitudeSub(index), &\n"
+        "              optPropRTMGridS%RTMweightSub(index), optPropRTMGridS%RTMweightSub(index) &\n"
+        "              * (optPropRTMGridS%kextSubGas(index) + optPropRTMGridS%kextSubAer(index) + optPropRTMGridS%kextSubCld(index)), &\n"
+        "              numerator(index), 1)\n"
+        "            trace_sample_index = trace_sample_index + 1\n"
+        "          end if\n"
+        "        end do\n\n"
+        "        ! slant optical distances for the levels with standard geometry at level ilTo\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "        do imu = 1, nmutot\n"
+        "          sin2theta = 1.0d0 - u(imu)**2\n"
+        "          do ilTo = RTMnlayer - 1, 0, -1\n",
+        "        do imu = 1, nmutot\n"
+        "          sin2theta = 1.0d0 - u(imu)**2\n"
+        "          if (imu == geometryS%nGauss + 1) &\n"
+        "            call o2a_trace_transport_attenuation_term('view', imu - 1, RTMnlayer, 0.0d0, atten(imu, RTMnlayer, RTMnlayer), 1)\n"
+        "          if (imu == geometryS%nGauss + 2) &\n"
+        "            call o2a_trace_transport_attenuation_term('solar', imu - 1, RTMnlayer, 0.0d0, atten(imu, RTMnlayer, RTMnlayer), 1)\n"
+        "          do ilTo = RTMnlayer - 1, 0, -1\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "            atten(imu, RTMnlayer, ilTo) = exp(-sumkext)\n"
+        "          end do ! ilTo loop\n",
+        "            atten(imu, RTMnlayer, ilTo) = exp(-sumkext)\n"
+        "            if (imu == geometryS%nGauss + 1) &\n"
+        "              call o2a_trace_transport_attenuation_term('view', imu - 1, ilTo, sumkext, atten(imu, RTMnlayer, ilTo), 1)\n"
+        "            if (imu == geometryS%nGauss + 2) &\n"
+        "              call o2a_trace_transport_attenuation_term('solar', imu - 1, ilTo, sumkext, atten(imu, RTMnlayer, ilTo), 1)\n"
+        "          end do ! ilTo loop\n",
         path,
     )
     text = replace_once(
@@ -1586,6 +1768,21 @@ def patch_labos_module(path: Path) -> None:
         "        wfAlbedo               = wfAlbedo                + factor * wfAlbedo_fc                * cos_m_dphi\n",
         path,
     )
+    text = replace_once(
+        text,
+        "              contribrefl_fc(iSV, ilevel) =  UD_fc(ilevel)%E(ind) * optPropRTMGridS%ksca(ilevel) &\n"
+        "                                          * (PminED(iSV) + PplusstU(iSV))\n"
+        "              ! integration\n"
+        "              sumRefl(iSV) = sumRefl(iSV) + optPropRTMGridS%RTMweight(ilevel) * contribrefl_fc(iSV, ilevel)\n",
+        "              contribrefl_fc(iSV, ilevel) =  UD_fc(ilevel)%E(ind) * optPropRTMGridS%ksca(ilevel) &\n"
+        "                                          * (PminED(iSV) + PplusstU(iSV))\n"
+        "              if (iSV == 1 .and. optPropRTMGridS%RTMweight(ilevel) > 0.0d0 .and. optPropRTMGridS%ksca(ilevel) > 0.0d0) &\n"
+        "                call o2a_trace_transport_source_term(iFourier, ilevel, optPropRTMGridS%RTMweight(ilevel), &\n"
+        "                optPropRTMGridS%ksca(ilevel), contribrefl_fc(iSV, ilevel))\n"
+        "              ! integration\n"
+        "              sumRefl(iSV) = sumRefl(iSV) + optPropRTMGridS%RTMweight(ilevel) * contribrefl_fc(iSV, ilevel)\n",
+        path,
+    )
     path.write_text(text, encoding="utf-8")
 
 
@@ -1597,7 +1794,28 @@ def patch_prop_atmosphere_module(path: Path) -> None:
         "                                getSmoothAndDiffXsec, slitfunction, fleg\n",
         "  use mathTools,          only: splintLin, spline, splint, polyInt, gaussDivPoints, &\n"
         "                                getSmoothAndDiffXsec, slitfunction, fleg\n"
-        "    use o2aFunctionTraceModule, only: o2a_trace_sublayer_optics\n",
+        "    use o2aFunctionTraceModule, only: o2a_trace_sublayer_optics, o2a_trace_interval_bound\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "       do ialt = 0, cloudAerosolRTMgridS%ninterval\n"
+        "         cloudAerosolRTMgridS%intervalBoundsAP(ialt) = &\n"
+        "           splint(errS, lnpressure, gasPTS%altAP, SDaltitudeAP, log(cloudAerosolRTMgridS%intervalBoundsAP_P(ialt)), status)\n"
+        "         cloudAerosolRTMgridS%intervalBounds(ialt) = &\n"
+        "           splint(errS, lnpressure, gasPTS%alt, SDaltitude, log(cloudAerosolRTMgridS%intervalBounds_P(ialt)), status)\n"
+        "       end do\n"
+        "       surfaceS(:)%altitude = cloudAerosolRTMgridS%intervalBounds(0)\n",
+        "       do ialt = 0, cloudAerosolRTMgridS%ninterval\n"
+        "         cloudAerosolRTMgridS%intervalBoundsAP(ialt) = &\n"
+        "           splint(errS, lnpressure, gasPTS%altAP, SDaltitudeAP, log(cloudAerosolRTMgridS%intervalBoundsAP_P(ialt)), status)\n"
+        "         cloudAerosolRTMgridS%intervalBounds(ialt) = &\n"
+        "           splint(errS, lnpressure, gasPTS%alt, SDaltitude, log(cloudAerosolRTMgridS%intervalBounds_P(ialt)), status)\n"
+        "       end do\n"
+        "       do ialt = 0, cloudAerosolRTMgridS%ninterval\n"
+        "         call o2a_trace_interval_bound(ialt, cloudAerosolRTMgridS%intervalBounds_P(ialt), cloudAerosolRTMgridS%intervalBounds(ialt))\n"
+        "       end do\n"
+        "       surfaceS(:)%altitude = cloudAerosolRTMgridS%intervalBounds(0)\n",
         path,
     )
     text = replace_once(
@@ -1654,7 +1872,7 @@ def patch_prop_atmosphere_module(path: Path) -> None:
         "          cloudScatteringOpticalDepth = kscaCld(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
         "          totalScatteringOpticalDepth = ksca(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
         "          totalOpticalDepth = (ksca(indexSub) + kabs(indexSub)) * optPropRTMGridS%RTMweightSub(indexSub)\n"
-        "          call o2a_trace_sublayer_optics(wavelength, indexSub, ibound, pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub) - ciaOpticalDepth, kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm, aerosolOpticalDepth, aerosolScatteringOpticalDepth, cloudOpticalDepth, cloudScatteringOpticalDepth, totalScatteringOpticalDepth, totalOpticalDepth, expCoef(1,1,0,indexSub), expCoef(1,1,1,indexSub), expCoef(1,1,2,indexSub), expCoef(1,1,3,indexSub), expCoef(1,1,10,indexSub), expCoef(1,1,20,indexSub), expCoef(1,1,39,indexSub))\n\n"
+        "          call o2a_trace_sublayer_optics(wavelength, indexSub, ibound, optPropRTMGridS%RTMaltitudeSub(indexSub), optPropRTMGridS%RTMweightSub(indexSub), pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub) - ciaOpticalDepth, kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm, aerosolOpticalDepth, aerosolScatteringOpticalDepth, cloudOpticalDepth, cloudScatteringOpticalDepth, totalScatteringOpticalDepth, totalOpticalDepth, expCoef(1,1,0,indexSub), expCoef(1,1,1,indexSub), expCoef(1,1,2,indexSub), expCoef(1,1,3,indexSub), expCoef(1,1,10,indexSub), expCoef(1,1,20,indexSub), expCoef(1,1,39,indexSub))\n\n"
         "          indexSub = indexSub + 1\n",
         path,
     )
@@ -1686,7 +1904,7 @@ def patch_prop_atmosphere_module(path: Path) -> None:
     "    cloudScatteringOpticalDepth = kscaCld(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
     "    totalScatteringOpticalDepth = ksca(indexSub) * optPropRTMGridS%RTMweightSub(indexSub)\n"
     "    totalOpticalDepth = (ksca(indexSub) + kabs(indexSub)) * optPropRTMGridS%RTMweightSub(indexSub)\n"
-    "    call o2a_trace_sublayer_optics(wavelength, indexSub, cloudAerosolRTMgridS%ninterval, pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub) - ciaOpticalDepth, kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm, aerosolOpticalDepth, aerosolScatteringOpticalDepth, cloudOpticalDepth, cloudScatteringOpticalDepth, totalScatteringOpticalDepth, totalOpticalDepth, expCoef(1,1,0,indexSub), expCoef(1,1,1,indexSub), expCoef(1,1,2,indexSub), expCoef(1,1,3,indexSub), expCoef(1,1,10,indexSub), expCoef(1,1,20,indexSub), expCoef(1,1,39,indexSub))\n\n"
+    "    call o2a_trace_sublayer_optics(wavelength, indexSub, cloudAerosolRTMgridS%ninterval, optPropRTMGridS%RTMaltitudeSub(indexSub), optPropRTMGridS%RTMweightSub(indexSub), pressure(indexSub), temperature(indexSub), numberDensityAir(indexSub), oxygenNumberDensity, lineCrossSection, ciaSigma, kabsGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub) - ciaOpticalDepth, kscaGas(indexSub) * optPropRTMGridS%RTMweightSub(indexSub), ciaOpticalDepth, pathLengthCm, aerosolOpticalDepth, aerosolScatteringOpticalDepth, cloudOpticalDepth, cloudScatteringOpticalDepth, totalScatteringOpticalDepth, totalOpticalDepth, expCoef(1,1,0,indexSub), expCoef(1,1,1,indexSub), expCoef(1,1,2,indexSub), expCoef(1,1,3,indexSub), expCoef(1,1,10,indexSub), expCoef(1,1,20,indexSub), expCoef(1,1,39,indexSub))\n\n"
     "    if ( verbose ) then\n",
         path,
     )
