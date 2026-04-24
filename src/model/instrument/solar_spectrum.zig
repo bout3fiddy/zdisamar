@@ -346,13 +346,19 @@ pub const OperationalSolarSpectrum = struct {
         const span_nm = self.wavelengths_nm[upper_index] - self.wavelengths_nm[lower_index];
         if (span_nm == 0.0) return self.irradiance[upper_index];
 
-        const a = (self.wavelengths_nm[upper_index] - wavelength_nm) / span_nm;
-        const b = (wavelength_nm - self.wavelengths_nm[lower_index]) / span_nm;
-        return a * self.irradiance[lower_index] +
-            b * self.irradiance[upper_index] +
-            (((a * a * a) - a) * self.spline_second_derivatives[lower_index] +
-                ((b * b * b) - b) * self.spline_second_derivatives[upper_index]) *
-                (span_nm * span_nm) / 6.0;
+        const dx_nm = wavelength_nm - self.wavelengths_nm[lower_index];
+        // PARITY:
+        //   DISAMAR `mathTools::splint` evaluates prepared spline second
+        //   derivatives in Horner form. Keep the O2 A solar source on the
+        //   same reduction path; the symmetric cubic only differs in the last
+        //   bits, but irradiance is large enough for those bits to be visible.
+        const b = (self.irradiance[upper_index] - self.irradiance[lower_index]) / span_nm -
+            (2.0 * self.spline_second_derivatives[lower_index] +
+                self.spline_second_derivatives[upper_index]) * span_nm / 6.0;
+        const d = (self.spline_second_derivatives[upper_index] -
+            self.spline_second_derivatives[lower_index]) / (6.0 * span_nm);
+        return self.irradiance[lower_index] +
+            dx_nm * (b + dx_nm * (self.spline_second_derivatives[lower_index] / 2.0 + dx_nm * d));
     }
 };
 

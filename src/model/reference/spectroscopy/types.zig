@@ -9,6 +9,11 @@ pub const hitran_boltzmann_constant_j_per_k = 1.3806488e-23;
 pub const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;
 pub const hitran_hc_over_kb_cm_k = 1.4387770;
 // PARITY:
+//   DISAMAR's HITRAN module uses `pi = 3.1415926536D0`, not the full
+//   language/library constant. The truncated literal is visible in O2 A
+//   cross-section parity because it sits inside the Voigt normalization.
+pub const hitran_pi = 3.1415926536;
+// PARITY:
 //   DISAMAR keeps the module-wide `hc_kB = 1.4387770D0` for ordinary HITRAN
 //   absorption but `HITRANModule::ConvTP` uses a local `A = 1.43877696D0`
 //   when temperature-scaling O2 line-mixing populations. Keep both constants

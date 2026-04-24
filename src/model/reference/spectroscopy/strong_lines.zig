@@ -43,7 +43,7 @@ pub fn strongLineContribution(
         1.0e-6,
     );
     const cte = @sqrt(@log(2.0)) / gam_d;
-    const cte1 = cte / @sqrt(std.math.pi);
+    const cte1 = cte / @sqrt(Types.hitran_pi);
     const cpf = Core.complexProbabilityFunction(
         (convtp_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) * cte,
         convtp_state.half_width_cm1_at_t[strong_index] * safe_pressure * cte,
@@ -89,7 +89,7 @@ pub fn strongLineContributionPrepared(
         1.0e-6,
     );
     const cte = @sqrt(@log(2.0)) / gam_d;
-    const cte1 = cte / @sqrt(std.math.pi);
+    const cte1 = cte / @sqrt(Types.hitran_pi);
     const cpf = Core.complexProbabilityFunction(
         (prepared_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) * cte,
         prepared_state.half_width_cm1_at_t[strong_index] * safe_pressure * cte,

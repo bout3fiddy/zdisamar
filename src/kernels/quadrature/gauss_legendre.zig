@@ -68,6 +68,149 @@ pub fn fillNodesAndWeights(
     }
 }
 
+const max_disamar_division_points: usize = 256;
+
+/// Purpose:
+///   Fill DISAMAR-compatible Gauss division points on `[0, 1]`.
+///
+/// Vendor:
+///   DISAMAR `mathToolsModule::GaussDivPoints`, including its QL
+///   `gausq2` eigen-solve and final interval scaling.
+pub fn fillDisamarDivPoints01(
+    order: u32,
+    nodes_out: []f64,
+    weights_out: []f64,
+) error{InvalidOrder}!void {
+    if (order == 0 or
+        nodes_out.len < order or
+        weights_out.len < order or
+        order > max_disamar_division_points)
+    {
+        return error.InvalidOrder;
+    }
+
+    const order_usize: usize = @intCast(order);
+    var diagonal: [max_disamar_division_points]f64 = undefined;
+    var off_diagonal: [max_disamar_division_points]f64 = undefined;
+    var first_row: [max_disamar_division_points]f64 = undefined;
+
+    if (order_usize > 1) {
+        for (0..order_usize - 1) |index| {
+            const abi: f64 = @floatFromInt(index + 1);
+            diagonal[index] = 0.0;
+            off_diagonal[index] = abi / @sqrt(4.0 * abi * abi - 1.0);
+        }
+    }
+    diagonal[order_usize - 1] = 0.0;
+    off_diagonal[order_usize - 1] = 0.0;
+    first_row[0] = 1.0;
+    if (order_usize > 1) @memset(first_row[1..order_usize], 0.0);
+
+    try gausq2Disamar(
+        diagonal[0..order_usize],
+        off_diagonal[0..order_usize],
+        first_row[0..order_usize],
+    );
+
+    for (0..order_usize) |index| {
+        nodes_out[index] = (diagonal[index] + 1.0) * 0.5;
+        weights_out[index] = first_row[index] * first_row[index];
+    }
+}
+
+fn gausq2Disamar(
+    diagonal: []f64,
+    off_diagonal: []f64,
+    first_row: []f64,
+) error{InvalidOrder}!void {
+    const n = diagonal.len;
+    if (n == 0 or off_diagonal.len != n or first_row.len != n) return error.InvalidOrder;
+    if (n == 1) return;
+
+    const machep = 2.0e-16;
+    off_diagonal[n - 1] = 0.0;
+
+    var l: usize = 0;
+    while (l < n) : (l += 1) {
+        var iteration_count: usize = 0;
+        while (true) {
+            var m = l;
+            while (m < n) : (m += 1) {
+                if (m == n - 1) break;
+                if (@abs(off_diagonal[m]) <= machep * (@abs(diagonal[m]) + @abs(diagonal[m + 1]))) break;
+            }
+
+            var p = diagonal[l];
+            if (m == l) break;
+            if (iteration_count == 30) return error.InvalidOrder;
+            iteration_count += 1;
+
+            var g = (diagonal[l + 1] - p) / (2.0 * off_diagonal[l]);
+            var r = @sqrt(g * g + 1.0);
+            g = diagonal[m] - p + off_diagonal[l] / (g + disamarSign(r, g));
+            var s: f64 = 1.0;
+            var c: f64 = 1.0;
+            p = 0.0;
+
+            var ii: usize = 1;
+            while (ii <= m - l) : (ii += 1) {
+                const i = m - ii;
+                const f = s * off_diagonal[i];
+                const b = c * off_diagonal[i];
+                if (@abs(f) >= @abs(g)) {
+                    c = g / f;
+                    r = @sqrt(c * c + 1.0);
+                    off_diagonal[i + 1] = f * r;
+                    s = 1.0 / r;
+                    c *= s;
+                } else {
+                    s = f / g;
+                    r = @sqrt(s * s + 1.0);
+                    off_diagonal[i + 1] = g * r;
+                    c = 1.0 / r;
+                    s *= c;
+                }
+                g = diagonal[i + 1] - p;
+                r = (diagonal[i] - g) * s + 2.0 * c * b;
+                p = s * r;
+                diagonal[i + 1] = g + p;
+                g = c * r - b;
+
+                const f_component = first_row[i + 1];
+                first_row[i + 1] = s * first_row[i] + c * f_component;
+                first_row[i] = c * first_row[i] - s * f_component;
+            }
+
+            diagonal[l] -= p;
+            off_diagonal[l] = g;
+            off_diagonal[m] = 0.0;
+        }
+    }
+
+    var sort_start: usize = 1;
+    while (sort_start < n) : (sort_start += 1) {
+        const i = sort_start - 1;
+        var k = i;
+        var p = diagonal[i];
+        var j = sort_start;
+        while (j < n) : (j += 1) {
+            if (diagonal[j] >= p) continue;
+            k = j;
+            p = diagonal[j];
+        }
+        if (k == i) continue;
+        diagonal[k] = diagonal[i];
+        diagonal[i] = p;
+        const first_row_i = first_row[i];
+        first_row[i] = first_row[k];
+        first_row[k] = first_row_i;
+    }
+}
+
+fn disamarSign(magnitude: f64, sign_source: f64) f64 {
+    return if (sign_source >= 0.0) @abs(magnitude) else -@abs(magnitude);
+}
+
 /// Purpose:
 ///   Return a Gauss-Legendre rule of the requested order.
 ///
@@ -265,6 +408,24 @@ test "gauss-legendre dynamic fill supports higher-order rules" {
     try std.testing.expectApproxEqRel(@as(f64, -0.9931285991850949), nodes[0], 1e-12);
     try std.testing.expectApproxEqRel(@as(f64, 0.1527533871307258), weights[9], 1e-12);
     try std.testing.expectApproxEqRel(@as(f64, -nodes[19]), nodes[0], 1e-12);
+}
+
+test "disamar gauss division points are scaled to unit interval" {
+    var nodes = [_]f64{0.0} ** 5;
+    var weights = [_]f64{0.0} ** 5;
+
+    try fillDisamarDivPoints01(5, nodes[0..], weights[0..]);
+
+    var sum_weights: f64 = 0.0;
+    for (0..5) |index| {
+        try std.testing.expect(nodes[index] >= 0.0 and nodes[index] <= 1.0);
+        sum_weights += weights[index];
+    }
+    try std.testing.expect(nodes[0] < nodes[1]);
+    try std.testing.expect(nodes[1] < nodes[2]);
+    try std.testing.expect(nodes[2] < nodes[3]);
+    try std.testing.expect(nodes[3] < nodes[4]);
+    try std.testing.expectApproxEqRel(@as(f64, 1.0), sum_weights, 1e-12);
 }
 
 const std = @import("std");

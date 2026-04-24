@@ -228,7 +228,7 @@ pub fn prepareWeakLineVoigtState(
         (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * evaluation_wavenumber_cm1 / safe_temperature));
     const prefactor = @sqrt(@log(2.0)) /
         doppler_width_cm1 /
-        @sqrt(std.math.pi) *
+        @sqrt(Types.hitran_pi) *
         safe_pressure *
         converted_strength *
         stimulated_emission_scale *
