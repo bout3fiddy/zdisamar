@@ -48,6 +48,7 @@ EXPECTED_CSVS = (
     "kernel_samples.csv",
     "transport_samples.csv",
     "transport_summary.csv",
+    "irradiance_contributions.csv",
     "fourier_terms.csv",
     "transport_layers.csv",
     "transport_source_terms.csv",
@@ -338,6 +339,18 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "irradiance",
             "radiance",
             "weighted_radiance_contribution",
+        ),
+    ),
+    "irradiance_contributions.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "irradiance",
+            "weighted_irradiance_contribution",
+            "cumulative_irradiance",
         ),
     ),
     "transport_order_surface.csv": CsvSpec(
@@ -1207,6 +1220,7 @@ def canonicalize_side(side_root: Path) -> None:
             "adaptive_grid.csv",
             "kernel_samples.csv",
             "transport_samples.csv",
+            "irradiance_contributions.csv",
             "interval_bounds.csv",
         }:
             rows = dedupe_exact_rows(rows)
@@ -2306,7 +2320,8 @@ def patch_radiance_module(path: Path) -> None:
         text,
         "  use ramansspecs,          only: ConvoluteSpecRaman, ConvoluteSpecRamanMS, TotalRamanXsecScatWavel, RayXsec\n",
         "  use ramansspecs,          only: ConvoluteSpecRaman, ConvoluteSpecRamanMS, TotalRamanXsecScatWavel, RayXsec\n"
-        "  use o2aFunctionTraceModule, only: o2a_trace_emit_kernel_and_transport, o2a_trace_transport_summary\n",
+        "  use o2aFunctionTraceModule, only: o2a_trace_emit_kernel_and_transport, o2a_trace_transport_summary, &\n"
+        "    o2a_trace_irradiance_contribution\n",
         path,
     )
     text = replace_once(
@@ -2321,6 +2336,9 @@ def patch_radiance_module(path: Path) -> None:
         "          ! multiply with gaussian weights for integration\n"
         "          slitfunctionValues(index) = wavelHRS%weight(index) * slitfunctionValues(index)\n"
         "          irradiance = irradiance + slitfunctionValues(index) * solarIrradianceS%solIrrHR(index)\n"
+        "          call o2a_trace_irradiance_contribution(wavelInstrS%wavel(iwave), index - startIndex, wavelHRS%wavel(index), &\n"
+        "            slitfunctionValues(index), solarIrradianceS%solIrrHR(index), &\n"
+        "            slitfunctionValues(index) * solarIrradianceS%solIrrHR(index), irradiance)\n"
         "        end do\n"
         "        solarIrradianceS%solIrr(iwave) = irradiance\n",
         path,

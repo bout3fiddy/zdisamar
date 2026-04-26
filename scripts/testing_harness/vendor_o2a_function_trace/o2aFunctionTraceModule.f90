@@ -30,6 +30,11 @@ module o2aFunctionTraceModule
   integer, save :: kernel_samples_unit = -1
   integer, save :: transport_samples_unit = -1
   integer, save :: transport_summary_unit = -1
+  integer, save :: irradiance_contributions_unit = -1
+  logical, save :: have_last_irradiance_contribution_key = .false.
+  real(8), save :: last_irradiance_nominal_wavelength_nm = 0.0d0
+  integer, save :: last_irradiance_sample_index = -1
+  real(8), save :: last_irradiance_sample_wavelength_nm = 0.0d0
   integer, save :: fourier_terms_unit = -1
   integer, save :: transport_layers_unit = -1
   integer, save :: transport_source_terms_unit = -1
@@ -102,6 +107,8 @@ contains
       'nominal_wavelength_nm,sample_index,sample_wavelength_nm,radiance,irradiance,weight')
     call open_trace_file(transport_summary_unit, 'transport_summary.csv', &
       'nominal_wavelength_nm,final_radiance,final_irradiance,final_reflectance')
+    call open_trace_file(irradiance_contributions_unit, 'irradiance_contributions.csv', &
+      'nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,irradiance,weighted_irradiance_contribution,cumulative_irradiance')
     call open_trace_file(fourier_terms_unit, 'fourier_terms.csv', &
       'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,refl_fc,source_refl_fc,surface_refl_fc,surface_e_view,surface_u_view_solar,fourier_weight,weighted_refl')
     call open_trace_file(transport_layers_unit, 'transport_layers.csv', &
@@ -433,6 +440,35 @@ contains
     flush(kernel_samples_unit)
     flush(transport_samples_unit)
   end subroutine o2a_trace_emit_kernel_and_transport
+
+  subroutine o2a_trace_irradiance_contribution(nominal_wavelength_nm, sample_index, sample_wavelength_nm, kernel_weight, irradiance, weighted_irradiance_contribution, cumulative_irradiance)
+    real(8), intent(in) :: nominal_wavelength_nm
+    integer, intent(in) :: sample_index
+    real(8), intent(in) :: sample_wavelength_nm
+    real(8), intent(in) :: kernel_weight
+    real(8), intent(in) :: irradiance
+    real(8), intent(in) :: weighted_irradiance_contribution
+    real(8), intent(in) :: cumulative_irradiance
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    trace_match_index = find_trace_wavelength_index(nominal_wavelength_nm)
+    if (trace_match_index <= 0) return
+    if (have_last_irradiance_contribution_key) then
+      if (abs(last_irradiance_nominal_wavelength_nm - trace_wavelengths_nm(trace_match_index)) <= 1.0d-12 .and. &
+          last_irradiance_sample_index == sample_index .and. &
+          abs(last_irradiance_sample_wavelength_nm - sample_wavelength_nm) <= 1.0d-12) return
+    end if
+    have_last_irradiance_contribution_key = .true.
+    last_irradiance_nominal_wavelength_nm = trace_wavelengths_nm(trace_match_index)
+    last_irradiance_sample_index = sample_index
+    last_irradiance_sample_wavelength_nm = sample_wavelength_nm
+
+    write(irradiance_contributions_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), sample_index, &
+      sample_wavelength_nm, kernel_weight, irradiance, weighted_irradiance_contribution, cumulative_irradiance
+    flush(irradiance_contributions_unit)
+  end subroutine o2a_trace_irradiance_contribution
 
   subroutine o2a_trace_transport_summary(nominal_wavelength_nm, radiance, irradiance, reflectance)
     real(8), intent(in) :: nominal_wavelength_nm

@@ -176,6 +176,16 @@ const TransportSummaryRow = struct {
     final_reflectance: f64,
 };
 
+const IrradianceContributionRow = struct {
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+    irradiance: f64,
+    weighted_irradiance_contribution: f64,
+    cumulative_irradiance: f64,
+};
+
 const FourierTermRow = struct {
     nominal_wavelength_nm: f64,
     sample_index: usize,
@@ -306,6 +316,7 @@ const TraceFiles = struct {
     kernel_samples: std.fs.File,
     transport_samples: std.fs.File,
     transport_summary: std.fs.File,
+    irradiance_contributions: std.fs.File,
     fourier_terms: std.fs.File,
     transport_layers: std.fs.File,
     transport_source_terms: std.fs.File,
@@ -339,6 +350,7 @@ const TraceFiles = struct {
             .kernel_samples = try createCsvFile(allocator, side_root, "kernel_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,weight\n"),
             .transport_samples = try createCsvFile(allocator, side_root, "transport_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,radiance,irradiance,weight\n"),
             .transport_summary = try createCsvFile(allocator, side_root, "transport_summary.csv", "nominal_wavelength_nm,final_radiance,final_irradiance,final_reflectance\n"),
+            .irradiance_contributions = try createCsvFile(allocator, side_root, "irradiance_contributions.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,irradiance,weighted_irradiance_contribution,cumulative_irradiance\n"),
             .fourier_terms = try createCsvFile(allocator, side_root, "fourier_terms.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,refl_fc,source_refl_fc,surface_refl_fc,surface_e_view,surface_u_view_solar,fourier_weight,weighted_refl\n"),
             .transport_layers = try createCsvFile(allocator, side_root, "transport_layers.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,layer_index,optical_depth,scattering_optical_depth,single_scatter_albedo,phase_coef_0,phase_coef_1,phase_coef_2,phase_coef_3,phase_coef_10,phase_coef_20,phase_coef_39\n"),
             .transport_source_terms = try createCsvFile(allocator, side_root, "transport_source_terms.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,level_index,rtm_weight,ksca,source_contribution,weighted_source_contribution\n"),
@@ -366,6 +378,7 @@ const TraceFiles = struct {
         self.kernel_samples.close();
         self.transport_samples.close();
         self.transport_summary.close();
+        self.irradiance_contributions.close();
         self.fourier_terms.close();
         self.transport_layers.close();
         self.transport_source_terms.close();
@@ -1457,6 +1470,8 @@ fn emitTransportTraces(
     defer transport_rows.deinit(allocator);
     var summary_rows = std.ArrayList(TransportSummaryRow).empty;
     defer summary_rows.deinit(allocator);
+    var irradiance_contribution_rows = std.ArrayList(IrradianceContributionRow).empty;
+    defer irradiance_contribution_rows.deinit(allocator);
     var fourier_rows = std.ArrayList(FourierTermRow).empty;
     defer fourier_rows.deinit(allocator);
     var transport_layer_rows = std.ArrayList(TransportLayerRow).empty;
@@ -1539,6 +1554,26 @@ fn emitTransportTraces(
                 .offsets_nm = [_]f64{0.0} ++ [_]f64{0.0} ** (InstrumentProviders.max_integration_sample_count - 1),
                 .weights = [_]f64{1.0} ++ [_]f64{0.0} ** (InstrumentProviders.max_integration_sample_count - 1),
             };
+        }
+        var cumulative_irradiance: f64 = 0.0;
+        for (0..irradiance_integration.sample_count) |sample_index| {
+            const sample_wavelength_nm = irradiance_evaluation_wavelength_nm + irradiance_integration.offsets_nm[sample_index];
+            const weight = irradiance_integration.weights[sample_index];
+            const irradiance = if (irradiance_support.enabled())
+                irradiance_support.interpolateIrradiance(sample_wavelength_nm)
+            else
+                0.0;
+            const weighted_contribution = weight * irradiance;
+            cumulative_irradiance += weighted_contribution;
+            try irradiance_contribution_rows.append(allocator, .{
+                .nominal_wavelength_nm = nominal_wavelength_nm,
+                .sample_index = sample_index,
+                .sample_wavelength_nm = sample_wavelength_nm,
+                .kernel_weight = weight,
+                .irradiance = irradiance,
+                .weighted_irradiance_contribution = weighted_contribution,
+                .cumulative_irradiance = cumulative_irradiance,
+            });
         }
 
         for (0..radiance_integration.sample_count) |sample_index| {
@@ -1639,6 +1674,7 @@ fn emitTransportTraces(
     std.sort.block(KernelSampleRow, kernel_rows.items, {}, lessThanKernelSampleRow);
     std.sort.block(TransportSampleRow, transport_rows.items, {}, lessThanTransportSampleRow);
     std.sort.block(TransportSummaryRow, summary_rows.items, {}, lessThanTransportSummaryRow);
+    std.sort.block(IrradianceContributionRow, irradiance_contribution_rows.items, {}, lessThanIrradianceContributionRow);
     std.sort.block(FourierTermRow, fourier_rows.items, {}, lessThanFourierTermRow);
     std.sort.block(TransportLayerRow, transport_layer_rows.items, {}, lessThanTransportLayerRow);
     std.sort.block(SourceTermRow, source_rows.items, {}, lessThanSourceTermRow);
@@ -1694,6 +1730,22 @@ fn emitTransportTraces(
                 row.final_radiance,
                 row.final_irradiance,
                 row.final_reflectance,
+            },
+        );
+    }
+
+    var irradiance_contribution_writer = files.irradiance_contributions.deprecatedWriter();
+    for (irradiance_contribution_rows.items) |row| {
+        try irradiance_contribution_writer.print(
+            "{},{},{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.sample_index,
+                row.sample_wavelength_nm,
+                row.kernel_weight,
+                row.irradiance,
+                row.weighted_irradiance_contribution,
+                row.cumulative_irradiance,
             },
         );
     }
@@ -2859,6 +2911,11 @@ fn lessThanTransportSampleRow(_: void, lhs: TransportSampleRow, rhs: TransportSa
 
 fn lessThanTransportSummaryRow(_: void, lhs: TransportSummaryRow, rhs: TransportSummaryRow) bool {
     return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+}
+
+fn lessThanIrradianceContributionRow(_: void, lhs: IrradianceContributionRow, rhs: IrradianceContributionRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    return lhs.sample_index < rhs.sample_index;
 }
 
 fn lessThanFourierTermRow(_: void, lhs: FourierTermRow, rhs: FourierTermRow) bool {
