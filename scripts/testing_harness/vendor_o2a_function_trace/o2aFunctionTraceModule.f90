@@ -15,6 +15,7 @@ module o2aFunctionTraceModule
   integer, save :: trace_wavelength_count = 0
   real(8), save :: trace_wavelengths_nm(max_trace_wavelengths) = 0.0d0
   real(8), save :: active_wavelength_nm = -1.0d0
+  integer, save :: active_fourier_index = -1
 
   integer, save :: line_catalog_unit = -1
   integer, save :: strong_state_unit = -1
@@ -32,6 +33,12 @@ module o2aFunctionTraceModule
   integer, save :: transport_source_terms_unit = -1
   integer, save :: transport_attenuation_terms_unit = -1
   integer, save :: transport_pseudo_spherical_samples_unit = -1
+  integer, save :: transport_radiance_contributions_unit = -1
+  integer, save :: transport_order_surface_unit = -1
+  integer, save :: transport_source_components_unit = -1
+  integer, save :: transport_source_angle_components_unit = -1
+  integer, save :: transport_pseudo_spherical_terms_unit = -1
+  integer, save :: transport_optical_depth_components_unit = -1
   logical, save :: line_catalog_frozen = .false.
   integer, save :: last_line_catalog_source_index = 0
 
@@ -97,9 +104,30 @@ contains
       'nominal_wavelength_nm,sample_wavelength_nm,direction_kind,direction_index,level_index,sumkext,attenuation_top_to_level,grid_valid')
     call open_trace_file(transport_pseudo_spherical_samples_unit, 'transport_pseudo_spherical_samples.csv', &
       'nominal_wavelength_nm,sample_wavelength_nm,global_sample_index,altitude_km,support_weight_km,optical_depth,radius_weighted_optical_depth,grid_valid')
+    call open_trace_file(transport_radiance_contributions_unit, 'transport_radiance_contributions.csv', &
+      'nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,reflectance,irradiance,radiance,weighted_radiance_contribution')
+    call open_trace_file(transport_order_surface_unit, 'transport_order_surface.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,order_index,stop_reason,max_value,surface_u_order,surface_u_accumulated,surface_d_order,surface_e_view')
+    call open_trace_file(transport_source_components_unit, 'transport_source_components.csv', &
+      'nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,level_index,e_view,pmin_ed,pplusst_u,source_over_ksca,source_contribution,weighted_source_contribution')
+    call open_trace_file(transport_source_angle_components_unit, 'transport_source_angle_components.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,level_index,component_kind,angle_index,phase_value,field_value,angle_contribution,weighted_angle_contribution')
+    call open_trace_file(transport_pseudo_spherical_terms_unit, 'transport_pseudo_spherical_terms.csv', &
+      'nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,direction_kind,direction_index,level_index,global_sample_index,level_altitude_km,level_radius_km,sample_altitude_km,sample_radius_km,numerator,denominator,contribution,cumulative_sumkext,grid_valid')
+    call open_trace_file(transport_optical_depth_components_unit, 'transport_optical_depth_components.csv', &
+      'wavelength_nm,global_sublayer_index,interval_index_1based,line_absorption_optical_depth,cia_optical_depth,gas_scattering_optical_depth,aerosol_optical_depth,cloud_optical_depth,total_absorption_optical_depth,total_scattering_optical_depth,total_optical_depth')
 
     trace_enabled = .true.
   end subroutine o2a_trace_init
+
+  subroutine o2a_trace_set_fourier_index(i_fourier)
+    integer, intent(in) :: i_fourier
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+
+    active_fourier_index = i_fourier
+  end subroutine o2a_trace_set_fourier_index
 
   subroutine o2a_trace_line_catalog_row(source_row_index, gas_index, isotope_number, sig_cm1, strength, gamma_cm1, lower_state_energy_cm1, beta, delta_cm1, ic1, ic2, nf)
     integer, intent(in) :: source_row_index
@@ -545,6 +573,55 @@ contains
       global_sample_index, altitude_km, support_weight_km, optical_depth, radius_weighted_optical_depth, grid_valid
     flush(transport_pseudo_spherical_samples_unit)
   end subroutine o2a_trace_transport_pseudo_spherical_sample
+
+  subroutine o2a_trace_transport_order_surface(i_fourier, order_index, stop_reason, max_value, surface_u_order, surface_u_accumulated, surface_d_order, surface_e_view)
+    integer, intent(in) :: i_fourier
+    integer, intent(in) :: order_index
+    character(len=*), intent(in) :: stop_reason
+    real(8), intent(in) :: max_value
+    real(8), intent(in) :: surface_u_order
+    real(8), intent(in) :: surface_u_accumulated
+    real(8), intent(in) :: surface_d_order
+    real(8), intent(in) :: surface_e_view
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+    if (active_fourier_index /= 0) return
+    if (i_fourier /= active_fourier_index) return
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_order_surface_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      active_fourier_index, order_index, trim(stop_reason), max_value, surface_u_order, surface_u_accumulated, surface_d_order, surface_e_view
+    flush(transport_order_surface_unit)
+  end subroutine o2a_trace_transport_order_surface
+
+  subroutine o2a_trace_transport_source_angle_component(i_fourier, level_index, component_kind, angle_index, phase_value, field_value, angle_contribution, weighted_angle_contribution)
+    integer, intent(in) :: i_fourier
+    integer, intent(in) :: level_index
+    character(len=*), intent(in) :: component_kind
+    integer, intent(in) :: angle_index
+    real(8), intent(in) :: phase_value
+    real(8), intent(in) :: field_value
+    real(8), intent(in) :: angle_contribution
+    real(8), intent(in) :: weighted_angle_contribution
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+    if (i_fourier /= 0) return
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_source_angle_components_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      i_fourier, level_index, trim(component_kind), angle_index, phase_value, field_value, angle_contribution, weighted_angle_contribution
+    flush(transport_source_angle_components_unit)
+  end subroutine o2a_trace_transport_source_angle_component
 
   integer function find_trace_wavelength_index(wavelength_nm)
     real(8), intent(in) :: wavelength_nm

@@ -330,6 +330,19 @@ pub fn build(b: *std.Build) void {
         "Run the O2A function-diff hotspot probe and write timestamped trace outputs",
     );
     o2a_function_diff_step.dependOn(&o2a_function_diff_cmd.step);
+    const o2a_parity_diagnostics_function_diff_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/o2a_function_diff.py",
+        "--wavelengths",
+        "764.48,762.29,773.9",
+    });
+    const o2a_parity_diagnostics_step = b.step(
+        "o2a-parity-diagnostics",
+        "Regenerate full O2A plots and run focused function-diff hotspot traces",
+    );
+    o2a_parity_diagnostics_step.dependOn(&o2a_plot_bundle_cmd.step);
+    o2a_parity_diagnostics_step.dependOn(&o2a_parity_diagnostics_function_diff_cmd.step);
 
     const o2a_function_diff_test_cmd = b.addSystemCommand(&.{
         "uv",

@@ -223,6 +223,36 @@ const PseudoSphericalSampleRow = struct {
     grid_valid: u8,
 };
 
+const OrderSurfaceRow = struct {
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+    fourier_index: usize,
+    order_index: usize,
+    stop_reason: []const u8,
+    max_value: f64,
+    surface_u_order: f64,
+    surface_u_accumulated: f64,
+    surface_d_order: f64,
+    surface_e_view: f64,
+};
+
+const SourceAngleComponentRow = struct {
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+    fourier_index: usize,
+    level_index: usize,
+    component_kind: []const u8,
+    angle_index: usize,
+    phase_value: f64,
+    field_value: f64,
+    angle_contribution: f64,
+    weighted_angle_contribution: f64,
+};
+
 const ThermodynamicState = struct {
     pressure_hpa: f64,
     temperature_k: f64,
@@ -254,6 +284,12 @@ const TraceFiles = struct {
     transport_source_terms: std.fs.File,
     transport_attenuation_terms: std.fs.File,
     transport_pseudo_spherical_samples: std.fs.File,
+    transport_radiance_contributions: std.fs.File,
+    transport_order_surface: std.fs.File,
+    transport_source_components: std.fs.File,
+    transport_source_angle_components: std.fs.File,
+    transport_pseudo_spherical_terms: std.fs.File,
+    transport_optical_depth_components: std.fs.File,
 
     fn init(
         allocator: std.mem.Allocator,
@@ -279,6 +315,12 @@ const TraceFiles = struct {
             .transport_source_terms = try createCsvFile(allocator, side_root, "transport_source_terms.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,level_index,rtm_weight,ksca,source_contribution,weighted_source_contribution\n"),
             .transport_attenuation_terms = try createCsvFile(allocator, side_root, "transport_attenuation_terms.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,direction_kind,direction_index,level_index,sumkext,attenuation_top_to_level,grid_valid\n"),
             .transport_pseudo_spherical_samples = try createCsvFile(allocator, side_root, "transport_pseudo_spherical_samples.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,global_sample_index,altitude_km,support_weight_km,optical_depth,radius_weighted_optical_depth,grid_valid\n"),
+            .transport_radiance_contributions = try createCsvFile(allocator, side_root, "transport_radiance_contributions.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,reflectance,irradiance,radiance,weighted_radiance_contribution\n"),
+            .transport_order_surface = try createCsvFile(allocator, side_root, "transport_order_surface.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,order_index,stop_reason,max_value,surface_u_order,surface_u_accumulated,surface_d_order,surface_e_view\n"),
+            .transport_source_components = try createCsvFile(allocator, side_root, "transport_source_components.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,level_index,e_view,pmin_ed,pplusst_u,source_over_ksca,source_contribution,weighted_source_contribution\n"),
+            .transport_source_angle_components = try createCsvFile(allocator, side_root, "transport_source_angle_components.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,level_index,component_kind,angle_index,phase_value,field_value,angle_contribution,weighted_angle_contribution\n"),
+            .transport_pseudo_spherical_terms = try createCsvFile(allocator, side_root, "transport_pseudo_spherical_terms.csv", "nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,direction_kind,direction_index,level_index,global_sample_index,level_altitude_km,level_radius_km,sample_altitude_km,sample_radius_km,numerator,denominator,contribution,cumulative_sumkext,grid_valid\n"),
+            .transport_optical_depth_components = try createCsvFile(allocator, side_root, "transport_optical_depth_components.csv", "wavelength_nm,global_sublayer_index,interval_index_1based,line_absorption_optical_depth,cia_optical_depth,gas_scattering_optical_depth,aerosol_optical_depth,cloud_optical_depth,total_absorption_optical_depth,total_scattering_optical_depth,total_optical_depth\n"),
         };
     }
 
@@ -298,6 +340,12 @@ const TraceFiles = struct {
         self.transport_source_terms.close();
         self.transport_attenuation_terms.close();
         self.transport_pseudo_spherical_samples.close();
+        self.transport_radiance_contributions.close();
+        self.transport_order_surface.close();
+        self.transport_source_components.close();
+        self.transport_source_angle_components.close();
+        self.transport_pseudo_spherical_terms.close();
+        self.transport_optical_depth_components.close();
         self.* = undefined;
     }
 };
@@ -1199,6 +1247,10 @@ fn emitTransportTraces(
     defer transport_layer_rows.deinit(allocator);
     var source_rows = std.ArrayList(SourceTermRow).empty;
     defer source_rows.deinit(allocator);
+    var order_surface_rows = std.ArrayList(OrderSurfaceRow).empty;
+    defer order_surface_rows.deinit(allocator);
+    var source_angle_rows = std.ArrayList(SourceAngleComponentRow).empty;
+    defer source_angle_rows.deinit(allocator);
     var attenuation_rows = std.ArrayList(AttenuationTermRow).empty;
     defer attenuation_rows.deinit(allocator);
     var pseudo_spherical_rows = std.ArrayList(PseudoSphericalSampleRow).empty;
@@ -1298,6 +1350,8 @@ fn emitTransportTraces(
                 &fourier_rows,
                 &transport_layer_rows,
                 &source_rows,
+                &order_surface_rows,
+                &source_angle_rows,
                 &attenuation_rows,
                 &pseudo_spherical_rows,
                 scene,
@@ -1372,6 +1426,8 @@ fn emitTransportTraces(
     std.sort.block(FourierTermRow, fourier_rows.items, {}, lessThanFourierTermRow);
     std.sort.block(TransportLayerRow, transport_layer_rows.items, {}, lessThanTransportLayerRow);
     std.sort.block(SourceTermRow, source_rows.items, {}, lessThanSourceTermRow);
+    std.sort.block(OrderSurfaceRow, order_surface_rows.items, {}, lessThanOrderSurfaceRow);
+    std.sort.block(SourceAngleComponentRow, source_angle_rows.items, {}, lessThanSourceAngleComponentRow);
     std.sort.block(AttenuationTermRow, attenuation_rows.items, {}, lessThanAttenuationTermRow);
     std.sort.block(PseudoSphericalSampleRow, pseudo_spherical_rows.items, {}, lessThanPseudoSphericalSampleRow);
 
@@ -1509,6 +1565,48 @@ fn emitTransportTraces(
         );
     }
 
+    var order_surface_writer = files.transport_order_surface.deprecatedWriter();
+    for (order_surface_rows.items) |row| {
+        try order_surface_writer.print(
+            "{},{},{},{},{},{},{s},{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.sample_index,
+                row.sample_wavelength_nm,
+                row.kernel_weight,
+                row.fourier_index,
+                row.order_index,
+                row.stop_reason,
+                row.max_value,
+                row.surface_u_order,
+                row.surface_u_accumulated,
+                row.surface_d_order,
+                row.surface_e_view,
+            },
+        );
+    }
+
+    var source_angle_writer = files.transport_source_angle_components.deprecatedWriter();
+    for (source_angle_rows.items) |row| {
+        try source_angle_writer.print(
+            "{},{},{},{},{},{},{s},{},{},{},{},{}\n",
+            .{
+                row.nominal_wavelength_nm,
+                row.sample_index,
+                row.sample_wavelength_nm,
+                row.kernel_weight,
+                row.fourier_index,
+                row.level_index,
+                row.component_kind,
+                row.angle_index,
+                row.phase_value,
+                row.field_value,
+                row.angle_contribution,
+                row.weighted_angle_contribution,
+            },
+        );
+    }
+
     var pseudo_spherical_writer = files.transport_pseudo_spherical_samples.deprecatedWriter();
     for (pseudo_spherical_rows.items) |row| {
         try pseudo_spherical_writer.print(
@@ -1534,6 +1632,8 @@ fn emitLabosFourierRowsForSample(
     rows: *std.ArrayList(FourierTermRow),
     layer_rows: *std.ArrayList(TransportLayerRow),
     source_rows: *std.ArrayList(SourceTermRow),
+    order_surface_rows: *std.ArrayList(OrderSurfaceRow),
+    source_angle_rows: *std.ArrayList(SourceAngleComponentRow),
     attenuation_rows: *std.ArrayList(AttenuationTermRow),
     pseudo_spherical_rows: *std.ArrayList(PseudoSphericalSampleRow),
     scene: *const internal.Scene,
@@ -1654,6 +1754,23 @@ fn emitLabosFourierRowsForSample(
             layer_phase_kernel_valid,
         );
         rt[0] = Labos.fillSurface(i_fourier, input.surface_albedo, &geo);
+        if (i_fourier == 0) {
+            try appendOrderSurfaceRowsForFourier(
+                allocator,
+                order_surface_rows,
+                0,
+                input.layers.len,
+                &geo,
+                &atten,
+                rt,
+                controls,
+                num_orders_max,
+                nominal_wavelength_nm,
+                sample_index,
+                sample_wavelength_nm,
+                kernel_weight,
+            );
+        }
         const orders_result = Labos.ordersScatInto(
             &orders_workspace,
             0,
@@ -1668,6 +1785,7 @@ fn emitLabosFourierRowsForSample(
             try appendSourceTermRowsForFourier(
                 allocator,
                 source_rows,
+                source_angle_rows,
                 input,
                 orders_result.ud,
                 i_fourier,
@@ -1854,9 +1972,262 @@ fn pseudoSphericalLevelAltitude(
     return @max(sample.altitude_km - 0.5 * sample.thickness_km, 0.0);
 }
 
+fn appendOrderSurfaceRowsForFourier(
+    allocator: std.mem.Allocator,
+    rows: *std.ArrayList(OrderSurfaceRow),
+    start_level: usize,
+    end_level: usize,
+    geo: *const Labos.Geometry,
+    atten: *const Labos.DynamicAttenArray,
+    rt: []const Labos.LayerRT,
+    controls: TransportCommon.RtmControls,
+    num_orders_max: usize,
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+) !void {
+    const nlevel = end_level + 1;
+    var workspace = try Labos.OrdersWorkspace.init(allocator, nlevel);
+    defer workspace.deinit();
+    const ud = workspace.ud[0..nlevel];
+    const ud_sum_local = workspace.ud_sum_local[0..nlevel];
+    const ud_orde = workspace.ud_orde[0..nlevel];
+    const ud_local = workspace.ud_local[0..nlevel];
+    initializeTraceOrderBuffers(ud, ud_sum_local, ud_orde, ud_local, geo.nmutot);
+
+    for (start_level..end_level + 1) |ilevel| {
+        for (0..geo.nmutot) |imu| {
+            const att = atten.get(imu, end_level, ilevel);
+            ud_orde[ilevel].E.set(imu, att);
+            ud[ilevel].E.set(imu, att);
+        }
+    }
+
+    for (start_level..end_level) |ilevel| {
+        for (0..2) |imu0| {
+            const col_idx = geo.n_gauss + imu0;
+            const att = atten.get(col_idx, end_level, ilevel + 1);
+            for (0..geo.nmutot) |imu| {
+                ud_local[ilevel].D.col[imu0].set(imu, rt[ilevel + 1].T.get(imu, col_idx) * att);
+            }
+        }
+    }
+    ud_local[end_level].D = Labos.Vec2.zero(geo.nmutot);
+
+    for (start_level..end_level + 1) |ilevel| {
+        for (0..2) |imu0| {
+            const col_idx = geo.n_gauss + imu0;
+            const att = atten.get(col_idx, end_level, ilevel);
+            for (0..geo.nmutot) |imu| {
+                ud_local[ilevel].U.col[imu0].set(imu, rt[ilevel].R.get(imu, col_idx) * att);
+            }
+        }
+    }
+
+    for (start_level..end_level + 1) |ilevel| {
+        ud_sum_local[ilevel].U = ud_local[ilevel].U;
+        ud_sum_local[ilevel].D = ud_local[ilevel].D;
+    }
+
+    transportTraceOrderToOtherLevels(start_level, end_level, geo.nmutot, atten, ud_local, ud_orde);
+    for (start_level..end_level + 1) |ilevel| {
+        ud[ilevel].U = ud_orde[ilevel].U;
+        ud[ilevel].D = ud_orde[ilevel].D;
+    }
+
+    var max_value = orderMaxValue(ud_orde, end_level, geo);
+    if (controls.scattering != .multiple or max_value < controls.threshold_conv_first) {
+        try appendOrderSurfaceRow(
+            allocator,
+            rows,
+            "first_converged",
+            1,
+            max_value,
+            ud,
+            ud_orde,
+            geo,
+            nominal_wavelength_nm,
+            sample_index,
+            sample_wavelength_nm,
+            kernel_weight,
+        );
+        return;
+    }
+    try appendOrderSurfaceRow(allocator, rows, "accumulated", 1, max_value, ud, ud_orde, geo, nominal_wavelength_nm, sample_index, sample_wavelength_nm, kernel_weight);
+
+    var num_orders: usize = 1;
+    while (true) {
+        num_orders += 1;
+
+        for (start_level..end_level) |ilevel| {
+            for (0..2) |imu0| {
+                for (0..geo.nmutot) |imu| {
+                    const rst_dot_u = Labos.dotGauss(&rt[ilevel + 1].R, imu, &ud_orde[ilevel].U.col[imu0], geo.n_gauss);
+                    const t_dot_d = Labos.dotGauss(&rt[ilevel + 1].T, imu, &ud_orde[ilevel + 1].D.col[imu0], geo.n_gauss);
+                    ud_local[ilevel].D.col[imu0].set(imu, rst_dot_u + t_dot_d);
+                }
+            }
+        }
+        ud_local[end_level].D = Labos.Vec2.zero(geo.nmutot);
+
+        for (0..2) |imu0| {
+            for (0..geo.nmutot) |imu| {
+                const r_dot_d = Labos.dotGauss(&rt[start_level].R, imu, &ud_orde[start_level].D.col[imu0], geo.n_gauss);
+                ud_local[start_level].U.col[imu0].set(imu, r_dot_d);
+            }
+        }
+
+        for (start_level + 1..end_level + 1) |ilevel| {
+            for (0..2) |imu0| {
+                for (0..geo.nmutot) |imu| {
+                    const r_dot_d = Labos.dotGauss(&rt[ilevel].R, imu, &ud_orde[ilevel].D.col[imu0], geo.n_gauss);
+                    const tst_dot_u = Labos.dotGauss(&rt[ilevel].T, imu, &ud_orde[ilevel - 1].U.col[imu0], geo.n_gauss);
+                    ud_local[ilevel].U.col[imu0].set(imu, r_dot_d + tst_dot_u);
+                }
+            }
+        }
+
+        transportTraceOrderToOtherLevels(start_level, end_level, geo.nmutot, atten, ud_local, ud_orde);
+        max_value = orderMaxValue(ud_orde, end_level, geo);
+        if (max_value < controls.threshold_conv_mult or num_orders >= num_orders_max) {
+            try appendOrderSurfaceRow(
+                allocator,
+                rows,
+                if (num_orders >= num_orders_max) "max_orders" else "multiple_converged",
+                num_orders,
+                max_value,
+                ud,
+                ud_orde,
+                geo,
+                nominal_wavelength_nm,
+                sample_index,
+                sample_wavelength_nm,
+                kernel_weight,
+            );
+            break;
+        }
+
+        accumulateTraceOrderContribution(ud, ud_sum_local, ud_orde, ud_local, start_level, end_level, geo.nmutot);
+        try appendOrderSurfaceRow(allocator, rows, "accumulated", num_orders, max_value, ud, ud_orde, geo, nominal_wavelength_nm, sample_index, sample_wavelength_nm, kernel_weight);
+    }
+}
+
+fn initializeTraceOrderBuffers(
+    ud: []Labos.UDField,
+    ud_sum_local: []Labos.UDLocal,
+    ud_orde: []Labos.UDField,
+    ud_local: []Labos.UDLocal,
+    nmutot: usize,
+) void {
+    for (ud, ud_sum_local, ud_orde, ud_local) |*field, *sum_local, *orde, *local| {
+        field.* = .{ .E = Labos.Vec.zero(nmutot), .U = Labos.Vec2.zero(nmutot), .D = Labos.Vec2.zero(nmutot) };
+        sum_local.* = .{ .U = Labos.Vec2.zero(nmutot), .D = Labos.Vec2.zero(nmutot) };
+        orde.* = .{ .E = Labos.Vec.zero(nmutot), .U = Labos.Vec2.zero(nmutot), .D = Labos.Vec2.zero(nmutot) };
+        local.* = .{ .U = Labos.Vec2.zero(nmutot), .D = Labos.Vec2.zero(nmutot) };
+    }
+}
+
+fn transportTraceOrderToOtherLevels(
+    start_level: usize,
+    end_level: usize,
+    nmutot: usize,
+    atten: *const Labos.DynamicAttenArray,
+    ud_local: []const Labos.UDLocal,
+    ud_orde: []Labos.UDField,
+) void {
+    ud_orde[start_level].U = ud_local[start_level].U;
+    for (start_level + 1..end_level + 1) |ilevel| {
+        for (0..2) |imu0| {
+            for (0..nmutot) |imu| {
+                const local_val = ud_local[ilevel].U.col[imu0].get(imu);
+                const prev_val = ud_orde[ilevel - 1].U.col[imu0].get(imu);
+                ud_orde[ilevel].U.col[imu0].set(imu, local_val + atten.get(imu, ilevel - 1, ilevel) * prev_val);
+            }
+        }
+    }
+
+    ud_orde[end_level].D = Labos.Vec2.zero(nmutot);
+    var ilevel = end_level;
+    while (ilevel > start_level) {
+        ilevel -= 1;
+        for (0..2) |imu0| {
+            for (0..nmutot) |imu| {
+                const local_val = ud_local[ilevel].D.col[imu0].get(imu);
+                const prev_val = ud_orde[ilevel + 1].D.col[imu0].get(imu);
+                ud_orde[ilevel].D.col[imu0].set(imu, local_val + atten.get(imu, ilevel + 1, ilevel) * prev_val);
+            }
+        }
+    }
+}
+
+fn accumulateTraceOrderContribution(
+    ud: []Labos.UDField,
+    ud_sum_local: []Labos.UDLocal,
+    ud_orde: []const Labos.UDField,
+    ud_local: []const Labos.UDLocal,
+    start_level: usize,
+    end_level: usize,
+    nmutot: usize,
+) void {
+    for (start_level..end_level + 1) |ilevel| {
+        for (0..2) |imu0| {
+            for (0..nmutot) |imu| {
+                ud[ilevel].U.col[imu0].set(imu, ud[ilevel].U.col[imu0].get(imu) + ud_orde[ilevel].U.col[imu0].get(imu));
+                ud[ilevel].D.col[imu0].set(imu, ud[ilevel].D.col[imu0].get(imu) + ud_orde[ilevel].D.col[imu0].get(imu));
+                ud_sum_local[ilevel].U.col[imu0].set(imu, ud_sum_local[ilevel].U.col[imu0].get(imu) + ud_local[ilevel].U.col[imu0].get(imu));
+                ud_sum_local[ilevel].D.col[imu0].set(imu, ud_sum_local[ilevel].D.col[imu0].get(imu) + ud_local[ilevel].D.col[imu0].get(imu));
+            }
+        }
+    }
+}
+
+fn orderMaxValue(ud_orde: []const Labos.UDField, end_level: usize, geo: *const Labos.Geometry) f64 {
+    var max_value: f64 = 0.0;
+    for (0..2) |imu0| {
+        for (geo.n_gauss..geo.nmutot) |imu| {
+            max_value = @max(max_value, @abs(ud_orde[end_level].U.col[imu0].get(imu)));
+        }
+    }
+    return max_value;
+}
+
+fn appendOrderSurfaceRow(
+    allocator: std.mem.Allocator,
+    rows: *std.ArrayList(OrderSurfaceRow),
+    stop_reason: []const u8,
+    order_index: usize,
+    max_value: f64,
+    ud: []const Labos.UDField,
+    ud_orde: []const Labos.UDField,
+    geo: *const Labos.Geometry,
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+) !void {
+    const solar_col: usize = 1;
+    const view_idx = geo.viewIdx();
+    try rows.append(allocator, .{
+        .nominal_wavelength_nm = nominal_wavelength_nm,
+        .sample_index = sample_index,
+        .sample_wavelength_nm = sample_wavelength_nm,
+        .kernel_weight = kernel_weight,
+        .fourier_index = 0,
+        .order_index = order_index,
+        .stop_reason = stop_reason,
+        .max_value = max_value,
+        .surface_u_order = ud_orde[0].U.col[solar_col].get(view_idx),
+        .surface_u_accumulated = ud[0].U.col[solar_col].get(view_idx),
+        .surface_d_order = ud_orde[0].D.col[solar_col].get(view_idx),
+        .surface_e_view = ud[0].E.get(view_idx),
+    });
+}
+
 fn appendSourceTermRowsForFourier(
     allocator: std.mem.Allocator,
     rows: *std.ArrayList(SourceTermRow),
+    angle_rows: *std.ArrayList(SourceAngleComponentRow),
     input: TransportCommon.ForwardInput,
     ud: []const Labos.UDField,
     i_fourier: usize,
@@ -1932,18 +2303,84 @@ fn appendSourceTermRowsForFourier(
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
             const pmin = 0.25 * z.Zmin.get(view_idx, imu) / (view_mu * mu);
-            pmin_ed += pmin * ud[ilevel].D.col[solar_col].get(imu);
+            const field_value = ud[ilevel].D.col[solar_col].get(imu);
+            const angle_contribution = pmin * field_value;
+            pmin_ed += angle_contribution;
+            if (i_fourier == 0) {
+                try appendSourceAngleRow(
+                    allocator,
+                    angle_rows,
+                    "pmin_diffuse",
+                    imu,
+                    pmin,
+                    field_value,
+                    angle_contribution,
+                    ud[ilevel].E.get(view_idx),
+                    source_ksca,
+                    source_rtm_weight,
+                    i_fourier,
+                    ilevel,
+                    nominal_wavelength_nm,
+                    sample_index,
+                    sample_wavelength_nm,
+                    kernel_weight,
+                );
+            }
         }
 
         const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
         const pmin_direct = 0.25 * z.Zmin.get(view_idx, solar_idx) / (view_mu * solar_mu);
-        pmin_ed += pmin_direct * ud[ilevel].E.get(solar_idx);
+        const direct_field_value = ud[ilevel].E.get(solar_idx);
+        const direct_angle_contribution = pmin_direct * direct_field_value;
+        pmin_ed += direct_angle_contribution;
+        if (i_fourier == 0) {
+            try appendSourceAngleRow(
+                allocator,
+                angle_rows,
+                "pmin_direct",
+                solar_idx,
+                pmin_direct,
+                direct_field_value,
+                direct_angle_contribution,
+                ud[ilevel].E.get(view_idx),
+                source_ksca,
+                source_rtm_weight,
+                i_fourier,
+                ilevel,
+                nominal_wavelength_nm,
+                sample_index,
+                sample_wavelength_nm,
+                kernel_weight,
+            );
+        }
 
         var pplusst_u: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
             const pplusst = 0.25 * z.Zplus.get(view_idx, imu) / (view_mu * mu);
-            pplusst_u += pplusst * ud[ilevel].U.col[solar_col].get(imu);
+            const field_value = ud[ilevel].U.col[solar_col].get(imu);
+            const angle_contribution = pplusst * field_value;
+            pplusst_u += angle_contribution;
+            if (i_fourier == 0) {
+                try appendSourceAngleRow(
+                    allocator,
+                    angle_rows,
+                    "pplusst_up",
+                    imu,
+                    pplusst,
+                    field_value,
+                    angle_contribution,
+                    ud[ilevel].E.get(view_idx),
+                    source_ksca,
+                    source_rtm_weight,
+                    i_fourier,
+                    ilevel,
+                    nominal_wavelength_nm,
+                    sample_index,
+                    sample_wavelength_nm,
+                    kernel_weight,
+                );
+            }
         }
 
         const contribution = ud[ilevel].E.get(view_idx) *
@@ -1962,6 +2399,41 @@ fn appendSourceTermRowsForFourier(
             .weighted_source_contribution = source_rtm_weight * contribution,
         });
     }
+}
+
+fn appendSourceAngleRow(
+    allocator: std.mem.Allocator,
+    rows: *std.ArrayList(SourceAngleComponentRow),
+    component_kind: []const u8,
+    angle_index: usize,
+    phase_value: f64,
+    field_value: f64,
+    angle_contribution: f64,
+    e_view: f64,
+    ksca: f64,
+    rtm_weight: f64,
+    fourier_index: usize,
+    level_index: usize,
+    nominal_wavelength_nm: f64,
+    sample_index: usize,
+    sample_wavelength_nm: f64,
+    kernel_weight: f64,
+) !void {
+    const source_contribution = e_view * ksca * angle_contribution;
+    try rows.append(allocator, .{
+        .nominal_wavelength_nm = nominal_wavelength_nm,
+        .sample_index = sample_index,
+        .sample_wavelength_nm = sample_wavelength_nm,
+        .kernel_weight = kernel_weight,
+        .fourier_index = fourier_index,
+        .level_index = level_index,
+        .component_kind = component_kind,
+        .angle_index = angle_index,
+        .phase_value = phase_value,
+        .field_value = field_value,
+        .angle_contribution = angle_contribution,
+        .weighted_angle_contribution = rtm_weight * source_contribution,
+    });
 }
 
 fn sourceInterfaceAtLevel(
@@ -2190,6 +2662,23 @@ fn lessThanSourceTermRow(_: void, lhs: SourceTermRow, rhs: SourceTermRow) bool {
     if (lhs.sample_index != rhs.sample_index) return lhs.sample_index < rhs.sample_index;
     if (lhs.fourier_index != rhs.fourier_index) return lhs.fourier_index < rhs.fourier_index;
     return lhs.level_index < rhs.level_index;
+}
+
+fn lessThanOrderSurfaceRow(_: void, lhs: OrderSurfaceRow, rhs: OrderSurfaceRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    if (lhs.sample_index != rhs.sample_index) return lhs.sample_index < rhs.sample_index;
+    if (lhs.fourier_index != rhs.fourier_index) return lhs.fourier_index < rhs.fourier_index;
+    return lhs.order_index < rhs.order_index;
+}
+
+fn lessThanSourceAngleComponentRow(_: void, lhs: SourceAngleComponentRow, rhs: SourceAngleComponentRow) bool {
+    if (lhs.nominal_wavelength_nm != rhs.nominal_wavelength_nm) return lhs.nominal_wavelength_nm < rhs.nominal_wavelength_nm;
+    if (lhs.sample_index != rhs.sample_index) return lhs.sample_index < rhs.sample_index;
+    if (lhs.fourier_index != rhs.fourier_index) return lhs.fourier_index < rhs.fourier_index;
+    if (lhs.level_index != rhs.level_index) return lhs.level_index < rhs.level_index;
+    const component_order = std.mem.order(u8, lhs.component_kind, rhs.component_kind);
+    if (component_order != .eq) return component_order == .lt;
+    return lhs.angle_index < rhs.angle_index;
 }
 
 fn lessThanAttenuationTermRow(_: void, lhs: AttenuationTermRow, rhs: AttenuationTermRow) bool {

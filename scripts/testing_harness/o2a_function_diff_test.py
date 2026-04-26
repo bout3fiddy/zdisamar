@@ -1,6 +1,10 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
+# dependencies = [
+#   "matplotlib>=3.10",
+#   "numpy>=2.2",
+# ]
 # ///
 
 from __future__ import annotations
@@ -19,19 +23,30 @@ from o2a_function_diff import (
     aggregate_weak_line_contributors,
     canonicalize_optional_csv,
     compare_csv_files,
+    derive_granular_transport_traces,
     load_parity_irradiance_support,
     merge_fortran_sublayer_optics,
     representative_vendor_indices_for_yaml,
     summarize_pairwise_diff,
+    write_function_diff_plot_bundle,
+    write_granular_contributor_summaries,
     write_irradiance_support_diagnostic,
     write_weak_line_contributor_summary,
     write_csv_rows,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
+        build_zig = (REPO_ROOT / "build.zig").read_text(encoding="utf-8")
+        assert '"o2a-parity-diagnostics"' in build_zig
+        assert 'o2a_parity_diagnostics_step.dependOn(&o2a_plot_bundle_cmd.step);' in build_zig
+        assert 'o2a_parity_diagnostics_step.dependOn(&o2a_parity_diagnostics_function_diff_cmd.step);' in build_zig
+        assert '"764.48,762.29,773.9"' in build_zig
+
         left = root / "left.csv"
         right = root / "right.csv"
         write_csv_rows(
@@ -91,6 +106,8 @@ def main() -> int:
             "wavelength_nm",
             "global_sublayer_index",
             "interval_index_1based",
+            "altitude_km",
+            "support_weight_km",
             "pressure_hpa",
             "temperature_k",
             "number_density_cm3",
@@ -117,6 +134,8 @@ def main() -> int:
             "combined_phase_coef_39",
         ]
         sublayer_extra_defaults = {
+            "altitude_km": "0.0",
+            "support_weight_km": "1.0",
             "aerosol_optical_depth": "0.0",
             "aerosol_scattering_optical_depth": "0.0",
             "cloud_optical_depth": "0.0",
@@ -222,6 +241,8 @@ def main() -> int:
                 "wavelength_nm",
                 "global_sublayer_index",
                 "interval_index_1based",
+                "altitude_km",
+                "support_weight_km",
                 "pressure_hpa",
                 "temperature_k",
                 "number_density_cm3",
@@ -576,6 +597,367 @@ def main() -> int:
         assert len(aggregates) == 1
         only_record = next(iter(aggregates.values()))
         assert abs(only_record["total"] - 2.5e-33) < 1.0e-40
+
+        granular_names = {
+            "transport_radiance_contributions.csv",
+            "transport_order_surface.csv",
+            "transport_source_components.csv",
+            "transport_source_angle_components.csv",
+            "transport_pseudo_spherical_terms.csv",
+            "transport_optical_depth_components.csv",
+        }
+        assert granular_names <= set(EXPECTED_CSVS)
+        for name in granular_names:
+            assert name in CSV_SPECS
+            assert CSV_SPECS[name].key_columns
+            assert CSV_SPECS[name].numeric_columns
+
+        granular_trace_root = root / "granular_trace"
+        granular_vendor = granular_trace_root / "vendor"
+        granular_yaml = granular_trace_root / "yaml"
+        granular_diff = granular_trace_root / "diff"
+        granular_vendor.mkdir(parents=True)
+        granular_yaml.mkdir(parents=True)
+        granular_diff.mkdir(parents=True)
+        transport_headers = ["nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "radiance", "irradiance", "weight"]
+        write_csv_rows(
+            granular_vendor / "transport_samples.csv",
+            transport_headers,
+            [
+                {
+                    "nominal_wavelength_nm": "764.48",
+                    "sample_index": "0",
+                    "sample_wavelength_nm": "764.48",
+                    "radiance": "100.0",
+                    "irradiance": "2.0",
+                    "weight": "0.0",
+                },
+                {
+                    "nominal_wavelength_nm": "764.48",
+                    "sample_index": "1",
+                    "sample_wavelength_nm": "764.49",
+                    "radiance": "120.0",
+                    "irradiance": "2.0",
+                    "weight": "0.5",
+                },
+            ],
+        )
+        write_csv_rows(
+            granular_yaml / "transport_samples.csv",
+            transport_headers,
+            [
+                {
+                    "nominal_wavelength_nm": "764.48",
+                    "sample_index": "0",
+                    "sample_wavelength_nm": "764.48",
+                    "radiance": "999.0",
+                    "irradiance": "2.0",
+                    "weight": "0.0",
+                },
+                {
+                    "nominal_wavelength_nm": "764.48",
+                    "sample_index": "1",
+                    "sample_wavelength_nm": "764.49",
+                    "radiance": "100.0",
+                    "irradiance": "2.0",
+                    "weight": "0.5",
+                },
+            ],
+        )
+        source_headers = [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "level_index",
+            "rtm_weight",
+            "ksca",
+            "source_contribution",
+            "weighted_source_contribution",
+        ]
+        write_csv_rows(
+            granular_vendor / "transport_source_terms.csv",
+            source_headers,
+            [
+                {
+                    "nominal_wavelength_nm": "764.48",
+                    "sample_index": "1",
+                    "sample_wavelength_nm": "764.49",
+                    "kernel_weight": "0.5",
+                    "fourier_index": "0",
+                    "level_index": "2",
+                    "rtm_weight": "0.25",
+                    "ksca": "2.0",
+                    "source_contribution": "4.0",
+                    "weighted_source_contribution": "1.0",
+                },
+            ],
+        )
+        write_csv_rows(
+            granular_yaml / "transport_source_terms.csv",
+            source_headers,
+            [
+                {
+                    "nominal_wavelength_nm": "764.48",
+                    "sample_index": "1",
+                    "sample_wavelength_nm": "764.49",
+                    "kernel_weight": "0.5",
+                    "fourier_index": "0",
+                    "level_index": "2",
+                    "rtm_weight": "0.25",
+                    "ksca": "2.0",
+                    "source_contribution": "2.0",
+                    "weighted_source_contribution": "0.5",
+                },
+            ],
+        )
+        attenuation_headers = [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "direction_kind",
+            "direction_index",
+            "level_index",
+            "sumkext",
+            "attenuation_top_to_level",
+            "grid_valid",
+        ]
+        pseudo_headers = [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "global_sample_index",
+            "altitude_km",
+            "support_weight_km",
+            "optical_depth",
+            "radius_weighted_optical_depth",
+            "grid_valid",
+        ]
+        for side in (granular_vendor, granular_yaml):
+            write_csv_rows(
+                side / "transport_attenuation_terms.csv",
+                attenuation_headers,
+                [
+                    {
+                        "nominal_wavelength_nm": "764.48",
+                        "sample_index": "1",
+                        "sample_wavelength_nm": "764.49",
+                        "kernel_weight": "0.5",
+                        "direction_kind": "view",
+                        "direction_index": "4",
+                        "level_index": "0",
+                        "sumkext": "1.0",
+                        "attenuation_top_to_level": "0.5",
+                        "grid_valid": "1",
+                    },
+                ],
+            )
+        write_csv_rows(
+            granular_vendor / "transport_pseudo_spherical_samples.csv",
+            pseudo_headers,
+            [
+                {
+                    "nominal_wavelength_nm": "764.48",
+                    "sample_index": "1",
+                    "sample_wavelength_nm": "764.49",
+                    "kernel_weight": "0.5",
+                    "global_sample_index": "3",
+                    "altitude_km": "10.0",
+                    "support_weight_km": "1.0",
+                    "optical_depth": "0.2",
+                    "radius_weighted_optical_depth": "1276.2",
+                    "grid_valid": "1",
+                },
+            ],
+        )
+        write_csv_rows(
+            granular_yaml / "transport_pseudo_spherical_samples.csv",
+            pseudo_headers,
+            [
+                {
+                    "nominal_wavelength_nm": "764.48",
+                    "sample_index": "1",
+                    "sample_wavelength_nm": "764.49",
+                    "kernel_weight": "0.5",
+                    "global_sample_index": "3",
+                    "altitude_km": "10.0",
+                    "support_weight_km": "1.0",
+                    "optical_depth": "0.1",
+                    "radius_weighted_optical_depth": "638.1",
+                    "grid_valid": "1",
+                },
+            ],
+        )
+        for side, total in ((granular_vendor, "0.3"), (granular_yaml, "0.2")):
+            write_csv_rows(
+                side / "sublayer_optics.csv",
+                [
+                    "wavelength_nm",
+                    "global_sublayer_index",
+                    "interval_index_1based",
+                    "gas_absorption_optical_depth",
+                    "gas_scattering_optical_depth",
+                    "cia_optical_depth",
+                    "aerosol_optical_depth",
+                    "cloud_optical_depth",
+                    "total_scattering_optical_depth",
+                    "total_optical_depth",
+                ],
+                [
+                    {
+                        "wavelength_nm": "764.48",
+                        "global_sublayer_index": "0",
+                        "interval_index_1based": "1",
+                        "gas_absorption_optical_depth": "0.1",
+                        "gas_scattering_optical_depth": "0.05",
+                        "cia_optical_depth": "0.01",
+                        "aerosol_optical_depth": "0.0",
+                        "cloud_optical_depth": "0.0",
+                        "total_scattering_optical_depth": "0.05",
+                        "total_optical_depth": total,
+                    },
+                ],
+            )
+        order_headers = [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "order_index",
+            "stop_reason",
+            "max_value",
+            "surface_u_order",
+            "surface_u_accumulated",
+            "surface_d_order",
+            "surface_e_view",
+        ]
+        angle_headers = [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "level_index",
+            "component_kind",
+            "angle_index",
+            "phase_value",
+            "field_value",
+            "angle_contribution",
+            "weighted_angle_contribution",
+        ]
+        for side, order_value, angle_value in (
+            (granular_vendor, "0.4", "0.2"),
+            (granular_yaml, "0.3", "0.1"),
+        ):
+            write_csv_rows(
+                side / "transport_order_surface.csv",
+                order_headers,
+                [
+                    {
+                        "nominal_wavelength_nm": "764.48",
+                        "sample_index": "1",
+                        "sample_wavelength_nm": "764.49",
+                        "kernel_weight": "0.5",
+                        "fourier_index": "0",
+                        "order_index": "1",
+                        "stop_reason": "accumulated",
+                        "max_value": "1.0e-4",
+                        "surface_u_order": order_value,
+                        "surface_u_accumulated": order_value,
+                        "surface_d_order": "0.0",
+                        "surface_e_view": "0.9",
+                    },
+                ],
+            )
+            write_csv_rows(
+                side / "transport_source_angle_components.csv",
+                angle_headers,
+                [
+                    {
+                        "nominal_wavelength_nm": "764.48",
+                        "sample_index": "1",
+                        "sample_wavelength_nm": "764.49",
+                        "kernel_weight": "0.5",
+                        "fourier_index": "0",
+                        "level_index": "2",
+                        "component_kind": "pmin_diffuse",
+                        "angle_index": "0",
+                        "phase_value": "0.25",
+                        "field_value": "0.8",
+                        "angle_contribution": angle_value,
+                        "weighted_angle_contribution": angle_value,
+                    },
+                ],
+            )
+        derive_granular_transport_traces(granular_vendor)
+        derive_granular_transport_traces(granular_yaml)
+        write_granular_contributor_summaries(granular_trace_root, granular_diff, [764.48])
+        radiance_summary = (granular_diff / "radiance_contributor_summary.txt").read_text()
+        first_ranked_line = next(line for line in radiance_summary.splitlines() if "column=" in line)
+        assert "column=weighted_radiance_contribution" in first_ranked_line
+        assert "signed_delta=1.000000000000e+01" in radiance_summary
+        assert "signed_delta=2.000000000000e+01" in radiance_summary
+        assert "signed_delta=-8.990000000000e+02" not in radiance_summary
+        assert len(list(csv.DictReader((granular_vendor / "transport_order_surface.csv").open()))) == 1
+        assert len(list(csv.DictReader((granular_vendor / "transport_source_angle_components.csv").open()))) == 1
+        assert (granular_diff / "labos_m0_summary.json").exists()
+        assert (granular_diff / "attenuation_contributor_summary.json").exists()
+        assert (granular_diff / "optical_depth_component_summary.json").exists()
+
+        plot_trace_root = root / "plot_trace"
+        plot_vendor = plot_trace_root / "vendor"
+        plot_yaml = plot_trace_root / "yaml"
+        plot_diff = plot_trace_root / "diff"
+        plot_vendor.mkdir(parents=True)
+        plot_yaml.mkdir(parents=True)
+        plot_diff.mkdir(parents=True)
+        summary_headers = ["nominal_wavelength_nm", "final_radiance", "final_irradiance", "final_reflectance"]
+        write_csv_rows(
+            plot_vendor / "transport_summary.csv",
+            summary_headers,
+            [
+                {
+                    "nominal_wavelength_nm": "761.75",
+                    "final_radiance": "10.0",
+                    "final_irradiance": "100.0",
+                    "final_reflectance": "0.1",
+                },
+                {
+                    "nominal_wavelength_nm": "762.29",
+                    "final_radiance": "20.0",
+                    "final_irradiance": "100.0",
+                    "final_reflectance": "0.2",
+                },
+            ],
+        )
+        write_csv_rows(
+            plot_yaml / "transport_summary.csv",
+            summary_headers,
+            [
+                {
+                    "nominal_wavelength_nm": "761.75",
+                    "final_radiance": "11.0",
+                    "final_irradiance": "100.0",
+                    "final_reflectance": "0.11",
+                },
+                {
+                    "nominal_wavelength_nm": "762.29",
+                    "final_radiance": "21.0",
+                    "final_irradiance": "100.0",
+                    "final_reflectance": "0.21",
+                },
+            ],
+        )
+        write_function_diff_plot_bundle(plot_trace_root, plot_diff, [761.75, 762.29])
+        plot_dir = plot_diff / "function_diff_plots"
+        assert (plot_dir / "comparison_metrics.json").exists()
+        assert (plot_dir / "current_vs_vendor_residuals.png").exists()
+        plot_metrics = json.loads((plot_dir / "comparison_metrics.json").read_text())
+        assert plot_metrics["irradiance"]["max_abs"] == 0.0
 
         solar_path, half_span_nm = load_parity_irradiance_support()
         assert solar_path.exists()

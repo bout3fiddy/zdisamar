@@ -1,6 +1,10 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
+# dependencies = [
+#   "matplotlib>=3.10",
+#   "numpy>=2.2",
+# ]
 # ///
 
 from __future__ import annotations
@@ -17,6 +21,9 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Iterable
+
+import numpy as np
+from o2a_plot_bundle import create_plots, stable_repo_path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +51,12 @@ EXPECTED_CSVS = (
     "transport_source_terms.csv",
     "transport_attenuation_terms.csv",
     "transport_pseudo_spherical_samples.csv",
+    "transport_radiance_contributions.csv",
+    "transport_order_surface.csv",
+    "transport_source_components.csv",
+    "transport_source_angle_components.csv",
+    "transport_pseudo_spherical_terms.csv",
+    "transport_optical_depth_components.csv",
 )
 STAGE_ORDER = EXPECTED_CSVS
 PAIRWISE_DIFFS = (("vendor", "yaml"),)
@@ -284,6 +297,120 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "grid_valid",
         ),
     ),
+    "transport_radiance_contributions.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "reflectance",
+            "irradiance",
+            "radiance",
+            "weighted_radiance_contribution",
+        ),
+    ),
+    "transport_order_surface.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index", "order_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "order_index",
+            "max_value",
+            "surface_u_order",
+            "surface_u_accumulated",
+            "surface_d_order",
+            "surface_e_view",
+        ),
+    ),
+    "transport_source_components.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index", "level_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "level_index",
+            "e_view",
+            "pmin_ed",
+            "pplusst_u",
+            "source_over_ksca",
+            "source_contribution",
+            "weighted_source_contribution",
+        ),
+    ),
+    "transport_source_angle_components.csv": CsvSpec(
+        key_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "fourier_index",
+            "level_index",
+            "component_kind",
+            "angle_index",
+        ),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "level_index",
+            "angle_index",
+            "phase_value",
+            "field_value",
+            "angle_contribution",
+            "weighted_angle_contribution",
+        ),
+    ),
+    "transport_pseudo_spherical_terms.csv": CsvSpec(
+        key_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "direction_kind",
+            "level_index",
+            "global_sample_index",
+        ),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "direction_index",
+            "level_index",
+            "global_sample_index",
+            "level_altitude_km",
+            "level_radius_km",
+            "sample_altitude_km",
+            "sample_radius_km",
+            "numerator",
+            "denominator",
+            "contribution",
+            "cumulative_sumkext",
+            "grid_valid",
+        ),
+    ),
+    "transport_optical_depth_components.csv": CsvSpec(
+        key_columns=("wavelength_nm", "global_sublayer_index"),
+        numeric_columns=(
+            "wavelength_nm",
+            "global_sublayer_index",
+            "interval_index_1based",
+            "line_absorption_optical_depth",
+            "cia_optical_depth",
+            "gas_scattering_optical_depth",
+            "aerosol_optical_depth",
+            "cloud_optical_depth",
+            "total_absorption_optical_depth",
+            "total_scattering_optical_depth",
+            "total_optical_depth",
+        ),
+    ),
 }
 
 WEAK_LINE_CONTRIBUTOR_SPEC = CsvSpec(
@@ -348,8 +475,10 @@ def main() -> int:
         merge_fortran_spectroscopy_summary(vendor_root)
         merge_fortran_sublayer_optics(vendor_root)
         run_zig_trace(trace_root, wavelengths_nm, args.zig_optimize)
-        annotate_transport_support_rows(vendor_root)
+        annotate_transport_support_rows(vendor_root, expand_overlapping_supports=True)
         annotate_transport_support_rows(yaml_root)
+        derive_granular_transport_traces(vendor_root)
+        derive_granular_transport_traces(yaml_root)
         canonicalize_side(vendor_root)
         verify_expected_csvs(vendor_root, "vendor")
         canonicalize_side(yaml_root)
@@ -357,8 +486,22 @@ def main() -> int:
         canonicalize_optional_csv(vendor_root, WEAK_LINE_CONTRIBUTOR_FILE, WEAK_LINE_CONTRIBUTOR_SPEC)
         canonicalize_optional_csv(yaml_root, WEAK_LINE_CONTRIBUTOR_FILE, WEAK_LINE_CONTRIBUTOR_SPEC)
         align_sublayer_optics_to_yaml(vendor_root, yaml_root)
+        derive_optical_depth_components(vendor_root)
+        derive_optical_depth_components(yaml_root)
+        canonicalize_optional_csv(
+            vendor_root,
+            "transport_optical_depth_components.csv",
+            CSV_SPECS["transport_optical_depth_components.csv"],
+        )
+        canonicalize_optional_csv(
+            yaml_root,
+            "transport_optical_depth_components.csv",
+            CSV_SPECS["transport_optical_depth_components.csv"],
+        )
         write_diff_summaries(trace_root, diff_root, wavelengths_nm)
         write_weak_line_contributor_summary(trace_root, diff_root, wavelengths_nm)
+        write_granular_contributor_summaries(trace_root, diff_root, wavelengths_nm)
+        write_function_diff_plot_bundle(trace_root, diff_root, wavelengths_nm)
         write_irradiance_support_diagnostic(diff_root, wavelengths_nm)
         update_latest_trace_root(trace_root)
     finally:
@@ -659,19 +802,22 @@ def align_sublayer_optics_to_yaml(vendor_root: Path, yaml_root: Path) -> None:
     write_csv_rows(vendor_path, list(yaml_rows[0].keys()), aligned_vendor_rows)
 
 
-def annotate_transport_support_rows(side_root: Path) -> None:
+def annotate_transport_support_rows(side_root: Path, expand_overlapping_supports: bool = False) -> None:
     kernel_path = side_root / "kernel_samples.csv"
     if not kernel_path.exists():
         return
 
-    support_by_wavelength = {
-        support_join_key(row["nominal_wavelength_nm"], row["sample_wavelength_nm"]): row
-        for row in read_csv_rows(kernel_path)
-    }
+    support_by_wavelength: dict[tuple[str, str], dict[str, str]] = {}
+    support_by_sample_wavelength: dict[str, list[dict[str, str]]] = {}
+    for row in read_csv_rows(kernel_path):
+        support_by_wavelength[support_join_key(row["nominal_wavelength_nm"], row["sample_wavelength_nm"])] = row
+        support_by_sample_wavelength.setdefault(sample_support_key(row["sample_wavelength_nm"]), []).append(row)
     for file_name in (
         "fourier_terms.csv",
         "transport_layers.csv",
         "transport_source_terms.csv",
+        "transport_order_surface.csv",
+        "transport_source_angle_components.csv",
         "transport_attenuation_terms.csv",
         "transport_pseudo_spherical_samples.csv",
     ):
@@ -699,20 +845,273 @@ def annotate_transport_support_rows(side_root: Path) -> None:
 
         annotated_rows: list[dict[str, str]] = []
         for row in rows:
-            support_row = support_by_wavelength.get(
-                support_join_key(row["nominal_wavelength_nm"], row["sample_wavelength_nm"])
-            )
-            if support_row is None:
+            if expand_overlapping_supports:
+                support_rows = support_by_sample_wavelength.get(sample_support_key(row["sample_wavelength_nm"]), [])
+            else:
+                support_row = support_by_wavelength.get(
+                    support_join_key(row["nominal_wavelength_nm"], row["sample_wavelength_nm"])
+                )
+                support_rows = [] if support_row is None else [support_row]
+            if not support_rows:
                 continue
-            annotated_row = dict(row)
-            annotated_row["sample_index"] = support_row["sample_index"]
-            annotated_row["kernel_weight"] = support_row["weight"]
-            annotated_rows.append(annotated_row)
+            for support_row in support_rows:
+                annotated_row = dict(row)
+                annotated_row["nominal_wavelength_nm"] = support_row["nominal_wavelength_nm"]
+                annotated_row["sample_index"] = support_row["sample_index"]
+                annotated_row["sample_wavelength_nm"] = support_row["sample_wavelength_nm"]
+                annotated_row["kernel_weight"] = support_row["weight"]
+                annotated_rows.append(annotated_row)
         write_csv_rows(path, fieldnames, annotated_rows)
+
+
+def derive_granular_transport_traces(side_root: Path) -> None:
+    derive_radiance_contributions(side_root)
+    derive_source_components(side_root)
+    derive_empty_trace(
+        side_root / "transport_order_surface.csv",
+        [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "order_index",
+            "stop_reason",
+            "max_value",
+            "surface_u_order",
+            "surface_u_accumulated",
+            "surface_d_order",
+            "surface_e_view",
+        ],
+    )
+    derive_empty_trace(
+        side_root / "transport_source_angle_components.csv",
+        [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "level_index",
+            "component_kind",
+            "angle_index",
+            "phase_value",
+            "field_value",
+            "angle_contribution",
+            "weighted_angle_contribution",
+        ],
+    )
+    derive_pseudo_spherical_terms(side_root)
+    derive_optical_depth_components(side_root)
+
+
+def derive_empty_trace(path: Path, fieldnames: list[str]) -> None:
+    if path.exists():
+        return
+    write_csv_rows(path, fieldnames, [])
+
+
+def derive_radiance_contributions(side_root: Path) -> None:
+    source_path = side_root / "transport_samples.csv"
+    target_path = side_root / "transport_radiance_contributions.csv"
+    fieldnames = [
+        "nominal_wavelength_nm",
+        "sample_index",
+        "sample_wavelength_nm",
+        "kernel_weight",
+        "reflectance",
+        "irradiance",
+        "radiance",
+        "weighted_radiance_contribution",
+    ]
+    if not source_path.exists():
+        write_csv_rows(target_path, fieldnames, [])
+        return
+
+    rows: list[dict[str, str]] = []
+    for row in read_csv_rows(source_path):
+        radiance = parse_float(row["radiance"])
+        irradiance = parse_float(row["irradiance"])
+        weight = parse_float(row["weight"])
+        rows.append(
+            {
+                "nominal_wavelength_nm": row["nominal_wavelength_nm"],
+                "sample_index": row["sample_index"],
+                "sample_wavelength_nm": row["sample_wavelength_nm"],
+                "kernel_weight": row["weight"],
+                "reflectance": repr(radiance / max(irradiance, 1.0e-12)),
+                "irradiance": row["irradiance"],
+                "radiance": row["radiance"],
+                "weighted_radiance_contribution": repr(weight * radiance),
+            }
+        )
+    write_csv_rows(target_path, fieldnames, rows)
+
+
+def derive_source_components(side_root: Path) -> None:
+    source_path = side_root / "transport_source_terms.csv"
+    target_path = side_root / "transport_source_components.csv"
+    fieldnames = [
+        "nominal_wavelength_nm",
+        "sample_index",
+        "sample_wavelength_nm",
+        "kernel_weight",
+        "fourier_index",
+        "level_index",
+        "e_view",
+        "pmin_ed",
+        "pplusst_u",
+        "source_over_ksca",
+        "source_contribution",
+        "weighted_source_contribution",
+    ]
+    if not source_path.exists():
+        write_csv_rows(target_path, fieldnames, [])
+        return
+
+    rows: list[dict[str, str]] = []
+    for row in read_csv_rows(source_path):
+        ksca = parse_float(row["ksca"])
+        contribution = parse_float(row["source_contribution"])
+        rows.append(
+            {
+                "nominal_wavelength_nm": row["nominal_wavelength_nm"],
+                "sample_index": row["sample_index"],
+                "sample_wavelength_nm": row["sample_wavelength_nm"],
+                "kernel_weight": row["kernel_weight"],
+                "fourier_index": row["fourier_index"],
+                "level_index": row["level_index"],
+                "e_view": "nan",
+                "pmin_ed": "nan",
+                "pplusst_u": "nan",
+                "source_over_ksca": repr(contribution / ksca) if ksca > 0.0 else "nan",
+                "source_contribution": row["source_contribution"],
+                "weighted_source_contribution": row["weighted_source_contribution"],
+            }
+        )
+    write_csv_rows(target_path, fieldnames, rows)
+
+
+def derive_pseudo_spherical_terms(side_root: Path) -> None:
+    sample_path = side_root / "transport_pseudo_spherical_samples.csv"
+    attenuation_path = side_root / "transport_attenuation_terms.csv"
+    target_path = side_root / "transport_pseudo_spherical_terms.csv"
+    fieldnames = [
+        "nominal_wavelength_nm",
+        "sample_index",
+        "sample_wavelength_nm",
+        "kernel_weight",
+        "direction_kind",
+        "direction_index",
+        "level_index",
+        "global_sample_index",
+        "level_altitude_km",
+        "level_radius_km",
+        "sample_altitude_km",
+        "sample_radius_km",
+        "numerator",
+        "denominator",
+        "contribution",
+        "cumulative_sumkext",
+        "grid_valid",
+    ]
+    if not sample_path.exists() or not attenuation_path.exists():
+        write_csv_rows(target_path, fieldnames, [])
+        return
+
+    samples_by_support: dict[tuple[str, str, str], list[dict[str, str]]] = {}
+    for row in read_csv_rows(sample_path):
+        key = (row["nominal_wavelength_nm"], row["sample_index"], row["sample_wavelength_nm"])
+        samples_by_support.setdefault(key, []).append(row)
+
+    rows: list[dict[str, str]] = []
+    earth_radius_km = 6371.0
+    for attenuation_row in read_csv_rows(attenuation_path):
+        key = (
+            attenuation_row["nominal_wavelength_nm"],
+            attenuation_row["sample_index"],
+            attenuation_row["sample_wavelength_nm"],
+        )
+        level_index = int(float(attenuation_row["level_index"]))
+        support_rows = samples_by_support.get(key, [])
+        if not support_rows:
+            continue
+        sample_row = support_rows[min(level_index, len(support_rows) - 1)]
+        sample_altitude = parse_float(sample_row["altitude_km"])
+        sample_radius = earth_radius_km + sample_altitude
+        contribution = parse_float(attenuation_row["sumkext"])
+        rows.append(
+            {
+                "nominal_wavelength_nm": attenuation_row["nominal_wavelength_nm"],
+                "sample_index": attenuation_row["sample_index"],
+                "sample_wavelength_nm": attenuation_row["sample_wavelength_nm"],
+                "kernel_weight": attenuation_row["kernel_weight"],
+                "direction_kind": attenuation_row["direction_kind"],
+                "direction_index": attenuation_row["direction_index"],
+                "level_index": attenuation_row["level_index"],
+                "global_sample_index": sample_row["global_sample_index"],
+                "level_altitude_km": sample_row["altitude_km"],
+                "level_radius_km": repr(sample_radius),
+                "sample_altitude_km": sample_row["altitude_km"],
+                "sample_radius_km": repr(sample_radius),
+                "numerator": sample_row["radius_weighted_optical_depth"],
+                "denominator": "nan",
+                "contribution": repr(contribution),
+                "cumulative_sumkext": attenuation_row["sumkext"],
+                "grid_valid": attenuation_row["grid_valid"],
+            }
+        )
+    write_csv_rows(target_path, fieldnames, rows)
+
+
+def derive_optical_depth_components(side_root: Path) -> None:
+    source_path = side_root / "sublayer_optics.csv"
+    target_path = side_root / "transport_optical_depth_components.csv"
+    fieldnames = [
+        "wavelength_nm",
+        "global_sublayer_index",
+        "interval_index_1based",
+        "line_absorption_optical_depth",
+        "cia_optical_depth",
+        "gas_scattering_optical_depth",
+        "aerosol_optical_depth",
+        "cloud_optical_depth",
+        "total_absorption_optical_depth",
+        "total_scattering_optical_depth",
+        "total_optical_depth",
+    ]
+    if not source_path.exists():
+        write_csv_rows(target_path, fieldnames, [])
+        return
+
+    rows: list[dict[str, str]] = []
+    for row in read_csv_rows(source_path):
+        total = parse_float(row["total_optical_depth"])
+        scattering = parse_float(row["total_scattering_optical_depth"])
+        rows.append(
+            {
+                "wavelength_nm": row["wavelength_nm"],
+                "global_sublayer_index": row["global_sublayer_index"],
+                "interval_index_1based": row["interval_index_1based"],
+                "line_absorption_optical_depth": row["gas_absorption_optical_depth"],
+                "cia_optical_depth": row["cia_optical_depth"],
+                "gas_scattering_optical_depth": row["gas_scattering_optical_depth"],
+                "aerosol_optical_depth": row["aerosol_optical_depth"],
+                "cloud_optical_depth": row["cloud_optical_depth"],
+                "total_absorption_optical_depth": repr(total - scattering),
+                "total_scattering_optical_depth": row["total_scattering_optical_depth"],
+                "total_optical_depth": row["total_optical_depth"],
+            }
+        )
+    write_csv_rows(target_path, fieldnames, rows)
 
 
 def support_join_key(nominal_wavelength_nm: str, sample_wavelength_nm: str) -> tuple[str, str]:
     return (normalized_float_key(nominal_wavelength_nm), normalized_float_key(sample_wavelength_nm))
+
+
+def sample_support_key(sample_wavelength_nm: str) -> str:
+    return normalized_float_key(sample_wavelength_nm)
 
 
 def aligned_sublayer_group_key(row: dict[str, str]) -> str:
@@ -931,6 +1330,275 @@ def write_weak_line_contributor_summary(trace_root: Path, diff_root: Path, wavel
         json.dumps(summary_json, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def write_granular_contributor_summaries(trace_root: Path, diff_root: Path, wavelengths_nm: list[float]) -> None:
+    write_ranked_delta_summary(
+        trace_root,
+        diff_root,
+        "transport_radiance_contributions.csv",
+        "radiance_contributor_summary",
+        ["weighted_radiance_contribution", "radiance", "reflectance"],
+        wavelengths_nm,
+        min_activity_column="weighted_radiance_contribution",
+        primary_column="weighted_radiance_contribution",
+    )
+    write_ranked_delta_summary(
+        trace_root,
+        diff_root,
+        "transport_source_components.csv",
+        "labos_m0_summary",
+        ["weighted_source_contribution", "source_contribution", "source_over_ksca"],
+        wavelengths_nm,
+        m0_only=True,
+        min_activity_column="weighted_source_contribution",
+    )
+    write_ranked_delta_summary(
+        trace_root,
+        diff_root,
+        "transport_pseudo_spherical_terms.csv",
+        "attenuation_contributor_summary",
+        ["contribution", "cumulative_sumkext", "numerator"],
+        wavelengths_nm,
+        min_activity_column="contribution",
+    )
+    write_ranked_delta_summary(
+        trace_root,
+        diff_root,
+        "transport_optical_depth_components.csv",
+        "optical_depth_component_summary",
+        [
+            "total_optical_depth",
+            "line_absorption_optical_depth",
+            "cia_optical_depth",
+            "gas_scattering_optical_depth",
+            "total_scattering_optical_depth",
+            "total_absorption_optical_depth",
+        ],
+        wavelengths_nm,
+        wavelength_column="wavelength_nm",
+        min_activity_column="total_optical_depth",
+    )
+
+
+def write_function_diff_plot_bundle(trace_root: Path, diff_root: Path, wavelengths_nm: list[float]) -> None:
+    vendor_path = trace_root / "vendor" / "transport_summary.csv"
+    yaml_path = trace_root / "yaml" / "transport_summary.csv"
+    if not vendor_path.exists() or not yaml_path.exists():
+        return
+
+    vendor_rows = summary_rows_by_wavelength(read_csv_rows(vendor_path))
+    yaml_rows = summary_rows_by_wavelength(read_csv_rows(yaml_path))
+    common_wavelengths = [
+        wavelength_nm
+        for wavelength_nm in wavelengths_nm
+        if f"{wavelength_nm:.12e}" in vendor_rows and f"{wavelength_nm:.12e}" in yaml_rows
+    ]
+    if not common_wavelengths:
+        return
+
+    plot_dir = diff_root / "function_diff_plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    vendor_spectrum = spectrum_from_summary_rows(vendor_rows, common_wavelengths)
+    yaml_spectrum = spectrum_from_summary_rows(yaml_rows, common_wavelengths)
+    wavelength_array = np.array(common_wavelengths, dtype=float)
+    write_spectrum_csv(plot_dir / "vendor_trace_spectrum.csv", vendor_spectrum)
+    write_spectrum_csv(plot_dir / "yaml_trace_spectrum.csv", yaml_spectrum)
+
+    create_plots(plot_dir, wavelength_array, yaml_spectrum, vendor_spectrum)
+    metrics = {
+        "sample_count": int(len(common_wavelengths)),
+        "wavelength_min_nm": float(wavelength_array.min()),
+        "wavelength_max_nm": float(wavelength_array.max()),
+        "vendor_trace_spectrum_path": stable_repo_path(plot_dir / "vendor_trace_spectrum.csv"),
+        "yaml_trace_spectrum_path": stable_repo_path(plot_dir / "yaml_trace_spectrum.csv"),
+        "reflectance": function_diff_metric_block(
+            wavelength_array,
+            yaml_spectrum["reflectance"],
+            vendor_spectrum["reflectance"],
+        ),
+        "radiance": function_diff_metric_block(wavelength_array, yaml_spectrum["radiance"], vendor_spectrum["radiance"]),
+        "irradiance": function_diff_metric_block(
+            wavelength_array,
+            yaml_spectrum["irradiance"],
+            vendor_spectrum["irradiance"],
+        ),
+    }
+    (plot_dir / "comparison_metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
+
+
+def function_diff_metric_block(wavelength_nm: np.ndarray, yaml_values: np.ndarray, vendor_values: np.ndarray) -> dict[str, float]:
+    residual = yaml_values - vendor_values
+    correlation = math.nan
+    if len(wavelength_nm) > 1 and np.std(yaml_values) > 0.0 and np.std(vendor_values) > 0.0:
+        correlation = float(np.corrcoef(yaml_values, vendor_values)[0, 1])
+    return {
+        "mae": float(np.mean(np.abs(residual))),
+        "rmse": float(np.sqrt(np.mean(residual**2))),
+        "max_abs": float(np.max(np.abs(residual))),
+        "max_abs_wavelength_nm": float(wavelength_nm[np.argmax(np.abs(residual))]),
+        "correlation": correlation,
+        "mean_signed": float(np.mean(residual)),
+    }
+
+
+def summary_rows_by_wavelength(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    return {f"{parse_float(row['nominal_wavelength_nm']):.12e}": row for row in rows}
+
+
+def spectrum_from_summary_rows(
+    rows_by_wavelength: dict[str, dict[str, str]],
+    wavelengths_nm: list[float],
+) -> dict[str, np.ndarray]:
+    rows = [rows_by_wavelength[f"{wavelength_nm:.12e}"] for wavelength_nm in wavelengths_nm]
+    return {
+        "wavelength_nm": np.array(wavelengths_nm, dtype=float),
+        "reflectance": np.array([parse_float(row["final_reflectance"]) for row in rows], dtype=float),
+        "radiance": np.array([parse_float(row["final_radiance"]) for row in rows], dtype=float),
+        "irradiance": np.array([parse_float(row["final_irradiance"]) for row in rows], dtype=float),
+    }
+
+
+def write_spectrum_csv(path: Path, spectrum: dict[str, np.ndarray]) -> None:
+    fieldnames = ["wavelength_nm", "reflectance", "radiance", "irradiance"]
+    rows = []
+    for index in range(len(spectrum["wavelength_nm"])):
+        rows.append({field: repr(float(spectrum[field][index])) for field in fieldnames})
+    write_csv_rows(path, fieldnames, rows)
+
+
+def write_ranked_delta_summary(
+    trace_root: Path,
+    diff_root: Path,
+    file_name: str,
+    output_stem: str,
+    columns: list[str],
+    wavelengths_nm: list[float],
+    *,
+    wavelength_column: str = "nominal_wavelength_nm",
+    m0_only: bool = False,
+    min_activity_column: str | None = None,
+    primary_column: str | None = None,
+) -> None:
+    vendor_path = trace_root / "vendor" / file_name
+    yaml_path = trace_root / "yaml" / file_name
+    spec = CSV_SPECS[file_name]
+    lines = [output_stem]
+    output_json: dict[str, object] = {"file": file_name, "wavelengths_nm": list(wavelengths_nm), "ranked": []}
+    if not vendor_path.exists() or not yaml_path.exists():
+        lines.append("  missing input")
+        write_summary_files(diff_root, output_stem, lines, output_json)
+        return
+
+    vendor_rows = rows_by_key(read_csv_rows(vendor_path), spec)
+    yaml_rows = rows_by_key(read_csv_rows(yaml_path), spec)
+    ranked: list[dict[str, object]] = []
+    for key in sorted(set(vendor_rows) | set(yaml_rows), key=str):
+        vendor_row = vendor_rows.get(key)
+        yaml_row = yaml_rows.get(key)
+        row = vendor_row or yaml_row
+        if row is None:
+            continue
+        if m0_only and row.get("fourier_index") not in {None, "0", "0.0"}:
+            continue
+        if not row_matches_wavelength(row, wavelengths_nm, wavelength_column):
+            continue
+        if min_activity_column is not None:
+            vendor_activity = abs(parse_float_or_zero(vendor_row, min_activity_column))
+            yaml_activity = abs(parse_float_or_zero(yaml_row, min_activity_column))
+            if max(vendor_activity, yaml_activity) <= 1.0e-24:
+                continue
+        for column in columns:
+            vendor_value = parse_float_or_zero(vendor_row, column)
+            yaml_value = parse_float_or_zero(yaml_row, column)
+            delta = vendor_value - yaml_value
+            if delta == 0.0 or math.isnan(delta):
+                continue
+            ranked.append(
+                {
+                    "column": column,
+                    "key": list(key),
+                    "signed_delta": delta,
+                    "abs_delta": abs(delta),
+                    "vendor": vendor_value,
+                    "yaml": yaml_value,
+                }
+            )
+
+    ranked.sort(
+        key=lambda item: (
+            0 if primary_column is not None and item["column"] == primary_column else 1,
+            -float(item["abs_delta"]),
+        )
+    )
+    signed_total = sum(float(item["signed_delta"]) for item in ranked)
+    total_abs = sum(float(item["abs_delta"]) for item in ranked)
+    cumulative_abs = 0.0
+    for item in ranked[:25]:
+        cumulative_abs += float(item["abs_delta"])
+        item["cumulative_abs_share"] = cumulative_abs / total_abs if total_abs > 0.0 else 0.0
+        item["signed_total_share"] = (
+            float(item["signed_delta"]) / signed_total if abs(signed_total) > 1.0e-300 else math.nan
+        )
+
+    if not ranked:
+        lines.append("  no active signed deltas")
+    else:
+        for item in ranked[:10]:
+            lines.append(
+                "  "
+                f"column={item['column']} "
+                f"key={item['key']!r} "
+                f"signed_delta={item['signed_delta']:.12e} "
+                f"abs_delta={item['abs_delta']:.12e} "
+                f"cumulative_abs_share={item.get('cumulative_abs_share', 0.0):.6f}"
+            )
+    output_json["ranked"] = ranked[:25]
+    output_json["signed_total"] = signed_total
+    output_json["total_abs"] = total_abs
+    write_summary_files(diff_root, output_stem, lines, output_json)
+
+
+def write_summary_files(diff_root: Path, stem: str, lines: list[str], payload: dict[str, object]) -> None:
+    (diff_root / f"{stem}.txt").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    (diff_root / f"{stem}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def rows_by_key(rows: list[dict[str, str]], spec: CsvSpec) -> dict[tuple[str, ...], dict[str, str]]:
+    return {
+        tuple(normalized_summary_key_value(row.get(column, "")) for column in spec.key_columns): row
+        for row in rows
+    }
+
+
+def normalized_summary_key_value(raw: str) -> str:
+    try:
+        value = parse_float(raw)
+    except ValueError:
+        return raw
+    if math.isnan(value):
+        return "nan"
+    return f"{value:.12e}"
+
+
+def parse_float_or_zero(row: dict[str, str] | None, column: str) -> float:
+    if row is None:
+        return 0.0
+    try:
+        value = parse_float(row.get(column, "0.0"))
+    except ValueError:
+        return 0.0
+    if math.isnan(value):
+        return 0.0
+    return value
+
+
+def row_matches_wavelength(row: dict[str, str], wavelengths_nm: list[float], column: str) -> bool:
+    if column not in row:
+        return True
+    row_wavelength = parse_float(row[column])
+    return any(abs(row_wavelength - wavelength_nm) <= 1.5e-2 for wavelength_nm in wavelengths_nm)
 
 
 def aggregate_weak_line_contributors(
@@ -1662,7 +2330,8 @@ def patch_labos_module(path: Path) -> None:
         "  use mathTools,   only : GaussDivPoints, LU_decomposition, locate, solve_lin_system_LU_based\n"
         "  use o2aFunctionTraceModule, only: o2a_trace_fourier_term, o2a_trace_transport_layer, &\n"
         "    o2a_trace_transport_source_term, o2a_trace_transport_attenuation_term, &\n"
-        "    o2a_trace_transport_pseudo_spherical_sample\n",
+        "    o2a_trace_transport_pseudo_spherical_sample, o2a_trace_transport_order_surface, &\n"
+        "    o2a_trace_transport_source_angle_component, o2a_trace_set_fourier_index\n",
         path,
     )
     text = replace_once(
@@ -1670,6 +2339,28 @@ def patch_labos_module(path: Path) -> None:
         "      integer    :: ilFrom, ilTo, ilayer, imu, index\n",
         "      integer    :: ilFrom, ilTo, ilayer, imu, index\n"
         "      integer    :: trace_sample_index\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      real(8) :: sumIntField(nmuextra), sumIntField_prev(nmuextra)\n"
+        "      real(8) :: eigenvalue(nmuextra)\n"
+        "      real(8) :: maxValue\n",
+        "      real(8) :: sumIntField(nmuextra), sumIntField_prev(nmuextra)\n"
+        "      real(8) :: eigenvalue(nmuextra)\n"
+        "      real(8) :: maxValue\n"
+        "      integer :: trace_surface_ind\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      integer :: ilevel, maxExpCoefLevel\n"
+        "      integer :: is, imu, imu0, iSV, jSV, ind, ind0\n"
+        "      real(8) :: sumRefl(dimSV_fc)\n",
+        "      integer :: ilevel, maxExpCoefLevel\n"
+        "      integer :: is, imu, imu0, iSV, jSV, ind, ind0\n"
+        "      real(8) :: sumRefl(dimSV_fc)\n"
+        "      real(8) :: trace_angle_contribution\n",
         path,
     )
     text = replace_once(
@@ -1720,6 +2411,59 @@ def patch_labos_module(path: Path) -> None:
     )
     text = replace_once(
         text,
+        "      if ( maxValue  < controlS%thresholdConv_first) then\n\n"
+        "        if ( verbose )  write(intermediateFileUnit,'(A, I4)') 'numorders= ', numorders\n\n"
+        "      else ! higher orders of scattering\n",
+        "      trace_surface_ind = 1 + nGauss * dimSV_fc\n"
+        "      if ( maxValue  < controlS%thresholdConv_first) then\n\n"
+        "        call o2a_trace_transport_order_surface(0, numorders, 'first_converged', maxValue, &\n"
+        "          UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
+        "          UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n"
+        "        if ( verbose )  write(intermediateFileUnit,'(A, I4)') 'numorders= ', numorders\n\n"
+        "      else ! higher orders of scattering\n"
+        "        call o2a_trace_transport_order_surface(0, numorders, 'accumulated', maxValue, &\n"
+        "          UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
+        "          UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "          if ( (maxValue  < controlS%thresholdConv_mult) .or. (numorders == numOrdersMax) ) then\n"
+        "             if ( verbose )  write(intermediateFileUnit,*) 'numorders= ', numorders\n"
+        "            exit ! exit loop over orders of scattering\n"
+        "          end if\n",
+        "          if ( (maxValue  < controlS%thresholdConv_mult) .or. (numorders == numOrdersMax) ) then\n"
+        "            if (numorders == numOrdersMax) then\n"
+        "              call o2a_trace_transport_order_surface(0, numorders, 'max_orders', maxValue, &\n"
+        "                UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
+        "                UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n"
+        "            else\n"
+        "              call o2a_trace_transport_order_surface(0, numorders, 'multiple_converged', maxValue, &\n"
+        "                UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
+        "                UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n"
+        "            end if\n"
+        "             if ( verbose )  write(intermediateFileUnit,*) 'numorders= ', numorders\n"
+        "            exit ! exit loop over orders of scattering\n"
+        "          end if\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "              UDsumLocal_fc(ilevel)%D   = UDsumLocal_fc(ilevel)%D + UDLocal_fc(ilevel)%D\n"
+        "            end do\n"
+        "            \n"
+        "          end if ! numorders == numOrdersMax\n",
+        "              UDsumLocal_fc(ilevel)%D   = UDsumLocal_fc(ilevel)%D + UDLocal_fc(ilevel)%D\n"
+        "            end do\n"
+        "            call o2a_trace_transport_order_surface(0, numorders, 'accumulated', maxValue, &\n"
+        "              UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
+        "              UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n"
+        "            \n"
+        "          end if ! numorders == numOrdersMax\n",
+        path,
+    )
+    text = replace_once(
+        text,
         "      real(8) :: factor \n",
         "      real(8) :: factor \n"
         "      real(8) :: trace_surface_e_view\n"
@@ -1751,6 +2495,32 @@ def patch_labos_module(path: Path) -> None:
     )
     text = replace_once(
         text,
+        "          call ordersScat(errS, controlS, geometryS, numOrdersMax, RTMnlevelCloud, &\n"
+        "                          RTMnlayer, atten, dimSV_fc, nmutot, nmuextra, nGauss,    &\n"
+        "                          RT_fc, UDsumLocal_fc, UDLocal_fc, UDorde_fc, UD_fc)\n"
+        "          if (errorCheck(errS)) return\n",
+        "          call o2a_trace_set_fourier_index(iFourier)\n"
+        "          call ordersScat(errS, controlS, geometryS, numOrdersMax, RTMnlevelCloud, &\n"
+        "                          RTMnlayer, atten, dimSV_fc, nmutot, nmuextra, nGauss,    &\n"
+        "                          RT_fc, UDsumLocal_fc, UDLocal_fc, UDorde_fc, UD_fc)\n"
+        "          if (errorCheck(errS)) return\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "          call ordersScat(errS, controlS, geometryS, numOrdersMax, RTMnlevelCloud, &\n"
+        "                          RTMnlayer, atten, dimSV_fc, nmutot, nmuextra, nGauss,    &\n"
+        "                          RT_fc, UDsumLocal_fc, UDLocal_fc, UDorde_fc, UD_fc)\n"
+        "          if (errorCheck(errS)) return\n",
+        "          call o2a_trace_set_fourier_index(iFourier)\n"
+        "          call ordersScat(errS, controlS, geometryS, numOrdersMax, RTMnlevelCloud, &\n"
+        "                          RTMnlayer, atten, dimSV_fc, nmutot, nmuextra, nGauss,    &\n"
+        "                          RT_fc, UDsumLocal_fc, UDLocal_fc, UDorde_fc, UD_fc)\n"
+        "          if (errorCheck(errS)) return\n",
+        path,
+    )
+    text = replace_once(
+        text,
         "        factor = 2.0d0\n"
         "        if (iFourier == 0) factor = 1.0d0\n\n\n"
         "        wfAlbedo               = wfAlbedo                + factor * wfAlbedo_fc                * cos_m_dphi\n",
@@ -1774,6 +2544,27 @@ def patch_labos_module(path: Path) -> None:
         "                                          * (PminED(iSV) + PplusstU(iSV))\n"
         "              ! integration\n"
         "              sumRefl(iSV) = sumRefl(iSV) + optPropRTMGridS%RTMweight(ilevel) * contribrefl_fc(iSV, ilevel)\n",
+        "              if (iSV == 1 .and. iFourier == 0 .and. optPropRTMGridS%RTMweight(ilevel) > 0.0d0 .and. optPropRTMGridS%ksca(ilevel) > 0.0d0) then\n"
+        "                do imu = 1, nGauss\n"
+        "                  trace_angle_contribution = Pmin(ind, 1 + (imu - 1) * dimSV_fc) * UD_fc(ilevel)%D(1 + (imu - 1) * dimSV_fc, is)\n"
+        "                  call o2a_trace_transport_source_angle_component(iFourier, ilevel, 'pmin_diffuse', imu - 1, &\n"
+        "                    Pmin(ind, 1 + (imu - 1) * dimSV_fc), UD_fc(ilevel)%D(1 + (imu - 1) * dimSV_fc, is), &\n"
+        "                    trace_angle_contribution, optPropRTMGridS%RTMweight(ilevel) * UD_fc(ilevel)%E(ind) &\n"
+        "                    * optPropRTMGridS%ksca(ilevel) * trace_angle_contribution)\n"
+        "                end do\n"
+        "                trace_angle_contribution = Pmin(ind, ind0) * UD_fc(ilevel)%E(ind0)\n"
+        "                call o2a_trace_transport_source_angle_component(iFourier, ilevel, 'pmin_direct', nGauss + 1, &\n"
+        "                  Pmin(ind, ind0), UD_fc(ilevel)%E(ind0), trace_angle_contribution, &\n"
+        "                  optPropRTMGridS%RTMweight(ilevel) * UD_fc(ilevel)%E(ind) * optPropRTMGridS%ksca(ilevel) &\n"
+        "                  * trace_angle_contribution)\n"
+        "                do imu = 1, nGauss\n"
+        "                  trace_angle_contribution = Pplusst(ind, 1 + (imu - 1) * dimSV_fc) * UD_fc(ilevel)%U(1 + (imu - 1) * dimSV_fc, is)\n"
+        "                  call o2a_trace_transport_source_angle_component(iFourier, ilevel, 'pplusst_up', imu - 1, &\n"
+        "                    Pplusst(ind, 1 + (imu - 1) * dimSV_fc), UD_fc(ilevel)%U(1 + (imu - 1) * dimSV_fc, is), &\n"
+        "                    trace_angle_contribution, optPropRTMGridS%RTMweight(ilevel) * UD_fc(ilevel)%E(ind) &\n"
+        "                    * optPropRTMGridS%ksca(ilevel) * trace_angle_contribution)\n"
+        "                end do\n"
+        "              end if\n"
         "              contribrefl_fc(iSV, ilevel) =  UD_fc(ilevel)%E(ind) * optPropRTMGridS%ksca(ilevel) &\n"
         "                                          * (PminED(iSV) + PplusstU(iSV))\n"
         "              if (iSV == 1 .and. optPropRTMGridS%RTMweight(ilevel) > 0.0d0 .and. optPropRTMGridS%ksca(ilevel) > 0.0d0) &\n"
