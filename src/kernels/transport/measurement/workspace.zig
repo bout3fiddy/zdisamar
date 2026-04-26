@@ -26,6 +26,7 @@ const InstrumentIntegration = @import("../../../o2a/providers/instrument/integra
 const NoiseProviders = @import("../../../o2a/providers/noise.zig");
 const OpticsPreparation = @import("../../optics/preparation.zig");
 const common = @import("../common.zig");
+const Cache = @import("cache.zig");
 const grid = @import("../../spectra/grid.zig");
 const convolution = @import("../../spectra/convolution.zig");
 const Types = @import("types.zig");
@@ -85,6 +86,7 @@ pub const SummaryWorkspace = struct {
     radiance_noise_sigma: []f64 = &.{},
     irradiance_noise_sigma: []f64 = &.{},
     reflectance_noise_sigma: []f64 = &.{},
+    evaluation_cache: ?Cache.SpectralEvaluationCache = null,
 
     /// Purpose:
     ///   Release every owned buffer held by the measurement workspace.
@@ -107,7 +109,18 @@ pub const SummaryWorkspace = struct {
         freeBuffer(allocator, self.radiance_noise_sigma);
         freeBuffer(allocator, self.irradiance_noise_sigma);
         freeBuffer(allocator, self.reflectance_noise_sigma);
+        if (self.evaluation_cache) |*cache| cache.deinit();
         self.* = .{};
+    }
+
+    /// Purpose:
+    ///   Return a reusable exact-wavelength spectral cache for one run.
+    pub fn spectralCache(self: *SummaryWorkspace, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {
+        if (self.evaluation_cache == null) {
+            self.evaluation_cache = Cache.SpectralEvaluationCache.init(allocator);
+        }
+        self.evaluation_cache.?.reset();
+        return &(self.evaluation_cache.?);
     }
 
     /// Purpose:
@@ -208,7 +221,7 @@ pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
 ///   Estimate the pseudo-spherical sample count needed for one sweep.
 pub fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usize {
     const layer_count = transportLayerCountHint(scene, route);
-    return layer_count * pseudoSphericalSubgridDivisions(scene);
+    return layer_count * (pseudoSphericalSubgridDivisions(scene) + 2);
 }
 
 pub fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
@@ -230,6 +243,16 @@ pub fn resolvedPseudoSphericalSampleCount(
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
 ) usize {
+    if (prepared.intervalSemanticsUseReducedSharedRtmLayers() and
+        prepared.shared_rtm_geometry.isValidFor(resolvedTransportLayerCount(route, prepared)))
+    {
+        var sample_count: usize = 0;
+        for (prepared.shared_rtm_geometry.layers) |layer| {
+            const support_count: usize = @intCast(layer.support_count);
+            if (support_count > 2) sample_count += support_count - 2;
+        }
+        return sample_count;
+    }
     return resolvedTransportLayerCount(route, prepared) * pseudoSphericalSubgridDivisions(scene);
 }
 

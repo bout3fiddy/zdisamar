@@ -140,7 +140,6 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     }
     if (shared_geometry.usesSharedRtmGrid(self, solver_layer_count)) {
         if (shared_geometry.cachedSharedRtmGeometry(self, solver_layer_count)) |geometry| {
-            var shared_subgrid_scratch: shared_geometry.GaussRuleScratch = .{};
             for (level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
                 altitude_km.* = level_geometry.altitude_km;
             }
@@ -156,17 +155,14 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
                     support_start_index,
                     support_count,
                 );
-                sample_index = shared_carrier.fillSharedPseudoSphericalSamplesOnSubgridWithSpectroscopyCache(
+                sample_index = shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRows(
                     self,
-                    scene,
                     wavelength_nm,
                     support.sublayers,
                     support.strong_line_states,
-                    layer_geometry,
                     attenuation_layers,
                     attenuation_samples,
                     sample_index,
-                    &shared_subgrid_scratch,
                     profile_cache,
                 );
             }

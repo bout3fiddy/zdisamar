@@ -107,7 +107,6 @@ pub fn applyLutWorkflows(
                     generated_o2_lut.*.?,
                     .o2,
                 );
-                working_scene.observation_model.o2_operational_lut = generated_o2_lut.*.?;
                 try appendExecutionLabel(allocator, execution_entries, "o2:xsec_lut:generated");
                 try appendGeneratedAsset(
                     allocator,
@@ -163,7 +162,6 @@ pub fn applyLutWorkflows(
                     generated_o2o2_lut.*.?,
                     .o2o2,
                 );
-                working_scene.observation_model.o2o2_operational_lut = generated_o2o2_lut.*.?;
                 try appendExecutionLabel(allocator, execution_entries, "o2o2:xsec_lut:generated");
                 try appendGeneratedAsset(
                     allocator,

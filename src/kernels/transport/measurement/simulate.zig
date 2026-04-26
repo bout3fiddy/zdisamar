@@ -67,13 +67,12 @@ pub fn simulateInternal(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     providers: Types.ProviderBindings,
     buffers: Workspace.Buffers,
+    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
     forward_profile: ?*Types.ForwardProfile,
 ) Workspace.Error!Types.MeasurementSpaceSummary {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try Workspace.validateBuffers(sample_count, buffers);
-    var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
-    defer evaluation_cache.deinit();
     if (forward_profile) |profile| profile.reset();
     var phase_timer = if (forward_profile != null)
         std.time.Timer.start() catch unreachable
@@ -122,7 +121,7 @@ pub fn simulateInternal(
         providers,
         safe_span,
         forward_misses,
-        &evaluation_cache,
+        evaluation_cache,
     );
 
     var radiance_sum: f64 = 0.0;
@@ -158,7 +157,7 @@ pub fn simulateInternal(
             buffers.pseudo_spherical_samples,
             buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1],
             buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1],
-            &evaluation_cache,
+            evaluation_cache,
             &plan.radiance_integration,
         );
         buffers.scratch[index] = integrated.radiance;
@@ -190,7 +189,7 @@ pub fn simulateInternal(
             prepared,
             plan.irradiance_wavelength_nm,
             safe_span,
-            &evaluation_cache,
+            evaluation_cache,
             &plan.irradiance_integration,
         );
     }
@@ -328,7 +327,10 @@ pub fn simulate(
     providers: Types.ProviderBindings,
     buffers: Workspace.Buffers,
 ) Workspace.Error!Types.MeasurementSpaceSummary {
-    return simulateInternal(allocator, scene, route, prepared, providers, buffers, null);
+    var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
+    defer evaluation_cache.deinit();
+    evaluation_cache.reset();
+    return simulateInternal(allocator, scene, route, prepared, providers, buffers, &evaluation_cache, null);
 }
 
 /// Purpose:
@@ -369,6 +371,7 @@ pub fn simulateSummaryWithWorkspace(
         prepared,
         providers,
         try workspace.buffers(allocator, &summary_scene, route, providers),
+        try workspace.spectralCache(allocator),
         null,
     );
 }

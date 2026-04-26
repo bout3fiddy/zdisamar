@@ -26,6 +26,7 @@ const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
 const common = @import("../common.zig");
+const cache_module = @import("cache.zig");
 const spectral_forward = @import("spectral_forward.zig");
 const Types = @import("types.zig");
 const Workspace = @import("workspace.zig");
@@ -38,36 +39,7 @@ const Error = Workspace.Error;
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
 pub const ForwardCacheMiss = spectral_forward.ForwardCacheMiss;
 
-/// Exact-wavelength spectral cache for repeated forward and irradiance samples.
-pub const SpectralEvaluationCache = struct {
-    allocator: Allocator,
-    forward: std.AutoHashMap(u64, ForwardIntegratedSample),
-    irradiance: std.AutoHashMap(u64, f64),
-
-    /// Purpose:
-    ///   Initialize the cache buckets for one measurement-space sweep.
-    pub fn init(allocator: Allocator) SpectralEvaluationCache {
-        return .{
-            .allocator = allocator,
-            .forward = std.AutoHashMap(u64, ForwardIntegratedSample).init(allocator),
-            .irradiance = std.AutoHashMap(u64, f64).init(allocator),
-        };
-    }
-
-    /// Purpose:
-    ///   Release both spectral cache maps.
-    pub fn deinit(self: *SpectralEvaluationCache) void {
-        self.forward.deinit();
-        self.irradiance.deinit();
-        self.* = undefined;
-    }
-
-    /// Purpose:
-    ///   Convert an exact finite wavelength value into the cache key space.
-    pub fn keyFor(wavelength_nm: f64) u64 {
-        return @as(u64, @bitCast(wavelength_nm));
-    }
-};
+pub const SpectralEvaluationCache = cache_module.SpectralEvaluationCache;
 
 fn irradianceAtWavelength(
     scene: *const Scene,

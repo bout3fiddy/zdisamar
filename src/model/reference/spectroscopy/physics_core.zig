@@ -183,15 +183,15 @@ pub fn prepareWeakLineVoigtState(
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_atm, Types.min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
-    const center_wavenumber_cm1 = wavelengthToWavenumberCm1(line.center_wavelength_nm);
+    const center_wavenumber_cm1 = lineCenterWavenumberCm1(line);
     const temperature_ratio = reference_temperature_k / safe_temperature;
-    const pressure_shift_cm1 = -spectralWidthNmToCm1(line.pressure_shift_nm, center_wavenumber_cm1);
+    const pressure_shift_cm1 = linePressureShiftCm1(line);
     const shifted_center_wavenumber_cm1 = @max(
         center_wavenumber_cm1 + pressure_shift_cm1 * safe_pressure,
         1.0,
     );
     const half_width_cm1_at_t = @max(
-        spectralWidthNmToCm1(line.air_half_width_nm, center_wavenumber_cm1) *
+        lineAirHalfWidthCm1(line) *
             std.math.pow(f64, temperature_ratio, line.temperature_exponent),
         1.0e-6,
     );
@@ -241,6 +241,27 @@ pub fn prepareWeakLineVoigtState(
         .prefactor = prefactor,
         .cpf = cpf,
     };
+}
+
+fn lineCenterWavenumberCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.center_wavenumber_cm1))
+        line.center_wavenumber_cm1
+    else
+        wavelengthToWavenumberCm1(line.center_wavelength_nm);
+}
+
+fn lineAirHalfWidthCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.air_half_width_cm1))
+        line.air_half_width_cm1
+    else
+        spectralWidthNmToCm1(line.air_half_width_nm, lineCenterWavenumberCm1(line));
+}
+
+fn linePressureShiftCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.pressure_shift_cm1))
+        line.pressure_shift_cm1
+    else
+        -spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
 }
 
 pub fn weakLineContribution(

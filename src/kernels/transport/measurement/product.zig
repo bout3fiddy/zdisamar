@@ -67,6 +67,7 @@ pub fn simulateProductWithWorkspace(
         prepared,
         providers,
         buffers,
+        try workspace.spectralCache(allocator),
         forward_profile,
     );
     return .{

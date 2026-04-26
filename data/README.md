@@ -28,8 +28,8 @@ into typed `ReferenceData` structures before kernels consume them.
 
 ## Acquisition Notes
 
-The import mapping for upstream reference subsets lives in
-`validation/compatibility/vendor_import_registry.json`.
+Upstream reference subsets are tracked by the bundle manifests next to the data
+they describe. O2 A parity evidence lives under `validation/`.
 
 ## Adapter Ingestion
 

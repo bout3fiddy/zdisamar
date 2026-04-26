@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "canonical_command": "zig build o2a-plots",
+  "tracked_output_dir": "validation",
+  "vendor_reference_path": "validation/o2a_with_cia_disamar_reference.csv",
+  "tracked_outputs": [
+    "validation/bundle_manifest.json",
+    "validation/comparison_metrics.json",
+    "validation/current_vs_vendor_reflectance.png",
+    "validation/current_vs_vendor_radiance.png",
+    "validation/current_vs_vendor_irradiance.png",
+    "validation/current_vs_vendor_residuals.png",
+    "validation/generated_spectrum.csv",
+    "validation/profile_summary.json"
+  ],
+  "policy": {
+    "default_vendor_refresh": "use_committed_vendor_reference",
+    "note": "The default O2A plot refresh uses the committed vendor reference and does not rerun vendored DISAMAR."
+  }
+}

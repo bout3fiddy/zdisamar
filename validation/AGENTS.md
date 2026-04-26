@@ -1,5 +1,6 @@
 # Validation
 
-- Use this tree for compatibility, golden, plugin, and performance validation assets that are broader or heavier than normal tests.
-- Validation data should support parity and regression analysis against the tracked specs and the local Fortran reference clone.
-- `validation/compatibility/o2a_plots/` is committed O2A comparison evidence. Regenerate it by command with `zig build o2a-plots` (alias: `zig build o2a-plot-bundle`); do not hand-edit its contents.
+- Use this tree for tracked O2 A parity evidence that is intentionally committed.
+- Keep validation-specific O2 A maintenance scripts in this directory when they read or rewrite the tracked validation bundle.
+- Keep disposable traces, scratch runs, and exploratory validation output under `out/`.
+- The committed O2 A comparison evidence lives directly under `validation/`. Regenerate it by command with `zig build o2a-plots` (alias: `zig build o2a-plot-bundle`); do not hand-edit its generated contents.

@@ -1,5 +1,5 @@
 //! Purpose:
-//!   Expose ingest adapters for spectral ASCII inputs and bundled reference assets.
+//!   Expose retained ingest adapters for bundled reference assets.
 //!
 //! Physics:
 //!   Normalize vendor and bundled scientific tables into typed inputs before they reach the

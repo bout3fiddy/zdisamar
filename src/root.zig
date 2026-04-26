@@ -30,12 +30,12 @@ pub const Result = o2a.Result;
 pub const Report = o2a.Report;
 pub const ForwardProfile = o2a.ForwardProfile;
 pub const RtmControls = o2a.RtmControls;
+pub const Prepared = o2a.Prepared;
 pub const parity = o2a.parity;
 pub const profile = o2a.profile;
 
-pub const loadData = o2a.loadData;
-pub const buildOptics = o2a.buildOptics;
-pub const runSpectrum = o2a.runSpectrum;
+pub const prepare = o2a.prepare;
+pub const run = o2a.run;
 pub const writeReport = o2a.writeReport;
 
 test "public root exposes the O2A forward lab surface" {
@@ -46,10 +46,10 @@ test "public root exposes the O2A forward lab surface" {
     try std.testing.expect(@hasDecl(@This(), "Work"));
     try std.testing.expect(@hasDecl(@This(), "Result"));
     try std.testing.expect(@hasDecl(@This(), "Report"));
+    try std.testing.expect(@hasDecl(@This(), "Prepared"));
     try std.testing.expect(@hasDecl(@This(), "parity"));
-    try std.testing.expect(@hasDecl(@This(), "loadData"));
-    try std.testing.expect(@hasDecl(@This(), "buildOptics"));
-    try std.testing.expect(@hasDecl(@This(), "runSpectrum"));
+    try std.testing.expect(@hasDecl(@This(), "prepare"));
+    try std.testing.expect(@hasDecl(@This(), "run"));
     try std.testing.expect(@hasDecl(@This(), "writeReport"));
 }
 
@@ -63,4 +63,7 @@ test "public root no longer exposes engine or plugin scaffolding" {
     try std.testing.expect(!@hasDecl(@This(), "exporters"));
     try std.testing.expect(!@hasDecl(@This(), "test_support"));
     try std.testing.expect(!@hasDecl(@This(), "vendor_case"));
+    try std.testing.expect(!@hasDecl(@This(), "loadData"));
+    try std.testing.expect(!@hasDecl(@This(), "buildOptics"));
+    try std.testing.expect(!@hasDecl(@This(), "runSpectrum"));
 }

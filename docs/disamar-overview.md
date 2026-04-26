@@ -104,6 +104,6 @@ For the present codebase, that means the implementation has to satisfy three con
 After this overview:
 
 1. Read [Architecture and Execution Model](./zig-architecture.md) for the system-level layout.
-2. Read [Operational O2 A-Band Path](./operational-o2a.md) for the main operational science path.
-3. Read [Plugins and Extension Boundaries](./plugins-and-extension-boundaries.md) for the capability system.
+2. Read [O2A Forward](./o2a-forward.md) for the retained public runtime path.
+3. Read [Parity Harness](./parity-harness.md) for the bounded DISAMAR comparison workflow.
 4. Read [Validation and Scientific Scope](./validation-and-parity.md) for the current tested and validated contract envelope.

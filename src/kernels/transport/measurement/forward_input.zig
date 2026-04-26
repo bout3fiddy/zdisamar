@@ -116,8 +116,9 @@ pub fn configuredForwardInput(
             &profile_cache,
         );
         if (has_pseudo_spherical_grid) {
+            const pseudo_spherical_sample_count = pseudo_spherical_level_starts[input.layers.len];
             input.pseudo_spherical_grid = .{
-                .samples = pseudo_spherical_samples[0..Workspace.resolvedPseudoSphericalSampleCount(scene, route, prepared)],
+                .samples = pseudo_spherical_samples[0..pseudo_spherical_sample_count],
                 .level_sample_starts = pseudo_spherical_level_starts[0 .. input.layers.len + 1],
                 .level_altitudes_km = pseudo_spherical_level_altitudes[0 .. input.layers.len + 1],
             };

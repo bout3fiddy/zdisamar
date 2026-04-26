@@ -196,13 +196,8 @@ pub fn prepareStrongLineConvTPState(
                 lower_sum += strong_lines[row_index].dipole_ratio * state.weightAt(row_index, column_index);
             }
         }
-        if (@abs(lower_sum) <= 1.0e-24) continue;
-
-        const rotational_gate = 1.0 - std.math.clamp(
-            @abs(@as(f64, @floatFromInt(strong_lines[column_index].rotational_index_m1))) / 36.0,
-            0.0,
-            1.0,
-        );
+        const rotational_gate = 1.0 -
+            @abs(@as(f64, @floatFromInt(strong_lines[column_index].rotational_index_m1))) / 36.0;
         const renormalization_anchor = strong_lines[column_index].dipole_ratio *
             rotational_gate *
             rotational_gate *
@@ -217,22 +212,18 @@ pub fn prepareStrongLineConvTPState(
             state.setWeight(
                 column_index,
                 row_index,
-                renormalized * state.population_t[column_index] / @max(state.population_t[row_index], 1.0e-24),
+                renormalized * state.population_t[column_index] / state.population_t[row_index],
             );
         }
     }
 
     for (0..line_count) |line_index| {
         var mixing_sum: f64 = 0.0;
-        const self_dipole = if (@abs(state.dipole_t[line_index]) > 1.0e-24)
-            state.dipole_t[line_index]
-        else
-            1.0e-24;
         for (0..line_count) |other_index| {
             if (other_index == line_index) continue;
             const delta_sig = state.mod_sig_cm1[line_index] - state.mod_sig_cm1[other_index];
-            if (@abs(delta_sig) <= 1.0e-12) continue;
-            mixing_sum += 2.0 * state.dipole_t[other_index] / self_dipole *
+            if (delta_sig == 0.0) continue;
+            mixing_sum += 2.0 * state.dipole_t[other_index] / state.dipole_t[line_index] *
                 state.weightAt(other_index, line_index) /
                 delta_sig;
         }
@@ -243,8 +234,14 @@ pub fn prepareStrongLineConvTPState(
 }
 
 pub fn shiftedLineCenterWavenumberCm1(line: Types.SpectroscopyLine, pressure_atm: f64) f64 {
-    const center_wavenumber_cm1 = Core.wavelengthToWavenumberCm1(line.center_wavelength_nm);
-    const pressure_shift_cm1 = -Core.spectralWidthNmToCm1(line.pressure_shift_nm, center_wavenumber_cm1);
+    const center_wavenumber_cm1 = if (std.math.isFinite(line.center_wavenumber_cm1))
+        line.center_wavenumber_cm1
+    else
+        Core.wavelengthToWavenumberCm1(line.center_wavelength_nm);
+    const pressure_shift_cm1 = if (std.math.isFinite(line.pressure_shift_cm1))
+        line.pressure_shift_cm1
+    else
+        -Core.spectralWidthNmToCm1(line.pressure_shift_nm, center_wavenumber_cm1);
     // PARITY:
     //   `HITRANModule::CalculatAbsXsec` applies pressure shift as
     //   `Sig + delt * P` in wavenumber space. The Zig line payload stores the

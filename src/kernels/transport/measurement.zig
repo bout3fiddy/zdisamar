@@ -1,5 +1,6 @@
 pub const types = @import("measurement/types.zig");
 pub const workspace = @import("measurement/workspace.zig");
+pub const cache = @import("measurement/cache.zig");
 pub const forward_input = @import("measurement/forward_input.zig");
 pub const spectral_eval = @import("measurement/spectral_eval.zig");
 pub const product = @import("measurement/product.zig");
@@ -95,6 +96,7 @@ pub fn simulateProductWithWorkspace(
 test {
     _ = types;
     _ = workspace;
+    _ = cache;
     _ = forward_input;
     _ = spectral_eval;
     _ = product;

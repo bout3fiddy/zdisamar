@@ -13,7 +13,7 @@ inputs:
       format: profile_csv
     vendor_reference_csv:
       kind: file
-      path: validation/reference/o2a_with_cia_disamar_reference.csv
+      path: validation/o2a_with_cia_disamar_reference.csv
       format: disamar_o2a_reference_csv
     raw_solar_reference:
       kind: file

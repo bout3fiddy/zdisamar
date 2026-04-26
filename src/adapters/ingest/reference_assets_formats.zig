@@ -150,7 +150,8 @@ fn parseHitran160(
     contents: []const u8,
     columns: []const []const u8,
 ) Error!ParsedTable {
-    const has_vendor_o2a_fields = columns.len == 14;
+    const emit_source_cm1_fields = helpers.columnNamesContain(columns, "center_wavenumber_cm1");
+    const has_vendor_o2a_fields = helpers.columnNamesContain(columns, "vendor_filter_metadata_from_source");
     const minimum_line_length: usize = 67;
     const owned_columns = try helpers.dupColumns(allocator, columns);
     errdefer helpers.freeColumns(allocator, owned_columns);
@@ -220,11 +221,26 @@ fn parseHitran160(
             @as(f64, @floatFromInt(isotope_number)),
             helpers.deriveIsotopicAbundanceFraction(gas_index, isotope_number),
             center_wavelength_nm,
+        });
+        if (emit_source_cm1_fields) {
+            try values.append(allocator, center_wavenumber_cm1);
+        }
+        try values.appendSlice(allocator, &.{
             line_strength,
             air_half_width_nm,
+        });
+        if (emit_source_cm1_fields) {
+            try values.append(allocator, air_half_width_cm1);
+        }
+        try values.appendSlice(allocator, &.{
             temperature_exponent,
             lower_state_energy_cm1,
             pressure_shift_nm,
+        });
+        if (emit_source_cm1_fields) {
+            try values.append(allocator, pressure_shift_cm1);
+        }
+        try values.appendSlice(allocator, &.{
             line_mixing_coefficient,
         });
         if (has_vendor_o2a_fields) {

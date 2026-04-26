@@ -1,8 +1,30 @@
 //! Spectroscopy line-list support helpers that are not themselves line-shape
 //! physics.
 
+const std = @import("std");
 const Physics = @import("physics.zig");
 const Types = @import("types.zig");
+
+pub fn lineCenterWavenumberCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.center_wavenumber_cm1))
+        line.center_wavenumber_cm1
+    else
+        Physics.wavelengthToWavenumberCm1(line.center_wavelength_nm);
+}
+
+pub fn lineAirHalfWidthCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.air_half_width_cm1))
+        line.air_half_width_cm1
+    else
+        Physics.spectralWidthNmToCm1(line.air_half_width_nm, lineCenterWavenumberCm1(line));
+}
+
+pub fn linePressureShiftCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.pressure_shift_cm1))
+        line.pressure_shift_cm1
+    else
+        -Physics.spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
+}
 
 pub fn lineIndexIsStrongAnchor(anchor_indices: []const ?usize, line_index: usize) bool {
     for (anchor_indices) |anchor| {
@@ -41,7 +63,7 @@ pub fn traceRowForWeakLine(
         .gas_index = line.gas_index,
         .isotope_number = line.isotope_number,
         .center_wavelength_nm = line.center_wavelength_nm,
-        .center_wavenumber_cm1 = Physics.wavelengthToWavenumberCm1(line.center_wavelength_nm),
+        .center_wavenumber_cm1 = lineCenterWavenumberCm1(line),
         .shifted_center_wavenumber_cm1 = Physics.shiftedLineCenterWavenumberCm1(line, pressure_atm),
         .line_strength_cm2_per_molecule = line.line_strength_cm2_per_molecule,
         .air_half_width_nm = line.air_half_width_nm,

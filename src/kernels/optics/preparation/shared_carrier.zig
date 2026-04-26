@@ -186,6 +186,7 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
     attenuation_layers: []transport_common.LayerInput,
     attenuation_samples: []transport_common.PseudoSphericalSample,
     sample_index_start: usize,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
 ) usize {
     var sample_index = sample_index_start;
     if (support_sublayers.len < 2) return sample_index;
@@ -202,7 +203,7 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
                 support_sublayer,
                 @intCast(support_sublayer.global_sublayer_index),
                 strong_line_state,
-                null,
+                profile_cache,
             ).totalOpticalDepthPerKm()
         else
             0.0;

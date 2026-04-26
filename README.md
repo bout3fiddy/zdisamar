@@ -125,11 +125,11 @@ That deletes `.zig-cache`, `.zig-cache-int`, and the repo's disposable
 
 ## Tracked O2A Plot Bundle
 
-The committed O2A comparison evidence lives under `validation/compatibility/o2a_plots/`.
+The committed O2A comparison evidence lives directly under `validation/`.
 
 - Canonical refresh command: `zig build o2a-plot-bundle`
-- Default vendor input: `validation/reference/o2a_with_cia_disamar_reference.csv`
-- Default policy: refresh the tracked plots from the committed vendor reference; do not rerun vendored DISAMAR unless you explicitly call `zig build o2a-vendor-reference-refresh`
+- Default vendor input: `validation/o2a_with_cia_disamar_reference.csv`
+- Default policy: refresh the tracked plots from the committed vendor reference in `validation/o2a_with_cia_disamar_reference.csv`.
 
 ## The O2A Workflow
 
@@ -170,34 +170,30 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 defer _ = gpa.deinit();
 const allocator = gpa.allocator();
 
-var case: zdisamar.Case = .{};
-var data = try zdisamar.loadData(allocator, &case);
-defer data.deinit(allocator);
+var case: zdisamar.Case = .{
+    .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 121 },
+};
+var prepared = try zdisamar.prepare(allocator, &case);
+defer prepared.deinit(allocator);
 
-var optics = try zdisamar.buildOptics(allocator, &case, &data);
-defer optics.deinit(allocator);
-
-var work: zdisamar.Work = .{};
-defer work.deinit(allocator);
-
-var result = try zdisamar.runSpectrum(
+var result = try zdisamar.run(
     allocator,
-    &case,
-    &optics,
-    &work,
+    &prepared,
     .exact,
-    zdisamar.vendor_case.stockRtmControls(),
+    .{},
     null,
 );
 defer result.deinit(allocator);
 ```
 
-That is the same lifecycle the retained O2A profile CLI eventually drives.
+`Prepared` owns the resolved case, bundled data, prepared optics, and reusable
+workspace. The old split `loadData -> buildOptics -> runSpectrum` surface is no
+longer public.
 
 ## Data, Packages, And Exporters
 
 - `data/` contains tracked O2A climatologies, cross-sections, LUTs, and vendor reference assets.
-- `validation/compatibility/o2a_plots/` contains the tracked O2A comparison bundle.
+- `validation/` contains the tracked O2A comparison bundle.
 - The retained artifact outputs are profile summaries and generated spectra, not exporter backends.
 
 ## Validation And Scientific Scope
@@ -212,10 +208,11 @@ build artifact.
 ## Recommended Reading
 
 - [`docs/disamar-overview.md`](./docs/disamar-overview.md)
-- [`docs/o2a-forward-architecture.md`](./docs/o2a-forward-architecture.md)
+- [`docs/o2a-forward.md`](./docs/o2a-forward.md)
+- [`docs/parity-harness.md`](./docs/parity-harness.md)
+- [`docs/python-bindings.md`](./docs/python-bindings.md)
 - [`docs/o2a-telemetry.md`](./docs/o2a-telemetry.md)
 - [`docs/o2a-vendor-stage-map.md`](./docs/o2a-vendor-stage-map.md)
-- [`docs/operational-o2a.md`](./docs/operational-o2a.md)
 - [`docs/reference-data-and-bundles.md`](./docs/reference-data-and-bundles.md)
 - [`docs/validation-and-parity.md`](./docs/validation-and-parity.md)
 

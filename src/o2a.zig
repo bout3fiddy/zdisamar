@@ -1,4 +1,5 @@
 const bundled_data = @import("data/bundled/load.zig");
+const std = @import("std");
 const report_json = @import("o2a/report/json.zig");
 const spectrum = @import("o2a/spectrum.zig");
 
@@ -15,35 +16,50 @@ pub const RtmControls = @import("kernels/transport/common.zig").RtmControls;
 pub const parity = @import("o2a/data/vendor_parity_yaml.zig");
 pub const profile = report_json;
 
-pub fn loadData(
-    allocator: @import("std").mem.Allocator,
+pub const Prepared = struct {
+    case: Case,
+    data: Data,
+    optics: Optics,
+    work: Work = .{},
+
+    pub fn deinit(self: *Prepared, allocator: std.mem.Allocator) void {
+        self.work.deinit(allocator);
+        self.optics.deinit(allocator);
+        self.data.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+pub fn prepare(
+    allocator: std.mem.Allocator,
     case: *const Case,
-) !Data {
-    return bundled_data.load(allocator, case);
+) !Prepared {
+    var data = try bundled_data.load(allocator, case);
+    errdefer data.deinit(allocator);
+
+    var optics = try bundled_data.buildOptics(allocator, &data.working_case, &data);
+    errdefer optics.deinit(allocator);
+
+    return .{
+        .case = data.working_case,
+        .data = data,
+        .optics = optics,
+        .work = .{},
+    };
 }
 
-pub fn buildOptics(
-    allocator: @import("std").mem.Allocator,
-    case: *const Case,
-    loaded: *Data,
-) !Optics {
-    return bundled_data.buildOptics(allocator, case, loaded);
-}
-
-pub fn runSpectrum(
-    allocator: @import("std").mem.Allocator,
-    case: *const Case,
-    prepared_optics: *const Optics,
-    work: ?*Work,
+pub fn run(
+    allocator: std.mem.Allocator,
+    prepared: *Prepared,
     method: Method,
     rtm_controls: RtmControls,
     profile_out: ?*ForwardProfile,
 ) !Result {
     return spectrum.run(
         allocator,
-        case,
-        prepared_optics,
-        work,
+        &prepared.case,
+        &prepared.optics,
+        &prepared.work,
         method,
         rtm_controls,
         profile_out,

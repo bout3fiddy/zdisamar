@@ -95,6 +95,7 @@ const ForwardPrefetchErrorState = struct {
 };
 
 const ForwardPrefetchWorker = struct {
+    allocator: Allocator,
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -166,11 +167,8 @@ pub fn computeForwardSampleAtWavelength(
 }
 
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const worker_allocator = gpa.allocator();
     var scratch = ForwardSampleScratch.init(
-        worker_allocator,
+        worker.allocator,
         worker.scene,
         worker.route,
         worker.prepared,
@@ -178,11 +176,11 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
         worker.error_state.store(err);
         return;
     };
-    defer scratch.deinit(worker_allocator);
+    defer scratch.deinit(worker.allocator);
 
     for (worker.misses, worker.results) |miss, *result| {
         result.* = computeForwardSampleAtWavelength(
-            worker_allocator,
+            worker.allocator,
             worker.scene,
             worker.route,
             worker.prepared,
@@ -255,6 +253,7 @@ pub fn prefetchForwardSamples(
         const batch_count = base_count + @as(usize, if (worker_index < remainder) 1 else 0);
         const end_index = start_index + batch_count;
         workers[worker_index] = .{
+            .allocator = allocator,
             .scene = scene,
             .route = route,
             .prepared = prepared,
@@ -287,7 +286,7 @@ pub fn prefetchForwardSamples(
 fn preferredForwardWorkerCount(miss_count: usize) usize {
     if (miss_count < min_parallel_forward_miss_count) return 1;
     const cpu_count = std.Thread.getCpuCount() catch 1;
-    return @max(@min(cpu_count, miss_count), 1);
+    return @min(cpu_count, @max(@as(usize, 1), miss_count / min_parallel_forward_miss_count));
 }
 
 test "small forward miss batches stay single-threaded" {

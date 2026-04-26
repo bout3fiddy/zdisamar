@@ -180,8 +180,29 @@ pub const LoadedAsset = struct {
     ///   Convert HITRAN-style line rows into typed spectroscopy lines.
     pub fn toSpectroscopyLineList(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLineList {
         if (self.kind != .spectroscopy_line_list) return error.InvalidAssetKind;
-        const has_vendor_o2a_fields = self.columnCount() == 14;
-        if (has_vendor_o2a_fields) {
+        const has_source_cm1_fields = columnNamesContain(self.column_names, "center_wavenumber_cm1");
+        const has_vendor_o2a_fields = columnNamesContain(self.column_names, "vendor_filter_metadata_from_source");
+        if (has_vendor_o2a_fields and has_source_cm1_fields) {
+            try expectColumns(self.column_names, &.{
+                "gas_index",
+                "isotope_number",
+                "abundance_fraction",
+                "center_wavelength_nm",
+                "center_wavenumber_cm1",
+                "line_strength_cm2_per_molecule",
+                "air_half_width_nm",
+                "air_half_width_cm1",
+                "temperature_exponent",
+                "lower_state_energy_cm1",
+                "pressure_shift_nm",
+                "pressure_shift_cm1",
+                "line_mixing_coefficient",
+                "branch_ic1",
+                "branch_ic2",
+                "rotational_nf",
+                "vendor_filter_metadata_from_source",
+            });
+        } else if (has_vendor_o2a_fields) {
             try expectColumns(self.column_names, &.{
                 "gas_index",
                 "isotope_number",
@@ -197,6 +218,22 @@ pub const LoadedAsset = struct {
                 "branch_ic2",
                 "rotational_nf",
                 "vendor_filter_metadata_from_source",
+            });
+        } else if (has_source_cm1_fields) {
+            try expectColumns(self.column_names, &.{
+                "gas_index",
+                "isotope_number",
+                "abundance_fraction",
+                "center_wavelength_nm",
+                "center_wavenumber_cm1",
+                "line_strength_cm2_per_molecule",
+                "air_half_width_nm",
+                "air_half_width_cm1",
+                "temperature_exponent",
+                "lower_state_energy_cm1",
+                "pressure_shift_nm",
+                "pressure_shift_cm1",
+                "line_mixing_coefficient",
             });
         } else {
             try expectColumns(self.column_names, &.{
@@ -218,21 +255,31 @@ pub const LoadedAsset = struct {
 
         for (lines, 0..) |*line, row_index| {
             const row = row_index * self.columnCount();
+            const line_strength_index: usize = if (has_source_cm1_fields) 5 else 4;
+            const air_half_width_nm_index: usize = if (has_source_cm1_fields) 6 else 5;
+            const temperature_exponent_index: usize = if (has_source_cm1_fields) 8 else 6;
+            const lower_state_energy_index: usize = if (has_source_cm1_fields) 9 else 7;
+            const pressure_shift_nm_index: usize = if (has_source_cm1_fields) 10 else 8;
+            const line_mixing_index: usize = if (has_source_cm1_fields) 12 else 9;
+            const vendor_index: usize = if (has_source_cm1_fields) 13 else 10;
             line.* = .{
                 .gas_index = @intFromFloat(self.values[row + 0]),
                 .isotope_number = @intFromFloat(self.values[row + 1]),
                 .abundance_fraction = self.values[row + 2],
                 .center_wavelength_nm = self.values[row + 3],
-                .line_strength_cm2_per_molecule = self.values[row + 4],
-                .air_half_width_nm = self.values[row + 5],
-                .temperature_exponent = self.values[row + 6],
-                .lower_state_energy_cm1 = self.values[row + 7],
-                .pressure_shift_nm = self.values[row + 8],
-                .line_mixing_coefficient = self.values[row + 9],
-                .branch_ic1 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 10]) else null,
-                .branch_ic2 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 11]) else null,
-                .rotational_nf = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 12]) else null,
-                .vendor_filter_metadata_from_source = has_vendor_o2a_fields and self.values[row + 13] != 0.0,
+                .center_wavenumber_cm1 = if (has_source_cm1_fields) self.values[row + 4] else std.math.nan(f64),
+                .line_strength_cm2_per_molecule = self.values[row + line_strength_index],
+                .air_half_width_nm = self.values[row + air_half_width_nm_index],
+                .air_half_width_cm1 = if (has_source_cm1_fields) self.values[row + 7] else std.math.nan(f64),
+                .temperature_exponent = self.values[row + temperature_exponent_index],
+                .lower_state_energy_cm1 = self.values[row + lower_state_energy_index],
+                .pressure_shift_nm = self.values[row + pressure_shift_nm_index],
+                .pressure_shift_cm1 = if (has_source_cm1_fields) self.values[row + 11] else std.math.nan(f64),
+                .line_mixing_coefficient = self.values[row + line_mixing_index],
+                .branch_ic1 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index]) else null,
+                .branch_ic2 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index + 1]) else null,
+                .rotational_nf = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index + 2]) else null,
+                .vendor_filter_metadata_from_source = has_vendor_o2a_fields and self.values[row + vendor_index + 3] != 0.0,
             };
         }
 
@@ -378,6 +425,13 @@ fn expectColumns(actual: []const []const u8, expected: []const []const u8) !void
     for (actual, expected) |actual_name, expected_name| {
         if (!std.mem.eql(u8, actual_name, expected_name)) return error.ColumnMismatch;
     }
+}
+
+fn columnNamesContain(actual: []const []const u8, expected: []const u8) bool {
+    for (actual) |actual_name| {
+        if (std.mem.eql(u8, actual_name, expected)) return true;
+    }
+    return false;
 }
 
 fn expectAirmassFactorColumns(actual: []const []const u8) !void {

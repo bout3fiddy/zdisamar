@@ -58,7 +58,7 @@ pub const Data = struct {
             self.working_case.absorbers.deinitOwned(allocator);
         }
         if (self.owns_operational_band_support) {
-            for (self.working_case.observation_model.operational_band_support) |*support| support.deinitOwned(allocator);
+            for (@constCast(self.working_case.observation_model.operational_band_support)) |*support| support.deinitOwned(allocator);
             allocator.free(self.working_case.observation_model.operational_band_support);
         }
         for (self.generated_lut_assets) |*asset| asset.deinitOwned(allocator);

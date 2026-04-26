@@ -26,7 +26,7 @@ fn exampleConfigPath() []const u8 {
 fn loadBaselineAnchor(allocator: std.mem.Allocator) !std.json.Parsed(BaselineAnchor) {
     const raw = try std.fs.cwd().readFileAlloc(
         allocator,
-        "validation/compatibility/o2a_vendor_forward_reflectance_baseline.json",
+        "validation/o2a_vendor_forward_reflectance_baseline.json",
         64 * 1024,
     );
     defer allocator.free(raw);

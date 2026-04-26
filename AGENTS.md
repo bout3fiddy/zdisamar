@@ -23,8 +23,8 @@
 - The verification harness is layered; keep the current suite split and validation assets as the base layer instead of replacing them with one monolithic runner.
 - `zig build` is the front door for local verification. Prefer adding or changing build steps before adding ad hoc shell commands.
 - Python helper scripts in this repo are invoked with `uv run ...`, not `python3 ...`.
-- When the user asks to "update O2A plots", run `zig build o2a-plot-bundle` and stage the changed tracked files under `validation/compatibility/o2a_plots/`.
-- The default O2A plot refresh uses the committed vendor reference in `validation/reference/o2a_with_cia_disamar_reference.csv` and does not rerun vendored DISAMAR.
+- When the user asks to "update O2A plots", run `zig build o2a-plot-bundle` and stage the changed tracked files under `validation/`.
+- The default O2A plot refresh uses the committed vendor reference in `validation/o2a_with_cia_disamar_reference.csv` and does not rerun vendored DISAMAR.
 - `zig build check` is the fast baseline: format check, compile the shipped O2A artifacts and suite roots, then run the root smoke tests.
 - `zig build test-fast` is the broader presubmit lane for the retained O2A fast suites.
 - `./scripts/clean-zig-caches.sh` removes accumulated repo-local Zig caches (`.zig-cache`, `.zig-cache-int`, and `zig-cache/`) after a run has finished.
@@ -45,8 +45,8 @@
 
 - `zig build check` is the fast local verification command.
 - `zig build test-fast` is the fast presubmit verification command.
-- `zig build o2a-plot-bundle` regenerates the tracked O2A comparison bundle under `validation/compatibility/o2a_plots/`.
-- `zig build o2a-vendor-reference-refresh` explicitly reruns vendored DISAMAR to refresh `validation/reference/o2a_with_cia_disamar_reference.csv`.
+- `zig build o2a-plot-bundle` regenerates the tracked O2A comparison bundle under `validation/`.
+- The tracked O2 A validation bundle uses the committed vendor reference at `validation/o2a_with_cia_disamar_reference.csv`.
 - `zig build test-transport` is the focused transport/parity verification command.
 - `zig build test-validation-o2a` runs the retained O2A forward-shape validation lane.
 - `zig build test-validation-o2a-vendor` runs the opt-in O2A vendor trend assessment lane.

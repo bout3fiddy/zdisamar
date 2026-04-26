@@ -38,6 +38,13 @@ pub fn freeColumns(allocator: std.mem.Allocator, columns: []const []const u8) vo
     allocator.free(columns);
 }
 
+pub fn columnNamesContain(columns: []const []const u8, expected: []const u8) bool {
+    for (columns) |column| {
+        if (std.mem.eql(u8, column, expected)) return true;
+    }
+    return false;
+}
+
 pub fn parseFixedFloat(slice: []const u8) !f64 {
     return std.fmt.parseFloat(f64, trimWhitespace(slice)) catch error.InvalidNumber;
 }
