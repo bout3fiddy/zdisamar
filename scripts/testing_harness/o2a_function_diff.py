@@ -40,6 +40,8 @@ EXPECTED_CSVS = (
     "line_catalog.csv",
     "strong_state.csv",
     "spectroscopy_summary.csv",
+    "dense_profile.csv",
+    "hydrostatic_terms.csv",
     "sublayer_optics.csv",
     "interval_bounds.csv",
     "adaptive_grid.csv",
@@ -141,6 +143,34 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "strong_sigma_cm2_per_molecule",
             "line_mixing_sigma_cm2_per_molecule",
             "total_sigma_cm2_per_molecule",
+        ),
+    ),
+    "dense_profile.csv": CsvSpec(
+        key_columns=("row_index",),
+        numeric_columns=(
+            "row_index",
+            "pressure_hpa",
+            "lnpressure",
+            "altitude_km",
+            "temperature_k",
+            "number_density_cm3",
+            "scale_height_km",
+        ),
+    ),
+    "hydrostatic_terms.csv": CsvSpec(
+        key_columns=("iteration", "pressure_index", "gauss_index"),
+        numeric_columns=(
+            "iteration",
+            "pressure_index",
+            "gauss_index",
+            "lnpressure_gp",
+            "weight_gp",
+            "altitude_gp_km",
+            "temperature_gp_k",
+            "gravity_mps2",
+            "scale_height_gp_km",
+            "increment_km",
+            "cumulative_altitude_km",
         ),
     ),
     "sublayer_optics.csv": CsvSpec(
@@ -2585,7 +2615,63 @@ def patch_prop_atmosphere_module(path: Path) -> None:
         "                                getSmoothAndDiffXsec, slitfunction, fleg\n",
         "  use mathTools,          only: splintLin, spline, splint, polyInt, gaussDivPoints, &\n"
         "                                getSmoothAndDiffXsec, slitfunction, fleg\n"
-        "    use o2aFunctionTraceModule, only: o2a_trace_sublayer_optics, o2a_trace_interval_bound\n",
+        "    use o2aFunctionTraceModule, only: o2a_trace_sublayer_optics, o2a_trace_interval_bound, &\n"
+        "      o2a_trace_dense_profile_row, o2a_trace_hydrostatic_term\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "        ! calculate altitude at pressure grid using integration\n"
+        "        do ipressure = 1, gasPTS%npressure\n"
+        "          startIndex = (ipressure - 1) * numDivisionPoints\n"
+        "          altitude(ipressure)   = altitude(ipressure-1)\n"
+        "          altitudeAP(ipressure) = altitudeAP(ipressure-1)\n"
+        "          do igauss = 1, numDivisionPoints\n"
+        "            altitude(ipressure)   = altitude(ipressure) &\n"
+        "                                  + weight_gp(startIndex + igauss) * scaleHeight_gp(startIndex + igauss)\n"
+        "            altitudeAP(ipressure) = altitudeAP(ipressure) &\n"
+        "                                  + weight_gp(startIndex + igauss) * scaleHeightAP_gp(startIndex + igauss)\n"
+        "          end do ! igauss\n"
+        "        end do ! ipressure\n",
+        "        ! calculate altitude at pressure grid using integration\n"
+        "        do ipressure = 1, gasPTS%npressure\n"
+        "          startIndex = (ipressure - 1) * numDivisionPoints\n"
+        "          altitude(ipressure)   = altitude(ipressure-1)\n"
+        "          altitudeAP(ipressure) = altitudeAP(ipressure-1)\n"
+        "          do igauss = 1, numDivisionPoints\n"
+        "            altitude(ipressure)   = altitude(ipressure) &\n"
+        "                                  + weight_gp(startIndex + igauss) * scaleHeight_gp(startIndex + igauss)\n"
+        "            call o2a_trace_hydrostatic_term(iteration, ipressure, igauss, lnpressure_gp(startIndex + igauss), &\n"
+        "              weight_gp(startIndex + igauss), altitude_gp(startIndex + igauss), temperature_gp(startIndex + igauss), &\n"
+        "              gravitationalAcceleration(45.0d0, altitude_gp(startIndex + igauss)), scaleHeight_gp(startIndex + igauss), &\n"
+        "              weight_gp(startIndex + igauss) * scaleHeight_gp(startIndex + igauss), altitude(ipressure))\n"
+        "            altitudeAP(ipressure) = altitudeAP(ipressure) &\n"
+        "                                  + weight_gp(startIndex + igauss) * scaleHeightAP_gp(startIndex + igauss)\n"
+        "          end do ! igauss\n"
+        "        end do ! ipressure\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      ! fill the scale height on the pressure grid\n"
+        "      do ipressure = 0, gasPTS%npressure\n"
+        "        gasPTS%scaleHeight(ipressure)   = 1.0d-3 * universalGasConstant * gasPTS%temperature(ipressure) &\n"
+        "              / meanMolWeightAir / gravitationalAcceleration( 45.0d0, gasPTS%alt(ipressure) )\n"
+        "        gasPTS%scaleHeightAP(ipressure) = 1.0d-3 * universalGasConstant * gasPTS%temperatureAP(ipressure) &\n"
+        "              / meanMolWeightAir / gravitationalAcceleration( 45.0d0, gasPTS%altAP(ipressure) )\n"
+        "      end do\n",
+        "      ! fill the scale height on the pressure grid\n"
+        "      do ipressure = 0, gasPTS%npressure\n"
+        "        gasPTS%scaleHeight(ipressure)   = 1.0d-3 * universalGasConstant * gasPTS%temperature(ipressure) &\n"
+        "              / meanMolWeightAir / gravitationalAcceleration( 45.0d0, gasPTS%alt(ipressure) )\n"
+        "        gasPTS%scaleHeightAP(ipressure) = 1.0d-3 * universalGasConstant * gasPTS%temperatureAP(ipressure) &\n"
+        "              / meanMolWeightAir / gravitationalAcceleration( 45.0d0, gasPTS%altAP(ipressure) )\n"
+        "      end do\n"
+        "      do ipressure = 0, gasPTS%npressure\n"
+        "        call o2a_trace_dense_profile_row(ipressure, gasPTS%pressure(ipressure), gasPTS%lnpressure(ipressure), &\n"
+        "          gasPTS%alt(ipressure), gasPTS%temperature(ipressure), gasPTS%pressure(ipressure) / gasPTS%temperature(ipressure) / 1.380658d-19, &\n"
+        "          gasPTS%scaleHeight(ipressure))\n"
+        "      end do\n",
         path,
     )
     text = replace_once(

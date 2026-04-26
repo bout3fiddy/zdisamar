@@ -532,8 +532,9 @@ fn linearSampleDescending(x_desc: []const f64, y: []const f64, target_x: f64) f6
 }
 
 fn gravitationalAccelerationMetersPerSecondSquared(latitude_deg: f64, altitude_km: f64) f64 {
+    const geodetic_flattening_term: f64 = @floatCast(@as(f32, 0.993306));
     const geodetic_latitude_rad = std.math.atan(std.math.tan(latitude_deg * std.math.pi / 180.0) /
-        (0.993306 + 1.049583e-6 * altitude_km));
+        (geodetic_flattening_term + 1.049583e-6 * altitude_km));
     const sin_latitude = std.math.sin(geodetic_latitude_rad);
     const gravity_at_mean_sea_level = 9.78031 + 0.05186 * sin_latitude * sin_latitude;
     return gravity_at_mean_sea_level - 3.086e-3 * altitude_km;

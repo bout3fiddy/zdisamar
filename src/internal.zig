@@ -15,6 +15,7 @@ pub const instrument = @import("model/Instrument.zig");
 pub const hitran_partition_tables = @import("model/hitran_partition_tables.zig");
 pub const reference_data = @import("model/ReferenceData.zig");
 pub const vendor_o2a_trace_support = @import("o2a/data/vendor_parity_yaml.zig");
+pub const vendor_o2a_trace_runtime = @import("o2a/data/vendor_parity_runtime.zig");
 
 pub const kernels = struct {
     pub const optics = struct {
@@ -23,6 +24,10 @@ pub const kernels = struct {
 
     pub const spectra = struct {
         pub const calibration = @import("kernels/spectra/calibration.zig");
+    };
+
+    pub const quadrature = struct {
+        pub const gauss_legendre = @import("kernels/quadrature/gauss_legendre.zig");
     };
 
     pub const transport = struct {

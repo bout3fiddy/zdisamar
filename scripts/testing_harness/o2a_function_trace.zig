@@ -10,6 +10,7 @@ const ReferenceData = internal.reference_data;
 const InstrumentProviders = internal.plugin_internal.providers.Instrument;
 const InstrumentIntegration = internal.plugin_internal.providers.instrument_integration;
 const OpticsPrepare = internal.kernels.optics.preparation;
+const GaussLegendre = internal.kernels.quadrature.gauss_legendre;
 
 const default_wavelengths_nm = [_]f64{761.75};
 
@@ -77,6 +78,30 @@ const WeakLineContributorRow = struct {
     rotational_nf: f64,
     matched_strong_index: f64,
     weak_line_sigma_cm2_per_molecule: f64,
+};
+
+const DenseProfileRow = struct {
+    row_index: usize,
+    pressure_hpa: f64,
+    lnpressure: f64,
+    altitude_km: f64,
+    temperature_k: f64,
+    number_density_cm3: f64,
+    scale_height_km: f64,
+};
+
+const HydrostaticTermRow = struct {
+    iteration: usize,
+    pressure_index: usize,
+    gauss_index: usize,
+    lnpressure_gp: f64,
+    weight_gp: f64,
+    altitude_gp_km: f64,
+    temperature_gp_k: f64,
+    gravity_mps2: f64,
+    scale_height_gp_km: f64,
+    increment_km: f64,
+    cumulative_altitude_km: f64,
 };
 
 const SublayerOpticsRow = struct {
@@ -273,6 +298,8 @@ const TraceFiles = struct {
     strong_state: std.fs.File,
     spectroscopy_summary: std.fs.File,
     weak_line_contributors: std.fs.File,
+    dense_profile: std.fs.File,
+    hydrostatic_terms: std.fs.File,
     sublayer_optics: std.fs.File,
     interval_bounds: std.fs.File,
     adaptive_grid: std.fs.File,
@@ -304,6 +331,8 @@ const TraceFiles = struct {
             .strong_state = try createCsvFile(allocator, side_root, "strong_state.csv", "pressure_hpa,temperature_k,strong_index,center_wavelength_nm,center_wavenumber_cm1,sig_moy_cm1,population_t,dipole_t,mod_sig_cm1,half_width_cm1_at_t,line_mixing_coefficient\n"),
             .spectroscopy_summary = try createCsvFile(allocator, side_root, "spectroscopy_summary.csv", "pressure_hpa,temperature_k,wavelength_nm,weak_sigma_cm2_per_molecule,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule,total_sigma_cm2_per_molecule\n"),
             .weak_line_contributors = try createCsvFile(allocator, side_root, "weak_line_contributors.csv", "pressure_hpa,temperature_k,wavelength_nm,sample_wavelength_nm,source_row_index,contribution_kind,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,shifted_center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf,matched_strong_index,weak_line_sigma_cm2_per_molecule\n"),
+            .dense_profile = try createCsvFile(allocator, side_root, "dense_profile.csv", "row_index,pressure_hpa,lnpressure,altitude_km,temperature_k,number_density_cm3,scale_height_km\n"),
+            .hydrostatic_terms = try createCsvFile(allocator, side_root, "hydrostatic_terms.csv", "iteration,pressure_index,gauss_index,lnpressure_gp,weight_gp,altitude_gp_km,temperature_gp_k,gravity_mps2,scale_height_gp_km,increment_km,cumulative_altitude_km\n"),
             .sublayer_optics = try createCsvFile(allocator, side_root, "sublayer_optics.csv", "wavelength_nm,global_sublayer_index,interval_index_1based,altitude_km,support_weight_km,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm,aerosol_optical_depth,aerosol_scattering_optical_depth,cloud_optical_depth,cloud_scattering_optical_depth,total_scattering_optical_depth,total_optical_depth,combined_phase_coef_0,combined_phase_coef_1,combined_phase_coef_2,combined_phase_coef_3,combined_phase_coef_10,combined_phase_coef_20,combined_phase_coef_39\n"),
             .interval_bounds = try createCsvFile(allocator, side_root, "interval_bounds.csv", "nominal_wavelength_nm,boundary_index_0based,interval_index_1based,pressure_hpa,altitude_km\n"),
             .adaptive_grid = try createCsvFile(allocator, side_root, "adaptive_grid.csv", "nominal_wavelength_nm,interval_kind,source_center_wavelength_nm,interval_start_nm,interval_end_nm,division_count\n"),
@@ -329,6 +358,8 @@ const TraceFiles = struct {
         self.strong_state.close();
         self.spectroscopy_summary.close();
         self.weak_line_contributors.close();
+        self.dense_profile.close();
+        self.hydrostatic_terms.close();
         self.sublayer_optics.close();
         self.interval_bounds.close();
         self.adaptive_grid.close();
@@ -407,6 +438,12 @@ pub fn main() !void {
 
     var prepared_case = try vendor_support.prepareTraceCase(allocator);
     defer prepared_case.deinit(allocator);
+    var loaded_case = try vendor_support.loadDefaultResolvedCase(allocator);
+    defer loaded_case.deinit();
+    var source_profile = try internal.vendor_o2a_trace_runtime.loadResolvedVendorO2AAtmosphereProfile(allocator, &loaded_case.resolved);
+    defer source_profile.deinit(allocator);
+    var loaded_inputs = try internal.vendor_o2a_trace_runtime.loadResolvedVendorO2AInputs(allocator, &loaded_case.resolved);
+    defer loaded_inputs.deinit(allocator);
 
     var files = try TraceFiles.init(allocator, config.trace_root);
     defer files.deinit();
@@ -482,6 +519,16 @@ pub fn main() !void {
         &files.sublayer_optics,
         &prepared_case.prepared,
         trace_wavelengths,
+    );
+    try emitDenseProfile(
+        &files.dense_profile,
+        loaded_inputs.profile,
+    );
+    try emitHydrostaticTerms(
+        &files.hydrostatic_terms,
+        allocator,
+        source_profile,
+        loaded_case.resolved.surface_pressure_hpa,
     );
     try emitIntervalBounds(
         &files.interval_bounds,
@@ -639,16 +686,19 @@ fn emitLineCatalog(
             .gas_index = line.gas_index,
             .isotope_number = line.isotope_number,
             .center_wavelength_nm = line.center_wavelength_nm,
-            .center_wavenumber_cm1 = wavelengthToWavenumberCm1(line.center_wavelength_nm),
+            .center_wavenumber_cm1 = if (std.math.isFinite(line.center_wavenumber_cm1))
+                line.center_wavenumber_cm1
+            else
+                wavelengthToWavenumberCm1(line.center_wavelength_nm),
             .line_strength_cm2_per_molecule = line.line_strength_cm2_per_molecule,
             .air_half_width_nm = line.air_half_width_nm,
             .temperature_exponent = line.temperature_exponent,
             .lower_state_energy_cm1 = line.lower_state_energy_cm1,
             .pressure_shift_nm = line.pressure_shift_nm,
             .line_mixing_coefficient = line.line_mixing_coefficient,
-            .branch_ic1 = optionalU8ToF64(line.branch_ic1),
-            .branch_ic2 = optionalU8ToF64(line.branch_ic2),
-            .rotational_nf = optionalU8ToF64(line.rotational_nf),
+            .branch_ic1 = if (line.vendor_filter_metadata_from_source) optionalU8ToF64(line.branch_ic1) else std.math.nan(f64),
+            .branch_ic2 = if (line.vendor_filter_metadata_from_source) optionalU8ToF64(line.branch_ic2) else std.math.nan(f64),
+            .rotational_nf = if (line.vendor_filter_metadata_from_source) optionalU8ToF64(line.rotational_nf) else std.math.nan(f64),
         });
     }
 
@@ -1089,7 +1139,6 @@ fn emitSublayerOptics(
                 cia_optical_depth +
                 sublayer.aerosol_optical_depth +
                 sublayer.cloud_optical_depth;
-
             try rows.append(std.heap.page_allocator, .{
                 .wavelength_nm = trace_wavelength.nominal_nm,
                 .global_sublayer_index = sublayer.global_sublayer_index,
@@ -1164,6 +1213,164 @@ fn emitSublayerOptics(
     }
 }
 
+fn emitDenseProfile(
+    file: *std.fs.File,
+    profile: ReferenceData.ClimatologyProfile,
+) !void {
+    var rows = std.ArrayList(DenseProfileRow).empty;
+    defer rows.deinit(std.heap.page_allocator);
+
+    for (profile.rows, 0..) |row, row_index| {
+        const scale_height_km = 1.0e-3 * 8.3144621 * row.temperature_k / 28.964e-3 /
+            traceGravityMetersPerSecondSquared(45.0, row.altitude_km);
+        try rows.append(std.heap.page_allocator, .{
+            .row_index = row_index,
+            .pressure_hpa = row.pressure_hpa,
+            .lnpressure = @log(@max(row.pressure_hpa, 1.0e-9)),
+            .altitude_km = row.altitude_km,
+            .temperature_k = row.temperature_k,
+            .number_density_cm3 = row.air_number_density_cm3,
+            .scale_height_km = scale_height_km,
+        });
+    }
+
+    var writer = file.deprecatedWriter();
+    for (rows.items) |row| {
+        try writer.print(
+            "{},{},{},{},{},{},{}\n",
+            .{
+                row.row_index,
+                row.pressure_hpa,
+                row.lnpressure,
+                row.altitude_km,
+                row.temperature_k,
+                row.number_density_cm3,
+                row.scale_height_km,
+            },
+        );
+    }
+}
+
+fn emitHydrostaticTerms(
+    file: *std.fs.File,
+    allocator: std.mem.Allocator,
+    source_profile: ReferenceData.ClimatologyProfile,
+    surface_pressure_hpa: f64,
+) !void {
+    if (source_profile.rows.len < 2) return;
+
+    const scale_height_guess_km = 8.0;
+    var dense_row_count: usize = 1;
+    for (source_profile.rows[0 .. source_profile.rows.len - 1], source_profile.rows[1..]) |lower, upper| {
+        const delta_z_guess = scale_height_guess_km * @log(@max(lower.pressure_hpa, 1.0e-9) / @max(upper.pressure_hpa, 1.0e-9));
+        dense_row_count += @as(usize, @intFromFloat(@floor(@max(delta_z_guess, 0.0)))) + 1;
+    }
+
+    const dense_pressures_hpa = try allocator.alloc(f64, dense_row_count);
+    defer allocator.free(dense_pressures_hpa);
+    const dense_log_pressures = try allocator.alloc(f64, dense_row_count);
+    defer allocator.free(dense_log_pressures);
+    const dense_altitudes_km = try allocator.alloc(f64, dense_row_count);
+    defer allocator.free(dense_altitudes_km);
+    const previous_altitudes_km = try allocator.alloc(f64, dense_row_count);
+    defer allocator.free(previous_altitudes_km);
+    const lnpressure_gp = try allocator.alloc(f64, (dense_row_count - 1) * 2);
+    defer allocator.free(lnpressure_gp);
+    const weight_gp = try allocator.alloc(f64, (dense_row_count - 1) * 2);
+    defer allocator.free(weight_gp);
+    const altitude_gp_km = try allocator.alloc(f64, (dense_row_count - 1) * 2);
+    defer allocator.free(altitude_gp_km);
+    const temperature_gp_k = try allocator.alloc(f64, (dense_row_count - 1) * 2);
+    defer allocator.free(temperature_gp_k);
+    const scale_height_gp_km = try allocator.alloc(f64, (dense_row_count - 1) * 2);
+    defer allocator.free(scale_height_gp_km);
+
+    var dense_index: usize = 0;
+    dense_pressures_hpa[dense_index] = source_profile.rows[0].pressure_hpa;
+    for (source_profile.rows[0 .. source_profile.rows.len - 1], source_profile.rows[1..]) |lower, upper| {
+        const delta_nodes_lnp = @log(@max(lower.pressure_hpa, 1.0e-9) / @max(upper.pressure_hpa, 1.0e-9));
+        const additional_levels: usize = @intFromFloat(@floor(@max(scale_height_guess_km * delta_nodes_lnp, 0.0)));
+        if (additional_levels > 0) {
+            const delta_lnp = delta_nodes_lnp / @as(f64, @floatFromInt(additional_levels + 1));
+            for (0..additional_levels) |_| {
+                dense_index += 1;
+                dense_pressures_hpa[dense_index] = dense_pressures_hpa[dense_index - 1] * @exp(-delta_lnp);
+            }
+        }
+        dense_index += 1;
+        dense_pressures_hpa[dense_index] = upper.pressure_hpa;
+    }
+
+    var x0: [2]f64 = undefined;
+    var w0: [2]f64 = undefined;
+    try GaussLegendre.fillDisamarDivPoints01(2, x0[0..], w0[0..]);
+
+    const safe_surface_pressure_hpa = @max(surface_pressure_hpa, 1.0e-9);
+    for (dense_pressures_hpa, 0..) |pressure_hpa, index| {
+        dense_log_pressures[index] = @log(@max(pressure_hpa, 1.0e-9));
+        dense_altitudes_km[index] = scale_height_guess_km * (@log(safe_surface_pressure_hpa) - dense_log_pressures[index]);
+        previous_altitudes_km[index] = dense_altitudes_km[index];
+    }
+
+    for (1..dense_row_count) |pressure_index| {
+        const dlnp = dense_log_pressures[pressure_index - 1] - dense_log_pressures[pressure_index];
+        const start = (pressure_index - 1) * 2;
+        for (0..2) |gauss_index| {
+            const gp_index = start + gauss_index;
+            lnpressure_gp[gp_index] = dense_log_pressures[pressure_index] + dlnp * x0[gauss_index];
+            weight_gp[gp_index] = dlnp * w0[gauss_index];
+            altitude_gp_km[gp_index] = scale_height_guess_km * (@log(safe_surface_pressure_hpa) - lnpressure_gp[gp_index]);
+            temperature_gp_k[gp_index] = source_profile.interpolateTemperatureForPressureSpline(@exp(lnpressure_gp[gp_index]));
+        }
+    }
+
+    var writer = file.deprecatedWriter();
+    const universal_gas_constant = 8.3144621;
+    const mean_molecular_weight_air = 28.964e-3;
+    var iteration: usize = 1;
+    while (iteration <= 6) : (iteration += 1) {
+        for (scale_height_gp_km, altitude_gp_km, temperature_gp_k) |*scale_height_slot, altitude_km, temperature_k| {
+            const gravity_mps2 = traceGravityMetersPerSecondSquared(45.0, altitude_km);
+            scale_height_slot.* = 1.0e-3 * universal_gas_constant * temperature_k /
+                mean_molecular_weight_air / gravity_mps2;
+        }
+
+        for (1..dense_row_count) |pressure_index| {
+            const start = (pressure_index - 1) * 2;
+            dense_altitudes_km[pressure_index] = dense_altitudes_km[pressure_index - 1];
+            for (0..2) |gauss_index| {
+                const gp_index = start + gauss_index;
+                const increment_km = weight_gp[gp_index] * scale_height_gp_km[gp_index];
+                dense_altitudes_km[pressure_index] += increment_km;
+                try writer.print(
+                    "{},{},{},{},{},{},{},{},{},{},{}\n",
+                    .{
+                        iteration,
+                        pressure_index,
+                        gauss_index + 1,
+                        lnpressure_gp[gp_index],
+                        weight_gp[gp_index],
+                        altitude_gp_km[gp_index],
+                        temperature_gp_k[gp_index],
+                        traceGravityMetersPerSecondSquared(45.0, altitude_gp_km[gp_index]),
+                        scale_height_gp_km[gp_index],
+                        increment_km,
+                        dense_altitudes_km[pressure_index],
+                    },
+                );
+            }
+        }
+
+        var chi2: f64 = 0.0;
+        for (dense_altitudes_km, previous_altitudes_km) |altitude_km, previous_altitude_km| {
+            const delta = altitude_km - previous_altitude_km;
+            chi2 += delta * delta;
+        }
+        if (chi2 < 1.0e-6) break;
+        @memcpy(previous_altitudes_km, dense_altitudes_km);
+    }
+}
+
 fn emitIntervalBounds(
     file: *std.fs.File,
     prepared: *const OpticsPrepare.PreparedOpticalState,
@@ -1221,6 +1428,15 @@ fn emitIntervalBounds(
             },
         );
     }
+}
+
+fn traceGravityMetersPerSecondSquared(latitude_deg: f64, altitude_km: f64) f64 {
+    const geodetic_flattening_term: f64 = @floatCast(@as(f32, 0.993306));
+    const geodetic_latitude_rad = std.math.atan(std.math.tan(latitude_deg * std.math.pi / 180.0) /
+        (geodetic_flattening_term + 1.049583e-6 * altitude_km));
+    const sin_latitude = std.math.sin(geodetic_latitude_rad);
+    const gravity_at_mean_sea_level = 9.78031 + 0.05186 * sin_latitude * sin_latitude;
+    return gravity_at_mean_sea_level - 3.086e-3 * altitude_km;
 }
 
 fn emitTransportTraces(

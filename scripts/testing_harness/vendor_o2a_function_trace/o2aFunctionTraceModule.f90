@@ -22,6 +22,8 @@ module o2aFunctionTraceModule
   integer, save :: spectroscopy_weak_unit = -1
   integer, save :: spectroscopy_strong_unit = -1
   integer, save :: weak_line_contributors_unit = -1
+  integer, save :: dense_profile_unit = -1
+  integer, save :: hydrostatic_terms_unit = -1
   integer, save :: sublayer_optics_raw_unit = -1
   integer, save :: interval_bounds_unit = -1
   integer, save :: adaptive_grid_unit = -1
@@ -40,7 +42,9 @@ module o2aFunctionTraceModule
   integer, save :: transport_pseudo_spherical_terms_unit = -1
   integer, save :: transport_optical_depth_components_unit = -1
   logical, save :: line_catalog_frozen = .false.
+  logical, save :: dense_profile_frozen = .false.
   integer, save :: last_line_catalog_source_index = 0
+  integer, save :: dense_profile_row_count = 0
 
   integer, save :: stored_interval_count = 0
   real(8), allocatable, save :: stored_interval_start_nm(:)
@@ -82,6 +86,10 @@ contains
       'pressure_hpa,temperature_k,wavelength_nm,strong_sigma_cm2_per_molecule,line_mixing_sigma_cm2_per_molecule')
     call open_trace_file(weak_line_contributors_unit, 'weak_line_contributors.csv', &
       'pressure_hpa,temperature_k,wavelength_nm,sample_wavelength_nm,source_row_index,contribution_kind,gas_index,isotope_number,center_wavelength_nm,center_wavenumber_cm1,shifted_center_wavenumber_cm1,line_strength_cm2_per_molecule,air_half_width_nm,temperature_exponent,lower_state_energy_cm1,pressure_shift_nm,line_mixing_coefficient,branch_ic1,branch_ic2,rotational_nf,matched_strong_index,weak_line_sigma_cm2_per_molecule')
+    call open_trace_file(dense_profile_unit, 'dense_profile.csv', &
+      'row_index,pressure_hpa,lnpressure,altitude_km,temperature_k,number_density_cm3,scale_height_km')
+    call open_trace_file(hydrostatic_terms_unit, 'hydrostatic_terms.csv', &
+      'iteration,pressure_index,gauss_index,lnpressure_gp,weight_gp,altitude_gp_km,temperature_gp_k,gravity_mps2,scale_height_gp_km,increment_km,cumulative_altitude_km')
     call open_trace_file(sublayer_optics_raw_unit, 'sublayer_optics_raw.csv', &
       'actual_wavelength_nm,wavelength_nm,global_sublayer_index,interval_index_1based,altitude_km,support_weight_km,pressure_hpa,temperature_k,number_density_cm3,oxygen_number_density_cm3,line_cross_section_cm2_per_molecule,line_mixing_cross_section_cm2_per_molecule,cia_sigma_cm5_per_molecule2,gas_absorption_optical_depth,gas_scattering_optical_depth,cia_optical_depth,path_length_cm,aerosol_optical_depth,aerosol_scattering_optical_depth,cloud_optical_depth,cloud_scattering_optical_depth,total_scattering_optical_depth,total_optical_depth,combined_phase_coef_0,combined_phase_coef_1,combined_phase_coef_2,combined_phase_coef_3,combined_phase_coef_10,combined_phase_coef_20,combined_phase_coef_39')
     call open_trace_file(interval_bounds_unit, 'interval_bounds.csv', &
@@ -199,6 +207,52 @@ contains
     end do
     flush(strong_state_unit)
   end subroutine o2a_trace_convtp_state
+
+  subroutine o2a_trace_dense_profile_row(row_index, pressure_hpa, lnpressure, altitude_km, temperature_k, number_density_cm3, scale_height_km)
+    integer, intent(in) :: row_index
+    real(8), intent(in) :: pressure_hpa
+    real(8), intent(in) :: lnpressure
+    real(8), intent(in) :: altitude_km
+    real(8), intent(in) :: temperature_k
+    real(8), intent(in) :: number_density_cm3
+    real(8), intent(in) :: scale_height_km
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (dense_profile_frozen) return
+    if (row_index == 0 .and. dense_profile_row_count > 0) then
+      dense_profile_frozen = .true.
+      return
+    end if
+
+    write(dense_profile_unit, '(*(g0,:,","))') row_index, pressure_hpa, lnpressure, altitude_km, temperature_k, &
+      number_density_cm3, scale_height_km
+    dense_profile_row_count = dense_profile_row_count + 1
+    flush(dense_profile_unit)
+  end subroutine o2a_trace_dense_profile_row
+
+  subroutine o2a_trace_hydrostatic_term(iteration, pressure_index, gauss_index, lnpressure_gp, weight_gp, altitude_gp_km, temperature_gp_k, gravity_mps2, scale_height_gp_km, increment_km, cumulative_altitude_km)
+    integer, intent(in) :: iteration
+    integer, intent(in) :: pressure_index
+    integer, intent(in) :: gauss_index
+    real(8), intent(in) :: lnpressure_gp
+    real(8), intent(in) :: weight_gp
+    real(8), intent(in) :: altitude_gp_km
+    real(8), intent(in) :: temperature_gp_k
+    real(8), intent(in) :: gravity_mps2
+    real(8), intent(in) :: scale_height_gp_km
+    real(8), intent(in) :: increment_km
+    real(8), intent(in) :: cumulative_altitude_km
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (dense_profile_frozen) return
+    if (dense_profile_row_count > 0) return
+
+    write(hydrostatic_terms_unit, '(*(g0,:,","))') iteration, pressure_index, gauss_index, lnpressure_gp, weight_gp, &
+      altitude_gp_km, temperature_gp_k, gravity_mps2, scale_height_gp_km, increment_km, cumulative_altitude_km
+    flush(hydrostatic_terms_unit)
+  end subroutine o2a_trace_hydrostatic_term
 
   subroutine o2a_trace_weak_spectroscopy(temperature_k, pressure_atm, nvalues, wavelengths_nm, abs_xsec)
     real(8), intent(in) :: temperature_k

@@ -213,6 +213,21 @@ pub fn loadResolvedVendorO2AInputs(
     };
 }
 
+pub fn loadResolvedVendorO2AAtmosphereProfile(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+) !ReferenceDataModel.ClimatologyProfile {
+    var profile_asset = try reference_assets.loadExternalAsset(
+        allocator,
+        .climatology_profile,
+        resolved.inputs.atmosphere_profile.id,
+        resolved.inputs.atmosphere_profile.path,
+        resolved.inputs.atmosphere_profile.format,
+    );
+    defer profile_asset.deinit(allocator);
+    return profile_asset.toClimatologyProfile(allocator);
+}
+
 /// Purpose:
 ///   Build the trace-gas spectroscopy support grid used by the vendor O2A
 ///   parity path.
