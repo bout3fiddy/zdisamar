@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Compute forward radiance samples at exact wavelengths and prefetch unique
-//!   cache misses for measurement evaluation.
-//!
-//! Physics:
-//!   Couples prepared transport output with solar irradiance and surface BRDF
-//!   gain, then materializes exact-wavelength forward samples for cached reuse.
-//!
-//! Vendor:
-//!   `measurement spectral evaluation`
-//!
-//! Design:
-//!   Keep forward-sample execution and miss-prefetch orchestration separate
-//!   from cache ownership and nominal-wavelength integration.
-//!
-//! Invariants:
-//!   Prefetch solves each unique miss exactly once and preserves deterministic
-//!   cache insertion order on the main thread.
-//!
-//! Validation:
-//!   Measurement summary/product tests and the fast O2 A transport lanes.
-
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");

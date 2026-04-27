@@ -1,27 +1,3 @@
-//! Purpose:
-//!   Evaluate transport output at instrument wavelengths and cache the
-//!   spectral samples used by measurement-space materialization.
-//!
-//! Physics:
-//!   Combines transport forward results with solar irradiance and instrument
-//!   integration kernels, then reuses quantized wavelength caches for repeated
-//!   samples.
-//!
-//! Vendor:
-//!   `measurement spectral evaluation` stage
-//!
-//! Design:
-//!   Caches by exact wavelength bits so the measurement reduction can reuse
-//!   repeated forward and irradiance samples without collapsing adjacent
-//!   adaptive high-resolution wavelengths.
-//!
-//! Invariants:
-//!   Cache keys must distinguish adjacent adaptive O2A samples, and the
-//!   bundled O2A irradiance reference remains band-limited.
-//!
-//! Validation:
-//!   Measurement-space summary and product tests.
-
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
@@ -52,11 +28,6 @@ fn irradianceAtWavelength(
     return solar_compat.irradianceAtWavelength(scene, wavelength_nm);
 }
 
-/// Purpose:
-///   Integrate the forward model at one nominal instrument wavelength.
-///
-/// Vendor:
-///   `measurement spectral evaluation`
 pub fn integrateForwardAtNominal(
     allocator: Allocator,
     scene: *const Scene,
@@ -76,7 +47,7 @@ pub fn integrateForwardAtNominal(
     integration: *const OperationalInstrumentIntegration,
 ) Error!ForwardIntegratedSample {
     // DECISION:
-    //   When the instrument has no internal integration kernel, fall back to
+    //   When the instrument has no internal integration routine, fall back to
     //   the quantized cached forward sample at the nominal wavelength.
     if (!integration.enabled) {
         return cachedForwardAtWavelength(
@@ -131,11 +102,6 @@ pub fn integrateForwardAtNominal(
     };
 }
 
-/// Purpose:
-///   Integrate the solar irradiance at one nominal instrument wavelength.
-///
-/// Vendor:
-///   `measurement spectral evaluation`
 pub fn integrateIrradianceAtNominal(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -145,7 +111,7 @@ pub fn integrateIrradianceAtNominal(
     integration: *const OperationalInstrumentIntegration,
 ) Error!f64 {
     // DECISION:
-    //   Integrated instruments sample irradiance through the same kernel used
+    //   Integrated instruments sample irradiance through the same routine used
     //   for radiance so the instrument response stays aligned.
     if (!integration.enabled) {
         return cachedIrradianceAtWavelength(scene, prepared, nominal_wavelength_nm, safe_span, cache);
@@ -166,14 +132,6 @@ pub fn integrateIrradianceAtNominal(
     return irradiance_sum;
 }
 
-/// Purpose:
-///   Prefill the forward cache by solving each unique quantized wavelength miss
-///   exactly once, optionally in parallel.
-///
-/// Physics:
-///   Keeps the cache-key contract exact by solving the first encountered sample
-///   wavelength for each quantized miss and then inserting the finished samples
-///   back into the main-thread cache in deterministic order.
 pub fn prefetchForwardSamples(
     allocator: Allocator,
     scene: *const Scene,
@@ -204,11 +162,6 @@ pub fn prefetchForwardSamples(
     }
 }
 
-/// Purpose:
-///   Cache and return a forward sample at one wavelength.
-///
-/// Vendor:
-///   `measurement spectral evaluation`
 pub fn cachedForwardAtWavelength(
     allocator: Allocator,
     scene: *const Scene,
@@ -249,11 +202,6 @@ pub fn cachedForwardAtWavelength(
     return sample;
 }
 
-/// Purpose:
-///   Cache and return a solar irradiance sample at one wavelength.
-///
-/// Vendor:
-///   `measurement spectral evaluation`
 fn cachedIrradianceAtWavelength(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,

@@ -1,35 +1,9 @@
-//! Purpose:
-//!   Provide fixed Gauss-Legendre quadrature rules for small orders.
-//!
-//! Physics:
-//!   Supplies precomputed nodes and weights on the canonical interval `[-1, 1]`.
-//!
-//! Vendor:
-//!   `Gauss-Legendre quadrature`
-//!
-//! Design:
-//!   The rule table is hard-coded so higher-level integration code can stay allocation-free and deterministic.
-//!
-//! Invariants:
-//!   Only orders 1 through 10 are supported in this compact table.
-//!
-//! Validation:
-//!   Tests check representative nodes and weights across the supported orders.
-
-/// Purpose:
-///   Store a fixed Gauss-Legendre quadrature rule.
 pub const Rule = struct {
     count: u32,
     nodes: [10]f64,
     weights: [10]f64,
 };
 
-/// Purpose:
-///   Fill caller-provided buffers with a Gauss-Legendre rule on `[-1, 1]`.
-///
-/// Design:
-///   Uses the standard Newton iteration on Legendre roots so higher-order LUT fitting can request
-///   more nodes than the compact fixed table exposes.
 pub fn fillNodesAndWeights(
     order: u32,
     nodes_out: []f64,
@@ -70,12 +44,6 @@ pub fn fillNodesAndWeights(
 
 const max_disamar_division_points: usize = 256;
 
-/// Purpose:
-///   Fill DISAMAR-compatible Gauss division points on `[0, 1]`.
-///
-/// Vendor:
-///   DISAMAR `mathToolsModule::GaussDivPoints`, including its QL
-///   `gausq2` eigen-solve and final interval scaling.
 pub fn fillDisamarDivPoints01(
     order: u32,
     nodes_out: []f64,
@@ -118,12 +86,6 @@ pub fn fillDisamarDivPoints01(
     }
 }
 
-/// Purpose:
-///   Fill DISAMAR-compatible Gauss division points on `[a0, b0]`.
-///
-/// Vendor:
-///   DISAMAR `mathToolsModule::GaussDivPoints`, including its final
-///   interval scaling expression order.
 pub fn fillDisamarDivPointsInterval(
     order: u32,
     a0: f64,
@@ -262,14 +224,6 @@ fn disamarSign(magnitude: f64, sign_source: f64) f64 {
     return if (sign_source >= 0.0) @abs(magnitude) else -@abs(magnitude);
 }
 
-/// Purpose:
-///   Return a Gauss-Legendre rule of the requested order.
-///
-/// Physics:
-///   Provides fixed nodes and weights for numerical integration on `[-1, 1]`.
-///
-/// Vendor:
-///   `Gauss-Legendre rule lookup`
 pub fn rule(order: u32) error{UnsupportedOrder}!Rule {
     return switch (order) {
         1 => .{

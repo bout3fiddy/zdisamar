@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Assemble the final prepared optical state from the staged context,
-//!   absorber state, and accumulated means.
-
 const Scene = @import("../../../model/Scene.zig").Scene;
 const PhaseSupportKind = @import("../../../model/reference/airmass_phase.zig").PhaseSupportKind;
 const Accumulation = @import("accumulation.zig");

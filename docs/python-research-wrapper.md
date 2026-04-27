@@ -15,7 +15,7 @@ particular shape.
 The interface should expose data in bulk, not one scalar at a time. Python
 should ask for tables or arrays such as a spectrum, atmospheric layers,
 absorption contributions, instrument response samples, or radiative-transfer
-trace outputs. The expensive calculations should remain in Zig.
+diagnostic outputs. The expensive calculations should remain in Zig.
 
 ## Preferred User Language
 
@@ -42,8 +42,9 @@ Prefer:
 - `radiance`
 - `irradiance`
 
-Avoid making users learn internal terms such as `kernel`, `transport`, or
-`sample_plan` unless they are explicitly documented as implementation details.
+Avoid making users learn internal terms such as `routine`, private
+radiative-transfer module names, or wavelength-sampling filenames unless they
+are explicitly documented as implementation details.
 
 ## Example Python Shape
 
@@ -81,7 +82,7 @@ with zd.prepare(case) as run:
 In this example, `forward_model()` performs the full simulated spectrum run.
 The later calls inspect prepared scientific state or evaluate selected
 diagnostic quantities. They should not rerun the full forward model unless the
-user explicitly asks for radiative-transfer tracing or parameter sensitivity.
+user explicitly asks for radiative-transfer diagnostics or parameter sensitivity.
 
 ## Data To Expose
 
@@ -151,7 +152,7 @@ user explicitly asks for radiative-transfer tracing or parameter sensitivity.
 - integrated radiance and irradiance before final reflectance
 - whether adaptive high-resolution sampling was used
 
-### Radiative-Transfer Trace
+### Radiative-Transfer Diagnostics
 
 This should be explicit and opt-in because it can be large.
 
@@ -247,17 +248,17 @@ Expected cost pattern:
 
 - final spectrum: full forward-model cost
 - atmospheric budget: moderate, scales with wavelengths and layers
-- O2 line contribution trace: potentially high, scales with wavelengths,
+- O2 line contribution table: potentially high, scales with wavelengths,
   thermodynamic states, and relevant line count
 - instrument response table: low to moderate
-- radiative-transfer trace: high, should be filtered and row-limited
+- radiative-transfer diagnostic output: high, should be filtered and row-limited
 - parameter sensitivity: usually one extra forward run per perturbation unless
   an analytical derivative is available
 
-The API should make expensive tracing explicit:
+The API should make expensive diagnostics explicit:
 
 ```python
-trace = run.radiative_transfer.trace(
+diagnostics = run.radiative_transfer.diagnostics(
     wavelengths_nm=[761.75],
     include=["source_function", "spherical_correction"],
     max_rows=100_000,
@@ -272,11 +273,11 @@ transfer.
 
 Suggested staged order:
 
-1. expose final spectrum and current profile output cleanly;
+1. expose final spectrum and current diagnostic report cleanly;
 2. expose atmospheric layer and absorption/scattering budget tables;
 3. expose O2 line contribution tables;
 4. expose instrument response samples;
-5. expose selected radiative-transfer traces;
+5. expose selected radiative-transfer diagnostics;
 6. expose parameter perturbation helpers.
 
 Each stage should return versioned table schemas so Python can convert them to

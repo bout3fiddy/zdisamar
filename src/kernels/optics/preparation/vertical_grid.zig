@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Own vertical-grid allocation and explicit-vs-legacy construction for
-//!   optics preparation.
-//!
-//! Physics:
-//!   Materializes the layer and sublayer altitude/pressure contracts that
-//!   later optics preparation stages consume.
-//!
-//! Vendor:
-//!   `optics preparation vertical grid`
-//!
-//! Design:
-//!   Keep grid allocation and ordering policy separate from the coupled
-//!   absorber/materialization loop in `builder.zig`.
-//!
-//! Invariants:
-//!   Explicit interval grids preserve declared interval identity while laying
-//!   out sublayers in the bottom-up transport order expected downstream.
-//!
-//! Validation:
-//!   O2 A forward-shape and transport smoke tests cover the resulting grid.
-
 const std = @import("std");
 const AtmosphereModel = @import("../../../model/Atmosphere.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
@@ -254,7 +232,7 @@ fn buildExplicitDisamarParity(
         }
 
         // The shared boundary row between adjacent pressure intervals belongs to
-        // the interval currently being materialized in the vendor trace.
+        // the interval currently being materialized in the vendor diagnostic output.
         grid.sublayer_interval_indices_1based[support_cursor] = parity_interval_index_1based;
         grid.sublayer_subcolumn_labels[support_cursor] = scene.atmosphere.subcolumns.labelForAltitude(interval_bottom_altitude_km);
 

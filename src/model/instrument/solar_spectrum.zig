@@ -1,44 +1,17 @@
-//! Purpose:
-//!   Store operational solar spectrum controls and interpolation helpers.
-//!
-//! Physics:
-//!   Represents wavelength-aligned irradiance samples and supports interpolation onto target grids.
-//!
-//! Vendor:
-//!   `solar spectrum controls`
-//!
-//! Design:
-//!   The spectrum stays as explicit owned slices so callers can clone, correct, and free it deterministically.
-//!
-//! Invariants:
-//!   Wavelengths are strictly increasing, irradiance is non-negative, and empty spectra disable the helper.
-//!
-//! Validation:
-//!   Tests cover interpolation and measured-spectrum correction.
-
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const Allocator = std.mem.Allocator;
 
-/// Purpose:
-///   Store an operational solar spectrum with wavelengths and irradiance.
 pub const OperationalSolarSpectrum = struct {
     wavelengths_nm: []const f64 = &[_]f64{},
     irradiance: []const f64 = &[_]f64{},
     spline_second_derivatives: []const f64 = &[_]f64{},
     owns_spline_state: bool = false,
 
-    /// Purpose:
-    ///   Report whether the solar spectrum is active.
     pub fn enabled(self: *const OperationalSolarSpectrum) bool {
         return self.wavelengths_nm.len > 0;
     }
 
-    /// Purpose:
-    ///   Validate the solar spectrum.
-    ///
-    /// Physics:
-    ///   Requires monotonic wavelengths and non-negative irradiance samples.
     pub fn validate(self: *const OperationalSolarSpectrum) errors.Error!void {
         if (!self.enabled()) {
             if (self.irradiance.len != 0 or self.spline_second_derivatives.len != 0) {
@@ -68,14 +41,6 @@ pub const OperationalSolarSpectrum = struct {
         }
     }
 
-    /// Purpose:
-    ///   Prepare owned spline state so repeated irradiance sampling does not
-    ///   rebuild interpolation coefficients at runtime.
-    ///
-    /// Physics:
-    ///   DISAMAR evaluates the raw solar spectrum through a cubic spline whose
-    ///   end derivatives are fixed to the first and last one-sided slopes, so
-    ///   the operational solar carrier caches that spline state after ingest.
     pub fn prepareInterpolation(
         self: *OperationalSolarSpectrum,
         allocator: Allocator,
@@ -155,8 +120,6 @@ pub const OperationalSolarSpectrum = struct {
         self.owns_spline_state = true;
     }
 
-    /// Purpose:
-    ///   Clone the spectrum into owned storage.
     pub fn clone(self: OperationalSolarSpectrum, allocator: Allocator) !OperationalSolarSpectrum {
         var cloned: OperationalSolarSpectrum = .{};
         cloned.wavelengths_nm = try allocator.dupe(f64, self.wavelengths_nm);
@@ -172,8 +135,6 @@ pub const OperationalSolarSpectrum = struct {
         return cloned;
     }
 
-    /// Purpose:
-    ///   Release owned spectrum storage.
     pub fn deinitOwned(self: *OperationalSolarSpectrum, allocator: Allocator) void {
         self.clearSplineState(allocator);
         allocator.free(self.wavelengths_nm);
@@ -181,12 +142,6 @@ pub const OperationalSolarSpectrum = struct {
         self.* = .{};
     }
 
-    /// Purpose:
-    ///   Interpolate irradiance at a wavelength.
-    ///
-    /// Physics:
-    ///   Uses spline interpolation between adjacent monotonic samples, with
-    ///   endpoint clamping when callers sample outside the loaded support.
     pub fn interpolateIrradiance(self: *const OperationalSolarSpectrum, wavelength_nm: f64) f64 {
         return self.interpolateIrradianceWithinBounds(wavelength_nm) orelse {
             if (!self.enabled()) return 0.0;
@@ -195,8 +150,6 @@ pub const OperationalSolarSpectrum = struct {
         };
     }
 
-    /// Purpose:
-    ///   Interpolate irradiance with the legacy linear helper.
     pub fn interpolateIrradianceLinear(self: *const OperationalSolarSpectrum, wavelength_nm: f64) f64 {
         return self.interpolateIrradianceLinearWithinBounds(wavelength_nm) orelse {
             if (!self.enabled()) return 0.0;
@@ -205,12 +158,6 @@ pub const OperationalSolarSpectrum = struct {
         };
     }
 
-    /// Purpose:
-    ///   Report whether the spectrum covers a closed wavelength interval.
-    ///
-    /// Physics:
-    ///   DISAMAR-style HR slit convolution requires the raw solar support to
-    ///   cover the full slit span instead of relying on endpoint clamping.
     pub fn coversRange(
         self: *const OperationalSolarSpectrum,
         lower_wavelength_nm: f64,
@@ -221,12 +168,6 @@ pub const OperationalSolarSpectrum = struct {
             upper_wavelength_nm <= self.wavelengths_nm[self.wavelengths_nm.len - 1];
     }
 
-    /// Purpose:
-    ///   Interpolate irradiance without extrapolating outside the stored range.
-    ///
-    /// Physics:
-    ///   Returns `null` when the requested wavelength falls outside the loaded
-    ///   solar support so parity callers can detect clipped HR kernels.
     pub fn interpolateIrradianceWithinBounds(
         self: *const OperationalSolarSpectrum,
         wavelength_nm: f64,
@@ -240,9 +181,6 @@ pub const OperationalSolarSpectrum = struct {
         return self.interpolateIrradianceLinearWithinBounds(wavelength_nm);
     }
 
-    /// Purpose:
-    ///   Interpolate irradiance linearly without extrapolating outside the
-    ///   stored range.
     pub fn interpolateIrradianceLinearWithinBounds(
         self: *const OperationalSolarSpectrum,
         wavelength_nm: f64,
@@ -264,8 +202,6 @@ pub const OperationalSolarSpectrum = struct {
         return null;
     }
 
-    /// Purpose:
-    ///   Interpolate the solar spectrum onto a target wavelength grid.
     pub fn interpolateOnto(
         self: *const OperationalSolarSpectrum,
         allocator: Allocator,
@@ -280,11 +216,6 @@ pub const OperationalSolarSpectrum = struct {
         return irradiance;
     }
 
-    /// Purpose:
-    ///   Correct measured values onto a target grid using the solar spectrum ratio.
-    ///
-    /// Physics:
-    ///   Scales measured radiance by target-to-source solar irradiance.
     pub fn correctMeasuredSpectrumOnto(
         self: *const OperationalSolarSpectrum,
         allocator: Allocator,

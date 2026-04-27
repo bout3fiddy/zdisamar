@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Define the canonical scene blueprint and fully resolved scene types used across forward and
-//!   retrieval execution.
-//!
-//! Physics:
-//!   Aggregates atmosphere, geometry, spectral domain, absorber, surface, aerosol/cloud, and
-//!   observation-model state into one typed scientific scene description.
-//!
-//! Vendor:
-//!   `canonical scene contract`
-//!
-//! Design:
-//!   Keep one reusable scene model for both forward and inverse paths while exposing lightweight
-//!   layout hints through `Blueprint` and explicit ownership teardown through `deinitOwned`.
-//!
-//! Invariants:
-//!   The scene spectral grid, measured wavelengths, and supporting observation metadata must stay
-//!   shape-consistent. Ownership is explicit for dynamically allocated substructures only.
-//!
-//! Validation:
-//!   Scene validation tests in this file and the forward/retrieval integration tests that prepare
-//!   canonical scenes through the public engine surface.
-
 const std = @import("std");
 const errors = @import("../core/errors.zig");
 const ExecutionMode = @import("../core/execution_mode.zig").ExecutionMode;
@@ -63,8 +40,6 @@ pub const FitControls = @import("InverseProblem.zig").FitControls;
 pub const Convergence = @import("InverseProblem.zig").Convergence;
 pub const DerivativeMode = @import("InverseProblem.zig").DerivativeMode;
 
-/// Purpose:
-///   Describe the reusable layout hints and default execution regime for a future scene.
 pub const Blueprint = struct {
     id: []const u8 = "scene-template",
     spectral_grid: SpectralGrid = .{},
@@ -77,9 +52,6 @@ pub const Blueprint = struct {
     measurement_count_hint: u32 = 0,
     operational_band_count_hint: u32 = 0,
 
-    /// Purpose:
-    ///   Convert the blueprint hints into reusable layout requirements for plan/workspace
-    ///   preparation.
     pub fn layoutRequirements(self: Blueprint) LayoutRequirements {
         return .{
             .spectral_start_nm = self.spectral_grid.start_nm,
@@ -92,8 +64,6 @@ pub const Blueprint = struct {
     }
 };
 
-/// Purpose:
-///   Hold the fully resolved canonical scene executed by forward and retrieval providers.
 pub const Scene = struct {
     id: []const u8 = "scene-0",
     atmosphere: Atmosphere = .{},
@@ -107,8 +77,6 @@ pub const Scene = struct {
     observation_model: ObservationModel = .{},
     lut_controls: LutControls.Controls = .{},
 
-    /// Purpose:
-    ///   Validate the canonical scene and its supporting observation metadata.
     pub fn validate(self: *const Scene) errors.Error!void {
         if (self.id.len == 0) {
             return errors.Error.MissingScene;
@@ -142,8 +110,6 @@ pub const Scene = struct {
         }
     }
 
-    /// Purpose:
-    ///   Derive the layout requirements implied by the fully resolved scene.
     pub fn layoutRequirements(self: *const Scene) LayoutRequirements {
         return .{
             .spectral_start_nm = self.spectral_grid.start_nm,
@@ -153,8 +119,6 @@ pub const Scene = struct {
         };
     }
 
-    /// Purpose:
-    ///   Derive the scientific identity that makes scene-local LUTs reusable or incompatible.
     pub fn lutCompatibilityKey(self: *const Scene) LutControls.CompatibilityKey {
         const support = self.observation_model.primaryOperationalBandSupport();
         const nominal_bounds = self.lutNominalWavelengthBounds();
@@ -176,8 +140,6 @@ pub const Scene = struct {
         };
     }
 
-    /// Purpose:
-    ///   Return the nominal wavelength bounds that seed LUT wavelength sampling.
     pub fn lutNominalWavelengthBounds(self: *const Scene) struct { start_nm: f64, end_nm: f64 } {
         const nominal_wavelengths = self.observation_model.measured_wavelengths_nm;
         if (nominal_wavelengths.len != 0) {
@@ -192,8 +154,6 @@ pub const Scene = struct {
         };
     }
 
-    /// Purpose:
-    ///   Report whether LUT generation expands the nominal wavelength bounds onto a high-resolution grid.
     pub fn usesHighResolutionLutSampling(self: *const Scene) bool {
         const support = self.observation_model.primaryOperationalBandSupport();
         return support.high_resolution_step_nm > 0.0 and
@@ -233,8 +193,6 @@ pub const Scene = struct {
         return hasher.final();
     }
 
-    /// Purpose:
-    ///   Release only the dynamically owned substructures attached to the scene.
     pub fn deinitOwned(self: *Scene, allocator: Allocator) void {
         self.atmosphere.deinitOwned(allocator);
         self.surface.deinitOwned(allocator);

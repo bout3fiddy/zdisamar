@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Aggregate the detailed layer accumulation pass into prepared means.
-
 const std = @import("std");
 const BandMeans = @import("../prepare/band_means.zig");
 const LayerAccumulation = @import("layer_accumulation.zig");

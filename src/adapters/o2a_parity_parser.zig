@@ -1,13 +1,3 @@
-//! Purpose:
-//!   Parse the retained O2A vendor-parity YAML subset into a lightweight node tree.
-//!
-//! Design:
-//!   Keep the parser strict and indentation-based so adapter compilation can resolve templates
-//!   and typed runtime contracts without depending on a general YAML library.
-//!
-//! Invariants:
-//!   Unknown syntax, duplicate keys, and inconsistent indentation are rejected explicitly.
-
 const std = @import("std");
 
 pub const Node = union(enum) {

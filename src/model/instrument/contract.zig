@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Define the top-level typed instrument contract after splitting the
-//!   measurement-pipeline controls into their own module.
-
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const Allocator = std.mem.Allocator;

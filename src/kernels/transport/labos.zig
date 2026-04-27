@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Thin public facade for the LABOS transport family.
-
 const basis = @import("labos/basis.zig");
 const attenuation = @import("labos/attenuation.zig");
 const execute_mod = @import("labos/execute.zig");

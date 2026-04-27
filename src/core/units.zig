@@ -1,36 +1,10 @@
-//! Purpose:
-//!   Define lightweight typed unit wrappers and validation helpers shared across the
-//!   canonical scene and request model.
-//!
-//! Physics:
-//!   These types encode basic spectral and angular domains used by atmospheric geometry
-//!   and measurement setup before more detailed kernels consume them.
-//!
-//! Vendor:
-//!   `geometry and spectral domain validation stage`
-//!
-//! Design:
-//!   The Zig port uses tiny validated wrapper structs instead of passing raw scalars
-//!   through the pipeline, which keeps unit intent explicit at API boundaries.
-//!
-//! Invariants:
-//!   Wavelength intervals must be finite and strictly increasing, zenith angles stay in
-//!   `[0, 180]` degrees, and azimuth angles stay in `[0, 360]` degrees.
-//!
-//! Validation:
-//!   Unit tests below cover inverted spectral intervals, NaN rejection, and physical
-//!   angle range enforcement.
 const std = @import("std");
 
-/// Purpose:
-///   Report validation failures for typed scalar and interval wrappers.
 pub const Error = error{
     InvalidRange,
     InvalidValue,
 };
 
-/// Purpose:
-///   Represent an interval on the wavelength axis.
 pub const WavelengthRange = struct {
     // UNITS:
     //   Both bounds are stored in nanometers because the public scene model expresses
@@ -38,8 +12,6 @@ pub const WavelengthRange = struct {
     start_nm: f64 = 270.0,
     end_nm: f64 = 2400.0,
 
-    /// Purpose:
-    ///   Ensure the wavelength interval is finite and strictly increasing.
     pub fn validate(self: WavelengthRange) Error!void {
         if (!std.math.isFinite(self.start_nm) or !std.math.isFinite(self.end_nm)) {
             return Error.InvalidValue;
@@ -50,14 +22,10 @@ pub const WavelengthRange = struct {
     }
 };
 
-/// Purpose:
-///   Represent an altitude interval in kilometers.
 pub const AltitudeRangeKm = struct {
     bottom_km: f64 = 0.0,
     top_km: f64 = 0.0,
 
-    /// Purpose:
-    ///   Ensure the altitude interval is finite, non-negative, and increasing upward.
     pub fn validate(self: AltitudeRangeKm) Error!void {
         if (!std.math.isFinite(self.bottom_km) or !std.math.isFinite(self.top_km)) {
             return Error.InvalidValue;
@@ -68,14 +36,10 @@ pub const AltitudeRangeKm = struct {
     }
 };
 
-/// Purpose:
-///   Represent a pressure interval in hectopascals.
 pub const PressureRangeHpa = struct {
     top_hpa: f64 = 0.0,
     bottom_hpa: f64 = 0.0,
 
-    /// Purpose:
-    ///   Ensure the pressure interval is finite, positive, and increases downward.
     pub fn validate(self: PressureRangeHpa) Error!void {
         if (!std.math.isFinite(self.top_hpa) or !std.math.isFinite(self.bottom_hpa)) {
             return Error.InvalidValue;
@@ -86,16 +50,12 @@ pub const PressureRangeHpa = struct {
     }
 };
 
-/// Purpose:
-///   Represent a generic angle in degrees.
 pub const AngleDeg = struct {
     // UNITS:
     //   Stored in degrees to match the geometry parameters used by the canonical scene
     //   model and vendor-facing adapter layers.
     value: f64 = 0.0,
 
-    /// Purpose:
-    ///   Ensure the angle is finite.
     pub fn validate(self: AngleDeg) Error!void {
         if (!std.math.isFinite(self.value)) {
             return Error.InvalidValue;
@@ -103,13 +63,9 @@ pub const AngleDeg = struct {
     }
 };
 
-/// Purpose:
-///   Represent a zenith angle constrained to the physical `[0, 180]` degree range.
 pub const ZenithAngleDeg = struct {
     value: f64 = 0.0,
 
-    /// Purpose:
-    ///   Ensure the zenith angle is finite and physically valid.
     pub fn validate(self: ZenithAngleDeg) Error!void {
         try (AngleDeg{ .value = self.value }).validate();
         if (self.value < 0.0 or self.value > 180.0) {
@@ -118,13 +74,9 @@ pub const ZenithAngleDeg = struct {
     }
 };
 
-/// Purpose:
-///   Represent an azimuth angle constrained to the physical `[0, 360]` degree range.
 pub const AzimuthAngleDeg = struct {
     value: f64 = 0.0,
 
-    /// Purpose:
-    ///   Ensure the azimuth angle is finite and physically valid.
     pub fn validate(self: AzimuthAngleDeg) Error!void {
         try (AngleDeg{ .value = self.value }).validate();
         if (self.value < 0.0 or self.value > 360.0) {

@@ -1,21 +1,3 @@
-//! Purpose:
-//!   Factor, solve, and invert small dense symmetric positive-definite systems.
-//!
-//! Physics:
-//!   Implements Cholesky decomposition on row-major matrices and uses it for linear solves and inverse assembly.
-//!
-//! Vendor:
-//!   `Cholesky factorization`
-//!
-//! Design:
-//!   The factor is stored in-place in row-major form to keep the small dense helpers allocation-free.
-//!
-//! Invariants:
-//!   Matrices must be square, the factor must remain lower-triangular, and diagonal pivots must be positive.
-//!
-//! Validation:
-//!   Tests cover 2x2 factorization, dense solves, and inverse construction.
-
 const std = @import("std");
 const dense = @import("small_dense.zig");
 
@@ -24,14 +6,6 @@ pub const Error = error{
     ShapeMismatch,
 };
 
-/// Purpose:
-///   Factor a 2x2 symmetric positive-definite matrix and return the lower-triangular factor.
-///
-/// Physics:
-///   Computes the Cholesky factor used to solve and invert SPD systems.
-///
-/// Vendor:
-///   `2x2 Cholesky factorization`
 pub fn factor2x2(matrix: [2][2]f64) Error![2][2]f64 {
     var flat = [_]f64{
         matrix[0][0], matrix[0][1],
@@ -44,17 +18,6 @@ pub fn factor2x2(matrix: [2][2]f64) Error![2][2]f64 {
     };
 }
 
-/// Purpose:
-///   Factor a square matrix in place using a lower-triangular Cholesky factorization.
-///
-/// Physics:
-///   Rewrites the matrix as `L` while zeroing the upper triangle.
-///
-/// Vendor:
-///   `dense Cholesky factorization`
-///
-/// Assumptions:
-///   `matrix` is row-major and `dimension * dimension` matches the slice length.
 pub fn factorInPlace(matrix: []f64, dimension: usize) Error!void {
     if (matrix.len != dimension * dimension) return Error.ShapeMismatch;
 
@@ -82,14 +45,6 @@ pub fn factorInPlace(matrix: []f64, dimension: usize) Error!void {
     }
 }
 
-/// Purpose:
-///   Solve a factored SPD system for the supplied right-hand side.
-///
-/// Physics:
-///   Performs forward and backward substitution against the Cholesky factor.
-///
-/// Vendor:
-///   `Cholesky solve`
 pub fn solveWithFactor(
     factor: []const f64,
     dimension: usize,
@@ -122,17 +77,6 @@ pub fn solveWithFactor(
     }
 }
 
-/// Purpose:
-///   Form the inverse of a factored SPD matrix using repeated basis solves.
-///
-/// Physics:
-///   Builds the inverse column by column from the Cholesky factor.
-///
-/// Vendor:
-///   `Cholesky inverse`
-///
-/// Assumptions:
-///   `workspace` supplies `2 * dimension` scratch entries for basis and solution vectors.
 pub fn invertFromFactor(
     factor: []const f64,
     dimension: usize,

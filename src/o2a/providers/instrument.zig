@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Provide builtin instrument-response behavior for the registry-selected
-//!   observation model.
-
 const provider = @import("instrument/provider.zig");
 const types = @import("instrument/types.zig");
 

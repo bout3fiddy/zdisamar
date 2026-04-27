@@ -1,32 +1,3 @@
-//! Purpose:
-//!   Own the resolved O2A vendor-parity runtime contract shared by YAML-driven
-//!   execution and the retained parity support helpers.
-//!
-//! Physics:
-//!   This file hydrates the retained O2 A-band forcing case: climatology,
-//!   line-by-line O2, optional O2-O2 CIA, aerosol placement, instrument
-//!   sampling, and the scalar multiple-scattering RTM controls used for the
-//!   current parity lane.
-//!
-//! Vendor:
-//!   `readConfigFileModule::INSTRUMENT/O2/O2-O2/SURFACE/ATMOSPHERIC_INTERVALS/AEROSOL`
-//!   and `verifyConfigFileModule::interval-grid and fit-interval checks`
-//!
-//! Design:
-//!   The resolved case stays typed and explicit. Adapters compile YAML or other
-//!   external control surfaces into this struct, and runtime code materializes
-//!   the actual `Scene` and reference assets from that typed contract.
-//!
-//! Invariants:
-//!   All referenced assets must exist and match the declared format, explicit
-//!   interval grids must tile the active atmosphere, and no enabled parity
-//!   feature may be silently dropped.
-//!
-//! Validation:
-//!   The YAML adapter tests exercise the resolved-contract mapping, while the
-//!   vendor assessment and oracle tests execute the resulting `Scene` through
-//!   the retained O2A reflectance path.
-
 const std = @import("std");
 const AbsorberModel = @import("../../model/Absorber.zig");
 const AtmosphereModel = @import("../../model/Atmosphere.zig");
@@ -49,7 +20,7 @@ const instrument_types = @import("../providers/instrument/types.zig");
 const Allocator = std.mem.Allocator;
 pub const AbsorberSpecies = parity_types.AbsorberSpecies;
 pub const Route = parity_types.Route;
-pub const RtmControls = parity_types.RtmControls;
+pub const RadiativeTransferControls = parity_types.RadiativeTransferControls;
 pub const ReferenceSample = parity_types.ReferenceSample;
 pub const ExternalAsset = parity_types.ExternalAsset;
 pub const OutputKind = parity_types.OutputKind;
@@ -133,12 +104,6 @@ pub fn loadSolarSpectrumSamples(
     return try samples.toOwnedSlice(allocator);
 }
 
-/// Purpose:
-///   Load the resolved external assets required by the retained vendor-parity case.
-///
-/// Decisions:
-///   The loader stays asset-oriented even for the narrow first YAML cut so the
-///   config references data files rather than embedding scientific payloads.
 pub fn loadResolvedVendorO2AInputs(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
@@ -227,17 +192,6 @@ pub fn loadResolvedVendorO2AAtmosphereProfile(
     return profile_asset.toClimatologyProfile(allocator);
 }
 
-/// Purpose:
-///   Build the trace-gas spectroscopy support grid used by the vendor O2A
-///   parity path.
-///
-/// Physics:
-///   DISAMAR evaluates line absorption at the configured trace-gas pressure
-///   nodes, but maps those nodes onto altitude through the realized dense
-///   pressure-altitude grid before splining cross sections to RTM sublayers.
-///
-/// Vendor:
-///   `propAtmosphere::update_T_z_other_grids`
 fn buildVendorTraceGasSpectroscopyProfile(
     allocator: Allocator,
     source_profile: ReferenceDataModel.ClimatologyProfile,
@@ -260,8 +214,6 @@ fn buildVendorTraceGasSpectroscopyProfile(
     return .{ .rows = rows };
 }
 
-/// Purpose:
-///   Materialize the resolved parity scene into the canonical typed `Scene`.
 pub fn buildResolvedVendorO2AScene(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
@@ -407,7 +359,7 @@ pub fn buildResolvedVendorO2AScene(
 
 pub fn prepareResolvedVendorO2ARoute(
     scene: *const Scene,
-    rtm_controls: RtmControls,
+    rtm_controls: RadiativeTransferControls,
 ) !Route {
     return transport_common.prepareRoute(.{
         .regime = scene.observation_model.regime,
@@ -494,19 +446,6 @@ pub fn prepareResolvedVendorO2ACase(
     };
 }
 
-/// Purpose:
-///   Attach the realized DISAMAR HR support grid to the O2 line list used by
-///   the vendor-parity runtime.
-///
-/// Vendor:
-///   `DISAMARModule::setupHRWavelengthGrid` and
-///   `HITRANModule::CalculatAbsXsec`
-///
-/// Decisions:
-///   The adaptive grid is a runtime consequence of the resolved scene and line
-///   list, not a parsed config field. Keeping it on spectroscopy runtime
-///   controls lets line evaluation preserve DISAMAR's nearest-index weak-line
-///   cutoff rule without making kernels depend on file-driven vendor state.
 fn installVendorWeakCutoffGrid(
     allocator: Allocator,
     scene: *const Scene,
@@ -554,24 +493,6 @@ fn installCutoffGridOnLineList(
     line_list.runtime_controls.cutoff_grid_wavelengths_nm = owned_support;
 }
 
-/// Purpose:
-///   Re-window the raw solar carrier to the shared measurement HR support used
-///   by the vendor-faithful parity lane before spline interpolation is prepared.
-///
-/// Physics:
-///   DISAMAR crops the raw solar file to the active `wavelHRSimS` span and
-///   then builds the spline on that cropped support. Keeping extra file rows
-///   outside the active HR band perturbs the cubic spline very slightly, which
-///   is enough to leave `1e4-1e5` irradiance residuals after convolution.
-///
-/// Vendor:
-///   `readModule::getHRSolarIrradiance`
-///
-/// Decisions:
-///   The Zig runtime derives the vendor HR span from the realized radiance and
-///   irradiance kernels at the first and last nominal wavelengths of the active
-///   spectral grid, requires those parity kernels to agree, and then rebuilds
-///   the owned solar carrier on just that inclusive range.
 fn rewindowParitySolarSupportToMeasurementKernel(
     allocator: Allocator,
     scene: *Scene,

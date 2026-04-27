@@ -1,30 +1,3 @@
-//! Purpose:
-//!   Define the typed phase-function coefficient carriers used by optics
-//!   preparation and scalar transport.
-//!
-//! Physics:
-//!   Encodes the Rayleigh proxy coefficients, vendor-style analytic HG
-//!   expansion, and weighted coefficient mixing used to prepare transport
-//!   layers.
-//!
-//! Vendor:
-//!   `propAtmosphereModule::getNumberPhasefcoef` and
-//!   `propAtmosphereModule::getOptPropAtm`
-//!
-//! Design:
-//!   The Zig path keeps a fixed-capacity coefficient carrier so the transport
-//!   API remains typed while still allowing the active HG tail to follow the
-//!   DISAMAR truncation rule instead of a hard four-term cutoff.
-//!
-//! Invariants:
-//!   Coefficient index `0` remains `1.0`, inactive tail entries remain zero,
-//!   and the active HG budget follows the vendor truncation recurrence.
-//!
-//! Validation:
-//!   `tests/unit/optics_preparation_test.zig`,
-//!   `tests/validation/disamar_compatibility_harness_test.zig`, and the O2A
-//!   validation parity lanes.
-
 const std = @import("std");
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
@@ -65,20 +38,6 @@ pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
     return gasPhaseCoefficientsAtWavelength(760.0);
 }
 
-/// Purpose:
-///   Build the scalar Rayleigh phase-function coefficients at a wavelength.
-///
-/// Physics:
-///   DISAMAR computes the scalar gas coefficient from the dry-air
-///   depolarization factor. For `useCabannes = 0`, the `(1,1,2)` coefficient
-///   is `(45 + eps) / (90 + 20 eps)`, where
-///   `eps = 45 depol / (6 - 7 depol)`.
-///
-/// Vendor:
-///   `propAtmosphere::getOptPropAtm`
-///
-/// Units:
-///   `wavelength_nm` is in nanometers.
 pub fn gasPhaseCoefficientsAtWavelength(wavelength_nm: f64) [phase_coefficient_count]f64 {
     var coefficients = zeroPhaseCoefficients();
     coefficients[2] = rayleighPhaseCoefficient2AtWavelength(wavelength_nm);

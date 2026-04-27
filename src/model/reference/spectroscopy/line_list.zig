@@ -1,5 +1,5 @@
-//! Own a spectroscopy line list plus optional strong-line sidecars and runtime
-//! controls.
+// Own a spectroscopy line list plus optional strong-line sidecars and runtime
+// controls.
 
 const Types = @import("types.zig");
 

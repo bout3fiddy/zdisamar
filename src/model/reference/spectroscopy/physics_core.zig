@@ -1,4 +1,4 @@
-//! Weak-line spectroscopy helpers and shared line-shape math.
+// Weak-line spectroscopy helpers and shared line-shape math.
 
 const std = @import("std");
 const Types = @import("types.zig");

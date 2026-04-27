@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Precompute per-sample wavelength and integration plans for measurement
-//!   simulation.
-//!
-//! Physics:
-//!   Resolves nominal and calibrated wavelengths together with instrument
-//!   integration kernels so radiance, irradiance, and prefetch passes share
-//!   one spectral execution plan.
-//!
-//! Vendor:
-//!   `measurement simulation planning`
-//!
-//! Design:
-//!   Keep plan construction separate from the transport execution loops so the
-//!   hot path stops rebuilding identical instrument metadata per sample.
-//!
-//! Invariants:
-//!   Each plan entry is keyed to one nominal sample wavelength and contains the
-//!   exact channel-specific calibrated wavelength and integration kernel.
-//!
-//! Validation:
-//!   Fast measurement-space suites and O2 A transport smoke tests.
-
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");

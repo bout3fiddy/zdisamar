@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Hold wavelength-dependent optical-depth and layer-evaluation helpers for
-//!   prepared optical state reuse.
-
 const PhaseFunctions = @import("../prepare/phase_functions.zig");
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const ReferenceData = @import("../../../model/ReferenceData.zig");

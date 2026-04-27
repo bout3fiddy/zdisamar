@@ -1,4 +1,4 @@
-//! Shared spectroscopy carrier types and constants.
+// Shared spectroscopy carrier types and constants.
 
 const std = @import("std");
 
@@ -149,14 +149,14 @@ pub const SpectroscopyRuntimeControls = struct {
     }
 };
 
-/// Fallback margin used only when a DISAMAR high-resolution cutoff grid is not
-/// available. The exact vendor path chooses nearest grid indices to the cutoff
-/// endpoints, then includes both endpoints.
+// Fallback margin used only when a DISAMAR high-resolution cutoff grid is not
+// available. The exact vendor path chooses nearest grid indices to the cutoff
+// endpoints, then includes both endpoints.
 pub const vendor_cutoff_boundary_margin_cm1: f64 = 0.115;
 
-/// PARITY:
-///   The sorted prewindow has to be wider than the fallback scalar cutoff
-///   because the exact decision is made later against the adaptive HR grid.
+// PARITY:
+//   The sorted prewindow has to be wider than the fallback scalar cutoff
+//   because the exact decision is made later against the adaptive HR grid.
 pub const vendor_cutoff_prewindow_margin_cm1: f64 = 0.25;
 
 pub const StrongLinePreparedState = struct {

@@ -15,7 +15,7 @@ pub fn run(
     optics: *const PreparedOpticalState,
     work: ?*SummaryWorkspace,
     method: Method,
-    rtm_controls: common.RtmControls,
+    rtm_controls: common.RadiativeTransferControls,
 ) !Result {
     switch (method) {
         .exact => {},

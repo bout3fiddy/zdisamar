@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Render resolved O2A parity output products and serialize summary artifacts.
-
 const std = @import("std");
 const common = @import("o2a_parity_compile_common.zig");
 const parser = @import("o2a_parity_parser.zig");

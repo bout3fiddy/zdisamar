@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Materialize full measurement-space products with owned output arrays.
-
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");

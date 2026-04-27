@@ -1,29 +1,6 @@
-//! Purpose:
-//!   Bridge evaluated optical-depth breakdowns back into transport layer
-//!   inputs.
-//!
-//! Physics:
-//!   Accumulates optical-depth components and packages them for the transport
-//!   layer carrier used by the solver.
-//!
-//! Vendor:
-//!   `optics preparation evaluation`
-//!
-//! Design:
-//!   Keeps the breakdown accumulation separate from the transport carrier so
-//!   the same state can feed forward and diagnostic paths.
-//!
-//! Invariants:
-//!   Optical-depth components must remain additive across the transport grid.
-//!
-//! Validation:
-//!   Optics-preparation transport tests.
-
 const transport_common = @import("../../transport/common.zig");
 const State = @import("state.zig");
 
-/// Purpose:
-///   Accumulate one layer's optical-depth breakdown into a running total.
 pub fn accumulateBreakdown(
     totals: *State.OpticalDepthBreakdown,
     breakdown: State.OpticalDepthBreakdown,
@@ -37,8 +14,6 @@ pub fn accumulateBreakdown(
     totals.cloud_scattering_optical_depth += breakdown.cloud_scattering_optical_depth;
 }
 
-/// Purpose:
-///   Convert an evaluated layer into a transport layer input carrier.
 pub fn layerInputFromEvaluated(evaluated: State.EvaluatedLayer) transport_common.LayerInput {
     return .{
         .gas_absorption_optical_depth = evaluated.breakdown.gas_absorption_optical_depth,

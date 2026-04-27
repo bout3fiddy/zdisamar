@@ -1,38 +1,6 @@
-//! Purpose:
-//!   Own the adding-method layer-composition algebra for transport scenes.
-//!
-//! Physics:
-//!   Combines layer reflection and transmission blocks into the accumulated
-//!   upward and downward transport state used by the adding method.
-//!
-//! Vendor:
-//!   `adding` composition stage
-//!
-//! Design:
-//!   The Zig version keeps the top-down and surface-up recurrences explicit
-//!   while isolating the matrix-composition algebra from field reconstruction
-//!   and execution orchestration.
-//!
-//! Invariants:
-//!   The returned scattering summaries must preserve the Fourier-0 vendor
-//!   scalar reductions and zero the higher-order scalar closures.
-//!
-//! Validation:
-//!   `tests/unit/transport_adding_test.zig` and transport integration suites.
-
 const common = @import("../common.zig");
 const labos = @import("../labos.zig");
 
-/// Purpose:
-///   Accumulate the transport state associated with one partially composed
-///   atmosphere.
-///
-/// Physics:
-///   Stores the reflection, transmission, and source-function closures needed
-///   to continue the adding recursion through the column.
-///
-/// Vendor:
-///   `adding` partial-atmosphere state
 pub const PartAtmosphere = struct {
     R: labos.Mat,
     T: labos.Mat,
@@ -65,16 +33,6 @@ pub const PartAtmosphere = struct {
     }
 };
 
-/// Purpose:
-///   Combine the bottom layer with the atmosphere above it using the adding
-///   recurrence.
-///
-/// Physics:
-///   Propagates reflection/transmission blocks through the lower boundary so
-///   the composed state preserves the vendor scalar and Fourier behavior.
-///
-/// Vendor:
-///   `adding::addLayerToBottom`
 pub fn addLayerToBottom(
     i_fourier: usize,
     etop: *const labos.Vec,
@@ -170,16 +128,6 @@ pub fn addLayerToBottom(
     };
 }
 
-/// Purpose:
-///   Combine the top layer with the atmosphere below it using the adding
-///   recurrence.
-///
-/// Physics:
-///   Propagates reflection/transmission blocks through the upper boundary so
-///   the composed state preserves the vendor scalar and Fourier behavior.
-///
-/// Vendor:
-///   `adding::addLayerToTop`
 pub fn addLayerToTop(
     i_fourier: usize,
     etop: *const labos.Vec,
@@ -291,15 +239,6 @@ fn vendorIntegratedDiffuseTransmission(
     return tpl;
 }
 
-/// Purpose:
-///   Materialize the top-down recursive composition state for every level.
-///
-/// Physics:
-///   Walks the atmosphere from the top boundary downward, combining each
-///   layer into the partially composed state used by the adding method.
-///
-/// Vendor:
-///   `adding::addingFromTopDown`
 pub fn addingFromTopDown(
     part_upper: []PartAtmosphere,
     end_level: usize,
@@ -348,15 +287,6 @@ pub fn addingFromTopDown(
     }
 }
 
-/// Purpose:
-///   Materialize the surface-up recursive composition state for every level.
-///
-/// Physics:
-///   Walks the atmosphere from the lower boundary upward, combining each
-///   layer into the partially composed state used by the adding method.
-///
-/// Vendor:
-///   `adding::addingFromSurfaceUp`
 pub fn addingFromSurfaceUp(
     part_lower: []PartAtmosphere,
     end_level: usize,

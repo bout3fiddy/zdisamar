@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Evaluate spectroscopy and continuum carriers for prepared sublayers.
-
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");

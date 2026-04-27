@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Own the retained observation-model compatibility rules that merge legacy
-//!   singleton controls into the explicit per-channel and per-band model.
-//!
-//! Physics:
-//!   Resolves spectral response, operational band support, and noise controls
-//!   for scenes that still provide older observation-model fields.
-//!
-//! Vendor:
-//!   `observation-model legacy compatibility`
-//!
-//! Design:
-//!   Keep the fallback policy out of `ObservationModel.zig` so the canonical
-//!   model type remains focused on typed data ownership and validation.
-//!
-//! Invariants:
-//!   Borrowed line-shape carriers must not claim ownership, and merged
-//!   operational support must preserve explicit overrides over legacy defaults.
-//!
-//! Validation:
-//!   Observation-model tests in `ObservationModel.zig` cover the compatibility
-//!   merge behavior through the public model methods.
-
 const Instrument = @import("../../model/Instrument.zig").Instrument;
 const InstrumentLineShape = @import("../../model/Instrument.zig").InstrumentLineShape;
 const InstrumentLineShapeTable = @import("../../model/Instrument.zig").InstrumentLineShapeTable;

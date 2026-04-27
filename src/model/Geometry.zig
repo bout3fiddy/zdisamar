@@ -1,43 +1,15 @@
-//! Purpose:
-//!   Define the observation geometry model and the cosine transforms needed by transport
-//!   preparation and path-length evaluation.
-//!
-//! Physics:
-//!   This file maps solar/viewing zenith angles and relative azimuth into local
-//!   propagation cosines under plane-parallel, pseudo-spherical, and spherical geometry
-//!   assumptions.
-//!
-//! Vendor:
-//!   `geometry cosine preparation stage`
-//!
-//! Design:
-//!   The Zig model keeps geometry as a small typed value with explicit helper methods
-//!   rather than relying on shared mutable angle buffers threaded through kernels.
-//!
-//! Invariants:
-//!   Angles are expressed in degrees, zenith and azimuth ranges are validated through the
-//!   core unit wrappers, and cosine helpers clamp to a nonzero floor to avoid singular
-//!   path lengths.
-//!
-//! Validation:
-//!   Unit tests below exercise angle-range checks and the altitude-dependent cosine
-//!   behavior for plane-parallel and pseudo-spherical modes.
 const errors = @import("../core/errors.zig");
 const units = @import("../core/units.zig");
 const std = @import("std");
 
 const earth_radius_km = 6371.0;
 
-/// Purpose:
-///   Select which geometric approximation the transport path uses.
 pub const Model = enum {
     plane_parallel,
     pseudo_spherical,
     spherical,
 };
 
-/// Purpose:
-///   Describe the observation geometry shared by forward and retrieval execution.
 pub const Geometry = struct {
     model: Model = .plane_parallel,
     // UNITS:
@@ -51,8 +23,6 @@ pub const Geometry = struct {
     //   pseudo-spherical paths.
     surface_altitude_km: f64 = 0.0,
 
-    /// Purpose:
-    ///   Ensure the geometry parameters remain within physically valid angle ranges.
     pub fn validate(self: Geometry) errors.Error!void {
         (units.ZenithAngleDeg{ .value = self.solar_zenith_deg }).validate() catch return errors.Error.InvalidRequest;
         (units.ZenithAngleDeg{ .value = self.viewing_zenith_deg }).validate() catch return errors.Error.InvalidRequest;
@@ -62,31 +32,14 @@ pub const Geometry = struct {
         }
     }
 
-    /// Purpose:
-    ///   Compute the solar-beam propagation cosine at the requested altitude.
     pub fn solarCosineAtAltitude(self: Geometry, altitude_km: f64) f64 {
         return self.propagationCosineAtAltitude(self.solar_zenith_deg, altitude_km);
     }
 
-    /// Purpose:
-    ///   Compute the viewing-beam propagation cosine at the requested altitude.
     pub fn viewingCosineAtAltitude(self: Geometry, altitude_km: f64) f64 {
         return self.propagationCosineAtAltitude(self.viewing_zenith_deg, altitude_km);
     }
 
-    /// Purpose:
-    ///   Convert the top-of-atmosphere zenith angle into a local propagation cosine.
-    ///
-    /// Physics:
-    ///   Pseudo-spherical and spherical modes contract the sine of the ray angle by the
-    ///   Earth-radius ratio to approximate curvature effects with altitude.
-    ///
-    /// Units:
-    ///   `zenith_deg` is in degrees and `altitude_km` is in kilometers.
-    ///
-    /// Assumptions:
-    ///   Negative altitudes are clamped to sea level and the returned cosine is floored
-    ///   to avoid singular slant-path amplification.
     fn propagationCosineAtAltitude(self: Geometry, zenith_deg: f64, altitude_km: f64) f64 {
         const base_zenith_rad = std.math.degreesToRadians(zenith_deg);
         const base_mu = @cos(base_zenith_rad);
@@ -101,7 +54,7 @@ pub const Geometry = struct {
 
         // GOTCHA:
         //   The cosine floor is parity-sensitive for long slant paths because removing it
-        //   would let near-horizon rays explode transport path lengths upstream.
+        //   would let near-horizon rays explode radiative transfer path lengths upstream.
         return switch (self.model) {
             .plane_parallel => @max(base_mu, 0.05),
             .pseudo_spherical => @max(local_mu, 0.05),

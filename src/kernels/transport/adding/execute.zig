@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Own the adding-method execution front door and scalar reflectance
-//!   orchestration.
-//!
-//! Physics:
-//!   Selects the appropriate transport path, accumulates reflectance, and
-//!   materializes the scalar proxy Jacobian for adding-method scenes.
-//!
-//! Vendor:
-//!   `adding` execution/orchestration stage
-//!
-//! Design:
-//!   The Zig version keeps the public `execute` entrypoint thin while the
-//!   directional field and composition stages live in sibling modules.
-//!
-//! Invariants:
-//!   Public callers continue to receive the same `ForwardResult` shape and the
-//!   same derivative semantics as before the split.
-//!
-//! Validation:
-//!   `tests/unit/transport_adding_test.zig` and transport integration suites.
-
 const std = @import("std");
 const common = @import("../common.zig");
 const derivatives = @import("../derivatives.zig");
@@ -34,15 +12,6 @@ const ReflectanceComponents = struct {
     scattering_term: f64,
 };
 
-/// Purpose:
-///   Execute the adding-method transport route for one forward request.
-///
-/// Physics:
-///   Orchestrates the layered adding kernels and materializes the scalar
-///   reflectance and proxy Jacobian for the caller.
-///
-/// Vendor:
-///   `adding::execute`
 pub fn execute(
     allocator: Allocator,
     route: common.Route,
@@ -124,7 +93,7 @@ fn lambertianSurfaceReflectanceFromAttenuation(
 fn directSurfaceOnlyReflectance(
     allocator: Allocator,
     input: common.ForwardInput,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
 ) common.ExecuteError!ReflectanceComponents {
     if (input.layers.len == 0) return bulkDirectSurfaceOnlyReflectance(input);
 
@@ -150,11 +119,11 @@ fn directSurfaceOnlyReflectance(
 fn layerResolvedReflectance(
     allocator: Allocator,
     input: common.ForwardInput,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
 ) common.ExecuteError!ReflectanceComponents {
     const layers = input.layers;
     if (layers.len == 0) {
-        return error.UnsupportedRtmControls;
+        return error.UnsupportedRadiativeTransferControls;
     }
 
     const mu0 = @max(input.mu0, 0.05);

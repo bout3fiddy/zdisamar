@@ -1,24 +1,3 @@
-//! Purpose:
-//!   Hold the shared low-level helpers used by the reference-asset parsers.
-//!
-//! Physics:
-//!   Convert fixed-width values, wavenumbers, widths, and HITRAN/LISA helper
-//!   metadata without changing the scientific units preserved by the parsers.
-//!
-//! Vendor:
-//!   `reference asset parser helper routines`
-//!
-//! Design:
-//!   Keep parser primitives separate from the format dispatch so the main
-//!   parser file only owns the higher-level row-shaping logic.
-//!
-//! Invariants:
-//!   Helper conversions must preserve the same numeric conventions as the
-//!   format-specific parsers that call them.
-//!
-//! Validation:
-//!   Reference-asset loader tests.
-
 const std = @import("std");
 
 pub fn dupColumns(allocator: std.mem.Allocator, columns: []const []const u8) ![]const []const u8 {

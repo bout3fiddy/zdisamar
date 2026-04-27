@@ -6,7 +6,7 @@ const BuiltinLineShapeKind = @import("../../../model/Instrument.zig").BuiltinLin
 pub fn defaultKernelHalfSpanNm(fwhm_nm: f64) f64 {
     // UNITS:
     //   Half-span is expressed in nanometers and clamped to keep the fallback
-    //   kernel away from degenerate widths.
+    //   routine away from degenerate widths.
     return @max(3.0 * @max(fwhm_nm, 1.0e-4), 1.0e-4);
 }
 

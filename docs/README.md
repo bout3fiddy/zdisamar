@@ -1,7 +1,7 @@
 # zdisamar Docs
 
 The retained docs describe the current O2A forward-model package and its parity
-harness. Historical plugin, retrieval, and workpackage notes were removed from
+harness. Historical extension, retrieval, and workpackage notes were removed from
 the tracked docs because they no longer describe the shipped public surface.
 
 ## Current Docs

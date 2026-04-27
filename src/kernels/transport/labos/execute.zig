@@ -32,7 +32,7 @@ fn directSurfaceOnlyReflectance(input: common.ForwardInput) f64 {
 fn directSurfaceOnlyReflectanceResolved(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
 ) common.ExecuteError!f64 {
     if (input.layers.len == 0) return directSurfaceOnlyReflectance(input);
 
@@ -99,7 +99,7 @@ pub fn execute(
 fn layerResolvedLabos(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
 ) common.ExecuteError!f64 {
     const nlayer = input.layers.len;
     if (nlayer == 0) return 0.0;
@@ -193,7 +193,7 @@ fn layerResolvedLabos(
 fn singleLayerLabos(
     allocator: std.mem.Allocator,
     input: common.ForwardInput,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
 ) common.ExecuteError!f64 {
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);

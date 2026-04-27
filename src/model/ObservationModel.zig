@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Define the typed observation-model contract attached to a canonical scene.
-//!
-//! Physics:
-//!   Captures instrument regime, calibration offsets, line-shape/reference carriers, solar
-//!   spectra, operational LUTs, and optional measured-channel supporting data.
-//!
-//! Vendor:
-//!   `observation-model and instrument-support contract`
-//!
-//! Design:
-//!   Keep instrument/observation configuration typed and self-contained so adapters can hydrate
-//!   operational metadata without leaking file-format policy into kernels.
-//!
-//! Invariants:
-//!   Calibration fields must be finite, optional measured channels must be strictly increasing,
-//!   and noise/support arrays must stay shape-consistent with their associated wavelengths.
-//!
-//! Validation:
-//!   Observation-model validation tests in this file and the execution tests that hydrate
-//!   measured-channel and operational observation metadata.
-
 const std = @import("std");
 const errors = @import("../core/errors.zig");
 const Binding = @import("Binding.zig").Binding;
@@ -43,24 +21,18 @@ pub const ObservationRegime = enum {
     occultation,
 };
 
-/// Purpose:
-///   Store per-band cross-section fitting controls shared by simulation and retrieval scenes.
 pub const CrossSectionFitControls = struct {
     use_effective_cross_section_oe: bool = false,
     use_polynomial_expansion: bool = false,
     xsec_strong_absorption_bands: []const bool = &.{},
     polynomial_degree_bands: []const u32 = &.{},
 
-    /// Purpose:
-    ///   Validate the owned slices and reject obviously inconsistent control payloads.
     pub fn validate(self: CrossSectionFitControls) errors.Error!void {
         for (self.polynomial_degree_bands) |degree| {
             if (degree > 7) return errors.Error.InvalidRequest;
         }
     }
 
-    /// Purpose:
-    ///   Ensure any configured per-band vectors match the resolved scene band count.
     pub fn validateForBandCount(self: CrossSectionFitControls, band_count: usize) errors.Error!void {
         try self.validate();
         if (self.xsec_strong_absorption_bands.len != 0 and self.xsec_strong_absorption_bands.len != band_count) {
@@ -71,8 +43,6 @@ pub const CrossSectionFitControls = struct {
         }
     }
 
-    /// Purpose:
-    ///   Deep-clone the per-band control vectors into owned storage.
     pub fn clone(self: CrossSectionFitControls, allocator: Allocator) !CrossSectionFitControls {
         const strong_absorption_bands = if (self.xsec_strong_absorption_bands.len != 0)
             try allocator.dupe(bool, self.xsec_strong_absorption_bands)
@@ -94,30 +64,22 @@ pub const CrossSectionFitControls = struct {
         };
     }
 
-    /// Purpose:
-    ///   Release any owned per-band control storage.
     pub fn deinitOwned(self: *CrossSectionFitControls, allocator: Allocator) void {
         if (self.xsec_strong_absorption_bands.len != 0) allocator.free(self.xsec_strong_absorption_bands);
         if (self.polynomial_degree_bands.len != 0) allocator.free(self.polynomial_degree_bands);
         self.* = .{};
     }
 
-    /// Purpose:
-    ///   Report whether a band is flagged as a strong-absorption interval.
     pub fn strongAbsorptionForBand(self: CrossSectionFitControls, band_index: usize) bool {
         if (band_index >= self.xsec_strong_absorption_bands.len) return false;
         return self.xsec_strong_absorption_bands[band_index];
     }
 
-    /// Purpose:
-    ///   Return the configured polynomial degree for a band, or zero when absent.
     pub fn polynomialOrderForBand(self: CrossSectionFitControls, band_index: usize) u32 {
         if (band_index >= self.polynomial_degree_bands.len) return 0;
         return self.polynomial_degree_bands[band_index];
     }
 
-    /// Purpose:
-    ///   Return the highest configured polynomial degree across all bands.
     pub fn maximumPolynomialOrder(self: CrossSectionFitControls) u32 {
         var maximum: u32 = 0;
         for (self.polynomial_degree_bands) |degree| {
@@ -127,8 +89,6 @@ pub const CrossSectionFitControls = struct {
     }
 };
 
-/// Purpose:
-///   Store the observation-side configuration and supporting data required to evaluate a scene.
 pub const ObservationModel = struct {
     instrument: InstrumentId = .generic,
     regime: ObservationRegime = .nadir,
@@ -160,8 +120,6 @@ pub const ObservationModel = struct {
     owns_reference_radiance: bool = false,
     ingested_noise_sigma: []const f64 = &.{},
 
-    /// Purpose:
-    ///   Validate calibration, measured-channel, and operational-support metadata.
     pub fn validate(self: *const ObservationModel) errors.Error!void {
         try self.solar_spectrum_source.validate();
         try self.weighted_reference_grid_source.validate();
@@ -185,7 +143,7 @@ pub const ObservationModel = struct {
         switch (self.noise_model) {
             .snr_from_input, .s5p_operational => {
                 // INVARIANT:
-                //   Input-driven noise models require an explicit sigma vector so transport and
+                //   Input-driven noise models require an explicit sigma vector so radiative transfer and
                 //   retrieval code can treat the noise contract as already materialized.
                 if (self.ingested_noise_sigma.len == 0) return errors.Error.InvalidRequest;
             },
@@ -252,39 +210,26 @@ pub const ObservationModel = struct {
         try self.cross_section_fit.validate();
     }
 
-    /// Purpose:
-    ///   Resolve the effective per-channel measurement controls, preserving legacy defaults
-    ///   until callers opt into the explicit channel pipeline.
     pub fn resolvedChannelControls(self: *const ObservationModel, channel: SpectralChannel) Instrument.SpectralChannelControls {
         return legacy_support.resolvedChannelControls(self, channel);
     }
 
-    /// Purpose:
-    ///   Return the explicit Ring controls, or a disabled record when absent.
     pub fn resolvedRingControls(self: *const ObservationModel) Instrument.RingControls {
         return self.measurement_pipeline.ring;
     }
 
-    /// Purpose:
-    ///   Return how many explicit operational band replacements are attached to the model.
     pub fn operationalBandCount(self: *const ObservationModel) usize {
         return legacy_support.operationalBandCount(self);
     }
 
-    /// Purpose:
-    ///   Resolve the primary operational replacement set, falling back to the legacy singleton fields.
     pub fn primaryOperationalBandSupport(self: *const ObservationModel) OperationalBandSupport {
         return legacy_support.primaryOperationalBandSupport(self);
     }
 
-    /// Purpose:
-    ///   Return the effective wavelength-support half-span used when LUT generation expands the scene grid.
     pub fn lutSamplingHalfSpanNm(self: *const ObservationModel) f64 {
         return legacy_support.lutSamplingHalfSpanNm(self.primaryOperationalBandSupport());
     }
 
-    /// Purpose:
-    ///   Return the explicit support record for a band, or the legacy singleton view for band zero.
     pub fn resolvedOperationalBandSupport(
         self: *const ObservationModel,
         band_index: usize,
@@ -292,8 +237,6 @@ pub const ObservationModel = struct {
         return legacy_support.resolvedOperationalBandSupport(self, band_index);
     }
 
-    /// Purpose:
-    ///   Materialize stable provenance labels for each active operational replacement band.
     pub fn operationalReplacementLabelsOwned(
         self: *const ObservationModel,
         allocator: Allocator,
@@ -317,8 +260,6 @@ pub const ObservationModel = struct {
         return labels;
     }
 
-    /// Purpose:
-    ///   Return reflectance calibration-error controls for sigma propagation.
     pub fn resolvedReflectanceCalibration(self: *const ObservationModel) Instrument.ReflectanceCalibration {
         return self.measurement_pipeline.reflectance_calibration;
     }
@@ -350,8 +291,6 @@ pub const ObservationModel = struct {
         return buffer.toOwnedSlice(allocator);
     }
 
-    /// Purpose:
-    ///   Release any owned line-shape, grid, solar-spectrum, LUT, and measured-channel storage.
     pub fn deinitOwned(self: *ObservationModel, allocator: Allocator) void {
         self.instrument_line_shape.deinitOwned(allocator);
         self.instrument_line_shape_table.deinitOwned(allocator);

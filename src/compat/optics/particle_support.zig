@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Own retained particle-placement and single-scatter-albedo compatibility
-//!   rules used by optics preparation.
-//!
-//! Physics:
-//!   Converts older aerosol/cloud geometry fields and legacy single-scatter
-//!   albedo fields into the canonical interval and particle properties.
-//!
-//! Vendor:
-//!   `particle placement and SSA compatibility`
-//!
-//! Design:
-//!   Keep old-field fallback policy out of the main model and prepared-state
-//!   files so the canonical physics path stays explicit.
-//!
-//! Invariants:
-//!   Explicit placements take precedence, and resolved albedos remain clamped
-//!   to the physical `[0, 1]` interval.
-//!
-//! Validation:
-//!   Aerosol/cloud model tests and optics preparation tests exercise the
-//!   retained compatibility behavior through public APIs.
-
 const std = @import("std");
 const Placement = @import("../../model/Atmosphere.zig").IntervalPlacement;
 

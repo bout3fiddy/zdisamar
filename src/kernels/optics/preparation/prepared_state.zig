@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Define the owned prepared optical state and route its behavior to focused
-//!   optics-preparation helper modules.
-
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const AtmosphereModel = @import("../../../model/Atmosphere.zig");

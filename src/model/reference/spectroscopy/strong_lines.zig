@@ -1,4 +1,4 @@
-//! Strong-line spectroscopy helpers and isotopologue-specific scaling logic.
+// Strong-line spectroscopy helpers and isotopologue-specific scaling logic.
 
 const std = @import("std");
 const hitran_partition_tables = @import("../../hitran_partition_tables.zig");

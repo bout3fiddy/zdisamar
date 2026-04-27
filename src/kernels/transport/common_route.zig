@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Resolve transport routes and derive interface helpers from the shared
-//!   transport contract.
-
 const std = @import("std");
 const common = @import("common_types.zig");
 const phase_functions = @import("../optics/prepare/phase_functions.zig");
@@ -125,7 +121,7 @@ test "prepare route resolves families and keeps derivative mode explicit" {
         .derivative_mode = .none,
         .rtm_controls = .{ .use_adding = true },
     }));
-    try std.testing.expectError(common.Error.UnsupportedRtmControls, prepareRoute(.{
+    try std.testing.expectError(common.Error.UnsupportedRadiativeTransferControls, prepareRoute(.{
         .regime = .nadir,
         .execution_mode = .scalar,
         .derivative_mode = .none,

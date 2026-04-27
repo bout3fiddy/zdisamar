@@ -186,25 +186,6 @@ pub fn fillZplusZminFromBasis(
     );
 }
 
-/// Purpose:
-///   Build a LABOS phase kernel with an explicit vendor-style coefficient
-///   ceiling.
-///
-/// Physics:
-///   DISAMAR sometimes uses a carrier phase function from an interface but
-///   truncates the Legendre sum with the maximum order of adjacent reduced
-///   layers. Keeping the ceiling explicit preserves that source-function
-///   behavior without mutating the phase carrier.
-///
-/// Vendor:
-///   `LabosModule::CalcReflectance`
-///
-/// Inputs:
-///   `max_phase_index` is the inclusive Legendre coefficient ceiling for the
-///   current layer or source level.
-///
-/// Validation:
-///   `reflectance.zig` source-level truncation tests and O2A function diff.
 pub fn fillZplusZminFromBasisLimited(
     i_fourier: usize,
     phase_coefs: [types.max_phase_coef]f64,

@@ -1,13 +1,9 @@
-//! Purpose:
-//!   Stable transport common root that reexports the contract types and route
-//!   helpers.
-
 const common_types = @import("common_types.zig");
 const common_route = @import("common_route.zig");
 
 pub const phase_coefficient_count = common_types.phase_coefficient_count;
 pub const ScatteringMode = common_types.ScatteringMode;
-pub const RtmControls = common_types.RtmControls;
+pub const RadiativeTransferControls = common_types.RadiativeTransferControls;
 pub const TransportFamily = common_types.TransportFamily;
 pub const ImplementationClass = common_types.ImplementationClass;
 pub const DerivativeSemantics = common_types.DerivativeSemantics;

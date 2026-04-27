@@ -1,21 +1,3 @@
-//! Purpose:
-//!   Estimate, scale, and whiten spectral noise vectors for forward and retrieval workflows.
-//!
-//! Physics:
-//!   Tracks photon shot noise and sigma propagation between reference and current spectral bins.
-//!
-//! Vendor:
-//!   `noise / whitening helpers`
-//!
-//! Design:
-//!   The helpers are intentionally explicit about reference-vs-current sigma propagation and input-noise paths.
-//!
-//! Invariants:
-//!   Shapes must match, sigma values must be positive, and scale factors must be finite and positive.
-//!
-//! Validation:
-//!   Tests cover shot-noise estimation, whitening, sigma copying, and reference-bin correction.
-
 const std = @import("std");
 const sampling = @import("sampling.zig");
 
@@ -30,17 +12,6 @@ pub const Error = error{
     UnsupportedS5OperationalRange,
 };
 
-/// Purpose:
-///   Estimate shot-noise standard deviation from a signal expressed in detector counts.
-///
-/// Physics:
-///   Converts counts to electrons, applies Poisson scaling, then maps back to count units.
-///
-/// Vendor:
-///   `shot noise standard deviation`
-///
-/// Units:
-///   `electrons_per_count` is electrons per recorded count.
 pub fn shotNoiseStd(signal: []const f64, electrons_per_count: f64, output: []f64) Error!void {
     if (signal.len != output.len) return error.ShapeMismatch;
     if (!std.math.isFinite(electrons_per_count) or electrons_per_count <= 0.0) {
@@ -52,14 +23,6 @@ pub fn shotNoiseStd(signal: []const f64, electrons_per_count: f64, output: []f64
     }
 }
 
-/// Purpose:
-///   Whiten residuals by dividing them by per-channel sigma.
-///
-/// Physics:
-///   Produces a unitless residual vector suitable for least-squares objectives.
-///
-/// Vendor:
-///   `residual whitening`
 pub fn whitenResiduals(residual: []const f64, sigma: []const f64, output: []f64) Error!void {
     if (residual.len != sigma.len or residual.len != output.len) return error.ShapeMismatch;
     for (residual, sigma, output) |value, sigma_value, *slot| {
@@ -70,14 +33,6 @@ pub fn whitenResiduals(residual: []const f64, sigma: []const f64, output: []f64)
     }
 }
 
-/// Purpose:
-///   Copy explicit input sigmas into an output buffer after validating positivity.
-///
-/// Physics:
-///   Preserves user-supplied noise estimates for sigma-driven retrieval paths.
-///
-/// Vendor:
-///   `input sigma propagation`
 pub fn copyInputSigma(input_sigma: []const f64, output: []f64) Error!void {
     if (input_sigma.len == 0) return error.MissingInputNoiseSigma;
     if (input_sigma.len != output.len) return error.ShapeMismatch;
@@ -89,17 +44,6 @@ pub fn copyInputSigma(input_sigma: []const f64, output: []f64) Error!void {
     }
 }
 
-/// Purpose:
-///   Scale a reference sigma vector to a current spectrum with bin-width correction.
-///
-/// Physics:
-///   Propagates sigma proportionally to signal intensity and spectral bin width.
-///
-/// Vendor:
-///   `reference sigma scaling`
-///
-/// Units:
-///   `reference_bin_width_nm` and `current_bin_width_nm` are bin widths in nanometers.
 pub fn scaleSigmaFromReference(
     reference_signal: []const f64,
     reference_sigma: []const f64,
@@ -133,8 +77,6 @@ pub fn scaleSigmaFromReference(
     }
 }
 
-/// Purpose:
-///   Interpolate a sparse SNR specification onto the current wavelengths and convert it to sigma.
 pub fn sigmaFromInterpolatedSignalToNoise(
     wavelengths_nm: []const f64,
     snr_wavelengths_nm: []const f64,
@@ -161,8 +103,6 @@ pub fn sigmaFromInterpolatedSignalToNoise(
     }
 }
 
-/// Purpose:
-///   Evaluate the vendor-style LAB SNR parameterization and convert it to sigma.
 pub fn sigmaFromLabOperational(signal: []const f64, a: f64, b: f64, output: []f64) Error!void {
     if (signal.len != output.len) return error.ShapeMismatch;
     if (!std.math.isFinite(a) or a <= 0.0 or !std.math.isFinite(b) or b < 0.0) {
@@ -174,8 +114,6 @@ pub fn sigmaFromLabOperational(signal: []const f64, a: f64, b: f64, output: []f6
     }
 }
 
-/// Purpose:
-///   Evaluate the legacy Sentinel-5 SNR parameterization and convert it to sigma.
 pub fn sigmaFromS5Operational(
     wavelengths_nm: []const f64,
     signal: []const f64,

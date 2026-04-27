@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Build and own the staged inputs required for prepared optics
-//!   construction.
-
 const std = @import("std");
 const AtmosphereModel = @import("../../../model/Atmosphere.zig");
 const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;

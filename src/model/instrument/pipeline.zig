@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Own the measurement-pipeline controls that used to crowd the root
-//!   instrument contract.
-
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const Allocator = std.mem.Allocator;

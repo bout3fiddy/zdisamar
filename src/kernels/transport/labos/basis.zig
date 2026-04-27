@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Thin LABOS basis facade over shared types, matrix algebra, and phase basis logic.
-
 const types = @import("types.zig");
 const matrix = @import("matrix.zig");
 const phase_basis = @import("phase_basis.zig");

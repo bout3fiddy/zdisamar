@@ -1,10 +1,3 @@
-//! Purpose:
-//!   Own wavelength-dependent particle-fraction controls.
-//!
-//! Physics:
-//!   Encodes aerosol and cloud fraction retrieval controls independently from
-//!   the larger atmosphere shell.
-
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const Allocator = std.mem.Allocator;

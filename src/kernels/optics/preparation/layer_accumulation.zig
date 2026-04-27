@@ -17,21 +17,6 @@ const centimeters_per_kilometer = 1.0e5;
 const boltzmann_hpa_cm3_per_k = 1.380658e-19;
 const max_collision_complex_profile_nodes: usize = 256;
 
-/// Purpose:
-///   Realize parity support-row pressure from the support bounds already built
-///   into the vertical grid.
-///
-/// Physics:
-///   The DISAMAR-style support grid carries exact interval-boundary pressures.
-///   Pressure should therefore be sampled in log-pressure space within those
-///   realized bounds instead of being re-derived from a separate altitude
-///   interpolation path after the support grid has already been fixed.
-///
-/// Vendor:
-///   `propAtmosphere::fillHighResolutionPressureGrid`
-///
-/// Units:
-///   Altitudes are in kilometers and pressures are in hectopascals.
 fn pressureFromParitySupportBounds(
     bottom_altitude_km: f64,
     top_altitude_km: f64,

@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Re-export the typed instrument contract and carrier modules from dedicated
-//!   single-purpose files.
-
 const contract = @import("instrument/contract.zig");
 
 pub const max_line_shape_samples = contract.max_line_shape_samples;

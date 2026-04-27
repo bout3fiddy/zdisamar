@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Own LABOS reflectance extraction and Fourier-resolution selection.
-//!
-//! Physics:
-//!   Converts the internal radiation field into TOA reflectance and chooses
-//!   the Fourier terms required by the prepared transport input.
-//!
-//! Vendor:
-//!   LABOS reflectance extraction stage
-//!
-//! Design:
-//!   Reflectance extraction is separated from the orders recursion so the
-//!   higher-level facade can re-use the same Fourier and source-interface
-//!   policy without a monolithic solver file.
-//!
-//! Invariants:
-//!   Scalar LABOS uses the solar column for reflectance extraction. Fourier
-//!   truncation is driven by the active phase coefficients and transport input.
-//!
-//! Validation:
-//!   See `tests/unit/transport_labos_test.zig` for reflectance and Fourier
-//!   selection coverage.
-
 const std = @import("std");
 const basis = @import("basis.zig");
 const common = @import("../common.zig");
@@ -36,8 +13,6 @@ fn sourceInterfaceAtLevel(
     return common.sourceInterfaceFromLayers(layers, ilevel);
 }
 
-/// Purpose:
-///   Resolve the highest Fourier index required by the phase coefficients.
 fn maxPhaseCoefficientIndex(phase_coefficients: [basis.max_phase_coef]f64) usize {
     var max_index: usize = 0;
     for (1..basis.max_phase_coef) |idx| {
@@ -90,8 +65,6 @@ fn reuseLayerKernelIndex(
     return above_index;
 }
 
-/// Purpose:
-///   Compute TOA reflectance from the resolved LABOS internal radiation field.
 pub fn calcReflectance(
     ud: []const basis.UDField,
     end_level: usize,
@@ -102,31 +75,6 @@ pub fn calcReflectance(
     return ud[end_level].U.col[solar_col].get(view_idx);
 }
 
-/// Purpose:
-///   Compute the integrated reflectance using source-interface or quadrature
-///   carriers.
-///
-/// Physics:
-///   Integrates the local source term against the LABOS upwelling and
-///   downwelling fields, including the zero-Fourier direct term.
-///
-/// Vendor:
-///   `LABOS reflectance extraction`
-///
-/// Inputs:
-///   `layers` and `source_interfaces` describe the transport grid, `ud`
-///   carries the internal radiation field, and `i_fourier` selects the phase
-///   term.
-///
-/// Outputs:
-///   Returns the total reflectance contribution for the requested Fourier term.
-///
-/// Assumptions:
-///   The carrier arrays are aligned with the transport grid and any quadrature
-///   grid is already normalized to that layout.
-///
-/// Validation:
-///   `tests/unit/transport_labos_test.zig`
 pub fn calcIntegratedReflectance(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -155,14 +103,6 @@ pub fn calcIntegratedReflectance(
     );
 }
 
-/// Purpose:
-///   Compute the integrated reflectance using a caller-provided Fourier basis
-///   and optional layer phase-kernel cache.
-///
-/// Physics:
-///   Reuses the exact phase-kernel basis across interfaces and reuses already
-///   materialized layer kernels when the source-interface carrier is identical
-///   to the layer-above phase contract.
 pub fn calcIntegratedReflectanceWithBasis(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -278,8 +218,6 @@ pub fn calcIntegratedReflectanceWithBasis(
     return reflectance;
 }
 
-/// Purpose:
-///   Return the total non-negative scattering optical depth of the layer set.
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     var total: f64 = 0.0;
     for (layers) |layer| total += @max(layer.scattering_optical_depth, 0.0);
@@ -312,9 +250,6 @@ fn maxFourierIndexQuadrature(rtm_quadrature: common.RtmQuadratureGrid) usize {
     return max_index;
 }
 
-/// Purpose:
-///   Resolve the highest phase-coefficient index needed by the current
-///   transport input.
 pub fn resolvedPhaseCoefficientMax(input: common.ForwardInput) usize {
     var max_index = maxFourierIndex(input.layers);
     if (input.rtm_quadrature.isValidFor(input.layers.len)) {
@@ -325,18 +260,7 @@ pub fn resolvedPhaseCoefficientMax(input: common.ForwardInput) usize {
     return max_index;
 }
 
-/// Purpose:
-///   Resolve the highest Fourier term needed by the active transport input.
-///
-/// Vendor:
-///   `LABOS reflectance extraction`
-///
-/// Assumptions:
-///   The route has already resolved its layer and source-interface contract.
-///
-/// Validation:
-///   `tests/unit/transport_labos_test.zig`
-pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RtmControls) usize {
+pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RadiativeTransferControls) usize {
     _ = controls;
     if (input.layers.len == 0) return 0;
     // PARITY:

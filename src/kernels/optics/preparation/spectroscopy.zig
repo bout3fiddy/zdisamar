@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Resolve prepared spectroscopy inputs into active absorber species and
-//!   runtime mixing-ratio controls.
-//!
-//! Physics:
-//!   Normalizes absorber naming, selects active line absorbers, and applies
-//!   fallback mixing-ratio rules for prepared transport scenes.
-//!
-//! Vendor:
-//!   `spectroscopy preparation`
-//!
-//! Design:
-//!   Keeps absorber selection and mixing-ratio fallback logic in one place so
-//!   the builder can consume a typed spectroscopy contract.
-//!
-//! Invariants:
-//!   Active line species, continuum ownership, and fallback partitioning must
-//!   remain consistent with the scene's absorber set.
-//!
-//! Validation:
-//!   Optics-preparation transport tests.
-
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const ReferenceData = @import("../../../model/ReferenceData.zig");
@@ -32,8 +10,6 @@ const Allocator = std.mem.Allocator;
 const default_no2_volume_mixing_ratio = 5.0e-8;
 pub const default_o2_volume_mixing_ratio = 0.20946;
 
-/// Purpose:
-///   Collect the line-absorbing species active in the scene.
 pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
     var active = std.ArrayList(State.ActiveLineAbsorber).empty;
     defer active.deinit(allocator);
@@ -51,8 +27,6 @@ pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]
     return active.toOwnedSlice(allocator);
 }
 
-/// Purpose:
-///   Collect the cross-section absorbers active in the scene.
 pub fn collectActiveCrossSectionAbsorbers(
     allocator: Allocator,
     scene: *const Scene,
@@ -95,14 +69,10 @@ pub fn collectActiveCrossSectionAbsorbers(
     return active.toOwnedSlice(allocator);
 }
 
-/// Purpose:
-///   Resolve an absorber's canonical species identifier.
 pub fn resolvedAbsorberSpecies(absorber: AbsorberModel.Absorber) ?AbsorberModel.AbsorberSpecies {
     return AbsorberModel.resolvedAbsorberSpecies(absorber);
 }
 
-/// Purpose:
-///   Resolve the active line species for the current scene and line list.
 pub fn resolveActiveLineSpecies(
     active_line_absorber: ?State.ActiveLineAbsorber,
     line_list: ?ReferenceData.SpectroscopyLineList,
@@ -117,8 +87,6 @@ pub fn resolveActiveLineSpecies(
     return inferLineSpecies(spectroscopy_lines.lines);
 }
 
-/// Purpose:
-///   Resolve which species owns the continuum contribution.
 pub fn resolveContinuumOwnerSpecies(
     active_line_species: ?AbsorberModel.AbsorberSpecies,
     line_absorbers: []const State.PreparedLineAbsorber,
@@ -133,8 +101,6 @@ pub fn resolveContinuumOwnerSpecies(
     return null;
 }
 
-/// Purpose:
-///   Forward to the operational O2 spectroscopy evaluation hook.
 pub fn operationalO2EvaluationAtWavelength(
     operational_o2_lut: OperationalCrossSectionLut,
     wavelength_nm: f64,
@@ -149,8 +115,6 @@ pub fn operationalO2EvaluationAtWavelength(
     );
 }
 
-/// Purpose:
-///   Resolve a species mixing ratio at a pressure level.
 pub fn speciesMixingRatioAtPressure(
     scene: *const Scene,
     species: AbsorberModel.AbsorberSpecies,
@@ -170,8 +134,6 @@ pub fn speciesMixingRatioAtPressure(
     return default_fraction orelse defaultVolumeMixingRatioForScene(scene, species);
 }
 
-/// Purpose:
-///   Resolve the default volume mixing ratio for a species.
 pub fn defaultVolumeMixingRatio(species: AbsorberModel.AbsorberSpecies) ?f64 {
     return switch (species) {
         .no2, .trop_no2, .strat_no2 => default_no2_volume_mixing_ratio,

@@ -1,27 +1,3 @@
-//! Purpose:
-//!   Own LABOS inter-level attenuation tables and pseudo-spherical path-length
-//!   adjustments.
-//!
-//! Physics:
-//!   Computes direct-beam attenuation between transport levels and applies the
-//!   pseudo-spherical correction used for the top-level path.
-//!
-//! Vendor:
-//!   LABOS attenuation stages
-//!
-//! Design:
-//!   The attenuation builders are kept separate from the basis algebra so the
-//!   solver facade can share the same attenuation logic across the resolved and
-//!   synthetic single-layer paths.
-//!
-//! Invariants:
-//!   Plane-parallel attenuation is symmetric in level indices. Pseudo-spherical
-//!   corrections only change the top-level path segment.
-//!
-//! Validation:
-//!   See `tests/unit/transport_labos_test.zig` for attenuation smoke coverage
-//!   and scenario validation.
-
 const std = @import("std");
 const math = std.math;
 const Allocator = std.mem.Allocator;

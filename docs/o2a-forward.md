@@ -16,8 +16,8 @@ defer result.deinit(allocator);
 ```
 
 `Prepared` owns the resolved case, bundled data, prepared optics, and reusable
-measurement workspace. Callers should not pass a separate original case into the
-run step; `prepared.case` is the authoritative resolved scene.
+internal storage. Callers should not pass a separate original case into the run
+step; `prepared.case` is the authoritative resolved scene.
 
 The public root intentionally keeps only the literal O2A surface:
 
@@ -26,7 +26,8 @@ The public root intentionally keeps only the literal O2A surface:
 - `Data`
 - `Optics`
 - `Method`
-- `Work`
+- `RunStorage`
+- `RadiativeTransferControls`
 - `Result`
 - `Report`
 - `prepare`
@@ -34,5 +35,5 @@ The public root intentionally keeps only the literal O2A surface:
 - `writeReport`
 - `parity`
 
-The old split `loadData -> buildOptics -> runSpectrum` lifecycle is no longer
-public.
+Data loading, optical-property preparation, and spectrum generation are not
+separate public entrypoints.

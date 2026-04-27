@@ -1,14 +1,3 @@
-//! Purpose:
-//!   Expose a minimal C ABI around the retained O2A forward workflow.
-//!
-//! Physics:
-//!   Runs complete prepared O2A spectra through the native Zig engine; callers
-//!   receive bulk arrays rather than scalar per-wavelength entrypoints.
-//!
-//! Design:
-//!   The ABI is handle-based. Zig owns contexts and result arrays until the
-//!   matching destroy/free call is made.
-
 const std = @import("std");
 const zdisamar = @import("zdisamar");
 

@@ -1,4 +1,4 @@
-//! Mutation and selection helpers for spectroscopy line lists.
+// Mutation and selection helpers for spectroscopy line lists.
 
 const std = @import("std");
 const LineList = @import("line_list.zig");

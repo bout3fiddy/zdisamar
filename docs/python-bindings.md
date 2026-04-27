@@ -1,6 +1,10 @@
 # Python Bindings
 
-The first Python wrapper uses `ctypes` over the coarse C ABI in `src/api/c.zig`.
+Python bindings are deferred. The future interface should follow
+[`python-research-wrapper.md`](./python-research-wrapper.md) and use
+DISAMAR-facing language before any wrapper is implemented.
+
+The existing low-level C interface in `src/api/c.zig` is the native boundary.
 The native library owns contexts and spectrum arrays until the matching free or
 destroy call.
 

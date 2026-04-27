@@ -1,23 +1,3 @@
-//! Purpose:
-//!   Describe and query bundled reference-asset manifests.
-//!
-//! Physics:
-//!   Carry the bundle identity, upstream provenance, and asset index needed to
-//!   resolve typed scientific tables from bundled bytes.
-//!
-//! Vendor:
-//!   `reference asset bundle manifest`
-//!
-//! Design:
-//!   Keep manifest resolution separate from hydration so the loader can treat
-//!   path lookup, hash verification, and parsing as distinct steps.
-//!
-//! Invariants:
-//!   Manifest asset ids must resolve to exactly one asset entry when present.
-//!
-//! Validation:
-//!   Reference-asset loader tests.
-
 const std = @import("std");
 
 pub const BundleManifest = struct {

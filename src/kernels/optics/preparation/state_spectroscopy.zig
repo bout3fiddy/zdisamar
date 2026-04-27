@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Hold spectroscopy and CIA evaluation helpers for prepared optical state
-//!   reuse.
-
 const OperationalO2 = @import("operational_o2.zig");
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const LineListEval = @import("../../../model/reference/spectroscopy/line_list_eval.zig");
@@ -14,21 +10,6 @@ const PreparedOpticalState = PreparedState.PreparedOpticalState;
 const PreparedSublayer = Types.PreparedSublayer;
 const max_spectroscopy_profile_nodes: usize = 256;
 
-/// Purpose:
-///   Cache one wavelength's line-list cross sections at the atmospheric
-///   profile nodes used by the vendor spectroscopy path.
-///
-/// Physics:
-///   DISAMAR evaluates O2 line absorption on climatology/profile levels and
-///   splines those cross sections onto RTM support altitudes. The cache keeps
-///   that profile-node state local to one wavelength so hot transport carriers
-///   do not rebuild it for every quadrature altitude.
-///
-/// Units:
-///   Altitudes are kilometers and cross sections are cm^2 per molecule.
-///
-/// Validation:
-///   Exercised by the O2 A validation and plot-bundle parity lanes.
 pub const ProfileNodeSpectroscopyCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},

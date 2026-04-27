@@ -1,38 +1,13 @@
-//! Purpose:
-//!   Define the canonical measurement configuration used by forward simulation and
-//!   retrieval requests.
-//!
-//! Physics:
-//!   Measurements describe which observable is sampled on which wavelength grid, which
-//!   spectral windows are masked, and how observation-noise covariance is sourced.
-//!
-//! Vendor:
-//!   `measurement vector and spectral mask stage`
-//!
-//! Design:
-//!   The Zig model keeps measurement intent as typed fields and bindings instead of
-//!   spreading stage-product names and mask state across loosely coupled config blocks.
-//!
-//! Invariants:
-//!   Measurements must request at least one sample, excluded windows remain ordered and
-//!   non-overlapping, and covariance configuration is explicit through the error model.
-//!
-//! Validation:
-//!   Unit tests below exercise mask ordering, sample selection, and error-model checks.
 const std = @import("std");
 const Binding = @import("Binding.zig").Binding;
 const SpectralWindow = @import("Bands.zig").SpectralWindow;
 const errors = @import("../core/errors.zig");
 const Allocator = std.mem.Allocator;
 
-/// Purpose:
-///   Describe wavelength windows to exclude from a retrieved or simulated measurement.
 pub const SpectralMask = struct {
     band: []const u8 = "",
     exclude: []const SpectralWindow = &[_]SpectralWindow{},
 
-    /// Purpose:
-    ///   Ensure excluded windows are individually valid and monotonically ordered.
     pub fn validate(self: SpectralMask) errors.Error!void {
         var previous_end_nm: f64 = 0.0;
         for (self.exclude, 0..) |window, index| {
@@ -44,28 +19,20 @@ pub const SpectralMask = struct {
         }
     }
 
-    /// Purpose:
-    ///   Release allocator-owned excluded windows.
     pub fn deinitOwned(self: *SpectralMask, allocator: Allocator) void {
         if (self.exclude.len != 0) allocator.free(self.exclude);
         self.* = .{};
     }
 };
 
-/// Purpose:
-///   Describe how the measurement covariance is defined.
 pub const ErrorModel = struct {
     from_source_noise: bool = false,
     floor: f64 = 0.0,
 
-    /// Purpose:
-    ///   Report whether the error model defines a covariance contribution.
     pub fn definesCovariance(self: ErrorModel) bool {
         return self.from_source_noise or self.floor > 0.0;
     }
 
-    /// Purpose:
-    ///   Ensure the covariance floor is finite and non-negative.
     pub fn validate(self: ErrorModel) errors.Error!void {
         if (!std.math.isFinite(self.floor) or self.floor < 0.0) {
             return errors.Error.InvalidRequest;
@@ -73,16 +40,12 @@ pub const ErrorModel = struct {
     }
 };
 
-/// Purpose:
-///   Enumerate the physical quantity carried by a measurement vector.
 pub const Quantity = enum {
     radiance,
     irradiance,
     reflectance,
     slant_column,
 
-    /// Purpose:
-    ///   Parse a serialized observable label into the typed quantity enum.
     pub fn parse(value: []const u8) errors.Error!Quantity {
         if (std.mem.eql(u8, value, "radiance")) return .radiance;
         if (std.mem.eql(u8, value, "irradiance")) return .irradiance;
@@ -91,15 +54,11 @@ pub const Quantity = enum {
         return errors.Error.InvalidRequest;
     }
 
-    /// Purpose:
-    ///   Return the canonical serialized label for the observable.
     pub fn label(self: Quantity) []const u8 {
         return @tagName(self);
     }
 };
 
-/// Purpose:
-///   Describe one measurement product requested from forward or retrieval execution.
 pub const Measurement = struct {
     product_name: []const u8 = "",
     observable: Quantity = .radiance,
@@ -111,8 +70,6 @@ pub const Measurement = struct {
     mask: SpectralMask = .{},
     error_model: ErrorModel = .{},
 
-    /// Purpose:
-    ///   Ensure the measurement specification is internally consistent.
     pub fn validate(self: Measurement) errors.Error!void {
         if (self.sample_count == 0) return errors.Error.InvalidRequest;
         try self.source.validate();
@@ -120,15 +77,11 @@ pub const Measurement = struct {
         try self.error_model.validate();
     }
 
-    /// Purpose:
-    ///   Resolve the effective output product name for the measurement.
     pub fn resolvedProductName(self: Measurement) []const u8 {
         if (self.product_name.len != 0) return self.product_name;
         return self.observable.label();
     }
 
-    /// Purpose:
-    ///   Report whether the wavelength survives the configured exclusion mask.
     pub fn includesWavelength(self: Measurement, wavelength_nm: f64) bool {
         _ = self.mask.band;
         for (self.mask.exclude) |window| {
@@ -139,8 +92,6 @@ pub const Measurement = struct {
         return true;
     }
 
-    /// Purpose:
-    ///   Count how many wavelengths remain after applying the exclusion mask.
     pub fn selectedSampleCount(self: Measurement, wavelengths_nm: []const f64) u32 {
         var count: u32 = 0;
         for (wavelengths_nm) |wavelength_nm| {
@@ -149,16 +100,12 @@ pub const Measurement = struct {
         return count;
     }
 
-    /// Purpose:
-    ///   Release allocator-owned mask storage.
     pub fn deinitOwned(self: *Measurement, allocator: Allocator) void {
         self.mask.deinitOwned(allocator);
         self.* = .{};
     }
 };
 
-/// Purpose:
-///   Alias used when the measurement is treated as a state- or observation-vector entry.
 pub const MeasurementVector = Measurement;
 
 test "measurement validates source masks and error model" {

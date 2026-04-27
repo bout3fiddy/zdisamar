@@ -1,30 +1,3 @@
-//! Purpose:
-//!   Provide a narrow internal API for running the committed executable O2A
-//!   parity YAML case from product helpers and validation tests.
-//!
-//! Physics:
-//!   The loaded document expresses the retained DISAMAR-inspired O2 A-band
-//!   parity scene: geometry, pressure-interval placement, aerosol placement,
-//!   line-by-line O2 controls, optional O2-O2 CIA, and scalar RTM controls.
-//!
-//! Vendor:
-//!   `readConfigFileModule::GENERAL/INSTRUMENT/ATMOSPHERIC_INTERVALS/AEROSOL/O2/O2-O2`
-//!   and `verifyConfigFileModule::fit-interval and interval-grid checks`
-//!
-//! Design:
-//!   This module keeps the YAML adapter at the edge. Callers load the committed
-//!   parity YAML, optionally apply a small typed override bundle, and then run
-//!   the shared parity support helpers against that resolved case.
-//!
-//! Invariants:
-//!   The executable YAML remains the source of truth for the retained parity
-//!   case, while overrides stay small and local to tests and validation helpers.
-//!
-//! Validation:
-//!   `tests/validation/o2a_yaml_parity_runtime_test.zig`,
-//!   `tests/validation/o2a_forward_shape_test.zig`,
-//!   and `tests/validation/o2a_vendor_reflectance_assessment_test.zig`.
-
 const std = @import("std");
 const parity_config = @import("../../adapters/o2a_parity_config.zig");
 const parity_support = @import("vendor_parity_support.zig");

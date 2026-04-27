@@ -1,42 +1,18 @@
-//! Purpose:
-//!   Define the shared transport contract for route selection, layer inputs,
-//!   quadrature carriers, and forward results.
-//!
-//! Physics:
-//!   Encodes the transport-side bookkeeping for optical depth, scattering,
-//!   source-function weights, and pseudo-spherical geometry used by both
-//!   adding-method and LABOS execution paths.
-//!
-//! Vendor:
-//!   `transport controls` and `transport route selection`
-//!
-//! Design:
-//!   Keeps the transport kernel typed around explicit route and layer carriers
-//!   instead of exposing the adapter- or config-shaped mutation model.
-//!
-//! Invariants:
-//!   Route validation must happen before execution. Layer and source-interface
-//!   arrays remain aligned with the transport grid.
-//!
-//! Validation:
-//!   `tests/unit/transport_common_test.zig` and the transport integration
-//!   suites.
-
 const std = @import("std");
 const SceneModel = @import("../../model/Scene.zig");
 const phase_functions = @import("../optics/prepare/phase_functions.zig");
 
 pub const phase_coefficient_count = phase_functions.phase_coefficient_count;
 
-/// Atmospheric scattering treatment.
+// Atmospheric scattering treatment.
 pub const ScatteringMode = enum(u2) {
     none = 0,
     single = 1,
     multiple = 2,
 };
 
-/// Resolved transport controls compiled from canonical configuration.
-pub const RtmControls = struct {
+// Resolved radiative transfer controls compiled from canonical configuration.
+pub const RadiativeTransferControls = struct {
     scattering: ScatteringMode = .multiple,
     n_streams: u16 = 16,
     use_adding: bool = false,
@@ -51,48 +27,48 @@ pub const RtmControls = struct {
     renorm_phase_function: bool = true,
     stokes_dimension: u8 = 1,
 
-    pub fn nGauss(self: RtmControls) u16 {
+    pub fn nGauss(self: RadiativeTransferControls) u16 {
         return self.n_streams / 2;
     }
 
-    pub fn validate(self: RtmControls, execution_mode: ExecutionMode) PrepareError!void {
+    pub fn validate(self: RadiativeTransferControls, execution_mode: ExecutionMode) PrepareError!void {
         if (self.n_streams < 4 or (self.n_streams % 2) != 0) {
-            return error.UnsupportedRtmControls;
+            return error.UnsupportedRadiativeTransferControls;
         }
         switch (self.nGauss()) {
             2, 3, 4, 8, 10 => {},
-            else => return error.UnsupportedRtmControls,
+            else => return error.UnsupportedRadiativeTransferControls,
         }
         if (self.use_adding and self.scattering == .single) {
-            return error.UnsupportedRtmControls;
+            return error.UnsupportedRadiativeTransferControls;
         }
         if (self.stokes_dimension != 1 and execution_mode == .scalar) {
-            return error.UnsupportedRtmControls;
+            return error.UnsupportedRadiativeTransferControls;
         }
         if (self.threshold_conv_first <= 0.0 or
             self.threshold_conv_mult <= 0.0 or
             self.threshold_doubl <= 0.0 or
             self.threshold_mul <= 0.0)
         {
-            return error.UnsupportedRtmControls;
+            return error.UnsupportedRadiativeTransferControls;
         }
     }
 
-    pub fn resolvedNumOrdersMax(self: RtmControls, scattering_optical_depth: f64) u16 {
+    pub fn resolvedNumOrdersMax(self: RadiativeTransferControls, scattering_optical_depth: f64) u16 {
         if (self.num_orders_max != 0) return self.num_orders_max;
         const heuristic = @max(scattering_optical_depth, 0.0) + 15.0;
         return @intFromFloat(std.math.clamp(heuristic, 1.0, @as(f64, std.math.maxInt(u16))));
     }
 
-    pub fn nDirections(self: RtmControls) u16 {
+    pub fn nDirections(self: RadiativeTransferControls) u16 {
         return self.nGauss() + 2;
     }
 
-    pub fn supermatrixSize(self: RtmControls) u32 {
+    pub fn supermatrixSize(self: RadiativeTransferControls) u32 {
         return @as(u32, self.nDirections()) * @as(u32, self.stokes_dimension);
     }
 
-    pub const default_vendor = RtmControls{
+    pub const default_vendor = RadiativeTransferControls{
         .scattering = .multiple,
         .n_streams = 16,
         .use_adding = false,
@@ -152,7 +128,7 @@ pub const DispatchRequest = struct {
     regime: Regime = .nadir,
     execution_mode: ExecutionMode = .scalar,
     derivative_mode: DerivativeMode = .none,
-    rtm_controls: RtmControls = .{},
+    rtm_controls: RadiativeTransferControls = .{},
 };
 
 pub const Route = struct {
@@ -160,7 +136,7 @@ pub const Route = struct {
     regime: Regime,
     execution_mode: ExecutionMode,
     derivative_mode: DerivativeMode,
-    rtm_controls: RtmControls = .{},
+    rtm_controls: RadiativeTransferControls = .{},
 
     pub fn derivativeSemantics(self: Route) DerivativeSemantics {
         if (self.derivative_mode == .none) return .none;
@@ -275,7 +251,7 @@ pub const ForwardInput = struct {
     source_interfaces: []const SourceInterfaceInput = &.{},
     rtm_quadrature: RtmQuadratureGrid = .{},
     pseudo_spherical_grid: PseudoSphericalGrid = .{},
-    rtm_controls: RtmControls = .{},
+    rtm_controls: RadiativeTransferControls = .{},
 };
 
 pub const ForwardResult = struct {
@@ -290,7 +266,7 @@ pub const ForwardResult = struct {
 pub const PrepareError = error{
     UnsupportedDerivativeMode,
     UnsupportedExecutionMode,
-    UnsupportedRtmControls,
+    UnsupportedRadiativeTransferControls,
 };
 
 pub const ExecuteError = PrepareError || error{

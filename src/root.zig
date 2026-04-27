@@ -1,23 +1,3 @@
-//! Purpose:
-//!   Public Zig entrypoint for the O2A forward-model lab.
-//!
-//! Physics:
-//!   Re-exports the O2A case, data, optics, solver controls, spectral runner,
-//!   and reporting surface used by the exact scalar forward path.
-//!
-//! Design:
-//!   Keep the shipped surface small and literal: case, data, optics, spectrum,
-//!   and report. Generic engine, plugin, retrieval, and ABI layers are not
-//!   part of the public library anymore.
-//!
-//! Invariants:
-//!   Public consumers do not gain access to engine-plan-workspace scaffolding
-//!   or plugin/provider resolution APIs.
-//!
-//! Validation:
-//!   The root-level tests in this file verify the intended O2A-only export
-//!   surface.
-
 const std = @import("std");
 const o2a = @import("o2a.zig");
 
@@ -25,10 +5,10 @@ pub const Case = o2a.Case;
 pub const Data = o2a.Data;
 pub const Optics = o2a.Optics;
 pub const Method = o2a.Method;
-pub const Work = o2a.Work;
+pub const RunStorage = o2a.RunStorage;
 pub const Result = o2a.Result;
 pub const Report = o2a.Report;
-pub const RtmControls = o2a.RtmControls;
+pub const RadiativeTransferControls = o2a.RadiativeTransferControls;
 pub const Prepared = o2a.Prepared;
 pub const parity = o2a.parity;
 pub const report = o2a.report;
@@ -42,7 +22,7 @@ test "public root exposes the O2A forward lab surface" {
     try std.testing.expect(@hasDecl(@This(), "Data"));
     try std.testing.expect(@hasDecl(@This(), "Optics"));
     try std.testing.expect(@hasDecl(@This(), "Method"));
-    try std.testing.expect(@hasDecl(@This(), "Work"));
+    try std.testing.expect(@hasDecl(@This(), "RunStorage"));
     try std.testing.expect(@hasDecl(@This(), "Result"));
     try std.testing.expect(@hasDecl(@This(), "Report"));
     try std.testing.expect(@hasDecl(@This(), "Prepared"));
@@ -52,7 +32,7 @@ test "public root exposes the O2A forward lab surface" {
     try std.testing.expect(@hasDecl(@This(), "writeReport"));
 }
 
-test "public root no longer exposes engine or plugin scaffolding" {
+test "public root no longer exposes removed framework scaffolding" {
     try std.testing.expect(!@hasDecl(@This(), "Engine"));
     try std.testing.expect(!@hasDecl(@This(), "PreparedPlan"));
     try std.testing.expect(!@hasDecl(@This(), "Workspace"));

@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Re-export the typed atmosphere carriers from dedicated single-purpose
-//!   modules.
-
 pub const IntervalSemantics = @import("atmosphere/types.zig").IntervalSemantics;
 pub const ParticlePlacementSemantics = @import("atmosphere/types.zig").ParticlePlacementSemantics;
 pub const FractionTarget = @import("atmosphere/types.zig").FractionTarget;

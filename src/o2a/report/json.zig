@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Provide lightweight O2A product report helpers.
-
 const std = @import("std");
 const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 

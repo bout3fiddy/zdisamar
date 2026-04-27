@@ -85,18 +85,6 @@ pub fn buildAdaptiveIntegrationKernel(
     );
 }
 
-/// Purpose:
-///   Materialize the full DISAMAR-style adaptive HR wavelength support without
-///   narrowing it to one measured-channel slit window.
-///
-/// Vendor:
-///   `DISAMARModule::setupHRWavelengthGrid`
-///
-/// Decisions:
-///   Integration kernels select a per-nominal support subset from this same
-///   interval plan. Weak-line cutoff parity needs the global index space,
-///   because `HITRANModule::CalculatAbsXsec` compares cutoff endpoints against
-///   indices on the complete high-resolution grid.
 pub fn buildAdaptiveSupportWavelengths(
     allocator: Allocator,
     scene: *const Scene,
@@ -494,7 +482,7 @@ fn fillAdaptiveUnitGauss(
         //   DISAMAR `mathTools::GaussDivPoints` uses a QL eigensolve and
         //   returns nodes/weights already scaled to [0, 1]. The tiny
         //   last-bit differences from the generic Newton rule are visible in
-        //   steep O2A solar support samples.
+        //   steep O2A solar high-resolution wavelength samples.
         return gauss_legendre.fillDisamarDivPoints01(@intCast(order), nodes_01[0..order], weights_01[0..order]);
     }
 

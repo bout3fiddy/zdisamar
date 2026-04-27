@@ -118,8 +118,8 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
             return;
         }
         // PARITY:
-        //   Strong-line table kernels bypass the legacy slit convolution when
-        //   the table can provide a normalized kernel directly.
+        //   Strong-line table routines bypass the legacy slit convolution when
+        //   the table can provide a normalized routine directly.
         kernel.enabled = true;
         return;
     }
@@ -202,7 +202,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
             for (0..sample_count) |index| kernel.weights[index] /= total_weight;
         }
         // PARITY:
-        //   High-resolution measurement kernels are normalized in place rather
+        //   High-resolution measurement routines are normalized in place rather
         //   than routed through the legacy slit-convolution stage.
         kernel.enabled = true;
         kernel.sample_count = sample_count;
@@ -274,7 +274,7 @@ pub fn prepareAdaptiveKernelCache(
 pub fn slitKernelForScene(scene: *const Scene, channel: SpectralChannel) [5]f64 {
     const response = scene.observation_model.resolvedChannelControls(channel).response;
     // PARITY:
-    //   The default slit kernel remains a five-point symmetric kernel so the
+    //   The default slit routine remains a five-point symmetric routine so the
     //   legacy convolution shape stays recognizable when explicit line-shape
     //   metadata is absent.
     if (response.fwhm_nm <= 0.0) {

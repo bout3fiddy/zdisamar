@@ -1,39 +1,13 @@
-//! Purpose:
-//!   Define the canonical retrieval state-vector contract.
-//!
-//! Physics:
-//!   Captures named retrievable parameters, their target quantities, transforms, priors, and
-//!   bounds for inverse methods.
-//!
-//! Vendor:
-//!   `state-vector contract`
-//!
-//! Design:
-//!   Keep the retrieval parameter namespace typed and explicit while preserving room for
-//!   parsed-but-not-yet-wired vendor targets.
-//!
-//! Invariants:
-//!   Parameter names must be unique at the caller level, targets must be wired for the current
-//!   engine, and transform-specific prior/bounds constraints must hold.
-//!
-//! Validation:
-//!   State-vector validation tests in this file plus retrieval integration tests that materialize
-//!   solver-space state from canonical parameters.
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const errors = @import("../core/errors.zig");
 
-/// Purpose:
-///   Select the solver-space transform applied to a physical retrieval parameter.
 pub const Transform = enum {
     none,
     log,
     logit,
 };
 
-/// Purpose:
-///   Identify which physical quantity a retrieval parameter controls.
 pub const Target = enum {
     unset,
     surface_albedo,
@@ -44,15 +18,13 @@ pub const Target = enum {
     wavelength_shift_nm,
     multiplicative_offset,
     stray_light,
-    /// Vendor retrieval target: total or partial column amount of an absorber.
+    // Vendor retrieval target: total or partial column amount of an absorber.
     absorber_column_amount,
-    /// Vendor retrieval target: temperature profile shift (K).
+    // Vendor retrieval target: temperature profile shift (K).
     temperature_shift,
-    /// Vendor retrieval target: cloud top pressure or altitude.
+    // Vendor retrieval target: cloud top pressure or altitude.
     cloud_top_pressure,
 
-    /// Purpose:
-    ///   Parse the stable public target label into the typed target enum.
     pub fn parse(text: []const u8) errors.Error!Target {
         if (std.mem.eql(u8, text, "scene.surface.albedo")) return .surface_albedo;
         if (std.mem.eql(u8, text, "scene.aerosols.plume.optical_depth_550_nm")) return .aerosol_optical_depth_550_nm;
@@ -68,8 +40,6 @@ pub const Target = enum {
         return errors.Error.InvalidRequest;
     }
 
-    /// Purpose:
-    ///   Return the stable public label for this retrieval target.
     pub fn label(self: Target) []const u8 {
         return switch (self) {
             .unset => "",
@@ -88,15 +58,11 @@ pub const Target = enum {
     }
 };
 
-/// Purpose:
-///   Define optional lower/upper bounds for one retrieval parameter.
 pub const Bounds = struct {
     enabled: bool = false,
     min: f64 = 0.0,
     max: f64 = 0.0,
 
-    /// Purpose:
-    ///   Validate enabled bounds for finite ordered endpoints.
     pub fn validate(self: Bounds) errors.Error!void {
         if (!self.enabled) return;
         if (!std.math.isFinite(self.min) or !std.math.isFinite(self.max) or self.max < self.min) {
@@ -105,15 +71,11 @@ pub const Bounds = struct {
     }
 };
 
-/// Purpose:
-///   Define an optional Gaussian prior for one retrieval parameter.
 pub const Prior = struct {
     enabled: bool = false,
     mean: f64 = 0.0,
     sigma: f64 = 0.0,
 
-    /// Purpose:
-    ///   Validate an enabled prior for finite mean and positive sigma.
     pub fn validate(self: Prior) errors.Error!void {
         if (!self.enabled) return;
         if (!std.math.isFinite(self.mean) or !std.math.isFinite(self.sigma) or self.sigma <= 0.0) {
@@ -122,8 +84,6 @@ pub const Prior = struct {
     }
 };
 
-/// Purpose:
-///   Describe one retrievable parameter in the canonical state vector.
 pub const Parameter = struct {
     name: []const u8 = "",
     target: Target = .unset,
@@ -131,8 +91,6 @@ pub const Parameter = struct {
     prior: Prior = .{},
     bounds: Bounds = .{},
 
-    /// Purpose:
-    ///   Validate the target, transform, prior, and bounds for one retrieval parameter.
     pub fn validate(self: Parameter) errors.Error!void {
         if (self.name.len == 0 or self.target == .unset) {
             return errors.Error.InvalidRequest;
@@ -169,22 +127,15 @@ pub const Parameter = struct {
     }
 };
 
-/// Purpose:
-///   Store the ordered retrieval parameters used by an inverse problem.
 pub const StateVector = struct {
     value_count: u32 = 0,
     parameters: []const Parameter = &[_]Parameter{},
 
-    /// Purpose:
-    ///   Return the effective state length, preferring explicit parameter descriptors when
-    ///   present.
     pub fn count(self: StateVector) u32 {
         if (self.parameters.len != 0) return @intCast(self.parameters.len);
         return self.value_count;
     }
 
-    /// Purpose:
-    ///   Find the index of a named retrieval parameter.
     pub fn parameterIndex(self: StateVector, name: []const u8) ?usize {
         for (self.parameters, 0..) |parameter, index| {
             if (std.mem.eql(u8, parameter.name, name)) return index;
@@ -192,8 +143,6 @@ pub const StateVector = struct {
         return null;
     }
 
-    /// Purpose:
-    ///   Validate the state-vector contract and any explicit parameter descriptors.
     pub fn validate(self: StateVector) errors.Error!void {
         if (self.parameters.len == 0) {
             if (self.value_count == 0) return errors.Error.InvalidRequest;
@@ -209,8 +158,6 @@ pub const StateVector = struct {
         }
     }
 
-    /// Purpose:
-    ///   Release any owned parameter array attached to the state vector.
     pub fn deinitOwned(self: *StateVector, allocator: Allocator) void {
         if (self.parameters.len != 0) allocator.free(self.parameters);
         self.* = .{};

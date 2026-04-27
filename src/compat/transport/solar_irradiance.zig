@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Own the retained solar-spectrum precedence rules used by measurement
-//!   spectral evaluation.
-//!
-//! Physics:
-//!   Resolves operational solar irradiance from explicit band support, bundled
-//!   O2 A defaults, or the legacy continuum fallback.
-//!
-//! Vendor:
-//!   `measurement spectral solar precedence`
-//!
-//! Design:
-//!   Keep fallback precedence and bundled-reference tables out of the hot
-//!   measurement evaluation file so the transport logic stays focused.
-//!
-//! Invariants:
-//!   Explicit operational spectra take precedence, bundled defaults stay
-//!   band-limited, and the returned irradiance is always positive.
-//!
-//! Validation:
-//!   Measurement spectral-evaluation tests cover bundled and continuum solar
-//!   fallback behavior through the public transport entrypoints.
-
 const std = @import("std");
 const Scene = @import("../../model/Scene.zig").Scene;
 

@@ -1,10 +1,3 @@
-//! Purpose:
-//!   Compile the retained O2A parity YAML tree into typed runtime contracts.
-//!
-//! Design:
-//!   Keep the scene compiler focused on semantic resolution. Scene input bindings live in a
-//!   sibling module, while parsing and output emission stay separate.
-
 const std = @import("std");
 const parser = @import("o2a_parity_parser.zig");
 const common = @import("o2a_parity_compile_common.zig");
@@ -13,7 +6,7 @@ const output = @import("o2a_parity_output.zig");
 
 const AtmosphereModel = @import("../model/Atmosphere.zig");
 const SpectralGrid = @import("../model/Spectrum.zig").SpectralGrid;
-const RtmControls = @import("../kernels/transport/common.zig").RtmControls;
+const RadiativeTransferControls = @import("../kernels/transport/common.zig").RadiativeTransferControls;
 const parity_runtime = @import("../o2a/data/vendor_parity_runtime.zig");
 
 const Allocator = std.mem.Allocator;
@@ -110,7 +103,7 @@ const CompiledScene = struct {
     observation: parity_runtime.ObservationSpec,
     o2: parity_runtime.LineGasSpec,
     o2o2: parity_runtime.CiaSpec,
-    rtm_controls: RtmControls,
+    rtm_controls: RadiativeTransferControls,
 };
 
 const CompiledAtmosphere = struct {
@@ -201,7 +194,7 @@ fn compileScene(
     const surface_albedo = try scene_inputs.compileSurface(try common.expectMap(try common.requiredField(map, "surface")));
     const aerosol = try scene_inputs.compileAerosol(try common.expectMap(try common.requiredField(map, "aerosols")));
     const observation = try scene_inputs.compileObservation(try common.expectMap(try common.requiredField(map, "measurement_model")), assets);
-    const rtm_controls = try scene_inputs.compileRtmControls(try common.expectMap(try common.requiredField(map, "rtm")));
+    const rtm_controls = try scene_inputs.compileRadiativeTransferControls(try common.expectMap(try common.requiredField(map, "rtm")));
 
     const atmosphere_profile_asset = try lookupAsset(assets, try common.requiredString(atmosphere.profile_source_map, "asset"));
     const solar_reference_asset = try lookupAsset(assets, observation.solar_reference_asset_id);

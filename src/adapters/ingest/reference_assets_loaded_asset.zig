@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Represent a hydrated reference asset and convert it into typed reference
-//!   data.
-//!
-//! Physics:
-//!   Preserve the manifest provenance, numeric payload, and table-to-typed
-//!   conversion rules for bundled climatology, spectroscopy, CIA, LUT, and
-//!   Mie assets.
-//!
-//! Vendor:
-//!   `reference asset hydration and typed conversion`
-//!
-//! Design:
-//!   Keep the loaded-asset carrier and its conversion methods together so the
-//!   root loader can stay focused on file resolution and hashing.
-//!
-//! Invariants:
-//!   Owned strings and buffers are released exactly once, and typed outputs
-//!   preserve the original row order and column contracts.
-//!
-//! Validation:
-//!   Reference-asset loader tests.
-
 const std = @import("std");
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const types = @import("reference_assets_types.zig");
@@ -38,12 +15,6 @@ pub const LoadedAsset = struct {
     values: []f64,
     row_count: u32,
 
-    /// Purpose:
-    ///   Release all owned strings and numeric buffers for a loaded asset.
-    ///
-    /// Invariants:
-    ///   Every allocation in the asset must be freed exactly once before the
-    ///   struct is reused.
     pub fn deinit(self: *LoadedAsset, allocator: std.mem.Allocator) void {
         allocator.free(self.bundle_manifest_path);
         allocator.free(self.bundle_id);
@@ -58,23 +29,14 @@ pub const LoadedAsset = struct {
         self.* = undefined;
     }
 
-    /// Purpose:
-    ///   Report how many numeric columns the asset contains.
     pub fn columnCount(self: LoadedAsset) usize {
         return self.column_names.len;
     }
 
-    /// Purpose:
-    ///   Read one numeric cell from the loaded table.
     pub fn value(self: LoadedAsset, row_index: usize, column_index: usize) f64 {
         return self.values[row_index * self.column_names.len + column_index];
     }
 
-    /// Purpose:
-    ///   Register the loaded asset with the engine caches.
-    ///
-    /// Physics:
-    ///   Publish the dataset hash and, for LUTs, the derived shape metadata.
     pub fn registerWithEngine(self: LoadedAsset, engine: anytype) !void {
         try engine.registerDatasetArtifact(self.dataset_id, self.dataset_hash);
         if (self.kind == .lookup_table) {
@@ -86,11 +48,6 @@ pub const LoadedAsset = struct {
         }
     }
 
-    /// Purpose:
-    ///   Materialize a climatology profile from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Convert the table rows into typed atmospheric profile points.
     pub fn toClimatologyProfile(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.ClimatologyProfile {
         if (self.kind != .climatology_profile or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -115,12 +72,6 @@ pub const LoadedAsset = struct {
         return .{ .rows = rows };
     }
 
-    /// Purpose:
-    ///   Materialize a cross-section table from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Convert wavelength and cross-section columns into typed interpolation
-    ///   points.
     pub fn toCrossSectionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CrossSectionTable {
         if (self.kind != .cross_section_table or self.columnCount() != 2) return error.InvalidAssetKind;
         if (!std.mem.eql(u8, self.column_names[0], "wavelength_nm")) return error.InvalidColumns;
@@ -139,12 +90,6 @@ pub const LoadedAsset = struct {
         return .{ .points = points };
     }
 
-    /// Purpose:
-    ///   Materialize a CIA table from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Convert the fixed CIA polynomial coefficients into typed absorption
-    ///   points.
     pub fn toCollisionInducedAbsorptionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CollisionInducedAbsorptionTable {
         if (self.kind != .collision_induced_absorption_table or self.columnCount() != 5) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -173,11 +118,6 @@ pub const LoadedAsset = struct {
         };
     }
 
-    /// Purpose:
-    ///   Materialize a spectroscopy line list from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Convert HITRAN-style line rows into typed spectroscopy lines.
     pub fn toSpectroscopyLineList(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLineList {
         if (self.kind != .spectroscopy_line_list) return error.InvalidAssetKind;
         const has_source_cm1_fields = columnNamesContain(self.column_names, "center_wavenumber_cm1");
@@ -286,12 +226,6 @@ pub const LoadedAsset = struct {
         return .{ .lines = lines };
     }
 
-    /// Purpose:
-    ///   Materialize a strong-line sidecar set from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Preserve the O2A strong-line augmentation rows and the relaxation
-    ///   metadata used by the reference line-selection path.
     pub fn toSpectroscopyStrongLineSet(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyStrongLineSet {
         if (self.kind != .spectroscopy_strong_line_set or self.columnCount() != 12) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -333,8 +267,6 @@ pub const LoadedAsset = struct {
         return .{ .lines = lines };
     }
 
-    /// Purpose:
-    ///   Materialize a relaxation matrix from the generic loaded table.
     pub fn toSpectroscopyRelaxationMatrix(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.RelaxationMatrix {
         if (self.kind != .spectroscopy_relaxation_matrix or self.columnCount() != 2) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -363,8 +295,6 @@ pub const LoadedAsset = struct {
         };
     }
 
-    /// Purpose:
-    ///   Materialize an airmass-factor LUT from the generic loaded table.
     pub fn toAirmassFactorLut(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.AirmassFactorLut {
         if (self.kind != .lookup_table or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectAirmassFactorColumns(self.column_names);
@@ -385,8 +315,6 @@ pub const LoadedAsset = struct {
         return .{ .points = points };
     }
 
-    /// Purpose:
-    ///   Materialize a Mie phase table from the generic loaded table.
     pub fn toMiePhaseTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.MiePhaseTable {
         if (self.kind != .mie_phase_table or self.columnCount() != 7) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{

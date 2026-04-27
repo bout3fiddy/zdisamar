@@ -1,47 +1,15 @@
-//! Purpose:
-//!   Share small spectral-sampling helpers across calibration and noise kernels.
-//!
-//! Physics:
-//!   Provides clamped interpolation on sparse wavelength nodes without
-//!   changing the units of the sampled quantity.
-//!
-//! Vendor:
-//!   `spectral node sampling`
-//!
-//! Design:
-//!   Keeps identical interpolation arithmetic in one pure helper so spectral
-//!   kernels stay numerically aligned without duplicating loop structure.
-//!
-//! Invariants:
-//!   Input axes must be non-empty and shape-compatible. The unchecked entry
-//!   point also assumes a monotonic wavelength axis.
-//!
-//! Validation:
-//!   Exercised through the calibration and noise helper tests, plus the local
-//!   clamped-sampling test below.
-
 const std = @import("std");
 
 pub const Error = error{
     ShapeMismatch,
 };
 
-/// Purpose:
-///   Sample a sparse wavelength axis using clamped linear interpolation.
-///
-/// Assumptions:
-///   `x` and `y` are shape-compatible and ordered on the same spectral axis.
 pub fn sampleLinearClamped(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
     if (x.len != y.len) return error.ShapeMismatch;
     if (x.len == 0) return error.ShapeMismatch;
     return sampleLinearClampedAssumeValid(x, y, target_x);
 }
 
-/// Purpose:
-///   Sample a validated sparse wavelength axis using clamped linear interpolation.
-///
-/// Assumptions:
-///   Caller already validated that `x.len == y.len` and `x.len > 0`.
 pub fn sampleLinearClampedAssumeValid(x: []const f64, y: []const f64, target_x: f64) f64 {
     std.debug.assert(x.len == y.len);
     std.debug.assert(x.len != 0);

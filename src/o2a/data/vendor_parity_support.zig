@@ -1,31 +1,3 @@
-//! Purpose:
-//!   Own the retained O2A parity execution and assessment helpers
-//!   now that YAML is the source of truth for case assembly.
-//!
-//! Physics:
-//!   This module runs the committed O2 A-band parity scene through optics
-//!   preparation and measurement-space simulation, then computes the residual
-//!   and morphology metrics used by the validation lanes.
-//!
-//! Vendor:
-//!   `readConfigFileModule::O2/O2-O2/INSTRUMENT/ATMOSPHERIC_INTERVALS`
-//!   and the vendor-reflectance assessment harness semantics
-//!
-//! Design:
-//!   Case assembly lives in the YAML adapter and shared runtime contract. This
-//!   file keeps only the typed execution products and residual analysis helpers
-//!   that multiple lanes still share.
-//!
-//! Invariants:
-//!   The helpers here never invent a second config source of truth; they only
-//!   consume resolved parity cases.
-//!
-//! Validation:
-//!   `tests/validation/o2a_yaml_parity_runtime_test.zig`,
-//!   `tests/validation/o2a_forward_shape_test.zig`,
-//!   `tests/validation/o2a_vendor_reflectance_assessment_test.zig`,
-//!   and retained plot-bundle validation.
-
 const std = @import("std");
 const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
 const ReferenceDataModel = @import("../../model/ReferenceData.zig");

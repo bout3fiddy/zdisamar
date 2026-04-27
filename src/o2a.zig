@@ -7,10 +7,10 @@ pub const Case = @import("model/Scene.zig").Scene;
 pub const Data = bundled_data.Data;
 pub const Optics = @import("kernels/optics/preparation.zig").PreparedOpticalState;
 pub const Method = @import("o2a/method.zig").Method;
-pub const Work = @import("kernels/transport/measurement/workspace.zig").SummaryWorkspace;
+pub const RunStorage = @import("kernels/transport/measurement/workspace.zig").SummaryWorkspace;
 pub const Result = spectrum.Result;
 pub const Report = report_json.SummaryReport;
-pub const RtmControls = @import("kernels/transport/common.zig").RtmControls;
+pub const RadiativeTransferControls = @import("kernels/transport/common.zig").RadiativeTransferControls;
 pub const report = report_json;
 
 pub const parity = @import("o2a/data/vendor_parity_yaml.zig");
@@ -19,7 +19,7 @@ pub const Prepared = struct {
     case: Case,
     data: Data,
     optics: Optics,
-    work: Work = .{},
+    work: RunStorage = .{},
 
     pub fn deinit(self: *Prepared, allocator: std.mem.Allocator) void {
         self.work.deinit(allocator);
@@ -51,7 +51,7 @@ pub fn run(
     allocator: std.mem.Allocator,
     prepared: *Prepared,
     method: Method,
-    rtm_controls: RtmControls,
+    rtm_controls: RadiativeTransferControls,
 ) !Result {
     return spectrum.run(
         allocator,

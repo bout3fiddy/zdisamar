@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Load bundled reference optics data for a scene.
-//!
-//! Physics:
-//!   Assemble the reference climatology, spectroscopy, CIA, LUT, and optional Mie data needed
-//!   by optics preparation.
-//!
-//! Vendor:
-//!   `bundled optics reference loader`
-//!
-//! Design:
-//!   Keep the scene-selection rules in `assets.zig` and let this module act as a
-//!   loader facade over typed reference data. Explicit scene bindings win over bundled defaults,
-//!   and unresolved explicit bindings fail early instead of silently falling back.
-//!
-//! Invariants:
-//!   Bundle ids, manifest paths, and spectral-window thresholds stay centralized in the helper
-//!   module.
-//!
-//! Validation:
-//!   `tests/unit/bundled_optics_test.zig` and the O2A validation helpers.
-
 const std = @import("std");
 const Scene = @import("../../model/Scene.zig").Scene;
 const AbsorberModel = @import("../../model/Absorber.zig");
@@ -181,28 +159,6 @@ pub fn buildOptics(
     return prepared;
 }
 
-/// Purpose:
-///   Build the bundled optics state for a canonical scene.
-///
-/// Physics:
-///   Load the climatology, spectroscopy, CIA, LUT, and optional Mie inputs that optics
-///   preparation needs for the current scene.
-///
-/// Vendor:
-///   `bundled optics reference loader::prepareForScene`
-///
-/// Inputs:
-///   `scene` provides the canonical spectral range, absorber bindings, and observation controls.
-///
-/// Outputs:
-///   A prepared optical state that owns the cloned reference data used by optics kernels.
-///
-/// Decisions:
-///   Bundled data is loaded only when the scene does not already carry explicit bindings for the
-///   same scientific role.
-///
-/// Validation:
-///   Bundled optics unit tests and the O2A validation helpers.
 pub fn prepareForScene(allocator: Allocator, scene: *const Scene) !OpticsPrepare.PreparedOpticalState {
     var loaded = try load(allocator, scene);
     defer loaded.deinit(allocator);

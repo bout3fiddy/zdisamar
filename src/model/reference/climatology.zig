@@ -1,21 +1,3 @@
-//! Purpose:
-//!   Store simple climatology profiles for altitude-dependent pressure, temperature, and density.
-//!
-//! Physics:
-//!   Provides monotonic altitude samples for basic atmospheric property interpolation.
-//!
-//! Vendor:
-//!   `climatology profile`
-//!
-//! Design:
-//!   The profile is an owned slice so retrieval and preparation code can clone or free it explicitly.
-//!
-//! Invariants:
-//!   Altitude rows are expected to be ordered monotonically from low to high altitude.
-//!
-//! Validation:
-//!   Tests cover density and temperature interpolation over the demo profile data.
-
 const std = @import("std");
 const gauss_legendre = @import("../../kernels/quadrature/gauss_legendre.zig");
 const spline = @import("../../kernels/interpolation/spline.zig");
@@ -23,8 +5,6 @@ const Allocator = std.mem.Allocator;
 
 const max_spline_profile_rows: usize = 256;
 
-/// Purpose:
-///   Store one climatology sample row.
 pub const ClimatologyPoint = struct {
     altitude_km: f64,
     pressure_hpa: f64,
@@ -32,26 +12,14 @@ pub const ClimatologyPoint = struct {
     air_number_density_cm3: f64,
 };
 
-/// Purpose:
-///   Own a climatology profile table.
 pub const ClimatologyProfile = struct {
     rows: []ClimatologyPoint,
 
-    /// Purpose:
-    ///   Release the owned profile rows.
     pub fn deinit(self: *ClimatologyProfile, allocator: Allocator) void {
         allocator.free(self.rows);
         self.* = undefined;
     }
 
-    /// Purpose:
-    ///   Expand sparse vendor PT nodes onto the dense pressure grid used by the
-    ///   DISAMAR parity path.
-    ///
-    /// Physics:
-    ///   DISAMAR first inserts additional log-pressure levels between the
-    ///   configured PT nodes, then realizes altitude hydrostatically on that
-    ///   dense pressure grid before interval/support sampling.
     pub fn densifyVendorPressureGrid(
         self: ClimatologyProfile,
         allocator: Allocator,
@@ -181,22 +149,12 @@ pub const ClimatologyProfile = struct {
         return .{ .rows = dense_rows };
     }
 
-    /// Purpose:
-    ///   Compute the mean air-number density across the profile.
-    ///
-    /// Physics:
-    ///   Averages the stored number-density samples without regridding.
     pub fn meanNumberDensity(self: ClimatologyProfile) f64 {
         var total: f64 = 0.0;
         for (self.rows) |row| total += row.air_number_density_cm3;
         return if (self.rows.len == 0) 0.0 else total / @as(f64, @floatFromInt(self.rows.len));
     }
 
-    /// Purpose:
-    ///   Interpolate air-number density at the requested altitude.
-    ///
-    /// Physics:
-    ///   Uses linear interpolation between monotonic altitude samples.
     pub fn interpolateDensity(self: ClimatologyProfile, altitude_km: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].air_number_density_cm3;
@@ -212,11 +170,6 @@ pub const ClimatologyProfile = struct {
         return self.rows[self.rows.len - 1].air_number_density_cm3;
     }
 
-    /// Purpose:
-    ///   Interpolate temperature at the requested altitude.
-    ///
-    /// Physics:
-    ///   Uses linear interpolation between monotonic altitude samples.
     pub fn interpolateTemperature(self: ClimatologyProfile, altitude_km: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].temperature_k;
@@ -232,9 +185,6 @@ pub const ClimatologyProfile = struct {
         return self.rows[self.rows.len - 1].temperature_k;
     }
 
-    /// Purpose:
-    ///   Interpolate temperature with the spline contract used by the vendor
-    ///   parity path.
     pub fn interpolateTemperatureSpline(self: ClimatologyProfile, altitude_km: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (self.rows.len < 3 or self.rows.len > max_spline_profile_rows) {
@@ -256,13 +206,6 @@ pub const ClimatologyProfile = struct {
         ) catch self.interpolateTemperature(altitude_km);
     }
 
-    /// Purpose:
-    ///   Interpolate temperature at the requested pressure in log-pressure
-    ///   space.
-    ///
-    /// Physics:
-    ///   DISAMAR realizes PT state on the dense pressure grid first, then
-    ///   samples temperature as `T(ln p)` on derived interval/support rows.
     pub fn interpolateTemperatureForPressureLogLinear(self: ClimatologyProfile, pressure_hpa: f64) f64 {
         if (self.rows.len == 0) return 0.0;
 
@@ -300,12 +243,6 @@ pub const ClimatologyProfile = struct {
         return self.rows[self.rows.len - 1].temperature_k;
     }
 
-    /// Purpose:
-    ///   Interpolate temperature from a natural spline in `ln(p)`.
-    ///
-    /// Physics:
-    ///   Mirrors DISAMAR's `T(ln p)` realization on the vendor-style
-    ///   high-resolution pressure grid.
     pub fn interpolateTemperatureForPressureSpline(self: ClimatologyProfile, pressure_hpa: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (self.rows.len < 3 or self.rows.len > max_spline_profile_rows) {
@@ -349,11 +286,6 @@ pub const ClimatologyProfile = struct {
         ) catch self.interpolateTemperatureForPressureLogLinear(safe_pressure_hpa);
     }
 
-    /// Purpose:
-    ///   Interpolate pressure at the requested altitude.
-    ///
-    /// Physics:
-    ///   Uses linear interpolation between monotonic altitude samples.
     pub fn interpolatePressure(self: ClimatologyProfile, altitude_km: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].pressure_hpa;
@@ -369,13 +301,6 @@ pub const ClimatologyProfile = struct {
         return self.rows[self.rows.len - 1].pressure_hpa;
     }
 
-    /// Purpose:
-    ///   Interpolate pressure at the requested altitude in log-pressure space.
-    ///
-    /// Physics:
-    ///   DISAMAR prepares pressure on the RTM support grid from a spline in
-    ///   `ln(p)`. This helper keeps the parity path closer to that contract
-    ///   than the default linear-in-pressure interpolation used elsewhere.
     pub fn interpolatePressureLogLinear(self: ClimatologyProfile, altitude_km: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (altitude_km <= self.rows[0].altitude_km) return self.rows[0].pressure_hpa;
@@ -393,11 +318,6 @@ pub const ClimatologyProfile = struct {
         return self.rows[self.rows.len - 1].pressure_hpa;
     }
 
-    /// Purpose:
-    ///   Interpolate pressure from a natural spline in `ln(p)`.
-    ///
-    /// Physics:
-    ///   DISAMAR realizes the RTM support grid from a spline in log-pressure.
     pub fn interpolatePressureLogSpline(self: ClimatologyProfile, altitude_km: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (self.rows.len < 3 or self.rows.len > max_spline_profile_rows) {
@@ -420,18 +340,9 @@ pub const ClimatologyProfile = struct {
         return @exp(log_pressure);
     }
 
-    /// Purpose:
-    ///   Report the highest altitude in the profile.
     pub fn maxAltitude(self: ClimatologyProfile) f64 {
         return if (self.rows.len == 0) 0.0 else self.rows[self.rows.len - 1].altitude_km;
     }
-    /// Purpose:
-    ///   Interpolate altitude at the requested pressure.
-    ///
-    /// Physics:
-    ///   Uses log-pressure interpolation between monotonic climatology samples
-    ///   so pressure-bounded atmospheric intervals can be mapped into altitude
-    ///   bounds without reverting to uniform-layer approximations.
     pub fn interpolateAltitudeForPressure(self: ClimatologyProfile, pressure_hpa: f64) f64 {
         if (self.rows.len == 0) return 0.0;
 
@@ -469,8 +380,6 @@ pub const ClimatologyProfile = struct {
         return self.rows[self.rows.len - 1].altitude_km;
     }
 
-    /// Purpose:
-    ///   Invert the spline-based pressure realization used by the parity path.
     pub fn interpolateAltitudeForPressureSpline(self: ClimatologyProfile, pressure_hpa: f64) f64 {
         if (self.rows.len == 0) return 0.0;
         if (self.rows.len < 3 or self.rows.len > max_spline_profile_rows) {

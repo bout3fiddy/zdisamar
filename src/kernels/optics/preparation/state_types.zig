@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Define the typed prepared-state carriers shared by optics preparation and
-//!   transport evaluation.
-
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const AtmosphereModel = @import("../../../model/Atmosphere.zig");
@@ -15,14 +11,14 @@ const Allocator = std.mem.Allocator;
 
 pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
-/// Active line absorber resolved from the scene's absorber set.
+// Active line absorber resolved from the scene's absorber set.
 pub const ActiveLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     controls: AbsorberModel.LineGasControls,
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
 };
 
-/// Active cross-section absorber resolved from the scene's absorber set.
+// Active cross-section absorber resolved from the scene's absorber set.
 pub const ActiveCrossSectionAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     representation: AbsorberModel.AbsorptionRepresentation,
@@ -31,7 +27,7 @@ pub const ActiveCrossSectionAbsorber = struct {
     polynomial_order: u32 = 0,
 };
 
-/// Prepared line absorber with runtime controls and stored number densities.
+// Prepared line absorber with runtime controls and stored number densities.
 pub const PreparedLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -72,7 +68,7 @@ pub const PreparedCrossSectionRepresentation = union(enum) {
     lut: OperationalCrossSectionLut,
 };
 
-/// Prepared cross-section absorber with stored densities and typed representation metadata.
+// Prepared cross-section absorber with stored densities and typed representation metadata.
 pub const PreparedCrossSectionAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     representation_kind: CrossSectionRepresentationKind,
@@ -137,7 +133,7 @@ pub const PreparedCrossSectionAbsorber = struct {
     }
 };
 
-/// Prepared layer state on the transport grid.
+// Prepared layer state on the radiative transfer grid.
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,
@@ -176,7 +172,7 @@ pub const PreparedSupportRowKind = enum {
     parity_active,
 };
 
-/// Prepared sublayer state on the fine transport grid.
+// Prepared sublayer state on the fine radiative transfer grid.
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
     sublayer_index: u32,

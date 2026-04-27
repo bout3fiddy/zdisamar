@@ -1,21 +1,3 @@
-//! Purpose:
-//!   Interpolate monotonic spectral samples with a natural cubic spline.
-//!
-//! Physics:
-//!   Builds second derivatives for a natural spline and evaluates the cubic segment at a target wavelength.
-//!
-//! Vendor:
-//!   `natural cubic spline`
-//!
-//! Design:
-//!   The helper uses fixed stack scratch buffers to keep the implementation simple and predictable.
-//!
-//! Invariants:
-//!   `x` and `y` must be same length, `x` must be monotonic, and the sample count must fit the fixed workspace.
-//!
-//! Validation:
-//!   Tests cover quadratic reproduction at midpoints.
-
 const std = @import("std");
 const max_spline_point_count = 256;
 
@@ -25,20 +7,6 @@ pub const Error = error{
     OutOfDomain,
 };
 
-/// Purpose:
-///   Sample a monotonic spectrum with a natural cubic spline.
-///
-/// Physics:
-///   Solves a tridiagonal spline system implicitly and evaluates the interpolated value at `target_x`.
-///
-/// Vendor:
-///   `natural cubic interpolation`
-///
-/// Assumptions:
-///   The input axis is sorted in ascending order and fits within the fixed scratch buffers.
-///
-/// Decisions:
-///   The spline workspace is capped at 256 points so callers keep control of memory use in hot paths while still covering the embedded HITRAN tables.
 pub fn sampleNatural(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
     if (x.len != y.len) return Error.ShapeMismatch;
     if (x.len < 3) return Error.NotEnoughPoints;
@@ -86,13 +54,6 @@ pub fn sampleNatural(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
         ((a * a * a - a) * second[klo] + (b * b * b - b) * second[khi]) * (h * h) / 6.0;
 }
 
-/// Purpose:
-///   Sample a cubic spline whose endpoint slopes are fixed to the first and
-///   last secants.
-///
-/// Vendor:
-///   DISAMAR `mathToolsModule::spline`, which wraps `cubspl` with prescribed
-///   endpoint derivatives from adjacent knots.
 pub fn sampleEndpointSecant(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
     if (x.len != y.len) return Error.ShapeMismatch;
     if (x.len < 3) return Error.NotEnoughPoints;

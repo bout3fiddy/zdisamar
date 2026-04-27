@@ -150,7 +150,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                     );
 
                     // PARITY:
-                    //   DISAMAR forms transport-layer optical thickness from
+                    //   DISAMAR forms radiative transfer-layer optical thickness from
                     //   the already prepared RTM support rows and their
                     //   `RTMweightSub` values. Re-integrating a new Gauss
                     //   subgrid here changes line-shoulder absorption even

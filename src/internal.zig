@@ -1,12 +1,3 @@
-//! Purpose:
-//!   Provide a narrow internal umbrella for helper scripts that need direct
-//!   access to non-public O2A implementation modules.
-//!
-//! Design:
-//!   This file is not re-exported from the public root. It exists only so
-//!   local harnesses can bind the same internal module paths without widening
-//!   the shipped library surface.
-
 pub const scene = @import("model/Scene.zig");
 pub const Scene = scene.Scene;
 pub const absorber = @import("model/Absorber.zig");

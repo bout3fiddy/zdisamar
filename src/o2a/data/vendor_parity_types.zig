@@ -13,7 +13,7 @@ const Allocator = std.mem.Allocator;
 const BuiltinLineShapeKind = InstrumentModel.BuiltinLineShapeKind;
 pub const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 pub const Route = transport_common.Route;
-pub const RtmControls = transport_common.RtmControls;
+pub const RadiativeTransferControls = transport_common.RadiativeTransferControls;
 
 pub const ReferenceSample = struct {
     wavelength_nm: f64,
@@ -131,7 +131,7 @@ pub const ResolvedVendorO2ACase = struct {
     observation: ObservationSpec,
     o2: LineGasSpec,
     o2o2: CiaSpec,
-    rtm_controls: RtmControls,
+    rtm_controls: RadiativeTransferControls,
     outputs: []const OutputRequest,
     validation: ValidationPolicy,
 };

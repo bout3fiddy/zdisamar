@@ -1,21 +1,3 @@
-//! Purpose:
-//!   Store absorption cross-section tables and derive differential spectral baselines from them.
-//!
-//! Physics:
-//!   Interpolates wavelength-dependent molecular cross sections and removes low-order baselines in spectral space.
-//!
-//! Vendor:
-//!   `cross sections / differential baseline projection`
-//!
-//! Design:
-//!   Baseline fitting is expressed explicitly with small dense linear algebra so the polynomial order and weighting stay visible.
-//!
-//! Invariants:
-//!   Wavelength samples are expected to be monotonic, polynomial order is capped, and weights must remain finite.
-//!
-//! Validation:
-//!   Tests cover weighted mean removal and baseline projection behavior.
-
 const std = @import("std");
 const cholesky = @import("../../kernels/linalg/cholesky.zig");
 const dense = @import("../../kernels/linalg/small_dense.zig");
@@ -26,23 +8,14 @@ pub const CrossSectionPoint = struct {
     sigma_cm2_per_molecule: f64,
 };
 
-/// Purpose:
-///   Own a wavelength-indexed cross-section table.
 pub const CrossSectionTable = struct {
     points: []CrossSectionPoint,
 
-    /// Purpose:
-    ///   Release the owned cross-section points.
     pub fn deinit(self: *CrossSectionTable, allocator: Allocator) void {
         allocator.free(self.points);
         self.* = undefined;
     }
 
-    /// Purpose:
-    ///   Compute a mean cross section within a wavelength range.
-    ///
-    /// Physics:
-    ///   Averages the samples that fall inside the requested spectral window.
     pub fn meanSigmaInRange(self: CrossSectionTable, start_nm: f64, end_nm: f64) f64 {
         var total: f64 = 0.0;
         var count: usize = 0;
@@ -56,11 +29,6 @@ pub const CrossSectionTable = struct {
         return self.interpolateSigma((start_nm + end_nm) * 0.5);
     }
 
-    /// Purpose:
-    ///   Interpolate the cross section at a specific wavelength.
-    ///
-    /// Physics:
-    ///   Uses linear interpolation on the monotonic wavelength table.
     pub fn interpolateSigma(self: CrossSectionTable, wavelength_nm: f64) f64 {
         if (self.points.len == 0) return 0.0;
         if (wavelength_nm <= self.points[0].wavelength_nm) return self.points[0].sigma_cm2_per_molecule;
@@ -75,17 +43,10 @@ pub const CrossSectionTable = struct {
         return left.sigma_cm2_per_molecule + weight * (right.sigma_cm2_per_molecule - left.sigma_cm2_per_molecule);
     }
 
-    /// Purpose:
-    ///   Return the cross section at high-resolution wavelengths.
     pub fn sigmaAtHighResolution(self: CrossSectionTable, wavelength_nm: f64) f64 {
         return self.interpolateSigma(wavelength_nm);
     }
 
-    /// Purpose:
-    ///   Find the bracket around a wavelength for interpolation.
-    ///
-    /// Physics:
-    ///   Returns adjacent monotonic sample indices when the wavelength lies inside the table span.
     pub fn bracketForWavelength(
         self: CrossSectionTable,
         wavelength_nm: f64,
@@ -109,11 +70,6 @@ pub const CrossSectionTable = struct {
     }
 };
 
-/// Purpose:
-///   Compute the weighted mean of a sample vector.
-///
-/// Physics:
-///   Returns the weighted average used by the baseline-removal helpers.
 pub fn weightedMeanSamples(samples: []const f64, weights: []const f64) f64 {
     if (samples.len == 0 or samples.len != weights.len) return 0.0;
 
@@ -126,17 +82,6 @@ pub fn weightedMeanSamples(samples: []const f64, weights: []const f64) f64 {
     return numerator / @max(denominator, 1.0e-12);
 }
 
-/// Purpose:
-///   Remove a weighted polynomial baseline from a sampled cross-section vector.
-///
-/// Physics:
-///   Fits a low-order polynomial in normalized wavelength space and subtracts it from the input values.
-///
-/// Vendor:
-///   `differential cross-section vector`
-///
-/// Decisions:
-///   The fit order is capped at 7 to keep the tiny dense normal system bounded and easy to solve.
 pub fn differentialVector(
     allocator: Allocator,
     wavelengths_nm: []const f64,
@@ -207,11 +152,6 @@ pub fn differentialVector(
     return result;
 }
 
-/// Purpose:
-///   Convert a sensitivity spectrum into an effective cross section.
-///
-/// Physics:
-///   Normalizes by air mass factor before projecting out the low-order baseline.
 pub fn effectiveCrossSectionFromSensitivity(
     allocator: Allocator,
     wavelengths_nm: []const f64,

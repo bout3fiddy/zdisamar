@@ -1,5 +1,5 @@
-//! Spectroscopy line-list support helpers that are not themselves line-shape
-//! physics.
+// Spectroscopy line-list support helpers that are not themselves line-shape
+// physics.
 
 const std = @import("std");
 const Physics = @import("physics.zig");

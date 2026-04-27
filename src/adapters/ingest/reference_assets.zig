@@ -1,24 +1,3 @@
-//! Purpose:
-//!   Load reference assets from bundled manifests or explicit external files.
-//!
-//! Physics:
-//!   Hydrate climatology, spectroscopy, CIA, LUT, and Mie tables into typed
-//!   inputs that preserve the original scientific provenance and units.
-//!
-//! Vendor:
-//!   `reference asset ingest`
-//!
-//! Design:
-//!   Keep manifest resolution, format contracts, and table materialization in
-//!   this adapter layer so the core and kernels only see typed data.
-//!
-//! Invariants:
-//!   Bundle-derived assets validate their hashes and column layouts before
-//!   reaching the engine.
-//!
-//! Validation:
-//!   Reference-asset loader tests and the bundled optics validation helpers.
-
 const std = @import("std");
 const formats = @import("reference_assets_formats.zig");
 const loader = @import("reference_assets_loader.zig");
@@ -77,11 +56,6 @@ const hitran_legacy_columns = [_][]const u8{
     "line_mixing_coefficient",
 };
 
-/// Purpose:
-///   Load a bundle asset by manifest path and asset id.
-///
-/// Physics:
-///   Verify the manifest and asset bytes before converting the payload into typed rows.
 pub fn loadBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -106,8 +80,6 @@ pub fn loadBundleAsset(
     return loader.initLoadedAsset(allocator, kind, bundle_manifest_path, bundle, bundle_asset, asset_bytes);
 }
 
-/// Purpose:
-///   Load a CSV-backed bundle asset.
 pub fn loadCsvBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -117,11 +89,6 @@ pub fn loadCsvBundleAsset(
     return loadBundleAsset(allocator, kind, bundle_manifest_path, asset_id);
 }
 
-/// Purpose:
-///   Load and parse an externally supplied asset file.
-///
-/// Physics:
-///   Use the explicit file path and declared format instead of a bundle manifest.
 pub fn loadExternalAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -145,7 +112,7 @@ pub fn loadExternalAsset(
     return .{
         .kind = kind,
         // DECISION:
-        //   External assets still carry manifest-style metadata so the engine can treat them like
+        //   External assets still carry manifest-style metadata so the forward model can treat them like
         //   other hydrated reference assets.
         .bundle_manifest_path = try allocator.dupe(u8, asset_path),
         .bundle_id = try allocator.dupe(u8, "external_asset"),
@@ -160,8 +127,6 @@ pub fn loadExternalAsset(
     };
 }
 
-/// Purpose:
-///   Load a bundle asset from embedded manifest and asset bytes.
 pub fn loadEmbeddedBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -183,8 +148,6 @@ pub fn loadEmbeddedBundleAsset(
     return loader.initLoadedAsset(allocator, kind, bundle_manifest_path, bundle, bundle_asset, asset_bytes);
 }
 
-/// Purpose:
-///   Resolve the format-specific column contract for one asset kind.
 fn externalAssetSpec(kind: AssetKind, asset_format: []const u8) formats.AssetSpec {
     if (std.mem.eql(u8, asset_format, "profile_csv")) {
         return .{

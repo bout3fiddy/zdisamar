@@ -1,24 +1,3 @@
-//! Purpose:
-//!   Define the canonical inverse-problem contract used by retrieval execution.
-//!
-//! Physics:
-//!   Couples the retrieval state vector, measurement definition, covariance structure, fit
-//!   controls, and convergence thresholds for OE, DOAS, and DISMAS-style inversions.
-//!
-//! Vendor:
-//!   `inverse-problem and retrieval validation contract`
-//!
-//! Design:
-//!   Share one typed inverse-problem surface across retrieval methods while method-specific
-//!   validation gates remain explicit helper entrypoints.
-//!
-//! Invariants:
-//!   State-vector and measurement contracts must validate first. Method-specific validation adds
-//!   extra observable, prior, and covariance requirements without mutating the base problem.
-//!
-//! Validation:
-//!   Inverse-problem tests in this file plus the retrieval solver integration and parity tests.
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const errors = @import("../core/errors.zig");
@@ -27,8 +6,6 @@ const MeasurementQuantity = @import("Measurement.zig").Quantity;
 const StateParameter = @import("StateVector.zig").Parameter;
 const StateVector = @import("StateVector.zig").StateVector;
 
-/// Purpose:
-///   Select how transport and retrieval derivatives are expected to be produced.
 pub const DerivativeMode = enum {
     none,
     semi_analytical,
@@ -36,14 +13,10 @@ pub const DerivativeMode = enum {
     numerical,
 };
 
-/// Purpose:
-///   Describe a correlated block in the state-vector prior covariance model.
 pub const CovarianceBlock = struct {
     parameter_indices: []const u32 = &[_]u32{},
     correlation: f64 = 0.0,
 
-    /// Purpose:
-    ///   Validate the block indices and correlation against the state-vector size.
     pub fn validate(self: CovarianceBlock, parameter_count: u32) errors.Error!void {
         if (self.parameter_indices.len == 0 or !std.math.isFinite(self.correlation) or self.correlation < -1.0 or self.correlation > 1.0) {
             return errors.Error.InvalidRequest;
@@ -59,15 +32,11 @@ pub const CovarianceBlock = struct {
     }
 };
 
-/// Purpose:
-///   Configure retrieval iteration limits and trust-region policy.
 pub const FitControls = struct {
     pub const TrustRegion = enum {
         none,
         lm,
 
-        /// Purpose:
-        ///   Report whether the trust-region policy implies an active damping scheme.
         pub fn enabled(self: TrustRegion) bool {
             return self != .none;
         }
@@ -76,8 +45,6 @@ pub const FitControls = struct {
     max_iterations: u32 = 0,
     trust_region: TrustRegion = .none,
 
-    /// Purpose:
-    ///   Validate the fit-control configuration.
     pub fn validate(self: FitControls) errors.Error!void {
         if (self.max_iterations == 0 and self.trust_region.enabled()) {
             return errors.Error.InvalidRequest;
@@ -85,14 +52,10 @@ pub const FitControls = struct {
     }
 };
 
-/// Purpose:
-///   Define relative convergence tolerances for retrieval cost and state updates.
 pub const Convergence = struct {
     cost_relative: f64 = 0.0,
     state_relative: f64 = 0.0,
 
-    /// Purpose:
-    ///   Validate convergence tolerances for finiteness and non-negativity.
     pub fn validate(self: Convergence) errors.Error!void {
         if (!std.math.isFinite(self.cost_relative) or
             !std.math.isFinite(self.state_relative) or
@@ -104,8 +67,6 @@ pub const Convergence = struct {
     }
 };
 
-/// Purpose:
-///   Hold the fully typed inverse-problem definition executed by a retrieval provider.
 pub const InverseProblem = struct {
     id: []const u8 = "inverse-0",
     state_vector: StateVector = .{},
@@ -114,8 +75,6 @@ pub const InverseProblem = struct {
     fit_controls: FitControls = .{},
     convergence: Convergence = .{},
 
-    /// Purpose:
-    ///   Validate the base inverse-problem contract shared by all retrieval methods.
     pub fn validate(self: InverseProblem) errors.Error!void {
         if (self.id.len == 0) return errors.Error.InvalidRequest;
         try self.state_vector.validate();
@@ -128,8 +87,6 @@ pub const InverseProblem = struct {
         try self.convergence.validate();
     }
 
-    /// Purpose:
-    ///   Validate the extra prior and fit-control constraints required by optimal estimation.
     pub fn validateForOptimalEstimation(self: InverseProblem) errors.Error!void {
         try self.validateForSpectralRetrieval();
 
@@ -142,8 +99,6 @@ pub const InverseProblem = struct {
         }
     }
 
-    /// Purpose:
-    ///   Validate the observable contract required by DOAS-style spectral retrieval.
     pub fn validateForDoas(self: InverseProblem) errors.Error!void {
         try self.validateForSpectralRetrieval();
 
@@ -154,8 +109,6 @@ pub const InverseProblem = struct {
         }
     }
 
-    /// Purpose:
-    ///   Validate the observable contract required by DISMAS-style spectral retrieval.
     pub fn validateForDismas(self: InverseProblem) errors.Error!void {
         try self.validateForSpectralRetrieval();
         if (!measurementAllows(self.measurements, .radiance)) {
@@ -163,8 +116,6 @@ pub const InverseProblem = struct {
         }
     }
 
-    /// Purpose:
-    ///   Validate the shared requirements for spectral retrieval methods.
     fn validateForSpectralRetrieval(self: InverseProblem) errors.Error!void {
         try self.validate();
 
@@ -183,8 +134,6 @@ pub const InverseProblem = struct {
         return measurements.observable == expected;
     }
 
-    /// Purpose:
-    ///   Release the owned state vector, measurements, and covariance blocks.
     pub fn deinitOwned(self: *InverseProblem, allocator: Allocator) void {
         self.state_vector.deinitOwned(allocator);
         self.measurements.deinitOwned(allocator);
@@ -195,8 +144,6 @@ pub const InverseProblem = struct {
         self.* = .{};
     }
 
-    /// Purpose:
-    ///   Look up a state-parameter index by name through the owned state vector.
     pub fn parameterIndex(self: InverseProblem, name: []const u8) ?usize {
         return self.state_vector.parameterIndex(name);
     }

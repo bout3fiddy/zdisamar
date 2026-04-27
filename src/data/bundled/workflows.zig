@@ -1,18 +1,3 @@
-//! Purpose:
-//!   Execute bundled LUT workflows for a scene.
-//!
-//! Physics:
-//!   Materialize reflectance, xsec, and CIA LUT sidecars for bundled reference optics, while
-//!   preserving the explicit-vs-bundled control contract.
-//!
-//! Vendor:
-//!   `bundled optics reference workflows`
-//!
-//! Design:
-//!   Keep scene selection out of this module and let `selection.zig` provide sampled wavelengths
-//!   and explicit data resolution. This module owns the mutation of working copies and generated
-//!   LUT bookkeeping.
-
 const std = @import("std");
 const Scene = @import("../../model/Scene.zig").Scene;
 const AbsorberModel = @import("../../model/Absorber.zig");

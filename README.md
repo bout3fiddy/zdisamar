@@ -1,21 +1,23 @@
 # zdisamar
 
 `zdisamar` is a Zig O2 A forward-model lab built around the DISAMAR scientific
-path. The repository is organized around a direct physics pipeline:
+path. The repository is organized around a direct forward-model calculation
+sequence:
 
-`case -> data -> optics -> solver -> spectrum -> report`
+`Case -> Data -> Optics -> Spectrum -> Report`
 
-That pipeline is the center of the codebase. Scientific scene state, reference
-data, optics preparation, transport kernels, spectral integration, and report
-generation are kept explicit so execution stays reproducible and parity-focused.
+That sequence is the center of the codebase. Scientific scene state, reference
+data, optical-property preparation, radiative-transfer routines, spectral
+integration, and report generation are kept explicit so execution stays
+reproducible and parity-focused.
 
 ## What The Repository Contains
 
 - A buildable Zig library and O2 A profile CLI.
 - A small O2 A product surface in `src/o2a/`.
 - Retained typed atmosphere, geometry, spectroscopy, and instrument types in `src/model/`.
-- Reusable kernels for transport, optics, interpolation, quadrature, spectra,
-  and linear algebra in `src/kernels/`.
+- Reusable numerical routines for radiative transfer, optics, interpolation,
+  quadrature, spectra, and linear algebra in `src/kernels/`.
 - Narrow ingestion helpers for bundled reference assets in `src/adapters/`.
 - Tracked O2 A scientific bundles and reference assets under `data/`.
 - Retained O2 A validation assets and executable test lanes under `tests/` and `validation/`.
@@ -27,21 +29,21 @@ The public execution surface is intentionally small:
 - `Case` owns the retained O2 A inputs.
 - `Data` owns the loaded reference datasets and bundled helper assets.
 - `Optics` owns the prepared wavelength-dependent optical state.
-- `Work` owns reusable scratch storage for the forward path.
+- `RunStorage` owns reusable internal storage for the forward model.
 - `Result` owns the generated spectrum and summary outputs.
-- `Report` owns timings, counters, and profile artifacts.
+- `Report` owns timings, counters, and diagnostic artifacts.
 
-That structure is why kernels stay free of file I/O, CLI parsing, and global
-mutable state. Product wiring belongs in `src/o2a/`, while hot numerics stay in
-the kernels.
+That structure is why numerical routines stay free of file I/O, CLI parsing,
+and global mutable state. Product wiring belongs in `src/o2a/`, while hot
+numerics stay in the routines.
 
 ## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
-| `src/o2a/` | O2 A case, data loading, optics preparation, solver, spectrum, reporting, and CLI |
+| `src/o2a/` | O2 A case, data loading, optical-property preparation, forward model, spectrum, reporting, and CLI |
 | `src/model/` | retained atmosphere, geometry, surface, spectroscopy, and instrument types |
-| `src/kernels/` | reusable numeric kernels and measurement-space materialization |
+| `src/kernels/` | reusable numeric routines and instrument-grid materialization |
 | `src/adapters/` | narrow ingestion helpers that still support the O2 A data path |
 | `src/core/` | reduced support code such as units and error helpers |
 | `data/` | tracked O2 A bundles and reference assets |
@@ -71,7 +73,7 @@ Run the fast local verification loop:
 zig build check
 ```
 
-Run the focused transport/parity verification loop:
+Run the focused radiative-transfer/parity verification loop:
 
 ```bash
 zig build test-transport
@@ -133,12 +135,12 @@ The committed O2A comparison evidence lives directly under `validation/`.
 
 ## The O2A Workflow
 
-The retained executable surface is a single O2A profile CLI. The normal local
-workflow is:
+The retained executable surface is a single O2A forward-profile CLI. The normal
+local workflow is:
 
 1. build the library and CLI,
 2. run the retained fast verification lanes,
-3. run the stock O2A profile path when you need artifacts,
+3. run the stock O2A diagnostic path when you need artifacts,
 4. refresh the tracked plot bundle only when the O2A spectrum or report shape changes.
 
 The CLI surface is:
@@ -187,14 +189,14 @@ defer result.deinit(allocator);
 ```
 
 `Prepared` owns the resolved case, bundled data, prepared optics, and reusable
-workspace. The old split `loadData -> buildOptics -> runSpectrum` surface is no
-longer public.
+storage. Data loading, optical-property preparation, and spectrum generation are
+not separate public entrypoints.
 
 ## Data, Packages, And Exporters
 
 - `data/` contains tracked O2A climatologies, cross-sections, LUTs, and vendor reference assets.
 - `validation/` contains the tracked O2A comparison bundle.
-- The retained artifact outputs are profile summaries and generated spectra, not exporter backends.
+- The retained artifact outputs are diagnostic summaries and generated spectra, not exporter backends.
 
 ## Validation And Scientific Scope
 

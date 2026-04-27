@@ -2,7 +2,7 @@
 
 ## Why This Layer Exists
 
-DISAMAR-class retrievals are driven by scientific data as much as by transport numerics. A realistic run depends on a stack of external references:
+DISAMAR-class retrievals are driven by scientific data as much as by radiative-transfer calculations. A realistic run depends on a stack of external references:
 
 - atmospheric climatologies,
 - molecular cross sections,
@@ -16,13 +16,13 @@ The architecture in `zdisamar` treats those assets as named, typed scientific da
 
 ## Main Principle
 
-Reference data may be file-backed at the adapter and runtime boundary, but kernels and retrieval methods are allowed to see only typed in-memory forms.
+Reference data may be file-backed at the adapter boundary, but calculation routines are allowed to see only typed in-memory forms.
 
 That principle is what keeps the code readable and scientifically inspectable:
 
 - parsers know about file formats,
-- runtime preparation knows which datasets a scene requires,
-- kernels know only about physical quantities and numerical shapes.
+- preparation knows which datasets a scene requires,
+- routines know only about physical quantities and numerical shapes.
 
 ## Bundled Scientific Assets
 
@@ -56,18 +56,19 @@ Each dataset is intended to be:
 - `AirmassFactorLut`
 - `MiePhaseTable`
 
-These structures are not bookkeeping wrappers. They are the physical data surfaces used by optics preparation, measurement-space evaluation, validation, and result summaries.
+These structures are not bookkeeping wrappers. They are the physical data surfaces used by optical-property preparation, instrument-grid evaluation, validation, and result summaries.
 
 ## Runtime Preparation Path
 
-The default execution path is:
+The default O2 A execution path is:
 
-1. `Engine.execute(...)` resolves the plan and request.
-2. `src/runtime/reference/BundledOptics.zig` loads the reference datasets needed for that scene.
-3. `src/kernels/optics/prepare.zig` turns them into a `PreparedOpticalState`.
-4. `src/kernels/transport/measurement_space.zig` evaluates radiance, irradiance, reflectance, and derivative-related summaries from that prepared state.
+1. `Case` records the spectral grid, geometry, surface, atmosphere, and instrument controls.
+2. `Data` loads the reference datasets needed for that case.
+3. `Optics` prepares wavelength-dependent optical properties.
+4. `Spectrum` evaluates radiance, irradiance, and reflectance on the instrument grid.
+5. `Report` records diagnostics and provenance.
 
-The important architectural point is that dataset loading ends before the kernels begin. By the time transport runs, the code is operating on typed optical quantities rather than filenames, manifests, or ad hoc parser state.
+The important architectural point is that dataset loading ends before the numerical routines begin. By the time radiative transfer runs, the code is operating on typed optical quantities rather than filenames, manifests, or ad hoc parser state.
 
 ## Operational Replacement Surfaces
 
@@ -85,18 +86,14 @@ Those replacements do not invalidate the bundle model. They override a bounded s
 
 Reference data matters only if a result can state which dataset family it used.
 
-For that reason the current implementation records:
-
-- plugin and capability inventories,
-- dataset hashes carried through the capability snapshot,
-- plan identity and route selection,
-- measurement-space and exporter provenance.
+For that reason the current implementation records dataset identity, hashes,
+case settings, radiative-transfer method, and report provenance.
 
 The result is that a stored artifact can be tied back to both a scientific configuration and a concrete set of reference data.
 
 ## Why The Boundary Matters
 
-Moving file parsing out of kernels has scientific consequences:
+Moving file parsing out of numerical routines has scientific consequences:
 
 - the same dataset can be used in unit tests and full runs without special hooks,
 - optical preparation can be tested from typed inputs alone,
@@ -112,5 +109,5 @@ To follow the reference-data path:
 1. read `src/adapters/ingest/reference_assets.zig`,
 2. read `src/model/ReferenceData.zig`,
 3. read `src/runtime/reference/BundledOptics.zig`,
-4. read `src/kernels/optics/prepare.zig`,
+4. read `src/kernels/optics/preparation.zig`,
 5. inspect `data/*/bundle_manifest.json` for representative datasets.

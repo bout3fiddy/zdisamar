@@ -1,22 +1,3 @@
-//! Purpose:
-//!   Define typed LUT execution controls and compatibility keys shared by config, planning, caches,
-//!   and provenance.
-//!
-//! Physics:
-//!   Captures whether reflectance/correction and spectroscopy paths run directly, generate LUTs,
-//!   or consume precomputed LUTs, together with the scientific inputs that make a LUT reusable.
-//!
-//! Vendor:
-//!   `createLUT`, `createXsecLUT`
-//!
-//! Design:
-//!   Keep LUT workflow state typed and explicit so prepared plans, requests, and caches can reject
-//!   incompatible reuse instead of relying on implicit runtime assumptions.
-//!
-//! Invariants:
-//!   Non-direct LUT modes must provide finite ranges and counts, and compatibility keys must
-//!   capture the scene and instrument inputs that define reuse safety.
-
 const std = @import("std");
 const errors = @import("errors.zig");
 

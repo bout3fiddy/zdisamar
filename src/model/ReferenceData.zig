@@ -1,4 +1,4 @@
-//! Typed reference-data root.
+// Typed reference-data root.
 
 const climatology = @import("reference/climatology.zig");
 const cross_section_types = @import("reference/cross_sections.zig");

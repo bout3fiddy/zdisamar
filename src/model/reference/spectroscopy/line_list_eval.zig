@@ -1,4 +1,4 @@
-//! Evaluation helpers for spectroscopy line lists.
+// Evaluation helpers for spectroscopy line lists.
 
 const std = @import("std");
 const LineList = @import("line_list.zig");

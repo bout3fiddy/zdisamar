@@ -7,7 +7,7 @@ The purpose of validation in `zdisamar` is to show that the current implementati
 An earlier Fortran implementation remains useful as a reference implementation for focused comparisons, but validation in this repository is broader than source-to-source matching. The current compatibility stance is a bounded hybrid-contract envelope, not blanket numeric equivalence to every historical DISAMAR run. Validation here therefore has to cover:
 
 - scientific input preparation,
-- transport and measurement-space behavior,
+- radiative-transfer and instrument-grid behavior,
 - operational replacement surfaces,
 - retrieval-facing derivatives and contracts,
 - provenance and artifact integrity.
@@ -28,7 +28,7 @@ Unit tests check scientific mechanics in isolation, for example:
 
 ### Integration tests
 
-Integration tests check that the engine, mission adapters, runtime bundle layer, and measurement-space path agree on one typed execution flow. These tests are where scene assembly, plan preparation, transport, and result ownership are exercised together.
+Integration tests check that case assembly, bundled scientific data, optical-property preparation, radiative-transfer evaluation, and result ownership agree on one typed execution flow.
 
 ### Validation harnesses
 
@@ -47,7 +47,7 @@ The current implementation is tested and validated for a bounded but operational
 - relaxation matrices and O2-O2 CIA subsets,
 - aerosol and cloud phase-table preparation,
 - runtime preparation of optical state from tracked bundles,
-- measurement-space materialization into owned arrays,
+- instrument-grid materialization into owned arrays,
 - Sentinel-5P/TROPOMI-style operational replacement surfaces for:
   - geometry and auxiliary fields,
   - explicit slit functions,
@@ -62,16 +62,15 @@ This is the scientific scope that the current docs and tests can defend.
 Safe claims:
 
 - the present repository carries the main oxygen A-band operational surfaces explicitly in typed state,
-- measurement-space outputs, provenance, and exporter inputs are validated on the normal execution path,
-- the codebase supports OE-, DOAS-, and DISMAS-labeled surrogate retrieval lanes on a shared contracts layer,
-- the current implementation preserves the DISAMAR family structure and typed execution seams needed for later method-faithful work.
+- instrument-grid outputs and provenance are validated on the normal execution path,
+- the current implementation preserves the DISAMAR family structure and typed forward-model stages needed for later method-faithful work.
 
 Claims that should remain qualified:
 
 - complete equivalence to every historical DISAMAR dataset,
 - mission equivalence beyond the currently exercised Sentinel-5P path,
 - equality of every numerical intermediate with any earlier implementation,
-- method-faithful implementation of every currently named transport or retrieval family,
+- method-faithful implementation of every currently named radiative-transfer or retrieval family,
 - blanket scientific coverage outside the documented and tested data surfaces.
 
 ## Literature Context

@@ -1,27 +1,3 @@
-//! Purpose:
-//!   Own the LABOS per-layer reflection/transmission operators and the surface
-//!   Lambertian response.
-//!
-//! Physics:
-//!   Builds homogeneous-layer single-scatter operators, applies doubling for
-//!   thick layers, and initializes the surface reflector.
-//!
-//! Vendor:
-//!   LABOS layer R/T stages
-//!
-//! Design:
-//!   The layer operator code is isolated from the basis algebra and the
-//!   scattering-order transport so the core solver can be read as a staged
-//!   pipeline instead of one monolithic routine.
-//!
-//! Invariants:
-//!   Layer indices are resolved against the transport grid, and the surface is
-//!   only active for the zero Fourier term.
-//!
-//! Validation:
-//!   See `tests/unit/transport_labos_test.zig` for layer-operator smoke and
-//!   scenario coverage.
-
 const std = @import("std");
 const math = std.math;
 const phase_functions = @import("../../optics/prepare/phase_functions.zig");
@@ -128,7 +104,7 @@ fn renormalizeZeroFourierPhaseKernel(
     }
 }
 
-/// Rsingle: single-scattering reflection for a homogeneous layer.
+// Rsingle: single-scattering reflection for a homogeneous layer.
 fn singleScatterR(
     a: f64,
     E: *const basis.Vec,
@@ -151,7 +127,7 @@ fn singleScatterR(
     return result;
 }
 
-/// Tsingle: single-scattering transmission for a homogeneous layer.
+// Tsingle: single-scattering transmission for a homogeneous layer.
 fn singleScatterT(
     a: f64,
     b: f64,
@@ -182,7 +158,7 @@ fn singleScatterT(
     return result;
 }
 
-/// Perform ndouble doubling steps on R, T, E for a layer.
+// Perform ndouble doubling steps on R, T, E for a layer.
 fn doDouble(
     ndouble: usize,
     n: usize,
@@ -236,12 +212,6 @@ fn doDouble(
     }
 }
 
-/// Purpose:
-///   Build the layer reflection and transmission operators in place.
-///
-/// Physics:
-///   Turns each transport layer into its Fourier-specific single-scatter or
-///   doubled response on the LABOS grid.
 fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
     var max_index: usize = 0;
     for (layers) |layer| {
@@ -250,19 +220,12 @@ fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
     return max_index;
 }
 
-/// Purpose:
-///   Build the layer reflection and transmission operators in place using a
-///   caller-provided Fourier basis cache.
-///
-/// Physics:
-///   Reuses one Fourier-specific associated-Legendre basis across all layers so
-///   the phase-kernel build stays exact without rebuilding the same basis work.
 pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
     i_fourier: usize,
     geo: *const basis.Geometry,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
     plm_basis: *const basis.FourierPlmBasis,
     phase_kernel_cache: ?[]basis.PhaseKernel,
     phase_kernel_valid: ?[]bool,
@@ -344,18 +307,12 @@ pub fn calcRTlayersIntoWithBasis(
     }
 }
 
-/// Purpose:
-///   Build the layer reflection and transmission operators in place.
-///
-/// Physics:
-///   Turns each transport layer into its Fourier-specific single-scatter or
-///   doubled response on the LABOS grid.
 pub fn calcRTlayersInto(
     rt: []LayerRT,
     layers: []const common.LayerInput,
     i_fourier: usize,
     geo: *const basis.Geometry,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
 ) void {
     const plm_basis = basis.FourierPlmBasis.init(
         i_fourier,
@@ -429,21 +386,17 @@ test "calcRTlayersInto consumes renorm_phase_function on doubled zero-Fourier la
     ) > 1.0e-8);
 }
 
-/// Purpose:
-///   Build all layer reflection and transmission operators for one Fourier term.
 pub fn calcRTlayers(
     layers: []const common.LayerInput,
     i_fourier: usize,
     geo: *const basis.Geometry,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
 ) [attenuation.AttenArray.max_levels]LayerRT {
     var rt: [attenuation.AttenArray.max_levels]LayerRT = undefined;
     calcRTlayersInto(rt[0 .. layers.len + 1], layers, i_fourier, geo, controls);
     return rt;
 }
 
-/// Purpose:
-///   Materialize the zero-Fourier surface Lambertian response.
 pub fn fillSurface(
     i_fourier: usize,
     albedo: f64,

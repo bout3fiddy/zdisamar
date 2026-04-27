@@ -1,9 +1,3 @@
-//! Embedded HITRAN partition-function tables and local interpolation helpers for
-//! spectroscopy runtime controls.
-//!
-//! Physics:
-//!   Maps isotopologue code and temperature to `Q(T_ref) / Q(T)` while clamping
-//!   interpolation to the supported tabulated domain.
 const std = @import("std");
 const spline = @import("../kernels/interpolation/spline.zig");
 
@@ -415,28 +409,6 @@ const q_5111 = [_]f64{
     0.49230E+06, 0.51319E+06, 0.53487E+06, 0.55734E+06, 0.58064E+06, 0.60478E+06, 0.62981E+06, 0.65574E+06, 0.68260E+06,
 };
 
-/// Purpose:
-///   Return the partition-function ratio `Q(T_ref) / Q(T)` for a supported isotopologue.
-///
-/// Physics:
-///   This ratio rescales line strengths from the HITRAN reference temperature to the
-///   requested evaluation temperature.
-///
-/// Inputs:
-///   `isotopologue_code` is the HITRAN isotopologue identifier and both temperatures are
-///   in kelvin.
-///
-/// Outputs:
-///   Returns `null` when the isotopologue is not represented in the embedded tables.
-///
-/// Units:
-///   Temperatures are in kelvin and the returned ratio is dimensionless.
-///
-/// Assumptions:
-///   Temperatures outside the supported table range are clamped to the nearest endpoint.
-///
-/// Validation:
-///   Exercised by the representative isotopologue regression at the bottom of this file.
 pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temperature_k: f64) ?f64 {
     if (isotopologue_code == 67) {
         return ratioT0OverTFromF32Table(q_67[0..], temperature_k, reference_temperature_k);
