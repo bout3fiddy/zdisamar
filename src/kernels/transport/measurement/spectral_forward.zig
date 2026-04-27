@@ -73,7 +73,6 @@ const ForwardPrefetchErrorState = struct {
 };
 
 const ForwardPrefetchWorker = struct {
-    allocator: Allocator,
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -145,8 +144,12 @@ pub fn computeForwardSampleAtWavelength(
 }
 
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
-    var scratch = ForwardSampleScratch.init(
-        worker.allocator,
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const scratch = ForwardSampleScratch.init(
+        allocator,
         worker.scene,
         worker.route,
         worker.prepared,
@@ -154,11 +157,10 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
         worker.error_state.store(err);
         return;
     };
-    defer scratch.deinit(worker.allocator);
 
     for (worker.misses, worker.results) |miss, *result| {
         result.* = computeForwardSampleAtWavelength(
-            worker.allocator,
+            allocator,
             worker.scene,
             worker.route,
             worker.prepared,
@@ -231,7 +233,6 @@ pub fn prefetchForwardSamples(
         const batch_count = base_count + @as(usize, if (worker_index < remainder) 1 else 0);
         const end_index = start_index + batch_count;
         workers[worker_index] = .{
-            .allocator = allocator,
             .scene = scene,
             .route = route,
             .prepared = prepared,
