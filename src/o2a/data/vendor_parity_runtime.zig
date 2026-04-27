@@ -529,9 +529,11 @@ fn rewindowParitySolarSupportToMeasurementKernel(
     if (retained_count < 3) return error.InvalidData;
 
     const retained_wavelengths_nm = try allocator.alloc(f64, retained_count);
-    errdefer allocator.free(retained_wavelengths_nm);
+    var retained_wavelengths_owned = true;
+    errdefer if (retained_wavelengths_owned) allocator.free(retained_wavelengths_nm);
     const retained_irradiance = try allocator.alloc(f64, retained_count);
-    errdefer allocator.free(retained_irradiance);
+    var retained_irradiance_owned = true;
+    errdefer if (retained_irradiance_owned) allocator.free(retained_irradiance);
 
     var retained_index: usize = 0;
     for (current.wavelengths_nm, current.irradiance) |wavelength_nm, irradiance| {
@@ -547,6 +549,8 @@ fn rewindowParitySolarSupportToMeasurementKernel(
         .wavelengths_nm = retained_wavelengths_nm,
         .irradiance = retained_irradiance,
     };
+    retained_wavelengths_owned = false;
+    retained_irradiance_owned = false;
     try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
 }
 
