@@ -118,6 +118,57 @@ pub fn fillDisamarDivPoints01(
     }
 }
 
+/// Purpose:
+///   Fill DISAMAR-compatible Gauss division points on `[a0, b0]`.
+///
+/// Vendor:
+///   DISAMAR `mathToolsModule::GaussDivPoints`, including its final
+///   interval scaling expression order.
+pub fn fillDisamarDivPointsInterval(
+    order: u32,
+    a0: f64,
+    b0: f64,
+    nodes_out: []f64,
+    weights_out: []f64,
+) error{InvalidOrder}!void {
+    if (order == 0 or
+        nodes_out.len < order or
+        weights_out.len < order or
+        order > max_disamar_division_points)
+    {
+        return error.InvalidOrder;
+    }
+
+    const order_usize: usize = @intCast(order);
+    var diagonal: [max_disamar_division_points]f64 = undefined;
+    var off_diagonal: [max_disamar_division_points]f64 = undefined;
+    var first_row: [max_disamar_division_points]f64 = undefined;
+
+    if (order_usize > 1) {
+        for (0..order_usize - 1) |index| {
+            const abi: f64 = @floatFromInt(index + 1);
+            diagonal[index] = 0.0;
+            off_diagonal[index] = abi / @sqrt(4.0 * abi * abi - 1.0);
+        }
+    }
+    diagonal[order_usize - 1] = 0.0;
+    off_diagonal[order_usize - 1] = 0.0;
+    first_row[0] = 1.0;
+    if (order_usize > 1) @memset(first_row[1..order_usize], 0.0);
+
+    try gausq2Disamar(
+        diagonal[0..order_usize],
+        off_diagonal[0..order_usize],
+        first_row[0..order_usize],
+    );
+
+    const span = b0 - a0;
+    for (0..order_usize) |index| {
+        weights_out[index] = first_row[index] * first_row[index] / 2.0 * span;
+        nodes_out[index] = (diagonal[index] + 1.0) / 2.0 * span + a0;
+    }
+}
+
 fn gausq2Disamar(
     diagonal: []f64,
     off_diagonal: []f64,
