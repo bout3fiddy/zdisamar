@@ -37,11 +37,16 @@ module o2aFunctionTraceModule
   real(8), save :: last_irradiance_sample_wavelength_nm = 0.0d0
   integer, save :: fourier_terms_unit = -1
   integer, save :: transport_layers_unit = -1
+  integer, save :: transport_layer_accumulation_unit = -1
   integer, save :: transport_source_terms_unit = -1
   integer, save :: transport_attenuation_terms_unit = -1
   integer, save :: transport_pseudo_spherical_samples_unit = -1
   integer, save :: transport_radiance_contributions_unit = -1
   integer, save :: transport_order_surface_unit = -1
+  integer, save :: transport_rt_probe_unit = -1
+  integer, save :: transport_rt_build_probe_unit = -1
+  integer, save :: transport_rt_double_probe_unit = -1
+  integer, save :: transport_zplus_terms_unit = -1
   integer, save :: transport_source_components_unit = -1
   integer, save :: transport_source_angle_components_unit = -1
   integer, save :: transport_pseudo_spherical_terms_unit = -1
@@ -113,6 +118,8 @@ contains
       'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,refl_fc,source_refl_fc,surface_refl_fc,surface_e_view,surface_u_view_solar,fourier_weight,weighted_refl')
     call open_trace_file(transport_layers_unit, 'transport_layers.csv', &
       'nominal_wavelength_nm,sample_wavelength_nm,layer_index,optical_depth,scattering_optical_depth,single_scatter_albedo,phase_coef_0,phase_coef_1,phase_coef_2,phase_coef_3,phase_coef_10,phase_coef_20,phase_coef_39')
+    call open_trace_file(transport_layer_accumulation_unit, 'transport_layer_accumulation.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,layer_index,babs,bsca,babs_gas,bsca_gas,babs_particles,bsca_particles,optical_depth,scattering_optical_depth,single_scatter_albedo')
     call open_trace_file(transport_source_terms_unit, 'transport_source_terms.csv', &
       'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,level_index,rtm_weight,ksca,source_contribution,weighted_source_contribution')
     call open_trace_file(transport_attenuation_terms_unit, 'transport_attenuation_terms.csv', &
@@ -122,7 +129,15 @@ contains
     call open_trace_file(transport_radiance_contributions_unit, 'transport_radiance_contributions.csv', &
       'nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,reflectance,irradiance,radiance,weighted_radiance_contribution')
     call open_trace_file(transport_order_surface_unit, 'transport_order_surface.csv', &
-      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,order_index,stop_reason,max_value,surface_u_order,surface_u_accumulated,surface_d_order,surface_e_view')
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,order_index,stop_reason,max_value,surface_u_order,surface_u_accumulated,surface_d_order,surface_e_view,probe_level,probe_angle_index,probe_d_order,probe_d_accumulated,probe_u_order,probe_u_accumulated')
+    call open_trace_file(transport_rt_probe_unit, 'transport_rt_probe.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,layer_index,row_angle_index,solar_column_index,optical_depth,scattering_optical_depth,single_scatter_albedo,rt_t_value,attenuation_top_to_layer,first_order_d_local')
+    call open_trace_file(transport_rt_build_probe_unit, 'transport_rt_build_probe.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,layer_index,row_angle_index,solar_column_index,max_phase_index,max_beta_eff,a_eff,use_doubling,b_start,ndouble,zplus_value,e_row,e_col,eet,dmu_min,single_t_value,final_t_value')
+    call open_trace_file(transport_rt_double_probe_unit, 'transport_rt_double_probe.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,layer_index,iteration,b_before,q_value,d_value,u_value,t_before,t_after')
+    call open_trace_file(transport_zplus_terms_unit, 'transport_zplus_terms.csv', &
+      'nominal_wavelength_nm,sample_wavelength_nm,fourier_index,layer_index,row_angle_index,solar_column_index,coefficient_index,phase_coefficient,plm_row,plm_col,contribution,cumulative_zplus')
     call open_trace_file(transport_source_components_unit, 'transport_source_components.csv', &
       'nominal_wavelength_nm,sample_index,sample_wavelength_nm,kernel_weight,fourier_index,level_index,e_view,pmin_ed,pplusst_u,source_over_ksca,source_contribution,weighted_source_contribution')
     call open_trace_file(transport_source_angle_components_unit, 'transport_source_angle_components.csv', &
@@ -602,6 +617,37 @@ contains
     flush(transport_layers_unit)
   end subroutine o2a_trace_transport_layer
 
+  subroutine o2a_trace_transport_layer_accumulation(wavelength_nm, layer_index, babs, bsca, babs_gas, bsca_gas, babs_particles, bsca_particles)
+    real(8), intent(in) :: wavelength_nm
+    integer, intent(in) :: layer_index
+    real(8), intent(in) :: babs
+    real(8), intent(in) :: bsca
+    real(8), intent(in) :: babs_gas
+    real(8), intent(in) :: bsca_gas
+    real(8), intent(in) :: babs_particles
+    real(8), intent(in) :: bsca_particles
+
+    integer :: trace_match_index
+    real(8) :: optical_depth
+    real(8) :: single_scatter_albedo
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    trace_match_index = find_trace_wavelength_support_index(wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    optical_depth = babs + bsca
+    if (optical_depth > 0.0d0) then
+      single_scatter_albedo = bsca / optical_depth
+    else
+      single_scatter_albedo = 0.0d0
+    end if
+
+    write(transport_layer_accumulation_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), wavelength_nm, &
+      layer_index, babs, bsca, babs_gas, bsca_gas, babs_particles, bsca_particles, optical_depth, bsca, single_scatter_albedo
+    flush(transport_layer_accumulation_unit)
+  end subroutine o2a_trace_transport_layer_accumulation
+
   subroutine o2a_trace_transport_source_term(i_fourier, level_index, rtm_weight, ksca, source_contribution)
     integer, intent(in) :: i_fourier
     integer, intent(in) :: level_index
@@ -664,7 +710,7 @@ contains
     flush(transport_pseudo_spherical_samples_unit)
   end subroutine o2a_trace_transport_pseudo_spherical_sample
 
-  subroutine o2a_trace_transport_order_surface(i_fourier, order_index, stop_reason, max_value, surface_u_order, surface_u_accumulated, surface_d_order, surface_e_view)
+  subroutine o2a_trace_transport_order_surface(i_fourier, order_index, stop_reason, max_value, surface_u_order, surface_u_accumulated, surface_d_order, surface_e_view, probe_level, probe_angle_index, probe_d_order, probe_d_accumulated, probe_u_order, probe_u_accumulated)
     integer, intent(in) :: i_fourier
     integer, intent(in) :: order_index
     character(len=*), intent(in) :: stop_reason
@@ -673,6 +719,12 @@ contains
     real(8), intent(in) :: surface_u_accumulated
     real(8), intent(in) :: surface_d_order
     real(8), intent(in) :: surface_e_view
+    integer, intent(in) :: probe_level
+    integer, intent(in) :: probe_angle_index
+    real(8), intent(in) :: probe_d_order
+    real(8), intent(in) :: probe_d_accumulated
+    real(8), intent(in) :: probe_u_order
+    real(8), intent(in) :: probe_u_accumulated
 
     integer :: trace_match_index
 
@@ -685,9 +737,125 @@ contains
     if (trace_match_index <= 0) return
 
     write(transport_order_surface_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
-      active_fourier_index, order_index, trim(stop_reason), max_value, surface_u_order, surface_u_accumulated, surface_d_order, surface_e_view
+      active_fourier_index, order_index, trim(stop_reason), max_value, surface_u_order, surface_u_accumulated, surface_d_order, surface_e_view, &
+      probe_level, probe_angle_index, probe_d_order, probe_d_accumulated, probe_u_order, probe_u_accumulated
     flush(transport_order_surface_unit)
   end subroutine o2a_trace_transport_order_surface
+
+  subroutine o2a_trace_transport_rt_probe(i_fourier, layer_index, row_angle_index, solar_column_index, optical_depth, &
+      scattering_optical_depth, single_scatter_albedo, rt_t_value, attenuation_top_to_layer, first_order_d_local)
+    integer, intent(in) :: i_fourier
+    integer, intent(in) :: layer_index
+    integer, intent(in) :: row_angle_index
+    integer, intent(in) :: solar_column_index
+    real(8), intent(in) :: optical_depth
+    real(8), intent(in) :: scattering_optical_depth
+    real(8), intent(in) :: single_scatter_albedo
+    real(8), intent(in) :: rt_t_value
+    real(8), intent(in) :: attenuation_top_to_layer
+    real(8), intent(in) :: first_order_d_local
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_rt_probe_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      i_fourier, layer_index, row_angle_index, solar_column_index, optical_depth, scattering_optical_depth, &
+      single_scatter_albedo, rt_t_value, attenuation_top_to_layer, first_order_d_local
+    flush(transport_rt_probe_unit)
+  end subroutine o2a_trace_transport_rt_probe
+
+  subroutine o2a_trace_transport_rt_build_probe(i_fourier, layer_index, row_angle_index, solar_column_index, max_phase_index, &
+      max_beta_eff, a_eff, use_doubling, b_start, ndouble, zplus_value, e_row, e_col, eet, dmu_min, single_t_value, final_t_value)
+    integer, intent(in) :: i_fourier
+    integer, intent(in) :: layer_index
+    integer, intent(in) :: row_angle_index
+    integer, intent(in) :: solar_column_index
+    integer, intent(in) :: max_phase_index
+    real(8), intent(in) :: max_beta_eff
+    real(8), intent(in) :: a_eff
+    integer, intent(in) :: use_doubling
+    real(8), intent(in) :: b_start
+    integer, intent(in) :: ndouble
+    real(8), intent(in) :: zplus_value
+    real(8), intent(in) :: e_row
+    real(8), intent(in) :: e_col
+    real(8), intent(in) :: eet
+    real(8), intent(in) :: dmu_min
+    real(8), intent(in) :: single_t_value
+    real(8), intent(in) :: final_t_value
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_rt_build_probe_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      i_fourier, layer_index, row_angle_index, solar_column_index, max_phase_index, max_beta_eff, a_eff, use_doubling, &
+      b_start, ndouble, zplus_value, e_row, e_col, eet, dmu_min, single_t_value, final_t_value
+    flush(transport_rt_build_probe_unit)
+  end subroutine o2a_trace_transport_rt_build_probe
+
+  subroutine o2a_trace_transport_rt_double_probe(i_fourier, layer_index, iteration, b_before, q_value, d_value, u_value, t_before, t_after)
+    integer, intent(in) :: i_fourier
+    integer, intent(in) :: layer_index
+    integer, intent(in) :: iteration
+    real(8), intent(in) :: b_before
+    real(8), intent(in) :: q_value
+    real(8), intent(in) :: d_value
+    real(8), intent(in) :: u_value
+    real(8), intent(in) :: t_before
+    real(8), intent(in) :: t_after
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_rt_double_probe_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      i_fourier, layer_index, iteration, b_before, q_value, d_value, u_value, t_before, t_after
+    flush(transport_rt_double_probe_unit)
+  end subroutine o2a_trace_transport_rt_double_probe
+
+  subroutine o2a_trace_transport_zplus_term(i_fourier, layer_index, row_angle_index, solar_column_index, coefficient_index, phase_coefficient, plm_row, plm_col, contribution, cumulative_zplus)
+    integer, intent(in) :: i_fourier
+    integer, intent(in) :: layer_index
+    integer, intent(in) :: row_angle_index
+    integer, intent(in) :: solar_column_index
+    integer, intent(in) :: coefficient_index
+    real(8), intent(in) :: phase_coefficient
+    real(8), intent(in) :: plm_row
+    real(8), intent(in) :: plm_col
+    real(8), intent(in) :: contribution
+    real(8), intent(in) :: cumulative_zplus
+
+    integer :: trace_match_index
+
+    call o2a_trace_init()
+    if (.not. trace_enabled) return
+    if (active_wavelength_nm <= 0.0d0) return
+
+    trace_match_index = find_trace_wavelength_support_index(active_wavelength_nm)
+    if (trace_match_index <= 0) return
+
+    write(transport_zplus_terms_unit, '(*(g0,:,","))') trace_wavelengths_nm(trace_match_index), active_wavelength_nm, &
+      i_fourier, layer_index, row_angle_index, solar_column_index, coefficient_index, phase_coefficient, &
+      plm_row, plm_col, contribution, cumulative_zplus
+    flush(transport_zplus_terms_unit)
+  end subroutine o2a_trace_transport_zplus_term
 
   subroutine o2a_trace_transport_source_angle_component(i_fourier, level_index, component_kind, angle_index, phase_value, field_value, angle_contribution, weighted_angle_contribution)
     integer, intent(in) :: i_fourier

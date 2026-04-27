@@ -235,7 +235,7 @@ fn buildExplicitDisamarParity(
         if (interior_node_count > 0) {
             const rtm_weights = try allocator.alloc(f64, interior_node_count);
             defer allocator.free(rtm_weights);
-            try gauss_legendre.fillNodesAndWeights(
+            try gauss_legendre.fillDisamarDivPoints01(
                 @intCast(interior_node_count),
                 rtm_nodes,
                 rtm_weights,
@@ -262,8 +262,7 @@ fn buildExplicitDisamarParity(
             const next_boundary_altitude_km = if (local_layer_index == interior_node_count)
                 interval_top_altitude_km
             else
-                interval_bottom_altitude_km +
-                    0.5 * (rtm_nodes[local_layer_index] + 1.0) * (interval_top_altitude_km - interval_bottom_altitude_km);
+                interval_bottom_altitude_km + rtm_nodes[local_layer_index] * (interval_top_altitude_km - interval_bottom_altitude_km);
             const next_boundary_pressure_hpa = if (local_layer_index == interior_node_count)
                 interval.top_pressure_hpa
             else

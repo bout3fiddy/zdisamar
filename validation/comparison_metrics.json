@@ -6,20 +6,20 @@
   "generated_spectrum_path": "validation/generated_spectrum.csv",
   "profile_summary_path": "validation/profile_summary.json",
   "reflectance": {
-    "mae": 2.7804994200244115e-15,
-    "rmse": 8.802352131259349e-15,
-    "max_abs": 5.739853037312059e-14,
-    "max_abs_wavelength_nm": 756.8,
+    "mae": 2.7652345958281735e-15,
+    "rmse": 8.792219637841996e-15,
+    "max_abs": 5.725975249504245e-14,
+    "max_abs_wavelength_nm": 756.77,
     "correlation": 0.9999999999999998,
-    "mean_signed": -6.59182547665224e-16
+    "mean_signed": -6.692283535863764e-16
   },
   "radiance": {
-    "mae": 0.21168245976729672,
-    "rmse": 0.6737459397098542,
-    "max_abs": 4.42578125,
+    "mae": 0.21053924778218616,
+    "rmse": 0.6730321806001288,
+    "max_abs": 4.421875,
     "max_abs_wavelength_nm": 756.77,
     "correlation": 1.0,
-    "mean_signed": -0.051205971101551354
+    "mean_signed": -0.05197792216476462
   },
   "irradiance": {
     "mae": 0.05171184022824536,

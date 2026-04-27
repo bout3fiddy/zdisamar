@@ -33,6 +33,19 @@
 - Aggregate build steps must have explicit coverage for composition. When a new focused lane or proof is added, tests or harness checks should prove that aggregate steps include it when required and omit it when intentionally opt-in.
 - When a change adds both exact and alternate O2 A paths, add the smallest focused verification that proves intended semantic parity or intentional divergence across those paths.
 
+## Current O2 A Radiance Residual Notes
+
+- As of the 756.77 nm focused diff, the remaining radiance residual is carried by support sample 121 at 756.7749788772569 nm, with the top weighted radiance contribution delta about 4.408 and final focused radiance delta about 4.422.
+- Upstream optics, support irradiance, and reflectance are not the active issue. Irradiance residuals are a few ULPs at very large scale and have been confirmed as summation noise.
+- LABOS order recursion is an amplifier, not the seed. The fixed probe at Fourier 0, layer 14, row angle 4, solar column shows `Tsingle` already differs before doubling. Doubling grows that seed to `RT.T`/`UD.D` deltas around 1.9e-11.
+- Already tested with no net improvement: Fortran-style whole-RHS assignment ordering in `double`; Fortran-style `Qseries` LU/solve ordering; strict float mode in matrix helpers; strict float mode in phase-basis and `Zplus` summation; layer optical-depth regrouping as `babs + bsca`; DISAMAR-style row-level grouping of support-row `babs`/`bsca` accumulation.
+- The initial large `transport_layer_accumulation.csv` gas/scattering discrepancy was a trace alignment artifact caused by stale vendor `active_wavelength_nm`. Passing the actual `propAtmosphere` wavelength into the trace makes vendor accumulation equal vendor `transport_layers.csv`, and Zig matches DISAMAR layer `babs`/`bsca` to about 1e-15.
+- The support-row summand check for sample 121, layer 14 shows global support rows 56-59 account for the full layer optical-depth delta. Their per-row extinction (`optical_depth / support_weight_km`) deltas partially cancel, while `support_weight_km` path-length deltas dominate the positive cumulative layer delta. Switching the parity vertical grid to the repo's DISAMAR `[0,1]` Gauss rule did not improve radiance and was backed out; the active seed is vertical-grid path-length/span ULP noise, not the Gauss-rule family.
+- A narrower mirror of DISAMAR's RTM level-boundary construction, using DISAMAR-compatible `[0,1]` Gauss division points only for interval interior RTM boundaries while leaving sublayer support nodes unchanged, gives a small net improvement. The 756.77 focused residual moved from 4.421875 to 4.41796875, and the full plot bundle radiance max_abs moved from 4.42578125 to 4.421875. It does not eliminate the sample-121/layer-14 `b_start` seed.
+- `transport_zplus_terms.csv` shows per-coefficient `Zplus` terms are not the main seed. For the dominant sample, pre-renormalization cumulative `Zplus` is effectively aligned; post-renorm `Zplus` differs only at a few ULPs.
+- The strongest current seed is the near-canceling `Tsingle` factor `eet = E(row) - E(col)`: the row attenuation differs by one ULP while the column attenuation matches. This appears to originate in layer optical-depth / `b_start` roundoff and is then amplified by doubling.
+- Next useful inquiry: if exact bit parity is still required, continue mirroring DISAMAR's vertical-grid altitude/span arithmetic at the temporary-expression level. Otherwise treat the remaining radiance residual as amplified floating-point path-length noise. Do not repeat the eliminated LABOS `double`, `Qseries`, `Zplus`, `babs`/`bsca` grouping, or full sublayer-support Gauss-rule-family diagnostics unless new evidence changes the hotspot.
+
 ## Before Push
 
 - There is no repo CI workflow. Run the necessary checks locally before pushing larger changes.

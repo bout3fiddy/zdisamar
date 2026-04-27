@@ -22,6 +22,7 @@ pub const LayerRT = basis.LayerRT;
 pub const UDField = basis.UDField;
 pub const UDLocal = basis.UDLocal;
 pub const PhaseKernel = basis.PhaseKernel;
+pub const ZplusContributionTerm = basis.ZplusContributionTerm;
 pub const FourierPlmBasis = basis.FourierPlmBasis;
 pub const AttenArray = attenuation.AttenArray;
 pub const DynamicAttenArray = attenuation.DynamicAttenArray;
@@ -32,6 +33,7 @@ pub const semul = basis.semul;
 pub const matAdd = basis.matAdd;
 pub const qseries = basis.qseries;
 pub const fillZplusZmin = basis.fillZplusZmin;
+pub const collectZplusContributionTerms = basis.collectZplusContributionTerms;
 
 pub const fillAttenuation = attenuation.fillAttenuation;
 pub const fillAttenuationDynamic = attenuation.fillAttenuationDynamic;
@@ -40,6 +42,11 @@ pub const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWit
 pub const calcRTlayersInto = layers_mod.calcRTlayersInto;
 pub const calcRTlayersIntoWithBasis = layers_mod.calcRTlayersIntoWithBasis;
 pub const calcRTlayers = layers_mod.calcRTlayers;
+pub const TransmissionProbe = layers_mod.TransmissionProbe;
+pub const TransmissionIterationProbe = layers_mod.TransmissionIterationProbe;
+pub const max_transmission_iteration_probes = layers_mod.max_transmission_iteration_probes;
+pub const calcTransmissionProbe = layers_mod.calcTransmissionProbe;
+pub const calcTransmissionIterationProbes = layers_mod.calcTransmissionIterationProbes;
 pub const fillSurface = layers_mod.fillSurface;
 
 pub const dotGauss = orders_mod.dotGauss;

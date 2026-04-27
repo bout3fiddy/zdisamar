@@ -26,7 +26,9 @@ pub const matAdd = matrix.matAdd;
 pub const qseries = matrix.qseries;
 
 pub const PhaseKernel = phase_basis.PhaseKernel;
+pub const ZplusContributionTerm = phase_basis.ZplusContributionTerm;
 pub const FourierPlmBasis = phase_basis.FourierPlmBasis;
 pub const fillZplusZminFromBasis = phase_basis.fillZplusZminFromBasis;
 pub const fillZplusZminFromBasisLimited = phase_basis.fillZplusZminFromBasisLimited;
 pub const fillZplusZmin = phase_basis.fillZplusZmin;
+pub const collectZplusContributionTerms = phase_basis.collectZplusContributionTerms;

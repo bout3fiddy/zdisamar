@@ -23,10 +23,13 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import numpy as np
-from o2a_plot_bundle import create_plots, stable_repo_path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "validation"))
+
+from o2a_plot_bundle import create_plots, stable_repo_path
+
 DEFAULT_WAVELENGTHS_NM = (761.75,)
 DEFAULT_TRACE_ROOT = REPO_ROOT / "out" / "analysis" / "o2a" / "function_diff"
 PARITY_CASE_YAML = REPO_ROOT / "data" / "examples" / "vendor_o2a_parity.yaml"
@@ -51,11 +54,16 @@ EXPECTED_CSVS = (
     "irradiance_contributions.csv",
     "fourier_terms.csv",
     "transport_layers.csv",
+    "transport_layer_accumulation.csv",
     "transport_source_terms.csv",
     "transport_attenuation_terms.csv",
     "transport_pseudo_spherical_samples.csv",
     "transport_radiance_contributions.csv",
     "transport_order_surface.csv",
+    "transport_rt_probe.csv",
+    "transport_rt_build_probe.csv",
+    "transport_rt_double_probe.csv",
+    "transport_zplus_terms.csv",
     "transport_source_components.csv",
     "transport_source_angle_components.csv",
     "transport_pseudo_spherical_terms.csv",
@@ -284,6 +292,25 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "phase_coef_39",
         ),
     ),
+    "transport_layer_accumulation.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "layer_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "layer_index",
+            "babs",
+            "bsca",
+            "babs_gas",
+            "bsca_gas",
+            "babs_particles",
+            "bsca_particles",
+            "optical_depth",
+            "scattering_optical_depth",
+            "single_scatter_albedo",
+        ),
+    ),
     "transport_source_terms.csv": CsvSpec(
         key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index", "level_index"),
         numeric_columns=(
@@ -367,6 +394,94 @@ CSV_SPECS: dict[str, CsvSpec] = {
             "surface_u_accumulated",
             "surface_d_order",
             "surface_e_view",
+            "probe_level",
+            "probe_angle_index",
+            "probe_d_order",
+            "probe_d_accumulated",
+            "probe_u_order",
+            "probe_u_accumulated",
+        ),
+    ),
+    "transport_rt_probe.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index", "layer_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "layer_index",
+            "row_angle_index",
+            "solar_column_index",
+            "optical_depth",
+            "scattering_optical_depth",
+            "single_scatter_albedo",
+            "rt_t_value",
+            "attenuation_top_to_layer",
+            "first_order_d_local",
+        ),
+    ),
+    "transport_rt_build_probe.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index", "layer_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "layer_index",
+            "row_angle_index",
+            "solar_column_index",
+            "max_phase_index",
+            "max_beta_eff",
+            "a_eff",
+            "use_doubling",
+            "b_start",
+            "ndouble",
+            "zplus_value",
+            "e_row",
+            "e_col",
+            "eet",
+            "dmu_min",
+            "single_t_value",
+            "final_t_value",
+        ),
+    ),
+    "transport_rt_double_probe.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index", "layer_index", "iteration"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "layer_index",
+            "iteration",
+            "b_before",
+            "q_value",
+            "d_value",
+            "u_value",
+            "t_before",
+            "t_after",
+        ),
+    ),
+    "transport_zplus_terms.csv": CsvSpec(
+        key_columns=("nominal_wavelength_nm", "sample_index", "sample_wavelength_nm", "fourier_index", "layer_index", "coefficient_index"),
+        numeric_columns=(
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "layer_index",
+            "row_angle_index",
+            "solar_column_index",
+            "coefficient_index",
+            "phase_coefficient",
+            "plm_row",
+            "plm_col",
+            "contribution",
+            "cumulative_zplus",
         ),
     ),
     "transport_source_components.csv": CsvSpec(
@@ -858,8 +973,13 @@ def annotate_transport_support_rows(side_root: Path, expand_overlapping_supports
     for file_name in (
         "fourier_terms.csv",
         "transport_layers.csv",
+        "transport_layer_accumulation.csv",
         "transport_source_terms.csv",
         "transport_order_surface.csv",
+        "transport_rt_probe.csv",
+        "transport_rt_build_probe.csv",
+        "transport_rt_double_probe.csv",
+        "transport_zplus_terms.csv",
         "transport_source_angle_components.csv",
         "transport_attenuation_terms.csv",
         "transport_pseudo_spherical_samples.csv",
@@ -925,6 +1045,107 @@ def derive_granular_transport_traces(side_root: Path) -> None:
             "surface_u_accumulated",
             "surface_d_order",
             "surface_e_view",
+        ],
+    )
+    derive_empty_trace(
+        side_root / "transport_layer_accumulation.csv",
+        [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "layer_index",
+            "babs",
+            "bsca",
+            "babs_gas",
+            "bsca_gas",
+            "babs_particles",
+            "bsca_particles",
+            "optical_depth",
+            "scattering_optical_depth",
+            "single_scatter_albedo",
+        ],
+    )
+    derive_empty_trace(
+        side_root / "transport_rt_probe.csv",
+        [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "layer_index",
+            "row_angle_index",
+            "solar_column_index",
+            "optical_depth",
+            "scattering_optical_depth",
+            "single_scatter_albedo",
+            "rt_t_value",
+            "attenuation_top_to_layer",
+            "first_order_d_local",
+        ],
+    )
+    derive_empty_trace(
+        side_root / "transport_rt_build_probe.csv",
+        [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "layer_index",
+            "row_angle_index",
+            "solar_column_index",
+            "max_phase_index",
+            "max_beta_eff",
+            "a_eff",
+            "use_doubling",
+            "b_start",
+            "ndouble",
+            "zplus_value",
+            "e_row",
+            "e_col",
+            "eet",
+            "dmu_min",
+            "single_t_value",
+            "final_t_value",
+        ],
+    )
+    derive_empty_trace(
+        side_root / "transport_rt_double_probe.csv",
+        [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "layer_index",
+            "iteration",
+            "b_before",
+            "q_value",
+            "d_value",
+            "u_value",
+            "t_before",
+            "t_after",
+        ],
+    )
+    derive_empty_trace(
+        side_root / "transport_zplus_terms.csv",
+        [
+            "nominal_wavelength_nm",
+            "sample_index",
+            "sample_wavelength_nm",
+            "kernel_weight",
+            "fourier_index",
+            "layer_index",
+            "row_angle_index",
+            "solar_column_index",
+            "coefficient_index",
+            "phase_coefficient",
+            "plm_row",
+            "plm_col",
+            "contribution",
+            "cumulative_zplus",
         ],
     )
     derive_empty_trace(
@@ -2379,6 +2600,8 @@ def patch_labos_module(path: Path) -> None:
         "  use o2aFunctionTraceModule, only: o2a_trace_fourier_term, o2a_trace_transport_layer, &\n"
         "    o2a_trace_transport_source_term, o2a_trace_transport_attenuation_term, &\n"
         "    o2a_trace_transport_pseudo_spherical_sample, o2a_trace_transport_order_surface, &\n"
+        "    o2a_trace_transport_rt_probe, o2a_trace_transport_rt_build_probe, o2a_trace_transport_rt_double_probe, &\n"
+        "    o2a_trace_transport_zplus_term, &\n"
         "    o2a_trace_transport_source_angle_component, o2a_trace_set_fourier_index\n",
         path,
     )
@@ -2398,6 +2621,144 @@ def patch_labos_module(path: Path) -> None:
         "      real(8) :: eigenvalue(nmuextra)\n"
         "      real(8) :: maxValue\n"
         "      integer :: trace_surface_ind\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      real(8) :: beta_eff(0:maxExpCoef), max_beta_eff\n\n"
+        "      real(8) :: E(dimSV_fc*nmutot)\n",
+        "      real(8) :: beta_eff(0:maxExpCoef), max_beta_eff\n"
+        "      real(8) :: trace_b_start, trace_e_row, trace_e_col, trace_eet, trace_single_t\n"
+        "      real(8) :: trace_zplus_cumulative, trace_zplus_contribution\n"
+        "      integer :: trace_row_ind, trace_col_ind\n\n"
+        "      real(8) :: E(dimSV_fc*nmutot)\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "          doubling = .false.\n\n"
+        "          ! determine effective expansion coefficient for the current Fourier term\n",
+        "          doubling = .false.\n"
+        "          bstart = b\n"
+        "          ndouble = 0\n\n"
+        "          ! determine effective expansion coefficient for the current Fourier term\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "            R = Rsingle(dimSV_fc, nmutot, a, E, Zmin, DmuPlus)\n\n"
+        "            T = Tsingle(dimSV_fc, nmutot, a, bstart, E, Zplus, DmuMin, geometryS)\n",
+        "            trace_b_start = bstart\n"
+        "            trace_row_ind = 1 + min(4, nGauss - 1) * dimSV_fc\n"
+        "            trace_col_ind = dimSV_fc * nGauss + 1 + dimSV_fc\n"
+        "            trace_e_row = E(trace_row_ind)\n"
+        "            trace_e_col = E(trace_col_ind)\n"
+        "            if (abs(geometryS%u(1 + min(4, nGauss - 1)) - geometryS%u(nGauss + 2)) < 1.0d-6) then\n"
+        "              trace_eet = trace_b_start * trace_e_row\n"
+        "            else\n"
+        "              trace_eet = trace_e_row - trace_e_col\n"
+        "            end if\n"
+        "            R = Rsingle(dimSV_fc, nmutot, a, E, Zmin, DmuPlus)\n\n"
+        "            T = Tsingle(dimSV_fc, nmutot, a, bstart, E, Zplus, DmuMin, geometryS)\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "            R = Rsingle(dimSV_fc, nmutot, a, E, Zmin, DmuPlus)\n"
+        "            T = Tsingle(dimSV_fc, nmutot, a, b, E, Zplus, DmuMin, geometryS )\n",
+        "            trace_b_start = b\n"
+        "            trace_row_ind = 1 + min(4, nGauss - 1) * dimSV_fc\n"
+        "            trace_col_ind = dimSV_fc * nGauss + 1 + dimSV_fc\n"
+        "            trace_e_row = E(trace_row_ind)\n"
+        "            trace_e_col = E(trace_col_ind)\n"
+        "            if (abs(geometryS%u(1 + min(4, nGauss - 1)) - geometryS%u(nGauss + 2)) < 1.0d-6) then\n"
+        "              trace_eet = trace_b_start * trace_e_row\n"
+        "            else\n"
+        "              trace_eet = trace_e_row - trace_e_col\n"
+        "            end if\n"
+        "            R = Rsingle(dimSV_fc, nmutot, a, E, Zmin, DmuPlus)\n"
+        "            T = Tsingle(dimSV_fc, nmutot, a, b, E, Zplus, DmuMin, geometryS )\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "          end if ! doubling\n\n"
+        "          ! fill data structure\n",
+        "          end if ! doubling\n\n"
+        "          if (iFourier == 0 .and. ilayer == min(15, RTMnlayer)) then\n"
+        "            trace_row_ind = 1 + min(4, nGauss - 1) * dimSV_fc\n"
+        "            trace_col_ind = dimSV_fc * nGauss + 1 + dimSV_fc\n"
+        "            trace_zplus_cumulative = 0.0d0\n"
+        "            do iCoef = iFourier, optPropRTMGridS%maxExpCoefLay(ilayer)\n"
+        "              trace_zplus_contribution = optPropRTMGridS%phasefCoefLay(1,1,iCoef,ilayer) &\n"
+        "                * fcCoef(iCoef)%PlmPlus(trace_row_ind) * fcCoef(iCoef)%PlmPlus(trace_col_ind)\n"
+        "              trace_zplus_cumulative = trace_zplus_cumulative + trace_zplus_contribution\n"
+        "              call o2a_trace_transport_zplus_term(iFourier, min(14, RTMnlayer - 1), min(4, nGauss - 1), 1, &\n"
+        "                iCoef, optPropRTMGridS%phasefCoefLay(1,1,iCoef,ilayer), &\n"
+        "                fcCoef(iCoef)%PlmPlus(trace_row_ind), fcCoef(iCoef)%PlmPlus(trace_col_ind), &\n"
+        "                trace_zplus_contribution, trace_zplus_cumulative)\n"
+        "            end do\n"
+        "            trace_single_t = a * Zplus(trace_row_ind, trace_col_ind) * trace_eet * DmuMin(1 + min(4, nGauss - 1), nGauss + 2)\n"
+        "            call o2a_trace_transport_rt_build_probe(iFourier, min(14, RTMnlayer - 1), min(4, nGauss - 1), 1, &\n"
+        "              optPropRTMGridS%maxExpCoefLay(ilayer), max_beta_eff, aeff, merge(1, 0, doubling), trace_b_start, ndouble, &\n"
+        "              Zplus(trace_row_ind, trace_col_ind), trace_e_row, trace_e_col, trace_eet, &\n"
+        "              DmuMin(1 + min(4, nGauss - 1), nGauss + 2), &\n"
+        "              trace_single_t, T(trace_row_ind, trace_col_ind))\n"
+        "          end if\n\n"
+        "          ! fill data structure\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "            call double(errS, ndouble, dimSV_fc, nmutot, nGauss, controlS%thresholdMul, geometryS, &\n"
+        "                        bstart, E, R, T)\n",
+        "            call double(errS, ndouble, dimSV_fc, nmutot, nGauss, controlS%thresholdMul, geometryS, &\n"
+        "                        bstart, E, R, T, iFourier, ilayer)\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "    subroutine double(errS, ndouble, dimSV_fc, nmutot, nGauss, thresholdMul, geometryS, b, E, R, T)\n",
+        "    subroutine double(errS, ndouble, dimSV_fc, nmutot, nGauss, thresholdMul, geometryS, b, E, R, T, iFourierTrace, ilayerTrace)\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      integer,            intent(in)     :: dimSV_fc, nmutot, nGauss\n",
+        "      integer,            intent(in)     :: dimSV_fc, nmutot, nGauss\n"
+        "      integer,            intent(in)     :: iFourierTrace, ilayerTrace\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      integer :: idouble, imu, iSV, ind\n",
+        "      integer :: idouble, imu, iSV, ind, trace_row_ind, trace_col_ind\n"
+        "      real(8) :: trace_b_before, trace_t_before\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "      do idouble = 1, ndouble \n"
+        "        Rst  = transform_top_bottom(dimSV_fc, nmutot, R)\n",
+        "      trace_row_ind = 1 + min(4, nGauss - 1) * dimSV_fc\n"
+        "      trace_col_ind = dimSV_fc * nGauss + 1 + dimSV_fc\n"
+        "      do idouble = 1, ndouble \n"
+        "        trace_b_before = b\n"
+        "        trace_t_before = T(trace_row_ind, trace_col_ind)\n"
+        "        Rst  = transform_top_bottom(dimSV_fc, nmutot, R)\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "        T    = esmul(dimSV_fc*nmutot, E, D) + semul(dimSV_fc*nmutot, T, E) &\n"
+        "             + smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, T, D)\n",
+        "        T    = esmul(dimSV_fc*nmutot, E, D) + semul(dimSV_fc*nmutot, T, E) &\n"
+        "             + smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, T, D)\n"
+        "        if (iFourierTrace == 0 .and. ilayerTrace == 15) then\n"
+        "          call o2a_trace_transport_rt_double_probe(iFourierTrace, min(14, ilayerTrace - 1), idouble, &\n"
+        "            trace_b_before, Q(trace_row_ind, trace_col_ind), D(trace_row_ind, trace_col_ind), &\n"
+        "            U(trace_row_ind, trace_col_ind), trace_t_before, T(trace_row_ind, trace_col_ind))\n"
+        "        end if\n",
         path,
     )
     text = replace_once(
@@ -2466,12 +2827,18 @@ def patch_labos_module(path: Path) -> None:
         "      if ( maxValue  < controlS%thresholdConv_first) then\n\n"
         "        call o2a_trace_transport_order_surface(0, numorders, 'first_converged', maxValue, &\n"
         "          UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
-        "          UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n"
+        "          UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind), &\n"
+        "          min(14,endLevel), 4, UDorde_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), &\n"
+        "          UD_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), UDorde_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2), &\n"
+        "          UD_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2))\n"
         "        if ( verbose )  write(intermediateFileUnit,'(A, I4)') 'numorders= ', numorders\n\n"
         "      else ! higher orders of scattering\n"
         "        call o2a_trace_transport_order_surface(0, numorders, 'accumulated', maxValue, &\n"
         "          UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
-        "          UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n",
+        "          UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind), &\n"
+        "          min(14,endLevel), 4, UDorde_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), &\n"
+        "          UD_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), UDorde_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2), &\n"
+        "          UD_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2))\n",
         path,
     )
     text = replace_once(
@@ -2484,11 +2851,17 @@ def patch_labos_module(path: Path) -> None:
         "            if (numorders == numOrdersMax) then\n"
         "              call o2a_trace_transport_order_surface(0, numorders, 'max_orders', maxValue, &\n"
         "                UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
-        "                UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n"
+        "                UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind), &\n"
+        "                min(14,endLevel), 4, UDorde_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), &\n"
+        "                UD_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), UDorde_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2), &\n"
+        "                UD_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2))\n"
         "            else\n"
         "              call o2a_trace_transport_order_surface(0, numorders, 'multiple_converged', maxValue, &\n"
         "                UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
-        "                UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n"
+        "                UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind), &\n"
+        "                min(14,endLevel), 4, UDorde_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), &\n"
+        "                UD_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), UDorde_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2), &\n"
+        "                UD_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2))\n"
         "            end if\n"
         "             if ( verbose )  write(intermediateFileUnit,*) 'numorders= ', numorders\n"
         "            exit ! exit loop over orders of scattering\n"
@@ -2505,7 +2878,10 @@ def patch_labos_module(path: Path) -> None:
         "            end do\n"
         "            call o2a_trace_transport_order_surface(0, numorders, 'accumulated', maxValue, &\n"
         "              UDorde_fc(startLevel)%U(trace_surface_ind, 2), UD_fc(startLevel)%U(trace_surface_ind, 2), &\n"
-        "              UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind))\n"
+        "              UDorde_fc(startLevel)%D(trace_surface_ind, 2), UD_fc(startLevel)%E(trace_surface_ind), &\n"
+        "              min(14,endLevel), 4, UDorde_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), &\n"
+        "              UD_fc(min(14,endLevel))%D(1 + 4*dimSV_fc, 2), UDorde_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2), &\n"
+        "              UD_fc(min(14,endLevel))%U(1 + 4*dimSV_fc, 2))\n"
         "            \n"
         "          end if ! numorders == numOrdersMax\n",
         path,
@@ -2537,6 +2913,14 @@ def patch_labos_module(path: Path) -> None:
         "              optPropRTMGridS%phasefCoefLay(1,1,10,ilevel), optPropRTMGridS%phasefCoefLay(1,1,20,ilevel), &\n"
         "              optPropRTMGridS%phasefCoefLay(1,1,39,ilevel))\n"
         "          end do\n"
+        "          call o2a_trace_transport_rt_probe(iFourier, min(14, RTMnlayer - 1), min(4, nGauss - 1), 1, &\n"
+        "            optPropRTMGridS%opticalThicknLay(min(15, RTMnlayer)), &\n"
+        "            optPropRTMGridS%opticalThicknLay(min(15, RTMnlayer)) * optPropRTMGridS%ssaLay(min(15, RTMnlayer)), &\n"
+        "            optPropRTMGridS%ssaLay(min(15, RTMnlayer)), &\n"
+        "            RT_fc(min(15, RTMnlayer))%T(1 + min(4, nGauss - 1) * dimSV_fc, dimSV_fc * nGauss + 1 + dimSV_fc), &\n"
+        "            atten(nGauss + 2, RTMnlayer, min(15, RTMnlayer)), &\n"
+        "            RT_fc(min(15, RTMnlayer))%T(1 + min(4, nGauss - 1) * dimSV_fc, dimSV_fc * nGauss + 1 + dimSV_fc) &\n"
+        "              * atten(nGauss + 2, RTMnlayer, min(15, RTMnlayer)))\n"
         "        end if\n\n"
         "        call fillsurface(errS, iFourier, dimSV_fc, nmutot, albedo, geometryS, RT_fc(RTMnlevelCloud)%R,     &\n",
         path,
@@ -2634,7 +3018,7 @@ def patch_prop_atmosphere_module(path: Path) -> None:
         "  use mathTools,          only: splintLin, spline, splint, polyInt, gaussDivPoints, &\n"
         "                                getSmoothAndDiffXsec, slitfunction, fleg\n"
         "    use o2aFunctionTraceModule, only: o2a_trace_sublayer_optics, o2a_trace_interval_bound, &\n"
-        "      o2a_trace_dense_profile_row, o2a_trace_hydrostatic_term\n",
+        "      o2a_trace_dense_profile_row, o2a_trace_hydrostatic_term, o2a_trace_transport_layer_accumulation\n",
         path,
     )
     text = replace_once(
@@ -2737,6 +3121,26 @@ def patch_prop_atmosphere_module(path: Path) -> None:
         "      if (trim(traceGasS(iTrace)%nameTraceGas) == 'O2-O2') ciaTraceIndex = iTrace\n"
         "    end do\n\n"
         "    ! calculate values for column grid\n",
+        path,
+    )
+    text = replace_once(
+        text,
+        "        if ( bsca(index) > 1.0d-8 ) then\n"
+        "          expCoefLay(:,:,:, index) = expCoefLay(:,:,:, index) / bsca(index)\n"
+        "        else\n"
+        "          expCoefLay(:,:,:, index) = 0.0d0\n"
+        "          expCoefLay(1,1,0, index) = 1.0d0\n"
+        "        end if\n\n"
+        "        ! determine maxExpCoef for the layers\n",
+        "        if ( bsca(index) > 1.0d-8 ) then\n"
+        "          expCoefLay(:,:,:, index) = expCoefLay(:,:,:, index) / bsca(index)\n"
+        "        else\n"
+        "          expCoefLay(:,:,:, index) = 0.0d0\n"
+        "          expCoefLay(1,1,0, index) = 1.0d0\n"
+        "        end if\n"
+        "        call o2a_trace_transport_layer_accumulation(wavelength, index - 1, babs(index), bsca(index), &\n"
+        "          babsGas(index), bscaGas(index), babsPar(index), bscaPar(index))\n\n"
+        "        ! determine maxExpCoef for the layers\n",
         path,
     )
     text = replace_once(
