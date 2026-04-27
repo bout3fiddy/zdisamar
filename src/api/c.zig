@@ -85,7 +85,6 @@ export fn zds_context_destroy(ctx: ?*Context) void {
 
 export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    resolved.clearResults();
     resolved.clearPrepared();
     var case = defaultO2ACase();
     resolved.prepared = zdisamar.prepare(allocator, &case) catch |err| {
