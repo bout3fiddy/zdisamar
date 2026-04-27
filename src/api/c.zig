@@ -14,16 +14,30 @@ pub const ZdsSpectrum = extern struct {
     radiance: [*]const f64 = undefined,
     irradiance: [*]const f64 = undefined,
     reflectance: [*]const f64 = undefined,
+    result_handle: ?*anyopaque = null,
 };
 
 const Context = struct {
     prepared: ?zdisamar.Prepared = null,
-    result: ?zdisamar.Result = null,
+    results: std.ArrayList(*zdisamar.Result) = .empty,
     last_error: [256:0]u8 = [_:0]u8{0} ** 256,
 
-    fn clearResult(self: *Context) void {
-        if (self.result) |*result| result.deinit(allocator);
-        self.result = null;
+    fn clearResults(self: *Context) void {
+        for (self.results.items) |result| {
+            result.deinit(allocator);
+            allocator.destroy(result);
+        }
+        self.results.clearAndFree(allocator);
+    }
+
+    fn removeResult(self: *Context, result: *zdisamar.Result) bool {
+        for (self.results.items, 0..) |stored, index| {
+            if (stored == result) {
+                _ = self.results.swapRemove(index);
+                return true;
+            }
+        }
+        return false;
     }
 
     fn clearPrepared(self: *Context) void {
@@ -64,14 +78,14 @@ export fn zds_context_create() ?*Context {
 
 export fn zds_context_destroy(ctx: ?*Context) void {
     const resolved = ctx orelse return;
-    resolved.clearResult();
+    resolved.clearResults();
     resolved.clearPrepared();
     allocator.destroy(resolved);
 }
 
 export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    resolved.clearResult();
+    resolved.clearResults();
     resolved.clearPrepared();
     var case = defaultO2ACase();
     resolved.prepared = zdisamar.prepare(allocator, &case) catch |err| {
@@ -90,23 +104,33 @@ export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
         return @intFromEnum(ZdsStatus.failure);
     }
     const prepared = &resolved.prepared.?;
-    resolved.clearResult();
-    resolved.result = zdisamar.run(
+    const result = allocator.create(zdisamar.Result) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    result.* = zdisamar.run(
         allocator,
         prepared,
         .exact,
         .{},
     ) catch |err| {
+        allocator.destroy(result);
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
-    const result = &(resolved.result.?);
+    resolved.results.append(allocator, result) catch |err| {
+        result.deinit(allocator);
+        allocator.destroy(result);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
     output.* = .{
         .len = result.wavelengths.len,
         .wavelength_nm = result.wavelengths.ptr,
         .radiance = result.radiance.ptr,
         .irradiance = result.irradiance.ptr,
         .reflectance = result.reflectance.ptr,
+        .result_handle = @ptrCast(result),
     };
     resolved.setError("");
     return @intFromEnum(ZdsStatus.ok);
@@ -114,8 +138,15 @@ export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
 
 export fn zds_spectrum_free(ctx: ?*Context, out: ?*ZdsSpectrum) void {
     const resolved = ctx orelse return;
-    resolved.clearResult();
-    if (out) |output| output.* = .{};
+    const output = out orelse return;
+    if (output.result_handle) |handle| {
+        const result: *zdisamar.Result = @ptrCast(@alignCast(handle));
+        if (resolved.removeResult(result)) {
+            result.deinit(allocator);
+            allocator.destroy(result);
+        }
+    }
+    output.* = .{};
 }
 
 export fn zds_last_error(ctx: ?*Context) [*:0]const u8 {

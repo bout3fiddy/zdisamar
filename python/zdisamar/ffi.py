@@ -16,6 +16,7 @@ class _CSpectrum(ctypes.Structure):
         ("radiance", ctypes.POINTER(ctypes.c_double)),
         ("irradiance", ctypes.POINTER(ctypes.c_double)),
         ("reflectance", ctypes.POINTER(ctypes.c_double)),
+        ("result_handle", ctypes.c_void_p),
     ]
 
 
@@ -150,7 +151,11 @@ class Context:
 
 def forward(library_path: Optional[str | os.PathLike[str]] = None) -> Spectrum:
     ctx = Context(library_path)
-    ctx.prepare_default_o2a()
-    raw = _CSpectrum()
-    ctx._check(ctx._lib.zds_run_spectrum(ctx._ctx, ctypes.byref(raw)))
-    return Spectrum(ctx, raw, close_owner=True)
+    try:
+        ctx.prepare_default_o2a()
+        raw = _CSpectrum()
+        ctx._check(ctx._lib.zds_run_spectrum(ctx._ctx, ctypes.byref(raw)))
+        return Spectrum(ctx, raw, close_owner=True)
+    except Exception:
+        ctx.close()
+        raise

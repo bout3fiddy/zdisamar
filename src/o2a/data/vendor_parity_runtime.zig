@@ -118,7 +118,8 @@ pub fn loadResolvedVendorO2AInputs(
     defer profile_asset.deinit(allocator);
     var profile = try profile_asset.toClimatologyProfile(allocator);
     errdefer profile.deinit(allocator);
-    const dense_profile = try profile.densifyVendorPressureGrid(allocator, resolved.surface_pressure_hpa);
+    var dense_profile = try profile.densifyVendorPressureGrid(allocator, resolved.surface_pressure_hpa);
+    errdefer dense_profile.deinit(allocator);
     var spectroscopy_profile = try buildVendorTraceGasSpectroscopyProfile(
         allocator,
         profile,
@@ -127,6 +128,7 @@ pub fn loadResolvedVendorO2AInputs(
     errdefer spectroscopy_profile.deinit(allocator);
     profile.deinit(allocator);
     profile = dense_profile;
+    dense_profile = .{ .rows = &.{} };
 
     var cross_sections = try bundled_optics.zeroContinuumTable(allocator, 758.0, 771.0);
     errdefer cross_sections.deinit(allocator);
@@ -230,9 +232,11 @@ pub fn buildResolvedVendorO2AScene(
     if (retained_solar_count < 3) return error.InvalidData;
 
     const solar_wavelengths = try allocator.alloc(f64, retained_solar_count);
-    errdefer allocator.free(solar_wavelengths);
+    var solar_wavelengths_owned = true;
+    errdefer if (solar_wavelengths_owned) allocator.free(solar_wavelengths);
     const solar_irradiance = try allocator.alloc(f64, retained_solar_count);
-    errdefer allocator.free(solar_irradiance);
+    var solar_irradiance_owned = true;
+    errdefer if (solar_irradiance_owned) allocator.free(solar_irradiance);
     var solar_index: usize = 0;
     for (raw_solar_spectrum) |sample| {
         if (sample.wavelength_nm <= solar_support_start_nm) continue;
@@ -243,16 +247,20 @@ pub fn buildResolvedVendorO2AScene(
     }
 
     const absorber_items = try allocator.alloc(AbsorberModel.Absorber, 1);
-    errdefer allocator.free(absorber_items);
+    var absorber_items_owned = true;
+    errdefer if (absorber_items_owned) allocator.free(absorber_items);
     const absorber_id = try allocator.dupe(u8, "o2");
-    errdefer allocator.free(absorber_id);
+    var absorber_id_owned = true;
+    errdefer if (absorber_id_owned) allocator.free(absorber_id);
     const absorber_species = try allocator.dupe(u8, "o2");
-    errdefer allocator.free(absorber_species);
+    var absorber_species_owned = true;
+    errdefer if (absorber_species_owned) allocator.free(absorber_species);
     const isotopes_sim = if (resolved.o2.isotopes_sim.len != 0)
         try allocator.dupe(u8, resolved.o2.isotopes_sim)
     else
         &.{};
-    errdefer if (isotopes_sim.len != 0) allocator.free(isotopes_sim);
+    var isotopes_sim_owned = isotopes_sim.len != 0;
+    errdefer if (isotopes_sim_owned) allocator.free(isotopes_sim);
 
     absorber_items[0] = .{
         .id = absorber_id,
@@ -344,6 +352,12 @@ pub fn buildResolvedVendorO2AScene(
             },
         },
     };
+    solar_wavelengths_owned = false;
+    solar_irradiance_owned = false;
+    absorber_items_owned = false;
+    absorber_id_owned = false;
+    absorber_species_owned = false;
+    isotopes_sim_owned = false;
     errdefer scene.deinitOwned(allocator);
 
     if (resolved.intervals.len != 0) {
