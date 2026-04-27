@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Own retrieval-facing subcolumn carriers independently from the main
-//!   atmosphere shell.
-
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const units = @import("../../core/units.zig");

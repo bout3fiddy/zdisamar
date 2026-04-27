@@ -1,24 +1,3 @@
-//! Purpose:
-//!   Hydrate manifest and external bytes into typed loaded reference assets.
-//!
-//! Physics:
-//!   Verify dataset hashes, parse the numeric payload, and attach manifest
-//!   provenance before the data reaches the rest of the engine.
-//!
-//! Vendor:
-//!   `reference asset hydration`
-//!
-//! Design:
-//!   Keep hash verification and parsed-table assembly separate from the public
-//!   `LoadedAsset` conversion methods and the manifest index.
-//!
-//! Invariants:
-//!   Hash verification happens before typed parsing, and parsed columns must
-//!   match the declared manifest contract.
-//!
-//! Validation:
-//!   Reference-asset loader tests.
-
 const std = @import("std");
 const formats = @import("reference_assets_formats.zig");
 const loaded_asset = @import("reference_assets_loaded_asset.zig");

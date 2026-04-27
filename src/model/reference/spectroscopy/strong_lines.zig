@@ -1,4 +1,4 @@
-//! Strong-line spectroscopy helpers and isotopologue-specific scaling logic.
+// Strong-line spectroscopy helpers and isotopologue-specific scaling logic.
 
 const std = @import("std");
 const hitran_partition_tables = @import("../../hitran_partition_tables.zig");
@@ -27,30 +27,23 @@ pub const StrongLineConvTPState = struct {
 
 pub fn strongLineContribution(
     wavelength_nm: f64,
-    line: Types.SpectroscopyLine,
     strong_lines: []const Types.SpectroscopyStrongLine,
     strong_index: usize,
     convtp_state: StrongLineConvTPState,
     temperature_k: f64,
     pressure_scale: f64,
-    cutoff_cm1: ?f64,
 ) Types.SpectroscopyEvaluation {
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_scale, Types.min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = Core.wavelengthToWavenumberCm1(wavelength_nm);
-    if (cutoff_cm1) |window_cm1| {
-        if (@abs(convtp_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) > window_cm1) {
-            return zeroContribution();
-        }
-    }
-    const sig_moy_cm1 = @max(convtp_state.sig_moy_cm1, convtp_state.mod_sig_cm1[strong_index]);
+    const sig_moy_cm1 = @max(convtp_state.sig_moy_cm1, 1.0e-6);
     const gam_d = @max(
-        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, molecularWeightForLine(line)),
+        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, o2StrongLineMolecularWeight()),
         1.0e-6,
     );
     const cte = @sqrt(@log(2.0)) / gam_d;
-    const cte1 = cte / @sqrt(std.math.pi);
+    const cte1 = cte / @sqrt(Types.hitran_pi);
     const cpf = Core.complexProbabilityFunction(
         (convtp_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) * cte,
         convtp_state.half_width_cm1_at_t[strong_index] * safe_pressure * cte,
@@ -80,30 +73,23 @@ pub fn strongLineContribution(
 
 pub fn strongLineContributionPrepared(
     wavelength_nm: f64,
-    line: Types.SpectroscopyLine,
     strong_lines: []const Types.SpectroscopyStrongLine,
     strong_index: usize,
     prepared_state: *const Types.StrongLinePreparedState,
     temperature_k: f64,
     pressure_scale: f64,
-    cutoff_cm1: ?f64,
 ) Types.SpectroscopyEvaluation {
     _ = strong_lines;
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_scale, Types.min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = Core.wavelengthToWavenumberCm1(wavelength_nm);
-    if (cutoff_cm1) |window_cm1| {
-        if (@abs(prepared_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) > window_cm1) {
-            return zeroContribution();
-        }
-    }
-    const sig_moy_cm1 = @max(prepared_state.sig_moy_cm1, prepared_state.mod_sig_cm1[strong_index]);
+    const sig_moy_cm1 = @max(prepared_state.sig_moy_cm1, 1.0e-6);
     const gam_d = @max(
-        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, molecularWeightForLine(line)),
+        Core.dopplerWidthCm1(safe_temperature, sig_moy_cm1, o2StrongLineMolecularWeight()),
         1.0e-6,
     );
     const cte = @sqrt(@log(2.0)) / gam_d;
-    const cte1 = cte / @sqrt(std.math.pi);
+    const cte1 = cte / @sqrt(Types.hitran_pi);
     const cpf = Core.complexProbabilityFunction(
         (prepared_state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) * cte,
         prepared_state.half_width_cm1_at_t[strong_index] * safe_pressure * cte,
@@ -131,6 +117,10 @@ pub fn strongLineContributionPrepared(
     };
 }
 
+fn o2StrongLineMolecularWeight() f64 {
+    return 31.989830;
+}
+
 pub fn prepareStrongLineConvTPState(
     strong_lines: []const Types.SpectroscopyStrongLine,
     relaxation_matrix: Types.RelaxationMatrix,
@@ -149,7 +139,7 @@ pub fn prepareStrongLineConvTPState(
         const strong_line = strong_lines[row_index];
         state.population_t[row_index] = strong_line.population_t0 *
             partition_ratio *
-            @exp(Types.hitran_hc_over_kb_cm_k * strong_line.lower_state_energy_cm1 * ((1.0 / Types.hitran_reference_temperature_k) - (1.0 / safe_temperature)));
+            @exp(Types.hitran_o2_line_mixing_hc_over_kb_cm_k * strong_line.lower_state_energy_cm1 * ((1.0 / Types.hitran_reference_temperature_k) - (1.0 / safe_temperature)));
         state.dipole_t[row_index] = strong_line.dipole_t0 * std.math.sqrt(temperature_ratio);
         state.mod_sig_cm1[row_index] = strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1;
         state.half_width_cm1_at_t[row_index] = strong_line.air_half_width_cm1 *
@@ -206,13 +196,8 @@ pub fn prepareStrongLineConvTPState(
                 lower_sum += strong_lines[row_index].dipole_ratio * state.weightAt(row_index, column_index);
             }
         }
-        if (@abs(lower_sum) <= 1.0e-24) continue;
-
-        const rotational_gate = 1.0 - std.math.clamp(
-            @abs(@as(f64, @floatFromInt(strong_lines[column_index].rotational_index_m1))) / 36.0,
-            0.0,
-            1.0,
-        );
+        const rotational_gate = 1.0 -
+            @abs(@as(f64, @floatFromInt(strong_lines[column_index].rotational_index_m1))) / 36.0;
         const renormalization_anchor = strong_lines[column_index].dipole_ratio *
             rotational_gate *
             rotational_gate *
@@ -227,22 +212,18 @@ pub fn prepareStrongLineConvTPState(
             state.setWeight(
                 column_index,
                 row_index,
-                renormalized * state.population_t[column_index] / @max(state.population_t[row_index], 1.0e-24),
+                renormalized * state.population_t[column_index] / state.population_t[row_index],
             );
         }
     }
 
     for (0..line_count) |line_index| {
         var mixing_sum: f64 = 0.0;
-        const self_dipole = if (@abs(state.dipole_t[line_index]) > 1.0e-24)
-            state.dipole_t[line_index]
-        else
-            1.0e-24;
         for (0..line_count) |other_index| {
             if (other_index == line_index) continue;
             const delta_sig = state.mod_sig_cm1[line_index] - state.mod_sig_cm1[other_index];
-            if (@abs(delta_sig) <= 1.0e-12) continue;
-            mixing_sum += 2.0 * state.dipole_t[other_index] / self_dipole *
+            if (delta_sig == 0.0) continue;
+            mixing_sum += 2.0 * state.dipole_t[other_index] / state.dipole_t[line_index] *
                 state.weightAt(other_index, line_index) /
                 delta_sig;
         }
@@ -253,10 +234,20 @@ pub fn prepareStrongLineConvTPState(
 }
 
 pub fn shiftedLineCenterWavenumberCm1(line: Types.SpectroscopyLine, pressure_atm: f64) f64 {
-    return @max(
-        Core.wavelengthToWavenumberCm1(line.center_wavelength_nm + line.pressure_shift_nm * pressure_atm),
-        1.0,
-    );
+    const center_wavenumber_cm1 = if (std.math.isFinite(line.center_wavenumber_cm1))
+        line.center_wavenumber_cm1
+    else
+        Core.wavelengthToWavenumberCm1(line.center_wavelength_nm);
+    const pressure_shift_cm1 = if (std.math.isFinite(line.pressure_shift_cm1))
+        line.pressure_shift_cm1
+    else
+        -Core.spectralWidthNmToCm1(line.pressure_shift_nm, center_wavenumber_cm1);
+    // PARITY:
+    //   `HITRANModule::CalculatAbsXsec` applies pressure shift as
+    //   `Sig + delt * P` in wavenumber space. The Zig line payload stores the
+    //   equivalent wavelength-width magnitude, so convert once and keep the
+    //   vendor's linear wavenumber update.
+    return @max(center_wavenumber_cm1 + pressure_shift_cm1 * pressure_atm, 1.0);
 }
 
 pub fn partitionRatioT0OverT(

@@ -1,37 +1,13 @@
-//! Purpose:
-//!   Resolve transport routes and dispatch execution to the selected family.
-//!
-//! Physics:
-//!   Couples route preparation with the adding-method and LABOS executors
-//!   without leaking the selection policy into callers.
-//!
-//! Vendor:
-//!   `transport dispatcher` stage
-//!
-//! Design:
-//!   Keeps route preparation and execution dispatch as thin wrappers around the
-//!   family-specific solver modules.
-//!
-//! Invariants:
-//!   Prepared routes must be executed with the family they resolve to.
-//!
-//! Validation:
-//!   Transport route-selection and execution tests.
-
 const std = @import("std");
 const adding = @import("adding.zig");
 const common = @import("common.zig");
 const labos = @import("labos.zig");
 const phase_functions = @import("../optics/prepare/phase_functions.zig");
 
-/// Purpose:
-///   Resolve the dispatch request into a concrete transport route.
 pub fn prepare(request: common.DispatchRequest) common.PrepareError!common.Route {
     return common.prepareRoute(request);
 }
 
-/// Purpose:
-///   Execute a previously prepared route with the selected solver family.
 pub fn executePrepared(
     allocator: std.mem.Allocator,
     route: common.Route,
@@ -45,8 +21,6 @@ pub fn executePrepared(
     };
 }
 
-/// Purpose:
-///   Prepare and execute transport in one call.
 pub fn execute(
     allocator: std.mem.Allocator,
     request: common.DispatchRequest,

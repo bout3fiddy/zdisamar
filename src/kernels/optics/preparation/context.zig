@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Build and own the staged inputs required for prepared optics
-//!   construction.
-
 const std = @import("std");
 const AtmosphereModel = @import("../../../model/Atmosphere.zig");
 const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;
@@ -14,6 +10,7 @@ const Allocator = std.mem.Allocator;
 
 pub const PreparationInputs = struct {
     profile: *const ReferenceData.ClimatologyProfile,
+    spectroscopy_profile: ?*const ReferenceData.ClimatologyProfile = null,
     cross_sections: *const ReferenceData.CrossSectionTable,
     lut: *const ReferenceData.AirmassFactorLut,
     collision_induced_absorption: ?*const ReferenceData.CollisionInducedAbsorptionTable = null,
@@ -35,6 +32,9 @@ pub const PreparationContext = struct {
     layers: []State.PreparedLayer = &.{},
     sublayers: []State.PreparedSublayer = &.{},
     continuum_points: []ReferenceData.CrossSectionPoint = &.{},
+    spectroscopy_profile_altitudes_km: []f64 = &.{},
+    spectroscopy_profile_pressures_hpa: []f64 = &.{},
+    spectroscopy_profile_temperatures_k: []f64 = &.{},
     aerosol_fraction_control: AtmosphereModel.FractionControl = .{},
     cloud_fraction_control: AtmosphereModel.FractionControl = .{},
     operational_o2_lut: OperationalCrossSectionLut = .{},
@@ -46,6 +46,9 @@ pub const PreparationContext = struct {
         if (self.layers.len != 0) allocator.free(self.layers);
         if (self.sublayers.len != 0) allocator.free(self.sublayers);
         if (self.continuum_points.len != 0) allocator.free(self.continuum_points);
+        if (self.spectroscopy_profile_altitudes_km.len != 0) allocator.free(self.spectroscopy_profile_altitudes_km);
+        if (self.spectroscopy_profile_pressures_hpa.len != 0) allocator.free(self.spectroscopy_profile_pressures_hpa);
+        if (self.spectroscopy_profile_temperatures_k.len != 0) allocator.free(self.spectroscopy_profile_temperatures_k);
         if (self.collision_induced_absorption) |cia| {
             var owned = cia;
             owned.deinit(allocator);
@@ -86,6 +89,28 @@ pub fn init(
     errdefer if (sublayers.len != 0) allocator.free(sublayers);
     const continuum_points = try allocator.dupe(ReferenceData.CrossSectionPoint, inputs.cross_sections.points);
     errdefer if (continuum_points.len != 0) allocator.free(continuum_points);
+    const spectroscopy_profile = inputs.spectroscopy_profile orelse inputs.profile;
+    const profile_node_count = spectroscopy_profile.rows.len;
+    const spectroscopy_profile_altitudes_km: []f64 = if (profile_node_count != 0)
+        try allocator.alloc(f64, profile_node_count)
+    else
+        &.{};
+    errdefer if (spectroscopy_profile_altitudes_km.len != 0) allocator.free(spectroscopy_profile_altitudes_km);
+    const spectroscopy_profile_pressures_hpa: []f64 = if (profile_node_count != 0)
+        try allocator.alloc(f64, profile_node_count)
+    else
+        &.{};
+    errdefer if (spectroscopy_profile_pressures_hpa.len != 0) allocator.free(spectroscopy_profile_pressures_hpa);
+    const spectroscopy_profile_temperatures_k: []f64 = if (profile_node_count != 0)
+        try allocator.alloc(f64, profile_node_count)
+    else
+        &.{};
+    errdefer if (spectroscopy_profile_temperatures_k.len != 0) allocator.free(spectroscopy_profile_temperatures_k);
+    for (spectroscopy_profile.rows, 0..) |row, index| {
+        spectroscopy_profile_altitudes_km[index] = row.altitude_km;
+        spectroscopy_profile_pressures_hpa[index] = row.pressure_hpa;
+        spectroscopy_profile_temperatures_k[index] = row.temperature_k;
+    }
 
     const collision_induced_absorption = if (inputs.collision_induced_absorption) |cia|
         try cia.clone(allocator)
@@ -141,6 +166,9 @@ pub fn init(
         .layers = layers,
         .sublayers = sublayers,
         .continuum_points = continuum_points,
+        .spectroscopy_profile_altitudes_km = spectroscopy_profile_altitudes_km,
+        .spectroscopy_profile_pressures_hpa = spectroscopy_profile_pressures_hpa,
+        .spectroscopy_profile_temperatures_k = spectroscopy_profile_temperatures_k,
         .aerosol_fraction_control = aerosol_fraction_control,
         .cloud_fraction_control = cloud_fraction_control,
         .operational_o2_lut = operational_o2_lut,

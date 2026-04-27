@@ -8,6 +8,7 @@ const ObservationModel = @TypeOf(empty_scene.observation_model);
 const Aerosol = @TypeOf(empty_scene.aerosol);
 const Cloud = @TypeOf(empty_scene.cloud);
 const Placement = @TypeOf(empty_scene.aerosol.placement);
+const Absorber = std.meta.Child(@TypeOf(empty_scene.absorbers.items));
 const empty_observation_model: ObservationModel = .{};
 const OperationalBandSupport = std.meta.Child(@TypeOf(empty_observation_model.operational_band_support));
 
@@ -15,9 +16,80 @@ test "unit suite keeps the public surface literal" {
     try std.testing.expect(@hasDecl(zdisamar, "Case"));
     try std.testing.expect(@hasDecl(zdisamar, "Data"));
     try std.testing.expect(@hasDecl(zdisamar, "Optics"));
-    try std.testing.expect(@hasDecl(zdisamar, "runSpectrum"));
+    try std.testing.expect(@hasDecl(zdisamar, "Prepared"));
+    try std.testing.expect(@hasDecl(zdisamar, "prepare"));
+    try std.testing.expect(@hasDecl(zdisamar, "run"));
+    try std.testing.expect(!@hasDecl(zdisamar, "loadData"));
+    try std.testing.expect(!@hasDecl(zdisamar, "buildOptics"));
+    try std.testing.expect(!@hasDecl(zdisamar, "runSpectrum"));
     try std.testing.expect(!@hasDecl(zdisamar, "compat"));
     try std.testing.expect(!@hasDecl(zdisamar, "Engine"));
+}
+
+test "prepared lifecycle owns resolved O2A state" {
+    var case: zdisamar.Case = .{
+        .id = "prepared-lifecycle",
+        .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 3 },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .instrument_line_fwhm_nm = 0.38,
+        },
+    };
+
+    var prepared = try zdisamar.prepare(std.testing.allocator, &case);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("prepared-lifecycle", prepared.case.id);
+    try std.testing.expect(prepared.optics.total_optical_depth >= 0.0);
+}
+
+test "generated O2A LUTs live only in operational band support" {
+    const support = [_]OperationalBandSupport{.{
+        .id = "primary",
+        .high_resolution_step_nm = 0.05,
+        .high_resolution_half_span_nm = 0.25,
+    }};
+    const absorbers = [_]Absorber{.{
+        .id = "o2",
+        .species = "o2",
+        .resolved_species = .o2,
+        .profile_source = .atmosphere,
+        .spectroscopy = .{
+            .mode = .line_by_line,
+            .line_gas_controls = .{
+                .active_stage = .simulation,
+            },
+        },
+    }};
+    var case: zdisamar.Case = .{
+        .id = "generated-lut-ownership",
+        .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 3 },
+        .absorbers = .{ .items = absorbers[0..] },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .instrument_line_fwhm_nm = 0.38,
+            .operational_band_support = support[0..],
+        },
+        .lut_controls = .{
+            .xsec = .{
+                .mode = .generate,
+                .min_temperature_k = 180.0,
+                .max_temperature_k = 325.0,
+                .min_pressure_hpa = 0.03,
+                .max_pressure_hpa = 1050.0,
+                .temperature_grid_count = 3,
+                .pressure_grid_count = 3,
+                .temperature_coefficient_count = 2,
+                .pressure_coefficient_count = 2,
+            },
+        },
+    };
+
+    var prepared = try zdisamar.prepare(std.testing.allocator, &case);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expect(!prepared.case.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(prepared.case.observation_model.primaryOperationalBandSupport().o2_operational_lut.enabled());
 }
 
 test "observation model resolves legacy operational support through the public methods" {

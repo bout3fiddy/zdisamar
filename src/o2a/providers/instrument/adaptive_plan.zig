@@ -7,6 +7,7 @@ const ReferenceData = @import("../../../model/ReferenceData.zig");
 const AdaptiveReferenceGrid = @import("../../../model/Instrument.zig").AdaptiveReferenceGrid;
 const InstrumentModel = @import("../../../model/Instrument.zig").Instrument;
 const Scene = @import("../../../model/Scene.zig").Scene;
+const Allocator = std.mem.Allocator;
 
 pub const AdaptiveKernelSupportWindow = struct {
     global_start_nm: f64,
@@ -60,6 +61,105 @@ pub fn buildAdaptiveIntegrationKernel(
 
     var plan: AdaptiveIntervalPlan = .{};
     if (!buildAdaptiveIntervalPlan(scene, prepared, response, &plan)) return false;
+
+    var sample_wavelengths_nm: [types.max_integration_sample_count]f64 = undefined;
+    var sample_raw_weights: [types.max_integration_sample_count]f64 = undefined;
+    var sample_count: usize = 0;
+    if (!appendAdaptiveSamplesFromPlan(
+        &plan,
+        response,
+        nominal_wavelength_nm,
+        support_window.global_start_nm,
+        support_window.global_end_nm,
+        &sample_wavelengths_nm,
+        &sample_raw_weights,
+        &sample_count,
+        null,
+    )) return false;
+
+    return finalizeAdaptiveKernel(
+        kernel,
+        nominal_wavelength_nm,
+        sample_wavelengths_nm[0..sample_count],
+        sample_raw_weights[0..sample_count],
+    );
+}
+
+pub fn buildAdaptiveSupportWavelengths(
+    allocator: Allocator,
+    scene: *const Scene,
+    prepared: *const PreparedOpticalState,
+    response: InstrumentModel.SpectralResponse,
+) !?[]f64 {
+    const adaptive = scene.observation_model.adaptive_reference_grid;
+    if (!adaptive.enabled()) return null;
+    if (response.fwhm_nm <= 0.0) return null;
+
+    const has_single_line_list = if (prepared.spectroscopy_lines) |line_list|
+        line_list.lines.len != 0
+    else
+        false;
+    if (!has_single_line_list and prepared.line_absorbers.len == 0) return null;
+
+    var plan: AdaptiveIntervalPlan = .{};
+    if (!buildAdaptiveIntervalPlan(scene, prepared, response, &plan)) return null;
+
+    var support = std.ArrayList(f64).empty;
+    errdefer support.deinit(allocator);
+    var gauss_nodes_01: [types.max_integration_sample_count]f64 = undefined;
+    var gauss_weights_01: [types.max_integration_sample_count]f64 = undefined;
+
+    for (plan.intervals[0..plan.count]) |interval| {
+        const order = interval.division_count;
+        if (order == 0) continue;
+        fillAdaptiveUnitGauss(response, order, gauss_nodes_01[0..order], gauss_weights_01[0..order]) catch return null;
+
+        const interval_width_nm = interval.interval_end_nm - interval.interval_start_nm;
+        for (0..order) |gauss_index| {
+            // PARITY: `DISAMARModule::setupHRWavelengthGrid` consumes
+            // Gauss division points already scaled to [0, 1], then applies
+            // `sw + dw * x0`.
+            const wavelength_nm = interval.interval_start_nm + interval_width_nm * gauss_nodes_01[gauss_index];
+            if (!std.math.isFinite(wavelength_nm)) continue;
+            try support.append(allocator, wavelength_nm);
+        }
+    }
+    if (support.items.len == 0) return null;
+
+    std.sort.block(f64, support.items, {}, lessThanF64);
+
+    var merged_count: usize = 0;
+    for (support.items) |wavelength_nm| {
+        if (merged_count != 0 and @abs(support.items[merged_count - 1] - wavelength_nm) <= 1.0e-9) continue;
+        support.items[merged_count] = wavelength_nm;
+        merged_count += 1;
+    }
+    support.shrinkRetainingCapacity(merged_count);
+    return try support.toOwnedSlice(allocator);
+}
+
+pub fn buildDisamarRealizedKernel(
+    scene: *const Scene,
+    response: InstrumentModel.SpectralResponse,
+    nominal_wavelength_nm: f64,
+    kernel: *types.IntegrationKernel,
+) bool {
+    if (response.fwhm_nm <= 0.0) return false;
+
+    const support_window = adaptiveKernelSupportWindow(scene, response, nominal_wavelength_nm);
+    if (support_window.window_end_nm <= support_window.window_start_nm) return false;
+
+    const division_count = disamarIntervalDivisionCount(scene.observation_model.adaptive_reference_grid, response);
+    if (division_count == 0) return false;
+
+    var plan: AdaptiveIntervalPlan = .{};
+    if (!buildDisamarIntervalPlan(
+        support_window.global_start_nm,
+        support_window.global_end_nm,
+        @max(response.fwhm_nm, 1.0e-4),
+        division_count,
+        &plan,
+    )) return false;
 
     var sample_wavelengths_nm: [types.max_integration_sample_count]f64 = undefined;
     var sample_raw_weights: [types.max_integration_sample_count]f64 = undefined;
@@ -190,24 +290,22 @@ pub fn appendAdaptiveSamplesFromPlan(
     sample_count.* = 0;
     if (selected_intervals) |selected| @memset(selected, false);
 
-    var gauss_nodes: [types.max_integration_sample_count]f64 = undefined;
-    var gauss_weights: [types.max_integration_sample_count]f64 = undefined;
+    var gauss_nodes_01: [types.max_integration_sample_count]f64 = undefined;
+    var gauss_weights_01: [types.max_integration_sample_count]f64 = undefined;
 
     for (plan.intervals[0..plan.count], 0..) |interval, interval_index| {
         if (interval.interval_end_nm < generation_start_nm - 1.0e-12) continue;
         if (interval.interval_start_nm > generation_end_nm + 1.0e-12) continue;
         const order = interval.division_count;
         if (order == 0) continue;
-        gauss_legendre.fillNodesAndWeights(
-            @intCast(order),
-            gauss_nodes[0..order],
-            gauss_weights[0..order],
-        ) catch return false;
+        fillAdaptiveUnitGauss(response, order, gauss_nodes_01[0..order], gauss_weights_01[0..order]) catch return false;
 
-        const half_width_nm = 0.5 * (interval.interval_end_nm - interval.interval_start_nm);
-        const center_nm = 0.5 * (interval.interval_end_nm + interval.interval_start_nm);
+        const interval_width_nm = interval.interval_end_nm - interval.interval_start_nm;
         for (0..order) |gauss_index| {
-            const wavelength_nm = center_nm + (half_width_nm * gauss_nodes[gauss_index]);
+            // PARITY: preserve DISAMAR's Gauss division-point contract:
+            // nodes and weights are first scaled to [0, 1], then interval
+            // width is applied.
+            const wavelength_nm = interval.interval_start_nm + interval_width_nm * gauss_nodes_01[gauss_index];
             if (!appendAdaptiveCandidateSample(
                 &candidate_wavelengths_nm,
                 &candidate_raw_weights,
@@ -215,7 +313,7 @@ pub fn appendAdaptiveSamplesFromPlan(
                 &candidate_count,
                 wavelength_nm,
                 response_support.spectralResponseWeight(response, wavelength_nm - nominal_wavelength_nm) *
-                    (half_width_nm * gauss_weights[gauss_index]),
+                    (interval_width_nm * gauss_weights_01[gauss_index]),
                 interval_index,
             )) return false;
         }
@@ -370,6 +468,68 @@ fn adaptiveIntervalDivisionCount(
         @as(f64, @floatFromInt(max_divisions)) * (@max(interval_width_nm, 1.0e-9) / @max(max_interval_nm, 1.0e-9)),
     )));
     return std.math.clamp(@max(scaled, min_divisions), min_divisions, max_divisions);
+}
+
+fn fillAdaptiveUnitGauss(
+    response: InstrumentModel.SpectralResponse,
+    order: usize,
+    nodes_01: []f64,
+    weights_01: []f64,
+) error{InvalidOrder}!void {
+    if (order == 0 or nodes_01.len < order or weights_01.len < order) return error.InvalidOrder;
+    if (response.integration_mode == .disamar_hr_grid) {
+        // PARITY:
+        //   DISAMAR `mathTools::GaussDivPoints` uses a QL eigensolve and
+        //   returns nodes/weights already scaled to [0, 1]. The tiny
+        //   last-bit differences from the generic Newton rule are visible in
+        //   steep O2A solar high-resolution wavelength samples.
+        return gauss_legendre.fillDisamarDivPoints01(@intCast(order), nodes_01[0..order], weights_01[0..order]);
+    }
+
+    try gauss_legendre.fillNodesAndWeights(@intCast(order), nodes_01[0..order], weights_01[0..order]);
+    for (0..order) |index| {
+        nodes_01[index] = (nodes_01[index] + 1.0) * 0.5;
+        weights_01[index] *= 0.5;
+    }
+}
+
+fn disamarIntervalDivisionCount(
+    adaptive: AdaptiveReferenceGrid,
+    response: InstrumentModel.SpectralResponse,
+) usize {
+    if (adaptive.points_per_fwhm > 0) return adaptive.points_per_fwhm;
+    if (response.high_resolution_step_nm > 0.0 and response.fwhm_nm > 0.0) {
+        return @max(
+            @as(usize, @intFromFloat(std.math.round(response.fwhm_nm / response.high_resolution_step_nm))),
+            1,
+        );
+    }
+    return 1;
+}
+
+fn buildDisamarIntervalPlan(
+    global_start_nm: f64,
+    global_end_nm: f64,
+    interval_width_nm: f64,
+    division_count: usize,
+    plan: *AdaptiveIntervalPlan,
+) bool {
+    if (global_end_nm <= global_start_nm or interval_width_nm <= 0.0 or division_count == 0) return false;
+
+    plan.count = 0;
+    var current_nm = global_start_nm;
+    while (current_nm < global_end_nm - 1.0e-12 and plan.count < types.max_integration_sample_count) {
+        const next_nm = @min(current_nm + interval_width_nm, global_end_nm);
+        plan.intervals[plan.count] = .{
+            .kind = .uniform,
+            .interval_start_nm = current_nm,
+            .interval_end_nm = next_nm,
+            .division_count = division_count,
+        };
+        plan.count += 1;
+        current_nm = next_nm;
+    }
+    return plan.count != 0 and current_nm >= global_end_nm - 1.0e-12;
 }
 
 fn lessThanF64(_: void, lhs: f64, rhs: f64) bool {

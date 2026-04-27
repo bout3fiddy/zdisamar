@@ -1,32 +1,3 @@
-//! Purpose:
-//!   Own the resolved O2A vendor-parity runtime contract shared by YAML-driven
-//!   execution and the retained parity support helpers.
-//!
-//! Physics:
-//!   This file hydrates the retained O2 A-band forcing case: climatology,
-//!   line-by-line O2, optional O2-O2 CIA, aerosol placement, instrument
-//!   sampling, and the scalar multiple-scattering RTM controls used for the
-//!   current parity lane.
-//!
-//! Vendor:
-//!   `readConfigFileModule::INSTRUMENT/O2/O2-O2/SURFACE/ATMOSPHERIC_INTERVALS/AEROSOL`
-//!   and `verifyConfigFileModule::interval-grid and fit-interval checks`
-//!
-//! Design:
-//!   The resolved case stays typed and explicit. Adapters compile YAML or other
-//!   external control surfaces into this struct, and runtime code materializes
-//!   the actual `Scene` and reference assets from that typed contract.
-//!
-//! Invariants:
-//!   All referenced assets must exist and match the declared format, explicit
-//!   interval grids must tile the active atmosphere, and no enabled parity
-//!   feature may be silently dropped.
-//!
-//! Validation:
-//!   The YAML adapter tests exercise the resolved-contract mapping, while the
-//!   vendor assessment and oracle tests execute the resulting `Scene` through
-//!   the retained O2A reflectance path.
-
 const std = @import("std");
 const AbsorberModel = @import("../../model/Absorber.zig");
 const AtmosphereModel = @import("../../model/Atmosphere.zig");
@@ -38,18 +9,18 @@ const ObservationModel = @import("../../model/ObservationModel.zig");
 const ReferenceDataModel = @import("../../model/ReferenceData.zig");
 const Scene = @import("../../model/Scene.zig").Scene;
 const SpectralGrid = @import("../../model/Spectrum.zig").SpectralGrid;
-const spectroscopy_support = @import("../../model/reference/spectroscopy/support.zig");
 const bundled_optics = @import("../../data/bundled/assets.zig");
 const providers = @import("../providers/root.zig");
 const reference_assets = @import("../../adapters/ingest/reference_assets.zig");
 const transport_common = @import("../../kernels/transport/common.zig");
 const parity_types = @import("vendor_parity_types.zig");
+const adaptive_plan = @import("../providers/instrument/adaptive_plan.zig");
+const instrument_types = @import("../providers/instrument/types.zig");
 
 const Allocator = std.mem.Allocator;
 pub const AbsorberSpecies = parity_types.AbsorberSpecies;
 pub const Route = parity_types.Route;
-pub const RtmControls = parity_types.RtmControls;
-pub const PreparationPhaseProfile = parity_types.PreparationPhaseProfile;
+pub const RadiativeTransferControls = parity_types.RadiativeTransferControls;
 pub const ReferenceSample = parity_types.ReferenceSample;
 pub const ExternalAsset = parity_types.ExternalAsset;
 pub const OutputKind = parity_types.OutputKind;
@@ -65,6 +36,7 @@ pub const CiaSpec = parity_types.CiaSpec;
 pub const InputsSpec = parity_types.InputsSpec;
 pub const ResolvedVendorO2ACase = parity_types.ResolvedVendorO2ACase;
 pub const LoadedVendorO2AInputs = parity_types.LoadedVendorO2AInputs;
+pub const SolarSpectrumSample = parity_types.SolarSpectrumSample;
 
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -98,12 +70,40 @@ pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]Reference
     return try samples.toOwnedSlice(allocator);
 }
 
-/// Purpose:
-///   Load the resolved external assets required by the retained vendor-parity case.
-///
-/// Decisions:
-///   The loader stays asset-oriented even for the narrow first YAML cut so the
-///   config references data files rather than embedding scientific payloads.
+pub fn loadSolarSpectrumSamples(
+    allocator: Allocator,
+    asset: ExternalAsset,
+) ![]SolarSpectrumSample {
+    if (!std.mem.eql(u8, asset.format, "solar_reference_csv")) return error.UnsupportedSolarReferenceAssetFormat;
+
+    const file = try std.fs.cwd().openFile(asset.path, .{});
+    defer file.close();
+
+    const bytes = try file.readToEndAlloc(allocator, 1 << 20);
+    defer allocator.free(bytes);
+
+    var samples = std.ArrayList(SolarSpectrumSample).empty;
+    errdefer samples.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    _ = lines.next();
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, "\r \t");
+        if (trimmed.len == 0) continue;
+
+        var columns = std.mem.splitScalar(u8, trimmed, ',');
+        const wavelength_text = columns.next() orelse return error.InvalidData;
+        const irradiance_text = columns.next() orelse return error.InvalidData;
+
+        try samples.append(allocator, .{
+            .wavelength_nm = try std.fmt.parseFloat(f64, std.mem.trim(u8, wavelength_text, " \t")),
+            .irradiance = try std.fmt.parseFloat(f64, std.mem.trim(u8, irradiance_text, " \t")),
+        });
+    }
+
+    return try samples.toOwnedSlice(allocator);
+}
+
 pub fn loadResolvedVendorO2AInputs(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
@@ -118,6 +118,17 @@ pub fn loadResolvedVendorO2AInputs(
     defer profile_asset.deinit(allocator);
     var profile = try profile_asset.toClimatologyProfile(allocator);
     errdefer profile.deinit(allocator);
+    var dense_profile = try profile.densifyVendorPressureGrid(allocator, resolved.surface_pressure_hpa);
+    errdefer dense_profile.deinit(allocator);
+    var spectroscopy_profile = try buildVendorTraceGasSpectroscopyProfile(
+        allocator,
+        profile,
+        dense_profile,
+    );
+    errdefer spectroscopy_profile.deinit(allocator);
+    profile.deinit(allocator);
+    profile = dense_profile;
+    dense_profile = .{ .rows = &.{} };
 
     var cross_sections = try bundled_optics.zeroContinuumTable(allocator, 758.0, 771.0);
     errdefer cross_sections.deinit(allocator);
@@ -153,44 +164,103 @@ pub fn loadResolvedVendorO2AInputs(
 
     const reference = try loadReferenceSamples(allocator, resolved.inputs.vendor_reference_csv.path);
     errdefer allocator.free(reference);
+    const raw_solar_spectrum = try loadSolarSpectrumSamples(allocator, resolved.inputs.raw_solar_reference);
+    errdefer allocator.free(raw_solar_spectrum);
 
     return .{
         .profile = profile,
+        .spectroscopy_profile = spectroscopy_profile,
         .cross_sections = cross_sections,
         .line_list = line_list,
         .cia_table = cia_table,
         .lut = lut,
         .reference = reference,
+        .raw_solar_spectrum = raw_solar_spectrum,
     };
 }
 
-/// Purpose:
-///   Materialize the resolved parity scene into the canonical typed `Scene`.
+pub fn loadResolvedVendorO2AAtmosphereProfile(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+) !ReferenceDataModel.ClimatologyProfile {
+    var profile_asset = try reference_assets.loadExternalAsset(
+        allocator,
+        .climatology_profile,
+        resolved.inputs.atmosphere_profile.id,
+        resolved.inputs.atmosphere_profile.path,
+        resolved.inputs.atmosphere_profile.format,
+    );
+    defer profile_asset.deinit(allocator);
+    return profile_asset.toClimatologyProfile(allocator);
+}
+
+fn buildVendorTraceGasSpectroscopyProfile(
+    allocator: Allocator,
+    source_profile: ReferenceDataModel.ClimatologyProfile,
+    dense_profile: ReferenceDataModel.ClimatologyProfile,
+) !ReferenceDataModel.ClimatologyProfile {
+    const rows = try allocator.alloc(ReferenceDataModel.ClimatologyPoint, source_profile.rows.len);
+    errdefer allocator.free(rows);
+
+    for (source_profile.rows, rows) |source_row, *target_row| {
+        const pressure_hpa = source_row.pressure_hpa;
+        const temperature_k = source_row.temperature_k;
+        target_row.* = .{
+            .altitude_km = dense_profile.interpolateAltitudeForPressureSpline(pressure_hpa),
+            .pressure_hpa = pressure_hpa,
+            .temperature_k = temperature_k,
+            .air_number_density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / 1.380658e-19,
+        };
+    }
+
+    return .{ .rows = rows };
+}
+
 pub fn buildResolvedVendorO2AScene(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
-    reference: []const ReferenceSample,
+    raw_solar_spectrum: []const SolarSpectrumSample,
 ) !Scene {
-    const reference_wavelengths = try allocator.alloc(f64, reference.len);
-    errdefer allocator.free(reference_wavelengths);
-    const reference_irradiance = try allocator.alloc(f64, reference.len);
-    errdefer allocator.free(reference_irradiance);
-    for (reference, 0..) |sample, index| {
-        reference_wavelengths[index] = sample.wavelength_nm;
-        reference_irradiance[index] = sample.irradiance;
+    const solar_support_start_nm = resolved.spectral_grid.start_nm - (2.0 * resolved.observation.instrument_line_fwhm_nm);
+    const solar_support_end_nm = resolved.spectral_grid.end_nm + (2.0 * resolved.observation.instrument_line_fwhm_nm);
+    var retained_solar_count: usize = 0;
+    for (raw_solar_spectrum) |sample| {
+        if (sample.wavelength_nm <= solar_support_start_nm) continue;
+        if (sample.wavelength_nm >= solar_support_end_nm) continue;
+        retained_solar_count += 1;
+    }
+    if (retained_solar_count < 3) return error.InvalidData;
+
+    const solar_wavelengths = try allocator.alloc(f64, retained_solar_count);
+    var solar_wavelengths_owned = true;
+    errdefer if (solar_wavelengths_owned) allocator.free(solar_wavelengths);
+    const solar_irradiance = try allocator.alloc(f64, retained_solar_count);
+    var solar_irradiance_owned = true;
+    errdefer if (solar_irradiance_owned) allocator.free(solar_irradiance);
+    var solar_index: usize = 0;
+    for (raw_solar_spectrum) |sample| {
+        if (sample.wavelength_nm <= solar_support_start_nm) continue;
+        if (sample.wavelength_nm >= solar_support_end_nm) continue;
+        solar_wavelengths[solar_index] = sample.wavelength_nm;
+        solar_irradiance[solar_index] = sample.irradiance;
+        solar_index += 1;
     }
 
     const absorber_items = try allocator.alloc(AbsorberModel.Absorber, 1);
-    errdefer allocator.free(absorber_items);
+    var absorber_items_owned = true;
+    errdefer if (absorber_items_owned) allocator.free(absorber_items);
     const absorber_id = try allocator.dupe(u8, "o2");
-    errdefer allocator.free(absorber_id);
+    var absorber_id_owned = true;
+    errdefer if (absorber_id_owned) allocator.free(absorber_id);
     const absorber_species = try allocator.dupe(u8, "o2");
-    errdefer allocator.free(absorber_species);
+    var absorber_species_owned = true;
+    errdefer if (absorber_species_owned) allocator.free(absorber_species);
     const isotopes_sim = if (resolved.o2.isotopes_sim.len != 0)
         try allocator.dupe(u8, resolved.o2.isotopes_sim)
     else
         &.{};
-    errdefer if (isotopes_sim.len != 0) allocator.free(isotopes_sim);
+    var isotopes_sim_owned = isotopes_sim.len != 0;
+    errdefer if (isotopes_sim_owned) allocator.free(isotopes_sim);
 
     absorber_items[0] = .{
         .id = absorber_id,
@@ -207,6 +277,20 @@ pub fn buildResolvedVendorO2AScene(
                 .active_stage = .simulation,
             },
         },
+    };
+
+    const parity_response: Instrument.SpectralResponse = .{
+        .explicit = true,
+        .slit_index = switch (resolved.observation.builtin_line_shape) {
+            .gaussian => .gaussian_modulated,
+            .flat_top_n4 => .flat_top_n4,
+            .triple_flat_top_n4 => .triple_flat_top_n4,
+        },
+        .fwhm_nm = resolved.observation.instrument_line_fwhm_nm,
+        .builtin_line_shape = resolved.observation.builtin_line_shape,
+        .integration_mode = .disamar_hr_grid,
+        .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
+        .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
     };
 
     var scene: Scene = .{
@@ -253,11 +337,27 @@ pub fn buildResolvedVendorO2AScene(
             .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
             .adaptive_reference_grid = resolved.observation.adaptive_reference_grid,
             .operational_solar_spectrum = .{
-                .wavelengths_nm = reference_wavelengths,
-                .irradiance = reference_irradiance,
+                .wavelengths_nm = solar_wavelengths,
+                .irradiance = solar_irradiance,
+            },
+            .measurement_pipeline = .{
+                .radiance = .{
+                    .explicit = true,
+                    .response = parity_response,
+                },
+                .irradiance = .{
+                    .explicit = true,
+                    .response = parity_response,
+                },
             },
         },
     };
+    solar_wavelengths_owned = false;
+    solar_irradiance_owned = false;
+    absorber_items_owned = false;
+    absorber_id_owned = false;
+    absorber_species_owned = false;
+    isotopes_sim_owned = false;
     errdefer scene.deinitOwned(allocator);
 
     if (resolved.intervals.len != 0) {
@@ -267,12 +367,13 @@ pub fn buildResolvedVendorO2AScene(
             .intervals = resolved.intervals,
         };
     }
+    try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
     return scene;
 }
 
 pub fn prepareResolvedVendorO2ARoute(
     scene: *const Scene,
-    rtm_controls: RtmControls,
+    rtm_controls: RadiativeTransferControls,
 ) !Route {
     return transport_common.prepareRoute(.{
         .regime = scene.observation_model.regime,
@@ -292,7 +393,7 @@ pub fn runResolvedVendorO2AReflectanceCase(
     prepared: OpticsPrepare.PreparedOpticalState,
     product: MeasurementSpace.MeasurementSpaceProduct,
 } {
-    var prepared_case = try prepareResolvedVendorO2ATraceCase(allocator, resolved, null);
+    var prepared_case = try prepareResolvedVendorO2ACase(allocator, resolved);
     errdefer {
         prepared_case.prepared.deinit(allocator);
         prepared_case.scene.deinitOwned(allocator);
@@ -317,34 +418,20 @@ pub fn runResolvedVendorO2AReflectanceCase(
     };
 }
 
-pub fn prepareResolvedVendorO2ATraceCase(
+pub fn prepareResolvedVendorO2ACase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
-    phase_profile_out: ?*PreparationPhaseProfile,
 ) !struct {
     reference: []ReferenceSample,
     scene: Scene,
     route: Route,
     prepared: OpticsPrepare.PreparedOpticalState,
 } {
-    if (phase_profile_out) |profile| profile.* = .{
-        .input_loading_ns = 0,
-        .scene_assembly_ns = 0,
-        .optics_preparation_ns = 0,
-        .plan_preparation_ns = 0,
-    };
-    var timer = if (phase_profile_out != null)
-        std.time.Timer.start() catch unreachable
-    else
-        null;
-
     var inputs = try loadResolvedVendorO2AInputs(allocator, resolved);
     defer inputs.deinit(allocator);
-    if (phase_profile_out) |profile| profile.input_loading_ns = if (timer) |*owned| owned.lap() else 0;
 
-    var scene = try buildResolvedVendorO2AScene(allocator, resolved, inputs.reference);
+    var scene = try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
     errdefer scene.deinitOwned(allocator);
-    if (phase_profile_out) |profile| profile.scene_assembly_ns = if (timer) |*owned| owned.lap() else 0;
 
     const reference = inputs.reference;
     inputs.reference = inputs.reference[0..0];
@@ -352,16 +439,18 @@ pub fn prepareResolvedVendorO2ATraceCase(
 
     var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
         .profile = &inputs.profile,
+        .spectroscopy_profile = &inputs.spectroscopy_profile,
         .cross_sections = &inputs.cross_sections,
         .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
         .spectroscopy_lines = &inputs.line_list,
         .lut = &inputs.lut,
     });
     errdefer prepared.deinit(allocator);
-    if (phase_profile_out) |profile| profile.optics_preparation_ns = if (timer) |*owned| owned.lap() else 0;
+
+    try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
+    try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
 
     const route = try prepareResolvedVendorO2ARoute(&scene, resolved.rtm_controls);
-    if (phase_profile_out) |profile| profile.plan_preparation_ns = if (timer) |*owned| owned.lap() else 0;
 
     return .{
         .reference = reference,
@@ -369,6 +458,166 @@ pub fn prepareResolvedVendorO2ATraceCase(
         .route = route,
         .prepared = prepared,
     };
+}
+
+fn installVendorWeakCutoffGrid(
+    allocator: Allocator,
+    scene: *const Scene,
+    prepared: *OpticsPrepare.PreparedOpticalState,
+) !void {
+    const response = scene.observation_model.resolvedChannelControls(.radiance).response;
+    var has_cutoff_line_list = false;
+    if (prepared.spectroscopy_lines) |line_list| {
+        has_cutoff_line_list = line_list.runtime_controls.cutoff_cm1 != null;
+    }
+    for (prepared.line_absorbers) |line_absorber| {
+        has_cutoff_line_list = has_cutoff_line_list or line_absorber.line_list.runtime_controls.cutoff_cm1 != null;
+    }
+    if (!has_cutoff_line_list) return;
+
+    const support = try adaptive_plan.buildAdaptiveSupportWavelengths(
+        allocator,
+        scene,
+        prepared,
+        response,
+    ) orelse {
+        return error.DisamarKernelRealizationFailed;
+    };
+    defer allocator.free(support);
+    if (support.len < 2) return error.DisamarKernelRealizationFailed;
+
+    if (prepared.spectroscopy_lines) |*line_list| {
+        try installCutoffGridOnLineList(allocator, line_list, support);
+    }
+    for (prepared.line_absorbers) |*line_absorber| {
+        try installCutoffGridOnLineList(allocator, &line_absorber.line_list, support);
+    }
+}
+
+fn installCutoffGridOnLineList(
+    allocator: Allocator,
+    line_list: *ReferenceDataModel.SpectroscopyLineList,
+    support_wavelengths_nm: []const f64,
+) !void {
+    if (line_list.runtime_controls.cutoff_cm1 == null) return;
+    const owned_support = try allocator.dupe(f64, support_wavelengths_nm);
+    if (line_list.runtime_controls.cutoff_grid_wavelengths_nm.len != 0) {
+        allocator.free(line_list.runtime_controls.cutoff_grid_wavelengths_nm);
+    }
+    line_list.runtime_controls.cutoff_grid_wavelengths_nm = owned_support;
+}
+
+fn rewindowParitySolarSupportToMeasurementKernel(
+    allocator: Allocator,
+    scene: *Scene,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+) !void {
+    if (!scene.observation_model.operational_solar_spectrum.enabled()) return;
+
+    const support = try sharedParityMeasurementSupport(scene, prepared) orelse return;
+    const support_start_nm = support.start_nm;
+    const support_end_nm = support.end_nm;
+    if (!(support_end_nm > support_start_nm)) return;
+
+    const current = scene.observation_model.operational_solar_spectrum;
+    var retained_count: usize = 0;
+    for (current.wavelengths_nm) |wavelength_nm| {
+        if (wavelength_nm < support_start_nm) continue;
+        if (wavelength_nm > support_end_nm) continue;
+        retained_count += 1;
+    }
+    if (retained_count < 3) return error.InvalidData;
+
+    const retained_wavelengths_nm = try allocator.alloc(f64, retained_count);
+    var retained_wavelengths_owned = true;
+    errdefer if (retained_wavelengths_owned) allocator.free(retained_wavelengths_nm);
+    const retained_irradiance = try allocator.alloc(f64, retained_count);
+    var retained_irradiance_owned = true;
+    errdefer if (retained_irradiance_owned) allocator.free(retained_irradiance);
+
+    var retained_index: usize = 0;
+    for (current.wavelengths_nm, current.irradiance) |wavelength_nm, irradiance| {
+        if (wavelength_nm < support_start_nm) continue;
+        if (wavelength_nm > support_end_nm) continue;
+        retained_wavelengths_nm[retained_index] = wavelength_nm;
+        retained_irradiance[retained_index] = irradiance;
+        retained_index += 1;
+    }
+
+    scene.observation_model.operational_solar_spectrum.deinitOwned(allocator);
+    scene.observation_model.operational_solar_spectrum = .{
+        .wavelengths_nm = retained_wavelengths_nm,
+        .irradiance = retained_irradiance,
+    };
+    retained_wavelengths_owned = false;
+    retained_irradiance_owned = false;
+    try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
+}
+
+fn sharedParityMeasurementSupport(
+    scene: *const Scene,
+    prepared: *const OpticsPrepare.PreparedOpticalState,
+) !?struct { start_nm: f64, end_nm: f64 } {
+    var radiance_start: instrument_types.IntegrationKernel = undefined;
+    var radiance_end: instrument_types.IntegrationKernel = undefined;
+    var irradiance_start: instrument_types.IntegrationKernel = undefined;
+    var irradiance_end: instrument_types.IntegrationKernel = undefined;
+
+    try @import("../providers/instrument/integration.zig").integrationForWavelengthChecked(
+        scene,
+        prepared,
+        .radiance,
+        scene.spectral_grid.start_nm,
+        &radiance_start,
+    );
+    try @import("../providers/instrument/integration.zig").integrationForWavelengthChecked(
+        scene,
+        prepared,
+        .radiance,
+        scene.spectral_grid.end_nm,
+        &radiance_end,
+    );
+    try @import("../providers/instrument/integration.zig").integrationForWavelengthChecked(
+        scene,
+        prepared,
+        .irradiance,
+        scene.spectral_grid.start_nm,
+        &irradiance_start,
+    );
+    try @import("../providers/instrument/integration.zig").integrationForWavelengthChecked(
+        scene,
+        prepared,
+        .irradiance,
+        scene.spectral_grid.end_nm,
+        &irradiance_end,
+    );
+
+    if (!radiance_start.enabled or !radiance_end.enabled or
+        !irradiance_start.enabled or !irradiance_end.enabled or
+        radiance_start.sample_count == 0 or radiance_end.sample_count == 0 or
+        irradiance_start.sample_count == 0 or irradiance_end.sample_count == 0)
+    {
+        return null;
+    }
+
+    try expectParityKernelBoundsMatch(radiance_start, irradiance_start);
+    try expectParityKernelBoundsMatch(radiance_end, irradiance_end);
+
+    return .{
+        .start_nm = scene.spectral_grid.start_nm + radiance_start.offsets_nm[0],
+        .end_nm = scene.spectral_grid.end_nm + radiance_end.offsets_nm[radiance_end.sample_count - 1],
+    };
+}
+
+fn expectParityKernelBoundsMatch(
+    lhs: instrument_types.IntegrationKernel,
+    rhs: instrument_types.IntegrationKernel,
+) !void {
+    if (lhs.sample_count != rhs.sample_count) return error.InvalidRequest;
+    if (@abs(lhs.offsets_nm[0] - rhs.offsets_nm[0]) > 1.0e-12) return error.InvalidRequest;
+    if (@abs(lhs.offsets_nm[lhs.sample_count - 1] - rhs.offsets_nm[rhs.sample_count - 1]) > 1.0e-12) {
+        return error.InvalidRequest;
+    }
 }
 
 pub fn loadResolvedVendorO2ALineList(
@@ -411,158 +660,6 @@ pub fn loadResolvedVendorO2ALineList(
     var relaxation_matrix = try relaxation_asset.toSpectroscopyRelaxationMatrix(allocator);
     defer relaxation_matrix.deinit(allocator);
 
-    try filterVendorStrongLineSidecars(
-        allocator,
-        &line_list,
-        &strong_lines,
-        &relaxation_matrix,
-    );
     try line_list.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
-    line_list.preserve_anchor_weak_lines = true;
     return line_list;
-}
-
-fn filterVendorStrongLineSidecars(
-    allocator: Allocator,
-    line_list: *const ReferenceDataModel.SpectroscopyLineList,
-    strong_lines: *ReferenceDataModel.SpectroscopyStrongLineSet,
-    relaxation_matrix: *ReferenceDataModel.RelaxationMatrix,
-) !void {
-    // DECISION:
-    //   The retained vendor-parity assets keep the full vendor strong-line
-    //   sidecar tables even when the bundled line list is a wavelength subset.
-    //   Trim the sidecars to anchors present in the loaded line list before
-    //   attaching them so the retained O2A helper preserves the committed
-    //   subset semantics exercised by the vendor smoke tests.
-    var matched_indices = std.ArrayList(usize).empty;
-    defer matched_indices.deinit(allocator);
-
-    for (strong_lines.lines, 0..) |strong_line, strong_index| {
-        if (hasVendorStrongLineAnchor(line_list.*, strong_line)) {
-            try matched_indices.append(allocator, strong_index);
-        }
-    }
-
-    if (matched_indices.items.len == 0) return error.UnmatchedStrongLineSidecar;
-    if (matched_indices.items.len == strong_lines.lines.len) return;
-
-    const retained_count = matched_indices.items.len;
-    const retained_lines = try allocator.alloc(ReferenceDataModel.SpectroscopyStrongLine, retained_count);
-    errdefer allocator.free(retained_lines);
-    const retained_wt0 = try allocator.alloc(f64, retained_count * retained_count);
-    errdefer allocator.free(retained_wt0);
-    const retained_bw = try allocator.alloc(f64, retained_count * retained_count);
-    errdefer allocator.free(retained_bw);
-
-    for (matched_indices.items, 0..) |old_row_index, new_row_index| {
-        retained_lines[new_row_index] = strong_lines.lines[old_row_index];
-        for (matched_indices.items, 0..) |old_col_index, new_col_index| {
-            const flat_index = new_row_index * retained_count + new_col_index;
-            retained_wt0[flat_index] = relaxation_matrix.weightAt(old_row_index, old_col_index);
-            retained_bw[flat_index] = relaxation_matrix.temperatureExponentAt(old_row_index, old_col_index);
-        }
-    }
-
-    strong_lines.deinit(allocator);
-    strong_lines.* = .{ .lines = retained_lines };
-    relaxation_matrix.deinit(allocator);
-    relaxation_matrix.* = .{
-        .line_count = retained_count,
-        .wt0 = retained_wt0,
-        .bw = retained_bw,
-    };
-}
-
-fn hasVendorStrongLineAnchor(
-    line_list: ReferenceDataModel.SpectroscopyLineList,
-    strong_line: ReferenceDataModel.SpectroscopyStrongLine,
-) bool {
-    for (line_list.lines) |line| {
-        if (!spectroscopy_support.isVendorO2AStrongCandidate(line)) continue;
-        const tolerance_nm = @max(line_list.strong_line_tolerance_nm, strong_line.air_half_width_nm * 4.0);
-        if (@abs(line.center_wavelength_nm - strong_line.center_wavelength_nm) <= tolerance_nm) {
-            return true;
-        }
-    }
-    return false;
-}
-
-test "vendor parity loader trims unmatched strong-line sidecars to the loaded subset" {
-    var line_list = ReferenceDataModel.SpectroscopyLineList{
-        .lines = try std.testing.allocator.dupe(ReferenceDataModel.SpectroscopyLine, &.{
-            .{
-                .gas_index = 7,
-                .isotope_number = 1,
-                .center_wavelength_nm = 771.3015,
-                .line_strength_cm2_per_molecule = 1.0e-20,
-                .air_half_width_nm = 0.0015,
-                .temperature_exponent = 0.63,
-                .lower_state_energy_cm1 = 1800.0,
-                .pressure_shift_nm = 0.0,
-                .line_mixing_coefficient = 0.0,
-                .branch_ic1 = 5,
-                .branch_ic2 = 1,
-                .rotational_nf = 35,
-            },
-        }),
-    };
-    defer line_list.deinit(std.testing.allocator);
-
-    var strong_lines = ReferenceDataModel.SpectroscopyStrongLineSet{
-        .lines = try std.testing.allocator.dupe(ReferenceDataModel.SpectroscopyStrongLine, &.{
-            .{
-                .center_wavenumber_cm1 = 12965.1079,
-                .center_wavelength_nm = 771.3015,
-                .population_t0 = 5.10e-05,
-                .dipole_ratio = 0.712,
-                .dipole_t0 = 5.80e-04,
-                .lower_state_energy_cm1 = 1804.8773,
-                .air_half_width_cm1 = 0.0276,
-                .air_half_width_nm = 0.00164,
-                .temperature_exponent = 0.63,
-                .pressure_shift_cm1 = -0.009,
-                .pressure_shift_nm = 0.00053,
-                .rotational_index_m1 = -35,
-            },
-            .{
-                .center_wavenumber_cm1 = 12966.8087,
-                .center_wavelength_nm = 771.2004,
-                .population_t0 = 4.99e-05,
-                .dipole_ratio = -0.702,
-                .dipole_t0 = -5.78e-04,
-                .lower_state_energy_cm1 = 1803.1765,
-                .air_half_width_cm1 = 0.0276,
-                .air_half_width_nm = 0.00164,
-                .temperature_exponent = 0.63,
-                .pressure_shift_cm1 = -0.009,
-                .pressure_shift_nm = 0.00053,
-                .rotational_index_m1 = -34,
-            },
-        }),
-    };
-    defer strong_lines.deinit(std.testing.allocator);
-
-    var relaxation_matrix = ReferenceDataModel.RelaxationMatrix{
-        .line_count = 2,
-        .wt0 = try std.testing.allocator.dupe(f64, &.{
-            0.02764486,
-            0.0004338554,
-            0.0004338554,
-            0.02655312,
-        }),
-        .bw = try std.testing.allocator.dupe(f64, &.{
-            0.629999646133,
-            1.169364903905,
-            1.169364903905,
-            0.629999646133,
-        }),
-    };
-    defer relaxation_matrix.deinit(std.testing.allocator);
-
-    try filterVendorStrongLineSidecars(std.testing.allocator, &line_list, &strong_lines, &relaxation_matrix);
-    try std.testing.expectEqual(@as(usize, 1), strong_lines.lines.len);
-    try std.testing.expectApproxEqAbs(@as(f64, 771.3015), strong_lines.lines[0].center_wavelength_nm, 1.0e-9);
-    try std.testing.expectEqual(@as(usize, 1), relaxation_matrix.line_count);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.02764486), relaxation_matrix.weightAt(0, 0), 1.0e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.629999646133), relaxation_matrix.temperatureExponentAt(0, 0), 1.0e-12);
 }

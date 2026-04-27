@@ -1,8 +1,30 @@
-//! Spectroscopy line-list support helpers that are not themselves line-shape
-//! physics.
+// Spectroscopy line-list support helpers that are not themselves line-shape
+// physics.
 
+const std = @import("std");
 const Physics = @import("physics.zig");
 const Types = @import("types.zig");
+
+pub fn lineCenterWavenumberCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.center_wavenumber_cm1))
+        line.center_wavenumber_cm1
+    else
+        Physics.wavelengthToWavenumberCm1(line.center_wavelength_nm);
+}
+
+pub fn lineAirHalfWidthCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.air_half_width_cm1))
+        line.air_half_width_cm1
+    else
+        Physics.spectralWidthNmToCm1(line.air_half_width_nm, lineCenterWavenumberCm1(line));
+}
+
+pub fn linePressureShiftCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.pressure_shift_cm1))
+        line.pressure_shift_cm1
+    else
+        -Physics.spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
+}
 
 pub fn lineIndexIsStrongAnchor(anchor_indices: []const ?usize, line_index: usize) bool {
     for (anchor_indices) |anchor| {
@@ -23,78 +45,12 @@ pub fn zeroEvaluation() Types.SpectroscopyEvaluation {
     };
 }
 
-pub fn traceRowForWeakLine(
-    wavelength_nm: f64,
-    global_line_index: usize,
-    line: Types.SpectroscopyLine,
-    matched_strong_index: ?usize,
-    contribution_kind: Types.SpectroscopyTraceContributionKind,
-    contribution: Types.SpectroscopyEvaluation,
-    pressure_atm: f64,
-) Types.SpectroscopyTraceRow {
-    return .{
-        .contribution_kind = contribution_kind,
-        .wavelength_nm = wavelength_nm,
-        .global_line_index = global_line_index,
-        .strong_index = null,
-        .matched_strong_index = matched_strong_index,
-        .gas_index = line.gas_index,
-        .isotope_number = line.isotope_number,
-        .center_wavelength_nm = line.center_wavelength_nm,
-        .center_wavenumber_cm1 = Physics.wavelengthToWavenumberCm1(line.center_wavelength_nm),
-        .shifted_center_wavenumber_cm1 = Physics.shiftedLineCenterWavenumberCm1(line, pressure_atm),
-        .line_strength_cm2_per_molecule = line.line_strength_cm2_per_molecule,
-        .air_half_width_nm = line.air_half_width_nm,
-        .lower_state_energy_cm1 = line.lower_state_energy_cm1,
-        .pressure_shift_nm = line.pressure_shift_nm,
-        .line_mixing_coefficient = line.line_mixing_coefficient,
-        .branch_ic1 = line.branch_ic1,
-        .branch_ic2 = line.branch_ic2,
-        .rotational_nf = line.rotational_nf,
-        .weak_line_sigma_cm2_per_molecule = contribution.weak_line_sigma_cm2_per_molecule,
-        .strong_line_sigma_cm2_per_molecule = contribution.strong_line_sigma_cm2_per_molecule,
-        .line_mixing_sigma_cm2_per_molecule = contribution.line_mixing_sigma_cm2_per_molecule,
-        .total_sigma_cm2_per_molecule = contribution.total_sigma_cm2_per_molecule,
-    };
-}
-
-pub fn traceRowForStrongLine(
-    wavelength_nm: f64,
-    global_line_index: usize,
-    strong_index: usize,
-    anchor_line: Types.SpectroscopyLine,
-    strong_line: Types.SpectroscopyStrongLine,
-    contribution: Types.SpectroscopyEvaluation,
-    pressure_atm: f64,
-) Types.SpectroscopyTraceRow {
-    return .{
-        .contribution_kind = .strong_sidecar,
-        .wavelength_nm = wavelength_nm,
-        .global_line_index = global_line_index,
-        .strong_index = strong_index,
-        .matched_strong_index = strong_index,
-        .gas_index = anchor_line.gas_index,
-        .isotope_number = anchor_line.isotope_number,
-        .center_wavelength_nm = strong_line.center_wavelength_nm,
-        .center_wavenumber_cm1 = strong_line.center_wavenumber_cm1,
-        .shifted_center_wavenumber_cm1 = strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1,
-        .line_strength_cm2_per_molecule = anchor_line.line_strength_cm2_per_molecule,
-        .air_half_width_nm = strong_line.air_half_width_nm,
-        .lower_state_energy_cm1 = strong_line.lower_state_energy_cm1,
-        .pressure_shift_nm = anchor_line.pressure_shift_nm,
-        .line_mixing_coefficient = anchor_line.line_mixing_coefficient,
-        .branch_ic1 = anchor_line.branch_ic1,
-        .branch_ic2 = anchor_line.branch_ic2,
-        .rotational_nf = anchor_line.rotational_nf,
-        .weak_line_sigma_cm2_per_molecule = contribution.weak_line_sigma_cm2_per_molecule,
-        .strong_line_sigma_cm2_per_molecule = contribution.strong_line_sigma_cm2_per_molecule,
-        .line_mixing_sigma_cm2_per_molecule = contribution.line_mixing_sigma_cm2_per_molecule,
-        .total_sigma_cm2_per_molecule = contribution.total_sigma_cm2_per_molecule,
-    };
-}
-
 pub fn lineHasVendorStrongLineMetadata(line: Types.SpectroscopyLine) bool {
     return line.branch_ic1 != null and line.branch_ic2 != null and line.rotational_nf != null;
+}
+
+pub fn lineHasVendorStrongLineMetadataFromSource(line: Types.SpectroscopyLine) bool {
+    return line.vendor_filter_metadata_from_source and lineHasVendorStrongLineMetadata(line);
 }
 
 pub fn wavenumberCm1ToWavelengthNm(wavenumber_cm1: f64) f64 {
@@ -110,6 +66,10 @@ pub fn isVendorO2AStrongCandidate(line: Types.SpectroscopyLine) bool {
         line.branch_ic1.? == 5 and
         line.branch_ic2.? == 1 and
         line.rotational_nf.? <= 35;
+}
+
+pub fn isVendorO2AStrongCandidateFromSource(line: Types.SpectroscopyLine) bool {
+    return line.vendor_filter_metadata_from_source and isVendorO2AStrongCandidate(line);
 }
 
 pub fn runtimeControlsMatchLine(

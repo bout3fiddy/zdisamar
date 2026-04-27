@@ -1,5 +1,5 @@
-//! Own a spectroscopy line list plus optional strong-line sidecars and runtime
-//! controls.
+// Own a spectroscopy line list plus optional strong-line sidecars and runtime
+// controls.
 
 const Types = @import("types.zig");
 
@@ -10,6 +10,7 @@ pub const SpectroscopyLineList = struct {
     strong_line_tolerance_nm: f64 = 0.01,
     lines_sorted_ascending: bool = false,
     preserve_anchor_weak_lines: bool = false,
+    vendor_strong_line_partition: bool = false,
     strong_line_match_by_line: ?[]?u16 = null,
     runtime_controls: Types.SpectroscopyRuntimeControls = .{},
 
@@ -48,6 +49,7 @@ pub const SpectroscopyLineList = struct {
             .strong_line_tolerance_nm = self.strong_line_tolerance_nm,
             .lines_sorted_ascending = self.lines_sorted_ascending,
             .preserve_anchor_weak_lines = self.preserve_anchor_weak_lines,
+            .vendor_strong_line_partition = self.vendor_strong_line_partition,
             .strong_line_match_by_line = if (self.strong_line_match_by_line) |matches|
                 try allocator.dupe(?u16, matches)
             else
@@ -151,23 +153,5 @@ pub const SpectroscopyLineList = struct {
         pressure_hpa: f64,
     ) Types.SpectroscopyEvaluation {
         return @import("line_list_eval.zig").evaluateAt(self, wavelength_nm, temperature_k, pressure_hpa);
-    }
-
-    pub fn traceAt(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-        wavelength_nm: f64,
-        temperature_k: f64,
-        pressure_hpa: f64,
-        prepared_state: ?*const Types.StrongLinePreparedState,
-    ) !Types.SpectroscopyTrace {
-        return @import("line_list_eval.zig").traceAt(
-            self,
-            allocator,
-            wavelength_nm,
-            temperature_k,
-            pressure_hpa,
-            prepared_state,
-        );
     }
 };

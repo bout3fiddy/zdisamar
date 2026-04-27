@@ -1,4 +1,4 @@
-//! Evaluation and trace helpers for spectroscopy line lists.
+// Evaluation helpers for spectroscopy line lists.
 
 const std = @import("std");
 const LineList = @import("line_list.zig");
@@ -26,143 +26,6 @@ pub fn evaluateAt(
         .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
         .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
         .d_sigma_d_temperature_cm2_per_molecule_per_k = (upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule) / (2.0 * delta_t),
-    };
-}
-
-pub fn traceAt(
-    self: SpectroscopyLineList,
-    allocator: Types.Allocator,
-    wavelength_nm: f64,
-    temperature_k: f64,
-    pressure_hpa: f64,
-    prepared_state: ?*const Types.StrongLinePreparedState,
-) !Types.SpectroscopyTrace {
-    var rows = std.ArrayList(Types.SpectroscopyTraceRow).empty;
-    errdefer rows.deinit(allocator);
-
-    const safe_temperature = @max(temperature_k, 150.0);
-    const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
-
-    if (!self.hasStrongLineSidecars()) {
-        const relevant_window = Ops.relevantLineWindowForWavelength(self, wavelength_nm);
-        for (relevant_window.lines, 0..) |line, line_index| {
-            const contribution = Physics.weakLineContribution(
-                wavelength_nm,
-                line,
-                safe_temperature,
-                pressure_scale,
-                Types.hitran_reference_temperature_k,
-                self.runtime_controls.cutoff_cm1,
-            );
-            try rows.append(allocator, Support.traceRowForWeakLine(
-                wavelength_nm,
-                relevant_window.start_index + line_index,
-                line,
-                null,
-                .weak_included,
-                contribution,
-                pressure_scale,
-            ));
-        }
-    } else {
-        const strong_lines = self.strong_lines.?;
-        const relaxation_matrix = self.relaxation_matrix.?;
-        const convtp_state = if (prepared_state == null)
-            Physics.prepareStrongLineConvTPState(strong_lines, relaxation_matrix, safe_temperature, pressure_scale)
-        else
-            null;
-        const relevant_window = Ops.relevantLineWindowForWavelength(self, wavelength_nm);
-        const relevant_lines = relevant_window.lines;
-        const strong_line_anchors = Ops.selectStrongLineAnchors(self, relevant_lines, relevant_window.start_index);
-
-        for (relevant_lines, 0..) |line, line_index| {
-            const matched_strong_index = Ops.matchedStrongIndexForRelevantLine(
-                self,
-                relevant_window.start_index,
-                line,
-                line_index,
-            );
-            if (Ops.shouldExcludeWeakLine(self, relevant_window.start_index, line, line_index, &strong_line_anchors)) {
-                const exclusion_kind: Types.SpectroscopyTraceContributionKind = if (Ops.usesVendorStrongLinePartition(self))
-                    .weak_excluded_vendor_partition
-                else
-                    .weak_excluded_anchor;
-                try rows.append(allocator, Support.traceRowForWeakLine(
-                    wavelength_nm,
-                    relevant_window.start_index + line_index,
-                    line,
-                    matched_strong_index,
-                    exclusion_kind,
-                    Support.zeroEvaluation(),
-                    pressure_scale,
-                ));
-                continue;
-            }
-            const contribution = Physics.weakLineContribution(
-                wavelength_nm,
-                line,
-                safe_temperature,
-                pressure_scale,
-                Types.hitran_reference_temperature_k,
-                self.runtime_controls.cutoff_cm1,
-            );
-            try rows.append(allocator, Support.traceRowForWeakLine(
-                wavelength_nm,
-                relevant_window.start_index + line_index,
-                line,
-                matched_strong_index,
-                .weak_included,
-                contribution,
-                pressure_scale,
-            ));
-        }
-
-        for (strong_line_anchors[0..strong_lines.len], 0..) |anchor_line_index, strong_index| {
-            const line_index = anchor_line_index orelse continue;
-            const anchor_line = relevant_lines[line_index];
-            const contribution = if (prepared_state) |state|
-                Physics.strongLineContributionPrepared(
-                    wavelength_nm,
-                    anchor_line,
-                    strong_lines,
-                    strong_index,
-                    state,
-                    safe_temperature,
-                    pressure_scale,
-                    self.runtime_controls.cutoff_cm1,
-                )
-            else
-                Physics.strongLineContribution(
-                    wavelength_nm,
-                    anchor_line,
-                    strong_lines,
-                    strong_index,
-                    convtp_state.?,
-                    safe_temperature,
-                    pressure_scale,
-                    self.runtime_controls.cutoff_cm1,
-                );
-            try rows.append(allocator, Support.traceRowForStrongLine(
-                wavelength_nm,
-                relevant_window.start_index + line_index,
-                strong_index,
-                anchor_line,
-                strong_lines[strong_index],
-                contribution,
-                pressure_scale,
-            ));
-        }
-    }
-
-    return .{
-        .wavelength_nm = wavelength_nm,
-        .temperature_k = safe_temperature,
-        .pressure_hpa = pressure_hpa,
-        .evaluation = if (prepared_state) |state|
-            self.evaluateAtPrepared(wavelength_nm, safe_temperature, pressure_hpa, state)
-        else
-            self.evaluateAt(wavelength_nm, safe_temperature, pressure_hpa),
-        .rows = try rows.toOwnedSlice(allocator),
     };
 }
 
@@ -197,7 +60,7 @@ pub fn totalSigmaFromLineListOnly(
             safe_temperature,
             pressure_scale,
             Types.hitran_reference_temperature_k,
-            self.runtime_controls.cutoff_cm1,
+            self.runtime_controls,
         );
         line_sigma += contribution.line_sigma_cm2_per_molecule;
     }
@@ -245,22 +108,19 @@ pub fn totalSigmaWithStrongLineSidecars(
             safe_temperature,
             pressure_scale,
             Types.hitran_reference_temperature_k,
-            self.runtime_controls.cutoff_cm1,
+            self.runtime_controls,
         );
         weak_line_sigma += contribution.line_sigma_cm2_per_molecule;
     }
 
-    for (strong_line_anchors[0..strong_lines.len], 0..) |anchor_line_index, strong_index| {
-        const line_index = anchor_line_index orelse continue;
+    for (strong_lines, 0..) |_, strong_index| {
         const contribution = Physics.strongLineContribution(
             wavelength_nm,
-            relevant_lines[line_index],
             strong_lines,
             strong_index,
             convtp_state,
             safe_temperature,
             pressure_scale,
-            self.runtime_controls.cutoff_cm1,
         );
         strong_line_sigma += contribution.strong_line_sigma_cm2_per_molecule;
         line_mixing_sigma += contribution.line_mixing_sigma_cm2_per_molecule * self.runtime_controls.line_mixing_factor;
@@ -305,22 +165,19 @@ pub fn totalSigmaWithPreparedStrongLineState(
             safe_temperature,
             pressure_scale,
             Types.hitran_reference_temperature_k,
-            self.runtime_controls.cutoff_cm1,
+            self.runtime_controls,
         );
         weak_line_sigma += contribution.line_sigma_cm2_per_molecule;
     }
 
-    for (strong_line_anchors[0..strong_lines.len], 0..) |anchor_line_index, strong_index| {
-        const line_index = anchor_line_index orelse continue;
+    for (strong_lines, 0..) |_, strong_index| {
         const contribution = Physics.strongLineContributionPrepared(
             wavelength_nm,
-            relevant_lines[line_index],
             strong_lines,
             strong_index,
             prepared_state,
             safe_temperature,
             pressure_scale,
-            self.runtime_controls.cutoff_cm1,
         );
         strong_line_sigma += contribution.strong_line_sigma_cm2_per_molecule;
         line_mixing_sigma += contribution.line_mixing_sigma_cm2_per_molecule * self.runtime_controls.line_mixing_factor;

@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Represent a hydrated reference asset and convert it into typed reference
-//!   data.
-//!
-//! Physics:
-//!   Preserve the manifest provenance, numeric payload, and table-to-typed
-//!   conversion rules for bundled climatology, spectroscopy, CIA, LUT, and
-//!   Mie assets.
-//!
-//! Vendor:
-//!   `reference asset hydration and typed conversion`
-//!
-//! Design:
-//!   Keep the loaded-asset carrier and its conversion methods together so the
-//!   root loader can stay focused on file resolution and hashing.
-//!
-//! Invariants:
-//!   Owned strings and buffers are released exactly once, and typed outputs
-//!   preserve the original row order and column contracts.
-//!
-//! Validation:
-//!   Reference-asset loader tests.
-
 const std = @import("std");
 const ReferenceData = @import("../../model/ReferenceData.zig");
 const types = @import("reference_assets_types.zig");
@@ -38,12 +15,6 @@ pub const LoadedAsset = struct {
     values: []f64,
     row_count: u32,
 
-    /// Purpose:
-    ///   Release all owned strings and numeric buffers for a loaded asset.
-    ///
-    /// Invariants:
-    ///   Every allocation in the asset must be freed exactly once before the
-    ///   struct is reused.
     pub fn deinit(self: *LoadedAsset, allocator: std.mem.Allocator) void {
         allocator.free(self.bundle_manifest_path);
         allocator.free(self.bundle_id);
@@ -58,23 +29,14 @@ pub const LoadedAsset = struct {
         self.* = undefined;
     }
 
-    /// Purpose:
-    ///   Report how many numeric columns the asset contains.
     pub fn columnCount(self: LoadedAsset) usize {
         return self.column_names.len;
     }
 
-    /// Purpose:
-    ///   Read one numeric cell from the loaded table.
     pub fn value(self: LoadedAsset, row_index: usize, column_index: usize) f64 {
         return self.values[row_index * self.column_names.len + column_index];
     }
 
-    /// Purpose:
-    ///   Register the loaded asset with the engine caches.
-    ///
-    /// Physics:
-    ///   Publish the dataset hash and, for LUTs, the derived shape metadata.
     pub fn registerWithEngine(self: LoadedAsset, engine: anytype) !void {
         try engine.registerDatasetArtifact(self.dataset_id, self.dataset_hash);
         if (self.kind == .lookup_table) {
@@ -86,11 +48,6 @@ pub const LoadedAsset = struct {
         }
     }
 
-    /// Purpose:
-    ///   Materialize a climatology profile from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Convert the table rows into typed atmospheric profile points.
     pub fn toClimatologyProfile(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.ClimatologyProfile {
         if (self.kind != .climatology_profile or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -115,12 +72,6 @@ pub const LoadedAsset = struct {
         return .{ .rows = rows };
     }
 
-    /// Purpose:
-    ///   Materialize a cross-section table from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Convert wavelength and cross-section columns into typed interpolation
-    ///   points.
     pub fn toCrossSectionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CrossSectionTable {
         if (self.kind != .cross_section_table or self.columnCount() != 2) return error.InvalidAssetKind;
         if (!std.mem.eql(u8, self.column_names[0], "wavelength_nm")) return error.InvalidColumns;
@@ -139,12 +90,6 @@ pub const LoadedAsset = struct {
         return .{ .points = points };
     }
 
-    /// Purpose:
-    ///   Materialize a CIA table from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Convert the fixed CIA polynomial coefficients into typed absorption
-    ///   points.
     pub fn toCollisionInducedAbsorptionTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.CollisionInducedAbsorptionTable {
         if (self.kind != .collision_induced_absorption_table or self.columnCount() != 5) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -173,15 +118,31 @@ pub const LoadedAsset = struct {
         };
     }
 
-    /// Purpose:
-    ///   Materialize a spectroscopy line list from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Convert HITRAN-style line rows into typed spectroscopy lines.
     pub fn toSpectroscopyLineList(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyLineList {
         if (self.kind != .spectroscopy_line_list) return error.InvalidAssetKind;
-        const has_vendor_o2a_fields = self.columnCount() == 13;
-        if (has_vendor_o2a_fields) {
+        const has_source_cm1_fields = columnNamesContain(self.column_names, "center_wavenumber_cm1");
+        const has_vendor_o2a_fields = columnNamesContain(self.column_names, "vendor_filter_metadata_from_source");
+        if (has_vendor_o2a_fields and has_source_cm1_fields) {
+            try expectColumns(self.column_names, &.{
+                "gas_index",
+                "isotope_number",
+                "abundance_fraction",
+                "center_wavelength_nm",
+                "center_wavenumber_cm1",
+                "line_strength_cm2_per_molecule",
+                "air_half_width_nm",
+                "air_half_width_cm1",
+                "temperature_exponent",
+                "lower_state_energy_cm1",
+                "pressure_shift_nm",
+                "pressure_shift_cm1",
+                "line_mixing_coefficient",
+                "branch_ic1",
+                "branch_ic2",
+                "rotational_nf",
+                "vendor_filter_metadata_from_source",
+            });
+        } else if (has_vendor_o2a_fields) {
             try expectColumns(self.column_names, &.{
                 "gas_index",
                 "isotope_number",
@@ -196,6 +157,23 @@ pub const LoadedAsset = struct {
                 "branch_ic1",
                 "branch_ic2",
                 "rotational_nf",
+                "vendor_filter_metadata_from_source",
+            });
+        } else if (has_source_cm1_fields) {
+            try expectColumns(self.column_names, &.{
+                "gas_index",
+                "isotope_number",
+                "abundance_fraction",
+                "center_wavelength_nm",
+                "center_wavenumber_cm1",
+                "line_strength_cm2_per_molecule",
+                "air_half_width_nm",
+                "air_half_width_cm1",
+                "temperature_exponent",
+                "lower_state_energy_cm1",
+                "pressure_shift_nm",
+                "pressure_shift_cm1",
+                "line_mixing_coefficient",
             });
         } else {
             try expectColumns(self.column_names, &.{
@@ -217,32 +195,37 @@ pub const LoadedAsset = struct {
 
         for (lines, 0..) |*line, row_index| {
             const row = row_index * self.columnCount();
+            const line_strength_index: usize = if (has_source_cm1_fields) 5 else 4;
+            const air_half_width_nm_index: usize = if (has_source_cm1_fields) 6 else 5;
+            const temperature_exponent_index: usize = if (has_source_cm1_fields) 8 else 6;
+            const lower_state_energy_index: usize = if (has_source_cm1_fields) 9 else 7;
+            const pressure_shift_nm_index: usize = if (has_source_cm1_fields) 10 else 8;
+            const line_mixing_index: usize = if (has_source_cm1_fields) 12 else 9;
+            const vendor_index: usize = if (has_source_cm1_fields) 13 else 10;
             line.* = .{
                 .gas_index = @intFromFloat(self.values[row + 0]),
                 .isotope_number = @intFromFloat(self.values[row + 1]),
                 .abundance_fraction = self.values[row + 2],
                 .center_wavelength_nm = self.values[row + 3],
-                .line_strength_cm2_per_molecule = self.values[row + 4],
-                .air_half_width_nm = self.values[row + 5],
-                .temperature_exponent = self.values[row + 6],
-                .lower_state_energy_cm1 = self.values[row + 7],
-                .pressure_shift_nm = self.values[row + 8],
-                .line_mixing_coefficient = self.values[row + 9],
-                .branch_ic1 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 10]) else null,
-                .branch_ic2 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 11]) else null,
-                .rotational_nf = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + 12]) else null,
+                .center_wavenumber_cm1 = if (has_source_cm1_fields) self.values[row + 4] else std.math.nan(f64),
+                .line_strength_cm2_per_molecule = self.values[row + line_strength_index],
+                .air_half_width_nm = self.values[row + air_half_width_nm_index],
+                .air_half_width_cm1 = if (has_source_cm1_fields) self.values[row + 7] else std.math.nan(f64),
+                .temperature_exponent = self.values[row + temperature_exponent_index],
+                .lower_state_energy_cm1 = self.values[row + lower_state_energy_index],
+                .pressure_shift_nm = self.values[row + pressure_shift_nm_index],
+                .pressure_shift_cm1 = if (has_source_cm1_fields) self.values[row + 11] else std.math.nan(f64),
+                .line_mixing_coefficient = self.values[row + line_mixing_index],
+                .branch_ic1 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index]) else null,
+                .branch_ic2 = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index + 1]) else null,
+                .rotational_nf = if (has_vendor_o2a_fields) optionalVendorMetadataValue(self.values[row + vendor_index + 2]) else null,
+                .vendor_filter_metadata_from_source = has_vendor_o2a_fields and self.values[row + vendor_index + 3] != 0.0,
             };
         }
 
         return .{ .lines = lines };
     }
 
-    /// Purpose:
-    ///   Materialize a strong-line sidecar set from the generic loaded table.
-    ///
-    /// Physics:
-    ///   Preserve the O2A strong-line augmentation rows and the relaxation
-    ///   metadata used by the reference line-selection path.
     pub fn toSpectroscopyStrongLineSet(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.SpectroscopyStrongLineSet {
         if (self.kind != .spectroscopy_strong_line_set or self.columnCount() != 12) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -284,8 +267,6 @@ pub const LoadedAsset = struct {
         return .{ .lines = lines };
     }
 
-    /// Purpose:
-    ///   Materialize a relaxation matrix from the generic loaded table.
     pub fn toSpectroscopyRelaxationMatrix(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.RelaxationMatrix {
         if (self.kind != .spectroscopy_relaxation_matrix or self.columnCount() != 2) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -314,8 +295,6 @@ pub const LoadedAsset = struct {
         };
     }
 
-    /// Purpose:
-    ///   Materialize an airmass-factor LUT from the generic loaded table.
     pub fn toAirmassFactorLut(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.AirmassFactorLut {
         if (self.kind != .lookup_table or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectAirmassFactorColumns(self.column_names);
@@ -336,8 +315,6 @@ pub const LoadedAsset = struct {
         return .{ .points = points };
     }
 
-    /// Purpose:
-    ///   Materialize a Mie phase table from the generic loaded table.
     pub fn toMiePhaseTable(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.MiePhaseTable {
         if (self.kind != .mie_phase_table or self.columnCount() != 7) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{
@@ -378,6 +355,13 @@ fn expectColumns(actual: []const []const u8, expected: []const []const u8) !void
     }
 }
 
+fn columnNamesContain(actual: []const []const u8, expected: []const u8) bool {
+    for (actual) |actual_name| {
+        if (std.mem.eql(u8, actual_name, expected)) return true;
+    }
+    return false;
+}
+
 fn expectAirmassFactorColumns(actual: []const []const u8) !void {
     try expectColumns(actual[0..3], &.{
         "solar_zenith_deg",
@@ -400,7 +384,7 @@ test "spectroscopy line-list conversion preserves null vendor metadata fields" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const column_names = try allocator.alloc([]const u8, 13);
+    const column_names = try allocator.alloc([]const u8, 14);
     for ([_][]const u8{
         "gas_index",
         "isotope_number",
@@ -415,6 +399,7 @@ test "spectroscopy line-list conversion preserves null vendor metadata fields" {
         "branch_ic1",
         "branch_ic2",
         "rotational_nf",
+        "vendor_filter_metadata_from_source",
     }, 0..) |name, index| {
         column_names[index] = try allocator.dupe(u8, name);
     }
@@ -443,6 +428,7 @@ test "spectroscopy line-list conversion preserves null vendor metadata fields" {
             std.math.nan(f64),
             std.math.nan(f64),
             std.math.nan(f64),
+            0.0,
         }),
         .row_count = 1,
     };
@@ -453,4 +439,5 @@ test "spectroscopy line-list conversion preserves null vendor metadata fields" {
     try std.testing.expectEqual(@as(?u8, null), line_list.lines[0].branch_ic1);
     try std.testing.expectEqual(@as(?u8, null), line_list.lines[0].branch_ic2);
     try std.testing.expectEqual(@as(?u8, null), line_list.lines[0].rotational_nf);
+    try std.testing.expect(!line_list.lines[0].vendor_filter_metadata_from_source);
 }

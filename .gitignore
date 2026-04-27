@@ -1,20 +1,46 @@
+# OS/editor noise
 .DS_Store
+
+# Build outputs and caches
 .zig-cache/
 .zig-cache-int/
 zig-cache/
 zig-out/
 out/
 __pycache__/
+.pytest_cache/
+.venv/
 *.py[cod]
 *.bundle
+
+# Local DISAMAR reference clone and generated vendor outputs
+vendor/
 disamar.asciiHDF
 disamar.imed
 disamar.out
 profile_errorCovariance.out
-vendor/
+
+# Local scratch specs and work packages
 specs/
 docs/specs/
 docs/workpackages/*
 !docs/workpackages/fp-03/
 !docs/workpackages/fp-03/**
 docs/workpackages/fp-03/.DS_Store
+
+# Disposable validation output. Tracked O2 A evidence lives directly in validation/.
+validation/.cache/
+validation/function_diff/
+validation/latest/
+validation/runs/
+validation/scratch/
+validation/tmp/
+validation/work/
+
+# Retired validation subtrees; keep future evidence flat or under out/.
+validation/compatibility/
+validation/golden/
+validation/perf/
+validation/plugin_tests/
+validation/reference/
+validation/release/

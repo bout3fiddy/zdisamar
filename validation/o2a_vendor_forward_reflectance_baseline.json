@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "scenario": "o2a_vendor_forward_reflectance",
+  "upstream_config": "vendor/disamar-fortran/InputFiles/Config_O2_with_CIA.in",
+  "reference_path": "validation/o2a_with_cia_disamar_reference.csv",
+  "zero_tolerance_abs": 1.0e-12,
+  "trend_tolerances": {
+    "mean_abs_difference_abs": 1.0e-6,
+    "root_mean_square_difference_abs": 1.0e-6,
+    "max_abs_difference_abs": 1.0e-6,
+    "correlation_abs": 1.0e-6,
+    "blue_wing_mean_difference_abs": 0.060,
+    "trough_wavelength_difference_nm_abs": 0.050,
+    "trough_value_difference_abs": 0.060,
+    "rebound_peak_difference_abs": 0.100,
+    "mid_band_mean_difference_abs": 0.070,
+    "red_wing_mean_difference_abs": 0.060
+  },
+  "guidance": {
+    "allowed_to_fail": true,
+    "summary": "This lane is intentionally allowed to fail until the stored vendor residual collapses to numerical zero. It uses a coarsened vendor-shaped execution grid so the assessment stays usable in the local development loop; use the full vendor plot bundle for deeper full-band inspection. Agents should focus on whether mean/rms/max differences improved, regressed, or stayed flat relative to the committed baseline, and only treat regressions as urgent when the change touched forward-physics code or O2A reference assets.",
+    "expect_improvement_when_touched": [
+      "src/kernels/transport",
+      "src/kernels/optics",
+      "src/runtime/reference",
+      "src/model/reference",
+      "data/cross_sections",
+      "validation/o2a_with_cia_disamar_reference.csv"
+    ]
+  },
+  "baseline": {
+    "sample_count": 701,
+    "nonzero_sample_count": 701,
+    "exact_match_within_zero_tolerance": false,
+    "mean_signed_difference": 0.00586695689875252,
+    "mean_abs_difference": 0.009242599063500261,
+    "root_mean_square_difference": 0.015710459661891028,
+    "max_abs_difference": 0.07021287473403681,
+    "max_abs_difference_wavelength_nm": 762.05,
+    "correlation": 0.9837852371397875,
+    "blue_wing_mean_difference": 0.0013215702901985815,
+    "trough_wavelength_difference_nm": 0.014999999999986358,
+    "trough_value_difference": 0.0019397918090883204,
+    "rebound_peak_difference": -0.06815764236769316,
+    "mid_band_mean_difference": 0.01912386366192461,
+    "red_wing_mean_difference": 0.006162238657835273
+  }
+}

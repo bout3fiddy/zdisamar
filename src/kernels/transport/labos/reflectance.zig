@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Own LABOS reflectance extraction and Fourier-resolution selection.
-//!
-//! Physics:
-//!   Converts the internal radiation field into TOA reflectance and chooses
-//!   the Fourier terms required by the prepared transport input.
-//!
-//! Vendor:
-//!   LABOS reflectance extraction stage
-//!
-//! Design:
-//!   Reflectance extraction is separated from the orders recursion so the
-//!   higher-level facade can re-use the same Fourier and source-interface
-//!   policy without a monolithic solver file.
-//!
-//! Invariants:
-//!   Scalar LABOS uses the solar column for reflectance extraction. Fourier
-//!   truncation is driven by the active phase coefficients and transport input.
-//!
-//! Validation:
-//!   See `tests/unit/transport_labos_test.zig` for reflectance and Fourier
-//!   selection coverage.
-
 const std = @import("std");
 const basis = @import("basis.zig");
 const common = @import("../common.zig");
@@ -36,8 +13,6 @@ fn sourceInterfaceAtLevel(
     return common.sourceInterfaceFromLayers(layers, ilevel);
 }
 
-/// Purpose:
-///   Resolve the highest Fourier index required by the phase coefficients.
 fn maxPhaseCoefficientIndex(phase_coefficients: [basis.max_phase_coef]f64) usize {
     var max_index: usize = 0;
     for (1..basis.max_phase_coef) |idx| {
@@ -55,9 +30,22 @@ fn maxInterfacePhaseCoefficientIndex(
 ) usize {
     const source_interface = sourceInterfaceAtLevel(layers, source_interfaces, ilevel);
     const above_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_above);
-    if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return above_max;
-    const below_max = maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients);
+    const below_max = maxPhaseCoefficientIndex(source_interface.phase_coefficients_below);
+    if (layers.len == 0 or ilevel == 0 or ilevel > layers.len - 1) return @max(above_max, below_max);
     return @max(above_max, below_max);
+}
+
+fn adjacentLayerPhaseCoefficientIndex(
+    layers: []const common.LayerInput,
+    ilevel: usize,
+) usize {
+    if (layers.len == 0) return 0;
+    if (ilevel == 0) return maxPhaseCoefficientIndex(layers[0].phase_coefficients);
+    if (ilevel >= layers.len) return maxPhaseCoefficientIndex(layers[layers.len - 1].phase_coefficients);
+    return @max(
+        maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients),
+        maxPhaseCoefficientIndex(layers[ilevel].phase_coefficients),
+    );
 }
 
 fn reuseLayerKernelIndex(
@@ -77,8 +65,6 @@ fn reuseLayerKernelIndex(
     return above_index;
 }
 
-/// Purpose:
-///   Compute TOA reflectance from the resolved LABOS internal radiation field.
 pub fn calcReflectance(
     ud: []const basis.UDField,
     end_level: usize,
@@ -89,31 +75,6 @@ pub fn calcReflectance(
     return ud[end_level].U.col[solar_col].get(view_idx);
 }
 
-/// Purpose:
-///   Compute the integrated reflectance using source-interface or quadrature
-///   carriers.
-///
-/// Physics:
-///   Integrates the local source term against the LABOS upwelling and
-///   downwelling fields, including the zero-Fourier direct term.
-///
-/// Vendor:
-///   `LABOS reflectance extraction`
-///
-/// Inputs:
-///   `layers` and `source_interfaces` describe the transport grid, `ud`
-///   carries the internal radiation field, and `i_fourier` selects the phase
-///   term.
-///
-/// Outputs:
-///   Returns the total reflectance contribution for the requested Fourier term.
-///
-/// Assumptions:
-///   The carrier arrays are aligned with the transport grid and any quadrature
-///   grid is already normalized to that layout.
-///
-/// Validation:
-///   `tests/unit/transport_labos_test.zig`
 pub fn calcIntegratedReflectance(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -142,14 +103,6 @@ pub fn calcIntegratedReflectance(
     );
 }
 
-/// Purpose:
-///   Compute the integrated reflectance using a caller-provided Fourier basis
-///   and optional layer phase-kernel cache.
-///
-/// Physics:
-///   Reuses the exact phase-kernel basis across interfaces and reuses already
-///   materialized layer kernels when the source-interface carrier is identical
-///   to the layer-above phase contract.
 pub fn calcIntegratedReflectanceWithBasis(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -177,23 +130,34 @@ pub fn calcIntegratedReflectanceWithBasis(
             common.SourceInterfaceInput{}
         else
             sourceInterfaceAtLevel(layers, source_interfaces, ilevel);
-        const source_weight = if (use_rtm_quadrature)
-            rtm_quadrature.levels[ilevel].weightedScattering()
+        const source_rtm_weight = if (use_rtm_quadrature)
+            rtm_quadrature.levels[ilevel].weight
+        else if (source_interface.rtm_weight > 0.0 and source_interface.ksca_above > 0.0)
+            source_interface.rtm_weight
         else
-            source_interface.effectiveWeight();
-        if (source_weight <= 0.0) continue;
+            source_interface.source_weight;
+        const source_ksca = if (use_rtm_quadrature)
+            rtm_quadrature.levels[ilevel].ksca
+        else if (source_interface.rtm_weight > 0.0 and source_interface.ksca_above > 0.0)
+            source_interface.ksca_above
+        else
+            1.0;
+        if (source_rtm_weight <= 0.0 or source_ksca <= 0.0) continue;
         const phase_coefficients = if (use_rtm_quadrature)
             rtm_quadrature.levels[ilevel].phase_coefficients
         else
             source_interface.phase_coefficients_above;
-        if (i_fourier > if (use_rtm_quadrature)
-            maxPhaseCoefficientIndex(phase_coefficients)
+        const source_max_phase_index = if (use_rtm_quadrature)
+            adjacentLayerPhaseCoefficientIndex(layers, ilevel)
+        else if (layers.len != 0)
+            adjacentLayerPhaseCoefficientIndex(layers, ilevel)
         else
-            maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel))
-        {
+            maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel);
+        if (i_fourier > source_max_phase_index) {
             // PARITY:
-            //   Higher Fourier orders are skipped when the active phase
-            //   coefficients cannot support them.
+            //   DISAMAR gates an integrated-source level by the max phase
+            //   order of its adjacent reduced layers, then uses the interface
+            //   carrier only up to that same ceiling.
             continue;
         }
 
@@ -210,26 +174,39 @@ pub fn calcIntegratedReflectanceWithBasis(
                     }
                 }
             }
-            break :blk basis.fillZplusZminFromBasis(i_fourier, phase_coefficients, geo, plm_basis);
+            break :blk basis.fillZplusZminFromBasisLimited(
+                i_fourier,
+                phase_coefficients,
+                source_max_phase_index,
+                geo,
+                plm_basis,
+            );
         };
         var pmin_ed: f64 = 0.0;
-        var pplusst_u: f64 = 0.0;
 
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
             const pmin = 0.25 * z.Zmin.get(view_idx, imu) / (view_mu * mu);
-            const pplusst = 0.25 * z.Zplus.get(view_idx, imu) / (view_mu * mu);
             pmin_ed += pmin * ud[ilevel].D.col[solar_col].get(imu);
-            pplusst_u += pplusst * ud[ilevel].U.col[solar_col].get(imu);
         }
 
         const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
-        pmin_ed += 0.25 * z.Zmin.get(view_idx, solar_idx) /
-            (view_mu * solar_mu) * ud[ilevel].E.get(solar_idx);
+        const pmin_direct = 0.25 * z.Zmin.get(view_idx, solar_idx) / (view_mu * solar_mu);
+        pmin_ed += pmin_direct * ud[ilevel].E.get(solar_idx);
 
-        reflectance += ud[ilevel].E.get(view_idx) *
-            source_weight *
+        var pplusst_u: f64 = 0.0;
+        for (0..geo.n_gauss) |imu| {
+            const mu = @max(geo.u[imu], 1.0e-12);
+            const pplusst = 0.25 * z.Zplus.get(view_idx, imu) / (view_mu * mu);
+            pplusst_u += pplusst * ud[ilevel].U.col[solar_col].get(imu);
+        }
+
+        // PARITY: `LabosModule::CalcReflectance` forms the level source as
+        // `E * ksca * (...)`, then applies `RTMweight` in a separate reduction.
+        const contribution = ud[ilevel].E.get(view_idx) *
+            source_ksca *
             (pmin_ed + pplusst_u);
+        reflectance += source_rtm_weight * contribution;
     }
 
     if (i_fourier == 0) {
@@ -241,8 +218,6 @@ pub fn calcIntegratedReflectanceWithBasis(
     return reflectance;
 }
 
-/// Purpose:
-///   Return the total non-negative scattering optical depth of the layer set.
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     var total: f64 = 0.0;
     for (layers) |layer| total += @max(layer.scattering_optical_depth, 0.0);
@@ -261,6 +236,7 @@ fn maxFourierIndexInterfaces(source_interfaces: []const common.SourceInterfaceIn
     var max_index: usize = 0;
     for (source_interfaces) |source_interface| {
         max_index = @max(max_index, maxPhaseCoefficientIndex(source_interface.phase_coefficients_above));
+        max_index = @max(max_index, maxPhaseCoefficientIndex(source_interface.phase_coefficients_below));
     }
     return max_index;
 }
@@ -274,9 +250,6 @@ fn maxFourierIndexQuadrature(rtm_quadrature: common.RtmQuadratureGrid) usize {
     return max_index;
 }
 
-/// Purpose:
-///   Resolve the highest phase-coefficient index needed by the current
-///   transport input.
 pub fn resolvedPhaseCoefficientMax(input: common.ForwardInput) usize {
     var max_index = maxFourierIndex(input.layers);
     if (input.rtm_quadrature.isValidFor(input.layers.len)) {
@@ -287,18 +260,7 @@ pub fn resolvedPhaseCoefficientMax(input: common.ForwardInput) usize {
     return max_index;
 }
 
-/// Purpose:
-///   Resolve the highest Fourier term needed by the active transport input.
-///
-/// Vendor:
-///   `LABOS reflectance extraction`
-///
-/// Assumptions:
-///   The route has already resolved its layer and source-interface contract.
-///
-/// Validation:
-///   `tests/unit/transport_labos_test.zig`
-pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RtmControls) usize {
+pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RadiativeTransferControls) usize {
     _ = controls;
     if (input.layers.len == 0) return 0;
     // PARITY:
@@ -389,4 +351,84 @@ test "cached layer kernels preserve integrated reflectance when source interface
     );
 
     try std.testing.expectApproxEqAbs(baseline, cached, 1.0e-12);
+}
+
+test "integrated source truncates quadrature phase kernels by adjacent layers" {
+    const geo = basis.Geometry.init(4, 0.58, 0.64);
+    const layer_phase = .{ 1.0, 0.18, 0.31 } ++ .{0.0} ** (basis.max_phase_coef - 3);
+    const source_phase_with_tail = .{ 1.0, 0.18, 0.31, 4.0 } ++ .{0.0} ** (basis.max_phase_coef - 4);
+    const source_phase_truncated = .{ 1.0, 0.18, 0.31 } ++ .{0.0} ** (basis.max_phase_coef - 3);
+    const layers = [_]common.LayerInput{
+        .{
+            .scattering_optical_depth = 0.1,
+            .phase_coefficients = layer_phase,
+        },
+        .{
+            .scattering_optical_depth = 0.1,
+            .phase_coefficients = layer_phase,
+        },
+    };
+    var ud: [3]basis.UDField = undefined;
+    for (&ud, 0..) |*field, ilevel| {
+        field.* = .{
+            .E = basis.Vec.zero(geo.nmutot),
+            .U = basis.Vec2.zero(geo.nmutot),
+            .D = basis.Vec2.zero(geo.nmutot),
+        };
+        for (0..geo.nmutot) |imu| {
+            field.E.set(imu, 0.8 + 0.03 * @as(f64, @floatFromInt(ilevel + imu)));
+            for (0..2) |col| {
+                field.U.col[col].set(imu, 0.015 * @as(f64, @floatFromInt((ilevel + 1) * (imu + 2) * (col + 1))));
+                field.D.col[col].set(imu, 0.011 * @as(f64, @floatFromInt((ilevel + 2) * (imu + 1) * (col + 1))));
+            }
+        }
+    }
+
+    const rtm_quadrature_with_tail = common.RtmQuadratureGrid{ .levels = &.{
+        .{},
+        .{
+            .weight = 1.0,
+            .ksca = 1.0,
+            .phase_coefficients = source_phase_with_tail,
+        },
+        .{},
+    } };
+    const rtm_quadrature_truncated = common.RtmQuadratureGrid{ .levels = &.{
+        .{},
+        .{
+            .weight = 1.0,
+            .ksca = 1.0,
+            .phase_coefficients = source_phase_truncated,
+        },
+        .{},
+    } };
+    const i_fourier: usize = 0;
+    const plm_basis = basis.FourierPlmBasis.init(i_fourier, 3, &geo);
+
+    const actual = calcIntegratedReflectanceWithBasis(
+        &layers,
+        &.{},
+        rtm_quadrature_with_tail,
+        &ud,
+        layers.len,
+        i_fourier,
+        &geo,
+        &plm_basis,
+        null,
+        null,
+    );
+    const expected = calcIntegratedReflectanceWithBasis(
+        &layers,
+        &.{},
+        rtm_quadrature_truncated,
+        &ud,
+        layers.len,
+        i_fourier,
+        &geo,
+        &plm_basis,
+        null,
+        null,
+    );
+
+    try std.testing.expectApproxEqAbs(expected, actual, 1.0e-12);
 }

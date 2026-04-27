@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Own the measurement-pipeline controls that used to crowd the root
-//!   instrument contract.
-
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const Allocator = std.mem.Allocator;
@@ -150,6 +146,13 @@ pub const NodalCorrection = struct {
 };
 
 pub const SpectralResponse = struct {
+    pub const IntegrationMode = enum {
+        auto,
+        explicit_hr_grid,
+        disamar_hr_grid,
+        adaptive,
+    };
+
     explicit: bool = false,
     slit_index: SlitIndex = .gaussian_modulated,
     fwhm_nm: f64 = 0.0,
@@ -157,6 +160,7 @@ pub const SpectralResponse = struct {
     scale: f64 = 1.0,
     phase_deg: f64 = 0.0,
     builtin_line_shape: BuiltinLineShapeKind = .gaussian,
+    integration_mode: IntegrationMode = .auto,
     high_resolution_step_nm: f64 = 0.0,
     high_resolution_half_span_nm: f64 = 0.0,
     instrument_line_shape: InstrumentLineShape = .{},

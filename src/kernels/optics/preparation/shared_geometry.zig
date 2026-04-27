@@ -10,6 +10,7 @@ const SharedRtmLayerGeometry = State.SharedRtmLayerGeometry;
 const SharedRtmLevelGeometry = State.SharedRtmLevelGeometry;
 
 const max_dynamic_gauss_order: usize = 128;
+pub const invalid_support_row_index: u32 = std.math.maxInt(u32);
 
 pub const ResolvedGaussRule = struct {
     nodes: []const f64,
@@ -34,9 +35,8 @@ pub const SharedSupportSlices = struct {
 };
 
 pub fn usesSharedRtmGrid(self: *const PreparedOpticalState, transport_layer_count: usize) bool {
-    if (self.interval_semantics == .none) return false;
-    const sublayers = self.sublayers orelse return false;
-    return transport_layer_count == sublayers.len;
+    if (!self.intervalSemanticsUseReducedSharedRtmLayers()) return false;
+    return transport_layer_count == self.layers.len;
 }
 
 pub fn cachedSharedRtmGeometry(
@@ -98,8 +98,8 @@ pub fn sharedRtmInterval(
     const count: usize = @intCast(layer.sublayer_count);
     const stop_index = start_index + count;
     return .{
-        .lower_altitude_km = levelAltitudeFromSublayers(sublayers, start_index),
-        .upper_altitude_km = levelAltitudeFromSublayers(sublayers, stop_index),
+        .lower_altitude_km = layer.bottom_altitude_km,
+        .upper_altitude_km = layer.top_altitude_km,
         .support_sublayers = sublayers[start_index..stop_index],
         .strong_line_states = if (self.strong_line_states) |states|
             states[start_index..stop_index]
@@ -139,68 +139,111 @@ pub fn buildSharedRtmGeometry(
     @memset(layers, .{});
     @memset(levels, .{});
 
+    for (self.layers, 0..) |layer, layer_index| {
+        layers[layer_index] = .{
+            .lower_altitude_km = layer.bottom_altitude_km,
+            .upper_altitude_km = layer.top_altitude_km,
+            .midpoint_altitude_km = 0.5 * (layer.bottom_altitude_km + layer.top_altitude_km),
+            .thickness_km = @max(layer.top_altitude_km - layer.bottom_altitude_km, 0.0),
+            .support_start_index = layer.sublayer_start_index,
+            .support_count = layer.sublayer_count,
+        };
+    }
+
+    for (levels) |*level| {
+        level.* = .{
+            .particle_above_support_row_index = invalid_support_row_index,
+            .particle_below_support_row_index = invalid_support_row_index,
+        };
+    }
+
+    if (self.layers.len == 0) return .{ .layers = layers, .levels = levels };
+
+    const first_layer = self.layers[0];
+    const first_support_row_index: usize = @intCast(first_layer.sublayer_start_index);
+    levels[0] = .{
+        .altitude_km = sublayers[first_support_row_index].altitude_km,
+        .weight_km = 0.0,
+        .support_start_index = first_layer.sublayer_start_index,
+        .support_count = first_layer.sublayer_count,
+        .support_row_index = @intCast(first_support_row_index),
+        .particle_above_support_row_index = firstActiveSupportRowIndex(first_layer),
+        .particle_below_support_row_index = invalid_support_row_index,
+    };
+
+    for (1..self.layers.len) |level_index| {
+        const below_layer = self.layers[level_index - 1];
+        const above_layer = self.layers[level_index];
+        const boundary_support_row_index: usize = @intCast(above_layer.sublayer_start_index);
+        levels[level_index] = .{
+            .altitude_km = sublayers[boundary_support_row_index].altitude_km,
+            .weight_km = 0.0,
+            .support_start_index = above_layer.sublayer_start_index,
+            .support_count = above_layer.sublayer_count,
+            .support_row_index = @intCast(boundary_support_row_index),
+            .particle_above_support_row_index = firstActiveSupportRowIndex(above_layer),
+            .particle_below_support_row_index = lastActiveSupportRowIndex(below_layer),
+        };
+    }
+
+    const last_layer = self.layers[self.layers.len - 1];
+    const last_support_row_index: usize =
+        @as(usize, @intCast(last_layer.sublayer_start_index)) +
+        @as(usize, @intCast(last_layer.sublayer_count)) -
+        1;
+    levels[self.layers.len] = .{
+        .altitude_km = sublayers[last_support_row_index].altitude_km,
+        .weight_km = 0.0,
+        .support_start_index = last_layer.sublayer_start_index,
+        .support_count = last_layer.sublayer_count,
+        .support_row_index = @intCast(last_support_row_index),
+        .particle_above_support_row_index = invalid_support_row_index,
+        .particle_below_support_row_index = lastActiveSupportRowIndex(last_layer),
+    };
+
     var interval_rule_scratch: GaussRuleScratch = .{};
-    for (self.layers) |layer| {
-        const start_index: usize = @intCast(layer.sublayer_start_index);
-        const count: usize = @intCast(layer.sublayer_count);
-        if (count == 0) continue;
-
-        const interval = sharedRtmInterval(self, sublayers, layer);
-        const level_node_count = count - 1;
-        const level_rule = if (level_node_count > 0)
-            resolveGaussRule(level_node_count, &interval_rule_scratch)
-        else
-            null;
-
-        levels[start_index] = .{
-            .altitude_km = interval.lower_altitude_km,
-            .weight_km = 0.0,
-            .support_start_index = @intCast(start_index),
-            .support_count = @intCast(count),
-        };
-        for (0..level_node_count) |node_index| {
-            levels[start_index + 1 + node_index] = .{
-                .altitude_km = intervalAltitudeAtNode(
-                    interval.lower_altitude_km,
-                    interval.upper_altitude_km,
-                    level_rule.?.nodes[node_index],
-                ),
-                .weight_km = intervalWeightKm(
-                    interval.lower_altitude_km,
-                    interval.upper_altitude_km,
-                    level_rule.?.weights[node_index],
-                ),
-                .support_start_index = @intCast(start_index),
-                .support_count = @intCast(count),
-            };
+    var interval_start: usize = 0;
+    while (interval_start < self.layers.len) {
+        const interval_index_1based = self.layers[interval_start].interval_index_1based;
+        var interval_stop = interval_start + 1;
+        while (interval_stop < self.layers.len and self.layers[interval_stop].interval_index_1based == interval_index_1based) {
+            interval_stop += 1;
         }
 
-        const stop_index = start_index + count;
-        levels[stop_index] = .{
-            .altitude_km = interval.upper_altitude_km,
-            .weight_km = 0.0,
-            .support_start_index = @intCast(start_index),
-            .support_count = @intCast(count),
-        };
-
-        for (0..count) |local_layer_index| {
-            const lower_altitude_km = levels[start_index + local_layer_index].altitude_km;
-            const upper_altitude_km = levels[start_index + local_layer_index + 1].altitude_km;
-            layers[start_index + local_layer_index] = .{
-                .lower_altitude_km = lower_altitude_km,
-                .upper_altitude_km = upper_altitude_km,
-                .midpoint_altitude_km = 0.5 * (lower_altitude_km + upper_altitude_km),
-                .thickness_km = @max(upper_altitude_km - lower_altitude_km, 0.0),
-                .support_start_index = @intCast(start_index),
-                .support_count = @intCast(count),
-            };
+        const interval_first_layer = self.layers[interval_start];
+        const interval_last_layer = self.layers[interval_stop - 1];
+        const interior_level_count = interval_stop - interval_start - 1;
+        if (interior_level_count > 0) {
+            const rule = resolveGaussRule(interior_level_count, &interval_rule_scratch);
+            for (0..interior_level_count) |offset| {
+                levels[interval_start + 1 + offset].weight_km = intervalWeightKm(
+                    interval_first_layer.bottom_altitude_km,
+                    interval_last_layer.top_altitude_km,
+                    rule.weights[offset],
+                );
+            }
         }
+        interval_start = interval_stop;
     }
 
     return .{
         .layers = layers,
         .levels = levels,
     };
+}
+
+fn firstActiveSupportRowIndex(layer: State.PreparedLayer) u32 {
+    const start_index: usize = @intCast(layer.sublayer_start_index);
+    const count: usize = @intCast(layer.sublayer_count);
+    if (count <= 2) return invalid_support_row_index;
+    return @intCast(start_index + 1);
+}
+
+fn lastActiveSupportRowIndex(layer: State.PreparedLayer) u32 {
+    const start_index: usize = @intCast(layer.sublayer_start_index);
+    const count: usize = @intCast(layer.sublayer_count);
+    if (count <= 2) return invalid_support_row_index;
+    return @intCast(start_index + count - 2);
 }
 
 pub fn levelAltitudeFromSublayers(

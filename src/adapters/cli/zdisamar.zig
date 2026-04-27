@@ -1,12 +1,3 @@
-//! Purpose:
-//!   Provide the narrow live `zdisamar` CLI for the retained O2A parity YAML
-//!   surface.
-//!
-//! Design:
-//!   The command intentionally exposes only the executable contract that exists
-//!   today: `run`, `config validate`, and `config resolve` for the O2A parity
-//!   YAML subset.
-
 const std = @import("std");
 const config = @import("../o2a_parity_config.zig");
 

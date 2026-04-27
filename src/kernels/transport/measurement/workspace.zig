@@ -1,30 +1,11 @@
-//! Purpose:
-//!   Own the reusable measurement-space buffers and capacity planning.
-//!
-//! Physics:
-//!   Allocates the transport, pseudo-spherical, quadrature, and optional
-//!   derivative buffers required to materialize measurement-space outputs.
-//!
-//! Vendor:
-//!   `measurement workspace`
-//!
-//! Design:
-//!   Reuses typed buffers across sweeps instead of rebuilding them for every
-//!   spectral sample.
-//!
-//! Invariants:
-//!   Buffer shapes must match the scene sample count and the resolved transport
-//!   layer count.
-//!
-//! Validation:
-//!   Measurement-space workspace tests and transport integration suites.
-
 const std = @import("std");
 const core_errors = @import("../../../core/errors.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
+const InstrumentIntegration = @import("../../../o2a/providers/instrument/integration.zig");
 const NoiseProviders = @import("../../../o2a/providers/noise.zig");
 const OpticsPreparation = @import("../../optics/preparation.zig");
 const common = @import("../common.zig");
+const Cache = @import("cache.zig");
 const grid = @import("../../spectra/grid.zig");
 const convolution = @import("../../spectra/convolution.zig");
 const Types = @import("types.zig");
@@ -36,6 +17,7 @@ pub const Error =
     common.Error ||
     grid.Error ||
     convolution.Error ||
+    InstrumentIntegration.Error ||
     NoiseProviders.Error ||
     error{
         ShapeMismatch,
@@ -63,7 +45,7 @@ pub const Buffers = struct {
     reflectance_noise_sigma: ?[]f64 = null,
 };
 
-/// Reusable measurement-space workspace that owns the backing storage.
+// Reusable instrument grid storage that owns the backing storage.
 pub const SummaryWorkspace = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
@@ -83,9 +65,8 @@ pub const SummaryWorkspace = struct {
     radiance_noise_sigma: []f64 = &.{},
     irradiance_noise_sigma: []f64 = &.{},
     reflectance_noise_sigma: []f64 = &.{},
+    evaluation_cache: ?Cache.SpectralEvaluationCache = null,
 
-    /// Purpose:
-    ///   Release every owned buffer held by the measurement workspace.
     pub fn deinit(self: *SummaryWorkspace, allocator: Allocator) void {
         freeBuffer(allocator, self.wavelengths);
         freeBuffer(allocator, self.radiance);
@@ -105,15 +86,18 @@ pub const SummaryWorkspace = struct {
         freeBuffer(allocator, self.radiance_noise_sigma);
         freeBuffer(allocator, self.irradiance_noise_sigma);
         freeBuffer(allocator, self.reflectance_noise_sigma);
+        if (self.evaluation_cache) |*cache| cache.deinit();
         self.* = .{};
     }
 
-    /// Purpose:
-    ///   Materialize the live slices used by one measurement-space sweep.
-    ///
-    /// Physics:
-    ///   Resizes the reusable buffers to the scene and route shapes without
-    ///   changing the solver-side transport contract.
+    pub fn spectralCache(self: *SummaryWorkspace, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {
+        if (self.evaluation_cache == null) {
+            self.evaluation_cache = Cache.SpectralEvaluationCache.init(allocator);
+        }
+        self.evaluation_cache.?.reset();
+        return &(self.evaluation_cache.?);
+    }
+
     pub fn buffers(
         self: *SummaryWorkspace,
         allocator: Allocator,
@@ -177,30 +161,32 @@ pub const SummaryWorkspace = struct {
     }
 };
 
-/// Reusable full-product workspace that shares the same backing buffers as the
-/// summary path.
+// Reusable full-product storage that shares the same backing buffers as the
+// summary path.
 pub const ProductWorkspace = SummaryWorkspace;
 
-/// Purpose:
-///   Estimate the transport-layer count needed for one measurement sweep.
 pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
     _ = route;
     if (scene.atmosphere.interval_grid.enabled()) {
-        var total_sublayer_count: usize = 0;
+        const uses_disamar_shared_rtm_grid =
+            scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode == .disamar_hr_grid or
+            scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode == .disamar_hr_grid;
+        var total_count: usize = 0;
         for (scene.atmosphere.interval_grid.intervals) |interval| {
-            total_sublayer_count += @max(@as(usize, interval.altitude_divisions), 1);
+            total_count += if (uses_disamar_shared_rtm_grid)
+                @as(usize, interval.altitude_divisions) + 1
+            else
+                @max(@as(usize, interval.altitude_divisions), 1);
         }
-        return @max(total_sublayer_count, 1);
+        return @max(total_count, 1);
     }
     const layer_count = @max(@as(usize, @intCast(scene.atmosphere.layer_count)), 1);
     return layer_count * @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
 }
 
-/// Purpose:
-///   Estimate the pseudo-spherical sample count needed for one sweep.
 pub fn pseudoSphericalSampleCountHint(scene: *const Scene, route: common.Route) usize {
     const layer_count = transportLayerCountHint(scene, route);
-    return layer_count * pseudoSphericalSubgridDivisions(scene);
+    return layer_count * (pseudoSphericalSubgridDivisions(scene) + 2);
 }
 
 pub fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
@@ -208,20 +194,26 @@ pub fn reflectanceCalibrationEnabled(scene: *const Scene) bool {
     return controls.multiplicative_error.enabled() or controls.additive_error.enabled();
 }
 
-/// Purpose:
-///   Resolve the transport layer count from the prepared optical state.
 pub fn resolvedTransportLayerCount(route: common.Route, prepared: *const OpticsPreparation.PreparedOpticalState) usize {
     _ = route;
     return prepared.transportLayerCount();
 }
 
-/// Purpose:
-///   Resolve the pseudo-spherical sample count from the prepared optical state.
 pub fn resolvedPseudoSphericalSampleCount(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
 ) usize {
+    if (prepared.intervalSemanticsUseReducedSharedRtmLayers() and
+        prepared.shared_rtm_geometry.isValidFor(resolvedTransportLayerCount(route, prepared)))
+    {
+        var sample_count: usize = 0;
+        for (prepared.shared_rtm_geometry.layers) |layer| {
+            const support_count: usize = @intCast(layer.support_count);
+            if (support_count > 2) sample_count += support_count - 2;
+        }
+        return sample_count;
+    }
     return resolvedTransportLayerCount(route, prepared) * pseudoSphericalSubgridDivisions(scene);
 }
 
@@ -231,7 +223,7 @@ fn pseudoSphericalSubgridDivisions(scene: *const Scene) usize {
 
 pub fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
     // INVARIANT:
-    //   The summary buffers, transport-layer buffers, and quadrature carriers
+    //   The summary buffers, radiative transfer-layer buffers, and quadrature carriers
     //   must stay shape-compatible for a single sweep.
     if (sample_count == 0 or
         buffers.wavelengths.len != sample_count or
@@ -324,8 +316,6 @@ fn ensureIndexBufferCapacity(allocator: Allocator, buffer: *[]usize, capacity: u
     buffer.* = replacement;
 }
 
-/// Purpose:
-///   Release the standalone buffer slice if it owns storage.
 fn freeBuffer(allocator: Allocator, buffer: []f64) void {
     if (buffer.len != 0) allocator.free(buffer);
 }

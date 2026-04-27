@@ -13,14 +13,7 @@ const Allocator = std.mem.Allocator;
 const BuiltinLineShapeKind = InstrumentModel.BuiltinLineShapeKind;
 pub const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 pub const Route = transport_common.Route;
-pub const RtmControls = transport_common.RtmControls;
-
-pub const PreparationPhaseProfile = struct {
-    input_loading_ns: u64,
-    scene_assembly_ns: u64,
-    optics_preparation_ns: u64,
-    plan_preparation_ns: u64,
-};
+pub const RadiativeTransferControls = transport_common.RadiativeTransferControls;
 
 pub const ReferenceSample = struct {
     wavelength_nm: f64,
@@ -112,7 +105,13 @@ pub const CiaSpec = struct {
 pub const InputsSpec = struct {
     atmosphere_profile: ExternalAsset,
     vendor_reference_csv: ExternalAsset,
+    raw_solar_reference: ExternalAsset,
     airmass_factor_lut: ExternalAsset,
+};
+
+pub const SolarSpectrumSample = struct {
+    wavelength_nm: f64,
+    irradiance: f64,
 };
 
 pub const ResolvedVendorO2ACase = struct {
@@ -132,26 +131,30 @@ pub const ResolvedVendorO2ACase = struct {
     observation: ObservationSpec,
     o2: LineGasSpec,
     o2o2: CiaSpec,
-    rtm_controls: RtmControls,
+    rtm_controls: RadiativeTransferControls,
     outputs: []const OutputRequest,
     validation: ValidationPolicy,
 };
 
 pub const LoadedVendorO2AInputs = struct {
     profile: ReferenceDataModel.ClimatologyProfile,
+    spectroscopy_profile: ReferenceDataModel.ClimatologyProfile,
     cross_sections: ReferenceDataModel.CrossSectionTable,
     line_list: ReferenceDataModel.SpectroscopyLineList,
     cia_table: ?ReferenceDataModel.CollisionInducedAbsorptionTable,
     lut: ReferenceDataModel.AirmassFactorLut,
     reference: []ReferenceSample,
+    raw_solar_spectrum: []SolarSpectrumSample,
 
     pub fn deinit(self: *LoadedVendorO2AInputs, allocator: Allocator) void {
         self.profile.deinit(allocator);
+        self.spectroscopy_profile.deinit(allocator);
         self.cross_sections.deinit(allocator);
         self.line_list.deinit(allocator);
         if (self.cia_table) |*table| table.deinit(allocator);
         self.lut.deinit(allocator);
         if (self.reference.len != 0) allocator.free(self.reference);
+        if (self.raw_solar_spectrum.len != 0) allocator.free(self.raw_solar_spectrum);
         self.* = undefined;
     }
 };

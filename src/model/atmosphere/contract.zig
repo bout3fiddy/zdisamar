@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Define the top-level atmosphere shell after the interval, fraction, and
-//!   subcolumn carriers have been split into dedicated modules.
-
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const Binding = @import("../Binding.zig").Binding;

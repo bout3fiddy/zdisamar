@@ -1,9 +1,9 @@
 # Source Tree
 
-- `src/o2a/` owns the product surface. Keep it shaped around `case -> data -> optics -> solver -> spectrum -> report`.
+- `src/o2a/` owns the product surface. Keep it shaped around `Case -> Data -> Optics -> Spectrum -> Report`.
 - `src/model/` owns the retained typed atmosphere, geometry, surface, spectroscopy, and instrument structures that still feed the O2 A forward path.
-- `src/kernels/` is for reusable numeric kernels only. Keep hot paths free of I/O and coarse-grained orchestration.
-- `src/core/` is reduced support code only. Do not grow it back into an engine/planner layer.
+- `src/kernels/` is for reusable numeric routines only. Keep hot paths free of I/O and coarse-grained orchestration.
+- `src/core/` is reduced support code only. Do not grow it back into a forward-model preparation layer.
 - `src/adapters/` is reduced to narrow ingestion helpers that still support the retained O2 A data path.
 
 ## Local Rules
@@ -15,61 +15,17 @@
 
 ## Scientific Port Commenting Contract
 
-- When refactoring vendor-derived scientific logic into Zig, comments are part of the implementation contract. The goal is not just to describe what the code does, but also what physics it encodes, what vendor routine or phase it comes from, and why the Zig shape differs from the vendor shape.
-- Prefer verbose, structured comments over sparse cleverness for file headers, public APIs, vendor-divergence blocks, and non-obvious physics. Do not repeat the full template on thin arithmetic helpers when surrounding section comments already establish the scientific stage and invariants.
-- Use searchable section labels and tags consistently. Do not invent one-off phrasing when a standard label applies.
+- Comments explain why the code has this shape, not what the next declaration says.
+- Keep comments where they protect DISAMAR semantics, parity-sensitive arithmetic, units, sign conventions, ordering, or intentional divergence from the Fortran flow.
+- Prefer short comments near the non-obvious code. Do not add template headers or label blocks just to document ownership, inputs, outputs, or tests.
+- File-level comments are optional. Use them only when a module has a scientific gotcha or vendor divergence that is not obvious from the file name and imports.
+- Public declarations do not need doc comments when their names and types are clear.
 
-### Scope
+### Plain Comment Style
 
-- This contract applies to vendor-derived or vendor-validated scientific code under `src/`.
-- It is especially important in `src/o2a/`, `src/kernels/`, and any retained adapter or preparation code that translates vendor atmospheric, spectroscopy, optics, or transport behavior into typed Zig structures.
-- More specific subtrees may add stricter variants, but they should not weaken this contract.
-
-### Comment Forms
-
-- Use `//!` for file headers and module-level contracts.
-- Use `///` for public types, public functions, and internal functions with nontrivial scientific behavior.
-- Use `//` for local phase comments, decision notes, parity notes, gotchas, and unresolved issues inside implementations.
-- Prefer section-level provenance comments for clusters of related helpers that share the same vendor stage, physics, or invariants.
-
-### Required File Header
-
-- Every substantive scientific port or refactor file should start with a header that covers:
-- `Purpose:` what responsibility the file owns in the engine.
-- `Physics:` what physical quantity, model stage, or scientific transformation it implements.
-- `Vendor:` vendor file stem, module, or routine names only. Do not use filesystem paths.
-- `Design:` how the Zig version is organized differently from the vendor flow and why.
-- `Invariants:` conditions that must always hold in this file.
-- `Validation:` relevant tests, parity harnesses, or reference comparisons.
-
-### Required Function Comment
-
-- Apply the full structured function template to public functions, vendor-divergence blocks, and internal functions whose physics, parity role, or invariants are not obvious from surrounding context.
-- Smaller mechanical helpers may use a short comment or no comment when the enclosing section already documents the relevant physics and validation context.
-- When a helper cluster belongs to the same vendor phase, prefer one section-level provenance comment over repeating the full template for every helper.
-- Covered functions should document the applicable subset of:
-- `Purpose:` what the function computes or prepares.
-- `Physics:` the scientific meaning of the computation.
-- `Vendor:` the vendor routine, phase, or concept this corresponds to.
-- `Inputs:` the scientific meaning of important inputs, not just their types.
-- `Outputs:` what is returned or mutated in physical or numerical terms.
-- `Units:` units or normalization conventions for important quantities.
-- `Assumptions:` required ordering, monotonicity, valid ranges, or upstream contracts.
-- `Decisions:` why the implementation shape differs from the vendor version, if it does.
-- `Validation:` what test, fixture, or parity artifact exercises this function.
-
-### Required Inline Tags
-
-- Use these exact tags for local comments when they apply:
-- `INVARIANT:` facts that must remain true.
-- `UNITS:` physical units or normalization conventions.
-- `VENDOR:` local provenance for a block or transformation.
-- `DECISION:` why the code is shaped this way.
-- `PARITY:` exact vendor behavior that must be preserved.
-- `GOTCHA:` non-obvious behavior that is easy to break during cleanup.
-- `ISSUE:` known unresolved correctness, parity, performance, or design problem.
-- `TODO:` bounded future work with ownership and removal condition.
-- `VALIDATION:` tests, fixtures, or reference outputs relevant to the block.
+- Use plain `//` comments in Zig. Do not use `//!` or `///` narrative blocks for routine commentary.
+- Short tags like `PARITY:`, `DECISION:`, `GOTCHA:`, `ISSUE:`, `TODO:`, `UNITS:`, and `VENDOR:` are allowed when they make the reason easy to scan.
+- Do not stack tags into a template. One short comment beside the relevant code is better than a file header.
 
 ### Vendor Reference Rules
 
@@ -90,82 +46,13 @@
 - `TODO:` means planned work, not a vague idea. Every `TODO:` should include owner or area, a tracking issue or work package, and the condition for removal.
 - Preferred format: `TODO(owner=<owner>, issue=<ticket-or-wp>, remove_when=<condition>):`
 - `ISSUE:` marks a known current problem or design risk. State what is wrong, what it affects, and the boundary of the problem.
-- `GOTCHA:` marks behavior that another engineer might "simplify" incorrectly, such as unit conversions, indexing direction, sign conventions, layer ordering, implicit vendor clamping, or parity-sensitive edge handling.
-
-### Preferred Templates
-
-- File header template:
-
-```zig
-//! Purpose:
-//!   What this file is responsible for in the engine.
-//!
-//! Physics:
-//!   What physical quantity, model stage, or transformation it implements.
-//!
-//! Vendor:
-//!   `moduleOrFileStem::routineName`
-//!
-//! Design:
-//!   How the Zig structure differs from the vendor flow and why.
-//!
-//! Invariants:
-//!   Conditions that must always hold in this file.
-//!
-//! Validation:
-//!   Relevant tests, parity harnesses, or reference comparisons.
-```
-
-- Function comment template:
-
-```zig
-/// Purpose:
-///   What the function computes or prepares.
-///
-/// Physics:
-///   The scientific meaning of the computation.
-///
-/// Vendor:
-///   `moduleOrFileStem::routineName`
-///
-/// Inputs:
-///   The meaning of the important inputs.
-///
-/// Outputs:
-///   What is returned or mutated in physical terms.
-///
-/// Units:
-///   Units or normalization conventions for important quantities.
-///
-/// Assumptions:
-///   Ordering, monotonicity, range, or upstream-contract requirements.
-///
-/// Decisions:
-///   Why this shape differs from the vendor implementation, if it does.
-///
-/// Validation:
-///   Which test, fixture, or parity artifact exercises this function.
-```
-
-- Inline issue-tracking template:
-
-```zig
-// GOTCHA:
-//   Non-obvious behavior that is easy to break during cleanup.
-//
-// ISSUE:
-//   Known limitation, why it matters, and the current boundary.
-//
-// TODO(owner=<owner>, issue=<ticket-or-wp>, remove_when=<condition>):
-//   Concrete follow-up work.
-```
+- `GOTCHA:` marks behavior that another engineer might simplify incorrectly, such as unit conversions, indexing direction, sign conventions, layer ordering, implicit vendor clamping, or parity-sensitive edge handling.
 
 ### Minimum Standard for Vendor-Refactor Changes
 
-- New scientific port files should have a file header.
-- New or substantially changed nontrivial scientific functions should have structured doc comments.
-- Intentional divergences from vendor structure should have nearby `DECISION:` comments.
-- Physically meaningful quantities should document units either at the declaration site or at first non-obvious transformation.
+- New or changed scientific code should be understandable from names and types first.
+- Intentional divergences from vendor structure need a nearby `DECISION:` or `PARITY:` comment.
+- Physically meaningful quantities need units only where the unit is not obvious from the field name or type.
 - Known gaps should be recorded inline with `ISSUE:` or `TODO:` rather than left implicit in external notes only.
 
 ### Avoid
@@ -182,7 +69,7 @@
 - Avoid backtracking underflow in config/text readers; rewinds and backspaces must stop cleanly at the start of a buffer instead of reading before the first byte.
 - Avoid calling `len`/`size`-equivalent operations on absent or uninitialized storage just to validate required inputs; return a typed configuration/input error first.
 - Avoid allocate-without-reset behavior for static config buffers; repeated config loads must free, reuse, or overwrite existing storage safely.
-- Avoid allocate-without-reset behavior for per-request workspace buffers; repeated retrievals on the same workspace must be idempotent with respect to owned memory.
+- Avoid allocate-without-reset behavior for per-request storage buffers; repeated retrievals on the same storage must be idempotent with respect to owned memory.
 - Avoid cleanup paths that assume full initialization; partial-init and early-error teardown must guard every optional resource before release.
 - Avoid singular/plural field-name drift between declarations and use sites; shared ported structures need one canonical name per field and compile-time coverage in tests.
 - Avoid build-order assumptions in Zig build logic or generated C/Fortran interop steps; dependency edges must be explicit so parallel builds stay correct.

@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Thin LABOS basis facade over shared types, matrix algebra, and phase basis logic.
-
 const types = @import("types.zig");
 const matrix = @import("matrix.zig");
 const phase_basis = @import("phase_basis.zig");
@@ -28,4 +25,5 @@ pub const qseries = matrix.qseries;
 pub const PhaseKernel = phase_basis.PhaseKernel;
 pub const FourierPlmBasis = phase_basis.FourierPlmBasis;
 pub const fillZplusZminFromBasis = phase_basis.fillZplusZminFromBasis;
+pub const fillZplusZminFromBasisLimited = phase_basis.fillZplusZminFromBasisLimited;
 pub const fillZplusZmin = phase_basis.fillZplusZmin;

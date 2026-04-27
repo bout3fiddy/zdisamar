@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Evaluate spectroscopy and continuum carriers for prepared sublayers.
-
 const ReferenceData = @import("../../../model/ReferenceData.zig");
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
@@ -8,7 +5,7 @@ const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
 
 const Allocator = @import("std").mem.Allocator;
-const oxygen_volume_mixing_ratio = 0.2095;
+const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
 
 pub fn continuumCarrierDensity(
     absorbers: *Absorbers.AbsorberBuildState,

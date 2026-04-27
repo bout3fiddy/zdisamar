@@ -1,5 +1,6 @@
 pub const types = @import("measurement/types.zig");
 pub const workspace = @import("measurement/workspace.zig");
+pub const cache = @import("measurement/cache.zig");
 pub const forward_input = @import("measurement/forward_input.zig");
 pub const spectral_eval = @import("measurement/spectral_eval.zig");
 pub const product = @import("measurement/product.zig");
@@ -11,7 +12,6 @@ pub const ProviderBindings = types.ProviderBindings;
 pub const MeasurementSpaceSummary = types.MeasurementSpaceSummary;
 pub const MeasurementSpaceProduct = types.MeasurementSpaceProduct;
 pub const MeasurementSpaceProductView = types.MeasurementSpaceProductView;
-pub const ForwardProfile = types.ForwardProfile;
 pub const SummaryWorkspace = workspace.SummaryWorkspace;
 pub const ProductWorkspace = workspace.ProductWorkspace;
 pub const Error = workspace.Error;
@@ -54,24 +54,6 @@ pub fn simulateProduct(
     return product.simulateProduct(allocator, scene, route, prepared, providers);
 }
 
-pub fn simulateProductWithProfile(
-    allocator: @import("std").mem.Allocator,
-    scene: *const @import("../../model/Scene.zig").Scene,
-    route: @import("common.zig").Route,
-    prepared: *const @import("../optics/preparation.zig").PreparedOpticalState,
-    providers: ProviderBindings,
-    forward_profile: ?*ForwardProfile,
-) !MeasurementSpaceProduct {
-    return product.simulateProductWithProfile(
-        allocator,
-        scene,
-        route,
-        prepared,
-        providers,
-        forward_profile,
-    );
-}
-
 pub fn simulateProductWithWorkspace(
     allocator: @import("std").mem.Allocator,
     product_workspace: *ProductWorkspace,
@@ -79,7 +61,6 @@ pub fn simulateProductWithWorkspace(
     route: @import("common.zig").Route,
     prepared: *const @import("../optics/preparation.zig").PreparedOpticalState,
     providers: ProviderBindings,
-    forward_profile: ?*ForwardProfile,
 ) !MeasurementSpaceProductView {
     return product.simulateProductWithWorkspace(
         allocator,
@@ -88,13 +69,13 @@ pub fn simulateProductWithWorkspace(
         route,
         prepared,
         providers,
-        forward_profile,
     );
 }
 
 test {
     _ = types;
     _ = workspace;
+    _ = cache;
     _ = forward_input;
     _ = spectral_eval;
     _ = product;

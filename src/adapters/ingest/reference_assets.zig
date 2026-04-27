@@ -1,24 +1,3 @@
-//! Purpose:
-//!   Load reference assets from bundled manifests or explicit external files.
-//!
-//! Physics:
-//!   Hydrate climatology, spectroscopy, CIA, LUT, and Mie tables into typed
-//!   inputs that preserve the original scientific provenance and units.
-//!
-//! Vendor:
-//!   `reference asset ingest`
-//!
-//! Design:
-//!   Keep manifest resolution, format contracts, and table materialization in
-//!   this adapter layer so the core and kernels only see typed data.
-//!
-//! Invariants:
-//!   Bundle-derived assets validate their hashes and column layouts before
-//!   reaching the engine.
-//!
-//! Validation:
-//!   Reference-asset loader tests and the bundled optics validation helpers.
-
 const std = @import("std");
 const formats = @import("reference_assets_formats.zig");
 const loader = @import("reference_assets_loader.zig");
@@ -36,11 +15,14 @@ const hitran_extended_columns = [_][]const u8{
     "isotope_number",
     "abundance_fraction",
     "center_wavelength_nm",
+    "center_wavenumber_cm1",
     "line_strength_cm2_per_molecule",
     "air_half_width_nm",
+    "air_half_width_cm1",
     "temperature_exponent",
     "lower_state_energy_cm1",
     "pressure_shift_nm",
+    "pressure_shift_cm1",
     "line_mixing_coefficient",
 };
 
@@ -49,15 +31,19 @@ const hitran_vendor_o2a_columns = [_][]const u8{
     "isotope_number",
     "abundance_fraction",
     "center_wavelength_nm",
+    "center_wavenumber_cm1",
     "line_strength_cm2_per_molecule",
     "air_half_width_nm",
+    "air_half_width_cm1",
     "temperature_exponent",
     "lower_state_energy_cm1",
     "pressure_shift_nm",
+    "pressure_shift_cm1",
     "line_mixing_coefficient",
     "branch_ic1",
     "branch_ic2",
     "rotational_nf",
+    "vendor_filter_metadata_from_source",
 };
 
 const hitran_legacy_columns = [_][]const u8{
@@ -70,11 +56,6 @@ const hitran_legacy_columns = [_][]const u8{
     "line_mixing_coefficient",
 };
 
-/// Purpose:
-///   Load a bundle asset by manifest path and asset id.
-///
-/// Physics:
-///   Verify the manifest and asset bytes before converting the payload into typed rows.
 pub fn loadBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -99,8 +80,6 @@ pub fn loadBundleAsset(
     return loader.initLoadedAsset(allocator, kind, bundle_manifest_path, bundle, bundle_asset, asset_bytes);
 }
 
-/// Purpose:
-///   Load a CSV-backed bundle asset.
 pub fn loadCsvBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -110,11 +89,6 @@ pub fn loadCsvBundleAsset(
     return loadBundleAsset(allocator, kind, bundle_manifest_path, asset_id);
 }
 
-/// Purpose:
-///   Load and parse an externally supplied asset file.
-///
-/// Physics:
-///   Use the explicit file path and declared format instead of a bundle manifest.
 pub fn loadExternalAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -138,7 +112,7 @@ pub fn loadExternalAsset(
     return .{
         .kind = kind,
         // DECISION:
-        //   External assets still carry manifest-style metadata so the engine can treat them like
+        //   External assets still carry manifest-style metadata so the forward model can treat them like
         //   other hydrated reference assets.
         .bundle_manifest_path = try allocator.dupe(u8, asset_path),
         .bundle_id = try allocator.dupe(u8, "external_asset"),
@@ -153,8 +127,6 @@ pub fn loadExternalAsset(
     };
 }
 
-/// Purpose:
-///   Load a bundle asset from embedded manifest and asset bytes.
 pub fn loadEmbeddedBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -176,8 +148,6 @@ pub fn loadEmbeddedBundleAsset(
     return loader.initLoadedAsset(allocator, kind, bundle_manifest_path, bundle, bundle_asset, asset_bytes);
 }
 
-/// Purpose:
-///   Resolve the format-specific column contract for one asset kind.
 fn externalAssetSpec(kind: AssetKind, asset_format: []const u8) formats.AssetSpec {
     if (std.mem.eql(u8, asset_format, "profile_csv")) {
         return .{
@@ -347,12 +317,12 @@ test "reference asset loader preserves vendor O2A filter metadata for bundled JP
         std.testing.allocator,
         .spectroscopy_line_list,
         "data/cross_sections/bundle_manifest.json",
-        "o2a_hitran_subset_07_hit08_tropomi",
+        "o2a_hitran_07_hit08_tropomi",
     );
     defer asset.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 52), asset.row_count);
-    try std.testing.expectEqual(@as(usize, 13), asset.columnCount());
+    try std.testing.expect(asset.row_count > 1000);
+    try std.testing.expectEqual(@as(usize, 14), asset.columnCount());
 
     var lines = try asset.toSpectroscopyLineList(std.testing.allocator);
     defer lines.deinit(std.testing.allocator);
@@ -362,6 +332,7 @@ test "reference asset loader preserves vendor O2A filter metadata for bundled JP
     try std.testing.expectEqual(@as(u8, 5), lines.lines[2].branch_ic1.?);
     try std.testing.expectEqual(@as(u8, 1), lines.lines[2].branch_ic2.?);
     try std.testing.expect(lines.lines[2].rotational_nf.? <= 35);
+    try std.testing.expect(lines.lines[2].vendor_filter_metadata_from_source);
 }
 
 test "reference asset loader parses vendor strong-line and relaxation sidecars" {

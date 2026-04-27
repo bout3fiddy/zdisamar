@@ -1,18 +1,3 @@
-//! Purpose:
-//!   Resolve bundled reference optics inputs for a scene.
-//!
-//! Physics:
-//!   Load the climatology, spectroscopy, CIA, and wavelength sampling needed by bundled optics
-//!   preparation.
-//!
-//! Vendor:
-//!   `bundled optics reference selection`
-//!
-//! Design:
-//!   Keep scene selection logic here and let `load.zig` focus on materializing typed reference
-//!   data. Explicit bindings win, and missing explicit bindings fail early instead of falling back
-//!   silently.
-
 const std = @import("std");
 const Scene = @import("../../model/Scene.zig").Scene;
 const AbsorberModel = @import("../../model/Absorber.zig");
@@ -22,15 +7,6 @@ const assets = @import("assets.zig");
 const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
-/// Purpose:
-///   Resolve the continuum table required by the current scene.
-///
-/// Physics:
-///   Load the visible-band continuum when the scene overlaps the bundled window; otherwise emit a
-///   zero-valued table that preserves the expected spectral span.
-///
-/// Units:
-///   The visible-band check uses nanometers.
 pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {
     if (assets.shouldLoadVisibleBandContinuum(scene)) {
         return try assets.loadVisibleBandContinuumTable(allocator);
@@ -42,15 +18,6 @@ pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !Referen
     return assets.zeroContinuumTable(allocator, scene.spectral_grid.start_nm, scene.spectral_grid.end_nm);
 }
 
-/// Purpose:
-///   Resolve the spectroscopy line list required by the current scene.
-///
-/// Physics:
-///   Load explicit line-list bindings first, then bundled O2A or visible-band defaults when the
-///   scene requests them.
-///
-/// Units:
-///   The O2A gate spans 760.8 nm to 771.5 nm.
 pub fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?ReferenceData.SpectroscopyLineList {
     if (try assets.cloneResolvedSpectroscopyLineList(allocator, scene)) |line_list| {
         return line_list;
@@ -75,15 +42,6 @@ pub fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Ref
     return null;
 }
 
-/// Purpose:
-///   Resolve the CIA table required by the current scene.
-///
-/// Physics:
-///   Prefer explicit CIA bindings, suppress the bundled O2-O2 table when the operational LUT is
-///   active, and otherwise load the bundled O2A CIA in the O2A window.
-///
-/// Units:
-///   The O2A gate spans 760.8 nm to 771.5 nm.
 pub fn loadCollisionInducedAbsorptionForScene(
     allocator: Allocator,
     scene: *const Scene,
@@ -117,15 +75,6 @@ pub fn loadCollisionInducedAbsorptionForScene(
     return try assets.loadO2ACollisionInducedAbsorptionTable(allocator);
 }
 
-/// Purpose:
-///   Build the wavelength vector used for bundled optics sampling.
-///
-/// Physics:
-///   Respect high-resolution LUT sampling when enabled, otherwise reuse measured wavelengths or
-///   synthesize the scene spectral grid.
-///
-/// Units:
-///   Wavelengths are in nanometers.
 pub fn sampleSceneWavelengthsOwned(allocator: Allocator, scene: *const Scene) ![]f64 {
     const support = scene.observation_model.primaryOperationalBandSupport();
     const nominal_bounds = scene.lutNominalWavelengthBounds();

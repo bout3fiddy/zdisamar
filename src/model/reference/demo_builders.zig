@@ -1,21 +1,3 @@
-//! Purpose:
-//!   Build small owned demo reference tables for tests and examples.
-//!
-//! Physics:
-//!   Materializes representative climatology, cross-section, and airmass-factor data.
-//!
-//! Vendor:
-//!   `demo reference builders`
-//!
-//! Design:
-//!   The builders duplicate static arrays into owned slices so callers can free them with the table types.
-//!
-//! Invariants:
-//!   The demo arrays are already monotonic and representative of the supported spectral windows.
-//!
-//! Validation:
-//!   Exercised indirectly by the tests that use these demo tables.
-
 const std = @import("std");
 const climatology = @import("climatology.zig");
 const cross_sections = @import("cross_sections.zig");
@@ -45,24 +27,18 @@ const demo_airmass_factor_points = [_]airmass_phase.AirmassFactorPoint{
     .{ .solar_zenith_deg = 70.0, .view_zenith_deg = 30.0, .relative_azimuth_deg = 90.0, .airmass_factor = 2.11 },
 };
 
-/// Purpose:
-///   Build the demo climatology profile with owned storage.
 pub fn buildDemoClimatology(allocator: Allocator) !climatology.ClimatologyProfile {
     return .{
         .rows = try allocator.dupe(climatology.ClimatologyPoint, demo_profile_rows[0..]),
     };
 }
 
-/// Purpose:
-///   Build the demo cross-section table with owned storage.
 pub fn buildDemoCrossSections(allocator: Allocator) !cross_sections.CrossSectionTable {
     return .{
         .points = try allocator.dupe(cross_sections.CrossSectionPoint, demo_cross_section_points[0..]),
     };
 }
 
-/// Purpose:
-///   Build the demo airmass-factor table with owned storage.
 pub fn buildDemoAirmassFactorLut(allocator: Allocator) !airmass_phase.AirmassFactorLut {
     return .{
         .points = try allocator.dupe(airmass_phase.AirmassFactorPoint, demo_airmass_factor_points[0..]),

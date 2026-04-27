@@ -1,4 +1,4 @@
-//! Shared spectroscopy carrier types and constants.
+// Shared spectroscopy carrier types and constants.
 
 const std = @import("std");
 
@@ -8,6 +8,17 @@ pub const hitran_reference_temperature_k = 296.0;
 pub const hitran_boltzmann_constant_j_per_k = 1.3806488e-23;
 pub const hitran_boltzmann_constant_cm3_hpa_per_k = 1.380658e-19;
 pub const hitran_hc_over_kb_cm_k = 1.4387770;
+// PARITY:
+//   DISAMAR's HITRAN module uses `pi = 3.1415926536D0`, not the full
+//   language/library constant. The truncated literal is visible in O2 A
+//   cross-section parity because it sits inside the Voigt normalization.
+pub const hitran_pi = 3.1415926536;
+// PARITY:
+//   DISAMAR keeps the module-wide `hc_kB = 1.4387770D0` for ordinary HITRAN
+//   absorption but `HITRANModule::ConvTP` uses a local `A = 1.43877696D0`
+//   when temperature-scaling O2 line-mixing populations. Keep both constants
+//   literal because the difference is visible at O2 A parity precision.
+pub const hitran_o2_line_mixing_hc_over_kb_cm_k = 1.43877696;
 pub const hitran_gas_constant_j_per_mol_k = 8.3144621;
 pub const hitran_speed_of_light_m_per_s = 2.99792458e8;
 pub const min_spectroscopy_pressure_atm = 1.0e-12;
@@ -16,12 +27,16 @@ pub const SpectroscopyLine = struct {
     gas_index: u16 = 0,
     isotope_number: u8 = 1,
     abundance_fraction: f64 = 1.0,
+    vendor_filter_metadata_from_source: bool = false,
     center_wavelength_nm: f64,
+    center_wavenumber_cm1: f64 = std.math.nan(f64),
     line_strength_cm2_per_molecule: f64,
     air_half_width_nm: f64,
+    air_half_width_cm1: f64 = std.math.nan(f64),
     temperature_exponent: f64,
     lower_state_energy_cm1: f64,
     pressure_shift_nm: f64,
+    pressure_shift_cm1: f64 = std.math.nan(f64),
     line_mixing_coefficient: f64,
     branch_ic1: ?u8 = null,
     branch_ic2: ?u8 = null,
@@ -91,70 +106,34 @@ pub const SpectroscopyEvaluation = struct {
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 
-pub const SpectroscopyTraceContributionKind = enum {
-    weak_included,
-    weak_excluded_anchor,
-    weak_excluded_vendor_partition,
-    strong_sidecar,
-};
-
-pub const SpectroscopyTraceRow = struct {
-    contribution_kind: SpectroscopyTraceContributionKind,
-    wavelength_nm: f64,
-    global_line_index: ?usize = null,
-    strong_index: ?usize = null,
-    matched_strong_index: ?usize = null,
-    gas_index: u16 = 0,
-    isotope_number: u8 = 0,
-    center_wavelength_nm: f64,
-    center_wavenumber_cm1: f64,
-    shifted_center_wavenumber_cm1: f64,
-    line_strength_cm2_per_molecule: f64 = 0.0,
-    air_half_width_nm: f64 = 0.0,
-    lower_state_energy_cm1: f64 = 0.0,
-    pressure_shift_nm: f64 = 0.0,
-    line_mixing_coefficient: f64 = 0.0,
-    branch_ic1: ?u8 = null,
-    branch_ic2: ?u8 = null,
-    rotational_nf: ?u8 = null,
-    weak_line_sigma_cm2_per_molecule: f64 = 0.0,
-    strong_line_sigma_cm2_per_molecule: f64 = 0.0,
-    line_mixing_sigma_cm2_per_molecule: f64 = 0.0,
-    total_sigma_cm2_per_molecule: f64 = 0.0,
-};
-
-pub const SpectroscopyTrace = struct {
-    wavelength_nm: f64,
-    temperature_k: f64,
-    pressure_hpa: f64,
-    evaluation: SpectroscopyEvaluation,
-    rows: []SpectroscopyTraceRow,
-
-    pub fn deinit(self: *SpectroscopyTrace, allocator: Allocator) void {
-        allocator.free(self.rows);
-        self.* = undefined;
-    }
-};
-
 pub const SpectroscopyRuntimeControls = struct {
     gas_index: ?u16 = null,
     active_isotopes: []const u8 = &.{},
     threshold_line_scale: ?f64 = null,
     cutoff_cm1: ?f64 = null,
+    cutoff_grid_wavelengths_nm: []const f64 = &.{},
     line_mixing_factor: f64 = 1.0,
 
     pub fn clone(self: SpectroscopyRuntimeControls, allocator: Allocator) !SpectroscopyRuntimeControls {
-        return .{
+        var cloned = SpectroscopyRuntimeControls{
             .gas_index = self.gas_index,
-            .active_isotopes = if (self.active_isotopes.len != 0) try allocator.dupe(u8, self.active_isotopes) else &.{},
             .threshold_line_scale = self.threshold_line_scale,
             .cutoff_cm1 = self.cutoff_cm1,
             .line_mixing_factor = self.line_mixing_factor,
         };
+        errdefer cloned.deinitOwned(allocator);
+        if (self.active_isotopes.len != 0) {
+            cloned.active_isotopes = try allocator.dupe(u8, self.active_isotopes);
+        }
+        if (self.cutoff_grid_wavelengths_nm.len != 0) {
+            cloned.cutoff_grid_wavelengths_nm = try allocator.dupe(f64, self.cutoff_grid_wavelengths_nm);
+        }
+        return cloned;
     }
 
     pub fn deinitOwned(self: *SpectroscopyRuntimeControls, allocator: Allocator) void {
         if (self.active_isotopes.len != 0) allocator.free(self.active_isotopes);
+        if (self.cutoff_grid_wavelengths_nm.len != 0) allocator.free(self.cutoff_grid_wavelengths_nm);
         self.* = .{};
     }
 
@@ -169,6 +148,16 @@ pub const SpectroscopyRuntimeControls = struct {
         return max_strength * scale;
     }
 };
+
+// Fallback margin used only when a DISAMAR high-resolution cutoff grid is not
+// available. The exact vendor path chooses nearest grid indices to the cutoff
+// endpoints, then includes both endpoints.
+pub const vendor_cutoff_boundary_margin_cm1: f64 = 0.115;
+
+// PARITY:
+//   The sorted prewindow has to be wider than the fallback scalar cutoff
+//   because the exact decision is made later against the adaptive HR grid.
+pub const vendor_cutoff_prewindow_margin_cm1: f64 = 0.25;
 
 pub const StrongLinePreparedState = struct {
     line_count: usize,

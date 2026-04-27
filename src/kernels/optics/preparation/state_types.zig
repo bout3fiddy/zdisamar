@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Define the typed prepared-state carriers shared by optics preparation and
-//!   transport evaluation.
-
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const AtmosphereModel = @import("../../../model/Atmosphere.zig");
@@ -15,14 +11,14 @@ const Allocator = std.mem.Allocator;
 
 pub const phase_coefficient_count = PhaseFunctions.phase_coefficient_count;
 
-/// Active line absorber resolved from the scene's absorber set.
+// Active line absorber resolved from the scene's absorber set.
 pub const ActiveLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     controls: AbsorberModel.LineGasControls,
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
 };
 
-/// Active cross-section absorber resolved from the scene's absorber set.
+// Active cross-section absorber resolved from the scene's absorber set.
 pub const ActiveCrossSectionAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     representation: AbsorberModel.AbsorptionRepresentation,
@@ -31,7 +27,7 @@ pub const ActiveCrossSectionAbsorber = struct {
     polynomial_order: u32 = 0,
 };
 
-/// Prepared line absorber with runtime controls and stored number densities.
+// Prepared line absorber with runtime controls and stored number densities.
 pub const PreparedLineAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -72,7 +68,7 @@ pub const PreparedCrossSectionRepresentation = union(enum) {
     lut: OperationalCrossSectionLut,
 };
 
-/// Prepared cross-section absorber with stored densities and typed representation metadata.
+// Prepared cross-section absorber with stored densities and typed representation metadata.
 pub const PreparedCrossSectionAbsorber = struct {
     species: AbsorberModel.AbsorberSpecies,
     representation_kind: CrossSectionRepresentationKind,
@@ -137,7 +133,7 @@ pub const PreparedCrossSectionAbsorber = struct {
     }
 };
 
-/// Prepared layer state on the transport grid.
+// Prepared layer state on the radiative transfer grid.
 pub const PreparedLayer = struct {
     layer_index: u32,
     sublayer_start_index: u32 = 0,
@@ -170,7 +166,13 @@ pub const PreparedLayer = struct {
     cloud_fraction: f64 = 0.0,
 };
 
-/// Prepared sublayer state on the fine transport grid.
+pub const PreparedSupportRowKind = enum {
+    physical,
+    parity_boundary,
+    parity_active,
+};
+
+// Prepared sublayer state on the fine radiative transfer grid.
 pub const PreparedSublayer = struct {
     parent_layer_index: u32,
     sublayer_index: u32,
@@ -180,6 +182,7 @@ pub const PreparedSublayer = struct {
     temperature_k: f64,
     number_density_cm3: f64,
     oxygen_number_density_cm3: f64,
+    cia_pair_density_cm6: f64 = 0.0,
     absorber_number_density_cm3: f64 = 0.0,
     path_length_cm: f64,
     continuum_cross_section_cm2_per_molecule: f64,
@@ -210,6 +213,14 @@ pub const PreparedSublayer = struct {
     subcolumn_label: AtmosphereModel.PartitionLabel = .unspecified,
     aerosol_fraction: f64 = 0.0,
     cloud_fraction: f64 = 0.0,
+    support_row_kind: PreparedSupportRowKind = .physical,
+
+    pub fn ciaPairDensityCm6(self: PreparedSublayer) f64 {
+        return if (self.cia_pair_density_cm6 > 0.0)
+            self.cia_pair_density_cm6
+        else
+            self.oxygen_number_density_cm3 * self.oxygen_number_density_cm3;
+    }
 };
 
 pub const OpticalDepthBreakdown = struct {
@@ -267,6 +278,9 @@ pub const SharedRtmLevelGeometry = struct {
     weight_km: f64 = 0.0,
     support_start_index: u32 = 0,
     support_count: u32 = 0,
+    support_row_index: u32 = 0,
+    particle_above_support_row_index: u32 = std.math.maxInt(u32),
+    particle_below_support_row_index: u32 = std.math.maxInt(u32),
 };
 
 pub const SharedRtmGeometry = struct {

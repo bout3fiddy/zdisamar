@@ -1,11 +1,3 @@
-//! Purpose:
-//!   Own the explicit vertical-interval and particle-placement contracts used
-//!   by atmosphere preparation.
-//!
-//! Physics:
-//!   Captures pressure-bounded interval grids and explicit particle placements
-//!   without mixing them into the top-level atmosphere shell.
-
 const std = @import("std");
 const errors = @import("../../core/errors.zig");
 const units = @import("../../core/units.zig");

@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Hold wavelength-dependent optical-depth and layer-evaluation helpers for
-//!   prepared optical state reuse.
-
 const PhaseFunctions = @import("../prepare/phase_functions.zig");
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const ReferenceData = @import("../../../model/ReferenceData.zig");
@@ -21,12 +17,13 @@ pub fn opticalDepthBreakdownAtWavelength(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
 ) OpticalDepthBreakdown {
+    var profile_cache = Spectroscopy.ProfileNodeSpectroscopyCache.init(self, wavelength_nm);
     if (self.sublayers) |sublayers| {
         var totals: OpticalDepthBreakdown = .{};
         for (self.layers) |layer| {
             const start_index: usize = @intCast(layer.sublayer_start_index);
             const end_index = start_index + @as(usize, @intCast(layer.sublayer_count));
-            const evaluated = evaluateLayerAtWavelength(
+            const evaluated = evaluateLayerAtWavelengthWithSpectroscopyCache(
                 self,
                 null,
                 layer.altitude_km,
@@ -34,6 +31,7 @@ pub fn opticalDepthBreakdownAtWavelength(
                 start_index,
                 sublayers[start_index..end_index],
                 if (self.strong_line_states) |states| states[start_index..end_index] else null,
+                &profile_cache,
             );
             totals.gas_absorption_optical_depth += evaluated.breakdown.gas_absorption_optical_depth;
             totals.gas_scattering_optical_depth += evaluated.breakdown.gas_scattering_optical_depth;
@@ -97,9 +95,31 @@ pub fn evaluateLayerAtWavelength(
     sublayers: []const PreparedSublayer,
     strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
 ) EvaluatedLayer {
+    return evaluateLayerAtWavelengthWithSpectroscopyCache(
+        self,
+        scene,
+        altitude_km,
+        wavelength_nm,
+        sublayer_start_index,
+        sublayers,
+        strong_line_states,
+        null,
+    );
+}
+
+pub fn evaluateLayerAtWavelengthWithSpectroscopyCache(
+    self: *const PreparedOpticalState,
+    scene: ?*const Scene,
+    altitude_km: f64,
+    wavelength_nm: f64,
+    sublayer_start_index: usize,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    profile_cache: ?*const Spectroscopy.ProfileNodeSpectroscopyCache,
+) EvaluatedLayer {
     var breakdown: OpticalDepthBreakdown = .{};
     var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
-    const gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficients();
+    const gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
     const continuum_table: ReferenceData.CrossSectionTable = .{ .points = self.continuum_points };
 
     for (sublayers, 0..) |sublayer, sublayer_index| {
@@ -158,12 +178,14 @@ pub fn evaluateLayerAtWavelength(
                 break :blk continuum_optical_depth + cross_section_optical_depth + line_optical_depth;
             }
 
-            const spectroscopy_sigma = Spectroscopy.spectroscopySigmaAtWavelength(
+            const spectroscopy_sigma = Spectroscopy.spectroscopySigmaAtAltitudeWithCache(
                 self,
                 wavelength_nm,
                 sublayer.temperature_k,
                 sublayer.pressure_hpa,
+                sublayer.altitude_km,
                 if (strong_line_states) |states| &states[sublayer_index] else null,
+                profile_cache,
             );
             const spectroscopy_carrier_density_cm3 = Scalar.lineSpectroscopyCarrierDensityAtSublayer(
                 self,
@@ -185,8 +207,7 @@ pub fn evaluateLayerAtWavelength(
         );
         const cia_optical_depth =
             cia_sigma_cm5_per_molecule2 *
-            sublayer.oxygen_number_density_cm3 *
-            sublayer.oxygen_number_density_cm3 *
+            sublayer.ciaPairDensityCm6() *
             sublayer.path_length_cm;
         const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
             sublayer.aerosol_optical_depth,
@@ -224,7 +245,7 @@ pub fn evaluateLayerAtWavelength(
     }
 
     const total_scattering = breakdown.totalScatteringOpticalDepth();
-    var phase_coefficients = PhaseFunctions.gasPhaseCoefficients();
+    var phase_coefficients = PhaseFunctions.gasPhaseCoefficientsAtWavelength(wavelength_nm);
     if (total_scattering > 0.0) {
         for (0..phase_coefficient_count) |index| {
             phase_coefficients[index] = phase_numerator[index] / total_scattering;

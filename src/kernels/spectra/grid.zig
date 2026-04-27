@@ -1,21 +1,3 @@
-//! Purpose:
-//!   Define wavelength grids and resolved axes used by spectra kernels and measured-channel alignment.
-//!
-//! Physics:
-//!   Encodes spectral sample coordinates in nanometers and preserves monotonic channel ordering.
-//!
-//! Vendor:
-//!   `spectral grid` / `measured-channel axis`
-//!
-//! Design:
-//!   Zig keeps explicit uniform and resolved axis types instead of inferring channel coordinates from config blobs.
-//!
-//! Invariants:
-//!   Uniform axes have at least two samples and explicit sample lists are strictly increasing and finite.
-//!
-//! Validation:
-//!   Unit tests cover uniform spacing, explicit sample validation, and mixed resolved-axis lookup.
-
 const std = @import("std");
 
 pub const Error = error{
@@ -25,34 +7,16 @@ pub const Error = error{
     InvalidExplicitSamples,
 };
 
-/// Purpose:
-///   Describe a uniform spectral axis in nanometers.
 pub const SpectralGrid = struct {
     start_nm: f64,
     end_nm: f64,
     sample_count: u32,
 
-    /// Purpose:
-    ///   Validate the uniform spectral span before it is used for interpolation or indexing.
-    ///
-    /// Physics:
-    ///   Enforces a strictly increasing wavelength axis with at least two samples.
-    ///
-    /// Vendor:
-    ///   `spectral grid validation`
     pub fn validate(self: SpectralGrid) Error!void {
         if (self.sample_count < 2) return Error.InvalidSampleCount;
         if (self.end_nm <= self.start_nm) return Error.InvalidBounds;
     }
 
-    /// Purpose:
-    ///   Return the wavelength at a zero-based sample index on the uniform axis.
-    ///
-    /// Physics:
-    ///   Computes evenly spaced spectral coordinates in nanometers.
-    ///
-    /// Vendor:
-    ///   `spectral grid sample lookup`
     pub fn sampleAt(self: SpectralGrid, index: u32) Error!f64 {
         try self.validate();
         if (index >= self.sample_count) return Error.IndexOutOfRange;
@@ -61,20 +25,10 @@ pub const SpectralGrid = struct {
     }
 };
 
-/// Purpose:
-///   Pair a uniform spectral axis with optional explicit sample coordinates.
 pub const ResolvedAxis = struct {
     base: SpectralGrid,
     explicit_wavelengths_nm: []const f64 = &.{},
 
-    /// Purpose:
-    ///   Validate a resolved spectral axis and any explicit per-channel coordinates.
-    ///
-    /// Physics:
-    ///   Preserves a monotonic wavelength ordering whether the axis is uniform or externally supplied.
-    ///
-    /// Vendor:
-    ///   `resolved spectral axis`
     pub fn validate(self: ResolvedAxis) Error!void {
         try self.base.validate();
         if (self.explicit_wavelengths_nm.len == 0) return;
@@ -82,14 +36,6 @@ pub const ResolvedAxis = struct {
         try validateExplicitSamples(self.explicit_wavelengths_nm);
     }
 
-    /// Purpose:
-    ///   Resolve the wavelength at a sample index using explicit coordinates when present.
-    ///
-    /// Physics:
-    ///   Keeps measured-channel wavelengths authoritative when the axis is not uniformly generated.
-    ///
-    /// Vendor:
-    ///   `resolved spectral axis sample lookup`
     pub fn sampleAt(self: ResolvedAxis, index: u32) Error!f64 {
         try self.validate();
         if (self.explicit_wavelengths_nm.len != 0) return sampleAtExplicit(self.explicit_wavelengths_nm, index);
@@ -108,14 +54,6 @@ test "spectral grid validates and resolves sample coordinates" {
     try std.testing.expectApproxEqRel(@as(f64, 465.0), try grid.sampleAt(6), 1e-12);
 }
 
-/// Purpose:
-///   Validate an explicit wavelength list for measured-channel handling.
-///
-/// Physics:
-///   Enforces finite, strictly increasing channel coordinates in nanometers.
-///
-/// Vendor:
-///   `explicit spectral sample validation`
 pub fn validateExplicitSamples(wavelengths_nm: []const f64) Error!void {
     if (wavelengths_nm.len == 0) return error.InvalidExplicitSamples;
 
@@ -129,14 +67,6 @@ pub fn validateExplicitSamples(wavelengths_nm: []const f64) Error!void {
     }
 }
 
-/// Purpose:
-///   Return an explicit wavelength at a sample index.
-///
-/// Physics:
-///   Preserves the measured-channel wavelength list without re-deriving spacing.
-///
-/// Vendor:
-///   `explicit spectral sample lookup`
 pub fn sampleAtExplicit(wavelengths_nm: []const f64, index: u32) Error!f64 {
     try validateExplicitSamples(wavelengths_nm);
     if (index >= wavelengths_nm.len) return error.IndexOutOfRange;

@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Compute forward radiance samples at exact wavelengths and prefetch unique
-//!   cache misses for measurement evaluation.
-//!
-//! Physics:
-//!   Couples prepared transport output with solar irradiance and surface BRDF
-//!   gain, then materializes exact-wavelength forward samples for cached reuse.
-//!
-//! Vendor:
-//!   `measurement spectral evaluation`
-//!
-//! Design:
-//!   Keep forward-sample execution and miss-prefetch orchestration separate
-//!   from cache ownership and nominal-wavelength integration.
-//!
-//! Invariants:
-//!   Prefetch solves each unique miss exactly once and preserves deterministic
-//!   cache insertion order on the main thread.
-//!
-//! Validation:
-//!   Measurement summary/product tests and the fast O2 A transport lanes.
-
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
@@ -39,7 +17,7 @@ pub const ForwardIntegratedSample = struct {
 };
 
 pub const ForwardCacheMiss = struct {
-    key: i64,
+    key: u64,
     wavelength_nm: f64,
 };
 
@@ -166,11 +144,12 @@ pub fn computeForwardSampleAtWavelength(
 }
 
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const worker_allocator = gpa.allocator();
-    var scratch = ForwardSampleScratch.init(
-        worker_allocator,
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const scratch = ForwardSampleScratch.init(
+        allocator,
         worker.scene,
         worker.route,
         worker.prepared,
@@ -178,11 +157,10 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
         worker.error_state.store(err);
         return;
     };
-    defer scratch.deinit(worker_allocator);
 
     for (worker.misses, worker.results) |miss, *result| {
         result.* = computeForwardSampleAtWavelength(
-            worker_allocator,
+            allocator,
             worker.scene,
             worker.route,
             worker.prepared,
@@ -287,7 +265,7 @@ pub fn prefetchForwardSamples(
 fn preferredForwardWorkerCount(miss_count: usize) usize {
     if (miss_count < min_parallel_forward_miss_count) return 1;
     const cpu_count = std.Thread.getCpuCount() catch 1;
-    return @max(@min(cpu_count, miss_count), 1);
+    return @min(cpu_count, @max(@as(usize, 1), miss_count / min_parallel_forward_miss_count));
 }
 
 test "small forward miss batches stay single-threaded" {

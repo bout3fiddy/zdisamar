@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Define the canonical absorber and spectroscopy contracts used by the scene model.
-//!
-//! Physics:
-//!   Captures absorber identity, profile source, line-by-line/CIA/cross-section mode selection,
-//!   stage-specific line-gas controls, and optional resolved spectroscopy sidecars.
-//!
-//! Vendor:
-//!   `absorber and spectroscopy configuration`
-//!
-//! Design:
-//!   Keep scene intent typed and explicit while allowing adapters/runtime loaders to attach
-//!   resolved reference tables without reintroducing global mutable state.
-//!
-//! Invariants:
-//!   Spectroscopy bindings and resolved tables must agree with the active mode. Stage-specific
-//!   controls are optional but must validate independently when configured.
-//!
-//! Validation:
-//!   Absorber validation tests in this file plus bundled-reference and retrieval validation that
-//!   exercise line-by-line and CIA paths.
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const errors = @import("../core/errors.zig");
@@ -49,17 +27,10 @@ pub const AbsorptionRepresentation = union(enum) {
     xsec_lut: *const OperationalCrossSectionLut,
 };
 
-/// Purpose:
-///   Resolve a species string into the canonical typed absorber species.
 pub const resolveAbsorberSpeciesName = species_helpers.resolveAbsorberSpeciesName;
 
-/// Purpose:
-///   Resolve an absorber's canonical typed species, preferring any pre-parsed field.
 pub const resolvedAbsorberSpecies = species_helpers.resolvedAbsorberSpecies;
 
-/// Purpose:
-///   Store stage-specific vendor-style controls for line mixing, isotope selection, thresholds,
-///   and cutoffs.
 pub const LineGasControls = struct {
     factor_lm_sim: ?f64 = null,
     factor_lm_retr: ?f64 = null,
@@ -71,8 +42,6 @@ pub const LineGasControls = struct {
     cutoff_retr_cm1: ?f64 = null,
     active_stage: SpectroscopyStage = .none,
 
-    /// Purpose:
-    ///   Validate any configured line-gas controls for finite values and legal isotope lists.
     pub fn validate(self: LineGasControls) errors.Error!void {
         if (self.factor_lm_sim) |value| {
             if (!std.math.isFinite(value)) return errors.Error.InvalidRequest;
@@ -96,8 +65,6 @@ pub const LineGasControls = struct {
         try validateIsotopeSelection(self.isotopes_retr);
     }
 
-    /// Purpose:
-    ///   Report whether any stage-specific line-gas control has been configured.
     pub fn configured(self: LineGasControls) bool {
         return self.factor_lm_sim != null or
             self.factor_lm_retr != null or
@@ -109,8 +76,6 @@ pub const LineGasControls = struct {
             self.cutoff_retr_cm1 != null;
     }
 
-    /// Purpose:
-    ///   Return the active line-mixing factor for the currently selected stage.
     pub fn activeLineMixingFactor(self: LineGasControls) f64 {
         return switch (self.active_stage) {
             .simulation => self.factor_lm_sim orelse 1.0,
@@ -119,8 +84,6 @@ pub const LineGasControls = struct {
         };
     }
 
-    /// Purpose:
-    ///   Return the active isotope-selection list for the currently selected stage.
     pub fn activeIsotopes(self: LineGasControls) []const u8 {
         return switch (self.active_stage) {
             .simulation => self.isotopes_sim,
@@ -129,8 +92,6 @@ pub const LineGasControls = struct {
         };
     }
 
-    /// Purpose:
-    ///   Return the active weak-line threshold scale for the current stage, if configured.
     pub fn activeThresholdLine(self: LineGasControls) ?f64 {
         return switch (self.active_stage) {
             .simulation => self.threshold_line_sim,
@@ -139,8 +100,6 @@ pub const LineGasControls = struct {
         };
     }
 
-    /// Purpose:
-    ///   Return the active line-cutoff value in `cm^-1` for the current stage, if configured.
     pub fn activeCutoffCm1(self: LineGasControls) ?f64 {
         return switch (self.active_stage) {
             .simulation => self.cutoff_sim_cm1,
@@ -170,9 +129,6 @@ pub const LineGasControls = struct {
     }
 };
 
-/// Purpose:
-///   Store spectroscopy bindings, provider ids, line-gas controls, and any resolved sidecar data
-///   attached to an absorber.
 pub const Spectroscopy = struct {
     mode: SpectroscopyMode = .none,
     provider: []const u8 = "",
@@ -188,9 +144,6 @@ pub const Spectroscopy = struct {
     resolved_cross_section_table: ?ReferenceData.CrossSectionTable = null,
     resolved_cross_section_lut: ?OperationalCrossSectionLut = null,
 
-    /// Purpose:
-    ///   Validate that bindings, provider ids, controls, and resolved tables agree with the
-    ///   active spectroscopy mode.
     pub fn validate(self: Spectroscopy) errors.Error!void {
         try self.line_list.validate();
         try self.line_mixing.validate();
@@ -215,7 +168,7 @@ pub const Spectroscopy = struct {
                 self.resolved_cross_section_lut != null))
         {
             // INVARIANT:
-            //   `.mode == .none` is a true disabled state. No provider, binding, control, or
+            //   `.mode == .none` is a true disabled state. No implementation, binding, control, or
             //   resolved reference payload may remain attached in that case.
             return errors.Error.InvalidRequest;
         }
@@ -234,8 +187,6 @@ pub const Spectroscopy = struct {
         }
     }
 
-    /// Purpose:
-    ///   Duplicate any owned bindings, controls, and resolved reference data into new storage.
     pub fn clone(self: Spectroscopy, allocator: Allocator) !Spectroscopy {
         const provider = if (self.provider.len != 0) try allocator.dupe(u8, self.provider) else "";
         errdefer if (provider.len != 0) allocator.free(provider);
@@ -331,8 +282,6 @@ pub const Spectroscopy = struct {
         };
     }
 
-    /// Purpose:
-    ///   Release any owned binding strings, controls, and resolved reference tables.
     pub fn deinitOwned(self: *Spectroscopy, allocator: Allocator) void {
         if (self.provider.len != 0) allocator.free(self.provider);
         self.line_list.deinitOwned(allocator);
@@ -361,8 +310,6 @@ pub const Spectroscopy = struct {
         self.* = .{};
     }
 
-    /// Purpose:
-    ///   Report the active absorption representation attached to this absorber.
     pub fn resolvedAbsorptionRepresentation(self: *const Spectroscopy) AbsorptionRepresentation {
         if (self.resolved_cross_section_lut) |*lut| return .{ .xsec_lut = lut };
         if (self.resolved_cross_section_table) |*table| return .{ .xsec_table = table };
@@ -371,22 +318,17 @@ pub const Spectroscopy = struct {
     }
 };
 
-/// Purpose:
-///   Describe one absorber species, its profile source, and its spectroscopy configuration.
 pub const Absorber = struct {
     id: []const u8 = "",
     species: []const u8 = "",
-    /// Typed species identity resolved from the string `species` field.
-    /// Null when the species string has not been resolved against the
-    /// vendor species catalogue.
+    // Typed species identity resolved from the string `species` field.
+    // Null when the species string has not been resolved against the
+    // vendor species catalogue.
     resolved_species: ?AbsorberSpecies = null,
     profile_source: Binding = .none,
     volume_mixing_ratio_profile_ppmv: []const [2]f64 = &.{},
     spectroscopy: Spectroscopy = .{},
 
-    /// Purpose:
-    ///   Validate the absorber identity, profile source, optional VMR profile, and spectroscopy
-    ///   configuration.
     pub fn validate(self: Absorber) errors.Error!void {
         if (self.id.len == 0 or self.species.len == 0) {
             return errors.Error.InvalidRequest;
@@ -396,8 +338,6 @@ pub const Absorber = struct {
         try self.spectroscopy.validate();
     }
 
-    /// Purpose:
-    ///   Deep-clone the absorber and any owned spectroscopy/profile state.
     pub fn clone(self: Absorber, allocator: Allocator) !Absorber {
         return .{
             .id = try allocator.dupe(u8, self.id),
@@ -412,8 +352,6 @@ pub const Absorber = struct {
         };
     }
 
-    /// Purpose:
-    ///   Release any owned absorber strings, profile arrays, and spectroscopy state.
     pub fn deinitOwned(self: *Absorber, allocator: Allocator) void {
         allocator.free(self.id);
         allocator.free(self.species);
@@ -424,13 +362,9 @@ pub const Absorber = struct {
     }
 };
 
-/// Purpose:
-///   Store the absorber list attached to a canonical scene.
 pub const AbsorberSet = struct {
     items: []const Absorber = &[_]Absorber{},
 
-    /// Purpose:
-    ///   Validate all absorbers and reject duplicate absorber ids within one scene.
     pub fn validate(self: AbsorberSet) errors.Error!void {
         for (self.items, 0..) |absorber, index| {
             try absorber.validate();
@@ -442,8 +376,6 @@ pub const AbsorberSet = struct {
         }
     }
 
-    /// Purpose:
-    ///   Deep-clone the absorber set into owned storage.
     pub fn clone(self: AbsorberSet, allocator: Allocator) !AbsorberSet {
         const items = try allocator.alloc(Absorber, self.items.len);
         errdefer allocator.free(items);
@@ -458,8 +390,6 @@ pub const AbsorberSet = struct {
         return .{ .items = items };
     }
 
-    /// Purpose:
-    ///   Release all absorbers owned by the set.
     pub fn deinitOwned(self: *AbsorberSet, allocator: Allocator) void {
         for (0..self.items.len) |index| @constCast(&self.items[index]).deinitOwned(allocator);
         if (self.items.len != 0) allocator.free(self.items);

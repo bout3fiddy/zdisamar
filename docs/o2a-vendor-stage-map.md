@@ -1,44 +1,41 @@
-## O2A Vendor Stage Map
+# O2A Vendor Stage Map
 
-The retained O2 A path mirrors the vendor workflow in six stages:
+The retained O2A path is organized around:
 
-1. case
-2. data
-3. optics
-4. solver
-5. spectrum
-6. report
+1. `Case`
+2. `Data`
+3. `Optics`
+4. `Spectrum`
+5. `Report`
 
-## Stage Mapping
+The implementation no longer mirrors the vendor file/module layout. DISAMAR is
+kept as a reference family for parity checks, while the active runtime uses the
+typed Zig scene, bundled data loader, optical-property preparation,
+radiative-transfer evaluation on the instrument grid, and JSON report path.
 
-- `case`
-  - [src/o2a/case.zig](../src/o2a/case.zig)
-  - [src/o2a/data/vendor_case.zig](../src/o2a/data/vendor_case.zig)
-- `data`
-  - [src/o2a/data/load.zig](../src/o2a/data/load.zig)
-  - [src/o2a/data/assets.zig](../src/o2a/data/assets.zig)
-  - [src/o2a/data/luts.zig](../src/o2a/data/luts.zig)
-- `optics`
-  - [src/o2a/optics.zig](../src/o2a/optics.zig)
-  - [src/o2a/optics/layers.zig](../src/o2a/optics/layers.zig)
-  - [src/o2a/optics/pseudo_spherical.zig](../src/o2a/optics/pseudo_spherical.zig)
-- `solver`
-  - [src/o2a/solver.zig](../src/o2a/solver.zig)
-  - [src/o2a/solver/labos.zig](../src/o2a/solver/labos.zig)
-  - [src/o2a/solver/reflectance.zig](../src/o2a/solver/reflectance.zig)
-- `spectrum`
-  - [src/o2a/spectrum.zig](../src/o2a/spectrum.zig)
-  - [src/o2a/work.zig](../src/o2a/work.zig)
-- `report`
-  - [src/o2a/report.zig](../src/o2a/report.zig)
-  - [src/o2a/report/json.zig](../src/o2a/report/json.zig)
+DISAMAR stage map:
 
-## Validation Anchors
+- `GENERAL`, `INSTRUMENT`, and `GEOMETRY` feed `Case`.
+- `REFERENCE_DATA`, `PRESSURE_TEMPERATURE`, and absorbing-gas sections feed `Data`.
+- `SURFACE`, `ATMOSPHERIC_INTERVALS`, `CLOUD`, `AEROSOL`, and `RADIATIVE_TRANSFER` feed `Optics`.
+- `radianceIrradianceModule`, `LabosModule`, and `addingTools` correspond to `Spectrum`.
+- `ADDITIONAL_OUTPUT` corresponds to `Report`.
 
-The retained validation story stays centered on:
+Current anchors:
 
-- `validation/reference/o2a_with_cia_disamar_reference.csv`
-- `zig build test-validation-o2a`
-- `zig build test-validation-o2a-vendor`
-- `zig build test-validation-o2a-vendor-profile`
-- `zig build o2a-plot-bundle`
+- public API: `src/root.zig` and `src/o2a.zig`
+- bundled data and LUT workflows: `src/data/bundled/`
+- optics preparation: `src/kernels/optics/preparation.zig`
+- radiative transfer and instrument grid: `src/kernels/transport/`
+- report output: `src/o2a/report/json.zig`
+- parity runtime: `src/o2a/data/vendor_parity_*.zig`
+
+Validation commands:
+
+```bash
+zig build test-validation-o2a
+zig build test-validation-o2a-vendor
+zig build test-validation-o2a-vendor-line-list
+zig build test-validation-o2a-plot-bundle
+zig build o2a-plot-bundle
+```

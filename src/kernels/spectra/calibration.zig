@@ -1,27 +1,7 @@
-//! Purpose:
-//!   Apply simple spectral calibration adjustments to sampled signals and wavelength coordinates.
-//!
-//! Physics:
-//!   Models gain, offset, stray-light mixing, and a constant wavelength shift.
-//!
-//! Vendor:
-//!   `spectral calibration`
-//!
-//! Design:
-//!   The calibration struct stays intentionally small so calibration state can be threaded explicitly.
-//!
-//! Invariants:
-//!   Signal and output arrays must match, and wavelength shifts are treated as a constant offset in nanometers.
-//!
-//! Validation:
-//!   Tests cover gain, offset, stray-light mixing, and shifted wavelength output.
-
 const std = @import("std");
 const Instrument = @import("../../model/Instrument.zig").Instrument;
 const sampling = @import("sampling.zig");
 
-/// Purpose:
-///   Store simple calibration controls for detector response and wavelength shift.
 pub const Calibration = struct {
     gain: f64 = 1.0,
     offset: f64 = 0.0,
@@ -29,17 +9,6 @@ pub const Calibration = struct {
     stray_light: f64 = 0.0,
 };
 
-/// Purpose:
-///   Apply gain, offset, and stray-light mixing to a sampled spectral signal.
-///
-/// Physics:
-///   Mixes each sample toward the mean before applying a linear detector calibration.
-///
-/// Vendor:
-///   `signal calibration`
-///
-/// Units:
-///   `wavelength_shift_nm` is a wavelength correction in nanometers.
 pub fn applySignal(calibration: Calibration, signal: []const f64, output: []f64) !void {
     if (signal.len != output.len) return error.ShapeMismatch;
     if (signal.len == 0) return;
@@ -54,8 +23,6 @@ pub fn applySignal(calibration: Calibration, signal: []const f64, output: []f64)
     }
 }
 
-/// Purpose:
-///   Apply only the linear detector-response terms to a signal derivative.
 pub fn applySignalDerivative(calibration: Calibration, signal: []const f64, output: []f64) !void {
     if (signal.len != output.len) return error.ShapeMismatch;
     if (signal.len == 0) return;
@@ -70,20 +37,10 @@ pub fn applySignalDerivative(calibration: Calibration, signal: []const f64, outp
     }
 }
 
-/// Purpose:
-///   Shift a wavelength by the configured calibration offset.
-///
-/// Physics:
-///   Applies a constant detector wavelength correction in nanometers.
-///
-/// Vendor:
-///   `wavelength shift`
 pub fn shiftedWavelength(calibration: Calibration, wavelength_nm: f64) f64 {
     return wavelength_nm + calibration.wavelength_shift_nm;
 }
 
-/// Purpose:
-///   Apply vendor-style simple multiplicative and additive offsets in-place.
 pub fn applySimpleOffsets(offsets: Instrument.SimpleOffsets, signal: []f64) !void {
     if (signal.len == 0) return;
     const reference = signal[0];
@@ -93,14 +50,10 @@ pub fn applySimpleOffsets(offsets: Instrument.SimpleOffsets, signal: []f64) !voi
     }
 }
 
-/// Purpose:
-///   Apply the simple-offset derivative, including the shared first-sample additive term.
 pub fn applySimpleOffsetDerivatives(offsets: Instrument.SimpleOffsets, signal: []f64) !void {
     try applySimpleOffsets(offsets, signal);
 }
 
-/// Purpose:
-///   Apply sinusoidal additive and multiplicative features relative to the first wavelength.
 pub fn applySpectralFeatures(
     features: Instrument.SinusoidalFeatures,
     wavelengths_nm: []const f64,
@@ -127,8 +80,6 @@ pub fn applySpectralFeatures(
     }
 }
 
-/// Purpose:
-///   Apply the sinusoidal-feature derivative, including any first-sample additive term.
 pub fn applySpectralFeatureDerivatives(
     features: Instrument.SinusoidalFeatures,
     wavelengths_nm: []const f64,
@@ -137,8 +88,6 @@ pub fn applySpectralFeatureDerivatives(
     try applySpectralFeatures(features, wavelengths_nm, signal);
 }
 
-/// Purpose:
-///   Apply the vendor-style smear model by moving a percentage of each sample to its neighbor.
 pub fn applySmear(percent_smear: f64, signal: []f64, scratch: []f64) !void {
     if (signal.len != scratch.len) return error.ShapeMismatch;
     if (signal.len < 2) return;
@@ -154,8 +103,6 @@ pub fn applySmear(percent_smear: f64, signal: []f64, scratch: []f64) !void {
     @memcpy(signal, scratch);
 }
 
-/// Purpose:
-///   Add a multiplicative offset spectrum defined by nodal percentages.
 pub fn applyMultiplicativeNodes(
     correction: Instrument.NodalCorrection,
     wavelengths_nm: []const f64,
@@ -172,8 +119,6 @@ pub fn applyMultiplicativeNodes(
     @memcpy(signal, scratch);
 }
 
-/// Purpose:
-///   Add a wavelength-dependent stray-light spectrum defined by nodal percentages.
 pub fn applyStrayLightNodes(
     correction: Instrument.NodalCorrection,
     wavelengths_nm: []const f64,
@@ -201,8 +146,6 @@ pub fn applyStrayLightNodes(
     @memcpy(signal, scratch);
 }
 
-/// Purpose:
-///   Add an explicit or synthesized Ring spectrum to the radiance.
 pub fn applyRingSpectrum(
     ring: Instrument.RingControls,
     wavelengths_nm: []const f64,
@@ -233,23 +176,6 @@ pub fn applyRingSpectrum(
     @memcpy(radiance, scratch);
 }
 
-/// Purpose:
-///   Apply a scalar radiance bias when the polarization scrambler is disabled.
-///
-/// Physics:
-///   The vendor path adds a wavelength-dependent leakage term proportional to
-///   the polarized component of the measured radiance. The current Zig forward
-///   engine is scalar, so it does not materialize Stokes `Q/U`. This helper
-///   therefore applies a small deterministic leakage profile whose amplitude is
-///   bounded by the prepared depolarization factor.
-///
-/// Vendor:
-///   `radianceIrradianceModule::ignorePolarizationScrambler`
-///
-/// Decisions:
-///   Use an explicit scalar approximation instead of silently ignoring the
-///   control. The leakage profile is zero-mean across the band and only applies
-///   when the caller explicitly disables the scrambler.
 pub fn applyPolarizationScramblerBias(
     use_polarization_scrambler: bool,
     depolarization_factor: f64,
@@ -272,8 +198,6 @@ pub fn applyPolarizationScramblerBias(
     }
 }
 
-/// Purpose:
-///   Fold reflectance calibration-error nodes into the reflectance sigma in quadrature.
 pub fn applyReflectanceCalibrationErrorSigma(
     calibration_error: Instrument.ReflectanceCalibration,
     wavelengths_nm: []const f64,

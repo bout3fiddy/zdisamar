@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Own the retained observation-model compatibility rules that merge legacy
-//!   singleton controls into the explicit per-channel and per-band model.
-//!
-//! Physics:
-//!   Resolves spectral response, operational band support, and noise controls
-//!   for scenes that still provide older observation-model fields.
-//!
-//! Vendor:
-//!   `observation-model legacy compatibility`
-//!
-//! Design:
-//!   Keep the fallback policy out of `ObservationModel.zig` so the canonical
-//!   model type remains focused on typed data ownership and validation.
-//!
-//! Invariants:
-//!   Borrowed line-shape carriers must not claim ownership, and merged
-//!   operational support must preserve explicit overrides over legacy defaults.
-//!
-//! Validation:
-//!   Observation-model tests in `ObservationModel.zig` cover the compatibility
-//!   merge behavior through the public model methods.
-
 const Instrument = @import("../../model/Instrument.zig").Instrument;
 const InstrumentLineShape = @import("../../model/Instrument.zig").InstrumentLineShape;
 const InstrumentLineShapeTable = @import("../../model/Instrument.zig").InstrumentLineShapeTable;
@@ -104,6 +81,14 @@ fn legacyChannelControls(model: anytype, channel: SpectralChannel) Instrument.Sp
 
 fn legacySpectralResponse(model: anytype) Instrument.SpectralResponse {
     const support = primaryOperationalBandSupport(model);
+    const resolved_high_resolution_step_nm = if (support.high_resolution_step_nm > 0.0)
+        support.high_resolution_step_nm
+    else
+        model.high_resolution_step_nm;
+    const resolved_high_resolution_half_span_nm = if (support.high_resolution_half_span_nm > 0.0)
+        support.high_resolution_half_span_nm
+    else
+        model.high_resolution_half_span_nm;
     return .{
         .slit_index = switch (model.builtin_line_shape) {
             .gaussian => if (support.instrument_line_shape_table.nominal_count > 0 or model.instrument_line_shape_table.nominal_count > 0) .table else .gaussian_modulated,
@@ -112,14 +97,14 @@ fn legacySpectralResponse(model: anytype) Instrument.SpectralResponse {
         },
         .fwhm_nm = model.instrument_line_fwhm_nm,
         .builtin_line_shape = model.builtin_line_shape,
-        .high_resolution_step_nm = if (support.high_resolution_step_nm > 0.0)
-            support.high_resolution_step_nm
+        .integration_mode = if (model.adaptive_reference_grid.enabled())
+            .adaptive
+        else if (resolved_high_resolution_step_nm > 0.0 and resolved_high_resolution_half_span_nm > 0.0)
+            .explicit_hr_grid
         else
-            model.high_resolution_step_nm,
-        .high_resolution_half_span_nm = if (support.high_resolution_half_span_nm > 0.0)
-            support.high_resolution_half_span_nm
-        else
-            model.high_resolution_half_span_nm,
+            .auto,
+        .high_resolution_step_nm = resolved_high_resolution_step_nm,
+        .high_resolution_half_span_nm = resolved_high_resolution_half_span_nm,
         .instrument_line_shape = if (support.instrument_line_shape.sample_count > 0)
             borrowedLineShape(support.instrument_line_shape)
         else

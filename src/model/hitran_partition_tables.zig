@@ -1,10 +1,5 @@
-//! Embedded HITRAN partition-function tables and local interpolation helpers for
-//! spectroscopy runtime controls.
-//!
-//! Physics:
-//!   Maps isotopologue code and temperature to `Q(T_ref) / Q(T)` while clamping
-//!   interpolation to the supported tabulated domain.
 const std = @import("std");
+const spline = @import("../kernels/interpolation/spline.zig");
 
 const temperature_grid = [_]f64{
     60.0,   85.0,   110.0,  135.0,  160.0,  185.0,  210.0,  235.0,  260.0,  285.0,
@@ -366,7 +361,10 @@ const q_68 = [_]f64{
     0.82324e+04, 0.83613e+04, 0.84915e+04, 0.86229e+04, 0.87556e+04, 0.88895e+04, 0.90247e+04, 0.91611e+04, 0.92988e+04,
 };
 
-const q_67 = [_]f64{
+// DISAMAR declares this O2 isotopologue table with `E` exponents, so the
+// constants are rounded to default REAL before assignment into its real(8)
+// table. Keep the same literal precision here before widening for spline use.
+const q_67 = [_]f32{
     0.52071E+03, 0.74484E+03, 0.96908E+03, 0.11934E+04, 0.14177E+04, 0.16422E+04, 0.18667E+04, 0.20913E+04, 0.23161E+04, 0.25413E+04,
     0.27671E+04, 0.29936E+04, 0.32212E+04, 0.34501E+04, 0.36806E+04, 0.39130E+04, 0.41476E+04, 0.43846E+04, 0.46242E+04, 0.48668E+04,
     0.51125E+04, 0.53615E+04, 0.56140E+04, 0.58701E+04, 0.61300E+04, 0.63938E+04, 0.66617E+04, 0.69337E+04, 0.72099E+04, 0.74904E+04,
@@ -411,29 +409,11 @@ const q_5111 = [_]f64{
     0.49230E+06, 0.51319E+06, 0.53487E+06, 0.55734E+06, 0.58064E+06, 0.60478E+06, 0.62981E+06, 0.65574E+06, 0.68260E+06,
 };
 
-/// Purpose:
-///   Return the partition-function ratio `Q(T_ref) / Q(T)` for a supported isotopologue.
-///
-/// Physics:
-///   This ratio rescales line strengths from the HITRAN reference temperature to the
-///   requested evaluation temperature.
-///
-/// Inputs:
-///   `isotopologue_code` is the HITRAN isotopologue identifier and both temperatures are
-///   in kelvin.
-///
-/// Outputs:
-///   Returns `null` when the isotopologue is not represented in the embedded tables.
-///
-/// Units:
-///   Temperatures are in kelvin and the returned ratio is dimensionless.
-///
-/// Assumptions:
-///   Temperatures outside the supported table range are clamped to the nearest endpoint.
-///
-/// Validation:
-///   Exercised by the representative isotopologue regression at the bottom of this file.
 pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temperature_k: f64) ?f64 {
+    if (isotopologue_code == 67) {
+        return ratioT0OverTFromF32Table(q_67[0..], temperature_k, reference_temperature_k);
+    }
+
     const table = switch (isotopologue_code) {
         161 => q_161[0..],
         181 => q_181[0..],
@@ -458,7 +438,6 @@ pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temper
         212 => q_212[0..],
         66 => q_66[0..],
         68 => q_68[0..],
-        67 => q_67[0..],
         4111 => q_4111[0..],
         5111 => q_5111[0..],
         else => return null,
@@ -469,21 +448,36 @@ pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temper
     return q_ref / @max(q_t, 1.0e-12);
 }
 
+fn ratioT0OverTFromF32Table(table: []const f32, temperature_k: f64, reference_temperature_k: f64) f64 {
+    const q_t = interpolatePartitionTableF32(table, temperature_k);
+    const q_ref = interpolatePartitionTableF32(table, reference_temperature_k);
+    return q_ref / @max(q_t, 1.0e-12);
+}
+
 fn interpolatePartitionTable(table: []const f64, temperature_k: f64) f64 {
     // UNITS:
     //   `temperature_k` is in kelvin and interpolation runs on the shared HITRAN
     //   temperature grid declared at the top of this file.
     const safe_temperature = std.math.clamp(temperature_k, temperature_grid[0], temperature_grid[temperature_grid.len - 1]);
     if (safe_temperature <= temperature_grid[0]) return table[0];
+    if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) return table[table.len - 1];
+    return spline.sampleEndpointSecant(temperature_grid[0..], table, safe_temperature) catch unreachable;
+}
 
-    for (temperature_grid[0 .. temperature_grid.len - 1], temperature_grid[1..], 0..) |left_t, right_t, index| {
-        if (safe_temperature <= right_t) {
-            const span = right_t - left_t;
-            if (span == 0.0) return table[index + 1];
-            const weight = (safe_temperature - left_t) / span;
-            return table[index] + weight * (table[index + 1] - table[index]);
-        }
+fn interpolatePartitionTableF32(table: []const f32, temperature_k: f64) f64 {
+    var widened: [temperature_grid.len]f64 = undefined;
+    for (table, 0..) |value, index| {
+        widened[index] = @as(f64, value);
     }
+    return interpolatePartitionTable(widened[0..table.len], temperature_k);
+}
 
-    return table[table.len - 1];
+test "O2 partition ratio follows DISAMAR endpoint-secant spline" {
+    const ratio = ratioT0OverT(66, 165.1, 296.0) orelse unreachable;
+    try std.testing.expectApproxEqAbs(@as(f64, 1.7894420791035657), ratio, 1.0e-14);
+}
+
+test "O2 isotope 67 preserves DISAMAR default-real partition literals" {
+    const ratio = ratioT0OverT(67, 190.5, 296.0) orelse unreachable;
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5610005510908784), ratio, 1.0e-14);
 }

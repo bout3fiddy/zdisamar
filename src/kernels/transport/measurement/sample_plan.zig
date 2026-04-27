@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Precompute per-sample wavelength and integration plans for measurement
-//!   simulation.
-//!
-//! Physics:
-//!   Resolves nominal and calibrated wavelengths together with instrument
-//!   integration kernels so radiance, irradiance, and prefetch passes share
-//!   one spectral execution plan.
-//!
-//! Vendor:
-//!   `measurement simulation planning`
-//!
-//! Design:
-//!   Keep plan construction separate from the transport execution loops so the
-//!   hot path stops rebuilding identical instrument metadata per sample.
-//!
-//! Invariants:
-//!   Each plan entry is keyed to one nominal sample wavelength and contains the
-//!   exact channel-specific calibrated wavelength and integration kernel.
-//!
-//! Validation:
-//!   Fast measurement-space suites and O2 A transport smoke tests.
-
 const std = @import("std");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optics/preparation.zig");
@@ -76,7 +53,7 @@ pub fn buildSamplePlans(
         const nominal_wavelength_nm = try resolved_axis.sampleAt(@intCast(index));
         var radiance_integration: IntegrationKernel = undefined;
         if (can_cache_adaptive_plan) {
-            instrument_integration.integrationForWavelengthWithAdaptiveCache(
+            try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
                 scene,
                 prepared,
                 .radiance,
@@ -85,7 +62,7 @@ pub fn buildSamplePlans(
                 &radiance_integration,
             );
         } else {
-            providers.instrument.integrationForWavelength(
+            try instrument_integration.integrationForWavelengthChecked(
                 scene,
                 prepared,
                 .radiance,
@@ -95,7 +72,7 @@ pub fn buildSamplePlans(
         }
         var irradiance_integration: IntegrationKernel = undefined;
         if (can_cache_adaptive_plan) {
-            instrument_integration.integrationForWavelengthWithAdaptiveCache(
+            try instrument_integration.integrationForWavelengthWithAdaptiveCacheChecked(
                 scene,
                 prepared,
                 .irradiance,
@@ -104,7 +81,7 @@ pub fn buildSamplePlans(
                 &irradiance_integration,
             );
         } else {
-            providers.instrument.integrationForWavelength(
+            try instrument_integration.integrationForWavelengthChecked(
                 scene,
                 prepared,
                 .irradiance,
@@ -133,7 +110,7 @@ pub fn collectUniqueForwardMisses(
     allocator: Allocator,
     plans: []const SamplePlan,
 ) ![]SpectralEval.ForwardCacheMiss {
-    var seen = std.AutoHashMap(i64, void).init(allocator);
+    var seen = std.AutoHashMap(u64, void).init(allocator);
     defer seen.deinit();
     var misses = std.ArrayList(SpectralEval.ForwardCacheMiss).empty;
     errdefer misses.deinit(allocator);

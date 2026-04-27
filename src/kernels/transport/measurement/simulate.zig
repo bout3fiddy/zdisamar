@@ -1,26 +1,3 @@
-//! Purpose:
-//!   Materialize measurement-space radiance, irradiance, reflectance, and
-//!   optional Jacobian products from prepared transport input.
-//!
-//! Physics:
-//!   Runs the transport executor across the resolved spectral grid, applies
-//!   instrument integration and slit convolution, and reduces the results into
-//!   summary and product-level outputs.
-//!
-//! Vendor:
-//!   `measurement simulation` stage
-//!
-//! Design:
-//!   The transport executor is kept separate from the measurement reduction so
-//!   the same prepared state can feed summary and full-product materialization.
-//!
-//! Invariants:
-//!   The transport workspace must be shape-compatible with the scene's sample
-//!   count and the resolved transport layer count.
-//!
-//! Validation:
-//!   Measurement-space summary and product tests.
-
 const std = @import("std");
 const SpectralChannel = @import("../../../model/Instrument.zig").SpectralChannel;
 const Scene = @import("../../../model/Scene.zig").Scene;
@@ -38,28 +15,6 @@ const Workspace = @import("workspace.zig");
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
 
-fn recordPhaseLap(timer: ?*std.time.Timer, target: *u64) void {
-    if (timer) |resolved_timer| target.* = resolved_timer.lap();
-}
-
-/// Purpose:
-///   Execute the transport solver across the scene spectral grid.
-///
-/// Physics:
-///   Materializes radiance, irradiance, reflectance, and optional Jacobian
-///   arrays after route-specific integration and calibration.
-///
-/// Inputs:
-///   `scene` defines the resolved spectral grid, `route` selects the transport
-///   family, `prepared` carries the optical state, and `buffers` provides the
-///   reusable scratch slices.
-///
-/// Outputs:
-///   Returns measurement-space summary statistics and fills the product
-///   buffers in place.
-///
-/// Validation:
-///   Measurement-space summary and product tests.
 pub fn simulateInternal(
     allocator: Allocator,
     scene: *const Scene,
@@ -67,18 +22,11 @@ pub fn simulateInternal(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     providers: Types.ProviderBindings,
     buffers: Workspace.Buffers,
-    forward_profile: ?*Types.ForwardProfile,
+    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
 ) Workspace.Error!Types.MeasurementSpaceSummary {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try Workspace.validateBuffers(sample_count, buffers);
-    var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
-    defer evaluation_cache.deinit();
-    if (forward_profile) |profile| profile.reset();
-    var phase_timer = if (forward_profile != null)
-        std.time.Timer.start() catch unreachable
-    else
-        null;
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
@@ -122,7 +70,7 @@ pub fn simulateInternal(
         providers,
         safe_span,
         forward_misses,
-        &evaluation_cache,
+        evaluation_cache,
     );
 
     var radiance_sum: f64 = 0.0;
@@ -158,13 +106,12 @@ pub fn simulateInternal(
             buffers.pseudo_spherical_samples,
             buffers.pseudo_spherical_level_starts[0 .. transport_layer_count + 1],
             buffers.pseudo_spherical_level_altitudes[0 .. transport_layer_count + 1],
-            &evaluation_cache,
+            evaluation_cache,
             &plan.radiance_integration,
         );
         buffers.scratch[index] = integrated.radiance;
         if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
     }
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.radiance_integration_ns);
     if (uses_integrated_radiance_sampling) {
         // DECISION:
         //   Integrated sampling bypasses slit convolution because the
@@ -182,19 +129,16 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.radiance_postprocess_ns);
-
     for (sample_plans, 0..) |plan, index| {
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,
             prepared,
             plan.irradiance_wavelength_nm,
             safe_span,
-            &evaluation_cache,
+            evaluation_cache,
             &plan.irradiance_integration,
         );
     }
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.irradiance_integration_ns);
     if (uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
@@ -216,8 +160,6 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.irradiance_postprocess_ns);
-
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
         buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
@@ -303,8 +245,6 @@ pub fn simulateInternal(
         for (jacobian) |value| jacobian_sum += value;
         mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
     }
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.reduction_ns);
-
     return .{
         .sample_count = @intCast(sample_count),
         .wavelength_start_nm = buffers.wavelengths[0],
@@ -328,11 +268,12 @@ pub fn simulate(
     providers: Types.ProviderBindings,
     buffers: Workspace.Buffers,
 ) Workspace.Error!Types.MeasurementSpaceSummary {
-    return simulateInternal(allocator, scene, route, prepared, providers, buffers, null);
+    var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
+    defer evaluation_cache.deinit();
+    evaluation_cache.reset();
+    return simulateInternal(allocator, scene, route, prepared, providers, buffers, &evaluation_cache);
 }
 
-/// Purpose:
-///   Materialize a summary-only measurement-space product.
 pub fn simulateSummary(
     allocator: Allocator,
     scene: *const Scene,
@@ -345,8 +286,6 @@ pub fn simulateSummary(
     return simulateSummaryWithWorkspace(allocator, &workspace, scene, route, prepared, providers);
 }
 
-/// Purpose:
-///   Materialize a summary-only measurement-space product with reusable buffers.
 pub fn simulateSummaryWithWorkspace(
     allocator: Allocator,
     workspace: *Workspace.SummaryWorkspace,
@@ -369,6 +308,6 @@ pub fn simulateSummaryWithWorkspace(
         prepared,
         providers,
         try workspace.buffers(allocator, &summary_scene, route, providers),
-        null,
+        try workspace.spectralCache(allocator),
     );
 }

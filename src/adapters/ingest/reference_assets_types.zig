@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Define the shared ingest-side reference-asset kinds and embedded-asset
-//!   carriers.
-//!
-//! Physics:
-//!   These types identify which scientific table family is being hydrated and
-//!   how embedded manifest bytes are addressed before parsing.
-//!
-//! Vendor:
-//!   `reference asset ingest types`
-//!
-//! Design:
-//!   Keep the shared enum and embedded-byte carrier separate from the loader
-//!   and parser logic so the public ingest surface stays small.
-//!
-//! Invariants:
-//!   Asset kinds remain stable across manifest hydration and external-file
-//!   loading.
-//!
-//! Validation:
-//!   Reference-asset loader tests.
-
 pub const AssetKind = enum {
     climatology_profile,
     cross_section_table,

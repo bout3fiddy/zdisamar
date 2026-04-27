@@ -1,35 +1,11 @@
-//! Purpose:
-//!   Parse reference-asset table formats into numeric rows.
-//!
-//! Physics:
-//!   Convert HITRAN-style lines, BIRA CIA polynomials, and LISA strong-line sidecars into typed
-//!   numeric tables with the expected scientific units.
-//!
-//! Vendor:
-//!   `reference asset format parsers`
-//!
-//! Design:
-//!   Keep format-specific parsing separate from manifest resolution so each parser can preserve
-//!   its own unit conversions and validation rules.
-//!
-//! Invariants:
-//!   Column names and row shapes must match the declared asset format before hydration succeeds.
-//!
-//! Validation:
-//!   Reference-asset loader tests and the O2A bundled optics tests.
-
 const std = @import("std");
 const helpers = @import("reference_assets_formats_helpers.zig");
 
-/// Purpose:
-///   Describe the expected format and column contract for one asset.
 pub const AssetSpec = struct {
     format: []const u8,
     columns: []const []const u8,
 };
 
-/// Purpose:
-///   Hold the parsed numeric table and its header names.
 pub const ParsedTable = struct {
     column_names: []const []const u8,
     values: []f64,
@@ -44,11 +20,6 @@ pub const Error = error{
     OutOfMemory,
 };
 
-/// Purpose:
-///   Parse one asset payload according to its declared format.
-///
-/// Physics:
-///   Dispatch to the format-specific parser while preserving the declared scientific units.
 pub fn parseAssetTable(
     allocator: std.mem.Allocator,
     asset: AssetSpec,
@@ -72,8 +43,6 @@ pub fn parseAssetTable(
     return error.UnsupportedFormat;
 }
 
-/// Purpose:
-///   Parse a plain numeric CSV payload.
 fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!ParsedTable {
     var line_iter = std.mem.splitScalar(u8, contents, '\n');
 
@@ -140,17 +109,13 @@ fn parseNumericCsv(allocator: std.mem.Allocator, contents: []const u8) Error!Par
     };
 }
 
-/// Purpose:
-///   Parse a fixed-width HITRAN-style spectroscopy table.
-///
-/// Units:
-///   Wavenumbers are read in cm^-1 and converted to wavelengths in nm.
 fn parseHitran160(
     allocator: std.mem.Allocator,
     contents: []const u8,
     columns: []const []const u8,
 ) Error!ParsedTable {
-    const has_vendor_o2a_fields = columns.len == 13;
+    const emit_source_cm1_fields = helpers.columnNamesContain(columns, "center_wavenumber_cm1");
+    const has_vendor_o2a_fields = helpers.columnNamesContain(columns, "vendor_filter_metadata_from_source");
     const minimum_line_length: usize = 67;
     const owned_columns = try helpers.dupColumns(allocator, columns);
     errdefer helpers.freeColumns(allocator, owned_columns);
@@ -211,17 +176,35 @@ fn parseHitran160(
             metadata.rotational_nf
         else
             null;
+        const vendor_filter_metadata_from_source = inline_branch_ic1 != null and
+            inline_branch_ic2 != null and
+            inline_rotational_nf != null;
 
         try values.appendSlice(allocator, &.{
             @as(f64, @floatFromInt(gas_index)),
             @as(f64, @floatFromInt(isotope_number)),
             helpers.deriveIsotopicAbundanceFraction(gas_index, isotope_number),
             center_wavelength_nm,
+        });
+        if (emit_source_cm1_fields) {
+            try values.append(allocator, center_wavenumber_cm1);
+        }
+        try values.appendSlice(allocator, &.{
             line_strength,
             air_half_width_nm,
+        });
+        if (emit_source_cm1_fields) {
+            try values.append(allocator, air_half_width_cm1);
+        }
+        try values.appendSlice(allocator, &.{
             temperature_exponent,
             lower_state_energy_cm1,
             pressure_shift_nm,
+        });
+        if (emit_source_cm1_fields) {
+            try values.append(allocator, pressure_shift_cm1);
+        }
+        try values.appendSlice(allocator, &.{
             line_mixing_coefficient,
         });
         if (has_vendor_o2a_fields) {
@@ -229,6 +212,7 @@ fn parseHitran160(
                 if (branch_ic1) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
                 if (branch_ic2) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
                 if (rotational_nf) |value| @as(f64, @floatFromInt(value)) else std.math.nan(f64),
+                if (vendor_filter_metadata_from_source) 1.0 else 0.0,
             });
         }
         row_count += 1;
@@ -242,11 +226,6 @@ fn parseHitran160(
     };
 }
 
-/// Purpose:
-///   Parse a BIRA CIA polynomial table.
-///
-/// Units:
-///   The scale factor is stored in cm^5/molecule^2 and remains attached to the whole table.
 fn parseBiraCiaPolynomial(
     allocator: std.mem.Allocator,
     contents: []const u8,
@@ -314,11 +293,6 @@ fn parseBiraCiaPolynomial(
     };
 }
 
-/// Purpose:
-///   Parse a LISA strong-line sidecar table.
-///
-/// Physics:
-///   Preserve the sidecar fields that augment the O2A strong-line path.
 fn parseLisaSdf(
     allocator: std.mem.Allocator,
     contents: []const u8,
@@ -388,8 +362,6 @@ fn parseLisaSdf(
     };
 }
 
-/// Purpose:
-///   Parse a LISA relaxation matrix table.
 fn parseLisaRmf(
     allocator: std.mem.Allocator,
     contents: []const u8,

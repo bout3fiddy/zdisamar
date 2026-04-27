@@ -13,3 +13,21 @@ test "vendor partition tables interpolate representative isotopologues and prese
         );
     }
 }
+
+test "vendor partition tables follow spline anchors between tabulated temperatures" {
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 1.552060208567465),
+        internal.hitran_partition_tables.ratioT0OverT(66, 190.5, 296.0).?,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.8564335971463213),
+        internal.hitran_partition_tables.ratioT0OverT(626, 333.0, 296.0).?,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.8318508028148319),
+        internal.hitran_partition_tables.ratioT0OverT(4111, 333.0, 296.0).?,
+        1.0e-12,
+    );
+}

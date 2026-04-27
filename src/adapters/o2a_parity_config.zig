@@ -1,10 +1,3 @@
-//! Purpose:
-//!   Thin facade for the retained O2A vendor-parity YAML surface.
-//!
-//! Design:
-//!   Keep parsing, semantic compilation, and output emission in sibling modules so the adapter
-//!   surface stays small and the behavior remains easy to reason about.
-
 const std = @import("std");
 const parser = @import("o2a_parity_parser.zig");
 const scene = @import("o2a_parity_scene.zig");

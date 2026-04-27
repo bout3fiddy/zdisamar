@@ -1,11 +1,8 @@
-//! Purpose:
-//!   Compile scene-scoped input bindings and absorber/observation controls for the O2A parity lane.
-
 const std = @import("std");
 const common = @import("o2a_parity_compile_common.zig");
 
 const parity_runtime = @import("../o2a/data/vendor_parity_runtime.zig");
-const RtmControls = @import("../kernels/transport/common.zig").RtmControls;
+const RadiativeTransferControls = @import("../kernels/transport/common.zig").RadiativeTransferControls;
 const parser = @import("o2a_parity_parser.zig");
 
 const Allocator = std.mem.Allocator;
@@ -221,7 +218,7 @@ pub fn compileObservation(
     };
 }
 
-pub fn compileRtmControls(map: []const parser.MapEntry) !RtmControls {
+pub fn compileRadiativeTransferControls(map: []const parser.MapEntry) !RadiativeTransferControls {
     try common.expectOnlyFields(map, &.{
         "scattering",
         "n_streams",

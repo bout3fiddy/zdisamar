@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Resolve transport routes and derive interface helpers from the shared
-//!   transport contract.
-
 const std = @import("std");
 const common = @import("common_types.zig");
 const phase_functions = @import("../optics/prepare/phase_functions.zig");
@@ -33,6 +29,7 @@ fn selectFamily(request: common.DispatchRequest) common.TransportFamily {
 pub fn sourceInterfaceFromLayers(layers: []const common.LayerInput, ilevel: usize) common.SourceInterfaceInput {
     if (layers.len == 0) return .{};
     const above_index = @min(ilevel, layers.len - 1);
+    const below_index = if (ilevel > 0) ilevel - 1 else above_index;
     const source_weight = if (ilevel < layers.len)
         @max(layers[ilevel].scattering_optical_depth, 0.0)
     else
@@ -40,7 +37,21 @@ pub fn sourceInterfaceFromLayers(layers: []const common.LayerInput, ilevel: usiz
 
     return .{
         .source_weight = source_weight,
+        .particle_ksca_above = @max(layers[above_index].scattering_optical_depth, 0.0),
+        .particle_ksca_below = if (ilevel > 0)
+            @max(layers[below_index].scattering_optical_depth, 0.0)
+        else
+            0.0,
+        .ksca_above = @max(layers[above_index].scattering_optical_depth, 0.0),
+        .ksca_below = if (ilevel > 0)
+            @max(layers[below_index].scattering_optical_depth, 0.0)
+        else
+            0.0,
         .phase_coefficients_above = layers[above_index].phase_coefficients,
+        .phase_coefficients_below = if (ilevel > 0)
+            layers[below_index].phase_coefficients
+        else
+            phase_functions.zeroPhaseCoefficients(),
     };
 }
 
@@ -110,7 +121,7 @@ test "prepare route resolves families and keeps derivative mode explicit" {
         .derivative_mode = .none,
         .rtm_controls = .{ .use_adding = true },
     }));
-    try std.testing.expectError(common.Error.UnsupportedRtmControls, prepareRoute(.{
+    try std.testing.expectError(common.Error.UnsupportedRadiativeTransferControls, prepareRoute(.{
         .regime = .nadir,
         .execution_mode = .scalar,
         .derivative_mode = .none,
@@ -149,4 +160,7 @@ test "source interface builder preserves the top boundary weight and halves the 
     try std.testing.expectApproxEqAbs(@as(f64, 0.10), source_interfaces[0].phase_coefficients_above[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[1].phase_coefficients_above[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[2].phase_coefficients_above[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), source_interfaces[0].phase_coefficients_below[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.10), source_interfaces[1].phase_coefficients_below[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.30), source_interfaces[2].phase_coefficients_below[1], 1.0e-12);
 }

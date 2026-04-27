@@ -76,9 +76,30 @@ pub fn build(b: *std.Build) void {
         .root_module = lib_module,
     });
     b.installArtifact(lib);
+    const c_api_module = b.createModule(.{
+        .root_source_file = b.path("src/api/c.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "zdisamar",
+                .module = lib_module,
+            },
+            .{
+                .name = "build_options",
+                .module = build_options_module,
+            },
+        },
+    });
+    const c_api_lib = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "zdisamar_c",
+        .root_module = c_api_module,
+    });
+    b.installArtifact(c_api_lib);
 
-    const profile_module = b.createModule(.{
-        .root_source_file = b.path("src/o2a/cli/profile.zig"),
+    const plot_spectrum_module = b.createModule(.{
+        .root_source_file = b.path("src/o2a/cli/plot_spectrum.zig"),
         .target = target,
         .optimize = runtime_optimize,
         .imports = &.{
@@ -92,11 +113,11 @@ pub fn build(b: *std.Build) void {
             },
         },
     });
-    const profile_exe = b.addExecutable(.{
-        .name = "zdisamar-o2a-forward-profile",
-        .root_module = profile_module,
+    const plot_spectrum_exe = b.addExecutable(.{
+        .name = "zdisamar-o2a-plot-spectrum",
+        .root_module = plot_spectrum_module,
     });
-    b.installArtifact(profile_exe);
+    b.installArtifact(plot_spectrum_exe);
 
     const cli_module = b.createModule(.{
         .root_source_file = b.path("src/parity_cli_root.zig"),
@@ -178,16 +199,6 @@ pub fn build(b: *std.Build) void {
         "Run O2A vendor reflectance assessment lane",
         "tests/validation/o2a_vendor_reflectance_assessment_test.zig",
     );
-    const validation_o2a_vendor_profile = addTestStep(
-        b,
-        target,
-        optimize,
-        lib_module,
-        build_options_module,
-        "test-validation-o2a-vendor-profile",
-        "Run O2A vendor profile and reporting smoke tests",
-        "tests/validation/o2a_vendor_reflectance_profile_smoke_test.zig",
-    );
     const validation_o2a_vendor_line_list = addTestStep(
         b,
         target,
@@ -240,42 +251,28 @@ pub fn build(b: *std.Build) void {
     const fmt_check_step = b.step("fmt-check", "Verify Zig formatting without rewriting files");
     fmt_check_step.dependOn(&fmt_check_cmd.step);
 
-    const profile_install = b.addInstallArtifact(profile_exe, .{});
-    const profile_run = b.addRunArtifact(profile_exe);
-    const o2a_forward_profile_step = b.step(
-        "o2a-forward-profile",
-        "Run the O2A forward profiler and emit summary artifacts",
-    );
-    o2a_forward_profile_step.dependOn(&profile_install.step);
-    o2a_forward_profile_step.dependOn(&profile_run.step);
-
-    const o2a_plot_bundle_profile_run = b.addRunArtifact(profile_exe);
-    o2a_plot_bundle_profile_run.addArg("--output-dir");
-    o2a_plot_bundle_profile_run.addArg("out/analysis/o2a/plot_bundle_tmp");
-    o2a_plot_bundle_profile_run.addArg("--repeat");
-    o2a_plot_bundle_profile_run.addArg("1");
-    o2a_plot_bundle_profile_run.addArg("--write-spectrum");
-    o2a_plot_bundle_profile_run.addArg("--plot-bundle-grid");
+    const plot_spectrum_install = b.addInstallArtifact(plot_spectrum_exe, .{});
+    const o2a_plot_bundle_spectrum_run = b.addRunArtifact(plot_spectrum_exe);
+    o2a_plot_bundle_spectrum_run.addArg("--output-dir");
+    o2a_plot_bundle_spectrum_run.addArg("out/analysis/o2a/plot_bundle_tmp");
     const o2a_plot_bundle_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "scripts/testing_harness/o2a_plot_bundle.py",
+        "validation/o2a_plot_bundle.py",
         "--current-spectrum",
         "out/analysis/o2a/plot_bundle_tmp/generated_spectrum.csv",
-        "--profile-summary",
-        "out/analysis/o2a/plot_bundle_tmp/summary.json",
         "--vendor-reference",
-        "validation/reference/o2a_with_cia_disamar_reference.csv",
+        "validation/o2a_with_cia_disamar_reference.csv",
         "--output-dir",
-        "validation/compatibility/o2a_plots",
+        "validation",
         "--canonical-command",
         "zig build o2a-plots",
     });
-    o2a_plot_bundle_cmd.step.dependOn(&profile_install.step);
-    o2a_plot_bundle_cmd.step.dependOn(&o2a_plot_bundle_profile_run.step);
+    o2a_plot_bundle_cmd.step.dependOn(&plot_spectrum_install.step);
+    o2a_plot_bundle_cmd.step.dependOn(&o2a_plot_bundle_spectrum_run.step);
     const o2a_plot_bundle_step = b.step(
         "o2a-plot-bundle",
-        "Generate the tracked O2A plot bundle under validation/compatibility/o2a_plots",
+        "Generate the tracked O2A plot bundle under validation",
     );
     o2a_plot_bundle_step.dependOn(&o2a_plot_bundle_cmd.step);
     const o2a_plots_step = b.step(
@@ -284,21 +281,10 @@ pub fn build(b: *std.Build) void {
     );
     o2a_plots_step.dependOn(&o2a_plot_bundle_cmd.step);
 
-    const o2a_vendor_reference_refresh_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "scripts/testing_harness/o2a_vendor_reference_refresh.py",
-    });
-    const o2a_vendor_reference_refresh_step = b.step(
-        "o2a-vendor-reference-refresh",
-        "Regenerate the tracked O2A vendor reference CSV from the vendored DISAMAR executable",
-    );
-    o2a_vendor_reference_refresh_step.dependOn(&o2a_vendor_reference_refresh_cmd.step);
-
     const o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "scripts/testing_harness/o2a_plot_bundle_test.py",
+        "validation/o2a_plot_bundle_test.py",
     });
     const o2a_plot_bundle_test_step = b.step(
         "test-validation-o2a-plot-bundle",
@@ -306,28 +292,17 @@ pub fn build(b: *std.Build) void {
     );
     o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
 
-    const o2a_function_diff_test_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "scripts/testing_harness/o2a_function_diff_test.py",
-    });
-    const o2a_function_diff_test_step = b.step(
-        "test-validation-o2a-function-diff",
-        "Run the O2A function-diff harness smoke test",
-    );
-    o2a_function_diff_test_step.dependOn(&o2a_function_diff_test_cmd.step);
-
     const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(fmt_check_step);
     check_step.dependOn(&lib.step);
-    check_step.dependOn(&profile_exe.step);
+    check_step.dependOn(&c_api_lib.step);
+    check_step.dependOn(&plot_spectrum_exe.step);
     check_step.dependOn(&cli_exe.step);
     check_step.dependOn(&lib_tests.step);
     check_step.dependOn(&unit_tests.step);
     check_step.dependOn(&internal_tests.step);
     check_step.dependOn(validation_o2a.compile_step);
     check_step.dependOn(validation_o2a_vendor.compile_step);
-    check_step.dependOn(validation_o2a_vendor_profile.compile_step);
     check_step.dependOn(validation_o2a_vendor_line_list.compile_step);
     check_step.dependOn(validation_o2a_yaml.compile_step);
     check_step.dependOn(&run_lib_tests.step);
@@ -353,9 +328,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_internal_tests.step);
     test_step.dependOn(validation_o2a.run_step);
     test_step.dependOn(validation_o2a_vendor.run_step);
-    test_step.dependOn(validation_o2a_vendor_profile.run_step);
     test_step.dependOn(validation_o2a_vendor_line_list.run_step);
     test_step.dependOn(validation_o2a_yaml.run_step);
     test_step.dependOn(o2a_plot_bundle_test_step);
-    test_step.dependOn(o2a_function_diff_test_step);
 }

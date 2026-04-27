@@ -177,13 +177,32 @@ pub fn fillZplusZminFromBasis(
     geo: *const Geometry,
     plm_basis: *const FourierPlmBasis,
 ) PhaseKernel {
+    return fillZplusZminFromBasisLimited(
+        i_fourier,
+        phase_coefs,
+        phase_functions.maxPhaseCoefficientIndex(phase_coefs),
+        geo,
+        plm_basis,
+    );
+}
+
+pub fn fillZplusZminFromBasisLimited(
+    i_fourier: usize,
+    phase_coefs: [types.max_phase_coef]f64,
+    max_phase_index: usize,
+    geo: *const Geometry,
+    plm_basis: *const FourierPlmBasis,
+) PhaseKernel {
     const n = geo.nmutot;
     var zplus = Mat.zero(n);
     var zmin = Mat.zero(n);
-    const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);
-    if (i_fourier > max_phase_index) return .{ .Zplus = zplus, .Zmin = zmin };
+    const bounded_max_phase_index = @min(
+        max_phase_index,
+        phase_functions.maxPhaseCoefficientIndex(phase_coefs),
+    );
+    if (i_fourier > bounded_max_phase_index) return .{ .Zplus = zplus, .Zmin = zmin };
 
-    for (i_fourier..max_phase_index + 1) |l| {
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = phase_coefs[l];
         if (l <= plm_basis.max_phase_index) {
             for (0..n) |j| {

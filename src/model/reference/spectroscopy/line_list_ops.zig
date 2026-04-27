@@ -1,4 +1,4 @@
-//! Mutation and selection helpers for spectroscopy line lists.
+// Mutation and selection helpers for spectroscopy line lists.
 
 const std = @import("std");
 const LineList = @import("line_list.zig");
@@ -25,6 +25,7 @@ pub fn attachStrongLineSidecars(
         self.strong_lines = null;
     }
     self.relaxation_matrix = try relaxation_matrix.clone(allocator);
+    self.vendor_strong_line_partition = detectVendorStrongLinePartition(self.*);
     try validateStrongLinePartition(self);
 }
 
@@ -39,7 +40,7 @@ pub fn buildStrongLineMatchIndex(self: *SpectroscopyLineList, allocator: Types.A
     const matches = try allocator.alloc(?u16, self.lines.len);
     errdefer allocator.free(matches);
     for (self.lines, 0..) |line, line_index| {
-        if (usesVendorStrongLinePartition(self.*) and !Support.isVendorO2AStrongCandidate(line)) {
+        if (usesVendorStrongLinePartition(self.*) and !Support.isVendorO2AStrongCandidateFromSource(line)) {
             matches[line_index] = null;
             continue;
         }
@@ -64,7 +65,7 @@ pub fn applyRuntimeControls(
         try allocator.dupe(u8, active_isotopes)
     else
         &.{};
-    if (self.runtime_controls.active_isotopes.len != 0) allocator.free(self.runtime_controls.active_isotopes);
+    self.runtime_controls.deinitOwned(allocator);
     self.runtime_controls = .{
         .gas_index = gas_index,
         .active_isotopes = replacement_active_isotopes,
@@ -101,6 +102,7 @@ pub fn applyRuntimeControls(
         disableStrongLineSidecars(self, allocator);
         return;
     }
+    self.vendor_strong_line_partition = detectVendorStrongLinePartition(self.*);
     try validateStrongLinePartition(self);
 }
 
@@ -154,9 +156,10 @@ pub fn relevantLineWindowForWavelength(self: SpectroscopyLineList, wavelength_nm
             .start_index = 0,
         };
     };
+    const vendor_discrete_cutoff_cm1 = cutoff_cm1 + Types.vendor_cutoff_prewindow_margin_cm1;
     const evaluation_wavenumber_cm1 = Physics.wavelengthToWavenumberCm1(wavelength_nm);
-    const minimum_wavenumber_cm1 = @max(evaluation_wavenumber_cm1 - cutoff_cm1, 1.0e-6);
-    const maximum_wavenumber_cm1 = evaluation_wavenumber_cm1 + cutoff_cm1;
+    const minimum_wavenumber_cm1 = @max(evaluation_wavenumber_cm1 - vendor_discrete_cutoff_cm1, 1.0e-6);
+    const maximum_wavenumber_cm1 = evaluation_wavenumber_cm1 + vendor_discrete_cutoff_cm1;
     const minimum_wavelength_nm = Support.wavenumberCm1ToWavelengthNm(maximum_wavenumber_cm1);
     const maximum_wavelength_nm = Support.wavenumberCm1ToWavelengthNm(minimum_wavenumber_cm1);
     const lower = Physics.lowerBoundLineIndex(self.lines, minimum_wavelength_nm);
@@ -204,7 +207,7 @@ pub fn matchedStrongIndexForRelevantLine(
         }
     }
     if (usesVendorStrongLinePartition(self)) {
-        if (!Support.isVendorO2AStrongCandidate(line)) return null;
+        if (!Support.isVendorO2AStrongCandidateFromSource(line)) return null;
         return findStrongLineMatch(self, line.center_wavelength_nm);
     }
     return findStrongLineMatch(self, line.center_wavelength_nm);
@@ -217,8 +220,12 @@ pub fn shouldExcludeWeakLine(
     line_index: usize,
     strong_line_anchors: *const [Types.max_strong_line_sidecars]?usize,
 ) bool {
+    if (usesVendorStrongLinePartition(self)) {
+        if (self.preserve_anchor_weak_lines) return false;
+        if (!Support.isVendorO2AStrongCandidateFromSource(line)) return false;
+        return matchedStrongIndexForRelevantLine(self, start_index, line, line_index) != null;
+    }
     const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse return false;
-    if (usesVendorStrongLinePartition(self)) return !self.preserve_anchor_weak_lines;
     if (self.preserve_anchor_weak_lines) return false;
     if (strong_line_anchors[strong_index]) |anchor_line_index| {
         return anchor_line_index == line_index;
@@ -232,28 +239,19 @@ pub fn validateStrongLinePartition(self: *const SpectroscopyLineList) !void {
     const strong_lines = self.strong_lines orelse return;
     if (strong_lines.len > Types.max_strong_line_sidecars) return error.TooManyStrongLineSidecars;
 
-    var matched_counts = [_]usize{0} ** Types.max_strong_line_sidecars;
+    var saw_candidate = false;
+    var matched_candidate = false;
     for (self.lines) |line| {
-        if (!Support.isVendorO2AStrongCandidate(line)) continue;
-        const strong_index = findStrongLineMatch(self.*, line.center_wavelength_nm) orelse continue;
-        matched_counts[strong_index] += 1;
+        if (!Support.isVendorO2AStrongCandidateFromSource(line)) continue;
+        saw_candidate = true;
+        _ = findStrongLineMatch(self.*, line.center_wavelength_nm) orelse continue;
+        matched_candidate = true;
     }
-
-    for (strong_lines, 0..) |_, strong_index| {
-        if (matched_counts[strong_index] == 0) return error.UnmatchedStrongLineSidecar;
-    }
+    if (saw_candidate and !matched_candidate) return error.UnmatchedStrongLineCandidate;
 }
 
 pub fn usesVendorStrongLinePartition(self: SpectroscopyLineList) bool {
-    if (!self.hasStrongLineSidecars()) return false;
-    if (self.runtime_controls.gas_index) |gas_index| {
-        if (gas_index != 7) return false;
-    }
-    for (self.lines) |line| {
-        if (line.gas_index != 7) continue;
-        if (Support.lineHasVendorStrongLineMetadata(line)) return true;
-    }
-    return false;
+    return self.hasStrongLineSidecars() and self.vendor_strong_line_partition;
 }
 
 pub fn disableStrongLineSidecars(self: *SpectroscopyLineList, allocator: Types.Allocator) void {
@@ -263,4 +261,17 @@ pub fn disableStrongLineSidecars(self: *SpectroscopyLineList, allocator: Types.A
     self.relaxation_matrix = null;
     if (self.strong_line_match_by_line) |matches| allocator.free(matches);
     self.strong_line_match_by_line = null;
+    self.vendor_strong_line_partition = false;
+}
+
+fn detectVendorStrongLinePartition(self: SpectroscopyLineList) bool {
+    if (!self.hasStrongLineSidecars()) return false;
+    if (self.runtime_controls.gas_index) |gas_index| {
+        if (gas_index != 7) return false;
+    }
+    for (self.lines) |line| {
+        if (line.gas_index != 7) continue;
+        if (Support.lineHasVendorStrongLineMetadata(line)) return true;
+    }
+    return false;
 }

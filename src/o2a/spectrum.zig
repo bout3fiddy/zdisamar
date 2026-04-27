@@ -8,7 +8,6 @@ const SummaryWorkspace = @import("../kernels/transport/measurement/workspace.zig
 const PreparedOpticalState = @import("../kernels/optics/preparation.zig").PreparedOpticalState;
 
 pub const Result = measurement.MeasurementSpaceProduct;
-pub const ForwardProfile = measurement.ForwardProfile;
 
 pub fn run(
     allocator: std.mem.Allocator,
@@ -16,8 +15,7 @@ pub fn run(
     optics: *const PreparedOpticalState,
     work: ?*SummaryWorkspace,
     method: Method,
-    rtm_controls: common.RtmControls,
-    profile: ?*ForwardProfile,
+    rtm_controls: common.RadiativeTransferControls,
 ) !Result {
     switch (method) {
         .exact => {},
@@ -38,17 +36,15 @@ pub fn run(
             route,
             optics,
             providers.exact(),
-            profile,
         );
         return view.toOwned(allocator);
     }
 
-    return measurement.simulateProductWithProfile(
+    return measurement.simulateProduct(
         allocator,
         case,
         route,
         optics,
         providers.exact(),
-        profile,
     );
 }

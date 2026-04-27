@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Render resolved O2A parity output products and serialize summary artifacts.
-
 const std = @import("std");
 const common = @import("o2a_parity_compile_common.zig");
 const parser = @import("o2a_parity_parser.zig");
@@ -139,7 +136,7 @@ fn writeGeneratedSpectrumCsv(
     try writer.interface.writeAll("wavelength_nm,irradiance,radiance,reflectance\n");
     for (product.wavelengths, product.irradiance, product.radiance, product.reflectance) |wavelength_nm, irradiance, radiance, reflectance| {
         try writer.interface.print(
-            "{d:.8},{e:.12},{e:.12},{e:.12}\n",
+            "{d:.8},{e:.17},{e:.17},{e:.17}\n",
             .{ wavelength_nm, irradiance, radiance, reflectance },
         );
     }

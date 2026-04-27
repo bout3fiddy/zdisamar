@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Apply channel-level calibration, correction, and sigma materialization
-//!   after transport integration.
-
 const calibration = @import("../../spectra/calibration.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
 const SpectralChannel = @import("../../../model/Instrument.zig").SpectralChannel;

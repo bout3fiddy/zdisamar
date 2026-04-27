@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Publish the prepared optical-state carriers and behavior used by optics
-//!   preparation and transport execution.
-
 pub const phase_coefficient_count = @import("state_types.zig").phase_coefficient_count;
 pub const ActiveLineAbsorber = @import("state_types.zig").ActiveLineAbsorber;
 pub const ActiveCrossSectionAbsorber = @import("state_types.zig").ActiveCrossSectionAbsorber;

@@ -10,6 +10,7 @@ pub const PreparedVerticalGrid = struct {
     sublayer_top_altitudes_km: []const f64,
     sublayer_bottom_altitudes_km: []const f64,
     sublayer_mid_altitudes_km: []const f64,
+    sublayer_support_weights_km: []const f64,
     sublayer_parent_interval_indices_1based: []const u32,
 };
 
@@ -136,12 +137,12 @@ pub fn buildIntervalMatchedDistribution(
     }
 
     var total_weight: f64 = 0.0;
-    for (weights, grid.sublayer_parent_interval_indices_1based, grid.sublayer_top_altitudes_km, grid.sublayer_bottom_altitudes_km) |*slot, parent_interval_index_1based, top_altitude_km, bottom_altitude_km| {
+    for (weights, grid.sublayer_parent_interval_indices_1based, grid.sublayer_support_weights_km) |*slot, parent_interval_index_1based, support_weight_km| {
         if (parent_interval_index_1based != interval_index_1based) {
             slot.* = 0.0;
             continue;
         }
-        const weight = @max(top_altitude_km - bottom_altitude_km, 0.0);
+        const weight = @max(support_weight_km, 0.0);
         slot.* = weight;
         total_weight += weight;
     }
@@ -185,13 +186,13 @@ pub fn buildFiniteLayerSublayerDistribution(
     }
 
     var total_weight: f64 = 0.0;
-    for (weights, grid.sublayer_top_altitudes_km, grid.sublayer_bottom_altitudes_km) |*slot, slot_top_km, slot_bottom_km| {
+    for (weights, grid.sublayer_top_altitudes_km, grid.sublayer_bottom_altitudes_km, grid.sublayer_support_weights_km) |*slot, slot_top_km, slot_bottom_km, support_weight_km| {
         const slot_height_km = @max(slot_top_km - slot_bottom_km, 1.0e-9);
         const overlap_km = @max(
             0.0,
             @min(slot_top_km, layer_top_km) - @max(slot_bottom_km, layer_bottom_km),
         );
-        const weight = overlap_km / slot_height_km;
+        const weight = @max(support_weight_km, 0.0) * (overlap_km / slot_height_km);
         slot.* = weight;
         total_weight += weight;
     }
@@ -229,9 +230,9 @@ pub fn buildGaussianSublayerDistribution(
     }
 
     var total_weight: f64 = 0.0;
-    for (weights, grid.sublayer_mid_altitudes_km) |*slot, altitude_km| {
+    for (weights, grid.sublayer_mid_altitudes_km, grid.sublayer_support_weights_km) |*slot, altitude_km, support_weight_km| {
         const delta = (altitude_km - center_km) / @max(width_km, 0.25);
-        const weight = @exp(-0.5 * delta * delta);
+        const weight = @exp(-0.5 * delta * delta) * @max(support_weight_km, 0.0);
         slot.* = weight;
         total_weight += weight;
     }

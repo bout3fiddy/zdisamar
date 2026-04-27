@@ -1,4 +1,4 @@
-//! Typed reference-data root.
+// Typed reference-data root.
 
 const climatology = @import("reference/climatology.zig");
 const cross_section_types = @import("reference/cross_sections.zig");
@@ -21,9 +21,6 @@ pub const SpectroscopyStrongLine = spectroscopy.SpectroscopyStrongLine;
 pub const SpectroscopyStrongLineSet = spectroscopy.SpectroscopyStrongLineSet;
 pub const RelaxationMatrix = spectroscopy.RelaxationMatrix;
 pub const SpectroscopyEvaluation = spectroscopy.SpectroscopyEvaluation;
-pub const SpectroscopyTraceContributionKind = spectroscopy.SpectroscopyTraceContributionKind;
-pub const SpectroscopyTraceRow = spectroscopy.SpectroscopyTraceRow;
-pub const SpectroscopyTrace = spectroscopy.SpectroscopyTrace;
 pub const SpectroscopyRuntimeControls = spectroscopy.SpectroscopyRuntimeControls;
 pub const StrongLinePreparedState = spectroscopy.StrongLinePreparedState;
 pub const SpectroscopyLineList = spectroscopy.SpectroscopyLineList;

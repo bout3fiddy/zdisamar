@@ -91,10 +91,6 @@ fn transportToOtherLevels(
     }
 }
 
-/// Dot product over the first n_gauss elements of a matrix row and a vector column.
-///
-/// Physics:
-///   Computes the Gauss-point-only contraction used by the LABOS recursion.
 pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_gauss: usize) f64 {
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
@@ -157,27 +153,6 @@ fn accumulateOrderContribution(
     }
 }
 
-fn integralFieldMagnitude(
-    ud_orde: []const basis.UDField,
-    start_level: usize,
-    end_level: usize,
-    n_gauss: usize,
-    nmutot: usize,
-    geo: *const basis.Geometry,
-) [2]f64 {
-    var sum_int_field: [2]f64 = .{ 0.0, 0.0 };
-    for (0..2) |imu0| {
-        for (start_level..end_level + 1) |ilevel| {
-            for (n_gauss..nmutot) |imu| {
-                const wt = geo.w[imu];
-                sum_int_field[imu0] += @abs(ud_orde[ilevel].U.col[imu0].get(imu)) / wt +
-                    @abs(ud_orde[ilevel].D.col[imu0].get(imu)) / wt;
-            }
-        }
-    }
-    return sum_int_field;
-}
-
 fn ordersScatInternal(
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
@@ -188,7 +163,7 @@ fn ordersScatInternal(
     geo: *const basis.Geometry,
     atten: anytype,
     rt: []const basis.LayerRT,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
     const nmutot = geo.nmutot;
@@ -261,7 +236,6 @@ fn ordersScatInternal(
     }
 
     var num_orders: usize = 1;
-    var sum_int_field_prev: [2]f64 = .{ 0.0, 0.0 };
 
     while (true) {
         num_orders += 1;
@@ -305,49 +279,10 @@ fn ordersScatInternal(
         }
 
         if (max_value < controls.threshold_conv_mult or num_orders >= num_orders_max) {
-            const sum_int_field = integralFieldMagnitude(
-                ud_orde_view,
-                start_level,
-                end_level,
-                n_gauss,
-                nmutot,
-                geo,
-            );
-
-            if (num_orders >= num_orders_max) {
-                // DECISION:
-                //   Preserve the vendor truncation fallback by scaling the
-                //   final unresolved order with the observed growth ratio.
-                for (0..2) |imu0| {
-                    var eigenvalue: f64 = 0.0;
-                    if (sum_int_field_prev[imu0] > 1.0e-10) {
-                        eigenvalue = sum_int_field[imu0] / sum_int_field_prev[imu0];
-                    }
-                    const scale = if (@abs(1.0 - eigenvalue) > 1.0e-10) 1.0 / (1.0 - eigenvalue) else 1.0;
-                    for (start_level..end_level + 1) |ilevel| {
-                        for (0..nmutot) |imu| {
-                            const uval = ud_view[ilevel].U.col[imu0].get(imu) + ud_orde_view[ilevel].U.col[imu0].get(imu) * scale;
-                            ud_view[ilevel].U.col[imu0].set(imu, uval);
-                            const dval = ud_view[ilevel].D.col[imu0].get(imu) + ud_orde_view[ilevel].D.col[imu0].get(imu) * scale;
-                            ud_view[ilevel].D.col[imu0].set(imu, dval);
-                            const su = ud_sum_local_view[ilevel].U.col[imu0].get(imu) + ud_local_view[ilevel].U.col[imu0].get(imu) * scale;
-                            ud_sum_local_view[ilevel].U.col[imu0].set(imu, su);
-                            const sd = ud_sum_local_view[ilevel].D.col[imu0].get(imu) + ud_local_view[ilevel].D.col[imu0].get(imu) * scale;
-                            ud_sum_local_view[ilevel].D.col[imu0].set(imu, sd);
-                        }
-                    }
-                }
-            } else {
-                accumulateOrderContribution(
-                    ud_view,
-                    ud_sum_local_view,
-                    ud_orde_view,
-                    ud_local_view,
-                    start_level,
-                    end_level,
-                    nmutot,
-                );
-            }
+            // PARITY:
+            //   `LabosModule::ordersScat` exits the scattering-order loop as
+            //   soon as the current order falls below `thresholdConv_mult`.
+            //   That current below-threshold order is not added to `UD_fc`.
             break;
         }
 
@@ -360,14 +295,6 @@ fn ordersScatInternal(
             end_level,
             nmutot,
         );
-        sum_int_field_prev = integralFieldMagnitude(
-            ud_orde_view,
-            start_level,
-            end_level,
-            n_gauss,
-            nmutot,
-            geo,
-        );
     }
 
     return .{
@@ -376,9 +303,6 @@ fn ordersScatInternal(
     };
 }
 
-/// Purpose:
-///   Propagate scattered radiation through the LABOS order recursion using
-///   caller-owned reusable buffers.
 pub fn ordersScatInto(
     workspace: *OrdersWorkspace,
     start_level: usize,
@@ -386,7 +310,7 @@ pub fn ordersScatInto(
     geo: *const basis.Geometry,
     atten: anytype,
     rt: []const basis.LayerRT,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
     return ordersScatInternal(
@@ -404,28 +328,6 @@ pub fn ordersScatInto(
     );
 }
 
-/// Purpose:
-///   Propagate scattered radiation through the LABOS order recursion.
-///
-/// Physics:
-///   Accumulates successive scattering orders across the level grid while
-///   applying the configured convergence thresholds.
-///
-/// Vendor:
-///   `LABOS orders-of-scattering`
-///
-/// Inputs:
-///   `rt` holds the layer reflection/transmission operators, `atten` holds the
-///   inter-level attenuation grid, and `controls` governs truncation.
-///
-/// Outputs:
-///   Returns the accumulated diffuse field and local source summaries.
-///
-/// Assumptions:
-///   The transport grid is already resolved and `start_level <= end_level`.
-///
-/// Validation:
-///   `tests/unit/transport_labos_test.zig`
 pub fn ordersScat(
     allocator: Allocator,
     start_level: usize,
@@ -433,7 +335,7 @@ pub fn ordersScat(
     geo: *const basis.Geometry,
     atten: anytype,
     rt: []const basis.LayerRT,
-    controls: common.RtmControls,
+    controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) !OrdersResult {
     const nlevel = end_level + 1;
@@ -473,4 +375,91 @@ pub fn ordersScat(
         num_orders_max,
     );
     return result;
+}
+
+test "multiple scattering drops the first below-threshold order" {
+    const allocator = std.testing.allocator;
+    const geo = basis.Geometry.init(2, 0.58, 0.64);
+    const nlevel = 2;
+    const nmutot = geo.nmutot;
+    const UnitAtten = struct {
+        fn get(_: @This(), _: usize, _: usize, _: usize) f64 {
+            return 1.0;
+        }
+    };
+
+    var rt = [_]basis.LayerRT{
+        .{
+            .R = basis.Mat.zero(nmutot),
+            .T = basis.Mat.zero(nmutot),
+        },
+        .{
+            .R = basis.Mat.zero(nmutot),
+            .T = basis.Mat.zero(nmutot),
+        },
+    };
+    for (0..nmutot) |imu| {
+        for (0..2) |extra| {
+            const source_col = geo.n_gauss + extra;
+            rt[0].R.set(imu, source_col, 0.02);
+            rt[1].R.set(imu, source_col, 0.01);
+            rt[1].T.set(imu, source_col, 0.03);
+        }
+        for (0..geo.n_gauss) |gauss_col| {
+            rt[0].R.set(imu, gauss_col, 0.02);
+            rt[1].R.set(imu, gauss_col, 0.01);
+            rt[1].T.set(imu, gauss_col, 0.03);
+        }
+    }
+
+    var single_workspace = try OrdersWorkspace.init(allocator, nlevel);
+    defer single_workspace.deinit();
+    var multiple_workspace = try OrdersWorkspace.init(allocator, nlevel);
+    defer multiple_workspace.deinit();
+
+    const single_result = ordersScatInto(
+        &single_workspace,
+        0,
+        1,
+        &geo,
+        UnitAtten{},
+        &rt,
+        .{
+            .scattering = .single,
+            .threshold_conv_first = 1.0e-12,
+            .threshold_conv_mult = 1.0,
+        },
+        20,
+    );
+    const multiple_result = ordersScatInto(
+        &multiple_workspace,
+        0,
+        1,
+        &geo,
+        UnitAtten{},
+        &rt,
+        .{
+            .scattering = .multiple,
+            .threshold_conv_first = 1.0e-12,
+            .threshold_conv_mult = 1.0,
+        },
+        20,
+    );
+
+    for (0..nlevel) |ilevel| {
+        for (0..2) |col| {
+            for (0..nmutot) |imu| {
+                try std.testing.expectApproxEqAbs(
+                    single_result.ud[ilevel].U.col[col].get(imu),
+                    multiple_result.ud[ilevel].U.col[col].get(imu),
+                    1.0e-15,
+                );
+                try std.testing.expectApproxEqAbs(
+                    single_result.ud[ilevel].D.col[col].get(imu),
+                    multiple_result.ud[ilevel].D.col[col].get(imu),
+                    1.0e-15,
+                );
+            }
+        }
+    }
 }

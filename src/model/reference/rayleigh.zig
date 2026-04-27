@@ -1,21 +1,3 @@
-//! Purpose:
-//!   Provide dry-air Rayleigh scattering and depolarization helpers.
-//!
-//! Physics:
-//!   Computes refractive index, King factors, depolarization, and molecular cross section for air.
-//!
-//! Vendor:
-//!   `Rayleigh scattering`
-//!
-//! Design:
-//!   Constants stay local so the scattering model remains self-contained and easy to validate.
-//!
-//! Invariants:
-//!   Wavelengths are clamped to positive values before the refractive and scattering formulas are evaluated.
-//!
-//! Validation:
-//!   Tests compare O2A-scale expectations and monotonic wavelength trends.
-
 const std = @import("std");
 
 const fraction_n2 = 78.084;
@@ -24,23 +6,17 @@ const fraction_ar = 0.934;
 const fraction_co2 = 0.036;
 const reference_number_density_cm3 = 2.5468993e19;
 
-/// Purpose:
-///   Compute the nitrogen King factor at a wavelength.
 fn kingFactorN2(wavelength_nm: f64) f64 {
     const sigma_um_inv = 1000.0 / @max(wavelength_nm, 1.0);
     return 1.034 + 3.17e-4 * sigma_um_inv * sigma_um_inv;
 }
 
-/// Purpose:
-///   Compute the oxygen King factor at a wavelength.
 fn kingFactorO2(wavelength_nm: f64) f64 {
     const sigma_um_inv = 1000.0 / @max(wavelength_nm, 1.0);
     const sigma_sq = sigma_um_inv * sigma_um_inv;
     return 1.096 + 1.385e-3 * sigma_sq + 1.448e-4 * sigma_sq * sigma_sq;
 }
 
-/// Purpose:
-///   Compute the weighted King factor for dry air.
 fn kingFactorAir(wavelength_nm: f64) f64 {
     const weighted_sum =
         fraction_n2 * kingFactorN2(wavelength_nm) +
@@ -50,11 +26,6 @@ fn kingFactorAir(wavelength_nm: f64) f64 {
     return weighted_sum / (fraction_n2 + fraction_o2 + fraction_ar + fraction_co2);
 }
 
-/// Purpose:
-///   Compute the refractive index of dry air at a wavelength.
-///
-/// Physics:
-///   Uses a standard wavelength-dependent refractivity approximation.
 pub fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
     const sigma_um_inv = 1000.0 / @max(wavelength_nm, 1.0);
     const sigma_sq = sigma_um_inv * sigma_um_inv;
@@ -65,21 +36,11 @@ pub fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
     return 1.0 + refractivity * 1.0e-8;
 }
 
-/// Purpose:
-///   Compute the depolarization factor of dry air.
 pub fn depolarizationFactorAir(wavelength_nm: f64) f64 {
     const king_factor_air = kingFactorAir(wavelength_nm);
     return 6.0 * (king_factor_air - 1.0) / (3.0 + 7.0 * king_factor_air);
 }
 
-/// Purpose:
-///   Compute the Rayleigh scattering cross section of dry air.
-///
-/// Physics:
-///   Returns the scattering cross section in cm^2.
-///
-/// Units:
-///   `wavelength_nm` is in nanometers and the output is in cm^2.
 pub fn crossSectionCm2(wavelength_nm: f64) f64 {
     const safe_wavelength_nm = @max(wavelength_nm, 1.0);
     const refractive_index = refractiveIndexDryAir(safe_wavelength_nm);
@@ -95,12 +56,6 @@ pub fn crossSectionCm2(wavelength_nm: f64) f64 {
     return cross_section * kingFactorAir(safe_wavelength_nm);
 }
 
-/// Purpose:
-///   Convert a Rayleigh cross section and air column into scattering optical depth.
-///
-/// Physics:
-///   The prepared atmosphere path uses this helper when interval preparation is
-///   driven by pressure-bounded columns rather than fixed altitude spans.
 pub fn scatteringOpticalDepthForColumn(
     wavelength_nm: f64,
     air_column_density_cm2: f64,

@@ -1,6 +1,3 @@
-//! Purpose:
-//!   Resolve active absorbers and materialize their prepared runtime carriers.
-
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const OperationalCrossSectionLut = @import("../../../model/Instrument.zig").OperationalCrossSectionLut;

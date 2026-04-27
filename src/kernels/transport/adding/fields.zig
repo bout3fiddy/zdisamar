@@ -1,25 +1,3 @@
-//! Purpose:
-//!   Reconstruct adding-method transport fields from composed layer state.
-//!
-//! Physics:
-//!   Turns the accumulated layer recurrence state into upward and downward
-//!   field arrays and local source summaries on the transport grid.
-//!
-//! Vendor:
-//!   `adding` field-reconstruction stage
-//!
-//! Design:
-//!   Field reconstruction is separated from composition so the directional
-//!   recurrences can be reasoned about independently from the execution front
-//!   door.
-//!
-//! Invariants:
-//!   Top-down and surface-up field arrays must preserve the vendor ordering of
-//!   levels and the Fourier-0 local-source closure behavior.
-//!
-//! Validation:
-//!   `tests/unit/transport_adding_test.zig` and transport integration suites.
-
 const std = @import("std");
 const common = @import("../common.zig");
 const composition = @import("composition.zig");
@@ -27,16 +5,6 @@ const labos = @import("../labos.zig");
 
 const Allocator = std.mem.Allocator;
 
-/// Purpose:
-///   Hold the full top-down reconstructed field state and its per-level local
-///   source summaries.
-///
-/// Physics:
-///   Captures the directional fields after the adding recursion has been
-///   resolved from the top of the column downward.
-///
-/// Vendor:
-///   `adding` top-down field reconstruction
 pub const TopDownField = struct {
     ud: []labos.UDField,
     ud_sum_local: []labos.UDLocal,
@@ -47,15 +15,6 @@ pub const TopDownField = struct {
     }
 };
 
-/// Purpose:
-///   Rebuild the top-down field arrays for a layered transport scene.
-///
-/// Physics:
-///   Propagates the composed atmosphere downward to recover the full field
-///   arrays and the vendor local-source accumulation at each level.
-///
-/// Vendor:
-///   `adding::calcTopDownField`
 pub fn calcTopDownField(
     allocator: Allocator,
     end_level: usize,
@@ -90,15 +49,6 @@ pub fn calcTopDownField(
     };
 }
 
-/// Purpose:
-///   Rebuild the surface-up field arrays for a layered transport scene.
-///
-/// Physics:
-///   Propagates the composed atmosphere upward from the lower boundary to
-///   recover the full directional field on the transport grid.
-///
-/// Vendor:
-///   `adding::calcSurfaceUpField`
 pub fn calcSurfaceUpField(
     allocator: Allocator,
     end_level: usize,
@@ -121,16 +71,6 @@ pub fn calcSurfaceUpField(
     return ud;
 }
 
-/// Purpose:
-///   Materialize the top-down composed atmosphere without expanding it into
-///   field arrays.
-///
-/// Physics:
-///   Produces the intermediate layer-composition state needed by diagnostics
-///   and top-down field reconstruction.
-///
-/// Vendor:
-///   `adding::buildTopDownPartAtmosphere`
 pub fn buildTopDownPartAtmosphere(
     allocator: Allocator,
     end_level: usize,

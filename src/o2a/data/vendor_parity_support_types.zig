@@ -95,42 +95,13 @@ pub const VendorO2AReflectanceCase = struct {
     }
 };
 
-pub const VendorO2APreparationProfile = struct {
-    input_loading_ns: u64 = 0,
-    scene_assembly_ns: u64 = 0,
-    optics_preparation_ns: u64 = 0,
-    plan_preparation_ns: u64 = 0,
-
-    pub fn reset(self: *VendorO2APreparationProfile) void {
-        self.* = .{};
-    }
-
-    pub fn totalNs(self: VendorO2APreparationProfile) u64 {
-        return self.input_loading_ns +
-            self.scene_assembly_ns +
-            self.optics_preparation_ns +
-            self.plan_preparation_ns;
-    }
-};
-
-pub const VendorO2AProfileCase = struct {
-    reflectance_case: VendorO2AReflectanceCase,
-    preparation_profile: VendorO2APreparationProfile,
-    forward_profile: MeasurementSpace.ForwardProfile,
-
-    pub fn deinit(self: *VendorO2AProfileCase, allocator: std.mem.Allocator) void {
-        self.reflectance_case.deinit(allocator);
-        self.* = undefined;
-    }
-};
-
-pub const VendorO2ATracePreparation = struct {
+pub const VendorO2APreparedCase = struct {
     reference: []ReferenceSample,
     scene: Scene,
     route: Route,
     prepared: OpticsPrepare.PreparedOpticalState,
 
-    pub fn deinit(self: *VendorO2ATracePreparation, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *VendorO2APreparedCase, allocator: std.mem.Allocator) void {
         self.prepared.deinit(allocator);
         self.scene.deinitOwned(allocator);
         allocator.free(self.reference);
@@ -138,32 +109,22 @@ pub const VendorO2ATracePreparation = struct {
     }
 
     pub fn intoReflectanceCase(
-        self: *VendorO2ATracePreparation,
+        self: *VendorO2APreparedCase,
         allocator: std.mem.Allocator,
     ) !VendorO2AReflectanceCase {
-        return intoReflectanceCaseWithProfile(self, allocator, null);
+        return intoReflectanceCaseInternal(self, allocator);
     }
 
-    pub fn intoProfiledReflectanceCase(
-        self: *VendorO2ATracePreparation,
+    fn intoReflectanceCaseInternal(
+        self: *VendorO2APreparedCase,
         allocator: std.mem.Allocator,
-        forward_profile: *MeasurementSpace.ForwardProfile,
     ) !VendorO2AReflectanceCase {
-        return intoReflectanceCaseWithProfile(self, allocator, forward_profile);
-    }
-
-    fn intoReflectanceCaseWithProfile(
-        self: *VendorO2ATracePreparation,
-        allocator: std.mem.Allocator,
-        forward_profile: ?*MeasurementSpace.ForwardProfile,
-    ) !VendorO2AReflectanceCase {
-        var product = try MeasurementSpace.simulateProductWithProfile(
+        var product = try MeasurementSpace.simulateProduct(
             allocator,
             &self.scene,
             self.route,
             &self.prepared,
             providers.exact(),
-            forward_profile,
         );
         errdefer product.deinit(allocator);
 

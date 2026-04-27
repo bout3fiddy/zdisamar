@@ -1,7 +1,3 @@
-//! Purpose:
-//!   Hold scalar interpolation, density-resolution, and particle-scaling
-//!   helpers for prepared optical state evaluation.
-
 const std = @import("std");
 const AbsorberModel = @import("../../../model/Absorber.zig");
 const AtmosphereModel = @import("../../../model/Atmosphere.zig");

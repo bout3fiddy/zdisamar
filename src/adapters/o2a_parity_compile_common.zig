@@ -1,10 +1,3 @@
-//! Purpose:
-//!   Share typed node helpers and merge logic between the retained O2A parity compiler stages.
-//!
-//! Design:
-//!   Keep the strict YAML node utilities separate from the scene compiler so parsing and typed
-//!   resolution can evolve independently.
-
 const std = @import("std");
 const parser = @import("o2a_parity_parser.zig");
 

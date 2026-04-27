@@ -26,7 +26,7 @@ fn exampleConfigPath() []const u8 {
 fn loadBaselineAnchor(allocator: std.mem.Allocator) !std.json.Parsed(BaselineAnchor) {
     const raw = try std.fs.cwd().readFileAlloc(
         allocator,
-        "validation/compatibility/o2a_vendor_forward_reflectance_baseline.json",
+        "validation/o2a_vendor_forward_reflectance_baseline.json",
         64 * 1024,
     );
     defer allocator.free(raw);
@@ -38,6 +38,10 @@ test "yaml parity example resolves key DISAMAR mapping controls" {
     defer loaded.deinit();
 
     try std.testing.expectEqualStrings("disamar_standard", loaded.resolved.plan.model_family);
+    try std.testing.expectEqualStrings(
+        "data/climatologies/vendor_config_o2a_profile.csv",
+        loaded.resolved.inputs.atmosphere_profile.path,
+    );
     try std.testing.expectEqual(@as(f64, 755.0), loaded.resolved.spectral_grid.start_nm);
     try std.testing.expectEqual(@as(f64, 776.0), loaded.resolved.spectral_grid.end_nm);
     try std.testing.expectEqual(@as(u32, 21), loaded.resolved.spectral_grid.sample_count);
@@ -56,6 +60,33 @@ test "yaml parity example resolves key DISAMAR mapping controls" {
     try std.testing.expectEqual(@as(u16, 20), loaded.resolved.rtm_controls.n_streams);
     try std.testing.expect(loaded.resolved.rtm_controls.integrate_source_function);
     try std.testing.expect(loaded.resolved.rtm_controls.renorm_phase_function);
+}
+
+test "yaml parity runtime resolves symmetric DISAMAR HR integration for both channels" {
+    var loaded = try parity_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
+    defer loaded.deinit();
+
+    var parity_case = try o2a_parity.prepareResolvedVendorO2ACase(std.testing.allocator, &loaded.resolved);
+    defer parity_case.deinit(std.testing.allocator);
+
+    const radiance = parity_case.scene.observation_model.resolvedChannelControls(.radiance).response;
+    const irradiance = parity_case.scene.observation_model.resolvedChannelControls(.irradiance).response;
+
+    try std.testing.expect(radiance.explicit);
+    try std.testing.expect(irradiance.explicit);
+    try std.testing.expectEqual(.disamar_hr_grid, radiance.integration_mode);
+    try std.testing.expectEqual(.disamar_hr_grid, irradiance.integration_mode);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.01), radiance.high_resolution_step_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.14), radiance.high_resolution_half_span_nm, 1.0e-12);
+    try std.testing.expectEqual(radiance.slit_index, irradiance.slit_index);
+    try std.testing.expectEqual(radiance.builtin_line_shape, irradiance.builtin_line_shape);
+    try std.testing.expectApproxEqAbs(radiance.fwhm_nm, irradiance.fwhm_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(radiance.high_resolution_step_nm, irradiance.high_resolution_step_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(radiance.high_resolution_half_span_nm, irradiance.high_resolution_half_span_nm, 1.0e-12);
+    try std.testing.expectEqual(
+        @as(usize, 47),
+        parity_case.prepared.spectroscopy_profile_altitudes_km.len,
+    );
 }
 
 test "yaml parity output computes vendor comparison metrics on the executable config" {

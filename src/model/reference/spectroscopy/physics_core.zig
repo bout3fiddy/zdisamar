@@ -1,4 +1,4 @@
-//! Weak-line spectroscopy helpers and shared line-shape math.
+// Weak-line spectroscopy helpers and shared line-shape math.
 
 const std = @import("std");
 const Types = @import("types.zig");
@@ -183,15 +183,15 @@ pub fn prepareWeakLineVoigtState(
     const safe_temperature = @max(temperature_k, 150.0);
     const safe_pressure = @max(pressure_atm, Types.min_spectroscopy_pressure_atm);
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
-    const center_wavenumber_cm1 = wavelengthToWavenumberCm1(line.center_wavelength_nm);
+    const center_wavenumber_cm1 = lineCenterWavenumberCm1(line);
     const temperature_ratio = reference_temperature_k / safe_temperature;
-    const pressure_shift_cm1 = -spectralWidthNmToCm1(line.pressure_shift_nm, center_wavenumber_cm1);
+    const pressure_shift_cm1 = linePressureShiftCm1(line);
     const shifted_center_wavenumber_cm1 = @max(
         center_wavenumber_cm1 + pressure_shift_cm1 * safe_pressure,
         1.0,
     );
     const half_width_cm1_at_t = @max(
-        spectralWidthNmToCm1(line.air_half_width_nm, center_wavenumber_cm1) *
+        lineAirHalfWidthCm1(line) *
             std.math.pow(f64, temperature_ratio, line.temperature_exponent),
         1.0e-6,
     );
@@ -228,7 +228,7 @@ pub fn prepareWeakLineVoigtState(
         (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * evaluation_wavenumber_cm1 / safe_temperature));
     const prefactor = @sqrt(@log(2.0)) /
         doppler_width_cm1 /
-        @sqrt(std.math.pi) *
+        @sqrt(Types.hitran_pi) *
         safe_pressure *
         converted_strength *
         stimulated_emission_scale *
@@ -243,28 +243,44 @@ pub fn prepareWeakLineVoigtState(
     };
 }
 
+fn lineCenterWavenumberCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.center_wavenumber_cm1))
+        line.center_wavenumber_cm1
+    else
+        wavelengthToWavenumberCm1(line.center_wavelength_nm);
+}
+
+fn lineAirHalfWidthCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.air_half_width_cm1))
+        line.air_half_width_cm1
+    else
+        spectralWidthNmToCm1(line.air_half_width_nm, lineCenterWavenumberCm1(line));
+}
+
+fn linePressureShiftCm1(line: Types.SpectroscopyLine) f64 {
+    return if (std.math.isFinite(line.pressure_shift_cm1))
+        line.pressure_shift_cm1
+    else
+        -spectralWidthNmToCm1(line.pressure_shift_nm, lineCenterWavenumberCm1(line));
+}
+
 pub fn weakLineContribution(
     wavelength_nm: f64,
     line: Types.SpectroscopyLine,
     temperature_k: f64,
     pressure_atm: f64,
     reference_temperature_k: f64,
-    cutoff_cm1: ?f64,
+    runtime_controls: Types.SpectroscopyRuntimeControls,
 ) Types.SpectroscopyEvaluation {
-    const Strong = @import("strong_lines.zig");
-
-    if (cutoff_cm1) |window_cm1| {
-        const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
-        if (@abs(Strong.shiftedLineCenterWavenumberCm1(line, pressure_atm) - evaluation_wavenumber_cm1) > window_cm1) {
-            return .{
-                .weak_line_sigma_cm2_per_molecule = 0.0,
-                .strong_line_sigma_cm2_per_molecule = 0.0,
-                .line_sigma_cm2_per_molecule = 0.0,
-                .line_mixing_sigma_cm2_per_molecule = 0.0,
-                .total_sigma_cm2_per_molecule = 0.0,
-                .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
-            };
-        }
+    if (!weakLineInsideVendorCutoff(wavelength_nm, line, pressure_atm, runtime_controls)) {
+        return .{
+            .weak_line_sigma_cm2_per_molecule = 0.0,
+            .strong_line_sigma_cm2_per_molecule = 0.0,
+            .line_sigma_cm2_per_molecule = 0.0,
+            .line_mixing_sigma_cm2_per_molecule = 0.0,
+            .total_sigma_cm2_per_molecule = 0.0,
+            .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+        };
     }
     const state = prepareWeakLineVoigtState(
         wavelength_nm,
@@ -282,4 +298,110 @@ pub fn weakLineContribution(
         .total_sigma_cm2_per_molecule = line_sigma,
         .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
     };
+}
+
+fn weakLineInsideVendorCutoff(
+    wavelength_nm: f64,
+    line: Types.SpectroscopyLine,
+    pressure_atm: f64,
+    runtime_controls: Types.SpectroscopyRuntimeControls,
+) bool {
+    const window_cm1 = runtime_controls.cutoff_cm1 orelse return true;
+    const Strong = @import("strong_lines.zig");
+    const shifted_center_wavenumber_cm1 = Strong.shiftedLineCenterWavenumberCm1(line, pressure_atm);
+    const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
+
+    if (runtime_controls.cutoff_grid_wavelengths_nm.len >= 2) {
+        // PARITY:
+        //   `HITRANModule::CalculatAbsXsec` computes nearest HR-grid indices
+        //   for `Lsig +/- cutoff` with `minloc`, then loops inclusively from
+        //   the high-wavenumber endpoint to the low-wavenumber endpoint. The
+        //   retained O2 A grid is stored as increasing wavelength, so index
+        //   order is the opposite of wavenumber order but still monotonic.
+        const lower_wavelength_endpoint_index = nearestWavenumberGridIndex(
+            runtime_controls.cutoff_grid_wavelengths_nm,
+            shifted_center_wavenumber_cm1 + window_cm1,
+        );
+        const upper_wavelength_endpoint_index = nearestWavenumberGridIndex(
+            runtime_controls.cutoff_grid_wavelengths_nm,
+            shifted_center_wavenumber_cm1 - window_cm1,
+        );
+        const evaluation_index = nearestWavenumberGridIndex(
+            runtime_controls.cutoff_grid_wavelengths_nm,
+            evaluation_wavenumber_cm1,
+        );
+        const start_index = @min(lower_wavelength_endpoint_index, upper_wavelength_endpoint_index);
+        const end_index = @max(lower_wavelength_endpoint_index, upper_wavelength_endpoint_index);
+        return evaluation_index >= start_index and evaluation_index <= end_index;
+    }
+
+    const fallback_cutoff_cm1 = window_cm1 + Types.vendor_cutoff_boundary_margin_cm1;
+    return @abs(shifted_center_wavenumber_cm1 - evaluation_wavenumber_cm1) <= fallback_cutoff_cm1;
+}
+
+fn nearestWavenumberGridIndex(wavelengths_nm: []const f64, target_wavenumber_cm1: f64) usize {
+    std.debug.assert(wavelengths_nm.len != 0);
+    if (wavelengths_nm.len == 1) return 0;
+
+    const first_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelengths_nm[0]);
+    const last_index = wavelengths_nm.len - 1;
+    const last_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelengths_nm[last_index]);
+
+    const descending = first_wavenumber_cm1 >= last_wavenumber_cm1;
+    if (descending) {
+        if (target_wavenumber_cm1 >= first_wavenumber_cm1) return 0;
+        if (target_wavenumber_cm1 <= last_wavenumber_cm1) return last_index;
+
+        var lower_index: usize = 0;
+        var upper_index: usize = last_index;
+        while (upper_index - lower_index > 1) {
+            const midpoint = lower_index + (upper_index - lower_index) / 2;
+            const midpoint_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelengths_nm[midpoint]);
+            if (midpoint_wavenumber_cm1 >= target_wavenumber_cm1) {
+                lower_index = midpoint;
+            } else {
+                upper_index = midpoint;
+            }
+        }
+        return nearestOfTwoWavenumberGridIndices(
+            wavelengths_nm,
+            target_wavenumber_cm1,
+            lower_index,
+            upper_index,
+        );
+    }
+
+    if (target_wavenumber_cm1 <= first_wavenumber_cm1) return 0;
+    if (target_wavenumber_cm1 >= last_wavenumber_cm1) return last_index;
+
+    var lower_index: usize = 0;
+    var upper_index: usize = last_index;
+    while (upper_index - lower_index > 1) {
+        const midpoint = lower_index + (upper_index - lower_index) / 2;
+        const midpoint_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelengths_nm[midpoint]);
+        if (midpoint_wavenumber_cm1 <= target_wavenumber_cm1) {
+            lower_index = midpoint;
+        } else {
+            upper_index = midpoint;
+        }
+    }
+    return nearestOfTwoWavenumberGridIndices(
+        wavelengths_nm,
+        target_wavenumber_cm1,
+        lower_index,
+        upper_index,
+    );
+}
+
+fn nearestOfTwoWavenumberGridIndices(
+    wavelengths_nm: []const f64,
+    target_wavenumber_cm1: f64,
+    lower_index: usize,
+    upper_index: usize,
+) usize {
+    const lower_delta = @abs(wavelengthToWavenumberCm1(wavelengths_nm[lower_index]) - target_wavenumber_cm1);
+    const upper_delta = @abs(wavelengthToWavenumberCm1(wavelengths_nm[upper_index]) - target_wavenumber_cm1);
+    // PARITY:
+    //   Fortran `minloc` returns the first matching array element on ties.
+    return if (upper_delta < lower_delta) upper_index else lower_index;
 }

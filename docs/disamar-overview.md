@@ -14,7 +14,7 @@ In other words, DISAMAR should be understood as a mature scientific framework wi
 
 ## Historical Note
 
-The model family was developed first in Fortran and has been used for instrument-definition studies, algorithm development, and operational Earth-observation processing. The documentation in this repository is about the current implementation in `zdisamar`: a typed execution model that preserves the scientific identity of DISAMAR while making state ownership, provenance, and extension boundaries explicit.
+The model family was developed first in Fortran and has been used for instrument-definition studies, algorithm development, and operational Earth-observation processing. The documentation in this repository is about the current implementation in `zdisamar`: a typed forward model that preserves the scientific identity of DISAMAR while making state ownership and provenance explicit.
 
 ## Scientific Pedigree
 
@@ -22,7 +22,7 @@ Several aspects of the literature matter directly for this repository.
 
 ### Broad spectral and algorithmic range
 
-The 2022 GMD model description presents DISAMAR as both a forward model and a retrieval system. That matters because the codebase must carry not only radiance simulation but also derivatives, inverse methods, and operational measurement handling.
+The 2022 GMD model description presents DISAMAR as both a forward model and a retrieval system. That context matters even while this repository's retained public surface is centered on the O2 A forward model.
 
 ### Operational oxygen A-band work
 
@@ -30,7 +30,7 @@ The oxygen A-band has been central to cloud and aerosol studies for years. The 2
 
 ### Ozone-profile operations
 
-The 2024 TROPOMI ozone-profile validation paper documents five years of operational ozone profiling in the Sentinel-5P processing chain, within the broader ESA and Copernicus operational context. The later 2025 harmonisation work shows that these ozone-profile records are part of an active cross-sensor atmospheric data record effort. That is important context for `zdisamar`: the implementation is not only about reproducing a numerical kernel, but about supporting a model family that is already embedded in sustained satellite-product generation.
+The 2024 TROPOMI ozone-profile validation paper documents five years of operational ozone profiling in the Sentinel-5P processing chain, within the broader ESA and Copernicus operational context. The later 2025 harmonisation work shows that these ozone-profile records are part of an active cross-sensor atmospheric data record effort. That is important context for `zdisamar`: the implementation is not only about reproducing a numerical routine, but about supporting a model family that is already embedded in sustained satellite-product generation.
 
 ### Supporting surface and trace-gas infrastructure
 
@@ -40,70 +40,64 @@ The 2024 geometry-dependent Lambert-equivalent-reflectivity climatology paper is
 
 The scientific vocabulary in the DISAMAR literature is specific. The main terms that appear throughout this repository are these.
 
-In this repository, those names serve two different roles:
-
-- they describe the literature families the project is trying to host,
-- they also label the current transport and retrieval lanes, which are still surrogate implementations in several places.
-
-So the definitions below describe the scientific target vocabulary. They should not be read as a claim that every current Zig kernel is already a method-faithful reproduction of that literature.
+The definitions below describe the scientific target vocabulary. They should not be read as a claim that every current Zig routine is already a method-faithful reproduction of that literature.
 
 ### Doubling-adding
 
 Doubling-adding is a multiple-scattering method for layered atmospheres. Each atmospheric layer is represented through reflection, transmission, and source terms; larger stacks are then assembled by recursively combining layers. The method is attractive for satellite retrieval work because it handles strong multiple scattering in a numerically stable way while keeping layer interfaces explicit.
 
-In the current Zig tree, the transport lane carrying the adding label is still a surrogate layered-scattering kernel. The name is preserved as a family label and routing seam, not as a claim of full doubling-adding fidelity.
+In the current Zig tree, the adding label identifies the doubling-adding radiative-transfer family. Public documentation should describe it as a radiative-transfer method, not as an implementation route.
 
 ### LABOS
 
-LABOS stands for layer-based orders of scattering. In practical terms it is an order-of-scattering formulation organized layer by layer, which makes it useful when a full multiple-scattering solution is not the only quantity of interest and when controlled approximations, perturbations, or derivative-like diagnostics are needed. In the DISAMAR literature, doubling-adding and LABOS are complementary transport lanes rather than competing codebases.
+LABOS stands for layer-based orders of scattering. In practical terms it is an order-of-scattering formulation organized layer by layer, which makes it useful when a full multiple-scattering solution is not the only quantity of interest and when controlled approximations, perturbations, or derivative-like diagnostics are needed. In the DISAMAR literature, doubling-adding and LABOS are complementary radiative-transfer methods rather than competing codebases.
 
-In the current Zig tree, the LABOS-labeled lane is likewise still a surrogate transport path that preserves a typed route boundary while the numerics mature.
+In the current Zig tree, the LABOS-labeled path identifies the layer-based orders-of-scattering method family.
 
 ### Optimal estimation
 
 Optimal estimation, usually in the Rodgers sense, combines a forward model, a prior state, and error statistics to solve an inverse problem. In DISAMAR-class retrievals this means the code must provide Jacobians, state-vector handling, consistent measurement-error treatment, posterior covariance, and averaging-kernel diagnostics.
 
-The current OE-labeled solver in `zdisamar` now follows that Rodgers-style spectral-fit path. The remaining surrogate retrieval work is in the DOAS- and DISMAS-labeled lanes, not in OE.
+The O2 A forward-model surface does not expose retrieval execution yet. OE remains important terminology for future retrieval-facing work.
 
 ### DOAS
 
 DOAS, differential optical absorption spectroscopy, fits narrow-band differential absorption structures after broad spectral structure has been removed or parameterized. It is useful when the retrieval target is the fine spectral signature of trace-gas absorption rather than the full absolute radiance field.
 
-The current DOAS-labeled solver preserves the typed route and observation contract for that family, but it remains a surrogate implementation today.
+The O2 A forward-model surface does not expose DOAS retrieval execution yet.
 
 ### DISMAS
 
-DISMAS is the direct intensity fitting strategy described in the DISAMAR literature. Instead of isolating only differential structure, it works directly in measurement space and therefore depends strongly on the quality of the forward operator, sampling model, and derivative information.
+DISMAS is the direct intensity fitting strategy described in the DISAMAR literature. Instead of isolating only differential structure, it works directly on the measured spectrum and therefore depends strongly on the quality of the forward model, sampling model, and derivative information.
 
-The current DISMAS-labeled solver is also still a surrogate implementation. Its value today is that it preserves the direct-measurement-space seam and provenance route while the method-specific numerics remain under active construction.
+The O2 A forward-model surface does not expose DISMAS retrieval execution yet.
 
 ## Why This Matters For `zdisamar`
 
-The current implementation is organized around the consequences of those method families.
+The current implementation is organized around the retained O2 A forward model.
 
 - `src/model/` carries one canonical scene and observation description.
-- `src/kernels/transport/` carries forward-operator families and measurement-space evaluation.
-- `src/retrieval/` carries OE-, DOAS-, and DISMAS-labeled retrieval layers on shared contracts.
-- `src/runtime/reference/` and `src/adapters/` carry the scientific input surfaces needed to prepare execution without letting file I/O leak into kernels.
-- `src/plugins/` carries capability registration and extension boundaries for transport, retrieval, surface, instrument, and exporter lanes.
+- `src/o2a/` carries the public `Case -> Data -> Optics -> Spectrum -> Report` surface.
+- `src/data/bundled/` and `src/adapters/` carry the scientific input surfaces needed to prepare execution without letting file I/O leak into numerical routines.
+- `src/kernels/` carries private numerical routines for optical-property preparation, radiative transfer, interpolation, quadrature, spectra, and linear algebra.
 
-The important point is that DISAMAR in this repository is the scientific model family hosted by the engine, not a claim that the rest of the system should inherit every trait of an earlier application layout.
+The important point is that DISAMAR in this repository is the scientific model family behind the forward model, not a claim that the rest of the system should inherit every trait of an earlier application layout.
 
 ## Operational Role
 
-The acronym itself signals one historical purpose: instrument specifications and retrieval-method analysis. That heritage remains visible in current usage. DISAMAR-related work appears in the literature both as a retrieval engine and as part of the scientific infrastructure around operational satellite products, especially in the Sentinel-5P/TROPOMI context used by European Earth-observation programmes.
+The acronym itself signals one historical purpose: instrument specifications and retrieval-method analysis. That heritage remains visible in current usage. DISAMAR-related work appears in the literature both as a retrieval forward model and as part of the scientific infrastructure around operational satellite products, especially in the Sentinel-5P/TROPOMI context used by European Earth-observation programmes.
 
 For the present codebase, that means the implementation has to satisfy three conditions at once:
 
 - it must describe the physics and retrieval language used in the papers;
 - it must expose operational replacement surfaces such as slit functions, solar references, and spectroscopy lookup tables explicitly;
-- it must keep provenance strong enough that a result can be traced back to its model family, route, reference data, and capability inventory.
+- it must keep provenance strong enough that a result can be tied back to its model family, radiative-transfer method, and reference data.
 
 ## Recommended Next Reads
 
 After this overview:
 
 1. Read [Architecture and Execution Model](./zig-architecture.md) for the system-level layout.
-2. Read [Operational O2 A-Band Path](./operational-o2a.md) for the main operational science path.
-3. Read [Plugins and Extension Boundaries](./plugins-and-extension-boundaries.md) for the capability system.
+2. Read [O2A Forward](./o2a-forward.md) for the retained public runtime path.
+3. Read [Parity Harness](./parity-harness.md) for the bounded DISAMAR comparison workflow.
 4. Read [Validation and Scientific Scope](./validation-and-parity.md) for the current tested and validated contract envelope.

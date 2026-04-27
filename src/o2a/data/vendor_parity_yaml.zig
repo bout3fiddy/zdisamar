@@ -1,31 +1,3 @@
-//! Purpose:
-//!   Provide a narrow internal API for running the committed executable O2A
-//!   parity YAML case from product helpers and validation tests.
-//!
-//! Physics:
-//!   The loaded document expresses the retained DISAMAR-inspired O2 A-band
-//!   parity scene: geometry, pressure-interval placement, aerosol placement,
-//!   line-by-line O2 controls, optional O2-O2 CIA, and scalar RTM controls.
-//!
-//! Vendor:
-//!   `readConfigFileModule::GENERAL/INSTRUMENT/ATMOSPHERIC_INTERVALS/AEROSOL/O2/O2-O2`
-//!   and `verifyConfigFileModule::fit-interval and interval-grid checks`
-//!
-//! Design:
-//!   This module keeps the YAML adapter at the edge. Callers load the committed
-//!   parity YAML, optionally apply a small typed override bundle, and then run
-//!   the shared parity support helpers against that resolved case.
-//!
-//! Invariants:
-//!   The executable YAML remains the source of truth for the retained parity
-//!   case, while overrides stay small and local to tests or profiling helpers.
-//!
-//! Validation:
-//!   `tests/validation/o2a_yaml_parity_runtime_test.zig`,
-//!   `tests/validation/o2a_forward_shape_test.zig`,
-//!   `tests/validation/o2a_vendor_reflectance_assessment_test.zig`,
-//!   and `tests/validation/o2a_vendor_reflectance_profile_smoke_test.zig`.
-
 const std = @import("std");
 const parity_config = @import("../../adapters/o2a_parity_config.zig");
 const parity_support = @import("vendor_parity_support.zig");
@@ -38,9 +10,7 @@ pub const RunSummary = parity_config.RunSummary;
 pub const ReferenceData = parity_support.ReferenceData;
 pub const ResolvedVendorO2ACase = parity_support.ResolvedVendorO2ACase;
 pub const VendorO2AReflectanceCase = parity_support.VendorO2AReflectanceCase;
-pub const VendorO2AProfileCase = parity_support.VendorO2AProfileCase;
-pub const VendorO2ATracePreparation = parity_support.VendorO2ATracePreparation;
-pub const VendorO2APreparationProfile = parity_support.VendorO2APreparationProfile;
+pub const VendorO2APreparedCase = parity_support.VendorO2APreparedCase;
 pub const ComparisonMetrics = parity_support.ComparisonMetrics;
 pub const TrendTolerances = parity_support.TrendTolerances;
 pub const TrendState = parity_support.TrendState;
@@ -107,43 +77,48 @@ pub fn runResolvedCaseAndWriteOutputs(
 }
 
 pub const runResolvedVendorO2AReflectanceCase = parity_support.runResolvedVendorO2AReflectanceCase;
-pub const runResolvedVendorO2AProfileCase = parity_support.runResolvedVendorO2AProfileCase;
-pub const prepareResolvedVendorO2ATraceCase = parity_support.prepareResolvedVendorO2ATraceCase;
+pub const prepareResolvedVendorO2ACase = parity_support.prepareResolvedVendorO2ACase;
 
 pub fn runDefaultReflectanceCase(
     allocator: std.mem.Allocator,
     overrides: ExecutionOverrides,
 ) !VendorO2AReflectanceCase {
-    var loaded = try loadDefaultResolvedCase(allocator);
+    return runReflectanceCaseFromFile(allocator, default_yaml_path, overrides);
+}
+
+pub fn runReflectanceCaseFromFile(
+    allocator: std.mem.Allocator,
+    yaml_path: []const u8,
+    overrides: ExecutionOverrides,
+) !VendorO2AReflectanceCase {
+    var loaded = try loadResolvedCaseFromFile(allocator, yaml_path);
     defer loaded.deinit();
     applyExecutionOverrides(&loaded.resolved, overrides);
     return parity_support.runResolvedVendorO2AReflectanceCase(allocator, &loaded.resolved);
 }
 
-pub fn runDefaultProfileCase(
+pub fn prepareDefaultCase(
     allocator: std.mem.Allocator,
     overrides: ExecutionOverrides,
-) !VendorO2AProfileCase {
-    var loaded = try loadDefaultResolvedCase(allocator);
-    defer loaded.deinit();
-    applyExecutionOverrides(&loaded.resolved, overrides);
-    return parity_support.runResolvedVendorO2AProfileCase(allocator, &loaded.resolved);
+) !VendorO2APreparedCase {
+    return prepareCaseFromFile(allocator, default_yaml_path, overrides);
 }
 
-pub fn prepareDefaultTraceCase(
+pub fn prepareCaseFromFile(
     allocator: std.mem.Allocator,
+    yaml_path: []const u8,
     overrides: ExecutionOverrides,
-) !VendorO2ATracePreparation {
-    var loaded = try loadDefaultResolvedCase(allocator);
+) !VendorO2APreparedCase {
+    var loaded = try loadResolvedCaseFromFile(allocator, yaml_path);
     defer loaded.deinit();
     applyExecutionOverrides(&loaded.resolved, overrides);
-    return parity_support.prepareResolvedVendorO2ATraceCase(allocator, &loaded.resolved);
+    return parity_support.prepareResolvedVendorO2ACase(allocator, &loaded.resolved);
 }
 
-pub fn prepareTraceCase(
+pub fn prepareCase(
     allocator: std.mem.Allocator,
-) !VendorO2ATracePreparation {
-    return prepareDefaultTraceCase(allocator, .{});
+) !VendorO2APreparedCase {
+    return prepareDefaultCase(allocator, .{});
 }
 
 pub fn loadVendorParityO2ASpectroscopyLineList(

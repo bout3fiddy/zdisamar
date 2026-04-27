@@ -1,24 +1,3 @@
-//! Purpose:
-//!   Define the measurement-space transport products and provider bindings.
-//!
-//! Physics:
-//!   Carries the transport, surface, instrument, and noise hooks required to
-//!   map radiance into measurement-space summary and product outputs.
-//!
-//! Vendor:
-//!   `measurement-space products`
-//!
-//! Design:
-//!   Keeps measurement-space outputs separate from the transport kernels so
-//!   the solver can remain focused on optical state preparation.
-//!
-//! Invariants:
-//!   Measurement summaries and products share the same sample count and shape
-//!   contract established by the workspace helpers.
-//!
-//! Validation:
-//!   Measurement-space summary and product tests.
-
 const std = @import("std");
 const InstrumentProviders = @import("../../../o2a/providers/instrument.zig");
 const NoiseProviders = @import("../../../o2a/providers/noise.zig");
@@ -30,7 +9,7 @@ const Allocator = std.mem.Allocator;
 pub const reflectance_export_name = "reflectance";
 pub const fitted_reflectance_export_name = "fitted_reflectance";
 
-/// Bound provider implementations used by measurement-space evaluation.
+// Bound implementation implementations used by instrument grid evaluation.
 pub const ProviderBindings = struct {
     transport: TransportProviders.Provider,
     surface: SurfaceProviders.Provider,
@@ -38,7 +17,7 @@ pub const ProviderBindings = struct {
     noise: NoiseProviders.Provider,
 };
 
-/// Measurement-space summary statistics for one spectral sweep.
+// Measurement-space summary statistics for one spectral sweep.
 pub const MeasurementSpaceSummary = struct {
     sample_count: u32,
     wavelength_start_nm: f64,
@@ -50,28 +29,7 @@ pub const MeasurementSpaceSummary = struct {
     mean_jacobian: ?f64 = null,
 };
 
-/// Coarse phase timings for one forward measurement-space sweep.
-pub const ForwardProfile = struct {
-    radiance_integration_ns: u64 = 0,
-    radiance_postprocess_ns: u64 = 0,
-    irradiance_integration_ns: u64 = 0,
-    irradiance_postprocess_ns: u64 = 0,
-    reduction_ns: u64 = 0,
-
-    pub fn reset(self: *ForwardProfile) void {
-        self.* = .{};
-    }
-
-    pub fn totalNs(self: ForwardProfile) u64 {
-        return self.radiance_integration_ns +
-            self.radiance_postprocess_ns +
-            self.irradiance_integration_ns +
-            self.irradiance_postprocess_ns +
-            self.reduction_ns;
-    }
-};
-
-/// Measurement-space product arrays and associated bulk optical properties.
+// Measurement-space product arrays and associated bulk optical properties.
 pub const MeasurementSpaceProduct = struct {
     summary: MeasurementSpaceSummary,
     wavelengths: []f64,
@@ -95,8 +53,6 @@ pub const MeasurementSpaceProduct = struct {
     depolarization_factor: f64,
     d_optical_depth_d_temperature: f64,
 
-    /// Purpose:
-    ///   Release the owned measurement-space product buffers.
     pub fn deinit(self: *MeasurementSpaceProduct, allocator: Allocator) void {
         allocator.free(self.wavelengths);
         allocator.free(self.radiance);
@@ -111,7 +67,7 @@ pub const MeasurementSpaceProduct = struct {
     }
 };
 
-/// Borrowed measurement-space outputs backed by a reusable product workspace.
+// Borrowed instrument grid outputs backed by a reusable product storage.
 pub const MeasurementSpaceProductView = struct {
     summary: MeasurementSpaceSummary,
     wavelengths: []const f64,

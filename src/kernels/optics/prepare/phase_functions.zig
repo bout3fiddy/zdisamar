@@ -1,31 +1,5 @@
-//! Purpose:
-//!   Define the typed phase-function coefficient carriers used by optics
-//!   preparation and scalar transport.
-//!
-//! Physics:
-//!   Encodes the Rayleigh proxy coefficients, vendor-style analytic HG
-//!   expansion, and weighted coefficient mixing used to prepare transport
-//!   layers.
-//!
-//! Vendor:
-//!   `propAtmosphereModule::getNumberPhasefcoef` and
-//!   `propAtmosphereModule::getOptPropAtm`
-//!
-//! Design:
-//!   The Zig path keeps a fixed-capacity coefficient carrier so the transport
-//!   API remains typed while still allowing the active HG tail to follow the
-//!   DISAMAR truncation rule instead of a hard four-term cutoff.
-//!
-//! Invariants:
-//!   Coefficient index `0` remains `1.0`, inactive tail entries remain zero,
-//!   and the active HG budget follows the vendor truncation recurrence.
-//!
-//! Validation:
-//!   `tests/unit/optics_preparation_test.zig`,
-//!   `tests/validation/disamar_compatibility_harness_test.zig`, and the O2A
-//!   vendor-parity function-diff harness.
-
 const std = @import("std");
+const Rayleigh = @import("../../../model/reference/rayleigh.zig");
 const Scene = @import("../../../model/Scene.zig").Scene;
 
 pub const legacy_phase_coefficient_count: usize = 4;
@@ -61,9 +35,19 @@ pub fn maxPhaseCoefficientIndex(phase_coefficients: [phase_coefficient_count]f64
 }
 
 pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
+    return gasPhaseCoefficientsAtWavelength(760.0);
+}
+
+pub fn gasPhaseCoefficientsAtWavelength(wavelength_nm: f64) [phase_coefficient_count]f64 {
     var coefficients = zeroPhaseCoefficients();
-    coefficients[2] = 0.05;
+    coefficients[2] = rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
     return coefficients;
+}
+
+pub fn rayleighPhaseCoefficient2AtWavelength(wavelength_nm: f64) f64 {
+    const depolarization = Rayleigh.depolarizationFactorAir(wavelength_nm);
+    const eps = 45.0 * depolarization / (6.0 - 7.0 * depolarization);
+    return (45.0 + eps) / (90.0 + 20.0 * eps);
 }
 
 pub fn computeSingleScatterAlbedo(scene: *const Scene, wavelength_nm: f64) f64 {
@@ -102,13 +86,14 @@ pub fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
 }
 
 pub fn combinePhaseCoefficients(
+    wavelength_nm: f64,
     gas_scattering_optical_depth: f64,
     aerosol_scattering_optical_depth: f64,
     cloud_scattering_optical_depth: f64,
     aerosol_phase_coefficients: [phase_coefficient_count]f64,
     cloud_phase_coefficients: [phase_coefficient_count]f64,
 ) [phase_coefficient_count]f64 {
-    const gas_phase_coefficients = gasPhaseCoefficients();
+    const gas_phase_coefficients = gasPhaseCoefficientsAtWavelength(wavelength_nm);
     const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
     if (total_scattering == 0.0) return gas_phase_coefficients;
 
@@ -187,6 +172,14 @@ test "analytic HG phase coefficients follow vendor normalization" {
     try std.testing.expectApproxEqAbs(@as(f64, 3.0 * 0.7), coefficients[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 5.0 * 0.7 * 0.7), coefficients[2], 1.0e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 7.0 * 0.7 * 0.7 * 0.7), coefficients[3], 1.0e-12);
+}
+
+test "scalar Rayleigh phase coefficient follows vendor depolarization formula" {
+    const coefficients = gasPhaseCoefficientsAtWavelength(761.75);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), coefficients[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefficients[1], 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.4795010601166188), coefficients[2], 1.0e-15);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefficients[3], 1.0e-12);
 }
 
 test "analytic HG phase coefficients follow vendor truncation budget" {
