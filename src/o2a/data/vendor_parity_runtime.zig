@@ -50,7 +50,6 @@ const Allocator = std.mem.Allocator;
 pub const AbsorberSpecies = parity_types.AbsorberSpecies;
 pub const Route = parity_types.Route;
 pub const RtmControls = parity_types.RtmControls;
-pub const PreparationPhaseProfile = parity_types.PreparationPhaseProfile;
 pub const ReferenceSample = parity_types.ReferenceSample;
 pub const ExternalAsset = parity_types.ExternalAsset;
 pub const OutputKind = parity_types.OutputKind;
@@ -428,7 +427,7 @@ pub fn runResolvedVendorO2AReflectanceCase(
     prepared: OpticsPrepare.PreparedOpticalState,
     product: MeasurementSpace.MeasurementSpaceProduct,
 } {
-    var prepared_case = try prepareResolvedVendorO2ATraceCase(allocator, resolved, null);
+    var prepared_case = try prepareResolvedVendorO2ACase(allocator, resolved);
     errdefer {
         prepared_case.prepared.deinit(allocator);
         prepared_case.scene.deinitOwned(allocator);
@@ -453,34 +452,20 @@ pub fn runResolvedVendorO2AReflectanceCase(
     };
 }
 
-pub fn prepareResolvedVendorO2ATraceCase(
+pub fn prepareResolvedVendorO2ACase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
-    phase_profile_out: ?*PreparationPhaseProfile,
 ) !struct {
     reference: []ReferenceSample,
     scene: Scene,
     route: Route,
     prepared: OpticsPrepare.PreparedOpticalState,
 } {
-    if (phase_profile_out) |profile| profile.* = .{
-        .input_loading_ns = 0,
-        .scene_assembly_ns = 0,
-        .optics_preparation_ns = 0,
-        .plan_preparation_ns = 0,
-    };
-    var timer = if (phase_profile_out != null)
-        std.time.Timer.start() catch unreachable
-    else
-        null;
-
     var inputs = try loadResolvedVendorO2AInputs(allocator, resolved);
     defer inputs.deinit(allocator);
-    if (phase_profile_out) |profile| profile.input_loading_ns = if (timer) |*owned| owned.lap() else 0;
 
     var scene = try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
     errdefer scene.deinitOwned(allocator);
-    if (phase_profile_out) |profile| profile.scene_assembly_ns = if (timer) |*owned| owned.lap() else 0;
 
     const reference = inputs.reference;
     inputs.reference = inputs.reference[0..0];
@@ -495,13 +480,11 @@ pub fn prepareResolvedVendorO2ATraceCase(
         .lut = &inputs.lut,
     });
     errdefer prepared.deinit(allocator);
-    if (phase_profile_out) |profile| profile.optics_preparation_ns = if (timer) |*owned| owned.lap() else 0;
 
     try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
     try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
 
     const route = try prepareResolvedVendorO2ARoute(&scene, resolved.rtm_controls);
-    if (phase_profile_out) |profile| profile.plan_preparation_ns = if (timer) |*owned| owned.lap() else 0;
 
     return .{
         .reference = reference,

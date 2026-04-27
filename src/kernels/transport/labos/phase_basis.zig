@@ -14,15 +14,6 @@ pub const PhaseKernel = struct {
     Zmin: Mat,
 };
 
-pub const ZplusContributionTerm = struct {
-    coefficient_index: usize,
-    phase_coefficient: f64,
-    plm_row: f64,
-    plm_col: f64,
-    contribution: f64,
-    cumulative_zplus: f64,
-};
-
 pub const FourierPlmBasis = struct {
     i_fourier: usize,
     max_phase_index: usize,
@@ -263,41 +254,4 @@ pub fn fillZplusZmin(
     const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);
     const plm_basis = FourierPlmBasis.init(i_fourier, max_phase_index, geo);
     return fillZplusZminFromBasis(i_fourier, phase_coefs, geo, &plm_basis);
-}
-
-pub fn collectZplusContributionTerms(
-    i_fourier: usize,
-    phase_coefs: [types.max_phase_coef]f64,
-    max_phase_index: usize,
-    row_index: usize,
-    column_index: usize,
-    plm_basis: *const FourierPlmBasis,
-    terms: *[types.max_phase_coef]ZplusContributionTerm,
-) usize {
-    const bounded_max_phase_index = @min(
-        max_phase_index,
-        phase_functions.maxPhaseCoefficientIndex(phase_coefs),
-    );
-    if (i_fourier > bounded_max_phase_index) return 0;
-
-    var count: usize = 0;
-    var cumulative: f64 = 0.0;
-    for (i_fourier..bounded_max_phase_index + 1) |l| {
-        if (l > plm_basis.max_phase_index) break;
-        const phase_coefficient = phase_coefs[l];
-        const plm_row = plm_basis.plus[l][row_index];
-        const plm_col = plm_basis.plus[l][column_index];
-        const contribution = phase_coefficient * plm_row * plm_col;
-        cumulative += contribution;
-        terms[count] = .{
-            .coefficient_index = l,
-            .phase_coefficient = phase_coefficient,
-            .plm_row = plm_row,
-            .plm_col = plm_col,
-            .contribution = contribution,
-            .cumulative_zplus = cumulative,
-        };
-        count += 1;
-    }
-    return count;
 }

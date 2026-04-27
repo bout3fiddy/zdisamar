@@ -106,52 +106,6 @@ pub const SpectroscopyEvaluation = struct {
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 
-pub const SpectroscopyTraceContributionKind = enum {
-    weak_included,
-    weak_excluded_anchor,
-    weak_excluded_vendor_partition,
-    strong_sidecar,
-};
-
-pub const SpectroscopyTraceRow = struct {
-    contribution_kind: SpectroscopyTraceContributionKind,
-    wavelength_nm: f64,
-    global_line_index: ?usize = null,
-    strong_index: ?usize = null,
-    matched_strong_index: ?usize = null,
-    gas_index: u16 = 0,
-    isotope_number: u8 = 0,
-    center_wavelength_nm: f64,
-    center_wavenumber_cm1: f64,
-    shifted_center_wavenumber_cm1: f64,
-    line_strength_cm2_per_molecule: f64 = 0.0,
-    air_half_width_nm: f64 = 0.0,
-    temperature_exponent: f64 = 0.0,
-    lower_state_energy_cm1: f64 = 0.0,
-    pressure_shift_nm: f64 = 0.0,
-    line_mixing_coefficient: f64 = 0.0,
-    branch_ic1: ?u8 = null,
-    branch_ic2: ?u8 = null,
-    rotational_nf: ?u8 = null,
-    weak_line_sigma_cm2_per_molecule: f64 = 0.0,
-    strong_line_sigma_cm2_per_molecule: f64 = 0.0,
-    line_mixing_sigma_cm2_per_molecule: f64 = 0.0,
-    total_sigma_cm2_per_molecule: f64 = 0.0,
-};
-
-pub const SpectroscopyTrace = struct {
-    wavelength_nm: f64,
-    temperature_k: f64,
-    pressure_hpa: f64,
-    evaluation: SpectroscopyEvaluation,
-    rows: []SpectroscopyTraceRow,
-
-    pub fn deinit(self: *SpectroscopyTrace, allocator: Allocator) void {
-        allocator.free(self.rows);
-        self.* = undefined;
-    }
-};
-
 pub const SpectroscopyRuntimeControls = struct {
     gas_index: ?u16 = null,
     active_isotopes: []const u8 = &.{},

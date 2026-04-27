@@ -11,7 +11,6 @@ var result = try zdisamar.run(
     &prepared,
     .exact,
     .{},
-    null,
 );
 defer result.deinit(allocator);
 ```
@@ -34,7 +33,6 @@ The public root intentionally keeps only the literal O2A surface:
 - `run`
 - `writeReport`
 - `parity`
-- `profile`
 
 The old split `loadData -> buildOptics -> runSpectrum` lifecycle is no longer
 public.

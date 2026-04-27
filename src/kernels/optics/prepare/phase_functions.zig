@@ -23,7 +23,7 @@
 //! Validation:
 //!   `tests/unit/optics_preparation_test.zig`,
 //!   `tests/validation/disamar_compatibility_harness_test.zig`, and the O2A
-//!   vendor-parity function-diff harness.
+//!   validation parity lanes.
 
 const std = @import("std");
 const Rayleigh = @import("../../../model/reference/rayleigh.zig");

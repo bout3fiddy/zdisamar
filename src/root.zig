@@ -28,11 +28,10 @@ pub const Method = o2a.Method;
 pub const Work = o2a.Work;
 pub const Result = o2a.Result;
 pub const Report = o2a.Report;
-pub const ForwardProfile = o2a.ForwardProfile;
 pub const RtmControls = o2a.RtmControls;
 pub const Prepared = o2a.Prepared;
 pub const parity = o2a.parity;
-pub const profile = o2a.profile;
+pub const report = o2a.report;
 
 pub const prepare = o2a.prepare;
 pub const run = o2a.run;

@@ -38,10 +38,6 @@ const Workspace = @import("workspace.zig");
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
 
-fn recordPhaseLap(timer: ?*std.time.Timer, target: *u64) void {
-    if (timer) |resolved_timer| target.* = resolved_timer.lap();
-}
-
 /// Purpose:
 ///   Execute the transport solver across the scene spectral grid.
 ///
@@ -68,16 +64,10 @@ pub fn simulateInternal(
     providers: Types.ProviderBindings,
     buffers: Workspace.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
-    forward_profile: ?*Types.ForwardProfile,
 ) Workspace.Error!Types.MeasurementSpaceSummary {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try Workspace.validateBuffers(sample_count, buffers);
-    if (forward_profile) |profile| profile.reset();
-    var phase_timer = if (forward_profile != null)
-        std.time.Timer.start() catch unreachable
-    else
-        null;
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
@@ -163,7 +153,6 @@ pub fn simulateInternal(
         buffers.scratch[index] = integrated.radiance;
         if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
     }
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.radiance_integration_ns);
     if (uses_integrated_radiance_sampling) {
         // DECISION:
         //   Integrated sampling bypasses slit convolution because the
@@ -181,8 +170,6 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.radiance_postprocess_ns);
-
     for (sample_plans, 0..) |plan, index| {
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,
@@ -193,7 +180,6 @@ pub fn simulateInternal(
             &plan.irradiance_integration,
         );
     }
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.irradiance_integration_ns);
     if (uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
@@ -215,8 +201,6 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.irradiance_postprocess_ns);
-
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
         buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
@@ -302,8 +286,6 @@ pub fn simulateInternal(
         for (jacobian) |value| jacobian_sum += value;
         mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
     }
-    if (forward_profile) |profile| recordPhaseLap(if (phase_timer) |*timer| timer else null, &profile.reduction_ns);
-
     return .{
         .sample_count = @intCast(sample_count),
         .wavelength_start_nm = buffers.wavelengths[0],
@@ -330,7 +312,7 @@ pub fn simulate(
     var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
     defer evaluation_cache.deinit();
     evaluation_cache.reset();
-    return simulateInternal(allocator, scene, route, prepared, providers, buffers, &evaluation_cache, null);
+    return simulateInternal(allocator, scene, route, prepared, providers, buffers, &evaluation_cache);
 }
 
 /// Purpose:
@@ -372,6 +354,5 @@ pub fn simulateSummaryWithWorkspace(
         providers,
         try workspace.buffers(allocator, &summary_scene, route, providers),
         try workspace.spectralCache(allocator),
-        null,
     );
 }

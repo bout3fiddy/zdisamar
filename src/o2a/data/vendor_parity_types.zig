@@ -15,13 +15,6 @@ pub const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 pub const Route = transport_common.Route;
 pub const RtmControls = transport_common.RtmControls;
 
-pub const PreparationPhaseProfile = struct {
-    input_loading_ns: u64,
-    scene_assembly_ns: u64,
-    optics_preparation_ns: u64,
-    plan_preparation_ns: u64,
-};
-
 pub const ReferenceSample = struct {
     wavelength_nm: f64,
     irradiance: f64,

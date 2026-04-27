@@ -18,24 +18,6 @@ pub fn simulateProduct(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     providers: Types.ProviderBindings,
 ) Workspace.Error!Types.MeasurementSpaceProduct {
-    return simulateProductWithProfile(
-        allocator,
-        scene,
-        route,
-        prepared,
-        providers,
-        null,
-    );
-}
-
-pub fn simulateProductWithProfile(
-    allocator: Allocator,
-    scene: *const Scene,
-    route: common.Route,
-    prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-    forward_profile: ?*Types.ForwardProfile,
-) Workspace.Error!Types.MeasurementSpaceProduct {
     var workspace: Workspace.ProductWorkspace = .{};
     defer workspace.deinit(allocator);
     const view = try simulateProductWithWorkspace(
@@ -45,7 +27,6 @@ pub fn simulateProductWithProfile(
         route,
         prepared,
         providers,
-        forward_profile,
     );
     return view.toOwned(allocator);
 }
@@ -57,7 +38,6 @@ pub fn simulateProductWithWorkspace(
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     providers: Types.ProviderBindings,
-    forward_profile: ?*Types.ForwardProfile,
 ) Workspace.Error!Types.MeasurementSpaceProductView {
     const buffers = try workspace.buffers(allocator, scene, route, providers);
     const summary = try simulate_core.simulateInternal(
@@ -68,7 +48,6 @@ pub fn simulateProductWithWorkspace(
         providers,
         buffers,
         try workspace.spectralCache(allocator),
-        forward_profile,
     );
     return .{
         .summary = summary,

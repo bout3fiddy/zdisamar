@@ -18,7 +18,7 @@ Current anchors:
 - bundled data and LUT workflows: `src/data/bundled/`
 - optics preparation: `src/kernels/optics/preparation.zig`
 - transport and measurement: `src/kernels/transport/`
-- report/profile output: `src/o2a/report/json.zig`
+- report output: `src/o2a/report/json.zig`
 - parity runtime: `src/o2a/data/vendor_parity_*.zig`
 
 Validation commands:
@@ -26,7 +26,7 @@ Validation commands:
 ```bash
 zig build test-validation-o2a
 zig build test-validation-o2a-vendor
-zig build test-validation-o2a-vendor-profile
-zig build test-validation-o2a-function-diff
+zig build test-validation-o2a-vendor-line-list
+zig build test-validation-o2a-plot-bundle
 zig build o2a-plot-bundle
 ```

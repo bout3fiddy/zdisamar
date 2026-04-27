@@ -18,7 +18,7 @@
   },
   "guidance": {
     "allowed_to_fail": true,
-    "summary": "This lane is intentionally allowed to fail until the stored vendor residual collapses to numerical zero. It uses a coarsened vendor-shaped execution grid so the assessment stays usable in the local development loop; use the full vendor plot/profile helpers for deeper full-band inspection. Agents should focus on whether mean/rms/max differences improved, regressed, or stayed flat relative to the committed baseline, and only treat regressions as urgent when the change touched forward-physics code or O2A reference assets.",
+    "summary": "This lane is intentionally allowed to fail until the stored vendor residual collapses to numerical zero. It uses a coarsened vendor-shaped execution grid so the assessment stays usable in the local development loop; use the full vendor plot bundle for deeper full-band inspection. Agents should focus on whether mean/rms/max differences improved, regressed, or stayed flat relative to the committed baseline, and only treat regressions as urgent when the change touched forward-physics code or O2A reference assets.",
     "expect_improvement_when_touched": [
       "src/kernels/transport",
       "src/kernels/optics",

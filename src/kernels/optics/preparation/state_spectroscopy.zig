@@ -28,7 +28,7 @@ const max_spectroscopy_profile_nodes: usize = 256;
 ///   Altitudes are kilometers and cross sections are cm^2 per molecule.
 ///
 /// Validation:
-///   Exercised by the O2 A function-diff and plot-bundle parity lanes.
+///   Exercised by the O2 A validation and plot-bundle parity lanes.
 pub const ProfileNodeSpectroscopyCache = struct {
     node_count: usize = 0,
     altitudes_km: []const f64 = &.{},

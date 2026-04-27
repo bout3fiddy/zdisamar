@@ -10,11 +10,10 @@ pub const Method = @import("o2a/method.zig").Method;
 pub const Work = @import("kernels/transport/measurement/workspace.zig").SummaryWorkspace;
 pub const Result = spectrum.Result;
 pub const Report = report_json.SummaryReport;
-pub const ForwardProfile = spectrum.ForwardProfile;
 pub const RtmControls = @import("kernels/transport/common.zig").RtmControls;
+pub const report = report_json;
 
 pub const parity = @import("o2a/data/vendor_parity_yaml.zig");
-pub const profile = report_json;
 
 pub const Prepared = struct {
     case: Case,
@@ -53,7 +52,6 @@ pub fn run(
     prepared: *Prepared,
     method: Method,
     rtm_controls: RtmControls,
-    profile_out: ?*ForwardProfile,
 ) !Result {
     return spectrum.run(
         allocator,
@@ -62,7 +60,6 @@ pub fn run(
         &prepared.work,
         method,
         rtm_controls,
-        profile_out,
     );
 }
 

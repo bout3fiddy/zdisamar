@@ -4,7 +4,6 @@
   "wavelength_max_nm": 776.0,
   "vendor_reference_path": "validation/o2a_with_cia_disamar_reference.csv",
   "generated_spectrum_path": "validation/generated_spectrum.csv",
-  "profile_summary_path": "validation/profile_summary.json",
   "reflectance": {
     "mae": 2.7652345958281735e-15,
     "rmse": 8.792219637841996e-15,

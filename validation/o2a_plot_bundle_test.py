@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 import tempfile
 
 from o2a_plot_bundle import build_bundle
@@ -36,7 +35,6 @@ def main() -> int:
         root = Path(tmpdir)
         current_csv = root / "current.csv"
         vendor_csv = root / "vendor.csv"
-        profile_summary = root / "summary.json"
         output_dir = root / "bundle"
 
         write_text(
@@ -63,53 +61,11 @@ def main() -> int:
             )
             + "\n",
         )
-        profile_summary.write_text(
-            json.dumps(
-                {
-                    "optimize_mode": "ReleaseFast",
-                    "repeat_count": 1,
-                    "sample_count": 3,
-                    "summary_path": "/abs/out/summary.json",
-                    "spectrum_path": "/abs/out/generated_spectrum.csv",
-                    "runs": [
-                        {
-                            "run_index": 1,
-                            "sample_count": 3,
-                            "preparation": {
-                                "input_loading_ns": 1,
-                                "scene_assembly_ns": 2,
-                                "optics_preparation_ns": 3,
-                                "plan_preparation_ns": 4,
-                            },
-                            "forward": {
-                                "radiance_integration_ns": 5,
-                                "radiance_postprocess_ns": 6,
-                                "irradiance_integration_ns": 7,
-                                "irradiance_postprocess_ns": 8,
-                                "reduction_ns": 9,
-                            },
-                            "total_prepare_ns": 10,
-                            "total_forward_ns": 11,
-                            "total_end_to_end_ns": 12,
-                        }
-                    ],
-                    "preparation": {"total_ns": {"mean_ns": 10, "min_ns": 10, "max_ns": 10}},
-                    "forward": {"total_ns": {"mean_ns": 11, "min_ns": 11, "max_ns": 11}},
-                    "total_prepare_ns": {"mean_ns": 10, "min_ns": 10, "max_ns": 10},
-                    "total_forward_ns": {"mean_ns": 11, "min_ns": 11, "max_ns": 11},
-                    "total_end_to_end_ns": {"mean_ns": 12, "min_ns": 12, "max_ns": 12},
-                },
-                indent=2,
-            )
-            + "\n"
-        )
-
         current_rel = current_csv.relative_to(REPO_ROOT)
         vendor_rel = vendor_csv.relative_to(REPO_ROOT)
-        summary_rel = profile_summary.relative_to(REPO_ROOT)
         output_rel = output_dir.relative_to(REPO_ROOT)
 
-        build_bundle(current_rel, summary_rel, vendor_rel, output_rel, "zig build o2a-plots")
+        build_bundle(current_rel, vendor_rel, output_rel, "zig build o2a-plots")
 
         expected_files = [
             output_dir / "bundle_manifest.json",
@@ -119,7 +75,6 @@ def main() -> int:
             output_dir / "current_vs_vendor_irradiance.png",
             output_dir / "current_vs_vendor_residuals.png",
             output_dir / "generated_spectrum.csv",
-            output_dir / "profile_summary.json",
         ]
         for path in expected_files:
             assert path.exists(), f"missing {path}"
@@ -128,7 +83,6 @@ def main() -> int:
         assert metrics["sample_count"] == 3
         assert metrics["vendor_reference_path"] == vendor_rel.as_posix()
         assert metrics["generated_spectrum_path"] == f"{output_rel.as_posix()}/generated_spectrum.csv"
-        assert metrics["profile_summary_path"] == f"{output_rel.as_posix()}/profile_summary.json"
 
         manifest = json.loads((output_dir / "bundle_manifest.json").read_text())
         assert manifest["canonical_command"] == "zig build o2a-plots"
@@ -141,13 +95,8 @@ def main() -> int:
             f"{output_rel.as_posix()}/current_vs_vendor_irradiance.png",
             f"{output_rel.as_posix()}/current_vs_vendor_residuals.png",
             f"{output_rel.as_posix()}/generated_spectrum.csv",
-            f"{output_rel.as_posix()}/profile_summary.json",
         ]
 
-        tracked_summary = json.loads((output_dir / "profile_summary.json").read_text())
-        assert tracked_summary["summary_path"] == f"{output_rel.as_posix()}/profile_summary.json"
-        assert tracked_summary["spectrum_path"] == f"{output_rel.as_posix()}/generated_spectrum.csv"
-        assert "/abs/out" not in (output_dir / "profile_summary.json").read_text()
         assert "/abs/out" not in (output_dir / "bundle_manifest.json").read_text()
         assert "/abs/out" not in (output_dir / "comparison_metrics.json").read_text()
 
@@ -155,10 +104,9 @@ def main() -> int:
             output_dir / "bundle_manifest.json",
             output_dir / "comparison_metrics.json",
             output_dir / "generated_spectrum.csv",
-            output_dir / "profile_summary.json",
         ]
         before = read_bytes_map(stable_files)
-        build_bundle(current_rel, summary_rel, vendor_rel, output_rel, "zig build o2a-plots")
+        build_bundle(current_rel, vendor_rel, output_rel, "zig build o2a-plots")
         after = read_bytes_map(stable_files)
         assert before == after
 

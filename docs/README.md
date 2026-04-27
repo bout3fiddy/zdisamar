@@ -12,4 +12,3 @@ the tracked docs because they no longer describe the shipped public surface.
 4. [Validation And Parity](./validation-and-parity.md)
 5. [Reference Data And Bundles](./reference-data-and-bundles.md)
 6. [O2A Vendor Stage Map](./o2a-vendor-stage-map.md)
-7. [O2A Telemetry](./o2a-telemetry.md)

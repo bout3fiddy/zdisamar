@@ -14,7 +14,6 @@ import csv
 import json
 from pathlib import Path
 import shutil
-from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,17 +21,12 @@ import numpy as np
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Materialize a tracked O2A comparison bundle from a fresh zdisamar profile run."
+        description="Materialize a tracked O2A comparison bundle from a fresh zdisamar spectrum run."
     )
     parser.add_argument(
         "--current-spectrum",
         required=True,
-        help="Generated zdisamar spectrum CSV from the O2A profile workflow.",
-    )
-    parser.add_argument(
-        "--profile-summary",
-        required=True,
-        help="Raw profile summary JSON from the O2A profile workflow.",
+        help="Generated zdisamar spectrum CSV.",
     )
     parser.add_argument(
         "--vendor-reference",
@@ -93,15 +87,6 @@ def write_csv_copy(source: Path, destination: Path) -> None:
     shutil.copyfile(source, destination)
 
 
-def sanitize_profile_summary(raw_summary: dict[str, Any], output_dir: Path) -> dict[str, Any]:
-    sanitized = dict(raw_summary)
-    summary_path = output_dir / "profile_summary.json"
-    spectrum_path = output_dir / "generated_spectrum.csv"
-    sanitized["summary_path"] = stable_repo_path(summary_path)
-    sanitized["spectrum_path"] = stable_repo_path(spectrum_path)
-    return sanitized
-
-
 def metric_block(wavelength_nm: np.ndarray, current: np.ndarray, vendor: np.ndarray) -> dict[str, float]:
     residual = current - vendor
     return {
@@ -121,7 +106,6 @@ def write_comparison_metrics(
     vendor: dict[str, np.ndarray],
     vendor_reference_path: Path,
     generated_spectrum_path: Path,
-    profile_summary_path: Path,
 ) -> None:
     metrics = {
         "sample_count": int(len(wavelength_nm)),
@@ -129,7 +113,6 @@ def write_comparison_metrics(
         "wavelength_max_nm": float(wavelength_nm.max()),
         "vendor_reference_path": stable_repo_path(vendor_reference_path),
         "generated_spectrum_path": stable_repo_path(generated_spectrum_path),
-        "profile_summary_path": stable_repo_path(profile_summary_path),
         "reflectance": metric_block(wavelength_nm, current["reflectance"], vendor["reflectance"]),
         "radiance": metric_block(wavelength_nm, current["radiance"], vendor["radiance"]),
         "irradiance": metric_block(wavelength_nm, current["irradiance"], vendor["irradiance"]),
@@ -151,7 +134,6 @@ def write_manifest(
         "current_vs_vendor_irradiance.png",
         "current_vs_vendor_residuals.png",
         "generated_spectrum.csv",
-        "profile_summary.json",
     ]
     manifest = {
         "schema_version": 1,
@@ -244,7 +226,6 @@ def create_plots(
 
 def build_bundle(
     current_spectrum_path: Path,
-    profile_summary_path: Path,
     vendor_reference_path: Path,
     output_dir: Path,
     canonical_command: str,
@@ -259,11 +240,6 @@ def build_bundle(
     generated_spectrum_path = output_dir / "generated_spectrum.csv"
     write_csv_copy(current_spectrum_path, generated_spectrum_path)
 
-    raw_summary = json.loads(profile_summary_path.read_text())
-    sanitized_summary = sanitize_profile_summary(raw_summary, output_dir)
-    tracked_summary_path = output_dir / "profile_summary.json"
-    tracked_summary_path.write_text(json.dumps(sanitized_summary, indent=2) + "\n")
-
     write_comparison_metrics(
         output_dir / "comparison_metrics.json",
         wavelength_nm,
@@ -271,7 +247,6 @@ def build_bundle(
         vendor_resampled,
         vendor_reference_path,
         generated_spectrum_path,
-        tracked_summary_path,
     )
     create_plots(output_dir, wavelength_nm, current, vendor_resampled)
     write_manifest(output_dir / "bundle_manifest.json", canonical_command, vendor_reference_path, output_dir)
@@ -281,7 +256,6 @@ def main() -> None:
     args = parse_args()
     build_bundle(
         Path(args.current_spectrum),
-        Path(args.profile_summary),
         Path(args.vendor_reference),
         Path(args.output_dir),
         args.canonical_command,

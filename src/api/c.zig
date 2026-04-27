@@ -107,7 +107,6 @@ export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
         prepared,
         .exact,
         .{},
-        null,
     ) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);

@@ -154,22 +154,4 @@ pub const SpectroscopyLineList = struct {
     ) Types.SpectroscopyEvaluation {
         return @import("line_list_eval.zig").evaluateAt(self, wavelength_nm, temperature_k, pressure_hpa);
     }
-
-    pub fn traceAt(
-        self: SpectroscopyLineList,
-        allocator: Types.Allocator,
-        wavelength_nm: f64,
-        temperature_k: f64,
-        pressure_hpa: f64,
-        prepared_state: ?*const Types.StrongLinePreparedState,
-    ) !Types.SpectroscopyTrace {
-        return @import("line_list_eval.zig").traceAt(
-            self,
-            allocator,
-            wavelength_nm,
-            temperature_k,
-            pressure_hpa,
-            prepared_state,
-        );
-    }
 };

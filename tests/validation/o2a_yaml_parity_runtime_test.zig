@@ -66,7 +66,7 @@ test "yaml parity runtime resolves symmetric DISAMAR HR integration for both cha
     var loaded = try parity_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
     defer loaded.deinit();
 
-    var parity_case = try o2a_parity.prepareResolvedVendorO2ATraceCase(std.testing.allocator, &loaded.resolved);
+    var parity_case = try o2a_parity.prepareResolvedVendorO2ACase(std.testing.allocator, &loaded.resolved);
     defer parity_case.deinit(std.testing.allocator);
 
     const radiance = parity_case.scene.observation_model.resolvedChannelControls(.radiance).response;

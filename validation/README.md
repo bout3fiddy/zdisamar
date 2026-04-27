@@ -9,7 +9,7 @@ analysis belong under `out/`, not under this directory.
 - `o2a_with_cia_disamar_reference.csv`: committed DISAMAR reference spectrum.
 - `generated_spectrum.csv`: current zdisamar full-spectrum output from the
   tracked plot refresh.
-- `comparison_metrics.json`, `profile_summary.json`, and `bundle_manifest.json`:
+- `comparison_metrics.json` and `bundle_manifest.json`:
   metadata for the tracked plot refresh.
 - `current_vs_vendor_*.png`: committed full-spectrum comparison plots.
 - `o2a_vendor_forward_reflectance_baseline.json`: retained focused validation
@@ -21,17 +21,16 @@ analysis belong under `out/`, not under this directory.
 - `zig build test-validation`
 - `zig build o2a-plots`
 
-`zig build o2a-plots` and `zig build o2a-plot-bundle` regenerate the tracked
-plot files in this directory.
+`zig build o2a-plot-bundle` regenerates the tracked plot files in this
+directory.
 
 ## Irradiance Residual Note
 
 The remaining O2 A irradiance residuals are best understood as floating-point
-evaluation noise, not a physical or interpolation mismatch. The focused
-`irradiance_contributions.csv` function-diff trace at `773.9 nm` shows exact
-agreement in sample wavelengths and support irradiance values, with the first
-differences appearing in kernel-weight/product arithmetic. At an irradiance
-scale near `5e14`, one binary64 ULP is about `0.0625`, so residuals such as
+evaluation noise, not a physical or interpolation mismatch. Retained parity
+checks show exact agreement in sample wavelengths and support irradiance values,
+with the first differences appearing in kernel-weight/product arithmetic. At an
+irradiance scale near `5e14`, one binary64 ULP is about `0.0625`, so residuals such as
 `0.125`, `0.375`, and `0.4375` are only a few representable floating-point
 steps.
 

@@ -9,15 +9,9 @@ Useful commands:
 ```bash
 zig build test-validation-o2a
 zig build test-validation-o2a-vendor
-zig build test-validation-o2a-function-diff
-zig build o2a-function-diff
-zig build o2a-parity-diagnostics
+zig build test-validation-o2a-vendor-line-list
+zig build test-validation-o2a-plot-bundle
 ```
-
-`scripts/testing_harness/o2a_function_trace.zig` and
-`scripts/testing_harness/build_options_test_support.zig` are harness inputs
-used by `scripts/testing_harness/o2a_function_diff.py`; they are intentionally
-not product build roots.
 
 Tracked plot bundle refreshes should use:
 
@@ -25,5 +19,4 @@ Tracked plot bundle refreshes should use:
 zig build o2a-plot-bundle
 ```
 
-That command uses the committed vendor reference unless
 The tracked plot bundle uses the committed vendor reference in `validation/`.

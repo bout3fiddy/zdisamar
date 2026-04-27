@@ -10,8 +10,7 @@
     "validation/current_vs_vendor_radiance.png",
     "validation/current_vs_vendor_irradiance.png",
     "validation/current_vs_vendor_residuals.png",
-    "validation/generated_spectrum.csv",
-    "validation/profile_summary.json"
+    "validation/generated_spectrum.csv"
   ],
   "policy": {
     "default_vendor_refresh": "use_committed_vendor_reference",

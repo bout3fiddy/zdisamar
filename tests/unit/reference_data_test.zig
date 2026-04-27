@@ -17,7 +17,6 @@ const SpectroscopyLineList = ReferenceData.SpectroscopyLineList;
 const SpectroscopyStrongLine = ReferenceData.SpectroscopyStrongLine;
 const SpectroscopyStrongLineSet = ReferenceData.SpectroscopyStrongLineSet;
 const RelaxationMatrix = ReferenceData.RelaxationMatrix;
-const SpectroscopyTraceContributionKind = ReferenceData.SpectroscopyTraceContributionKind;
 
 test "spectroscopy constants preserve vendor weak and strong temperature scaling" {
     try std.testing.expectEqual(
@@ -44,14 +43,6 @@ fn makeRelaxationMatrix(line_count: usize, wt0: []const f64, bw: []const f64) !R
         .wt0 = try std.testing.allocator.dupe(f64, wt0),
         .bw = try std.testing.allocator.dupe(f64, bw),
     };
-}
-
-fn countRows(trace: ReferenceData.SpectroscopyTrace, kind: SpectroscopyTraceContributionKind) usize {
-    var count: usize = 0;
-    for (trace.rows) |row| {
-        if (row.contribution_kind == kind) count += 1;
-    }
-    return count;
 }
 
 fn applyRuntimeControlsRetryWithAllocator(allocator: std.mem.Allocator) !void {
@@ -355,14 +346,10 @@ test "spectroscopy line list partitions strong and weak lanes when sidecars are 
 
     try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
 
-    const trace = try lines.traceAt(std.testing.allocator, 771.25, 255.0, 820.0, null);
-    defer trace.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), countRows(trace, .strong_sidecar));
-    try std.testing.expectEqual(@as(usize, 2), trace.rows[trace.rows.len - 1].strong_index.?);
-    try std.testing.expect(trace.evaluation.weak_line_sigma_cm2_per_molecule > 0.0);
-    try std.testing.expect(trace.evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
-    try std.testing.expect(@abs(trace.evaluation.line_mixing_sigma_cm2_per_molecule) > 0.0);
+    const evaluation = lines.evaluateAt(771.25, 255.0, 820.0);
+    try std.testing.expect(evaluation.weak_line_sigma_cm2_per_molecule > 0.0);
+    try std.testing.expect(evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
+    try std.testing.expect(@abs(evaluation.line_mixing_sigma_cm2_per_molecule) > 0.0);
 }
 
 test "strong-line sidecars choose one anchor line per strong feature" {
@@ -401,24 +388,15 @@ test "strong-line sidecars choose one anchor line per strong feature" {
 
     try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
 
-    const trace = try lines.traceAt(std.testing.allocator, 759.594260, 255.0, 820.0, null);
-    defer trace.deinit(std.testing.allocator);
+    try lines.buildStrongLineMatchIndex(std.testing.allocator);
+    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[0]);
+    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[1]);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[2]);
+    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[3]);
 
-    var strong_rows: usize = 0;
-    var vendor_excluded_rows: usize = 0;
-    for (trace.rows) |row| {
-        switch (row.contribution_kind) {
-            .strong_sidecar => {
-                strong_rows += 1;
-                try std.testing.expectEqual(@as(?usize, 2), row.global_line_index);
-                try std.testing.expectEqual(@as(?usize, 0), row.strong_index);
-            },
-            .weak_excluded_vendor_partition => vendor_excluded_rows += 1,
-            else => {},
-        }
-    }
-    try std.testing.expectEqual(@as(usize, 1), strong_rows);
-    try std.testing.expectEqual(@as(usize, 4), vendor_excluded_rows);
+    const evaluation = lines.evaluateAt(759.594260, 255.0, 820.0);
+    try std.testing.expectEqual(@as(f64, 0.0), evaluation.weak_line_sigma_cm2_per_molecule);
+    try std.testing.expect(evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
 }
 
 test "cutoff-based prewindow keeps far-wing O2A lines beyond one nanometer" {
@@ -488,18 +466,8 @@ test "O2A cutoff matches vendor nearest-grid weak-line boundary" {
     defer lines.deinit(std.testing.allocator);
 
     const vendor_boundary_sample_nm = 772.969173559943;
-    const trace = try lines.traceAt(
-        std.testing.allocator,
-        vendor_boundary_sample_nm,
-        294.2,
-        1013.0,
-        null,
-    );
-    defer trace.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), trace.rows.len);
-    try std.testing.expectEqual(.weak_included, trace.rows[0].contribution_kind);
-    try std.testing.expect(trace.evaluation.total_sigma_cm2_per_molecule > 0.0);
+    const evaluation = lines.evaluateAt(vendor_boundary_sample_nm, 294.2, 1013.0);
+    try std.testing.expect(evaluation.total_sigma_cm2_per_molecule > 0.0);
 
     var second_included_lines = SpectroscopyLineList{
         .lines = try std.testing.allocator.dupe(SpectroscopyLine, &.{second_included_boundary_line}),
@@ -743,16 +711,8 @@ test "vendor O2A partition keeps matched fallback metadata rows in the weak lane
     try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[0]);
     try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[1]);
 
-    const trace = try lines.traceAt(std.testing.allocator, 771.3016, 255.0, 820.0, null);
-    defer trace.deinit(std.testing.allocator);
-
-    var saw_fallback_weak = false;
-    for (trace.rows) |row| {
-        if (row.global_line_index != 1) continue;
-        try std.testing.expectEqual(SpectroscopyTraceContributionKind.weak_included, row.contribution_kind);
-        saw_fallback_weak = true;
-    }
-    try std.testing.expect(saw_fallback_weak);
+    const evaluation = lines.evaluateAt(771.3016, 255.0, 820.0);
+    try std.testing.expect(evaluation.weak_line_sigma_cm2_per_molecule > 0.0);
 }
 
 test "vendor O2A strong candidates fail fast when they cannot be matched to a sidecar" {
@@ -1023,14 +983,12 @@ test "prepared strong-line state preserves upper-atmosphere pressure scaling" {
     );
     try std.testing.expect(prepared_state.half_width_cm1_at_t[0] > 0.0);
 
-    const prepared_trace = try line_list.traceAt(std.testing.allocator, 771.25, 190.5, 0.000258, &prepared_state);
-    defer prepared_trace.deinit(std.testing.allocator);
-    const unprepared_trace = try line_list.traceAt(std.testing.allocator, 771.25, 190.5, 0.000258, null);
-    defer unprepared_trace.deinit(std.testing.allocator);
+    const prepared_evaluation = line_list.evaluateAtPrepared(771.25, 190.5, 0.000258, &prepared_state);
+    const unprepared_evaluation = line_list.evaluateAt(771.25, 190.5, 0.000258);
 
     try std.testing.expectApproxEqAbs(
-        unprepared_trace.evaluation.total_sigma_cm2_per_molecule,
-        prepared_trace.evaluation.total_sigma_cm2_per_molecule,
+        unprepared_evaluation.total_sigma_cm2_per_molecule,
+        prepared_evaluation.total_sigma_cm2_per_molecule,
         1.0e-18,
     );
 }

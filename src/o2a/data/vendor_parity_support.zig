@@ -1,5 +1,5 @@
 //! Purpose:
-//!   Own the retained O2A parity execution, profiling, and assessment helpers
+//!   Own the retained O2A parity execution and assessment helpers
 //!   now that YAML is the source of truth for case assembly.
 //!
 //! Physics:
@@ -13,8 +13,8 @@
 //!
 //! Design:
 //!   Case assembly lives in the YAML adapter and shared runtime contract. This
-//!   file keeps only the typed execution products, profiling shells, and
-//!   residual analysis helpers that multiple lanes still share.
+//!   file keeps only the typed execution products and residual analysis helpers
+//!   that multiple lanes still share.
 //!
 //! Invariants:
 //!   The helpers here never invent a second config source of truth; they only
@@ -24,17 +24,13 @@
 //!   `tests/validation/o2a_yaml_parity_runtime_test.zig`,
 //!   `tests/validation/o2a_forward_shape_test.zig`,
 //!   `tests/validation/o2a_vendor_reflectance_assessment_test.zig`,
-//!   and `tests/validation/o2a_vendor_reflectance_profile_smoke_test.zig`.
+//!   and retained plot-bundle validation.
 
 const std = @import("std");
 const MeasurementSpace = @import("../../kernels/transport/measurement.zig");
-const OpticsPrepare = @import("../../kernels/optics/preparation.zig");
 const ReferenceDataModel = @import("../../model/ReferenceData.zig");
-const Scene = @import("../../model/Scene.zig").Scene;
-const providers = @import("../providers/root.zig");
 const runtime = @import("vendor_parity_runtime.zig");
 const support_types = @import("vendor_parity_support_types.zig");
-const Route = @import("../../kernels/transport/common.zig").Route;
 
 pub const ReferenceData = support_types.ReferenceData;
 pub const ReferenceSample = support_types.ReferenceSample;
@@ -48,9 +44,7 @@ pub const AssessmentVerdict = support_types.AssessmentVerdict;
 pub const AssessmentTrend = support_types.AssessmentTrend;
 pub const AssessmentOutcome = support_types.AssessmentOutcome;
 pub const VendorO2AReflectanceCase = support_types.VendorO2AReflectanceCase;
-pub const VendorO2APreparationProfile = support_types.VendorO2APreparationProfile;
-pub const VendorO2AProfileCase = support_types.VendorO2AProfileCase;
-pub const VendorO2ATracePreparation = support_types.VendorO2ATracePreparation;
+pub const VendorO2APreparedCase = support_types.VendorO2APreparedCase;
 
 pub fn runResolvedVendorO2AReflectanceCase(
     allocator: std.mem.Allocator,
@@ -66,48 +60,13 @@ pub fn runResolvedVendorO2AReflectanceCase(
     };
 }
 
-pub fn runResolvedVendorO2AProfileCase(
+pub fn prepareResolvedVendorO2ACase(
     allocator: std.mem.Allocator,
     resolved: *const ResolvedVendorO2ACase,
-) !VendorO2AProfileCase {
-    var preparation_profile: VendorO2APreparationProfile = .{};
-    var prepared_case = try prepareResolvedVendorO2ATraceCaseWithProfile(
+) !VendorO2APreparedCase {
+    const runtime_case = try runtime.prepareResolvedVendorO2ACase(
         allocator,
         resolved,
-        &preparation_profile,
-    );
-    errdefer prepared_case.deinit(allocator);
-
-    var forward_profile: MeasurementSpace.ForwardProfile = .{};
-    const reflectance_case = try prepared_case.intoProfiledReflectanceCase(
-        allocator,
-        &forward_profile,
-    );
-    return .{
-        .reflectance_case = reflectance_case,
-        .preparation_profile = preparation_profile,
-        .forward_profile = forward_profile,
-    };
-}
-
-pub fn prepareResolvedVendorO2ATraceCase(
-    allocator: std.mem.Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-) !VendorO2ATracePreparation {
-    return prepareResolvedVendorO2ATraceCaseWithProfile(allocator, resolved, null);
-}
-
-fn prepareResolvedVendorO2ATraceCaseWithProfile(
-    allocator: std.mem.Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    preparation_profile: ?*VendorO2APreparationProfile,
-) !VendorO2ATracePreparation {
-    if (preparation_profile) |profile| profile.reset();
-
-    const runtime_case = try runtime.prepareResolvedVendorO2ATraceCase(
-        allocator,
-        resolved,
-        if (preparation_profile) |profile| @ptrCast(profile) else null,
     );
     return .{
         .reference = runtime_case.reference,
