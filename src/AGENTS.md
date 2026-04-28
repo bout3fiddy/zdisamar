@@ -1,16 +1,16 @@
 # Source Tree
 
-- `src/o2a/` owns the product surface. Keep it shaped around `Case -> Data -> Optics -> Spectrum -> Report`.
-- `src/model/` owns the retained typed atmosphere, geometry, surface, spectroscopy, and instrument structures that still feed the O2 A forward path.
-- `src/kernels/` is for reusable numeric routines only. Keep hot paths free of I/O and coarse-grained orchestration.
-- `src/core/` is reduced support code only. Do not grow it back into a forward-model preparation layer.
-- `src/adapters/` is reduced to narrow ingestion helpers that still support the retained O2 A data path.
+- `src/input/` owns typed atmosphere, geometry, surface, spectroscopy, instrument, and reference-data input structures.
+- `src/forward_model/` owns optical-property preparation, radiative transfer, instrument-grid calculation, and built-in implementation bindings.
+- `src/output/` owns diagnostic report and spectrum serialization.
+- `src/common/` is shared support code only. Do not grow it into forward-model preparation or product wiring.
+- `src/validation/disamar_reference/` owns the DISAMAR reference comparison harness and CLI helpers.
 
 ## Local Rules
 
 - Inline `test` blocks under `src/` are not allowed. Add new tests under `tests/unit/`, mirroring the source path. The `check-no-inline-src-tests.sh` guard (run by `zig build check`) fails when `^test "` reappears under `src/`. Tests that need non-`pub` symbols use the `internal` module re-exports in `src/internal.zig` and the per-directory `internal.zig` shims under `src/`.
 - Push domain-heavy guidance into the nearest scoped `AGENTS.md` before expanding this file.
-- Prefer moving O2 A-specific behavior into `src/o2a/` instead of leaking new product wiring back into `src/core/` or `src/model/`.
+- Prefer the simple public flow: input -> forward model -> output. Keep product wiring out of `src/common/`.
 - When a feature exists in both exact and alternate forms, name the source of truth clearly and keep derived hints, prepared state, and runtime consumers synchronized by tests rather than convention.
 - Do not add typed fields whose only consumer is an eventual TODO. New scene/request/model controls must either affect runtime behavior now or be rejected explicitly.
 

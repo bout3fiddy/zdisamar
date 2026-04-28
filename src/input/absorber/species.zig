@@ -1,5 +1,5 @@
 const std = @import("std");
-const AbsorberSpecies = @import("../../o2a/support/enums.zig").AbsorberSpecies;
+const AbsorberSpecies = @import("../atmospheric_types.zig").AbsorberSpecies;
 
 pub fn resolveAbsorberSpeciesName(species_name: []const u8) ?AbsorberSpecies {
     if (std.meta.stringToEnum(AbsorberSpecies, species_name)) |species| return species;

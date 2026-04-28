@@ -5,7 +5,7 @@ const Binding = @import("Binding.zig").Binding;
 const ReferenceData = @import("ReferenceData.zig");
 const OperationalCrossSectionLut = @import("Instrument.zig").OperationalCrossSectionLut;
 const species_helpers = @import("absorber/species.zig");
-pub const AbsorberSpecies = @import("../o2a/support/enums.zig").AbsorberSpecies;
+pub const AbsorberSpecies = @import("atmospheric_types.zig").AbsorberSpecies;
 
 pub const SpectroscopyMode = enum {
     none,

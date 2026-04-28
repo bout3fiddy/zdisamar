@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const errors = @import("../common/errors.zig");
 const AtmosphereModel = @import("Atmosphere.zig");
 const particle_compat = @import("../forward_model/optical_properties/particle_support.zig");
-pub const CloudType = @import("../o2a/support/enums.zig").CloudType;
+pub const CloudType = @import("atmospheric_types.zig").CloudType;
 pub const Placement = AtmosphereModel.IntervalPlacement;
 pub const FractionControl = AtmosphereModel.FractionControl;
 
