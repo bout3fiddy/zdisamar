@@ -1,22 +1,23 @@
 # Repo Context Index
 
 owner: zdisamar
-last_verified: 2026-03-18
+last_verified: 2026-04-28
 
-## Canonical References
+## Current Shape
 
-- root AGENTS.md
-
-## Local-Only Areas
-
-- `docs/specs/` is for scratch plans and working notes that should not be committed.
-- `vendor/disamar-fortran/` is a local upstream clone recreated by `./scripts/bootstrap-upstream.sh`.
+- Public flow: input -> forward model -> output.
+- Source code: `src/input/`, `src/forward_model/`, `src/output/`, `src/common/`, `src/validation/disamar_reference/`.
+- Scientific assets: `data/reference_data/`.
+- Tracked DISAMAR-reference evidence: `validation/`.
 
 ## Verification Baseline
 
-- Use `zig build check` for the fast local verification loop.
-- Use `zig build test-transport` for focused transport/parity verification.
-- Use `zig build test-validation-compatibility` for fast compatibility smoke checks.
-- Use `zig build test-validation-o2a-vendor` only for the opt-in O2A vendor trend assessment lane.
-- Use `zig build test` for the full verification baseline.
-- Treat changes under `src/core`, `src/kernels`, `src/retrieval`, `src/runtime`, `src/plugins`, and `src/api` as code changes that should keep that baseline green.
+- `zig build check`: fast local baseline.
+- `zig build test-fast`: broader fast presubmit lane.
+- `zig build test`: full retained verification baseline.
+- `zig build o2a-plot-bundle`: regenerate tracked O2 A comparison plots.
+
+## Local-Only Areas
+
+- `docs/specs/` and `docs/workpackages/` are scratch planning spaces and stay gitignored.
+- `vendor/disamar-fortran/` is a local upstream clone recreated by `./scripts/bootstrap-upstream.sh`.
