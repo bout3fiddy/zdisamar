@@ -39,7 +39,7 @@ test "yaml DISAMAR reference example resolves key DISAMAR mapping controls" {
 
     try std.testing.expectEqualStrings("disamar_standard", loaded.resolved.plan.model_family);
     try std.testing.expectEqualStrings(
-        "data/climatologies/vendor_config_o2a_profile.csv",
+        "data/reference_data/climatologies/vendor_config_o2a_profile.csv",
         loaded.resolved.inputs.atmosphere_profile.path,
     );
     try std.testing.expectEqual(@as(f64, 755.0), loaded.resolved.spectral_grid.start_nm);

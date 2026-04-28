@@ -9,7 +9,7 @@ inputs:
   assets:
     atmosphere_profile:
       kind: file
-      path: data/climatologies/vendor_config_o2a_profile.csv
+      path: data/reference_data/climatologies/vendor_config_o2a_profile.csv
       format: profile_csv
     vendor_reference_csv:
       kind: file
@@ -17,11 +17,11 @@ inputs:
       format: disamar_o2a_reference_csv
     raw_solar_reference:
       kind: file
-      path: data/reference/o2a_solar_reference_753_778.csv
+      path: data/reference_data/solar/o2a_solar_reference_753_778.csv
       format: solar_reference_csv
     airmass_factor_lut:
       kind: file
-      path: data/luts/airmass_factor_nadir_demo.csv
+      path: data/reference_data/luts/airmass_factor_nadir_demo.csv
       format: csv
     o2_hitran:
       kind: file
@@ -29,15 +29,15 @@ inputs:
       format: hitran_par_o2a
     o2_line_mixing:
       kind: file
-      path: data/cross_sections/o2a_lisa_rmf.dat
+      path: data/reference_data/cross_sections/o2a_lisa_rmf.dat
       format: lisa_rmf
     o2_strong_lines:
       kind: file
-      path: data/cross_sections/o2a_lisa_sdf.dat
+      path: data/reference_data/cross_sections/o2a_lisa_sdf.dat
       format: lisa_sdf
     o2o2_cia:
       kind: file
-      path: data/cross_sections/o2o2_bira_o2a.dat
+      path: data/reference_data/cross_sections/o2o2_bira_o2a.dat
       format: bira_cia
 
 templates:

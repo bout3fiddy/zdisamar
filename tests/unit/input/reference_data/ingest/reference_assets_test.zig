@@ -8,7 +8,7 @@ test "reference asset loader validates hashes and parses numeric tables" {
     var asset = try loadBundleAsset(
         std.testing.allocator,
         .cross_section_table,
-        "data/cross_sections/bundle_manifest.json",
+        "data/reference_data/cross_sections/bundle_manifest.json",
         "no2_405_465_demo",
     );
     defer asset.deinit(std.testing.allocator);
@@ -28,7 +28,7 @@ test "reference asset loader parses HITRAN-style line lists into spectroscopy ro
     var asset = try loadBundleAsset(
         std.testing.allocator,
         .spectroscopy_line_list,
-        "data/cross_sections/bundle_manifest.json",
+        "data/reference_data/cross_sections/bundle_manifest.json",
         "no2_demo_lines",
     );
     defer asset.deinit(std.testing.allocator);
@@ -60,7 +60,7 @@ test "reference asset loader parses vendor strong-line and relaxation sidecars" 
     var sdf_asset = try loadBundleAsset(
         std.testing.allocator,
         .spectroscopy_strong_line_set,
-        "data/cross_sections/bundle_manifest.json",
+        "data/reference_data/cross_sections/bundle_manifest.json",
         "o2a_lisa_sdf_subset",
     );
     defer sdf_asset.deinit(std.testing.allocator);
@@ -77,7 +77,7 @@ test "reference asset loader parses vendor strong-line and relaxation sidecars" 
     var rmf_asset = try loadBundleAsset(
         std.testing.allocator,
         .spectroscopy_relaxation_matrix,
-        "data/cross_sections/bundle_manifest.json",
+        "data/reference_data/cross_sections/bundle_manifest.json",
         "o2a_lisa_rmf_subset",
     );
     defer rmf_asset.deinit(std.testing.allocator);
@@ -95,7 +95,7 @@ test "reference asset loader parses bounded O2-O2 CIA tables without collapsing 
     var asset = try loadBundleAsset(
         std.testing.allocator,
         .collision_induced_absorption_table,
-        "data/cross_sections/bundle_manifest.json",
+        "data/reference_data/cross_sections/bundle_manifest.json",
         "o2o2_bira_o2a_subset",
     );
     defer asset.deinit(std.testing.allocator);

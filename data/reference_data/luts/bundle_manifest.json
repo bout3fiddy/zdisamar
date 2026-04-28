@@ -14,7 +14,7 @@
   "assets": [
     {
       "id": "airmass_factor_nadir_demo",
-      "path": "data/luts/airmass_factor_nadir_demo.csv",
+      "path": "data/reference_data/luts/airmass_factor_nadir_demo.csv",
       "format": "csv",
       "sha256": "sha256:362f574aeb16a61df671dddc0492e2b5789b72d333215db185628e6dea2f1ce3",
       "columns": [
@@ -26,7 +26,7 @@
     },
     {
       "id": "mie_dust_phase_subset",
-      "path": "data/luts/mie_dust_phase_subset.csv",
+      "path": "data/reference_data/luts/mie_dust_phase_subset.csv",
       "format": "csv",
       "sha256": "sha256:8d2a0cb7509b626364dc8dafb69111e6881b41ddb0214a83ae17faf60271c379",
       "columns": [

@@ -14,7 +14,7 @@
   "assets": [
     {
       "id": "us_standard_1976_profile",
-      "path": "data/climatologies/us_standard_1976_profile.csv",
+      "path": "data/reference_data/climatologies/us_standard_1976_profile.csv",
       "format": "csv",
       "sha256": "sha256:7571a5be48dcb435d960abfe542e14c7c85c3879b3b8662d21ddea3c6626b234",
       "columns": [
@@ -26,7 +26,7 @@
     },
     {
       "id": "vendor_config_o2a_profile",
-      "path": "data/climatologies/vendor_config_o2a_profile.csv",
+      "path": "data/reference_data/climatologies/vendor_config_o2a_profile.csv",
       "format": "csv",
       "sha256": "sha256:c77f0539d7d3aeb825adc15bf6fad44aacf72cfdfdee816c18cb9837ded955c8",
       "columns": [

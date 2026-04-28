@@ -5,9 +5,9 @@ const ReferenceData = @import("../../ReferenceData.zig");
 const reference_assets = @import("../ingest/reference_assets.zig");
 
 pub const bundle_manifest_paths = struct {
-    pub const climatology = "data/climatologies/bundle_manifest.json";
-    pub const cross_sections = "data/cross_sections/bundle_manifest.json";
-    pub const luts = "data/luts/bundle_manifest.json";
+    pub const climatology = "data/reference_data/climatologies/bundle_manifest.json";
+    pub const cross_sections = "data/reference_data/cross_sections/bundle_manifest.json";
+    pub const luts = "data/reference_data/luts/bundle_manifest.json";
 };
 
 pub const asset_ids = struct {
