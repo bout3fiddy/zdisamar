@@ -7,7 +7,7 @@ test {
     _ = @import("observation_model_test.zig");
 }
 
-const Scene = zdisamar.Case;
+const Scene = zdisamar.Input;
 const empty_scene: Scene = .{};
 const ObservationModel = @TypeOf(empty_scene.observation_model);
 const Aerosol = @TypeOf(empty_scene.aerosol);
@@ -18,10 +18,10 @@ const empty_observation_model: ObservationModel = .{};
 const OperationalBandSupport = std.meta.Child(@TypeOf(empty_observation_model.operational_band_support));
 
 test "unit suite keeps the public surface literal" {
-    try std.testing.expect(@hasDecl(zdisamar, "Case"));
-    try std.testing.expect(@hasDecl(zdisamar, "Data"));
-    try std.testing.expect(@hasDecl(zdisamar, "Optics"));
-    try std.testing.expect(@hasDecl(zdisamar, "Prepared"));
+    try std.testing.expect(@hasDecl(zdisamar, "Input"));
+    try std.testing.expect(@hasDecl(zdisamar, "ReferenceData"));
+    try std.testing.expect(@hasDecl(zdisamar, "OpticalProperties"));
+    try std.testing.expect(@hasDecl(zdisamar, "PreparedInput"));
     try std.testing.expect(@hasDecl(zdisamar, "prepare"));
     try std.testing.expect(@hasDecl(zdisamar, "run"));
     try std.testing.expect(!@hasDecl(zdisamar, "loadData"));
@@ -32,7 +32,7 @@ test "unit suite keeps the public surface literal" {
 }
 
 test "prepared lifecycle owns resolved O2A state" {
-    var case: zdisamar.Case = .{
+    var input: zdisamar.Input = .{
         .id = "prepared-lifecycle",
         .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 3 },
         .observation_model = .{
@@ -41,11 +41,11 @@ test "prepared lifecycle owns resolved O2A state" {
         },
     };
 
-    var prepared = try zdisamar.prepare(std.testing.allocator, &case);
+    var prepared = try zdisamar.prepare(std.testing.allocator, &input);
     defer prepared.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualStrings("prepared-lifecycle", prepared.case.id);
-    try std.testing.expect(prepared.optics.total_optical_depth >= 0.0);
+    try std.testing.expectEqualStrings("prepared-lifecycle", prepared.input.id);
+    try std.testing.expect(prepared.optical_properties.total_optical_depth >= 0.0);
 }
 
 test "generated O2A LUTs live only in operational band support" {
@@ -66,7 +66,7 @@ test "generated O2A LUTs live only in operational band support" {
             },
         },
     }};
-    var case: zdisamar.Case = .{
+    var input: zdisamar.Input = .{
         .id = "generated-lut-ownership",
         .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 3 },
         .absorbers = .{ .items = absorbers[0..] },
@@ -90,11 +90,11 @@ test "generated O2A LUTs live only in operational band support" {
         },
     };
 
-    var prepared = try zdisamar.prepare(std.testing.allocator, &case);
+    var prepared = try zdisamar.prepare(std.testing.allocator, &input);
     defer prepared.deinit(std.testing.allocator);
 
-    try std.testing.expect(!prepared.case.observation_model.o2_operational_lut.enabled());
-    try std.testing.expect(prepared.case.observation_model.primaryOperationalBandSupport().o2_operational_lut.enabled());
+    try std.testing.expect(!prepared.input.observation_model.o2_operational_lut.enabled());
+    try std.testing.expect(prepared.input.observation_model.primaryOperationalBandSupport().o2_operational_lut.enabled());
 }
 
 test "observation model resolves legacy operational support through the public methods" {
@@ -161,15 +161,15 @@ test "particle placement falls back only when explicit placement is absent" {
 }
 
 test "public root exposes the O2A forward lab surface" {
-    try std.testing.expect(@hasDecl(zdisamar, "Case"));
-    try std.testing.expect(@hasDecl(zdisamar, "Data"));
-    try std.testing.expect(@hasDecl(zdisamar, "Optics"));
+    try std.testing.expect(@hasDecl(zdisamar, "Input"));
+    try std.testing.expect(@hasDecl(zdisamar, "ReferenceData"));
+    try std.testing.expect(@hasDecl(zdisamar, "OpticalProperties"));
     try std.testing.expect(@hasDecl(zdisamar, "Method"));
-    try std.testing.expect(@hasDecl(zdisamar, "RunStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "Result"));
-    try std.testing.expect(@hasDecl(zdisamar, "Report"));
-    try std.testing.expect(@hasDecl(zdisamar, "Prepared"));
-    try std.testing.expect(@hasDecl(zdisamar, "parity"));
+    try std.testing.expect(@hasDecl(zdisamar, "CalculationStorage"));
+    try std.testing.expect(@hasDecl(zdisamar, "Output"));
+    try std.testing.expect(@hasDecl(zdisamar, "DiagnosticReport"));
+    try std.testing.expect(@hasDecl(zdisamar, "PreparedInput"));
+    try std.testing.expect(@hasDecl(zdisamar, "disamar_reference"));
     try std.testing.expect(@hasDecl(zdisamar, "prepare"));
     try std.testing.expect(@hasDecl(zdisamar, "run"));
     try std.testing.expect(@hasDecl(zdisamar, "writeReport"));
@@ -185,6 +185,14 @@ test "public root no longer exposes removed framework scaffolding" {
     try std.testing.expect(!@hasDecl(zdisamar, "exporters"));
     try std.testing.expect(!@hasDecl(zdisamar, "test_support"));
     try std.testing.expect(!@hasDecl(zdisamar, "vendor_case"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Case"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Data"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Optics"));
+    try std.testing.expect(!@hasDecl(zdisamar, "RunStorage"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Result"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Report"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Prepared"));
+    try std.testing.expect(!@hasDecl(zdisamar, "parity"));
     try std.testing.expect(!@hasDecl(zdisamar, "loadData"));
     try std.testing.expect(!@hasDecl(zdisamar, "buildOptics"));
     try std.testing.expect(!@hasDecl(zdisamar, "runSpectrum"));

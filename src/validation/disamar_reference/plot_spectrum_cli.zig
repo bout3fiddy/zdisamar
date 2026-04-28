@@ -5,7 +5,7 @@ const report = zdisamar.report;
 
 const Config = struct {
     output_dir: []const u8 = "out/analysis/o2a/plot_bundle_tmp",
-    case_yaml_path: []const u8 = zdisamar.parity.default_yaml_path,
+    case_yaml_path: []const u8 = zdisamar.disamar_reference.default_yaml_path,
 };
 
 pub fn main() !void {
@@ -19,7 +19,7 @@ pub fn main() !void {
     const config = try parseArgs(args);
     try std.fs.cwd().makePath(config.output_dir);
 
-    var parity_case = try zdisamar.parity.runReflectanceCaseFromFile(
+    var disamar_case = try zdisamar.disamar_reference.runReflectanceCaseFromFile(
         allocator,
         config.case_yaml_path,
         .{
@@ -37,11 +37,11 @@ pub fn main() !void {
             .cutoff_sim_cm1 = 200.0,
         },
     );
-    defer parity_case.deinit(allocator);
+    defer disamar_case.deinit(allocator);
 
     const spectrum_path = try std.fs.path.join(allocator, &.{ config.output_dir, report.spectrum_name });
     defer allocator.free(spectrum_path);
-    try report.writeGeneratedSpectrumCsv(spectrum_path, &parity_case.product);
+    try report.writeGeneratedSpectrumCsv(spectrum_path, &disamar_case.product);
     std.debug.print("wrote {s}\n", .{spectrum_path});
 }
 

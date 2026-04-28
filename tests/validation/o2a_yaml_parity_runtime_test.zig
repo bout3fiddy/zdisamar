@@ -2,7 +2,7 @@ const std = @import("std");
 const validation_support = @import("disamar_reference_support").disamar_reference;
 const parity_config = validation_support.config;
 const parity_cli = validation_support.cli;
-const o2a_parity = validation_support.yaml;
+const disamar_reference = validation_support.yaml;
 
 const BaselineAnchor = struct {
     version: u32,
@@ -10,13 +10,13 @@ const BaselineAnchor = struct {
     upstream_config: []const u8,
     reference_path: []const u8,
     zero_tolerance_abs: f64,
-    trend_tolerances: o2a_parity.TrendTolerances,
+    trend_tolerances: disamar_reference.TrendTolerances,
     guidance: struct {
         allowed_to_fail: bool,
         summary: []const u8,
         expect_improvement_when_touched: []const []const u8,
     },
-    baseline: o2a_parity.ComparisonMetrics,
+    baseline: disamar_reference.ComparisonMetrics,
 };
 
 fn exampleConfigPath() []const u8 {
@@ -66,11 +66,11 @@ test "yaml parity runtime resolves symmetric DISAMAR HR integration for both cha
     var loaded = try parity_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
     defer loaded.deinit();
 
-    var parity_case = try o2a_parity.prepareResolvedVendorO2ACase(std.testing.allocator, &loaded.resolved);
-    defer parity_case.deinit(std.testing.allocator);
+    var disamar_case = try disamar_reference.prepareResolvedVendorO2ACase(std.testing.allocator, &loaded.resolved);
+    defer disamar_case.deinit(std.testing.allocator);
 
-    const radiance = parity_case.scene.observation_model.resolvedChannelControls(.radiance).response;
-    const irradiance = parity_case.scene.observation_model.resolvedChannelControls(.irradiance).response;
+    const radiance = disamar_case.scene.observation_model.resolvedChannelControls(.radiance).response;
+    const irradiance = disamar_case.scene.observation_model.resolvedChannelControls(.irradiance).response;
 
     try std.testing.expect(radiance.explicit);
     try std.testing.expect(irradiance.explicit);
@@ -85,7 +85,7 @@ test "yaml parity runtime resolves symmetric DISAMAR HR integration for both cha
     try std.testing.expectApproxEqAbs(radiance.high_resolution_half_span_nm, irradiance.high_resolution_half_span_nm, 1.0e-12);
     try std.testing.expectEqual(
         @as(usize, 47),
-        parity_case.prepared.spectroscopy_profile_altitudes_km.len,
+        disamar_case.prepared.spectroscopy_profile_altitudes_km.len,
     );
 }
 
@@ -96,10 +96,10 @@ test "yaml parity output computes vendor comparison metrics on the executable co
     var baseline = try loadBaselineAnchor(std.testing.allocator);
     defer baseline.deinit();
 
-    var yaml_case = try o2a_parity.runResolvedVendorO2AReflectanceCase(std.testing.allocator, &loaded.resolved);
+    var yaml_case = try disamar_reference.runResolvedVendorO2AReflectanceCase(std.testing.allocator, &loaded.resolved);
     defer yaml_case.deinit(std.testing.allocator);
 
-    const current = o2a_parity.computeComparisonMetrics(
+    const current = disamar_reference.computeComparisonMetrics(
         &yaml_case.product,
         yaml_case.reference,
         baseline.value.zero_tolerance_abs,

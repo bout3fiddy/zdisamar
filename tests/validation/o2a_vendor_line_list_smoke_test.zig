@@ -1,10 +1,10 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const o2a_parity = zdisamar.parity;
-const ReferenceData = o2a_parity.ReferenceData;
+const disamar_reference = zdisamar.disamar_reference;
+const ReferenceData = disamar_reference.ReferenceData;
 
 test "vendor parity O2A helper preserves weak-lane rows while retaining strong sidecars" {
-    var line_list = try o2a_parity.loadVendorParityO2ASpectroscopyLineList(std.testing.allocator);
+    var line_list = try disamar_reference.loadVendorParityO2ASpectroscopyLineList(std.testing.allocator);
     defer line_list.deinit(std.testing.allocator);
 
     try line_list.buildStrongLineMatchIndex(std.testing.allocator);
