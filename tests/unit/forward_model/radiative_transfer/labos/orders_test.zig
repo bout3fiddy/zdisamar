@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const labos = internal.kernels.transport.labos;
+const labos = internal.forward_model.radiative_transfer.labos;
 const Geometry = labos.Geometry;
 const LayerRT = labos.LayerRT;
 const Mat = labos.Mat;

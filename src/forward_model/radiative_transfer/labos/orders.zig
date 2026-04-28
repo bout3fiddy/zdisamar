@@ -304,7 +304,7 @@ fn ordersScatInternal(
 }
 
 pub fn ordersScatInto(
-    workspace: *OrdersWorkspace,
+    storage: *OrdersWorkspace,
     start_level: usize,
     end_level: usize,
     geo: *const basis.Geometry,
@@ -314,10 +314,10 @@ pub fn ordersScatInto(
     num_orders_max: usize,
 ) OrdersResultView {
     return ordersScatInternal(
-        workspace.ud,
-        workspace.ud_sum_local,
-        workspace.ud_orde,
-        workspace.ud_local,
+        storage.ud,
+        storage.ud_sum_local,
+        storage.ud_orde,
+        storage.ud_local,
         start_level,
         end_level,
         geo,

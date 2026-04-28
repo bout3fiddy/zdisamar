@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const Noise = internal.plugin_internal.providers.Noise;
+const Noise = internal.forward_model.implementations.Noise;
 const Scene = internal.Scene;
 const s5pOperationalSigma = Noise.s5pOperationalSigma;
 const labOperationalSigma = Noise.labOperationalSigma;

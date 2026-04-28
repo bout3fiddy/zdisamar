@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const small_dense = internal.kernels.linalg.small_dense;
+const small_dense = internal.common.math.linalg.small_dense;
 const solve2x2 = small_dense.solve2x2;
 const solve3x3 = small_dense.solve3x3;
 const setIdentity = small_dense.setIdentity;

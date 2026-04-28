@@ -7,10 +7,10 @@ const convolution = @import("../spectral_math/convolution.zig");
 const grid = @import("../spectral_math/grid.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const Postprocess = @import("postprocess.zig");
-const SamplePlan = @import("sample_plan.zig");
+const WavelengthSampling = @import("wavelength_sampling.zig");
 const SpectralEval = @import("spectral_eval.zig");
 const Types = @import("types.zig");
-const Workspace = @import("workspace.zig");
+const Storage = @import("storage.zig");
 
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
@@ -20,13 +20,13 @@ pub fn simulateInternal(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-    buffers: Workspace.Buffers,
+    implementations: Types.Implementations,
+    buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
-) Workspace.Error!Types.MeasurementSpaceSummary {
+) Storage.Error!Types.InstrumentGridSummary {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    try Workspace.validateBuffers(sample_count, buffers);
+    try Storage.validateBuffers(sample_count, buffers);
 
     const spectral_grid: grid.SpectralGrid = .{
         .start_nm = scene.spectral_grid.start_nm,
@@ -39,27 +39,27 @@ pub fn simulateInternal(
     };
     try resolved_axis.validate();
 
-    const radiance_calibration = providers.instrument.calibrationForScene(scene, .radiance);
-    const irradiance_calibration = providers.instrument.calibrationForScene(scene, .irradiance);
-    const radiance_slit_kernel = providers.instrument.slitKernelForScene(scene, .radiance);
-    const irradiance_slit_kernel = providers.instrument.slitKernelForScene(scene, .irradiance);
-    const uses_integrated_radiance_sampling = providers.instrument.usesIntegratedSampling(scene, .radiance);
-    const uses_integrated_irradiance_sampling = providers.instrument.usesIntegratedSampling(scene, .irradiance);
+    const radiance_calibration = implementations.instrument.calibrationForScene(scene, .radiance);
+    const irradiance_calibration = implementations.instrument.calibrationForScene(scene, .irradiance);
+    const radiance_slit_kernel = implementations.instrument.slitKernelForScene(scene, .radiance);
+    const irradiance_slit_kernel = implementations.instrument.slitKernelForScene(scene, .irradiance);
+    const uses_integrated_radiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .radiance);
+    const uses_integrated_irradiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
-    const sample_plans = try SamplePlan.buildSamplePlans(
+    const wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
         allocator,
         scene,
         prepared,
         &resolved_axis,
         radiance_calibration,
         irradiance_calibration,
-        providers,
+        implementations,
     );
-    defer allocator.free(sample_plans);
-    const forward_misses = try SamplePlan.collectUniqueForwardMisses(
+    defer allocator.free(wavelength_sampling);
+    const forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
         allocator,
-        sample_plans,
+        wavelength_sampling,
     );
     defer allocator.free(forward_misses);
     try SpectralEval.prefetchForwardSamples(
@@ -67,7 +67,7 @@ pub fn simulateInternal(
         scene,
         route,
         prepared,
-        providers,
+        implementations,
         safe_span,
         forward_misses,
         evaluation_cache,
@@ -78,7 +78,7 @@ pub fn simulateInternal(
     var reflectance_sum: f64 = 0.0;
     var noise_sum: f64 = 0.0;
     var jacobian_sum: f64 = 0.0;
-    const transport_layer_count = Workspace.resolvedTransportLayerCount(route, prepared);
+    const transport_layer_count = Storage.resolvedTransportLayerCount(route, prepared);
     if (buffers.layer_inputs.len < transport_layer_count or
         buffers.source_interfaces.len < transport_layer_count + 1 or
         buffers.rtm_quadrature_levels.len < transport_layer_count + 1 or
@@ -87,7 +87,7 @@ pub fn simulateInternal(
         return error.ShapeMismatch;
     }
 
-    for (sample_plans, 0..) |plan, index| {
+    for (wavelength_sampling, 0..) |plan, index| {
         const nominal_wavelength_nm = plan.nominal_wavelength_nm;
         buffers.wavelengths[index] = nominal_wavelength_nm;
 
@@ -98,7 +98,7 @@ pub fn simulateInternal(
             prepared,
             plan.radiance_wavelength_nm,
             safe_span,
-            providers,
+            implementations,
             buffers.layer_inputs[0..transport_layer_count],
             buffers.pseudo_spherical_layers,
             buffers.source_interfaces[0 .. transport_layer_count + 1],
@@ -129,7 +129,7 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
-    for (sample_plans, 0..) |plan, index| {
+    for (wavelength_sampling, 0..) |plan, index| {
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,
             prepared,
@@ -178,7 +178,7 @@ pub fn simulateInternal(
     else
         null;
     if (radiance_noise_sigma) |sigma| {
-        try Postprocess.materializeChannelSigma(providers, scene, .radiance, buffers.wavelengths, buffers.radiance, sigma);
+        try Postprocess.materializeChannelSigma(implementations, scene, .radiance, buffers.wavelengths, buffers.radiance, sigma);
     }
     if (buffers.noise_sigma) |noise_sigma| {
         const sigma = radiance_noise_sigma orelse return error.ShapeMismatch;
@@ -194,7 +194,7 @@ pub fn simulateInternal(
     else
         null;
     if (irradiance_noise_sigma) |sigma| {
-        try Postprocess.materializeChannelSigma(providers, scene, .irradiance, buffers.wavelengths, buffers.irradiance, sigma);
+        try Postprocess.materializeChannelSigma(implementations, scene, .irradiance, buffers.wavelengths, buffers.irradiance, sigma);
     }
 
     if (buffers.reflectance_noise_sigma) |reflectance_noise_sigma| {
@@ -265,13 +265,13 @@ pub fn simulate(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-    buffers: Workspace.Buffers,
-) Workspace.Error!Types.MeasurementSpaceSummary {
+    implementations: Types.Implementations,
+    buffers: Storage.Buffers,
+) Storage.Error!Types.InstrumentGridSummary {
     var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
     defer evaluation_cache.deinit();
     evaluation_cache.reset();
-    return simulateInternal(allocator, scene, route, prepared, providers, buffers, &evaluation_cache);
+    return simulateInternal(allocator, scene, route, prepared, implementations, buffers, &evaluation_cache);
 }
 
 pub fn simulateSummary(
@@ -279,21 +279,21 @@ pub fn simulateSummary(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-) Workspace.Error!Types.MeasurementSpaceSummary {
-    var workspace: Workspace.SummaryWorkspace = .{};
-    defer workspace.deinit(allocator);
-    return simulateSummaryWithWorkspace(allocator, &workspace, scene, route, prepared, providers);
+    implementations: Types.Implementations,
+) Storage.Error!Types.InstrumentGridSummary {
+    var storage: Storage.SummaryStorage = .{};
+    defer storage.deinit(allocator);
+    return simulateSummaryWithWorkspace(allocator, &storage, scene, route, prepared, implementations);
 }
 
 pub fn simulateSummaryWithWorkspace(
     allocator: Allocator,
-    workspace: *Workspace.SummaryWorkspace,
+    storage: *Storage.SummaryStorage,
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-) Workspace.Error!Types.MeasurementSpaceSummary {
+    implementations: Types.Implementations,
+) Storage.Error!Types.InstrumentGridSummary {
     var summary_scene = scene.*;
     // GOTCHA:
     //   Summary mode truncates very long spectral grids so it can stay
@@ -306,8 +306,8 @@ pub fn simulateSummaryWithWorkspace(
         &summary_scene,
         route,
         prepared,
-        providers,
-        try workspace.buffers(allocator, &summary_scene, route, providers),
-        try workspace.spectralCache(allocator),
+        implementations,
+        try storage.buffers(allocator, &summary_scene, route, implementations),
+        try storage.spectralCache(allocator),
     );
 }

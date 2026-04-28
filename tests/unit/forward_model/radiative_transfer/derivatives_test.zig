@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const derivatives = internal.kernels.transport.derivatives;
+const derivatives = internal.forward_model.radiative_transfer.derivatives;
 const dTransmittanceDOpticalDepth = derivatives.dTransmittanceDOpticalDepth;
 const proxyOpticalDepthSensitivity = derivatives.proxyOpticalDepthSensitivity;
 const proxyJacobianColumn = derivatives.proxyJacobianColumn;

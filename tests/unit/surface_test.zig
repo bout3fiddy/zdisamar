@@ -4,7 +4,7 @@ const internal = @import("internal");
 const surface = internal.surface;
 const Surface = surface.Surface;
 const Parameter = surface.Parameter;
-const errors = internal.core.errors;
+const errors = internal.common.errors;
 
 test "surface accepts named parameters" {
     const value: Surface = .{

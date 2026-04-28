@@ -1,8 +1,8 @@
 const std = @import("std");
 const core_errors = @import("../../../common/errors.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
-const InstrumentIntegration = @import("../../builtins/instrument/integration.zig");
-const NoiseProviders = @import("../../builtins/noise.zig");
+const InstrumentIntegration = @import("../../implementations/instrument/integration.zig");
+const NoiseProviders = @import("../../implementations/noise.zig");
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const Cache = @import("cache.zig");
@@ -46,7 +46,7 @@ pub const Buffers = struct {
 };
 
 // Reusable instrument grid storage that owns the backing storage.
-pub const SummaryWorkspace = struct {
+pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
     radiance: []f64 = &.{},
     irradiance: []f64 = &.{},
@@ -67,7 +67,7 @@ pub const SummaryWorkspace = struct {
     reflectance_noise_sigma: []f64 = &.{},
     evaluation_cache: ?Cache.SpectralEvaluationCache = null,
 
-    pub fn deinit(self: *SummaryWorkspace, allocator: Allocator) void {
+    pub fn deinit(self: *SummaryStorage, allocator: Allocator) void {
         freeBuffer(allocator, self.wavelengths);
         freeBuffer(allocator, self.radiance);
         freeBuffer(allocator, self.irradiance);
@@ -90,7 +90,7 @@ pub const SummaryWorkspace = struct {
         self.* = .{};
     }
 
-    pub fn spectralCache(self: *SummaryWorkspace, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {
+    pub fn spectralCache(self: *SummaryStorage, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {
         if (self.evaluation_cache == null) {
             self.evaluation_cache = Cache.SpectralEvaluationCache.init(allocator);
         }
@@ -99,18 +99,18 @@ pub const SummaryWorkspace = struct {
     }
 
     pub fn buffers(
-        self: *SummaryWorkspace,
+        self: *SummaryStorage,
         allocator: Allocator,
         scene: *const Scene,
         route: common.Route,
-        providers: Types.ProviderBindings,
+        implementations: Types.Implementations,
     ) Error!Buffers {
         const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
         const layer_count = transportLayerCountHint(scene, route);
         const pseudo_spherical_sample_count = pseudoSphericalSampleCountHint(scene, route);
         const wants_jacobian = route.derivative_mode != .none;
-        const wants_radiance_noise = providers.noise.materializesSigma(scene, .radiance);
-        const wants_irradiance_noise = providers.noise.materializesSigma(scene, .irradiance);
+        const wants_radiance_noise = implementations.noise.materializesSigma(scene, .radiance);
+        const wants_irradiance_noise = implementations.noise.materializesSigma(scene, .irradiance);
         const wants_noise = wants_radiance_noise or
             wants_irradiance_noise or
             reflectanceCalibrationEnabled(scene);
@@ -163,7 +163,7 @@ pub const SummaryWorkspace = struct {
 
 // Reusable full-product storage that shares the same backing buffers as the
 // summary path.
-pub const ProductWorkspace = SummaryWorkspace;
+pub const ProductStorage = SummaryStorage;
 
 pub fn transportLayerCountHint(scene: *const Scene, route: common.Route) usize {
     _ = route;

@@ -32,7 +32,7 @@ test {
     _ = @import("forward_model/radiative_transfer/labos/orders_test.zig");
     _ = @import("forward_model/radiative_transfer/labos/reflectance_test.zig");
     _ = @import("forward_model/instrument_grid/grid_calculation/spectral_eval_test.zig");
-    _ = @import("forward_model/instrument_grid/grid_calculation/workspace_test.zig");
+    _ = @import("forward_model/instrument_grid/grid_calculation/storage_test.zig");
 
     _ = @import("bands_test.zig");
     _ = @import("binding_test.zig");
@@ -52,7 +52,7 @@ test {
     _ = @import("input/reference_data/ingest/reference_assets_test.zig");
     _ = @import("input/reference_data/ingest/reference_assets_loaded_asset_test.zig");
     _ = @import("validation/disamar_reference/parser_test.zig");
-    _ = @import("forward_model/builtins/surface_test.zig");
+    _ = @import("forward_model/implementations/surface_test.zig");
 
     _ = @import("forward_model/optical_properties/state_build/layer_accumulation_test.zig");
     _ = @import("forward_model/optical_properties/state_build/carrier_eval_test.zig");
@@ -61,9 +61,9 @@ test {
     _ = @import("forward_model/optical_properties/state_build/rtm_quadrature_test.zig");
     _ = @import("forward_model/optical_properties/state_build/root_test.zig");
     _ = @import("forward_model/optical_properties/state_build/source_interfaces_test.zig");
-    _ = @import("forward_model/builtins/instrument/integration_test.zig");
-    _ = @import("forward_model/builtins/noise_test.zig");
-    _ = @import("forward_model/builtins/radiative_transfer_test.zig");
+    _ = @import("forward_model/implementations/instrument/integration_test.zig");
+    _ = @import("forward_model/implementations/noise_test.zig");
+    _ = @import("forward_model/implementations/radiative_transfer_test.zig");
 
     _ = @import("forward_model/radiative_transfer/labos/layers_test.zig");
     _ = @import("forward_model/radiative_transfer/adding/root_test.zig");

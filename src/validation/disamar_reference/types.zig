@@ -52,7 +52,7 @@ pub const PlanSpec = struct {
 
 pub const Metadata = struct {
     id: []const u8,
-    workspace: []const u8,
+    storage: []const u8,
     description: []const u8,
 };
 

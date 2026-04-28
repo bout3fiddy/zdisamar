@@ -1,8 +1,8 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const Transport = internal.plugin_internal.providers.Transport;
-const common = internal.kernels.transport.common;
+const Transport = internal.forward_model.implementations.Transport;
+const common = internal.forward_model.radiative_transfer;
 
 test "transport provider exposes route fidelity and provenance helpers" {
     const provider = Transport.resolve("builtin.dispatcher") orelse unreachable;

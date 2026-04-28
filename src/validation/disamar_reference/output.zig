@@ -2,7 +2,7 @@ const std = @import("std");
 const common = @import("compile_common.zig");
 const parser = @import("parser.zig");
 
-const MeasurementSpace = @import("../../forward_model/instrument_grid/root.zig");
+const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
 const parity_runtime = @import("run.zig");
 const parity_support = @import("metrics.zig");
 
@@ -12,7 +12,7 @@ pub const RunSummary = struct {
     metadata: parity_runtime.Metadata,
     scene_id: []const u8,
     reference_path: []const u8,
-    product_summary: MeasurementSpace.MeasurementSpaceSummary,
+    product_summary: InstrumentGrid.InstrumentGridSummary,
     comparison: parity_support.ComparisonMetrics,
 };
 
@@ -125,7 +125,7 @@ fn writeSummaryJson(path: []const u8, summary: RunSummary) !void {
 
 fn writeGeneratedSpectrumCsv(
     path: []const u8,
-    product: *const MeasurementSpace.MeasurementSpaceProduct,
+    product: *const InstrumentGrid.InstrumentGridProduct,
 ) !void {
     try ensureParentPath(path);
     var file = try std.fs.cwd().createFile(path, .{ .truncate = true });

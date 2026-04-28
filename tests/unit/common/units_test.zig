@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const units = internal.core.units;
+const units = internal.common.units;
 const Error = units.Error;
 const WavelengthRange = units.WavelengthRange;
 const AltitudeRangeKm = units.AltitudeRangeKm;

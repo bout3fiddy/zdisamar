@@ -1,18 +1,18 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const preparation = internal.kernels.optics.preparation;
+const preparation = internal.forward_model.optical_properties;
 const Scene = internal.Scene;
 const ReferenceData = internal.reference_data;
-const gauss_legendre = internal.kernels.quadrature.gauss_legendre;
-const transport_common = internal.kernels.transport.common;
+const gauss_legendre = internal.common.math.quadrature.gauss_legendre;
+const transport_common = internal.forward_model.radiative_transfer;
 const State = preparation.state;
 const shared_geometry = preparation.shared_geometry;
 const shared_carrier = preparation.shared_carrier;
 const carrier_eval = preparation.carrier_eval;
 const SpectroscopyState = preparation.state_spectroscopy;
 const pseudo_spherical = preparation.pseudo_spherical;
-const PhaseFunctions = internal.kernels.optics.prepare.phase_functions;
+const PhaseFunctions = internal.forward_model.optical_properties.shared.phase_functions;
 const PreparedOpticalState = preparation.PreparedOpticalState;
 const fillPseudoSphericalGridAtWavelength = pseudo_spherical.fillPseudoSphericalGridAtWavelength;
 

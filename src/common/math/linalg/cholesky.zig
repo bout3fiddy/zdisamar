@@ -81,12 +81,12 @@ pub fn invertFromFactor(
     factor: []const f64,
     dimension: usize,
     out: []f64,
-    workspace: []f64,
+    storage: []f64,
 ) Error!void {
-    if (out.len != dimension * dimension or workspace.len != 2 * dimension) return Error.ShapeMismatch;
+    if (out.len != dimension * dimension or storage.len != 2 * dimension) return Error.ShapeMismatch;
 
-    const basis = workspace[0..dimension];
-    const solution = workspace[dimension .. 2 * dimension];
+    const basis = storage[0..dimension];
+    const solution = storage[dimension .. 2 * dimension];
 
     @memset(out, 0.0);
     for (0..dimension) |column| {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const LoadedAsset = internal.adapters.ingest_reference_assets_loaded_asset.LoadedAsset;
+const LoadedAsset = internal.input_reference_data.ingest_reference_assets_loaded_asset.LoadedAsset;
 
 test "spectroscopy line-list conversion preserves null vendor metadata fields" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

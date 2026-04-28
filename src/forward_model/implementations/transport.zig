@@ -2,7 +2,7 @@ const common = @import("../radiative_transfer/root.zig");
 const dispatcher = @import("../radiative_transfer/dispatcher.zig");
 const std = @import("std");
 
-pub const Provider = struct {
+pub const Implementation = struct {
     id: []const u8,
     prepareRoute: *const fn (request: common.DispatchRequest) common.PrepareError!common.Route,
     executePrepared: *const fn (allocator: std.mem.Allocator, route: common.Route, input: common.ForwardInput) common.ExecuteError!common.ForwardResult,
@@ -11,7 +11,7 @@ pub const Provider = struct {
     derivativeSemanticsForRoute: *const fn (route: common.Route) common.DerivativeSemantics,
 };
 
-pub fn resolve(provider_id: []const u8) ?Provider {
+pub fn resolve(provider_id: []const u8) ?Implementation {
     if (std.mem.eql(u8, provider_id, "builtin.dispatcher")) {
         return .{
             .id = provider_id,

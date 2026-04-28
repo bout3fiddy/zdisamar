@@ -5,13 +5,13 @@ const Scene = @import("../../input/Scene.zig").Scene;
 
 pub const Error = noise.Error;
 
-pub const Provider = struct {
+pub const Implementation = struct {
     id: []const u8,
     materializesSigma: *const fn (scene: *const Scene, channel: SpectralChannel) bool,
     materializeSigma: *const fn (scene: *const Scene, channel: SpectralChannel, wavelengths_nm: []const f64, signal: []const f64, output: []f64) Error!void,
 };
 
-pub fn resolve(provider_id: []const u8) ?Provider {
+pub fn resolve(provider_id: []const u8) ?Implementation {
     if (std.mem.eql(u8, provider_id, "builtin.scene_noise")) {
         return .{
             .id = provider_id,

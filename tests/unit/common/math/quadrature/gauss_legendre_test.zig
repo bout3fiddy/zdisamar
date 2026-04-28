@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const gauss_legendre = internal.kernels.quadrature.gauss_legendre;
+const gauss_legendre = internal.common.math.quadrature.gauss_legendre;
 const rule = gauss_legendre.rule;
 const fillNodesAndWeights = gauss_legendre.fillNodesAndWeights;
 const fillDisamarDivPoints01 = gauss_legendre.fillDisamarDivPoints01;

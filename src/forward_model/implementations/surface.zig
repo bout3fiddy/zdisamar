@@ -12,12 +12,12 @@ pub const EvaluationContext = struct {
     forward: ForwardResult,
 };
 
-pub const Provider = struct {
+pub const Implementation = struct {
     id: []const u8,
     brdfFactor: *const fn (context: EvaluationContext) f64,
 };
 
-pub fn resolve(provider_id: []const u8) ?Provider {
+pub fn resolve(provider_id: []const u8) ?Implementation {
     if (std.mem.eql(u8, provider_id, "builtin.lambertian_surface")) {
         return .{
             .id = provider_id,

@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const o2a_parity_parser = internal.adapters.o2a_parity_parser;
+const o2a_parity_parser = internal.disamar_reference.parser;
 const parseDocument = o2a_parity_parser.parseDocument;
 
 test "parity yaml parser rejects unknown root fields" {
@@ -9,7 +9,7 @@ test "parity yaml parser rejects unknown root fields" {
         \\schema_version: 1
         \\metadata:
         \\  id: t
-        \\  workspace: w
+        \\  storage: w
         \\inputs:
         \\  assets: {}
         \\templates: {}
@@ -28,6 +28,6 @@ test "parity yaml parser rejects unknown root fields" {
     const root = try parseDocument(allocator, yaml);
     try std.testing.expectError(
         error.UnsupportedField,
-        internal.adapters.o2a_parity_scene.compileResolvedCase(allocator, root),
+        internal.disamar_reference.scene.compileResolvedCase(allocator, root),
     );
 }

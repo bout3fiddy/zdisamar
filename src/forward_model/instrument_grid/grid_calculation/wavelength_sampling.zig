@@ -5,12 +5,12 @@ const calibration = @import("../spectral_math/calibration.zig");
 const grid = @import("../spectral_math/grid.zig");
 const SpectralEval = @import("spectral_eval.zig");
 const Types = @import("types.zig");
-const IntegrationKernel = @import("../../builtins/instrument.zig").IntegrationKernel;
-const instrument_integration = @import("../../builtins/instrument/integration.zig");
+const IntegrationKernel = @import("../../implementations/instrument.zig").IntegrationKernel;
+const instrument_integration = @import("../../implementations/instrument/integration.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const SamplePlan = struct {
+pub const WavelengthSampling = struct {
     nominal_wavelength_nm: f64,
     radiance_wavelength_nm: f64,
     irradiance_wavelength_nm: f64,
@@ -18,20 +18,20 @@ pub const SamplePlan = struct {
     irradiance_integration: IntegrationKernel,
 };
 
-pub fn buildSamplePlans(
+pub fn buildWavelengthSampling(
     allocator: Allocator,
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
     resolved_axis: *const grid.ResolvedAxis,
     radiance_calibration: calibration.Calibration,
     irradiance_calibration: calibration.Calibration,
-    providers: Types.ProviderBindings,
-) ![]SamplePlan {
+    implementations: Types.Implementations,
+) ![]WavelengthSampling {
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
-    const plans = try allocator.alloc(SamplePlan, sample_count);
+    const plans = try allocator.alloc(WavelengthSampling, sample_count);
     errdefer allocator.free(plans);
     const can_cache_adaptive_plan = prepared.spectroscopy_lines != null and
-        std.mem.eql(u8, providers.instrument.id, "builtin.generic_response");
+        std.mem.eql(u8, implementations.instrument.id, "builtin.generic_response");
     var radiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     var irradiance_adaptive_cache: instrument_integration.AdaptiveKernelCache = .{};
     if (can_cache_adaptive_plan) {
@@ -108,7 +108,7 @@ pub fn buildSamplePlans(
 
 pub fn collectUniqueForwardMisses(
     allocator: Allocator,
-    plans: []const SamplePlan,
+    plans: []const WavelengthSampling,
 ) ![]SpectralEval.ForwardCacheMiss {
     var seen = std.AutoHashMap(u64, void).init(allocator);
     defer seen.deinit();

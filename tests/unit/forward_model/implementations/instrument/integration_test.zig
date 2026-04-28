@@ -1,8 +1,8 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const integration = internal.plugin_internal.providers.instrument_integration;
-const PreparedOpticalState = internal.kernels.optics.preparation.PreparedOpticalState;
+const integration = internal.forward_model.implementations.instrument_integration;
+const PreparedOpticalState = internal.forward_model.optical_properties.PreparedOpticalState;
 const Instrument = internal.instrument.Instrument;
 const Scene = internal.Scene;
 const SpectralChannel = internal.instrument.SpectralChannel;

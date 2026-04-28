@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const calibration = internal.kernels.spectra.calibration;
+const calibration = internal.forward_model.instrument_grid.spectral_math.calibration;
 const Instrument = internal.instrument.Instrument;
 const Calibration = calibration.Calibration;
 

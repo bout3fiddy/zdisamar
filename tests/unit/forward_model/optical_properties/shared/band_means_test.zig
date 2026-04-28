@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const band_means = internal.kernels.optics.prepare.band_means;
+const band_means = internal.forward_model.optical_properties.shared.band_means;
 const computeWeightedWindowMean = band_means.computeWeightedWindowMean;
 
 test "band means support generic weighted fit windows" {

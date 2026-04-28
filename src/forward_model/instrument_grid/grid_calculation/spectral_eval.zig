@@ -5,12 +5,12 @@ const common = @import("../../radiative_transfer/root.zig");
 const cache_module = @import("cache.zig");
 const spectral_forward = @import("spectral_forward.zig");
 const Types = @import("types.zig");
-const Workspace = @import("workspace.zig");
+const Storage = @import("storage.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 
 const Allocator = std.mem.Allocator;
-const OperationalInstrumentIntegration = @import("../../builtins/instrument.zig").IntegrationKernel;
-const Error = Workspace.Error;
+const OperationalInstrumentIntegration = @import("../../implementations/instrument.zig").IntegrationKernel;
+const Error = Storage.Error;
 
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
 pub const ForwardCacheMiss = spectral_forward.ForwardCacheMiss;
@@ -35,7 +35,7 @@ pub fn integrateForwardAtNominal(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     nominal_wavelength_nm: f64,
     safe_span: f64,
-    providers: Types.ProviderBindings,
+    implementations: Types.Implementations,
     layer_inputs: []common.LayerInput,
     pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
@@ -57,7 +57,7 @@ pub fn integrateForwardAtNominal(
             prepared,
             nominal_wavelength_nm,
             safe_span,
-            providers,
+            implementations,
             layer_inputs,
             pseudo_spherical_layers,
             source_interfaces,
@@ -82,7 +82,7 @@ pub fn integrateForwardAtNominal(
             prepared,
             wavelength_nm,
             safe_span,
-            providers,
+            implementations,
             layer_inputs,
             pseudo_spherical_layers,
             source_interfaces,
@@ -137,7 +137,7 @@ pub fn prefetchForwardSamples(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
+    implementations: Types.Implementations,
     safe_span: f64,
     misses: []const ForwardCacheMiss,
     cache: *SpectralEvaluationCache,
@@ -152,7 +152,7 @@ pub fn prefetchForwardSamples(
         scene,
         route,
         prepared,
-        providers,
+        implementations,
         safe_span,
         misses,
         results,
@@ -169,7 +169,7 @@ pub fn cachedForwardAtWavelength(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     wavelength_nm: f64,
     safe_span: f64,
-    providers: Types.ProviderBindings,
+    implementations: Types.Implementations,
     layer_inputs: []common.LayerInput,
     pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
@@ -189,7 +189,7 @@ pub fn cachedForwardAtWavelength(
         prepared,
         wavelength_nm,
         safe_span,
-        providers,
+        implementations,
         layer_inputs,
         pseudo_spherical_layers,
         source_interfaces,

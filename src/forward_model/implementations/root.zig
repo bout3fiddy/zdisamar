@@ -4,7 +4,7 @@ const noise = @import("noise.zig");
 const surface = @import("surface.zig");
 const transport = @import("transport.zig");
 
-pub const Bindings = measurement.ProviderBindings;
+pub const Bindings = measurement.Implementations;
 
 pub fn exact() Bindings {
     return .{

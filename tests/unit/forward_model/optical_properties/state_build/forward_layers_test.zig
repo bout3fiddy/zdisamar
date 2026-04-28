@@ -1,11 +1,11 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const preparation = internal.kernels.optics.preparation;
+const preparation = internal.forward_model.optical_properties;
 const Scene = internal.Scene;
-const transport_common = internal.kernels.transport.common;
-const ParticleProfiles = internal.kernels.optics.prepare.particle_profiles;
-const PhaseFunctions = internal.kernels.optics.prepare.phase_functions;
+const transport_common = internal.forward_model.radiative_transfer;
+const ParticleProfiles = internal.forward_model.optical_properties.shared.particle_profiles;
+const PhaseFunctions = internal.forward_model.optical_properties.shared.phase_functions;
 const State = preparation.state;
 const Evaluation = preparation.evaluation;
 const shared_geometry = preparation.shared_geometry;

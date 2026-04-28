@@ -5,7 +5,7 @@ const state_vector = internal.state_vector;
 const StateVector = state_vector.StateVector;
 const Parameter = state_vector.Parameter;
 const Target = state_vector.Target;
-const errors = internal.core.errors;
+const errors = internal.common.errors;
 
 test "state vector accepts canonical parameter descriptors" {
     const vector: StateVector = .{

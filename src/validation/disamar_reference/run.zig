@@ -3,19 +3,19 @@ const AbsorberModel = @import("../../input/Absorber.zig");
 const AtmosphereModel = @import("../../input/Atmosphere.zig");
 const InstrumentModel = @import("../../input/Instrument.zig");
 const Instrument = InstrumentModel.Instrument;
-const MeasurementSpace = @import("../../forward_model/instrument_grid/root.zig");
+const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
 const OpticsPrepare = @import("../../forward_model/optical_properties/root.zig");
 const ObservationModel = @import("../../input/ObservationModel.zig");
 const ReferenceDataModel = @import("../../input/ReferenceData.zig");
 const Scene = @import("../../input/Scene.zig").Scene;
 const SpectralGrid = @import("../../input/Spectrum.zig").SpectralGrid;
 const bundled_optics = @import("../../input/reference_data/bundled/assets.zig");
-const providers = @import("../../forward_model/builtins/root.zig");
+const implementations = @import("../../forward_model/implementations/root.zig");
 const reference_assets = @import("../../input/reference_data/ingest/reference_assets.zig");
 const transport_common = @import("../../forward_model/radiative_transfer/root.zig");
 const parity_types = @import("types.zig");
-const adaptive_plan = @import("../../forward_model/builtins/instrument/adaptive_plan.zig");
-const instrument_types = @import("../../forward_model/builtins/instrument/types.zig");
+const adaptive_plan = @import("../../forward_model/implementations/instrument/adaptive_plan.zig");
+const instrument_types = @import("../../forward_model/implementations/instrument/types.zig");
 
 const Allocator = std.mem.Allocator;
 pub const AbsorberSpecies = parity_types.AbsorberSpecies;
@@ -391,7 +391,7 @@ pub fn runResolvedVendorO2AReflectanceCase(
     scene: Scene,
     route: Route,
     prepared: OpticsPrepare.PreparedOpticalState,
-    product: MeasurementSpace.MeasurementSpaceProduct,
+    product: InstrumentGrid.InstrumentGridProduct,
 } {
     var prepared_case = try prepareResolvedVendorO2ACase(allocator, resolved);
     errdefer {
@@ -400,12 +400,12 @@ pub fn runResolvedVendorO2AReflectanceCase(
         allocator.free(prepared_case.reference);
     }
 
-    var product = try MeasurementSpace.simulateProduct(
+    var product = try InstrumentGrid.simulateProduct(
         allocator,
         &prepared_case.scene,
         prepared_case.route,
         &prepared_case.prepared,
-        providers.exact(),
+        implementations.exact(),
     );
     errdefer product.deinit(allocator);
 
@@ -563,28 +563,28 @@ fn sharedParityMeasurementSupport(
     var irradiance_start: instrument_types.IntegrationKernel = undefined;
     var irradiance_end: instrument_types.IntegrationKernel = undefined;
 
-    try @import("../../forward_model/builtins/instrument/integration.zig").integrationForWavelengthChecked(
+    try @import("../../forward_model/implementations/instrument/integration.zig").integrationForWavelengthChecked(
         scene,
         prepared,
         .radiance,
         scene.spectral_grid.start_nm,
         &radiance_start,
     );
-    try @import("../../forward_model/builtins/instrument/integration.zig").integrationForWavelengthChecked(
+    try @import("../../forward_model/implementations/instrument/integration.zig").integrationForWavelengthChecked(
         scene,
         prepared,
         .radiance,
         scene.spectral_grid.end_nm,
         &radiance_end,
     );
-    try @import("../../forward_model/builtins/instrument/integration.zig").integrationForWavelengthChecked(
+    try @import("../../forward_model/implementations/instrument/integration.zig").integrationForWavelengthChecked(
         scene,
         prepared,
         .irradiance,
         scene.spectral_grid.start_nm,
         &irradiance_start,
     );
-    try @import("../../forward_model/builtins/instrument/integration.zig").integrationForWavelengthChecked(
+    try @import("../../forward_model/implementations/instrument/integration.zig").integrationForWavelengthChecked(
         scene,
         prepared,
         .irradiance,

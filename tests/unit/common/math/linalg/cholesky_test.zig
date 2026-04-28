@@ -1,8 +1,8 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const cholesky = internal.kernels.linalg.cholesky;
-const dense = internal.kernels.linalg.small_dense;
+const cholesky = internal.common.math.linalg.cholesky;
+const dense = internal.common.math.linalg.small_dense;
 
 const factor2x2 = cholesky.factor2x2;
 const factorInPlace = cholesky.factorInPlace;
@@ -34,8 +34,8 @@ test "cholesky solves and inverts dense SPD systems" {
     try std.testing.expectApproxEqRel(@as(f64, 1.0), solution[2], 1e-12);
 
     var inverse = [_]f64{0.0} ** 9;
-    var workspace = [_]f64{0.0} ** 6;
-    try invertFromFactor(&matrix, 3, &inverse, &workspace);
+    var storage = [_]f64{0.0} ** 6;
+    try invertFromFactor(&matrix, 3, &inverse, &storage);
     try std.testing.expect(inverse[dense.index(0, 0, 3)] > 0.0);
     try std.testing.expect(inverse[dense.index(1, 1, 3)] > 0.0);
 }

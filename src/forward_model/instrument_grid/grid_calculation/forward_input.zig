@@ -2,7 +2,7 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const OpticsSpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const common = @import("../../radiative_transfer/root.zig");
-const Workspace = @import("workspace.zig");
+const Storage = @import("storage.zig");
 
 pub fn configuredForwardInput(
     scene: *const Scene,

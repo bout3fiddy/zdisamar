@@ -1,5 +1,5 @@
 const std = @import("std");
-const MeasurementSpace = @import("../../forward_model/instrument_grid/root.zig");
+const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
 const ReferenceDataModel = @import("../../input/ReferenceData.zig");
 const runtime = @import("run.zig");
 const support_types = @import("support_types.zig");
@@ -264,7 +264,7 @@ pub fn assessAgainstBaseline(
 }
 
 pub fn computeComparisonMetrics(
-    product: *const MeasurementSpace.MeasurementSpaceProduct,
+    product: *const InstrumentGrid.InstrumentGridProduct,
     reference: []const ReferenceSample,
     zero_tolerance_abs: f64,
 ) ComparisonMetrics {

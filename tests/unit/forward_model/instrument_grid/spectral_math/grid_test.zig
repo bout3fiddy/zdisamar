@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const grid_mod = internal.kernels.spectra.grid;
+const grid_mod = internal.forward_model.instrument_grid.spectral_math.grid;
 const SpectralGrid = grid_mod.SpectralGrid;
 const ResolvedAxis = grid_mod.ResolvedAxis;
 const validateExplicitSamples = grid_mod.validateExplicitSamples;

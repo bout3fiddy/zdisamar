@@ -2,14 +2,14 @@ const std = @import("std");
 const internal = @import("internal");
 
 const Scene = internal.Scene;
-const common = internal.kernels.transport.common;
-const workspace = internal.kernels.transport.measurement.workspace;
-const transportLayerCountHint = workspace.transportLayerCountHint;
-const pseudoSphericalSampleCountHint = workspace.pseudoSphericalSampleCountHint;
+const common = internal.forward_model.radiative_transfer;
+const storage = internal.forward_model.instrument_grid.storage;
+const transportLayerCountHint = storage.transportLayerCountHint;
+const pseudoSphericalSampleCountHint = storage.pseudoSphericalSampleCountHint;
 
-test "measurement workspace transport hint follows explicit interval totals" {
+test "measurement storage transport hint follows explicit interval totals" {
     const scene: Scene = .{
-        .id = "explicit-interval-workspace-hint",
+        .id = "explicit-interval-storage-hint",
         .atmosphere = .{
             .layer_count = 3,
             .sublayer_divisions = 2,

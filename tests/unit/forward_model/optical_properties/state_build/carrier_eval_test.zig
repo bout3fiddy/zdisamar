@@ -1,11 +1,11 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const preparation = internal.kernels.optics.preparation;
+const preparation = internal.forward_model.optical_properties;
 const State = preparation.state;
 const carrier_eval = preparation.carrier_eval;
 const shared_geometry = preparation.shared_geometry;
-const PhaseFunctions = internal.kernels.optics.prepare.phase_functions;
+const PhaseFunctions = internal.forward_model.optical_properties.shared.phase_functions;
 const Rayleigh = internal.reference.rayleigh;
 
 const PreparedSublayer = State.PreparedSublayer;

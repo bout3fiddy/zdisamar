@@ -1,5 +1,5 @@
 const std = @import("std");
-const MeasurementSpace = @import("../forward_model/instrument_grid/root.zig");
+const InstrumentGrid = @import("../forward_model/instrument_grid/root.zig");
 
 pub const spectrum_name = "generated_spectrum.csv";
 
@@ -24,7 +24,7 @@ pub fn writeSummaryReport(
     try writer.interface.flush();
 }
 
-pub fn summaryReportFromProduct(product: *const MeasurementSpace.MeasurementSpaceProduct) SummaryReport {
+pub fn summaryReportFromProduct(product: *const InstrumentGrid.InstrumentGridProduct) SummaryReport {
     return .{
         .sample_count = product.summary.sample_count,
         .wavelength_start_nm = product.summary.wavelength_start_nm,
@@ -37,7 +37,7 @@ pub fn summaryReportFromProduct(product: *const MeasurementSpace.MeasurementSpac
 
 pub fn writeGeneratedSpectrumCsv(
     output_path: []const u8,
-    product: *const MeasurementSpace.MeasurementSpaceProduct,
+    product: *const InstrumentGrid.InstrumentGridProduct,
 ) !void {
     var file = try std.fs.cwd().createFile(output_path, .{ .truncate = true });
     defer file.close();

@@ -4,7 +4,7 @@ const OpticsPreparation = @import("../../optical_properties/root.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const simulate_core = @import("simulate.zig");
 const Types = @import("types.zig");
-const Workspace = @import("workspace.zig");
+const Storage = @import("storage.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -13,38 +13,38 @@ pub fn simulateProduct(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-) Workspace.Error!Types.MeasurementSpaceProduct {
-    var workspace: Workspace.ProductWorkspace = .{};
-    defer workspace.deinit(allocator);
+    implementations: Types.Implementations,
+) Storage.Error!Types.InstrumentGridProduct {
+    var storage: Storage.ProductStorage = .{};
+    defer storage.deinit(allocator);
     const view = try simulateProductWithWorkspace(
         allocator,
-        &workspace,
+        &storage,
         scene,
         route,
         prepared,
-        providers,
+        implementations,
     );
     return view.toOwned(allocator);
 }
 
 pub fn simulateProductWithWorkspace(
     allocator: Allocator,
-    workspace: *Workspace.ProductWorkspace,
+    storage: *Storage.ProductStorage,
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
-) Workspace.Error!Types.MeasurementSpaceProductView {
-    const buffers = try workspace.buffers(allocator, scene, route, providers);
+    implementations: Types.Implementations,
+) Storage.Error!Types.InstrumentGridProductView {
+    const buffers = try storage.buffers(allocator, scene, route, implementations);
     const summary = try simulate_core.simulateInternal(
         allocator,
         scene,
         route,
         prepared,
-        providers,
+        implementations,
         buffers,
-        try workspace.spectralCache(allocator),
+        try storage.spectralCache(allocator),
     );
     return .{
         .summary = summary,

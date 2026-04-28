@@ -1,8 +1,8 @@
 const std = @import("std");
-const InstrumentProviders = @import("../../builtins/instrument.zig");
-const NoiseProviders = @import("../../builtins/noise.zig");
-const SurfaceProviders = @import("../../builtins/surface.zig");
-const TransportProviders = @import("../../builtins/transport.zig");
+const InstrumentProviders = @import("../../implementations/instrument.zig");
+const NoiseProviders = @import("../../implementations/noise.zig");
+const SurfaceProviders = @import("../../implementations/surface.zig");
+const TransportProviders = @import("../../implementations/transport.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -10,15 +10,15 @@ pub const reflectance_export_name = "reflectance";
 pub const fitted_reflectance_export_name = "fitted_reflectance";
 
 // Bound implementation implementations used by instrument grid evaluation.
-pub const ProviderBindings = struct {
-    transport: TransportProviders.Provider,
-    surface: SurfaceProviders.Provider,
-    instrument: InstrumentProviders.Provider,
-    noise: NoiseProviders.Provider,
+pub const Implementations = struct {
+    transport: TransportProviders.Implementation,
+    surface: SurfaceProviders.Implementation,
+    instrument: InstrumentProviders.Implementation,
+    noise: NoiseProviders.Implementation,
 };
 
 // Measurement-space summary statistics for one spectral sweep.
-pub const MeasurementSpaceSummary = struct {
+pub const InstrumentGridSummary = struct {
     sample_count: u32,
     wavelength_start_nm: f64,
     wavelength_end_nm: f64,
@@ -30,8 +30,8 @@ pub const MeasurementSpaceSummary = struct {
 };
 
 // Measurement-space product arrays and associated bulk optical properties.
-pub const MeasurementSpaceProduct = struct {
-    summary: MeasurementSpaceSummary,
+pub const InstrumentGridProduct = struct {
+    summary: InstrumentGridSummary,
     wavelengths: []f64,
     radiance: []f64,
     irradiance: []f64,
@@ -53,7 +53,7 @@ pub const MeasurementSpaceProduct = struct {
     depolarization_factor: f64,
     d_optical_depth_d_temperature: f64,
 
-    pub fn deinit(self: *MeasurementSpaceProduct, allocator: Allocator) void {
+    pub fn deinit(self: *InstrumentGridProduct, allocator: Allocator) void {
         allocator.free(self.wavelengths);
         allocator.free(self.radiance);
         allocator.free(self.irradiance);
@@ -68,8 +68,8 @@ pub const MeasurementSpaceProduct = struct {
 };
 
 // Borrowed instrument grid outputs backed by a reusable product storage.
-pub const MeasurementSpaceProductView = struct {
-    summary: MeasurementSpaceSummary,
+pub const InstrumentGridProductView = struct {
+    summary: InstrumentGridSummary,
     wavelengths: []const f64,
     radiance: []const f64,
     irradiance: []const f64,
@@ -91,7 +91,7 @@ pub const MeasurementSpaceProductView = struct {
     depolarization_factor: f64,
     d_optical_depth_d_temperature: f64,
 
-    pub fn toOwned(self: MeasurementSpaceProductView, allocator: Allocator) !MeasurementSpaceProduct {
+    pub fn toOwned(self: InstrumentGridProductView, allocator: Allocator) !InstrumentGridProduct {
         const wavelengths = try cloneF64Slice(allocator, self.wavelengths);
         errdefer allocator.free(wavelengths);
         const radiance = try cloneF64Slice(allocator, self.radiance);

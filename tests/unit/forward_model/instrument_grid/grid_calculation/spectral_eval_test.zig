@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const SpectralEvaluationCache = internal.kernels.transport.measurement.spectral_eval.SpectralEvaluationCache;
+const SpectralEvaluationCache = internal.forward_model.instrument_grid.spectral_eval.SpectralEvaluationCache;
 
 test "spectral cache key distinguishes adjacent adaptive samples" {
     const first = 759.637013770239;

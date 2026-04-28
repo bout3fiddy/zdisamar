@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const sampling = internal.kernels.spectra.sampling;
+const sampling = internal.forward_model.instrument_grid.spectral_math.sampling;
 const sampleLinearClamped = sampling.sampleLinearClamped;
 
 test "sampling clamps linearly on sparse wavelength nodes" {

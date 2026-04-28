@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const spline = internal.kernels.interpolation.spline;
+const spline = internal.common.math.interpolation.spline;
 const sampleNatural = spline.sampleNatural;
 const sampleEndpointSecant = spline.sampleEndpointSecant;
 

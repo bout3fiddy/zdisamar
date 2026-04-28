@@ -2,18 +2,18 @@ const calibration = @import("../spectral_math/calibration.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const SpectralChannel = @import("../../../input/Instrument.zig").SpectralChannel;
 const Types = @import("types.zig");
-const Workspace = @import("workspace.zig");
+const Storage = @import("storage.zig");
 
 pub fn materializeChannelSigma(
-    providers: Types.ProviderBindings,
+    implementations: Types.Implementations,
     scene: *const Scene,
     channel: SpectralChannel,
     wavelengths_nm: []const f64,
     signal: []const f64,
     output: []f64,
-) Workspace.Error!void {
-    if (providers.noise.materializesSigma(scene, channel)) {
-        try providers.noise.materializeSigma(scene, channel, wavelengths_nm, signal, output);
+) Storage.Error!void {
+    if (implementations.noise.materializesSigma(scene, channel)) {
+        try implementations.noise.materializeSigma(scene, channel, wavelengths_nm, signal, output);
     } else {
         @memset(output, 0.0);
     }

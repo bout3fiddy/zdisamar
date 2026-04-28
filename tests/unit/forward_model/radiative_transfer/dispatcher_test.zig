@@ -1,9 +1,9 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const dispatcher = internal.kernels.transport.dispatcher;
-const common = internal.kernels.transport.common;
-const phase_functions = internal.kernels.optics.prepare.phase_functions;
+const dispatcher = internal.forward_model.radiative_transfer.dispatcher;
+const common = internal.forward_model.radiative_transfer;
+const phase_functions = internal.forward_model.optical_properties.shared.phase_functions;
 
 test "dispatcher picks adding lane when use_adding is set" {
     const route = try dispatcher.prepare(.{

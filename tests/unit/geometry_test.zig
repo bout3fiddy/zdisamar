@@ -3,7 +3,7 @@ const internal = @import("internal");
 
 const geometry = internal.geometry;
 const Geometry = geometry.Geometry;
-const errors = internal.core.errors;
+const errors = internal.common.errors;
 
 test "geometry rejects out-of-range zenith and azimuth angles" {
     try (Geometry{

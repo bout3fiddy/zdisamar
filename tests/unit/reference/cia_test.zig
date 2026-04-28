@@ -3,7 +3,7 @@ const internal = @import("internal");
 
 const cia = internal.reference.cia;
 const cross_sections = internal.reference.cross_sections;
-const spline = internal.kernels.interpolation.spline;
+const spline = internal.common.math.interpolation.spline;
 const CollisionInducedAbsorptionPoint = cia.CollisionInducedAbsorptionPoint;
 const CollisionInducedAbsorptionTable = cia.CollisionInducedAbsorptionTable;
 const effectiveSigmaAtSamples = cia.effectiveSigmaAtSamples;

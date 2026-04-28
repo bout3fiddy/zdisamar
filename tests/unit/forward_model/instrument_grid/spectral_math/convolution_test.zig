@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const convolution = internal.kernels.spectra.convolution;
+const convolution = internal.forward_model.instrument_grid.spectral_math.convolution;
 const apply = convolution.apply;
 
 test "spectral convolution smooths a spike with a symmetric kernel" {

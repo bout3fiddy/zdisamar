@@ -1,11 +1,11 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const preparation = internal.kernels.optics.preparation;
-const gauss_legendre = internal.kernels.quadrature.gauss_legendre;
-const transport_common = internal.kernels.transport.common;
+const preparation = internal.forward_model.optical_properties;
+const gauss_legendre = internal.common.math.quadrature.gauss_legendre;
+const transport_common = internal.forward_model.radiative_transfer;
 const State = preparation.state;
-const PhaseFunctions = internal.kernels.optics.prepare.phase_functions;
+const PhaseFunctions = internal.forward_model.optical_properties.shared.phase_functions;
 const shared_geometry = preparation.shared_geometry;
 const carrier_eval = preparation.carrier_eval;
 const SpectroscopyState = preparation.state_spectroscopy;

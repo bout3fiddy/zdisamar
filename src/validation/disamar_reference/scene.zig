@@ -116,10 +116,10 @@ const CompiledAtmosphere = struct {
 };
 
 fn compileMetadata(map: []const parser.MapEntry) !parity_runtime.Metadata {
-    try common.expectOnlyFields(map, &.{ "id", "workspace", "description" });
+    try common.expectOnlyFields(map, &.{ "id", "storage", "description" });
     return .{
         .id = try common.requiredString(map, "id"),
-        .workspace = try common.requiredString(map, "workspace"),
+        .storage = try common.requiredString(map, "storage"),
         .description = try common.optionalString(map, "description") orelse "",
     };
 }

@@ -1,7 +1,7 @@
 const internal = @import("internal");
 
 test {
-    const preparation = internal.kernels.optics.preparation;
+    const preparation = internal.forward_model.optical_properties;
 
     _ = preparation.state;
     _ = preparation.builder;

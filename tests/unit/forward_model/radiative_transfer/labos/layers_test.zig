@@ -1,10 +1,10 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const labos = internal.kernels.transport.labos;
+const labos = internal.forward_model.radiative_transfer.labos;
 const labos_internal = labos.internal;
-const common = internal.kernels.transport.common;
-const phase_functions = internal.kernels.optics.prepare.phase_functions;
+const common = internal.forward_model.radiative_transfer;
+const phase_functions = internal.forward_model.optical_properties.shared.phase_functions;
 
 const Geometry = labos.Geometry;
 const LayerRT = labos.LayerRT;

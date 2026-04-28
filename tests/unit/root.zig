@@ -178,7 +178,7 @@ test "public root exposes the O2A forward lab surface" {
 test "public root no longer exposes removed framework scaffolding" {
     try std.testing.expect(!@hasDecl(zdisamar, "Engine"));
     try std.testing.expect(!@hasDecl(zdisamar, "PreparedPlan"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Workspace"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Storage"));
     try std.testing.expect(!@hasDecl(zdisamar, "Request"));
     try std.testing.expect(!@hasDecl(zdisamar, "canonical_config"));
     try std.testing.expect(!@hasDecl(zdisamar, "mission_s5p"));

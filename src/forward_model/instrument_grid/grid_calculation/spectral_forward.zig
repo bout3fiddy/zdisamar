@@ -4,11 +4,11 @@ const OpticsPreparation = @import("../../optical_properties/root.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const ForwardInput = @import("forward_input.zig");
 const Types = @import("types.zig");
-const Workspace = @import("workspace.zig");
+const Storage = @import("storage.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 
 const Allocator = std.mem.Allocator;
-const Error = Workspace.Error;
+const Error = Storage.Error;
 // PUB FOR TEST: re-exported via measurement/internal.zig.
 pub const min_parallel_forward_miss_count: usize = 32;
 
@@ -37,8 +37,8 @@ const ForwardSampleScratch = struct {
         route: common.Route,
         prepared: *const OpticsPreparation.PreparedOpticalState,
     ) !ForwardSampleScratch {
-        const layer_count = Workspace.resolvedTransportLayerCount(route, prepared);
-        const pseudo_spherical_sample_count = Workspace.resolvedPseudoSphericalSampleCount(scene, route, prepared);
+        const layer_count = Storage.resolvedTransportLayerCount(route, prepared);
+        const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, route, prepared);
         return .{
             .layer_inputs = try allocator.alloc(common.LayerInput, layer_count),
             .pseudo_spherical_layers = try allocator.alloc(common.LayerInput, pseudo_spherical_sample_count),
@@ -77,7 +77,7 @@ const ForwardPrefetchWorker = struct {
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
+    implementations: Types.Implementations,
     safe_span: f64,
     misses: []const ForwardCacheMiss,
     results: []ForwardIntegratedSample,
@@ -87,7 +87,7 @@ const ForwardPrefetchWorker = struct {
 pub fn radianceFromForward(
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
+    implementations: Types.Implementations,
     wavelength_nm: f64,
     safe_span: f64,
     phase: f64,
@@ -95,7 +95,7 @@ pub fn radianceFromForward(
 ) f64 {
     const solar_irradiance = solar_compat.irradianceAtWavelength(scene, wavelength_nm);
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
-    const surface_gain = providers.surface.brdfFactor(.{
+    const surface_gain = implementations.surface.brdfFactor(.{
         .scene = scene,
         .prepared = prepared,
         .wavelength_nm = wavelength_nm,
@@ -113,7 +113,7 @@ pub fn computeForwardSampleAtWavelength(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     wavelength_nm: f64,
     safe_span: f64,
-    providers: Types.ProviderBindings,
+    implementations: Types.Implementations,
     layer_inputs: []common.LayerInput,
     pseudo_spherical_layers: []common.LayerInput,
     source_interfaces: []common.SourceInterfaceInput,
@@ -137,9 +137,9 @@ pub fn computeForwardSampleAtWavelength(
     );
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
-    const forward = try providers.transport.executePrepared(allocator, effective_route, input);
+    const forward = try implementations.transport.executePrepared(allocator, effective_route, input);
     return .{
-        .radiance = radianceFromForward(scene, prepared, providers, wavelength_nm, safe_span, 0.0, forward),
+        .radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward),
         .jacobian = if (forward.jacobian_column) |value| value else 0.0,
     };
 }
@@ -167,7 +167,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
             worker.prepared,
             miss.wavelength_nm,
             worker.safe_span,
-            worker.providers,
+            worker.implementations,
             scratch.layer_inputs,
             scratch.pseudo_spherical_layers,
             scratch.source_interfaces,
@@ -187,7 +187,7 @@ pub fn prefetchForwardSamples(
     scene: *const Scene,
     route: common.Route,
     prepared: *const OpticsPreparation.PreparedOpticalState,
-    providers: Types.ProviderBindings,
+    implementations: Types.Implementations,
     safe_span: f64,
     misses: []const ForwardCacheMiss,
     results: []ForwardIntegratedSample,
@@ -207,7 +207,7 @@ pub fn prefetchForwardSamples(
                 prepared,
                 miss.wavelength_nm,
                 safe_span,
-                providers,
+                implementations,
                 scratch.layer_inputs,
                 scratch.pseudo_spherical_layers,
                 scratch.source_interfaces,
@@ -237,7 +237,7 @@ pub fn prefetchForwardSamples(
             .scene = scene,
             .route = route,
             .prepared = prepared,
-            .providers = providers,
+            .implementations = implementations,
             .safe_span = safe_span,
             .misses = misses[start_index..end_index],
             .results = results[start_index..end_index],

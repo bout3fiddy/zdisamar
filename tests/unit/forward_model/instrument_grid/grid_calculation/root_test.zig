@@ -1,10 +1,10 @@
 const internal = @import("internal");
 
 test {
-    const measurement = internal.kernels.transport.measurement;
+    const measurement = internal.forward_model.instrument_grid;
 
     _ = measurement.types;
-    _ = measurement.workspace;
+    _ = measurement.storage;
     _ = measurement.cache;
     _ = measurement.forward_input;
     _ = measurement.spectral_eval;

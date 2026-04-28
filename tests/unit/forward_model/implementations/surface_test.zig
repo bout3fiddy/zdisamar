@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const Surface = internal.plugin_internal.providers.Surface;
+const Surface = internal.forward_model.implementations.Surface;
 
 test "lambertian surface provider exposes a unit BRDF factor" {
     const provider = Surface.resolve("builtin.lambertian_surface").?;

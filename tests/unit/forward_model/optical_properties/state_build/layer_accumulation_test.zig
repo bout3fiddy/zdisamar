@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const preparation = internal.kernels.optics.preparation;
+const preparation = internal.forward_model.optical_properties;
 const preparation_internal = preparation.internal;
 const ReferenceData = internal.reference_data;
 const ClimatologyProfile = internal.reference.climatology.ClimatologyProfile;

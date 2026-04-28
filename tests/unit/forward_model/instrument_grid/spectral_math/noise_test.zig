@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const noise = internal.kernels.spectra.noise;
+const noise = internal.forward_model.instrument_grid.spectral_math.noise;
 const shotNoiseStd = noise.shotNoiseStd;
 const whitenResiduals = noise.whitenResiduals;
 const copyInputSigma = noise.copyInputSigma;

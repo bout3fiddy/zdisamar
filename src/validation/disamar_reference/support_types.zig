@@ -1,9 +1,9 @@
 const std = @import("std");
-const MeasurementSpace = @import("../../forward_model/instrument_grid/root.zig");
+const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
 const OpticsPrepare = @import("../../forward_model/optical_properties/root.zig");
 const ReferenceDataModel = @import("../../input/ReferenceData.zig");
 const Scene = @import("../../input/Scene.zig").Scene;
-const providers = @import("../../forward_model/builtins/root.zig");
+const implementations = @import("../../forward_model/implementations/root.zig");
 const runtime = @import("run.zig");
 const Route = @import("../../forward_model/radiative_transfer/root.zig").Route;
 
@@ -84,7 +84,7 @@ pub const VendorO2AReflectanceCase = struct {
     scene: Scene,
     route: Route,
     prepared: OpticsPrepare.PreparedOpticalState,
-    product: MeasurementSpace.MeasurementSpaceProduct,
+    product: InstrumentGrid.InstrumentGridProduct,
 
     pub fn deinit(self: *VendorO2AReflectanceCase, allocator: std.mem.Allocator) void {
         self.product.deinit(allocator);
@@ -119,12 +119,12 @@ pub const VendorO2APreparedCase = struct {
         self: *VendorO2APreparedCase,
         allocator: std.mem.Allocator,
     ) !VendorO2AReflectanceCase {
-        var product = try MeasurementSpace.simulateProduct(
+        var product = try InstrumentGrid.simulateProduct(
             allocator,
             &self.scene,
             self.route,
             &self.prepared,
-            providers.exact(),
+            implementations.exact(),
         );
         errdefer product.deinit(allocator);
 

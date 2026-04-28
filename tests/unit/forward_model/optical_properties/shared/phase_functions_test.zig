@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const phase_functions = internal.kernels.optics.prepare.phase_functions;
+const phase_functions = internal.forward_model.optical_properties.shared.phase_functions;
 const Scene = internal.Scene;
 const hgPhaseCoefficients = phase_functions.hgPhaseCoefficients;
 const gasPhaseCoefficientsAtWavelength = phase_functions.gasPhaseCoefficientsAtWavelength;

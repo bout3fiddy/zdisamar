@@ -1,5 +1,5 @@
 // Test-access seam for preparation submodules and lifted private helpers.
-// Consumed via `internal.kernels.optics.preparation.internal`.
+// Consumed via `internal.forward_model.optical_properties.internal`.
 
 const std = @import("std");
 const ClimatologyProfile = @import("../../../input/reference/climatology.zig").ClimatologyProfile;

@@ -1,8 +1,8 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const errors = internal.core.errors;
-const lut_controls = internal.core.lut_controls;
+const errors = internal.common.errors;
+const lut_controls = internal.common.lut_controls;
 const Controls = lut_controls.Controls;
 const CompatibilityKey = lut_controls.CompatibilityKey;
 

@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const reference_assets = internal.adapters.ingest_reference_assets;
+const reference_assets = internal.input_reference_data.ingest_reference_assets;
 const loadBundleAsset = reference_assets.loadBundleAsset;
 
 test "reference asset loader validates hashes and parses numeric tables" {

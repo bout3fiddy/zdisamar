@@ -1,8 +1,8 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const labos = internal.kernels.transport.labos;
-const common = internal.kernels.transport.common;
+const labos = internal.forward_model.radiative_transfer.labos;
+const common = internal.forward_model.radiative_transfer;
 
 const Geometry = labos.Geometry;
 const UDField = labos.UDField;
