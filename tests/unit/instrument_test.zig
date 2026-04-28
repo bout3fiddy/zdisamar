@@ -220,10 +220,28 @@ test "generated cross-section LUT rejects consume-mode source builds" {
 }
 
 test "cross-section LUT extrapolates scaled log coordinates outside configured temperature range" {
-    // ISSUE: original test asserted scaled-lnT extrapolation behavior, but the
-    // current eval helper returns 0 outside the configured range. Skip until the
-    // expected behavior is re-confirmed against vendor parity.
-    return error.SkipZigTest;
+    const lut: OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{ 760.8, 761.2 },
+        .coefficients = &[_]f64{
+            2.0e-24, 0.5e-24, 0.3e-24, 0.1e-24,
+            3.0e-24, 0.6e-24, 0.4e-24, 0.2e-24,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 150.0,
+        .max_pressure_hpa = 1000.0,
+    };
+    try lut.validate();
+
+    const below_min_sigma = lut.sigmaAt(761.0, 180.0, 700.0);
+    const at_min_sigma = lut.sigmaAt(761.0, lut.min_temperature_k, 700.0);
+    const above_min_sigma = lut.sigmaAt(761.0, 240.0, 700.0);
+
+    try std.testing.expect(below_min_sigma > 0.0);
+    try std.testing.expect(below_min_sigma < at_min_sigma);
+    try std.testing.expect(at_min_sigma < above_min_sigma);
 }
 
 test "cross-section LUT keeps non-positive temperature and pressure inputs finite" {
