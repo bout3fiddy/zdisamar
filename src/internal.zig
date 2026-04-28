@@ -8,6 +8,12 @@ pub const reference_data = @import("model/ReferenceData.zig");
 pub const vendor_o2a_trace_support = @import("o2a/data/vendor_parity_yaml.zig");
 pub const vendor_o2a_trace_runtime = @import("o2a/data/vendor_parity_runtime.zig");
 
+pub const core = struct {
+    pub const errors = @import("core/errors.zig");
+    pub const units = @import("core/units.zig");
+    pub const lut_controls = @import("core/lut_controls.zig");
+};
+
 pub const kernels = struct {
     pub const optics = struct {
         pub const preparation = @import("kernels/optics/preparation.zig");
@@ -19,6 +25,15 @@ pub const kernels = struct {
 
     pub const quadrature = struct {
         pub const gauss_legendre = @import("kernels/quadrature/gauss_legendre.zig");
+    };
+
+    pub const linalg = struct {
+        pub const cholesky = @import("kernels/linalg/cholesky.zig");
+        pub const small_dense = @import("kernels/linalg/small_dense.zig");
+    };
+
+    pub const interpolation = struct {
+        pub const spline = @import("kernels/interpolation/spline.zig");
     };
 
     pub const transport = struct {

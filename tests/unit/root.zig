@@ -1,6 +1,11 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const _observation_model_tests = @import("observation_model_test.zig");
+
+// See tests/unit/internal_root.zig for the rationale: a `test` block is
+// required to force Zig to analyze the imported test files.
+test {
+    _ = @import("observation_model_test.zig");
+}
 
 const Scene = zdisamar.Case;
 const empty_scene: Scene = .{};
