@@ -46,6 +46,8 @@ pub const kernels = struct {
 
     pub const transport = struct {
         pub const common = @import("kernels/transport/common.zig");
+        pub const derivatives = @import("kernels/transport/derivatives.zig");
+        pub const dispatcher = @import("kernels/transport/dispatcher.zig");
         pub const labos = @import("kernels/transport/labos.zig");
         pub const measurement = @import("kernels/transport/measurement.zig");
     };

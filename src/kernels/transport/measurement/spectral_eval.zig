@@ -223,9 +223,3 @@ fn cachedIrradianceAtWavelength(
     try cache.irradiance.put(key, value);
     return value;
 }
-
-test "spectral cache key distinguishes adjacent adaptive samples" {
-    const first = 759.637013770239;
-    const second = 759.6370143839599;
-    try std.testing.expect(SpectralEvaluationCache.keyFor(first) != SpectralEvaluationCache.keyFor(second));
-}

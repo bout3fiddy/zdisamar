@@ -25,4 +25,12 @@ test {
     _ = @import("kernels/spectra/sampling_test.zig");
     _ = @import("kernels/optics/prepare/phase_functions_test.zig");
     _ = @import("kernels/optics/prepare/band_means_test.zig");
+
+    _ = @import("kernels/transport/derivatives_test.zig");
+    _ = @import("kernels/transport/dispatcher_test.zig");
+    _ = @import("kernels/transport/common_route_test.zig");
+    _ = @import("kernels/transport/labos/orders_test.zig");
+    _ = @import("kernels/transport/labos/reflectance_test.zig");
+    _ = @import("kernels/transport/measurement/spectral_eval_test.zig");
+    _ = @import("kernels/transport/measurement/workspace_test.zig");
 }
