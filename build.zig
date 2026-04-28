@@ -130,11 +130,6 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(cli_exe);
 
-    const lib_tests = b.addTest(.{
-        .root_module = lib_module,
-    });
-    const run_lib_tests = b.addRunArtifact(lib_tests);
-
     const unit_test_module = b.createModule(.{
         .root_source_file = b.path("tests/unit/root.zig"),
         .target = target,
@@ -292,25 +287,32 @@ pub fn build(b: *std.Build) void {
     );
     o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
 
+    const no_inline_src_tests_cmd = b.addSystemCommand(&.{
+        "scripts/check-no-inline-src-tests.sh",
+    });
+    const no_inline_src_tests_step = b.step(
+        "check-no-inline-src-tests",
+        "Fail when an inline test block reappears under src/",
+    );
+    no_inline_src_tests_step.dependOn(&no_inline_src_tests_cmd.step);
+
     const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(fmt_check_step);
+    check_step.dependOn(no_inline_src_tests_step);
     check_step.dependOn(&lib.step);
     check_step.dependOn(&c_api_lib.step);
     check_step.dependOn(&plot_spectrum_exe.step);
     check_step.dependOn(&cli_exe.step);
-    check_step.dependOn(&lib_tests.step);
     check_step.dependOn(&unit_tests.step);
     check_step.dependOn(&internal_tests.step);
     check_step.dependOn(validation_o2a.compile_step);
     check_step.dependOn(validation_o2a_vendor.compile_step);
     check_step.dependOn(validation_o2a_vendor_line_list.compile_step);
     check_step.dependOn(validation_o2a_yaml.compile_step);
-    check_step.dependOn(&run_lib_tests.step);
     check_step.dependOn(&run_unit_tests.step);
     check_step.dependOn(&run_internal_tests.step);
 
     const test_fast_step = b.step("test-fast", "Run the fast O2A verification suites");
-    test_fast_step.dependOn(&lib_tests.step);
     test_fast_step.dependOn(&run_unit_tests.step);
     test_fast_step.dependOn(&run_internal_tests.step);
     test_fast_step.dependOn(validation_o2a.compile_step);
@@ -323,7 +325,6 @@ pub fn build(b: *std.Build) void {
     test_transport_step.dependOn(transport_smoke.run_step);
 
     const test_step = b.step("test", "Run the retained O2A verification baseline");
-    test_step.dependOn(&run_lib_tests.step);
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_internal_tests.step);
     test_step.dependOn(validation_o2a.run_step);

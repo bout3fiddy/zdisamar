@@ -8,6 +8,7 @@
 
 ## Local Rules
 
+- Inline `test` blocks under `src/` are not allowed. Add new tests under `tests/unit/`, mirroring the source path. The `check-no-inline-src-tests.sh` guard (run by `zig build check`) fails when `^test "` reappears under `src/`. Tests that need non-`pub` symbols use the `internal` module re-exports in `src/internal.zig` and the per-directory `internal.zig` shims under `src/`.
 - Push domain-heavy guidance into the nearest scoped `AGENTS.md` before expanding this file.
 - Prefer moving O2 A-specific behavior into `src/o2a/` instead of leaking new product wiring back into `src/core/` or `src/model/`.
 - When a feature exists in both exact and alternate forms, name the source of truth clearly and keep derived hints, prepared state, and runtime consumers synchronized by tests rather than convention.
