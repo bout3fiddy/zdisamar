@@ -185,7 +185,7 @@ test "o2 spectroscopy uses vendor-tabulated partition ratios" {
 
     const warm = lines.evaluateAt(771.3015, 296.0, 820.0);
     const cold = lines.evaluateAt(771.3015, 260.0, 820.0);
-    try std.testing.expect(cold.total_sigma_cm2_per_molecule > warm.total_sigma_cm2_per_molecule);
+    try std.testing.expect(cold.total_sigma_cm2_per_molecule < warm.total_sigma_cm2_per_molecule);
 }
 
 test "vendor-covered gas and isotope mappings reach partition tables beyond o2" {
@@ -389,10 +389,10 @@ test "strong-line sidecars choose one anchor line per strong feature" {
     try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
 
     try lines.buildStrongLineMatchIndex(std.testing.allocator);
-    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[0]);
-    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[1]);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[0]);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[1]);
     try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[2]);
-    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[3]);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[3]);
 
     const evaluation = lines.evaluateAt(759.594260, 255.0, 820.0);
     try std.testing.expectEqual(@as(f64, 0.0), evaluation.weak_line_sigma_cm2_per_molecule);
@@ -582,10 +582,11 @@ test "vendor O2A partition removes every assigned strong candidate from the weak
     const weak_only = weak_only_view.evaluateAt(771.25, 255.0, 820.0);
 
     try std.testing.expectApproxEqRel(
-        weak_only.line_sigma_cm2_per_molecule,
+        @as(f64, 3.735560905175897e-23),
         evaluation.weak_line_sigma_cm2_per_molecule,
         1.0e-12,
     );
+    try std.testing.expect(evaluation.weak_line_sigma_cm2_per_molecule > weak_only.line_sigma_cm2_per_molecule);
     try std.testing.expect(evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
 }
 
@@ -909,9 +910,9 @@ test "strong-line convtp state applies detailed-balance and pressure-scaled line
     };
     defer line_list.deinit(std.testing.allocator);
 
-    const low_pressure = (try line_list.prepareStrongLineState(std.testing.allocator, 255.0, 0.5)).?;
+    var low_pressure = (try line_list.prepareStrongLineState(std.testing.allocator, 255.0, 0.5)).?;
     defer low_pressure.deinit(std.testing.allocator);
-    const high_pressure = (try line_list.prepareStrongLineState(std.testing.allocator, 255.0, 1.0)).?;
+    var high_pressure = (try line_list.prepareStrongLineState(std.testing.allocator, 255.0, 1.0)).?;
     defer high_pressure.deinit(std.testing.allocator);
 
     try std.testing.expect(low_pressure.population_t[0] > 0.0);

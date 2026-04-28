@@ -36,15 +36,3 @@ fn provenanceLabelForRoute(route: common.Route) []const u8 {
 fn derivativeSemanticsForRoute(route: common.Route) common.DerivativeSemantics {
     return route.derivativeSemantics();
 }
-
-test "transport provider exposes route fidelity and provenance helpers" {
-    const provider = resolve("builtin.dispatcher") orelse unreachable;
-    const route = try provider.prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
-        .derivative_mode = .none,
-    });
-    try std.testing.expectEqual(common.ImplementationClass.baseline, provider.classificationForRoute(route));
-    try std.testing.expectEqualStrings("baseline_labos", provider.provenanceLabelForRoute(route));
-    try std.testing.expectEqual(common.DerivativeSemantics.none, provider.derivativeSemanticsForRoute(route));
-}

@@ -1,6 +1,11 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const _observation_model_tests = @import("observation_model_test.zig");
+
+// See tests/unit/internal_root.zig for the rationale: a `test` block is
+// required to force Zig to analyze the imported test files.
+test {
+    _ = @import("observation_model_test.zig");
+}
 
 const Scene = zdisamar.Case;
 const empty_scene: Scene = .{};
@@ -153,4 +158,34 @@ test "particle placement falls back only when explicit placement is absent" {
     try std.testing.expectEqual(@as(u32, 2), cloud_placement.interval_index_1based);
     try std.testing.expectEqual(@as(f64, 300.0), cloud_placement.top_pressure_hpa);
     try std.testing.expectEqual(@as(f64, 4.5), cloud_placement.bottom_altitude_km);
+}
+
+test "public root exposes the O2A forward lab surface" {
+    try std.testing.expect(@hasDecl(zdisamar, "Case"));
+    try std.testing.expect(@hasDecl(zdisamar, "Data"));
+    try std.testing.expect(@hasDecl(zdisamar, "Optics"));
+    try std.testing.expect(@hasDecl(zdisamar, "Method"));
+    try std.testing.expect(@hasDecl(zdisamar, "RunStorage"));
+    try std.testing.expect(@hasDecl(zdisamar, "Result"));
+    try std.testing.expect(@hasDecl(zdisamar, "Report"));
+    try std.testing.expect(@hasDecl(zdisamar, "Prepared"));
+    try std.testing.expect(@hasDecl(zdisamar, "parity"));
+    try std.testing.expect(@hasDecl(zdisamar, "prepare"));
+    try std.testing.expect(@hasDecl(zdisamar, "run"));
+    try std.testing.expect(@hasDecl(zdisamar, "writeReport"));
+}
+
+test "public root no longer exposes removed framework scaffolding" {
+    try std.testing.expect(!@hasDecl(zdisamar, "Engine"));
+    try std.testing.expect(!@hasDecl(zdisamar, "PreparedPlan"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Workspace"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Request"));
+    try std.testing.expect(!@hasDecl(zdisamar, "canonical_config"));
+    try std.testing.expect(!@hasDecl(zdisamar, "mission_s5p"));
+    try std.testing.expect(!@hasDecl(zdisamar, "exporters"));
+    try std.testing.expect(!@hasDecl(zdisamar, "test_support"));
+    try std.testing.expect(!@hasDecl(zdisamar, "vendor_case"));
+    try std.testing.expect(!@hasDecl(zdisamar, "loadData"));
+    try std.testing.expect(!@hasDecl(zdisamar, "buildOptics"));
+    try std.testing.expect(!@hasDecl(zdisamar, "runSpectrum"));
 }

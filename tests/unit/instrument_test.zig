@@ -4,6 +4,13 @@ const InstrumentModel = internal.instrument;
 
 const Instrument = InstrumentModel.Instrument;
 const OperationalCrossSectionLut = InstrumentModel.OperationalCrossSectionLut;
+const OperationalReferenceGrid = InstrumentModel.OperationalReferenceGrid;
+const AdaptiveReferenceGrid = InstrumentModel.AdaptiveReferenceGrid;
+const OperationalSolarSpectrum = InstrumentModel.OperationalSolarSpectrum;
+const InstrumentLineShape = InstrumentModel.InstrumentLineShape;
+const InstrumentLineShapeTable = InstrumentModel.InstrumentLineShapeTable;
+const ReferenceData = internal.reference_data;
+const errors = internal.core.errors;
 
 test "operational cross-section lut evaluates vendor-style scaled log legendre expansions" {
     const lut: OperationalCrossSectionLut = .{
@@ -161,4 +168,226 @@ test "operational typed carriers reject duplicate wavelengths" {
         },
     };
     try std.testing.expectError(error.InvalidRequest, invalid_lut.validate());
+}
+
+test "generated cross-section LUT reproduces direct table values" {
+    const wavelengths = [_]f64{ 430.0, 431.0, 432.0 };
+    const points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.0e-19 },
+        .{ .wavelength_nm = 431.0, .sigma_cm2_per_molecule = 3.0e-19 },
+        .{ .wavelength_nm = 432.0, .sigma_cm2_per_molecule = 4.0e-19 },
+    };
+    const table: ReferenceData.CrossSectionTable = .{ .points = @constCast(points[0..]) };
+    const lut = try OperationalCrossSectionLut.buildFromSource(
+        std.testing.allocator,
+        wavelengths[0..],
+        .{ .cross_section_table = &table },
+        .{
+            .mode = .generate,
+            .min_temperature_k = 180.0,
+            .max_temperature_k = 325.0,
+            .min_pressure_hpa = 0.03,
+            .max_pressure_hpa = 1050.0,
+            .temperature_grid_count = 6,
+            .pressure_grid_count = 8,
+            .temperature_coefficient_count = 3,
+            .pressure_coefficient_count = 4,
+        },
+    );
+    defer {
+        var owned = lut;
+        owned.deinitOwned(std.testing.allocator);
+    }
+
+    try std.testing.expectApproxEqRel(@as(f64, 3.0e-19), lut.sigmaAt(431.0, 250.0, 600.0), 1.0e-10);
+    // REBASELINE: derivative is numerically zero (~6e-37); use abs tolerance.
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), lut.dSigmaDTemperatureAt(431.0, 250.0, 600.0), 1.0e-30);
+}
+
+test "generated cross-section LUT rejects consume-mode source builds" {
+    const wavelengths = [_]f64{430.0};
+    const points = [_]ReferenceData.CrossSectionPoint{
+        .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 2.0e-19 },
+    };
+    const table: ReferenceData.CrossSectionTable = .{ .points = @constCast(points[0..]) };
+
+    try std.testing.expectError(errors.Error.InvalidRequest, OperationalCrossSectionLut.buildFromSource(
+        std.testing.allocator,
+        wavelengths[0..],
+        .{ .cross_section_table = &table },
+        .{ .mode = .consume },
+    ));
+}
+
+test "cross-section LUT extrapolates scaled log coordinates outside configured temperature range" {
+    const lut: OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{ 760.8, 761.2 },
+        .coefficients = &[_]f64{
+            2.0e-24, 0.5e-24, 0.3e-24, 0.1e-24,
+            3.0e-24, 0.6e-24, 0.4e-24, 0.2e-24,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 2,
+        .min_temperature_k = 220.0,
+        .max_temperature_k = 320.0,
+        .min_pressure_hpa = 150.0,
+        .max_pressure_hpa = 1000.0,
+    };
+    try lut.validate();
+
+    const below_min_sigma = lut.sigmaAt(761.0, 180.0, 700.0);
+    const at_min_sigma = lut.sigmaAt(761.0, lut.min_temperature_k, 700.0);
+    const above_min_sigma = lut.sigmaAt(761.0, 240.0, 700.0);
+
+    try std.testing.expect(below_min_sigma > 0.0);
+    try std.testing.expect(below_min_sigma < at_min_sigma);
+    try std.testing.expect(at_min_sigma < above_min_sigma);
+}
+
+test "cross-section LUT keeps non-positive temperature and pressure inputs finite" {
+    const lut: OperationalCrossSectionLut = .{
+        .wavelengths_nm = &[_]f64{431.0},
+        .coefficients = &[_]f64{
+            0.0,
+            1.0,
+        },
+        .temperature_coefficient_count = 2,
+        .pressure_coefficient_count = 1,
+        .min_temperature_k = 100.0,
+        .max_temperature_k = 200.0,
+        .min_pressure_hpa = 10.0,
+        .max_pressure_hpa = 1000.0,
+    };
+    try lut.validate();
+
+    const sigma = lut.sigmaAt(431.0, 0.0, 0.0);
+    const derivative = lut.dSigmaDTemperatureAt(431.0, 0.0, 0.0);
+
+    try std.testing.expect(std.math.isFinite(sigma));
+    try std.testing.expect(std.math.isFinite(derivative));
+    try std.testing.expectApproxEqRel(
+        lut.sigmaAt(431.0, lut.min_temperature_k, lut.min_pressure_hpa),
+        sigma,
+        1.0e-12,
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), derivative, 1.0e-12);
+}
+
+test "line-shape carriers normalize direct and table-driven kernels" {
+    const direct: InstrumentLineShape = .{
+        .sample_count = 3,
+        .offsets_nm = &.{ -0.1, 0.0, 0.1 },
+        .weights = &.{ 1.0, 2.0, 1.0 },
+    };
+    var offsets: [3]f64 = undefined;
+    var weights: [3]f64 = undefined;
+    const direct_count = direct.writeNormalizedKernel(&offsets, &weights);
+    try std.testing.expectEqual(@as(usize, 3), direct_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), weights[1], 1.0e-12);
+
+    const table: InstrumentLineShapeTable = .{
+        .nominal_count = 2,
+        .sample_count = 3,
+        .nominal_wavelengths_nm = &.{ 760.8, 761.0 },
+        .offsets_nm = &.{ -0.1, 0.0, 0.1 },
+        .weights = &.{ 1.0, 2.0, 1.0, 0.5, 1.0, 0.5 },
+    };
+    const table_count = table.writeNormalizedKernelForNominal(761.0, &offsets, &weights);
+    try std.testing.expectEqual(@as(usize, 3), table_count);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), weights[1], 1.0e-12);
+}
+
+test "operational reference grid reports a weighted effective spacing" {
+    const grid: OperationalReferenceGrid = .{
+        .wavelengths_nm = &.{ 760.8, 761.0, 761.3 },
+        .weights = &.{ 0.2, 0.6, 0.2 },
+    };
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.25), grid.effectiveSpacingNm(), 1.0e-12);
+}
+
+test "adaptive reference grid validates vendor-like strong-line division ranges" {
+    try (AdaptiveReferenceGrid{
+        .points_per_fwhm = 5,
+        .strong_line_min_divisions = 3,
+        .strong_line_max_divisions = 8,
+    }).validate();
+
+    try std.testing.expectError(
+        errors.Error.InvalidRequest,
+        (AdaptiveReferenceGrid{
+            .points_per_fwhm = 5,
+            .strong_line_min_divisions = 8,
+            .strong_line_max_divisions = 3,
+        }).validate(),
+    );
+}
+
+test "operational solar spectrum interpolates onto measured wavelengths" {
+    var spectrum: OperationalSolarSpectrum = .{
+        .wavelengths_nm = try std.testing.allocator.dupe(f64, &.{ 760.8, 761.0, 761.2 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 2.7e14, 2.8e14, 2.9e14 }),
+    };
+    try spectrum.prepareInterpolation(std.testing.allocator);
+    defer spectrum.deinitOwned(std.testing.allocator);
+
+    const aligned = try spectrum.interpolateOnto(std.testing.allocator, &.{ 760.8, 760.9, 761.15 });
+    defer std.testing.allocator.free(aligned);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.7e14), aligned[0], 1.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.75e14), aligned[1], 1.0e10);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.875e14), aligned[2], 1.0e10);
+}
+
+test "operational solar spectrum corrects measured irradiance onto a shifted radiance grid" {
+    var source_solar: OperationalSolarSpectrum = .{
+        .wavelengths_nm = try std.testing.allocator.dupe(f64, &.{ 760.8, 761.0, 761.2, 761.4 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 3.00e14, 2.90e14, 2.80e14, 2.70e14 }),
+    };
+    try source_solar.prepareInterpolation(std.testing.allocator);
+    defer source_solar.deinitOwned(std.testing.allocator);
+
+    const corrected = try source_solar.correctMeasuredSpectrumOnto(
+        std.testing.allocator,
+        &.{ 760.8, 761.0, 761.2 },
+        &.{ 2.70e14, 2.68e14, 2.66e14 },
+        &.{ 760.81, 761.01, 761.21 },
+    );
+    defer std.testing.allocator.free(corrected);
+
+    try std.testing.expect(corrected[0] < 2.70e14);
+    try std.testing.expect(corrected[1] < 2.68e14);
+    try std.testing.expect(corrected[2] < 2.66e14);
+}
+
+test "operational solar spectrum supports spline default and explicit linear fallback" {
+    var spectrum: OperationalSolarSpectrum = .{
+        .wavelengths_nm = try std.testing.allocator.dupe(f64, &.{ 0.0, 1.0, 2.0, 3.0 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 0.0, 1.0, 4.0, 9.0 }),
+    };
+    try spectrum.prepareInterpolation(std.testing.allocator);
+    defer spectrum.deinitOwned(std.testing.allocator);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.2), spectrum.interpolateIrradiance(1.5), 0.2);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), spectrum.interpolateIrradianceLinear(1.5), 1.0e-12);
+}
+
+test "operational solar spectrum clone preserves prepared spline state" {
+    var spectrum: OperationalSolarSpectrum = .{
+        .wavelengths_nm = try std.testing.allocator.dupe(f64, &.{ 760.8, 761.0, 761.2, 761.4 }),
+        .irradiance = try std.testing.allocator.dupe(f64, &.{ 3.00e14, 2.90e14, 2.80e14, 2.70e14 }),
+    };
+    try spectrum.prepareInterpolation(std.testing.allocator);
+    defer spectrum.deinitOwned(std.testing.allocator);
+
+    var cloned = try spectrum.clone(std.testing.allocator);
+    defer cloned.deinitOwned(std.testing.allocator);
+
+    try std.testing.expectEqual(spectrum.wavelengths_nm.len, cloned.spline_second_derivatives.len);
+    try std.testing.expect(cloned.owns_spline_state);
+    try std.testing.expectApproxEqAbs(
+        spectrum.interpolateIrradiance(761.1),
+        cloned.interpolateIrradiance(761.1),
+        1.0,
+    );
 }

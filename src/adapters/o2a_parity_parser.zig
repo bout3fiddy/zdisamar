@@ -189,25 +189,3 @@ fn splitKeyValue(text: []const u8) ?KeyValueSplit {
 fn isSequenceLine(text: []const u8) bool {
     return text.len != 0 and text[0] == '-';
 }
-
-test "parity yaml parser rejects unknown root fields" {
-    const yaml =
-        \\schema_version: 1
-        \\metadata:
-        \\  id: t
-        \\  workspace: w
-        \\inputs:
-        \\  assets: {}
-        \\templates: {}
-        \\experiment:
-        \\  simulation:
-        \\    from: base
-        \\validation:
-        \\  strict_unknown_fields: true
-        \\  require_resolved_assets: true
-        \\  require_resolved_stage_references: true
-        \\extra: 1
-    ;
-    const root = try parseDocument(std.testing.allocator, yaml);
-    try std.testing.expectError(error.UnsupportedField, @import("o2a_parity_scene.zig").compileResolvedCase(std.testing.allocator, root));
-}

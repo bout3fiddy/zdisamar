@@ -20,6 +20,7 @@ pub const UDField = basis.UDField;
 pub const UDLocal = basis.UDLocal;
 pub const PhaseKernel = basis.PhaseKernel;
 pub const FourierPlmBasis = basis.FourierPlmBasis;
+pub const fillZplusZminFromBasis = basis.fillZplusZminFromBasis;
 pub const AttenArray = attenuation.AttenArray;
 pub const DynamicAttenArray = attenuation.DynamicAttenArray;
 
@@ -34,6 +35,7 @@ pub const fillAttenuation = attenuation.fillAttenuation;
 pub const fillAttenuationDynamic = attenuation.fillAttenuationDynamic;
 pub const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWithGrid;
 
+pub const internal = @import("labos/internal.zig");
 pub const calcRTlayersInto = layers_mod.calcRTlayersInto;
 pub const calcRTlayersIntoWithBasis = layers_mod.calcRTlayersIntoWithBasis;
 pub const calcRTlayers = layers_mod.calcRTlayers;

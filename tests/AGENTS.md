@@ -1,5 +1,6 @@
 # Tests
 
+- Inline `test` blocks under `src/` are not allowed — tests live under `tests/unit/`, mirroring source paths. The `check-no-inline-src-tests.sh` guard (wired into `zig build check`) fails when `^test "` reappears under `src/`. Tests that need access to non-`pub` symbols go through the `internal` module re-exports in `src/internal.zig` and the matching `<dir>/internal.zig` shim files.
 - `tests/` is for first-class unit, integration, golden, and performance suites.
 - Do not treat dumped output artifacts as tests without harnesses or assertions.
 - Keep fast correctness checks here; longer-running compatibility or benchmark assets belong in `validation/`.

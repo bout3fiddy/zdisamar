@@ -1,3 +1,4 @@
+pub const internal = @import("measurement/internal.zig");
 pub const types = @import("measurement/types.zig");
 pub const workspace = @import("measurement/workspace.zig");
 pub const cache = @import("measurement/cache.zig");
@@ -70,14 +71,4 @@ pub fn simulateProductWithWorkspace(
         prepared,
         providers,
     );
-}
-
-test {
-    _ = types;
-    _ = workspace;
-    _ = cache;
-    _ = forward_input;
-    _ = spectral_eval;
-    _ = product;
-    _ = simulate;
 }

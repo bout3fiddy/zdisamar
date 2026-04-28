@@ -135,17 +135,3 @@ pub fn sampleEndpointSecant(x: []const f64, y: []const f64, target_x: f64) Error
     return a * y[klo] + b * y[khi] +
         ((a * a * a - a) * second[klo] + (b * b * b - b) * second[khi]) * (h * h) / 6.0;
 }
-
-test "natural cubic spline reproduces a quadratic profile at midpoints" {
-    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
-    const y = [_]f64{ 0.0, 1.0, 4.0, 9.0 };
-    const value = try sampleNatural(&x, &y, 1.5);
-    try std.testing.expectApproxEqRel(@as(f64, 2.2), value, 0.05);
-}
-
-test "endpoint-secant spline preserves linear endpoint slopes" {
-    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
-    const y = [_]f64{ 0.0, 1.0, 4.0, 9.0 };
-    const value = try sampleEndpointSecant(&x, &y, 1.5);
-    try std.testing.expect(value > 2.0 and value < 3.0);
-}

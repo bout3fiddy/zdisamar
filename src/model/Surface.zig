@@ -58,18 +58,3 @@ pub const Surface = struct {
         self.parameters = &[_]Parameter{};
     }
 };
-
-test "surface accepts named parameters" {
-    const surface: Surface = .{
-        .kind = .lambertian,
-        .parameters = &[_]Parameter{
-            .{ .name = "roughness_hint", .value = 0.03 },
-            .{ .name = "slope_hint", .value = 0.02 },
-        },
-    };
-    try std.testing.expectEqual(Surface.Kind.lambertian, surface.kind);
-    try surface.validate();
-    try std.testing.expectEqual(Surface.Kind.lambertian, try Surface.Kind.parse("lambertian"));
-    try std.testing.expectEqual(Surface.Kind.wavel_dependent, try Surface.Kind.parse("wavel_dependent"));
-    try std.testing.expectError(errors.Error.InvalidRequest, Surface.Kind.parse("unknown_surface"));
-}

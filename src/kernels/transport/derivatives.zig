@@ -25,13 +25,3 @@ pub fn proxyJacobianColumn(signal: f64, optical_depth: f64, derivative_scale: f6
         1.0,
     ) * transmittance(optical_depth);
 }
-
-test "transport derivative helpers expose analytical transmittance gradients" {
-    try std.testing.expectApproxEqRel(@as(f64, -std.math.exp(-0.5)), dTransmittanceDOpticalDepth(0.5), 1e-12);
-    try std.testing.expectApproxEqRel(
-        @as(f64, -1.1),
-        proxyOpticalDepthSensitivity(1.0, 0.1, 1.0, 1.0),
-        1e-12,
-    );
-    try std.testing.expect(proxyJacobianColumn(1.0, 0.5, 0.1) < 0.0);
-}

@@ -91,15 +91,15 @@ test "absorber set validates explicit spectroscopy bindings" {
 test "resolvedAbsorberSpecies normalizes legacy O2-O2 aliases" {
     try std.testing.expectEqual(
         AbsorberSpecies.o2_o2,
-        resolvedAbsorberSpecies(.{ .id = "o2_o2", .species = "o2_o2" }).?,
+        resolvedAbsorberSpecies(.{ .id = "o2_o2", .species = "o2_o2", .resolved_species = null }).?,
     );
     try std.testing.expectEqual(
         AbsorberSpecies.o2_o2,
-        resolvedAbsorberSpecies(.{ .id = "o2o2", .species = "o2o2" }).?,
+        resolvedAbsorberSpecies(.{ .id = "o2o2", .species = "o2o2", .resolved_species = null }).?,
     );
     try std.testing.expectEqual(
         AbsorberSpecies.o2_o2,
-        resolvedAbsorberSpecies(.{ .id = "o2-o2", .species = "o2-o2" }).?,
+        resolvedAbsorberSpecies(.{ .id = "o2-o2", .species = "o2-o2", .resolved_species = null }).?,
     );
 }
 
