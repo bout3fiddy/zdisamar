@@ -9,7 +9,8 @@ const solar_compat = @import("../../../compat/transport/solar_irradiance.zig");
 
 const Allocator = std.mem.Allocator;
 const Error = Workspace.Error;
-const min_parallel_forward_miss_count: usize = 32;
+// PUB FOR TEST: re-exported via measurement/internal.zig.
+pub const min_parallel_forward_miss_count: usize = 32;
 
 pub const ForwardIntegratedSample = struct {
     radiance: f64,
@@ -261,12 +262,9 @@ pub fn prefetchForwardSamples(
     if (error_state.err) |err| return err;
 }
 
-fn preferredForwardWorkerCount(miss_count: usize) usize {
+// PUB FOR TEST: re-exported via measurement/internal.zig.
+pub fn preferredForwardWorkerCount(miss_count: usize) usize {
     if (miss_count < min_parallel_forward_miss_count) return 1;
     const cpu_count = std.Thread.getCpuCount() catch 1;
     return @min(cpu_count, @max(@as(usize, 1), miss_count / min_parallel_forward_miss_count));
-}
-
-test "small forward miss batches stay single-threaded" {
-    try std.testing.expectEqual(@as(usize, 1), preferredForwardWorkerCount(min_parallel_forward_miss_count - 1));
 }

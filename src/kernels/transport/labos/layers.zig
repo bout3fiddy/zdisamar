@@ -14,7 +14,8 @@ fn locateLowerIndex(values: []const f64, target: f64) usize {
     return index;
 }
 
-fn zeroFourierIntegral(
+// PUB FOR TEST: re-exported via labos/internal.zig.
+pub fn zeroFourierIntegral(
     zplus: *const basis.Mat,
     zmin: *const basis.Mat,
     geo: *const basis.Geometry,
@@ -31,7 +32,8 @@ fn zeroFourierIntegral(
     return integral;
 }
 
-fn renormalizeZeroFourierPhaseKernel(
+// PUB FOR TEST: re-exported via labos/internal.zig.
+pub fn renormalizeZeroFourierPhaseKernel(
     geo: *const basis.Geometry,
     zplus: *basis.Mat,
     zmin: *basis.Mat,
@@ -329,61 +331,6 @@ pub fn calcRTlayersInto(
         null,
         null,
     );
-}
-
-test "zero-Fourier renormalization restores Gaussian quadrature closure" {
-    const geo = basis.Geometry.init(10, 0.61, 0.67);
-    const phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{
-        1.0,
-        0.98,
-        0.98 * 0.98,
-        0.98 * 0.98 * 0.98,
-    });
-    var z = basis.fillZplusZmin(0, phase_coefficients, &geo);
-
-    const before_view = zeroFourierIntegral(&z.Zplus, &z.Zmin, &geo, geo.viewIdx());
-    const before_solar = zeroFourierIntegral(&z.Zplus, &z.Zmin, &geo, geo.n_gauss + 1);
-    try std.testing.expect(@abs(before_view - 2.0) > 1.0e-4);
-    try std.testing.expect(@abs(before_solar - 2.0) > 1.0e-4);
-
-    renormalizeZeroFourierPhaseKernel(&geo, &z.Zplus, &z.Zmin);
-
-    try std.testing.expectApproxEqAbs(@as(f64, 2.0), zeroFourierIntegral(&z.Zplus, &z.Zmin, &geo, 0), 1.0e-10);
-    try std.testing.expectApproxEqAbs(@as(f64, 2.0), zeroFourierIntegral(&z.Zplus, &z.Zmin, &geo, geo.viewIdx()), 1.0e-10);
-    try std.testing.expectApproxEqAbs(@as(f64, 2.0), zeroFourierIntegral(&z.Zplus, &z.Zmin, &geo, geo.n_gauss + 1), 1.0e-10);
-}
-
-test "calcRTlayersInto consumes renorm_phase_function on doubled zero-Fourier layers" {
-    const geo = basis.Geometry.init(10, 0.61, 0.67);
-    const layers = [_]common.LayerInput{.{
-        .optical_depth = 2.4,
-        .scattering_optical_depth = 2.2,
-        .single_scatter_albedo = 0.92,
-        .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{
-            1.0,
-            0.98,
-            0.98 * 0.98,
-            0.98 * 0.98 * 0.98,
-        }),
-    }};
-
-    var rt_without = [_]LayerRT{ undefined, undefined };
-    var rt_with = [_]LayerRT{ undefined, undefined };
-    calcRTlayersInto(rt_without[0..], &layers, 0, &geo, .{
-        .n_streams = 20,
-        .threshold_doubl = 1.0e-6,
-        .renorm_phase_function = false,
-    });
-    calcRTlayersInto(rt_with[0..], &layers, 0, &geo, .{
-        .n_streams = 20,
-        .threshold_doubl = 1.0e-6,
-        .renorm_phase_function = true,
-    });
-
-    try std.testing.expect(@abs(
-        rt_with[1].R.get(geo.viewIdx(), geo.n_gauss + 1) -
-            rt_without[1].R.get(geo.viewIdx(), geo.n_gauss + 1),
-    ) > 1.0e-8);
 }
 
 pub fn calcRTlayers(

@@ -41,6 +41,7 @@ pub const kernels = struct {
         pub const prepare = struct {
             pub const phase_functions = @import("kernels/optics/prepare/phase_functions.zig");
             pub const band_means = @import("kernels/optics/prepare/band_means.zig");
+            pub const particle_profiles = @import("kernels/optics/prepare/particle_profiles.zig");
         };
     };
 
@@ -82,6 +83,8 @@ pub const plugin_internal = struct {
         pub const Instrument = @import("o2a/providers/instrument.zig");
         pub const instrument_integration = @import("o2a/providers/instrument/integration.zig");
         pub const Surface = @import("o2a/providers/surface.zig");
+        pub const Transport = @import("o2a/providers/transport.zig");
+        pub const Noise = @import("o2a/providers/noise.zig");
 
         pub fn exact() Bindings {
             return root.exact();

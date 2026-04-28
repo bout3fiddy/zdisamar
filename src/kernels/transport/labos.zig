@@ -35,6 +35,7 @@ pub const fillAttenuation = attenuation.fillAttenuation;
 pub const fillAttenuationDynamic = attenuation.fillAttenuationDynamic;
 pub const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWithGrid;
 
+pub const internal = @import("labos/internal.zig");
 pub const calcRTlayersInto = layers_mod.calcRTlayersInto;
 pub const calcRTlayersIntoWithBasis = layers_mod.calcRTlayersIntoWithBasis;
 pub const calcRTlayers = layers_mod.calcRTlayers;

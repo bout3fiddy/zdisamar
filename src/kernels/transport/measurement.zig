@@ -1,3 +1,4 @@
+pub const internal = @import("measurement/internal.zig");
 pub const types = @import("measurement/types.zig");
 pub const workspace = @import("measurement/workspace.zig");
 pub const cache = @import("measurement/cache.zig");

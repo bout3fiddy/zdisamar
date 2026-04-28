@@ -10,52 +10,16 @@ const ParticleProfiles = @import("../prepare/particle_profiles.zig");
 const PhaseFunctions = @import("../prepare/phase_functions.zig");
 const ClimatologyProfile = @import("../../../model/reference/climatology.zig").ClimatologyProfile;
 const spline = @import("../../interpolation/spline.zig");
+const internal = @import("internal.zig");
 
 const Allocator = std.mem.Allocator;
 const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
 const centimeters_per_kilometer = 1.0e5;
-const boltzmann_hpa_cm3_per_k = 1.380658e-19;
+const boltzmann_hpa_cm3_per_k = internal.boltzmann_hpa_cm3_per_k;
 const max_collision_complex_profile_nodes: usize = 256;
 
-fn pressureFromParitySupportBounds(
-    bottom_altitude_km: f64,
-    top_altitude_km: f64,
-    bottom_pressure_hpa: f64,
-    top_pressure_hpa: f64,
-    altitude_km: f64,
-) f64 {
-    const safe_bottom_pressure_hpa = @max(bottom_pressure_hpa, 1.0e-9);
-    const safe_top_pressure_hpa = @max(top_pressure_hpa, 1.0e-9);
-    const altitude_span_km = top_altitude_km - bottom_altitude_km;
-    if (altitude_span_km <= 0.0 or std.math.approxEqAbs(f64, safe_bottom_pressure_hpa, safe_top_pressure_hpa, 1.0e-12)) {
-        return if (bottom_pressure_hpa > 0.0) bottom_pressure_hpa else top_pressure_hpa;
-    }
-
-    const unclamped_weight = (altitude_km - bottom_altitude_km) / altitude_span_km;
-    const weight = std.math.clamp(unclamped_weight, 0.0, 1.0);
-    const bottom_log_pressure = @log(safe_bottom_pressure_hpa);
-    const top_log_pressure = @log(safe_top_pressure_hpa);
-    return @exp(bottom_log_pressure + weight * (top_log_pressure - bottom_log_pressure));
-}
-
-const ParitySupportThermodynamics = struct {
-    pressure_hpa: f64,
-    temperature_k: f64,
-    density_cm3: f64,
-};
-
-fn paritySupportThermodynamicsFromProfile(
-    profile: *const ClimatologyProfile,
-    altitude_km: f64,
-) ParitySupportThermodynamics {
-    const pressure_hpa = profile.interpolatePressureLogSpline(altitude_km);
-    const temperature_k = profile.interpolateTemperatureSpline(altitude_km);
-    return .{
-        .pressure_hpa = pressure_hpa,
-        .temperature_k = temperature_k,
-        .density_cm3 = pressure_hpa / @max(temperature_k, 1.0e-9) / boltzmann_hpa_cm3_per_k,
-    };
-}
+const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds;
+const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
 
 fn collisionComplexPairDensityCm6(
     context: *const Context,
@@ -845,69 +809,4 @@ fn populateSublayer(
 fn usesDisamarParitySupportGrid(context: *const Context) bool {
     return context.scene.observation_model.resolvedChannelControls(.radiance).response.integration_mode == .disamar_hr_grid or
         context.scene.observation_model.resolvedChannelControls(.irradiance).response.integration_mode == .disamar_hr_grid;
-}
-
-test "parity support-row pressure honors realized support bounds" {
-    try std.testing.expectApproxEqAbs(
-        @as(f64, 0.3),
-        pressureFromParitySupportBounds(20.0, 20.0, 0.3, 0.3, 20.0),
-        1.0e-12,
-    );
-    try std.testing.expectApproxEqAbs(
-        @as(f64, 316.22776601683796),
-        pressureFromParitySupportBounds(0.0, 10.0, 1000.0, 100.0, 5.0),
-        1.0e-9,
-    );
-}
-
-test "parity support-row thermodynamics follow the profile spline contract" {
-    const profile = ClimatologyProfile{
-        .rows = @constCast(@as([]const ReferenceData.ClimatologyPoint, &.{
-            .{
-                .altitude_km = 0.0,
-                .pressure_hpa = 1000.0,
-                .temperature_k = 295.0,
-                .air_number_density_cm3 = 2.5e19,
-            },
-            .{
-                .altitude_km = 1.0,
-                .pressure_hpa = 860.0,
-                .temperature_k = 271.0,
-                .air_number_density_cm3 = 2.0e19,
-            },
-            .{
-                .altitude_km = 2.0,
-                .pressure_hpa = 690.0,
-                .temperature_k = 248.0,
-                .air_number_density_cm3 = 1.6e19,
-            },
-            .{
-                .altitude_km = 3.0,
-                .pressure_hpa = 540.0,
-                .temperature_k = 242.0,
-                .air_number_density_cm3 = 1.2e19,
-            },
-        })),
-    };
-
-    const altitude_km = 1.4;
-    const state = paritySupportThermodynamicsFromProfile(&profile, altitude_km);
-    const legacy_pressure = pressureFromParitySupportBounds(1.0, 2.0, 860.0, 690.0, altitude_km);
-
-    try std.testing.expectApproxEqAbs(
-        profile.interpolatePressureLogSpline(altitude_km),
-        state.pressure_hpa,
-        1.0e-12,
-    );
-    try std.testing.expectApproxEqAbs(
-        profile.interpolateTemperatureSpline(altitude_km),
-        state.temperature_k,
-        1.0e-12,
-    );
-    try std.testing.expectApproxEqAbs(
-        state.pressure_hpa / state.temperature_k / boltzmann_hpa_cm3_per_k,
-        state.density_cm3,
-        1.0e-6,
-    );
-    try std.testing.expect(@abs(state.pressure_hpa - legacy_pressure) > 1.0e-3);
 }
