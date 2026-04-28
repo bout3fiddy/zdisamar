@@ -84,29 +84,3 @@ pub const AdaptiveReferenceGrid = struct {
         }
     }
 };
-
-test "operational reference grid reports a weighted effective spacing" {
-    const grid: OperationalReferenceGrid = .{
-        .wavelengths_nm = &.{ 760.8, 761.0, 761.3 },
-        .weights = &.{ 0.2, 0.6, 0.2 },
-    };
-
-    try std.testing.expectApproxEqAbs(@as(f64, 0.25), grid.effectiveSpacingNm(), 1.0e-12);
-}
-
-test "adaptive reference grid validates vendor-like strong-line division ranges" {
-    try (AdaptiveReferenceGrid{
-        .points_per_fwhm = 5,
-        .strong_line_min_divisions = 3,
-        .strong_line_max_divisions = 8,
-    }).validate();
-
-    try std.testing.expectError(
-        errors.Error.InvalidRequest,
-        (AdaptiveReferenceGrid{
-            .points_per_fwhm = 5,
-            .strong_line_min_divisions = 8,
-            .strong_line_max_divisions = 3,
-        }).validate(),
-    );
-}

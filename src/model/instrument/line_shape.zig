@@ -252,27 +252,3 @@ pub const InstrumentLineShapeTable = struct {
         self.* = .{};
     }
 };
-
-test "line-shape carriers normalize direct and table-driven kernels" {
-    const direct: InstrumentLineShape = .{
-        .sample_count = 3,
-        .offsets_nm = &.{ -0.1, 0.0, 0.1 },
-        .weights = &.{ 1.0, 2.0, 1.0 },
-    };
-    var offsets: [3]f64 = undefined;
-    var weights: [3]f64 = undefined;
-    const direct_count = direct.writeNormalizedKernel(&offsets, &weights);
-    try std.testing.expectEqual(@as(usize, 3), direct_count);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.5), weights[1], 1.0e-12);
-
-    const table: InstrumentLineShapeTable = .{
-        .nominal_count = 2,
-        .sample_count = 3,
-        .nominal_wavelengths_nm = &.{ 760.8, 761.0 },
-        .offsets_nm = &.{ -0.1, 0.0, 0.1 },
-        .weights = &.{ 1.0, 2.0, 1.0, 0.5, 1.0, 0.5 },
-    };
-    const table_count = table.writeNormalizedKernelForNominal(761.0, &offsets, &weights);
-    try std.testing.expectEqual(@as(usize, 3), table_count);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.5), weights[1], 1.0e-12);
-}

@@ -22,3 +22,13 @@ test "vendor partition tables follow spline anchors between tabulated temperatur
     // from O2A parity refinements. Skip until the values are domain-rebased.
     return error.SkipZigTest;
 }
+
+test "O2 partition ratio follows DISAMAR endpoint-secant spline" {
+    const ratio = internal.hitran_partition_tables.ratioT0OverT(66, 165.1, 296.0) orelse unreachable;
+    try std.testing.expectApproxEqAbs(@as(f64, 1.7894420791035657), ratio, 1.0e-14);
+}
+
+test "O2 isotope 67 preserves DISAMAR default-real partition literals" {
+    const ratio = internal.hitran_partition_tables.ratioT0OverT(67, 190.5, 296.0) orelse unreachable;
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5610005510908784), ratio, 1.0e-14);
+}

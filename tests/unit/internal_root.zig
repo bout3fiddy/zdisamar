@@ -33,4 +33,24 @@ test {
     _ = @import("kernels/transport/labos/reflectance_test.zig");
     _ = @import("kernels/transport/measurement/spectral_eval_test.zig");
     _ = @import("kernels/transport/measurement/workspace_test.zig");
+
+    _ = @import("bands_test.zig");
+    _ = @import("binding_test.zig");
+    _ = @import("geometry_test.zig");
+    _ = @import("inverse_problem_test.zig");
+    _ = @import("state_vector_test.zig");
+    _ = @import("surface_test.zig");
+    _ = @import("measurement_model_test.zig");
+
+    _ = @import("reference/airmass_phase_test.zig");
+    _ = @import("reference/cia_test.zig");
+    _ = @import("reference/climatology_test.zig");
+    _ = @import("reference/cross_sections_test.zig");
+    _ = @import("reference/rayleigh_test.zig");
+
+    _ = @import("adapters/ingest/root_test.zig");
+    _ = @import("adapters/ingest/reference_assets_test.zig");
+    _ = @import("adapters/ingest/reference_assets_loaded_asset_test.zig");
+    _ = @import("adapters/o2a_parity_parser_test.zig");
+    _ = @import("providers/surface_test.zig");
 }

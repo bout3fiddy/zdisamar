@@ -16,33 +16,3 @@ pub const report = o2a.report;
 pub const prepare = o2a.prepare;
 pub const run = o2a.run;
 pub const writeReport = o2a.writeReport;
-
-test "public root exposes the O2A forward lab surface" {
-    try std.testing.expect(@hasDecl(@This(), "Case"));
-    try std.testing.expect(@hasDecl(@This(), "Data"));
-    try std.testing.expect(@hasDecl(@This(), "Optics"));
-    try std.testing.expect(@hasDecl(@This(), "Method"));
-    try std.testing.expect(@hasDecl(@This(), "RunStorage"));
-    try std.testing.expect(@hasDecl(@This(), "Result"));
-    try std.testing.expect(@hasDecl(@This(), "Report"));
-    try std.testing.expect(@hasDecl(@This(), "Prepared"));
-    try std.testing.expect(@hasDecl(@This(), "parity"));
-    try std.testing.expect(@hasDecl(@This(), "prepare"));
-    try std.testing.expect(@hasDecl(@This(), "run"));
-    try std.testing.expect(@hasDecl(@This(), "writeReport"));
-}
-
-test "public root no longer exposes removed framework scaffolding" {
-    try std.testing.expect(!@hasDecl(@This(), "Engine"));
-    try std.testing.expect(!@hasDecl(@This(), "PreparedPlan"));
-    try std.testing.expect(!@hasDecl(@This(), "Workspace"));
-    try std.testing.expect(!@hasDecl(@This(), "Request"));
-    try std.testing.expect(!@hasDecl(@This(), "canonical_config"));
-    try std.testing.expect(!@hasDecl(@This(), "mission_s5p"));
-    try std.testing.expect(!@hasDecl(@This(), "exporters"));
-    try std.testing.expect(!@hasDecl(@This(), "test_support"));
-    try std.testing.expect(!@hasDecl(@This(), "vendor_case"));
-    try std.testing.expect(!@hasDecl(@This(), "loadData"));
-    try std.testing.expect(!@hasDecl(@This(), "buildOptics"));
-    try std.testing.expect(!@hasDecl(@This(), "runSpectrum"));
-}

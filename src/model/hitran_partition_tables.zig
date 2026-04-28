@@ -471,13 +471,3 @@ fn interpolatePartitionTableF32(table: []const f32, temperature_k: f64) f64 {
     }
     return interpolatePartitionTable(widened[0..table.len], temperature_k);
 }
-
-test "O2 partition ratio follows DISAMAR endpoint-secant spline" {
-    const ratio = ratioT0OverT(66, 165.1, 296.0) orelse unreachable;
-    try std.testing.expectApproxEqAbs(@as(f64, 1.7894420791035657), ratio, 1.0e-14);
-}
-
-test "O2 isotope 67 preserves DISAMAR default-real partition literals" {
-    const ratio = ratioT0OverT(67, 190.5, 296.0) orelse unreachable;
-    try std.testing.expectApproxEqAbs(@as(f64, 1.5610005510908784), ratio, 1.0e-14);
-}
