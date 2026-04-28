@@ -5,7 +5,7 @@ const bands = internal.bands;
 const SpectralBand = bands.SpectralBand;
 const SpectralBandSet = bands.SpectralBandSet;
 const SpectralWindow = bands.SpectralWindow;
-const errors = internal.core.errors;
+const errors = internal.common.errors;
 
 test "spectral band set rejects duplicate ids and invalid exclusion windows" {
     const valid: SpectralBandSet = .{

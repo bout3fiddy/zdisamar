@@ -1,15 +1,15 @@
 schema_version: 1
 
 metadata:
-  id: vendor_o2a_parity
-  workspace: vendor-o2a-parity
-  description: "Executable retained O2A parity case compiled from YAML."
+  id: disamar_reference_o2a
+  storage: disamar-reference-o2a
+  description: "Executable retained O2A DISAMAR reference case compiled from YAML."
 
 inputs:
   assets:
     atmosphere_profile:
       kind: file
-      path: data/climatologies/vendor_config_o2a_profile.csv
+      path: data/reference_data/climatologies/vendor_config_o2a_profile.csv
       format: profile_csv
     vendor_reference_csv:
       kind: file
@@ -17,11 +17,11 @@ inputs:
       format: disamar_o2a_reference_csv
     raw_solar_reference:
       kind: file
-      path: data/reference/o2a_solar_reference_753_778.csv
+      path: data/reference_data/solar/o2a_solar_reference_753_778.csv
       format: solar_reference_csv
     airmass_factor_lut:
       kind: file
-      path: data/luts/airmass_factor_nadir_demo.csv
+      path: data/reference_data/luts/airmass_factor_nadir_demo.csv
       format: csv
     o2_hitran:
       kind: file
@@ -29,15 +29,15 @@ inputs:
       format: hitran_par_o2a
     o2_line_mixing:
       kind: file
-      path: data/cross_sections/o2a_lisa_rmf.dat
+      path: data/reference_data/cross_sections/o2a_lisa_rmf.dat
       format: lisa_rmf
     o2_strong_lines:
       kind: file
-      path: data/cross_sections/o2a_lisa_sdf.dat
+      path: data/reference_data/cross_sections/o2a_lisa_sdf.dat
       format: lisa_sdf
     o2o2_cia:
       kind: file
-      path: data/cross_sections/o2o2_bira_o2a.dat
+      path: data/reference_data/cross_sections/o2o2_bira_o2a.dat
       format: bira_cia
 
 templates:
@@ -50,7 +50,7 @@ templates:
         solver_mode: scalar
         derivative_mode: none
     scene:
-      id: vendor_o2a_parity_template
+      id: disamar_reference_o2a_template
       geometry:
         model: pseudo_spherical
         solar_zenith_deg: 60.0
@@ -166,7 +166,7 @@ experiment:
   simulation:
     from: vendor_o2a_base
     scene:
-      id: o2a_vendor_parity_yaml
+      id: o2a_disamar_reference_yaml
 
 outputs:
   - kind: summary_json

@@ -2,11 +2,11 @@ const std = @import("std");
 const internal = @import("internal");
 
 const Scene = internal.Scene;
-const measurement = internal.kernels.transport.measurement;
-const common = internal.kernels.transport.common;
-const PreparedOpticalState = internal.kernels.optics.preparation.PreparedOpticalState;
-const providers = internal.plugin_internal.providers;
-const instrument_integration = providers.instrument_integration;
+const measurement = internal.forward_model.instrument_grid;
+const common = internal.forward_model.radiative_transfer;
+const PreparedOpticalState = internal.forward_model.optical_properties.PreparedOpticalState;
+const implementations = internal.forward_model.implementations;
+const instrument_integration = implementations.instrument_integration;
 
 test "adaptive integration cache matches uncached strong-line kernel" {
     var prepared = std.mem.zeroInit(PreparedOpticalState, .{
@@ -44,7 +44,7 @@ test "adaptive integration cache matches uncached strong-line kernel" {
         },
     };
 
-    var baseline: providers.Instrument.IntegrationKernel = undefined;
+    var baseline: implementations.Instrument.IntegrationKernel = undefined;
     instrument_integration.integrationForWavelength(&scene, &prepared, .radiance, 760.5, &baseline);
 
     var cache: instrument_integration.AdaptiveKernelCache = .{};
@@ -57,7 +57,7 @@ test "adaptive integration cache matches uncached strong-line kernel" {
         ),
     );
 
-    var cached: providers.Instrument.IntegrationKernel = undefined;
+    var cached: implementations.Instrument.IntegrationKernel = undefined;
     instrument_integration.integrationForWavelengthWithAdaptiveCache(
         &scene,
         &prepared,
@@ -124,7 +124,7 @@ test "explicit channel integration mode takes precedence over adaptive strong-li
         },
     };
 
-    var kernel: providers.Instrument.IntegrationKernel = undefined;
+    var kernel: implementations.Instrument.IntegrationKernel = undefined;
     instrument_integration.integrationForWavelength(&scene, &prepared, .radiance, 760.5, &kernel);
 
     try std.testing.expect(kernel.enabled);
@@ -183,7 +183,7 @@ test "legacy adaptive grid prefers adaptive realization over explicit HR lattice
         },
     };
 
-    var kernel: providers.Instrument.IntegrationKernel = undefined;
+    var kernel: implementations.Instrument.IntegrationKernel = undefined;
     instrument_integration.integrationForWavelength(&scene, &prepared, .radiance, 760.5, &kernel);
 
     try std.testing.expect(kernel.enabled);
@@ -193,9 +193,9 @@ test "legacy adaptive grid prefers adaptive realization over explicit HR lattice
     try std.testing.expect(@abs(first_spacing - second_spacing) > 1.0e-6);
 }
 
-test "product workspace reuses backing buffers across requests" {
-    var workspace: measurement.ProductWorkspace = .{};
-    defer workspace.deinit(std.testing.allocator);
+test "product storage reuses backing buffers across requests" {
+    var storage: measurement.ProductStorage = .{};
+    defer storage.deinit(std.testing.allocator);
 
     const scene: Scene = .{
         .spectral_grid = .{
@@ -219,10 +219,10 @@ test "product workspace reuses backing buffers across requests" {
         .execution_mode = .scalar,
         .derivative_mode = .none,
     };
-    const exact_providers = providers.exact();
+    const exact_providers = implementations.exact();
 
-    const first = try workspace.buffers(std.testing.allocator, &scene, route, exact_providers);
-    const second = try workspace.buffers(std.testing.allocator, &scene, route, exact_providers);
+    const first = try storage.buffers(std.testing.allocator, &scene, route, exact_providers);
+    const second = try storage.buffers(std.testing.allocator, &scene, route, exact_providers);
 
     try std.testing.expectEqual(first.wavelengths.ptr, second.wavelengths.ptr);
     try std.testing.expectEqual(first.radiance.ptr, second.radiance.ptr);

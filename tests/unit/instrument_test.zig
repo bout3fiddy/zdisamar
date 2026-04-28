@@ -10,7 +10,7 @@ const OperationalSolarSpectrum = InstrumentModel.OperationalSolarSpectrum;
 const InstrumentLineShape = InstrumentModel.InstrumentLineShape;
 const InstrumentLineShapeTable = InstrumentModel.InstrumentLineShapeTable;
 const ReferenceData = internal.reference_data;
-const errors = internal.core.errors;
+const errors = internal.common.errors;
 
 test "operational cross-section lut evaluates vendor-style scaled log legendre expansions" {
     const lut: OperationalCrossSectionLut = .{

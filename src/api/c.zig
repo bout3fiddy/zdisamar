@@ -18,8 +18,8 @@ pub const ZdsSpectrum = extern struct {
 };
 
 const Context = struct {
-    prepared: ?zdisamar.Prepared = null,
-    results: std.ArrayList(*zdisamar.Result) = .empty,
+    prepared: ?zdisamar.PreparedInput = null,
+    results: std.ArrayList(*zdisamar.Output) = .empty,
     last_error: [256:0]u8 = [_:0]u8{0} ** 256,
 
     fn clearResults(self: *Context) void {
@@ -30,7 +30,7 @@ const Context = struct {
         self.results.clearAndFree(allocator);
     }
 
-    fn removeResult(self: *Context, result: *zdisamar.Result) bool {
+    fn removeResult(self: *Context, result: *zdisamar.Output) bool {
         for (self.results.items, 0..) |stored, index| {
             if (stored == result) {
                 _ = self.results.swapRemove(index);
@@ -52,7 +52,7 @@ const Context = struct {
     }
 };
 
-fn defaultO2ACase() zdisamar.Case {
+fn defaultO2AInput() zdisamar.Input {
     return .{
         .id = "c-api-default-o2a",
         .spectral_grid = .{
@@ -86,8 +86,8 @@ export fn zds_context_destroy(ctx: ?*Context) void {
 export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
     resolved.clearPrepared();
-    var case = defaultO2ACase();
-    resolved.prepared = zdisamar.prepare(allocator, &case) catch |err| {
+    var input = defaultO2AInput();
+    resolved.prepared = zdisamar.prepare(allocator, &input) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -103,7 +103,7 @@ export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
         return @intFromEnum(ZdsStatus.failure);
     }
     const prepared = &resolved.prepared.?;
-    const result = allocator.create(zdisamar.Result) catch |err| {
+    const result = allocator.create(zdisamar.Output) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -139,7 +139,7 @@ export fn zds_spectrum_free(ctx: ?*Context, out: ?*ZdsSpectrum) void {
     const resolved = ctx orelse return;
     const output = out orelse return;
     if (output.result_handle) |handle| {
-        const result: *zdisamar.Result = @ptrCast(@alignCast(handle));
+        const result: *zdisamar.Output = @ptrCast(@alignCast(handle));
         if (resolved.removeResult(result)) {
             result.deinit(allocator);
             allocator.destroy(result);

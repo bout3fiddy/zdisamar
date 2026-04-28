@@ -4,7 +4,7 @@ const internal = @import("internal");
 const binding = internal.binding;
 const Binding = binding.Binding;
 const IngestRef = binding.IngestRef;
-const errors = internal.core.errors;
+const errors = internal.common.errors;
 
 test "binding validates kind-specific naming rules" {
     try (@as(Binding, .none)).validate();

@@ -1,24 +1,23 @@
 # zdisamar
 
 `zdisamar` is a Zig O2 A forward-model lab built around the DISAMAR scientific
-path. The repository is organized around a direct forward-model calculation
-sequence:
+path. The repository is organized around a direct calculation flow:
 
-`Case -> Data -> Optics -> Spectrum -> Report`
+`input -> forward model -> output`
 
-That sequence is the center of the codebase. Scientific scene state, reference
-data, optical-property preparation, radiative-transfer routines, spectral
-integration, and report generation are kept explicit so execution stays
-reproducible and parity-focused.
+Scientific input, reference data, optical-property preparation, radiative
+transfer, instrument-grid calculation, and diagnostic output are kept explicit
+so execution stays reproducible and easy to validate against DISAMAR reference
+evidence.
 
 ## What The Repository Contains
 
 - A buildable Zig library and O2 A profile CLI.
-- A small O2 A product surface in `src/o2a/`.
-- Retained typed atmosphere, geometry, spectroscopy, and instrument types in `src/model/`.
+- A small O2 A product surface in `src/root.zig` and `src/o2a.zig`.
+- Retained typed atmosphere, geometry, spectroscopy, and instrument inputs in `src/input/`.
 - Reusable numerical routines for radiative transfer, optics, interpolation,
-  quadrature, spectra, and linear algebra in `src/kernels/`.
-- Narrow ingestion helpers for bundled reference assets in `src/adapters/`.
+  quadrature, spectra, and linear algebra in `src/forward_model/` and `src/common/`.
+- Narrow ingestion helpers for bundled reference assets in `src/input/reference_data/ingest/`.
 - Tracked O2 A scientific bundles and reference assets under `data/`.
 - Retained O2 A validation assets and executable test lanes under `tests/` and `validation/`.
 
@@ -26,30 +25,30 @@ reproducible and parity-focused.
 
 The public execution surface is intentionally small:
 
-- `Case` owns the retained O2 A inputs.
-- `Data` owns the loaded reference datasets and bundled helper assets.
-- `Optics` owns the prepared wavelength-dependent optical state.
-- `RunStorage` owns reusable internal storage for the forward model.
-- `Result` owns the generated spectrum and summary outputs.
-- `Report` owns timings, counters, and diagnostic artifacts.
+- `Input` owns the retained O2 A inputs.
+- `ReferenceData` owns the loaded reference datasets and bundled helper assets.
+- `OpticalProperties` owns the prepared wavelength-dependent optical state.
+- `CalculationStorage` owns reusable internal storage for the forward model.
+- `Output` owns the generated spectrum and summary outputs.
+- `DiagnosticReport` owns timings, counters, and diagnostic artifacts.
 
 That structure is why numerical routines stay free of file I/O, CLI parsing,
-and global mutable state. Product wiring belongs in `src/o2a/`, while hot
-numerics stay in the routines.
+and global mutable state. Product wiring stays at the public root, while hot
+numeric routines stay under `src/forward_model/` and `src/common/`.
 
 ## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
-| `src/o2a/` | O2 A case, data loading, optical-property preparation, forward model, spectrum, reporting, and CLI |
-| `src/model/` | retained atmosphere, geometry, surface, spectroscopy, and instrument types |
-| `src/kernels/` | reusable numeric routines and instrument-grid materialization |
-| `src/adapters/` | narrow ingestion helpers that still support the O2 A data path |
-| `src/core/` | reduced support code such as units and error helpers |
+| `src/input/` | retained atmosphere, geometry, surface, spectroscopy, instrument, and reference-data inputs |
+| `src/forward_model/` | optical properties, radiative transfer, instrument-grid calculation, and implementations |
+| `src/output/` | diagnostic reports and spectrum serialization |
+| `src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
+| `src/validation/disamar_reference/` | DISAMAR reference comparison helpers and CLI support |
 | `data/` | tracked O2 A bundles and reference assets |
 | `tests/` | retained O2 A executable checks |
 | `validation/` | O2 A compatibility and reference evidence |
-| `docs/` | O2 A architecture, telemetry, parity, and operational narrative |
+| `docs/` | O2 A architecture, validation, and operational narrative |
 
 ## Prerequisites
 
@@ -73,7 +72,7 @@ Run the fast local verification loop:
 zig build check
 ```
 
-Run the focused radiative-transfer/parity verification loop:
+Run the focused radiative-transfer/DISAMAR-reference verification loop:
 
 ```bash
 zig build test-transport
@@ -172,25 +171,25 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 defer _ = gpa.deinit();
 const allocator = gpa.allocator();
 
-var case: zdisamar.Case = .{
+var input: zdisamar.Input = .{
     .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 121 },
 };
-var prepared = try zdisamar.prepare(allocator, &case);
+var prepared = try zdisamar.prepare(allocator, &input);
 defer prepared.deinit(allocator);
 
-var result = try zdisamar.run(
+var output = try zdisamar.run(
     allocator,
     &prepared,
     .exact,
     .{},
-    null,
 );
-defer result.deinit(allocator);
+defer output.deinit(allocator);
 ```
 
-`Prepared` owns the resolved case, bundled data, prepared optics, and reusable
-storage. Data loading, optical-property preparation, and spectrum generation are
-not separate public entrypoints.
+`PreparedInput` owns the resolved input, bundled reference data, prepared optical
+properties, and reusable calculation storage. Reference-data loading,
+optical-property preparation, and spectrum generation are not separate public
+entrypoints.
 
 ## Data, Packages, And Exporters
 

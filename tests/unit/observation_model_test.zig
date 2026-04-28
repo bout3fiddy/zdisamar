@@ -1,7 +1,7 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
 
-const Scene = zdisamar.Case;
+const Scene = zdisamar.Input;
 const empty_scene: Scene = .{};
 const ObservationModel = @TypeOf(empty_scene.observation_model);
 const empty_model: ObservationModel = .{};

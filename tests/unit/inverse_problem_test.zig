@@ -5,7 +5,7 @@ const inverse_problem = internal.inverse_problem;
 const InverseProblem = inverse_problem.InverseProblem;
 const CovarianceBlock = inverse_problem.CovarianceBlock;
 const StateParameter = internal.state_vector.Parameter;
-const errors = internal.core.errors;
+const errors = internal.common.errors;
 
 test "inverse problem validates canonical covariance and convergence controls" {
     try (InverseProblem{

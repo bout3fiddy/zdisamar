@@ -64,8 +64,8 @@ pub fn build(b: *std.Build) void {
             },
         },
     });
-    const parity_support_module = b.createModule(.{
-        .root_source_file = b.path("src/parity_support_root.zig"),
+    const disamar_reference_support_module = b.createModule(.{
+        .root_source_file = b.path("src/validation.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -99,7 +99,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(c_api_lib);
 
     const plot_spectrum_module = b.createModule(.{
-        .root_source_file = b.path("src/o2a/cli/plot_spectrum.zig"),
+        .root_source_file = b.path("src/validation/disamar_reference/plot_spectrum_cli.zig"),
         .target = target,
         .optimize = runtime_optimize,
         .imports = &.{
@@ -120,7 +120,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(plot_spectrum_exe);
 
     const cli_module = b.createModule(.{
-        .root_source_file = b.path("src/parity_cli_root.zig"),
+        .root_source_file = b.path("src/disamar_reference_cli.zig"),
         .target = target,
         .optimize = runtime_optimize,
     });
@@ -210,8 +210,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{
-                .name = "parity_support",
-                .module = parity_support_module,
+                .name = "disamar_reference_support",
+                .module = disamar_reference_support_module,
             },
         },
     });
@@ -225,7 +225,7 @@ pub fn build(b: *std.Build) void {
     };
     const validation_o2a_yaml_step = b.step(
         "test-validation-o2a-yaml",
-        "Run the YAML-driven O2A parity and CLI validation lane",
+        "Run the YAML-driven O2A DISAMAR reference and CLI validation lane",
     );
     validation_o2a_yaml_step.dependOn(&run_validation_o2a_yaml.step);
     const transport_smoke = addTestStep(

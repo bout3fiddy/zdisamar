@@ -11,28 +11,28 @@ test {
     _ = @import("reference_data_test.zig");
     _ = @import("scene_test.zig");
 
-    _ = @import("core/units_test.zig");
-    _ = @import("core/lut_controls_test.zig");
-    _ = @import("kernels/quadrature/gauss_legendre_test.zig");
-    _ = @import("kernels/linalg/cholesky_test.zig");
-    _ = @import("kernels/linalg/small_dense_test.zig");
-    _ = @import("kernels/interpolation/spline_test.zig");
+    _ = @import("common/units_test.zig");
+    _ = @import("common/lut_controls_test.zig");
+    _ = @import("common/math/quadrature/gauss_legendre_test.zig");
+    _ = @import("common/math/linalg/cholesky_test.zig");
+    _ = @import("common/math/linalg/small_dense_test.zig");
+    _ = @import("common/math/interpolation/spline_test.zig");
 
-    _ = @import("kernels/spectra/calibration_test.zig");
-    _ = @import("kernels/spectra/convolution_test.zig");
-    _ = @import("kernels/spectra/grid_test.zig");
-    _ = @import("kernels/spectra/noise_test.zig");
-    _ = @import("kernels/spectra/sampling_test.zig");
-    _ = @import("kernels/optics/prepare/phase_functions_test.zig");
-    _ = @import("kernels/optics/prepare/band_means_test.zig");
+    _ = @import("forward_model/instrument_grid/spectral_math/calibration_test.zig");
+    _ = @import("forward_model/instrument_grid/spectral_math/convolution_test.zig");
+    _ = @import("forward_model/instrument_grid/spectral_math/grid_test.zig");
+    _ = @import("forward_model/instrument_grid/spectral_math/noise_test.zig");
+    _ = @import("forward_model/instrument_grid/spectral_math/sampling_test.zig");
+    _ = @import("forward_model/optical_properties/shared/phase_functions_test.zig");
+    _ = @import("forward_model/optical_properties/shared/band_means_test.zig");
 
-    _ = @import("kernels/transport/derivatives_test.zig");
-    _ = @import("kernels/transport/dispatcher_test.zig");
-    _ = @import("kernels/transport/common_route_test.zig");
-    _ = @import("kernels/transport/labos/orders_test.zig");
-    _ = @import("kernels/transport/labos/reflectance_test.zig");
-    _ = @import("kernels/transport/measurement/spectral_eval_test.zig");
-    _ = @import("kernels/transport/measurement/workspace_test.zig");
+    _ = @import("forward_model/radiative_transfer/derivatives_test.zig");
+    _ = @import("forward_model/radiative_transfer/dispatcher_test.zig");
+    _ = @import("forward_model/radiative_transfer/common_route_test.zig");
+    _ = @import("forward_model/radiative_transfer/labos/orders_test.zig");
+    _ = @import("forward_model/radiative_transfer/labos/reflectance_test.zig");
+    _ = @import("forward_model/instrument_grid/grid_calculation/spectral_eval_test.zig");
+    _ = @import("forward_model/instrument_grid/grid_calculation/storage_test.zig");
 
     _ = @import("bands_test.zig");
     _ = @import("binding_test.zig");
@@ -48,25 +48,25 @@ test {
     _ = @import("reference/cross_sections_test.zig");
     _ = @import("reference/rayleigh_test.zig");
 
-    _ = @import("adapters/ingest/root_test.zig");
-    _ = @import("adapters/ingest/reference_assets_test.zig");
-    _ = @import("adapters/ingest/reference_assets_loaded_asset_test.zig");
-    _ = @import("adapters/o2a_parity_parser_test.zig");
-    _ = @import("providers/surface_test.zig");
+    _ = @import("input/reference_data/ingest/root_test.zig");
+    _ = @import("input/reference_data/ingest/reference_assets_test.zig");
+    _ = @import("input/reference_data/ingest/reference_assets_loaded_asset_test.zig");
+    _ = @import("validation/disamar_reference/parser_test.zig");
+    _ = @import("forward_model/implementations/surface_test.zig");
 
-    _ = @import("kernels/optics/preparation/layer_accumulation_test.zig");
-    _ = @import("kernels/optics/preparation/carrier_eval_test.zig");
-    _ = @import("kernels/optics/preparation/forward_layers_test.zig");
-    _ = @import("kernels/optics/preparation/pseudo_spherical_test.zig");
-    _ = @import("kernels/optics/preparation/rtm_quadrature_test.zig");
-    _ = @import("kernels/optics/preparation/root_test.zig");
-    _ = @import("kernels/optics/preparation/source_interfaces_test.zig");
-    _ = @import("providers/instrument/integration_test.zig");
-    _ = @import("providers/noise_test.zig");
-    _ = @import("providers/transport_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/layer_accumulation_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/carrier_eval_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/forward_layers_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/pseudo_spherical_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/rtm_quadrature_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/root_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/source_interfaces_test.zig");
+    _ = @import("forward_model/implementations/instrument/integration_test.zig");
+    _ = @import("forward_model/implementations/noise_test.zig");
+    _ = @import("forward_model/implementations/radiative_transfer_test.zig");
 
-    _ = @import("kernels/transport/labos/layers_test.zig");
-    _ = @import("kernels/transport/adding/root_test.zig");
-    _ = @import("kernels/transport/measurement/root_test.zig");
-    _ = @import("kernels/transport/measurement/spectral_forward_test.zig");
+    _ = @import("forward_model/radiative_transfer/labos/layers_test.zig");
+    _ = @import("forward_model/radiative_transfer/adding/root_test.zig");
+    _ = @import("forward_model/instrument_grid/grid_calculation/root_test.zig");
+    _ = @import("forward_model/instrument_grid/grid_calculation/spectral_forward_test.zig");
 }

@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "bundle_id": "disamar_standard.cross_sections.baseline",
+  "owner_package": "disamar_standard",
+  "description": "Baseline absorber cross-section samples for deterministic interface checks.",
+  "upstream": {
+    "vendor_root": "vendor/disamar-fortran",
+    "source_paths": [
+      "RefSpec/",
+      "InputFiles/"
+    ],
+    "reference_snapshot": "disamar-v4.1.5-local"
+  },
+  "assets": [
+    {
+      "id": "no2_405_465_demo",
+      "path": "data/reference_data/cross_sections/no2_405_465_demo.csv",
+      "format": "csv",
+      "sha256": "sha256:3650bd357618aab751fef60ad5c2b7af3d942093c06e9c9f1b3b81246ed639dd",
+      "columns": [
+        "wavelength_nm",
+        "no2_sigma_cm2_per_molecule"
+      ]
+    },
+    {
+      "id": "no2_demo_lines",
+      "path": "data/reference_data/cross_sections/no2_demo_lines.hitran",
+      "format": "hitran_160",
+      "sha256": "sha256:89d0e1641b9f723490aeba5410cc51468c0d95ea87065548f83cfd03e346dab5",
+      "columns": [
+        "gas_index",
+        "isotope_number",
+        "abundance_fraction",
+        "center_wavelength_nm",
+        "line_strength_cm2_per_molecule",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "lower_state_energy_cm1",
+        "pressure_shift_nm",
+        "line_mixing_coefficient"
+      ]
+    },
+    {
+      "id": "o2a_hitran_subset_07_hit08_tropomi",
+      "path": "data/reference_data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par",
+      "format": "hitran_160",
+      "sha256": "sha256:776ac1e53cfcccc40327fe090406bc3077471e253d95a97cafe359d6a834e236",
+      "columns": [
+        "gas_index",
+        "isotope_number",
+        "abundance_fraction",
+        "center_wavelength_nm",
+        "line_strength_cm2_per_molecule",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "lower_state_energy_cm1",
+        "pressure_shift_nm",
+        "line_mixing_coefficient"
+      ]
+    },
+    {
+      "id": "o2a_hitran_07_hit08_tropomi",
+      "path": "data/reference_data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
+      "format": "hitran_160",
+      "sha256": "sha256:b377eb68225a652595996c2149b626f3051a108b04ee85d91ba9fc5e3c29fb4d",
+      "columns": [
+        "gas_index",
+        "isotope_number",
+        "abundance_fraction",
+        "center_wavelength_nm",
+        "center_wavenumber_cm1",
+        "line_strength_cm2_per_molecule",
+        "air_half_width_nm",
+        "air_half_width_cm1",
+        "temperature_exponent",
+        "lower_state_energy_cm1",
+        "pressure_shift_nm",
+        "pressure_shift_cm1",
+        "line_mixing_coefficient",
+        "branch_ic1",
+        "branch_ic2",
+        "rotational_nf",
+        "vendor_filter_metadata_from_source"
+      ]
+    },
+    {
+      "id": "o2a_lisa_sdf_subset",
+      "path": "data/reference_data/cross_sections/o2a_lisa_sdf_subset.dat",
+      "format": "lisa_sdf",
+      "sha256": "sha256:ea1a65e8777085c1b871fd5d05655c5d082261a5184502b525b4f762bd0680ef",
+      "columns": [
+        "center_wavenumber_cm1",
+        "center_wavelength_nm",
+        "population_t0",
+        "dipole_ratio",
+        "dipole_t0",
+        "lower_state_energy_cm1",
+        "air_half_width_cm1",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "pressure_shift_cm1",
+        "pressure_shift_nm",
+        "rotational_index_m1"
+      ]
+    },
+    {
+      "id": "o2a_lisa_sdf",
+      "path": "data/reference_data/cross_sections/o2a_lisa_sdf.dat",
+      "format": "lisa_sdf",
+      "sha256": "sha256:292e5a28b8993bc8a221a02b1c75ecd4f48bc8d11c489b795bc21c821b85f868",
+      "columns": [
+        "center_wavenumber_cm1",
+        "center_wavelength_nm",
+        "population_t0",
+        "dipole_ratio",
+        "dipole_t0",
+        "lower_state_energy_cm1",
+        "air_half_width_cm1",
+        "air_half_width_nm",
+        "temperature_exponent",
+        "pressure_shift_cm1",
+        "pressure_shift_nm",
+        "rotational_index_m1"
+      ]
+    },
+    {
+      "id": "o2a_lisa_rmf_subset",
+      "path": "data/reference_data/cross_sections/o2a_lisa_rmf_subset.dat",
+      "format": "lisa_rmf",
+      "sha256": "sha256:b3862b64a8e92bf28643b11077fe722f6603a7492660fe90d40c48fbdedebb14",
+      "columns": [
+        "wt0",
+        "temperature_exponent_bw"
+      ]
+    },
+    {
+      "id": "o2a_lisa_rmf",
+      "path": "data/reference_data/cross_sections/o2a_lisa_rmf.dat",
+      "format": "lisa_rmf",
+      "sha256": "sha256:469b71408dad0eb6875b4133250685bc0614978a4110df8a706860224ef4c432",
+      "columns": [
+        "wt0",
+        "temperature_exponent_bw"
+      ]
+    },
+    {
+      "id": "o2o2_bira_o2a_subset",
+      "path": "data/reference_data/cross_sections/o2o2_bira_o2a_subset.dat",
+      "format": "bira_cia_poly",
+      "sha256": "sha256:fddb53e4921814210f3179d022cc30b200f2e4c2d4b2d509dbc44a8d139f1f81",
+      "columns": [
+        "wavelength_nm",
+        "a0",
+        "a1",
+        "a2",
+        "scale_factor_cm5_per_molecule2"
+      ]
+    },
+    {
+      "id": "o2o2_bira_o2a",
+      "path": "data/reference_data/cross_sections/o2o2_bira_o2a.dat",
+      "format": "bira_cia_poly",
+      "sha256": "sha256:37bfd7662114816366c4e19d846715ae6aff5db2c48e10c49f02a20783d02cb4",
+      "columns": [
+        "wavelength_nm",
+        "a0",
+        "a1",
+        "a2",
+        "scale_factor_cm5_per_molecule2"
+      ]
+    }
+  ]
+}
