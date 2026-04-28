@@ -1,8 +1,8 @@
 const std = @import("std");
-const parity_support = @import("parity_support");
-const parity_config = parity_support.config;
-const parity_cli = parity_support.cli;
-const o2a_parity = parity_support.yaml;
+const validation_support = @import("disamar_reference_support").disamar_reference;
+const parity_config = validation_support.config;
+const parity_cli = validation_support.cli;
+const o2a_parity = validation_support.yaml;
 
 const BaselineAnchor = struct {
     version: u32,

@@ -1,19 +1,19 @@
-const bundled_data = @import("data/bundled/load.zig");
+const bundled_data = @import("input/reference_data/bundled/load.zig");
 const std = @import("std");
-const report_json = @import("o2a/report/json.zig");
-const spectrum = @import("o2a/spectrum.zig");
+const report_json = @import("output/json.zig");
+const spectrum = @import("forward_model/run_spectrum.zig");
 
-pub const Case = @import("model/Scene.zig").Scene;
+pub const Case = @import("input/Scene.zig").Scene;
 pub const Data = bundled_data.Data;
-pub const Optics = @import("kernels/optics/preparation.zig").PreparedOpticalState;
-pub const Method = @import("o2a/method.zig").Method;
-pub const RunStorage = @import("kernels/transport/measurement/workspace.zig").SummaryWorkspace;
+pub const Optics = @import("forward_model/optical_properties/root.zig").PreparedOpticalState;
+pub const Method = @import("forward_model/method.zig").Method;
+pub const RunStorage = @import("forward_model/instrument_grid/grid_calculation/workspace.zig").SummaryWorkspace;
 pub const Result = spectrum.Result;
 pub const Report = report_json.SummaryReport;
-pub const RadiativeTransferControls = @import("kernels/transport/common.zig").RadiativeTransferControls;
+pub const RadiativeTransferControls = @import("forward_model/radiative_transfer/root.zig").RadiativeTransferControls;
 pub const report = report_json;
 
-pub const parity = @import("o2a/data/vendor_parity_yaml.zig");
+pub const parity = @import("validation/disamar_reference/yaml.zig");
 
 pub const Prepared = struct {
     case: Case,
