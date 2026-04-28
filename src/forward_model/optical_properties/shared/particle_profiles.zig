@@ -161,7 +161,7 @@ pub fn buildFiniteLayerSublayerDistribution(
     total_optical_depth: f64,
     bottom_altitude_km: f64,
     top_altitude_km: f64,
-    legacy_span_padding: bool,
+    pad_to_slot_height: bool,
 ) ![]f64 {
     const weights = try allocator.alloc(f64, grid.sublayer_mid_altitudes_km.len);
     errdefer allocator.free(weights);
@@ -173,7 +173,7 @@ pub fn buildFiniteLayerSublayerDistribution(
 
     var layer_bottom_km = @max(bottom_altitude_km, 0.0);
     var layer_top_km = @max(top_altitude_km, layer_bottom_km);
-    if (legacy_span_padding and grid.sublayer_top_altitudes_km.len != 0) {
+    if (pad_to_slot_height and grid.sublayer_top_altitudes_km.len != 0) {
         const center_km = 0.5 * (layer_top_km + layer_bottom_km);
         const slot_height_km = @max(
             grid.sublayer_top_altitudes_km[0] - grid.sublayer_bottom_altitudes_km[0],

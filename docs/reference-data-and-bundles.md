@@ -45,7 +45,7 @@ Each dataset is intended to be:
 
 ## Typed Scientific Structures
 
-`src/model/ReferenceData.zig` is the main in-memory surface for reference data. It defines structures such as:
+`src/input/ReferenceData.zig` is the main in-memory surface for reference data. It defines structures such as:
 
 - `ClimatologyProfile`
 - `CrossSectionTable`
@@ -62,11 +62,11 @@ These structures are not bookkeeping wrappers. They are the physical data surfac
 
 The default O2 A execution path is:
 
-1. `Case` records the spectral grid, geometry, surface, atmosphere, and instrument controls.
-2. `Data` loads the reference datasets needed for that case.
-3. `Optics` prepares wavelength-dependent optical properties.
-4. `Spectrum` evaluates radiance, irradiance, and reflectance on the instrument grid.
-5. `Report` records diagnostics and provenance.
+1. `Input` records the spectral grid, geometry, surface, atmosphere, and instrument controls.
+2. `ReferenceData` loads the reference datasets needed for that input.
+3. `OpticalProperties` prepares wavelength-dependent optical properties.
+4. `Output` contains radiance, irradiance, and reflectance on the instrument grid.
+5. `DiagnosticReport` records diagnostics and provenance.
 
 The important architectural point is that dataset loading ends before the numerical routines begin. By the time radiative transfer runs, the code is operating on typed optical quantities rather than filenames, manifests, or ad hoc parser state.
 
@@ -106,8 +106,8 @@ The current bundle and runtime layer is therefore not an implementation convenie
 
 To follow the reference-data path:
 
-1. read `src/adapters/ingest/reference_assets.zig`,
-2. read `src/model/ReferenceData.zig`,
-3. read `src/runtime/reference/BundledOptics.zig`,
-4. read `src/kernels/optics/preparation.zig`,
-5. inspect `data/*/bundle_manifest.json` for representative datasets.
+1. read `src/input/reference_data/ingest/reference_assets.zig`,
+2. read `src/input/ReferenceData.zig`,
+3. read `src/input/reference_data/bundled/load.zig`,
+4. read `src/forward_model/optical_properties/root.zig`,
+5. inspect `data/reference_data/*/bundle_manifest.json` for representative datasets.

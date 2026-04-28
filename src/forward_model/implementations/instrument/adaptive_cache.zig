@@ -52,7 +52,6 @@ pub fn buildAdaptiveIntegrationKernelFromCache(
         &sample_wavelengths_nm,
         &sample_raw_weights,
         &sample_count,
-        null,
     )) return false;
 
     return adaptive_plan.finalizeAdaptiveKernel(
