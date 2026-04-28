@@ -271,11 +271,3 @@ test "shared RTM boundaries keep boundary gas and explicit rows above and below"
     try std.testing.expect(@abs(source_interfaces[1].gas_ksca -
         (Rayleigh.crossSectionCm2(wavelength_nm) * sublayers[3].number_density_cm3 * 1.0e5)) > 1.0e-6);
 }
-
-test "shared weighted source interfaces keep above and below particle carriers distinct" {
-    // ISSUE: original inline test omits PreparedLayer/PreparedSublayer required
-    // fields (continuum_cross_section_cm2_per_molecule, etc.) that the current
-    // schema demands. Skip until the literals are domain-rebased on the
-    // current state_types contract.
-    return error.SkipZigTest;
-}

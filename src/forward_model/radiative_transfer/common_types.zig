@@ -264,7 +264,6 @@ pub const ForwardResult = struct {
 };
 
 pub const PrepareError = error{
-    UnsupportedDerivativeMode,
     UnsupportedExecutionMode,
     UnsupportedRadiativeTransferControls,
 };

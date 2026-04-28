@@ -76,10 +76,10 @@ The O2 A forward-model surface does not expose DISMAS retrieval execution yet.
 
 The current implementation is organized around the retained O2 A forward model.
 
-- `src/model/` carries one canonical scene and observation description.
-- `src/o2a/` carries the public `Case -> Data -> Optics -> Spectrum -> Report` surface.
-- `src/data/bundled/` and `src/adapters/` carry the scientific input surfaces needed to prepare execution without letting file I/O leak into numerical routines.
-- `src/kernels/` carries private numerical routines for optical-property preparation, radiative transfer, interpolation, quadrature, spectra, and linear algebra.
+- `src/input/` carries the typed scene and observation description.
+- `src/root.zig` carries the public `Input -> forward model -> Output` surface.
+- `src/input/reference_data/` carries the scientific input surfaces needed to prepare execution without letting file I/O leak into numerical routines.
+- `src/forward_model/` and `src/common/` carry numerical routines for optical-property preparation, radiative transfer, interpolation, quadrature, spectra, and linear algebra.
 
 The important point is that DISAMAR in this repository is the scientific model family behind the forward model, not a claim that the rest of the system should inherit every trait of an earlier application layout.
 
@@ -97,7 +97,7 @@ For the present codebase, that means the implementation has to satisfy three con
 
 After this overview:
 
-1. Read [Architecture and Execution Model](./zig-architecture.md) for the system-level layout.
-2. Read [O2A Forward](./o2a-forward.md) for the retained public runtime path.
-3. Read [Parity Harness](./parity-harness.md) for the bounded DISAMAR comparison workflow.
+1. Read [O2A Forward](./o2a-forward.md) for the retained public runtime path.
+2. Read [Parity Harness](./parity-harness.md) for the bounded DISAMAR comparison workflow.
+3. Read [Reference Data And Bundles](./reference-data-and-bundles.md) for the data-loading boundary.
 4. Read [Validation and Scientific Scope](./validation-and-parity.md) for the current tested and validated contract envelope.

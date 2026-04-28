@@ -18,8 +18,9 @@ analysis belong under `out/`, not under this directory.
 ## Baseline Commands
 
 - `zig build test`
-- `zig build test-validation`
-- `zig build o2a-plots`
+- `zig build test-validation-o2a`
+- `zig build test-validation-o2a-vendor`
+- `zig build o2a-plot-bundle`
 
 `zig build o2a-plot-bundle` regenerates the tracked plot files in this
 directory.

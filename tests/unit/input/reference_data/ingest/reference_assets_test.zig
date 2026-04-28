@@ -49,11 +49,33 @@ test "reference asset loader parses HITRAN-style line lists into spectroscopy ro
 }
 
 test "reference asset loader preserves vendor O2A filter metadata for bundled JPL line lists" {
-    // ISSUE: original literals (column count=14, branch_ic1/ic2/rotational_nf
-    // populated on row 2) reflected an earlier vendor schema; current bundle
-    // ships 17 columns and stores nulls in those slots for row 2. Skip until
-    // domain-rebased on the new schema.
-    return error.SkipZigTest;
+    var asset = try loadBundleAsset(
+        std.testing.allocator,
+        .spectroscopy_line_list,
+        "data/reference_data/cross_sections/bundle_manifest.json",
+        "o2a_hitran_07_hit08_tropomi",
+    );
+    defer asset.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 17), asset.columnCount());
+    try std.testing.expect(asset.row_count > 585);
+    try std.testing.expect(std.math.isNan(asset.value(2, 13)));
+    try std.testing.expect(std.math.isNan(asset.value(2, 14)));
+    try std.testing.expect(std.math.isNan(asset.value(2, 15)));
+    try std.testing.expectEqual(@as(f64, 0.0), asset.value(2, 16));
+
+    var lines = try asset.toSpectroscopyLineList(std.testing.allocator);
+    defer lines.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(?u8, null), lines.lines[2].branch_ic1);
+    try std.testing.expectEqual(@as(?u8, null), lines.lines[2].branch_ic2);
+    try std.testing.expectEqual(@as(?u8, null), lines.lines[2].rotational_nf);
+    try std.testing.expect(!lines.lines[2].vendor_filter_metadata_from_source);
+
+    try std.testing.expectEqual(@as(?u8, 6), lines.lines[585].branch_ic1);
+    try std.testing.expectEqual(@as(?u8, 2), lines.lines[585].branch_ic2);
+    try std.testing.expectEqual(@as(?u8, 9), lines.lines[585].rotational_nf);
+    try std.testing.expect(lines.lines[585].vendor_filter_metadata_from_source);
 }
 
 test "reference asset loader parses vendor strong-line and relaxation sidecars" {

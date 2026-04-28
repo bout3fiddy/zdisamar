@@ -69,9 +69,6 @@ pub fn execute(
     input: common.ForwardInput,
 ) common.ExecuteError!common.ForwardResult {
     if (route.family != .labos) unreachable;
-    if (route.derivative_mode == .analytical_plugin) {
-        return common.Error.UnsupportedDerivativeMode;
-    }
 
     const controls = route.rtm_controls;
     const toa = if (controls.scattering == .none)
@@ -90,7 +87,6 @@ pub fn execute(
         .jacobian_column = switch (route.derivative_mode) {
             .none => null,
             .semi_analytical => derivatives.proxyJacobianColumn(toa, input.optical_depth, 0.06),
-            .analytical_plugin => null,
             .numerical => derivatives.proxyJacobianColumn(toa, input.optical_depth, 0.05),
         },
     };

@@ -2,7 +2,7 @@ const std = @import("std");
 const Rayleigh = @import("../../../input/reference/rayleigh.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
 
-pub const legacy_phase_coefficient_count: usize = 4;
+pub const compact_phase_coefficient_count: usize = 4;
 pub const vendor_hg_max_phase_index: usize = 150;
 pub const vendor_hg_truncation_threshold: f64 = 1.0e-8;
 pub const phase_coefficient_count: usize = vendor_hg_max_phase_index + 1;
@@ -13,12 +13,12 @@ pub fn zeroPhaseCoefficients() [phase_coefficient_count]f64 {
     return coefficients;
 }
 
-pub fn phaseCoefficientsFromLegacy(
-    legacy_coefficients: [legacy_phase_coefficient_count]f64,
+pub fn phaseCoefficientsFromCompact(
+    compact_coefficients: [compact_phase_coefficient_count]f64,
 ) [phase_coefficient_count]f64 {
     var coefficients = zeroPhaseCoefficients();
-    inline for (0..legacy_phase_coefficient_count) |index| {
-        coefficients[index] = legacy_coefficients[index];
+    inline for (0..compact_phase_coefficient_count) |index| {
+        coefficients[index] = compact_coefficients[index];
     }
     coefficients[0] = 1.0;
     return coefficients;
