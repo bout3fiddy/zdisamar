@@ -52,9 +52,27 @@ test "s5p operational noise uses the operational reference grid as the reference
 }
 
 test "s5p operational noise falls back to spectral-grid spacing when measured wavelengths are absent" {
-    // ISSUE: current s5OperationalCoefficients implementation panics on this
-    // input. Skip until the helper is hardened against the migrated config.
-    return error.SkipZigTest;
+    const scene: Scene = .{
+        .spectral_grid = .{
+            .start_nm = 405.0,
+            .end_nm = 406.0,
+            .sample_count = 3,
+        },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .noise_model = .s5p_operational,
+            .reference_radiance = &.{ 10.0, 20.0, 40.0 },
+            .ingested_noise_sigma = &.{ 0.02, 0.03, 0.04 },
+        },
+    };
+
+    const signal = [_]f64{ 40.0, 80.0, 160.0 };
+    var sigma: [3]f64 = undefined;
+    try s5pOperationalSigma(&scene, .radiance, &.{ 405.0, 405.25, 405.5 }, &signal, &sigma);
+
+    try std.testing.expectApproxEqRel(@as(f64, 0.0565685424949238), sigma[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.0848528137423857), sigma[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 0.1131370849898476), sigma[2], 1.0e-12);
 }
 
 test "lab operational noise uses explicit per-channel coefficients" {
