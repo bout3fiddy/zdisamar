@@ -7,14 +7,14 @@ const output = @import("output.zig");
 const AtmosphereModel = @import("../../input/Atmosphere.zig");
 const SpectralGrid = @import("../../input/Spectrum.zig").SpectralGrid;
 const RadiativeTransferControls = @import("../../forward_model/radiative_transfer/root.zig").RadiativeTransferControls;
-const parity_runtime = @import("run.zig");
+const reference_run = @import("run.zig");
 
 const Allocator = std.mem.Allocator;
 
 pub fn compileResolvedCase(
     allocator: Allocator,
     root: parser.Node,
-) !parity_runtime.ResolvedVendorO2ACase {
+) !reference_run.ResolvedVendorO2ACase {
     const root_map = try common.expectMap(root);
     try common.expectOnlyFields(root_map, &.{
         "schema_version",
@@ -89,7 +89,7 @@ pub fn compileResolvedCase(
 }
 
 const CompiledScene = struct {
-    inputs: parity_runtime.InputsSpec,
+    inputs: reference_run.InputsSpec,
     scene_id: []const u8,
     spectral_grid: SpectralGrid,
     layer_count: u32,
@@ -98,11 +98,11 @@ const CompiledScene = struct {
     fit_interval_index_1based: u32,
     intervals: []const AtmosphereModel.VerticalInterval,
     surface_albedo: f64,
-    geometry: parity_runtime.GeometrySpec,
-    aerosol: parity_runtime.AerosolSpec,
-    observation: parity_runtime.ObservationSpec,
-    o2: parity_runtime.LineGasSpec,
-    o2o2: parity_runtime.CiaSpec,
+    geometry: reference_run.GeometrySpec,
+    aerosol: reference_run.AerosolSpec,
+    observation: reference_run.ObservationSpec,
+    o2: reference_run.LineGasSpec,
+    o2o2: reference_run.CiaSpec,
     rtm_controls: RadiativeTransferControls,
 };
 
@@ -115,7 +115,7 @@ const CompiledAtmosphere = struct {
     profile_source_map: []const parser.MapEntry,
 };
 
-fn compileMetadata(map: []const parser.MapEntry) !parity_runtime.Metadata {
+fn compileMetadata(map: []const parser.MapEntry) !reference_run.Metadata {
     try common.expectOnlyFields(map, &.{ "id", "storage", "description" });
     return .{
         .id = try common.requiredString(map, "id"),
@@ -124,7 +124,7 @@ fn compileMetadata(map: []const parser.MapEntry) !parity_runtime.Metadata {
     };
 }
 
-fn compileValidation(map: []const parser.MapEntry) !parity_runtime.ValidationPolicy {
+fn compileValidation(map: []const parser.MapEntry) !reference_run.ValidationPolicy {
     try common.expectOnlyFields(map, &.{
         "strict_unknown_fields",
         "require_resolved_assets",
@@ -143,7 +143,7 @@ fn compileValidation(map: []const parser.MapEntry) !parity_runtime.ValidationPol
     };
 }
 
-fn compilePlan(map: []const parser.MapEntry) !parity_runtime.PlanSpec {
+fn compilePlan(map: []const parser.MapEntry) !reference_run.PlanSpec {
     try common.expectOnlyFields(map, &.{ "model_family", "transport", "execution" });
     const model_family = try common.requiredString(map, "model_family");
     if (!std.mem.eql(u8, model_family, "disamar_standard")) return error.UnsupportedModelFamily;
@@ -225,7 +225,7 @@ fn compileScene(
     };
 }
 
-fn compileGeometry(map: []const parser.MapEntry) !parity_runtime.GeometrySpec {
+fn compileGeometry(map: []const parser.MapEntry) !reference_run.GeometrySpec {
     try common.expectOnlyFields(map, &.{ "model", "solar_zenith_deg", "viewing_zenith_deg", "relative_azimuth_deg" });
     const model_text = try common.requiredString(map, "model");
     if (!std.mem.eql(u8, model_text, "pseudo_spherical")) return error.UnsupportedGeometryModel;
@@ -309,7 +309,7 @@ fn sampleCountFromStep(start_nm: f64, end_nm: f64, step_nm: f64) !u32 {
     return @intFromFloat(rounded);
 }
 
-fn lookupAsset(assets: []const scene_inputs.AssetBinding, id: []const u8) !parity_runtime.ExternalAsset {
+fn lookupAsset(assets: []const scene_inputs.AssetBinding, id: []const u8) !reference_run.ExternalAsset {
     for (assets) |entry| {
         if (std.mem.eql(u8, entry.id, id)) return entry.asset;
     }

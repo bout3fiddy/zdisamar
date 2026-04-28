@@ -1,22 +1,22 @@
 const std = @import("std");
-const parity_config = @import("config.zig");
-const parity_support = @import("metrics.zig");
+const reference_config = @import("config.zig");
+const reference_metrics = @import("metrics.zig");
 const SpectralGrid = @import("../../input/Spectrum.zig").SpectralGrid;
 
 pub const default_yaml_path = "data/examples/vendor_o2a_parity.yaml";
 
-pub const LoadedResolvedCase = parity_config.LoadedResolvedCase;
-pub const RunSummary = parity_config.RunSummary;
-pub const ReferenceData = parity_support.ReferenceData;
-pub const ResolvedVendorO2ACase = parity_support.ResolvedVendorO2ACase;
-pub const VendorO2AReflectanceCase = parity_support.VendorO2AReflectanceCase;
-pub const VendorO2APreparedCase = parity_support.VendorO2APreparedCase;
-pub const ComparisonMetrics = parity_support.ComparisonMetrics;
-pub const TrendTolerances = parity_support.TrendTolerances;
-pub const TrendState = parity_support.TrendState;
-pub const AssessmentVerdict = parity_support.AssessmentVerdict;
-pub const AssessmentOutcome = parity_support.AssessmentOutcome;
-pub const RangeExtremum = parity_support.RangeExtremum;
+pub const LoadedResolvedCase = reference_config.LoadedResolvedCase;
+pub const RunSummary = reference_config.RunSummary;
+pub const ReferenceData = reference_metrics.ReferenceData;
+pub const ResolvedVendorO2ACase = reference_metrics.ResolvedVendorO2ACase;
+pub const VendorO2AReflectanceCase = reference_metrics.VendorO2AReflectanceCase;
+pub const VendorO2APreparedCase = reference_metrics.VendorO2APreparedCase;
+pub const ComparisonMetrics = reference_metrics.ComparisonMetrics;
+pub const TrendTolerances = reference_metrics.TrendTolerances;
+pub const TrendState = reference_metrics.TrendState;
+pub const AssessmentVerdict = reference_metrics.AssessmentVerdict;
+pub const AssessmentOutcome = reference_metrics.AssessmentOutcome;
+pub const RangeExtremum = reference_metrics.RangeExtremum;
 
 pub const ExecutionOverrides = struct {
     spectral_grid: ?SpectralGrid = null,
@@ -33,7 +33,7 @@ pub fn loadResolvedCaseFromFile(
     allocator: std.mem.Allocator,
     path: []const u8,
 ) !LoadedResolvedCase {
-    return parity_config.loadResolvedCaseFromFile(allocator, path);
+    return reference_config.loadResolvedCaseFromFile(allocator, path);
 }
 
 pub fn loadDefaultResolvedCase(
@@ -66,18 +66,18 @@ pub fn renderResolvedJson(
     allocator: std.mem.Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) ![]u8 {
-    return parity_config.renderResolvedJson(allocator, resolved);
+    return reference_config.renderResolvedJson(allocator, resolved);
 }
 
 pub fn runResolvedCaseAndWriteOutputs(
     allocator: std.mem.Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !RunSummary {
-    return parity_config.runResolvedCaseAndWriteOutputs(allocator, resolved);
+    return reference_config.runResolvedCaseAndWriteOutputs(allocator, resolved);
 }
 
-pub const runResolvedVendorO2AReflectanceCase = parity_support.runResolvedVendorO2AReflectanceCase;
-pub const prepareResolvedVendorO2ACase = parity_support.prepareResolvedVendorO2ACase;
+pub const runResolvedVendorO2AReflectanceCase = reference_metrics.runResolvedVendorO2AReflectanceCase;
+pub const prepareResolvedVendorO2ACase = reference_metrics.prepareResolvedVendorO2ACase;
 
 pub fn runDefaultReflectanceCase(
     allocator: std.mem.Allocator,
@@ -94,7 +94,7 @@ pub fn runReflectanceCaseFromFile(
     var loaded = try loadResolvedCaseFromFile(allocator, yaml_path);
     defer loaded.deinit();
     applyExecutionOverrides(&loaded.resolved, overrides);
-    return parity_support.runResolvedVendorO2AReflectanceCase(allocator, &loaded.resolved);
+    return reference_metrics.runResolvedVendorO2AReflectanceCase(allocator, &loaded.resolved);
 }
 
 pub fn prepareDefaultCase(
@@ -112,7 +112,7 @@ pub fn prepareCaseFromFile(
     var loaded = try loadResolvedCaseFromFile(allocator, yaml_path);
     defer loaded.deinit();
     applyExecutionOverrides(&loaded.resolved, overrides);
-    return parity_support.prepareResolvedVendorO2ACase(allocator, &loaded.resolved);
+    return reference_metrics.prepareResolvedVendorO2ACase(allocator, &loaded.resolved);
 }
 
 pub fn prepareCase(
@@ -121,15 +121,15 @@ pub fn prepareCase(
     return prepareDefaultCase(allocator, .{});
 }
 
-pub fn loadVendorParityO2ASpectroscopyLineList(
+pub fn loadDisamarReferenceO2ASpectroscopyLineList(
     allocator: std.mem.Allocator,
 ) !ReferenceData.SpectroscopyLineList {
     var loaded = try loadDefaultResolvedCase(allocator);
     defer loaded.deinit();
-    return parity_support.loadResolvedO2ASpectroscopyLineList(allocator, loaded.resolved.o2);
+    return reference_metrics.loadResolvedO2ASpectroscopyLineList(allocator, loaded.resolved.o2);
 }
 
-pub const meanVectorInRange = parity_support.meanVectorInRange;
-pub const minVectorInRange = parity_support.minVectorInRange;
-pub const computeComparisonMetrics = parity_support.computeComparisonMetrics;
-pub const assessAgainstBaseline = parity_support.assessAgainstBaseline;
+pub const meanVectorInRange = reference_metrics.meanVectorInRange;
+pub const minVectorInRange = reference_metrics.minVectorInRange;
+pub const computeComparisonMetrics = reference_metrics.computeComparisonMetrics;
+pub const assessAgainstBaseline = reference_metrics.assessAgainstBaseline;

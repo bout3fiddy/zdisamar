@@ -13,30 +13,30 @@ const bundled_optics = @import("../../input/reference_data/bundled/assets.zig");
 const implementations = @import("../../forward_model/implementations/root.zig");
 const reference_assets = @import("../../input/reference_data/ingest/reference_assets.zig");
 const transport_common = @import("../../forward_model/radiative_transfer/root.zig");
-const parity_types = @import("types.zig");
+const reference_types = @import("types.zig");
 const adaptive_plan = @import("../../forward_model/implementations/instrument/adaptive_plan.zig");
 const instrument_types = @import("../../forward_model/implementations/instrument/types.zig");
 
 const Allocator = std.mem.Allocator;
-pub const AbsorberSpecies = parity_types.AbsorberSpecies;
-pub const Route = parity_types.Route;
-pub const RadiativeTransferControls = parity_types.RadiativeTransferControls;
-pub const ReferenceSample = parity_types.ReferenceSample;
-pub const ExternalAsset = parity_types.ExternalAsset;
-pub const OutputKind = parity_types.OutputKind;
-pub const OutputRequest = parity_types.OutputRequest;
-pub const ValidationPolicy = parity_types.ValidationPolicy;
-pub const PlanSpec = parity_types.PlanSpec;
-pub const Metadata = parity_types.Metadata;
-pub const GeometrySpec = parity_types.GeometrySpec;
-pub const AerosolSpec = parity_types.AerosolSpec;
-pub const ObservationSpec = parity_types.ObservationSpec;
-pub const LineGasSpec = parity_types.LineGasSpec;
-pub const CiaSpec = parity_types.CiaSpec;
-pub const InputsSpec = parity_types.InputsSpec;
-pub const ResolvedVendorO2ACase = parity_types.ResolvedVendorO2ACase;
-pub const LoadedVendorO2AInputs = parity_types.LoadedVendorO2AInputs;
-pub const SolarSpectrumSample = parity_types.SolarSpectrumSample;
+pub const AbsorberSpecies = reference_types.AbsorberSpecies;
+pub const Route = reference_types.Route;
+pub const RadiativeTransferControls = reference_types.RadiativeTransferControls;
+pub const ReferenceSample = reference_types.ReferenceSample;
+pub const ExternalAsset = reference_types.ExternalAsset;
+pub const OutputKind = reference_types.OutputKind;
+pub const OutputRequest = reference_types.OutputRequest;
+pub const ValidationPolicy = reference_types.ValidationPolicy;
+pub const PlanSpec = reference_types.PlanSpec;
+pub const Metadata = reference_types.Metadata;
+pub const GeometrySpec = reference_types.GeometrySpec;
+pub const AerosolSpec = reference_types.AerosolSpec;
+pub const ObservationSpec = reference_types.ObservationSpec;
+pub const LineGasSpec = reference_types.LineGasSpec;
+pub const CiaSpec = reference_types.CiaSpec;
+pub const InputsSpec = reference_types.InputsSpec;
+pub const ResolvedVendorO2ACase = reference_types.ResolvedVendorO2ACase;
+pub const LoadedVendorO2AInputs = reference_types.LoadedVendorO2AInputs;
+pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -279,7 +279,7 @@ pub fn buildResolvedVendorO2AScene(
         },
     };
 
-    const parity_response: Instrument.SpectralResponse = .{
+    const reference_response: Instrument.SpectralResponse = .{
         .explicit = true,
         .slit_index = switch (resolved.observation.builtin_line_shape) {
             .gaussian => .gaussian_modulated,
@@ -343,11 +343,11 @@ pub fn buildResolvedVendorO2AScene(
             .measurement_pipeline = .{
                 .radiance = .{
                     .explicit = true,
-                    .response = parity_response,
+                    .response = reference_response,
                 },
                 .irradiance = .{
                     .explicit = true,
-                    .response = parity_response,
+                    .response = reference_response,
                 },
             },
         },

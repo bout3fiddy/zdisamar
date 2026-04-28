@@ -1,7 +1,7 @@
 const std = @import("std");
 const common = @import("compile_common.zig");
 
-const parity_runtime = @import("run.zig");
+const reference_run = @import("run.zig");
 const RadiativeTransferControls = @import("../../forward_model/radiative_transfer/root.zig").RadiativeTransferControls;
 const parser = @import("parser.zig");
 
@@ -9,7 +9,7 @@ const Allocator = std.mem.Allocator;
 
 pub const AssetBinding = struct {
     id: []const u8,
-    asset: parity_runtime.ExternalAsset,
+    asset: reference_run.ExternalAsset,
 };
 
 pub fn compileAssets(allocator: Allocator, inputs_node: parser.Node) ![]const AssetBinding {
@@ -42,7 +42,7 @@ pub fn compileO2(
     allocator: Allocator,
     absorbers_map: []const parser.MapEntry,
     assets: []const AssetBinding,
-) !parity_runtime.LineGasSpec {
+) !reference_run.LineGasSpec {
     const o2_map = try common.expectMap((try common.findRequiredField(absorbers_map, "o2")).value);
     try common.expectOnlyFields(o2_map, &.{ "species", "spectroscopy" });
     if (!std.mem.eql(u8, try common.requiredString(o2_map, "species"), "o2")) return error.UnsupportedAbsorberSpecies;
@@ -81,7 +81,7 @@ pub fn compileO2(
 pub fn compileO2O2(
     absorbers_map: []const parser.MapEntry,
     assets: []const AssetBinding,
-) !parity_runtime.CiaSpec {
+) !reference_run.CiaSpec {
     const o2o2_entry = try common.findRequiredField(absorbers_map, "o2o2");
     const o2o2_map = try common.expectMap(o2o2_entry.value);
     try common.expectOnlyFields(o2o2_map, &.{ "species", "spectroscopy" });
@@ -106,7 +106,7 @@ pub fn compileSurface(map: []const parser.MapEntry) !f64 {
     return try common.requiredF64(map, "albedo");
 }
 
-pub fn compileAerosol(map: []const parser.MapEntry) !parity_runtime.AerosolSpec {
+pub fn compileAerosol(map: []const parser.MapEntry) !reference_run.AerosolSpec {
     try common.expectOnlyFields(map, &.{"plume"});
     const plume_map = try common.expectMap(try common.requiredField(map, "plume"));
     try common.expectOnlyFields(plume_map, &.{
@@ -147,7 +147,7 @@ pub fn compileAerosol(map: []const parser.MapEntry) !parity_runtime.AerosolSpec 
 pub fn compileObservation(
     map: []const parser.MapEntry,
     assets: []const AssetBinding,
-) !parity_runtime.ObservationSpec {
+) !reference_run.ObservationSpec {
     try common.expectOnlyFields(map, &.{
         "regime",
         "instrument",
@@ -252,7 +252,7 @@ pub fn compileRadiativeTransferControls(map: []const parser.MapEntry) !Radiative
     };
 }
 
-fn lookupAsset(assets: []const AssetBinding, id: []const u8) !parity_runtime.ExternalAsset {
+fn lookupAsset(assets: []const AssetBinding, id: []const u8) !reference_run.ExternalAsset {
     for (assets) |entry| {
         if (std.mem.eql(u8, entry.id, id)) return entry.asset;
     }

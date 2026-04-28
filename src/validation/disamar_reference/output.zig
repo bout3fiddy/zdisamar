@@ -3,29 +3,29 @@ const common = @import("compile_common.zig");
 const parser = @import("parser.zig");
 
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
-const parity_runtime = @import("run.zig");
-const parity_support = @import("metrics.zig");
+const reference_run = @import("run.zig");
+const reference_metrics = @import("metrics.zig");
 
 const Allocator = std.mem.Allocator;
 
 pub const RunSummary = struct {
-    metadata: parity_runtime.Metadata,
+    metadata: reference_run.Metadata,
     scene_id: []const u8,
     reference_path: []const u8,
     product_summary: InstrumentGrid.InstrumentGridSummary,
-    comparison: parity_support.ComparisonMetrics,
+    comparison: reference_metrics.ComparisonMetrics,
 };
 
-pub fn compileOutputs(allocator: Allocator, outputs_node: ?parser.Node) ![]const parity_runtime.OutputRequest {
+pub fn compileOutputs(allocator: Allocator, outputs_node: ?parser.Node) ![]const reference_run.OutputRequest {
     if (outputs_node == null) return &.{};
     const seq = try common.expectSeq(outputs_node.?);
-    var outputs = std.ArrayList(parity_runtime.OutputRequest).empty;
+    var outputs = std.ArrayList(reference_run.OutputRequest).empty;
     errdefer outputs.deinit(allocator);
     for (seq) |item| {
         const map = try common.expectMap(item);
         try common.expectOnlyFields(map, &.{ "kind", "path" });
         const kind_text = try common.requiredString(map, "kind");
-        const kind: parity_runtime.OutputKind = if (std.mem.eql(u8, kind_text, "summary_json"))
+        const kind: reference_run.OutputKind = if (std.mem.eql(u8, kind_text, "summary_json"))
             .summary_json
         else if (std.mem.eql(u8, kind_text, "generated_spectrum_csv"))
             .generated_spectrum_csv
@@ -41,7 +41,7 @@ pub fn compileOutputs(allocator: Allocator, outputs_node: ?parser.Node) ![]const
 
 pub fn renderResolvedJson(
     allocator: Allocator,
-    resolved: *const parity_runtime.ResolvedVendorO2ACase,
+    resolved: *const reference_run.ResolvedVendorO2ACase,
 ) ![]u8 {
     const isotopes_u32 = try allocator.alloc(u32, resolved.o2.isotopes_sim.len);
     defer allocator.free(isotopes_u32);
@@ -85,12 +85,12 @@ pub fn renderResolvedJson(
 
 pub fn runResolvedCaseAndWriteOutputs(
     allocator: Allocator,
-    resolved: *const parity_runtime.ResolvedVendorO2ACase,
+    resolved: *const reference_run.ResolvedVendorO2ACase,
 ) !RunSummary {
-    var reflectance_case = try parity_support.runResolvedVendorO2AReflectanceCase(allocator, resolved);
+    var reflectance_case = try reference_metrics.runResolvedVendorO2AReflectanceCase(allocator, resolved);
     defer reflectance_case.deinit(allocator);
 
-    const comparison = parity_support.computeComparisonMetrics(
+    const comparison = reference_metrics.computeComparisonMetrics(
         &reflectance_case.product,
         reflectance_case.reference,
         0.0,

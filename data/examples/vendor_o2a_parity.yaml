@@ -1,9 +1,9 @@
 schema_version: 1
 
 metadata:
-  id: vendor_o2a_parity
-  workspace: vendor-o2a-parity
-  description: "Executable retained O2A parity case compiled from YAML."
+  id: disamar_reference_o2a
+  storage: disamar-reference-o2a
+  description: "Executable retained O2A DISAMAR reference case compiled from YAML."
 
 inputs:
   assets:
@@ -50,7 +50,7 @@ templates:
         solver_mode: scalar
         derivative_mode: none
     scene:
-      id: vendor_o2a_parity_template
+      id: disamar_reference_o2a_template
       geometry:
         model: pseudo_spherical
         solar_zenith_deg: 60.0
@@ -166,7 +166,7 @@ experiment:
   simulation:
     from: vendor_o2a_base
     scene:
-      id: o2a_vendor_parity_yaml
+      id: o2a_disamar_reference_yaml
 
 outputs:
   - kind: summary_json

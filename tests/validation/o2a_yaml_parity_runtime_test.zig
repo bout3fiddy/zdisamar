@@ -1,7 +1,7 @@
 const std = @import("std");
 const validation_support = @import("disamar_reference_support").disamar_reference;
-const parity_config = validation_support.config;
-const parity_cli = validation_support.cli;
+const reference_config = validation_support.config;
+const reference_cli = validation_support.cli;
 const disamar_reference = validation_support.yaml;
 
 const BaselineAnchor = struct {
@@ -33,8 +33,8 @@ fn loadBaselineAnchor(allocator: std.mem.Allocator) !std.json.Parsed(BaselineAnc
     return std.json.parseFromSlice(BaselineAnchor, allocator, raw, .{ .ignore_unknown_fields = false });
 }
 
-test "yaml parity example resolves key DISAMAR mapping controls" {
-    var loaded = try parity_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
+test "yaml DISAMAR reference example resolves key DISAMAR mapping controls" {
+    var loaded = try reference_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
     defer loaded.deinit();
 
     try std.testing.expectEqualStrings("disamar_standard", loaded.resolved.plan.model_family);
@@ -62,8 +62,8 @@ test "yaml parity example resolves key DISAMAR mapping controls" {
     try std.testing.expect(loaded.resolved.rtm_controls.renorm_phase_function);
 }
 
-test "yaml parity runtime resolves symmetric DISAMAR HR integration for both channels" {
-    var loaded = try parity_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
+test "yaml DISAMAR reference runtime resolves symmetric DISAMAR HR integration for both channels" {
+    var loaded = try reference_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
     defer loaded.deinit();
 
     var disamar_case = try disamar_reference.prepareResolvedVendorO2ACase(std.testing.allocator, &loaded.resolved);
@@ -89,8 +89,8 @@ test "yaml parity runtime resolves symmetric DISAMAR HR integration for both cha
     );
 }
 
-test "yaml parity output computes vendor comparison metrics on the executable config" {
-    var loaded = try parity_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
+test "yaml DISAMAR reference output computes vendor comparison metrics on the executable config" {
+    var loaded = try reference_config.loadResolvedCaseFromFile(std.testing.allocator, exampleConfigPath());
     defer loaded.deinit();
 
     var baseline = try loadBaselineAnchor(std.testing.allocator);
@@ -115,7 +115,7 @@ test "yaml cli validate and resolve commands succeed" {
     defer output.deinit(std.testing.allocator);
     var validate_writer = output.writer(std.testing.allocator);
 
-    try parity_cli.mainWithArgs(
+    try reference_cli.mainWithArgs(
         std.testing.allocator,
         &.{ "zdisamar", "config", "validate", exampleConfigPath() },
         &validate_writer,
@@ -124,17 +124,17 @@ test "yaml cli validate and resolve commands succeed" {
 
     output.clearRetainingCapacity();
     var resolve_writer = output.writer(std.testing.allocator);
-    try parity_cli.mainWithArgs(
+    try reference_cli.mainWithArgs(
         std.testing.allocator,
         &.{ "zdisamar", "config", "resolve", exampleConfigPath() },
         &resolve_writer,
     );
-    try std.testing.expect(std.mem.indexOf(u8, output.items, "\"scene_id\": \"o2a_vendor_parity_yaml\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "\"scene_id\": \"o2a_disamar_reference_yaml\"") != null);
 }
 
 test "yaml cli run command writes configured outputs" {
     var null_writer = std.io.null_writer;
-    try parity_cli.mainWithArgs(
+    try reference_cli.mainWithArgs(
         std.testing.allocator,
         &.{ "zdisamar", "run", exampleConfigPath() },
         &null_writer,
