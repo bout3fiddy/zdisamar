@@ -17,10 +17,18 @@ pub const core = struct {
 pub const kernels = struct {
     pub const optics = struct {
         pub const preparation = @import("kernels/optics/preparation.zig");
+        pub const prepare = struct {
+            pub const phase_functions = @import("kernels/optics/prepare/phase_functions.zig");
+            pub const band_means = @import("kernels/optics/prepare/band_means.zig");
+        };
     };
 
     pub const spectra = struct {
         pub const calibration = @import("kernels/spectra/calibration.zig");
+        pub const convolution = @import("kernels/spectra/convolution.zig");
+        pub const grid = @import("kernels/spectra/grid.zig");
+        pub const noise = @import("kernels/spectra/noise.zig");
+        pub const sampling = @import("kernels/spectra/sampling.zig");
     };
 
     pub const quadrature = struct {

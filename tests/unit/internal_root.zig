@@ -17,4 +17,12 @@ test {
     _ = @import("kernels/linalg/cholesky_test.zig");
     _ = @import("kernels/linalg/small_dense_test.zig");
     _ = @import("kernels/interpolation/spline_test.zig");
+
+    _ = @import("kernels/spectra/calibration_test.zig");
+    _ = @import("kernels/spectra/convolution_test.zig");
+    _ = @import("kernels/spectra/grid_test.zig");
+    _ = @import("kernels/spectra/noise_test.zig");
+    _ = @import("kernels/spectra/sampling_test.zig");
+    _ = @import("kernels/optics/prepare/phase_functions_test.zig");
+    _ = @import("kernels/optics/prepare/band_means_test.zig");
 }
