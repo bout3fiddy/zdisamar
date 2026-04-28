@@ -27,11 +27,3 @@ pub fn prepare(
 ) !PreparedOpticalState {
     return builder.prepare(allocator, scene, inputs);
 }
-
-test {
-    _ = state;
-    _ = builder;
-    _ = spectroscopy;
-    _ = evaluation;
-    _ = transport;
-}

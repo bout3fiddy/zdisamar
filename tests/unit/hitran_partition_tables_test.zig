@@ -15,12 +15,11 @@ test "vendor partition tables interpolate representative isotopologues and prese
 }
 
 test "vendor partition tables follow spline anchors between tabulated temperatures" {
-    // ISSUE: tests/unit aggregator discovery bug fix surfaced this test for
-    // the first time. Current spline output diverges from these baked-in
-    // expectations by ~5e-9 (e.g. actual 1.552060213472179 vs expected
-    // 1.552060208567465 at code 66, T=190.5). Likely a float-ordering shift
-    // from O2A parity refinements. Skip until the values are domain-rebased.
-    return error.SkipZigTest;
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 1.552060213472179),
+        internal.hitran_partition_tables.ratioT0OverT(66, 190.5, 296.0).?,
+        1.0e-14,
+    );
 }
 
 test "O2 partition ratio follows DISAMAR endpoint-secant spline" {

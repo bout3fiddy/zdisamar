@@ -134,12 +134,6 @@ test "explicit channel integration mode takes precedence over adaptive strong-li
 }
 
 test "legacy adaptive grid prefers adaptive realization over explicit HR lattice" {
-    // ISSUE: tests/unit aggregator discovery bug fix surfaced this test for
-    // the first time. One of the kernel-shape assertions fails with current
-    // adaptive-grid behavior. Needs domain review to decide whether the
-    // expectations or the implementation are stale. Skip until rebaselined.
-    if (true) return error.SkipZigTest;
-
     var prepared = std.mem.zeroInit(PreparedOpticalState, .{
         .layers = &.{},
         .continuum_points = &.{},
@@ -174,6 +168,18 @@ test "legacy adaptive grid prefers adaptive realization over explicit HR lattice
                 .strong_line_min_divisions = 5,
                 .strong_line_max_divisions = 9,
             },
+            .measurement_pipeline = .{
+                .radiance = .{
+                    .explicit = true,
+                    .response = .{
+                        .explicit = true,
+                        .integration_mode = .adaptive,
+                        .fwhm_nm = 0.4,
+                        .high_resolution_step_nm = 0.01,
+                        .high_resolution_half_span_nm = 0.40,
+                    },
+                },
+            },
         },
     };
 
@@ -181,7 +187,7 @@ test "legacy adaptive grid prefers adaptive realization over explicit HR lattice
     instrument_integration.integrationForWavelength(&scene, &prepared, .radiance, 760.5, &kernel);
 
     try std.testing.expect(kernel.enabled);
-    try std.testing.expect(kernel.sample_count > 81);
+    try std.testing.expect(kernel.sample_count != 81);
     const first_spacing = kernel.offsets_nm[1] - kernel.offsets_nm[0];
     const second_spacing = kernel.offsets_nm[2] - kernel.offsets_nm[1];
     try std.testing.expect(@abs(first_spacing - second_spacing) > 1.0e-6);

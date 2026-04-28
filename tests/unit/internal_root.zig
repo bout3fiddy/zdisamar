@@ -59,11 +59,14 @@ test {
     _ = @import("kernels/optics/preparation/forward_layers_test.zig");
     _ = @import("kernels/optics/preparation/pseudo_spherical_test.zig");
     _ = @import("kernels/optics/preparation/rtm_quadrature_test.zig");
+    _ = @import("kernels/optics/preparation/root_test.zig");
     _ = @import("kernels/optics/preparation/source_interfaces_test.zig");
     _ = @import("providers/instrument/integration_test.zig");
     _ = @import("providers/noise_test.zig");
     _ = @import("providers/transport_test.zig");
 
     _ = @import("kernels/transport/labos/layers_test.zig");
+    _ = @import("kernels/transport/adding/root_test.zig");
+    _ = @import("kernels/transport/measurement/root_test.zig");
     _ = @import("kernels/transport/measurement/spectral_forward_test.zig");
 }

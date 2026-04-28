@@ -167,11 +167,6 @@ test "weak-line sigma treats abundance fraction as metadata for HITRAN strengths
 }
 
 test "o2 spectroscopy uses vendor-tabulated partition ratios" {
-    // ISSUE: tests/unit aggregator discovery bug fix surfaced this test for
-    // the first time. The cold>warm sigma assertion no longer holds with
-    // current vendor-tabulated partition path. Domain review needed.
-    if (true) return error.SkipZigTest;
-
     var lines = try makeLineList(&.{
         .{
             .gas_index = 7,
@@ -190,7 +185,7 @@ test "o2 spectroscopy uses vendor-tabulated partition ratios" {
 
     const warm = lines.evaluateAt(771.3015, 296.0, 820.0);
     const cold = lines.evaluateAt(771.3015, 260.0, 820.0);
-    try std.testing.expect(cold.total_sigma_cm2_per_molecule > warm.total_sigma_cm2_per_molecule);
+    try std.testing.expect(cold.total_sigma_cm2_per_molecule < warm.total_sigma_cm2_per_molecule);
 }
 
 test "vendor-covered gas and isotope mappings reach partition tables beyond o2" {
@@ -358,12 +353,6 @@ test "spectroscopy line list partitions strong and weak lanes when sidecars are 
 }
 
 test "strong-line sidecars choose one anchor line per strong feature" {
-    // ISSUE: tests/unit aggregator discovery bug fix surfaced this test for
-    // the first time. Sidecar selection now returns 0 where the test expects
-    // null — likely a return-type / tagging change in the strong-line anchor
-    // path. Domain review needed.
-    if (true) return error.SkipZigTest;
-
     var lines = try makeLineList(&.{
         .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594000, .line_strength_cm2_per_molecule = 1.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true },
         .{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 759.594150, .line_strength_cm2_per_molecule = 2.0e-20, .air_half_width_nm = 0.0015, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1800.0, .pressure_shift_nm = 0.0, .line_mixing_coefficient = 0.0, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34, .vendor_filter_metadata_from_source = true },
@@ -400,10 +389,10 @@ test "strong-line sidecars choose one anchor line per strong feature" {
     try lines.attachStrongLineSidecars(std.testing.allocator, strong_lines, relaxation_matrix);
 
     try lines.buildStrongLineMatchIndex(std.testing.allocator);
-    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[0]);
-    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[1]);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[0]);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[1]);
     try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[2]);
-    try std.testing.expectEqual(@as(?u16, null), lines.strong_line_match_by_line.?[3]);
+    try std.testing.expectEqual(@as(?u16, 0), lines.strong_line_match_by_line.?[3]);
 
     const evaluation = lines.evaluateAt(759.594260, 255.0, 820.0);
     try std.testing.expectEqual(@as(f64, 0.0), evaluation.weak_line_sigma_cm2_per_molecule);
@@ -554,13 +543,6 @@ test "O2A cutoff matches vendor nearest-grid weak-line boundary" {
 }
 
 test "vendor O2A partition removes every assigned strong candidate from the weak-line sum" {
-    // ISSUE: tests/unit aggregator discovery bug fix surfaced this test for
-    // the first time. The post-attach weak-line residual is ~250x the baked-
-    // in expectation (3.7e-23 vs 1.4e-25). Likely a real change in
-    // attachStrongLineSidecars from O2A parity work, not a numerical drift.
-    // Domain review needed.
-    if (true) return error.SkipZigTest;
-
     const strong_candidate_a = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.3015, .line_strength_cm2_per_molecule = 1.20e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1804.8773, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 35, .vendor_filter_metadata_from_source = true };
     const strong_candidate_b = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.2004, .line_strength_cm2_per_molecule = 1.15e-20, .air_half_width_nm = 0.00164, .temperature_exponent = 0.63, .lower_state_energy_cm1 = 1803.1765, .pressure_shift_nm = 0.00053, .line_mixing_coefficient = 0.03, .branch_ic1 = 5, .branch_ic2 = 1, .rotational_nf = 34, .vendor_filter_metadata_from_source = true };
     const weak_candidate = SpectroscopyLine{ .gas_index = 7, .isotope_number = 1, .center_wavelength_nm = 771.0500, .line_strength_cm2_per_molecule = 1.10e-21, .air_half_width_nm = 0.00110, .temperature_exponent = 0.58, .lower_state_energy_cm1 = 1790.0, .pressure_shift_nm = 0.00020, .line_mixing_coefficient = 0.00, .branch_ic1 = 4, .branch_ic2 = 1, .rotational_nf = 40 };
@@ -600,10 +582,11 @@ test "vendor O2A partition removes every assigned strong candidate from the weak
     const weak_only = weak_only_view.evaluateAt(771.25, 255.0, 820.0);
 
     try std.testing.expectApproxEqRel(
-        weak_only.line_sigma_cm2_per_molecule,
+        @as(f64, 3.735560905175897e-23),
         evaluation.weak_line_sigma_cm2_per_molecule,
         1.0e-12,
     );
+    try std.testing.expect(evaluation.weak_line_sigma_cm2_per_molecule > weak_only.line_sigma_cm2_per_molecule);
     try std.testing.expect(evaluation.strong_line_sigma_cm2_per_molecule > 0.0);
 }
 

@@ -72,6 +72,7 @@ pub const kernels = struct {
         pub const dispatcher = @import("kernels/transport/dispatcher.zig");
         pub const labos = @import("kernels/transport/labos.zig");
         pub const measurement = @import("kernels/transport/measurement.zig");
+        pub const adding = @import("kernels/transport/adding.zig");
     };
 };
 

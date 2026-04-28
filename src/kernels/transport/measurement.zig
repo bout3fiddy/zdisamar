@@ -72,13 +72,3 @@ pub fn simulateProductWithWorkspace(
         providers,
     );
 }
-
-test {
-    _ = types;
-    _ = workspace;
-    _ = cache;
-    _ = forward_input;
-    _ = spectral_eval;
-    _ = product;
-    _ = simulate;
-}
