@@ -9,7 +9,6 @@ const StateVector = @import("StateVector.zig").StateVector;
 pub const DerivativeMode = enum {
     none,
     semi_analytical,
-    analytical_plugin,
     numerical,
 };
 

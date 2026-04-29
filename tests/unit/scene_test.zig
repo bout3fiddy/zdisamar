@@ -2,7 +2,6 @@ const std = @import("std");
 const internal = @import("internal");
 
 const Scene = internal.Scene;
-const Blueprint = internal.scene.Blueprint;
 const InverseProblem = internal.scene.InverseProblem;
 const StateParameter = internal.scene.StateParameter;
 const SpectralBand = internal.scene.SpectralBand;
@@ -17,22 +16,7 @@ test "scene validation rejects missing instrument and accepts valid scene" {
     try std.testing.expectError(error.MissingObservationInstrument, scene.validate());
 }
 
-test "blueprint and inverse problem expose canonical layout and validation contracts" {
-    const blueprint_requirements = (Blueprint{
-        .spectral_grid = .{
-            .start_nm = 405.0,
-            .end_nm = 465.0,
-            .sample_count = 121,
-        },
-        .layer_count_hint = 48,
-        .state_parameter_count_hint = 3,
-        .measurement_count_hint = 121,
-    }).layoutRequirements();
-
-    try std.testing.expectEqual(@as(u32, 48), blueprint_requirements.layer_count);
-    try std.testing.expectEqual(@as(u32, 3), blueprint_requirements.state_parameter_count);
-    try std.testing.expectEqual(@as(u32, 121), blueprint_requirements.measurement_count);
-
+test "inverse problem exposes validation contracts" {
     try (InverseProblem{
         .id = "retrieval-1",
         .state_vector = .{

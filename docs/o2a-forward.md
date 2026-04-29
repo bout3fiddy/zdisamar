@@ -3,7 +3,11 @@
 `zdisamar` exposes a narrow O2A forward-model lifecycle:
 
 ```zig
-var prepared = try zdisamar.prepare(allocator, &case);
+var input: zdisamar.Input = .{
+    .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 121 },
+};
+
+var prepared = try zdisamar.prepare(allocator, &input);
 defer prepared.deinit(allocator);
 
 var result = try zdisamar.run(
@@ -15,25 +19,26 @@ var result = try zdisamar.run(
 defer result.deinit(allocator);
 ```
 
-`Prepared` owns the resolved case, bundled data, prepared optics, and reusable
-internal storage. Callers should not pass a separate original case into the run
-step; `prepared.case` is the authoritative resolved scene.
+`PreparedInput` owns the resolved input, bundled data, prepared optics, and
+reusable internal storage. Callers should not pass a separate original input
+into the run step; `prepared.input` is the authoritative resolved scene.
 
 The public root intentionally keeps only the literal O2A surface:
 
-- `Case`
-- `Prepared`
-- `Data`
-- `Optics`
+- `Input`
+- `PreparedInput`
+- `ReferenceData`
+- `OpticalProperties`
 - `Method`
-- `RunStorage`
+- `CalculationStorage`
 - `RadiativeTransferControls`
-- `Result`
-- `Report`
+- `Output`
+- `DiagnosticReport`
 - `prepare`
 - `run`
 - `writeReport`
-- `parity`
+- `disamar_reference`
+- `report`
 
 Data loading, optical-property preparation, and spectrum generation are not
 separate public entrypoints.

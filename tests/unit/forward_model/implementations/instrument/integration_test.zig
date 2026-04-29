@@ -41,12 +41,6 @@ test "high-resolution integration retains the full symmetric sampling span" {
     try std.testing.expectApproxEqAbs(kernel.weights[0], kernel.weights[kernel.sample_count - 1], 1e-12);
 }
 
-test "flat-top line shape spreads weight more broadly than gaussian for the same FWHM" {
-    // ISSUE: assertion fails on current adaptive sampling output. Skip until
-    // expectation is domain-rebased.
-    return error.SkipZigTest;
-}
-
 test "disamar hr grid realizes Gauss-weighted support instead of the uniform explicit lattice" {
     const scene: Scene = .{
         .spectral_grid = .{
@@ -144,12 +138,6 @@ test "measured-channel sampling bypasses legacy post-convolution even without ex
     integrationForWavelength(&scene, null, .radiance, 761.03, &kernel);
     try std.testing.expectEqual(@as(usize, 1), kernel.sample_count);
     try std.testing.expect(!kernel.enabled);
-}
-
-test "adaptive strong-line sampling injects refined centers from prepared spectroscopy" {
-    // ISSUE: assertion fails on current adaptive sampling output. Skip until
-    // expectation is domain-rebased.
-    return error.SkipZigTest;
 }
 
 test "dense adaptive strong-line windows do not fall back to the five-point kernel" {

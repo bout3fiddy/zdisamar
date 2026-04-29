@@ -71,22 +71,17 @@ test "prepare route resolves families and keeps derivative mode explicit" {
             .scattering = .single,
         },
     }));
-    try std.testing.expectError(common.Error.UnsupportedDerivativeMode, prepareRoute(.{
-        .regime = .limb,
-        .execution_mode = .scalar,
-        .derivative_mode = .analytical_plugin,
-    }));
 }
 
 test "source interface builder preserves the top boundary weight and halves the bottom boundary weight" {
     const layers = [_]common.LayerInput{
         .{
             .scattering_optical_depth = 0.20,
-            .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.10, 0.0, 0.0 }),
+            .phase_coefficients = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.10, 0.0, 0.0 }),
         },
         .{
             .scattering_optical_depth = 0.40,
-            .phase_coefficients = phase_functions.phaseCoefficientsFromLegacy(.{ 1.0, 0.30, 0.0, 0.0 }),
+            .phase_coefficients = phase_functions.phaseCoefficientsFromCompact(.{ 1.0, 0.30, 0.0, 0.0 }),
         },
     };
     var source_interfaces: [3]common.SourceInterfaceInput = undefined;

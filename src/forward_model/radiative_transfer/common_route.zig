@@ -2,9 +2,6 @@ const common = @import("common_types.zig");
 const phase_functions = @import("../optical_properties/shared/phase_functions.zig");
 
 pub fn prepareRoute(request: common.DispatchRequest) common.PrepareError!common.Route {
-    if (request.derivative_mode == .analytical_plugin) {
-        return common.Error.UnsupportedDerivativeMode;
-    }
     try request.rtm_controls.validate(request.execution_mode);
     const family = selectFamily(request);
     if (family == .adding and request.execution_mode != .scalar) {

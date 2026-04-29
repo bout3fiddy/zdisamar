@@ -37,17 +37,6 @@ pub const LoadedAsset = struct {
         return self.values[row_index * self.column_names.len + column_index];
     }
 
-    pub fn registerWithEngine(self: LoadedAsset, engine: anytype) !void {
-        try engine.registerDatasetArtifact(self.dataset_id, self.dataset_hash);
-        if (self.kind == .lookup_table) {
-            try engine.registerLUTArtifact(self.dataset_id, self.asset_id, .{
-                .spectral_bins = self.row_count,
-                .layer_count = 0,
-                .coefficient_count = @intCast(if (self.columnCount() > 0) self.columnCount() - 1 else 0),
-            });
-        }
-    }
-
     pub fn toClimatologyProfile(self: LoadedAsset, allocator: std.mem.Allocator) !ReferenceData.ClimatologyProfile {
         if (self.kind != .climatology_profile or self.columnCount() != 4) return error.InvalidAssetKind;
         try expectColumns(self.column_names, &.{

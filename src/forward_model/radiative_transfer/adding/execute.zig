@@ -18,9 +18,6 @@ pub fn execute(
     input: common.ForwardInput,
 ) common.ExecuteError!common.ForwardResult {
     if (route.family != .adding) unreachable;
-    if (route.derivative_mode == .analytical_plugin) {
-        return common.Error.UnsupportedDerivativeMode;
-    }
 
     const controls = route.rtm_controls;
     const components = if (controls.scattering == .none)
@@ -42,7 +39,6 @@ pub fn execute(
                 (1.0 / input.mu0) + (1.0 / input.muv),
                 0.5 * ((1.0 / input.mu0) + (1.0 / input.muv)),
             ),
-            .analytical_plugin => null,
             .numerical => derivatives.proxyOpticalDepthSensitivity(
                 components.surface_term,
                 components.scattering_term,

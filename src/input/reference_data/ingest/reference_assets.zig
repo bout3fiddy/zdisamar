@@ -46,16 +46,6 @@ const hitran_vendor_o2a_columns = [_][]const u8{
     "vendor_filter_metadata_from_source",
 };
 
-const hitran_legacy_columns = [_][]const u8{
-    "center_wavelength_nm",
-    "line_strength_cm2_per_molecule",
-    "air_half_width_nm",
-    "temperature_exponent",
-    "lower_state_energy_cm1",
-    "pressure_shift_nm",
-    "line_mixing_coefficient",
-};
-
 pub fn loadBundleAsset(
     allocator: std.mem.Allocator,
     kind: AssetKind,
@@ -116,7 +106,7 @@ pub fn loadExternalAsset(
         //   other hydrated reference assets.
         .bundle_manifest_path = try allocator.dupe(u8, asset_path),
         .bundle_id = try allocator.dupe(u8, "external_asset"),
-        .owner_package = try allocator.dupe(u8, "canonical_config"),
+        .owner_package = try allocator.dupe(u8, "external_asset"),
         .asset_id = try allocator.dupe(u8, asset_id),
         .asset_path = try allocator.dupe(u8, asset_path),
         .dataset_id = try allocator.dupe(u8, asset_id),

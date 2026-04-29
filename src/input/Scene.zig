@@ -1,10 +1,8 @@
 const std = @import("std");
 const errors = @import("../common/errors.zig");
-const ExecutionMode = @import("../common/execution_mode.zig").ExecutionMode;
 const LutControls = @import("../common/lut_controls.zig");
 const Allocator = std.mem.Allocator;
 
-pub const LayoutRequirements = @import("LayoutRequirements.zig").LayoutRequirements;
 pub const Atmosphere = @import("Atmosphere.zig").Atmosphere;
 pub const Binding = @import("Binding.zig").Binding;
 pub const BindingKind = @import("Binding.zig").BindingKind;
@@ -39,30 +37,6 @@ pub const CovarianceBlock = @import("InverseProblem.zig").CovarianceBlock;
 pub const FitControls = @import("InverseProblem.zig").FitControls;
 pub const Convergence = @import("InverseProblem.zig").Convergence;
 pub const DerivativeMode = @import("InverseProblem.zig").DerivativeMode;
-
-pub const Blueprint = struct {
-    id: []const u8 = "scene-template",
-    spectral_grid: SpectralGrid = .{},
-    observation_regime: ObservationRegime = .nadir,
-    derivative_mode: DerivativeMode = .none,
-    execution_mode: ExecutionMode = .synthetic,
-    lut_compatibility: LutControls.CompatibilityKey = .{},
-    layer_count_hint: u32 = 0,
-    state_parameter_count_hint: u32 = 0,
-    measurement_count_hint: u32 = 0,
-    operational_band_count_hint: u32 = 0,
-
-    pub fn layoutRequirements(self: Blueprint) LayoutRequirements {
-        return .{
-            .spectral_start_nm = self.spectral_grid.start_nm,
-            .spectral_end_nm = self.spectral_grid.end_nm,
-            .spectral_sample_count = self.spectral_grid.sample_count,
-            .layer_count = self.layer_count_hint,
-            .state_parameter_count = self.state_parameter_count_hint,
-            .measurement_count = self.measurement_count_hint,
-        };
-    }
-};
 
 pub const Scene = struct {
     id: []const u8 = "scene-0",
@@ -108,15 +82,6 @@ pub const Scene = struct {
             //   sample count once the scene is ready for execution.
             return errors.Error.InvalidRequest;
         }
-    }
-
-    pub fn layoutRequirements(self: *const Scene) LayoutRequirements {
-        return .{
-            .spectral_start_nm = self.spectral_grid.start_nm,
-            .spectral_end_nm = self.spectral_grid.end_nm,
-            .spectral_sample_count = self.spectral_grid.sample_count,
-            .layer_count = self.atmosphere.preparedLayerCount(),
-        };
     }
 
     pub fn lutCompatibilityKey(self: *const Scene) LutControls.CompatibilityKey {

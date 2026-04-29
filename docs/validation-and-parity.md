@@ -88,11 +88,11 @@ Those papers are the reason the docs in this repository focus on scientific scop
 
 Representative files include:
 
-- `tests/unit/adapter_ingest_test.zig`
-- `tests/unit/optics_preparation_test.zig`
-- `tests/integration/mission_s5p_integration_test.zig`
-- `tests/integration/forward_model_integration_test.zig`
-- `tests/validation/disamar_compatibility_harness_test.zig`
+- `tests/unit/input/reference_data/ingest/reference_assets_test.zig`
+- `tests/unit/forward_model/optical_properties/state_build/root_test.zig`
+- `tests/unit/forward_model/instrument_grid/grid_calculation/root_test.zig`
+- `tests/validation/o2a_forward_shape_test.zig`
+- `tests/validation/o2a_vendor_reflectance_assessment_test.zig`
 - `validation/o2a_with_cia_disamar_reference.csv`
 - `validation/comparison_metrics.json`
 
@@ -103,5 +103,5 @@ If the goal is to understand the current tested and validated contract envelope 
 1. read [DISAMAR Overview](./disamar-overview.md),
 2. read [O2A Forward](./o2a-forward.md),
 3. inspect `validation/README.md`,
-4. read `tests/validation/disamar_compatibility_harness_test.zig`,
+4. read `tests/validation/o2a_forward_shape_test.zig`,
 5. inspect the unit and integration tests for the surface you care about.
