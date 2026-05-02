@@ -169,3 +169,8 @@ pub const forward_model = struct {
         }
     };
 };
+
+pub const output = struct {
+    pub const atmospheric_budget = @import("output/atmospheric_budget.zig");
+    pub const o2_line_contributions = @import("output/o2_line_contributions.zig");
+};

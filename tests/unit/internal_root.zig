@@ -51,6 +51,8 @@ test {
     _ = @import("input/reference_data/ingest/root_test.zig");
     _ = @import("input/reference_data/ingest/reference_assets_test.zig");
     _ = @import("input/reference_data/ingest/reference_assets_loaded_asset_test.zig");
+    _ = @import("output/atmospheric_budget_test.zig");
+    _ = @import("output/o2_line_contributions_test.zig");
     _ = @import("validation/disamar_reference/parser_test.zig");
     _ = @import("forward_model/implementations/surface_test.zig");
 

@@ -79,7 +79,7 @@ pub fn build(b: *std.Build) void {
     const c_api_module = b.createModule(.{
         .root_source_file = b.path("src/api/c.zig"),
         .target = target,
-        .optimize = optimize,
+        .optimize = runtime_optimize,
         .imports = &.{
             .{
                 .name = "zdisamar",
@@ -96,7 +96,8 @@ pub fn build(b: *std.Build) void {
         .name = "zdisamar_c",
         .root_module = c_api_module,
     });
-    b.installArtifact(c_api_lib);
+    const c_api_install = b.addInstallArtifact(c_api_lib, .{});
+    b.getInstallStep().dependOn(&c_api_install.step);
 
     const plot_spectrum_module = b.createModule(.{
         .root_source_file = b.path("src/validation/disamar_reference/plot_spectrum_cli.zig"),
@@ -286,6 +287,106 @@ pub fn build(b: *std.Build) void {
         "Run the O2A plot bundle harness smoke test",
     );
     o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
+
+    const python_forward_summary_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_forward_summary.py",
+    });
+    python_forward_summary_cmd.step.dependOn(&c_api_install.step);
+    const python_forward_summary_step = b.step(
+        "python-forward-summary",
+        "Run the Python-defined DISAMAR O2A spectrum summary script",
+    );
+    python_forward_summary_step.dependOn(&python_forward_summary_cmd.step);
+
+    const python_o2a_setup_roundtrip_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_o2a_setup_roundtrip.py",
+        "--output",
+        "out/ci/python_o2a_setup_roundtrip.json",
+        "--library",
+    });
+    python_o2a_setup_roundtrip_cmd.addFileArg(c_api_lib.getEmittedBin());
+    python_o2a_setup_roundtrip_cmd.step.dependOn(&c_api_install.step);
+    const python_o2a_setup_roundtrip_step = b.step(
+        "python-o2a-setup-roundtrip",
+        "Verify typed Python O2A setup against the default parity entrypoint",
+    );
+    python_o2a_setup_roundtrip_step.dependOn(&python_o2a_setup_roundtrip_cmd.step);
+
+    const python_atmosphere_budget_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_atmosphere_budget.py",
+    });
+    python_atmosphere_budget_cmd.step.dependOn(&c_api_install.step);
+    const python_atmosphere_budget_step = b.step(
+        "python-atmosphere-budget",
+        "Answer atmospheric budget science questions through the Python wrapper",
+    );
+    python_atmosphere_budget_step.dependOn(&python_atmosphere_budget_cmd.step);
+
+    const python_o2_line_diagnostics_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_o2_line_diagnostics.py",
+    });
+    python_o2_line_diagnostics_cmd.step.dependOn(&c_api_install.step);
+    const python_o2_line_diagnostics_step = b.step(
+        "python-o2-line-diagnostics",
+        "Answer O2 line spectroscopy science questions through the Python wrapper",
+    );
+    python_o2_line_diagnostics_step.dependOn(&python_o2_line_diagnostics_cmd.step);
+
+    const python_o2_o2_cia_diagnostics_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_o2_o2_cia_diagnostics.py",
+    });
+    python_o2_o2_cia_diagnostics_cmd.step.dependOn(&c_api_install.step);
+    const python_o2_o2_cia_diagnostics_step = b.step(
+        "python-o2-o2-cia-diagnostics",
+        "Answer O2-O2 CIA science questions through the Python wrapper",
+    );
+    python_o2_o2_cia_diagnostics_step.dependOn(&python_o2_o2_cia_diagnostics_cmd.step);
+
+    const python_instrument_response_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_instrument_response.py",
+    });
+    python_instrument_response_cmd.step.dependOn(&c_api_install.step);
+    const python_instrument_response_step = b.step(
+        "python-instrument-response",
+        "Answer instrument response science questions through the Python wrapper",
+    );
+    python_instrument_response_step.dependOn(&python_instrument_response_cmd.step);
+
+    const python_radiative_transfer_diagnostics_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_radiative_transfer_diagnostics.py",
+    });
+    python_radiative_transfer_diagnostics_cmd.step.dependOn(&c_api_install.step);
+    const python_radiative_transfer_diagnostics_step = b.step(
+        "python-radiative-transfer-diagnostics",
+        "Answer radiative-transfer science questions through the Python wrapper",
+    );
+    python_radiative_transfer_diagnostics_step.dependOn(&python_radiative_transfer_diagnostics_cmd.step);
+
+    const python_parameter_perturbation_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_parameter_perturbation.py",
+    });
+    python_parameter_perturbation_cmd.step.dependOn(&c_api_install.step);
+    const python_parameter_perturbation_step = b.step(
+        "python-parameter-perturbation",
+        "Answer parameter perturbation science questions through the Python wrapper",
+    );
+    python_parameter_perturbation_step.dependOn(&python_parameter_perturbation_cmd.step);
 
     const no_inline_src_tests_cmd = b.addSystemCommand(&.{
         "scripts/check-no-inline-src-tests.sh",
