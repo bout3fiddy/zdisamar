@@ -2,6 +2,12 @@
 name = "zdisamar-tools"
 version = "0.0.0"
 requires-python = ">=3.14"
+dependencies = [
+    "altair>=5.5",
+    "numpy>=2.2",
+    "pandas>=2.2",
+    "vl-convert-python>=1.7",
+]
 
 [tool.uv]
 package = false

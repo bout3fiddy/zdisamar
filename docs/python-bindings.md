@@ -67,6 +67,23 @@ reference setup as `zd.prepare(zd.o2a_disamar_reference_input())`.
 The Python API exposes full-array operations. It does not provide scalar
 per-wavelength calls because the native boundary is meant to stay coarse.
 
+## Plotting
+
+The plotting surface lives under `zdisamar.plot` and uses Altair as the core
+chart engine. Plotting dependencies are regular project dependencies rather than
+an optional extra, so generated plots can be produced from the same `uv run ...`
+environment as the other Python helpers.
+
+Generated preview plots should go under `out/plots/`, which is gitignored. The
+phase-2 plotting smoke harness writes inspectable HTML, SVG, and PNG files to:
+
+```bash
+out/plots/python_plotting/
+```
+
+Each smoke artifact includes the full sampled spectrum for orientation, either
+as the plot itself or as a context panel above the derived diagnostic panel.
+
 Run the first feedback-loop script:
 
 ```bash
@@ -78,4 +95,5 @@ zig build python-o2-o2-cia-diagnostics
 zig build python-instrument-response
 zig build python-radiative-transfer-diagnostics
 zig build python-parameter-perturbation
+zig build python-plotting-library-smoke
 ```

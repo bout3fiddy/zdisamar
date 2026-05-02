@@ -388,6 +388,17 @@ pub fn build(b: *std.Build) void {
     );
     python_parameter_perturbation_step.dependOn(&python_parameter_perturbation_cmd.step);
 
+    const python_plotting_library_smoke_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_plotting_library_smoke.py",
+    });
+    const python_plotting_library_smoke_step = b.step(
+        "python-plotting-library-smoke",
+        "Build inspectable Altair plots for the Python plotting package",
+    );
+    python_plotting_library_smoke_step.dependOn(&python_plotting_library_smoke_cmd.step);
+
     const no_inline_src_tests_cmd = b.addSystemCommand(&.{
         "scripts/check-no-inline-src-tests.sh",
     });
