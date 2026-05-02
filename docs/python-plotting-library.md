@@ -651,7 +651,9 @@ zp.bundles.perturbation_sensitivity(results) -> alt.VConcatChart
 
 Bound convenience helpers should be optional and thin. They should not alter the
 core model, and any method that runs diagnostics should do so visibly from the
-method name or parameters.
+method name or parameters. Bound helpers that need a spectrum require either a
+materialized `spectrum=...` argument or `run_forward=True`; they should not run a
+forward model implicitly.
 
 ```python
 plots = zp.for_prepared(prepared)
@@ -661,12 +663,22 @@ plots.spectrum.reflectance(
     spectrum=None,
     window_nm=None,
     markers_nm=(),
+    run_forward: bool = False,
 ) -> alt.LayerChart
 
 plots.spectrum.triplet(
     *,
     spectrum=None,
     markers_nm=(755.0, 760.76, 776.0),
+    run_forward: bool = False,
+) -> alt.VConcatChart
+
+plots.validation.reflectance_residual_report(
+    reference,
+    *,
+    spectrum=None,
+    residual_threshold: float = 1.0e-14,
+    run_forward: bool = False,
 ) -> alt.VConcatChart
 
 plots.atmosphere.optical_depth_heatmap(
@@ -683,6 +695,7 @@ plots.o2_lines.window(
     center_nm: float = 760.76,
     max_rows: int = 100_000,
     top_n: int = 40,
+    run_forward: bool = False,
 ) -> alt.VConcatChart
 
 plots.cia.budget(
@@ -700,6 +713,7 @@ plots.radiative_transfer.budget(
     *,
     wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0),
     spectrum=None,
+    run_forward: bool = False,
 ) -> alt.VConcatChart
 
 plots.perturbation.delta_reflectance(
@@ -887,62 +901,62 @@ sequential scale and allow `log_color=True`.
 
 ### Phase 3: P0 Diagnostic Table Plots
 
-- [ ] `o2_line_window`
-- [ ] `o2_line_contribution_stems`
-- [ ] `o2_line_partition_bar`
-- [ ] `optical_depth_profile`
-- [ ] `optical_depth_heatmap`
-- [ ] `optical_depth_component_stack`
-- [ ] `aerosol_share_spectrum`
-- [ ] `cia_share_profile`
-- [ ] `cia_share_spectrum`
-- [ ] `instrument_response_kernel`
-- [ ] `instrument_support_width`
-- [ ] `rt_source_profile`
-- [ ] `rt_cumulative_transmission`
-- [ ] `perturbation_delta_reflectance`
-- [ ] `perturbation_abs_delta_reflectance`
-- [ ] `perturbation_summary_bar`
+- [x] `o2_line_window`
+- [x] `o2_line_contribution_stems`
+- [x] `o2_line_partition_bar`
+- [x] `optical_depth_profile`
+- [x] `optical_depth_heatmap`
+- [x] `optical_depth_component_stack`
+- [x] `aerosol_share_spectrum`
+- [x] `cia_share_profile`
+- [x] `cia_share_spectrum`
+- [x] `instrument_response_kernel`
+- [x] `instrument_support_width`
+- [x] `rt_source_profile`
+- [x] `rt_cumulative_transmission`
+- [x] `perturbation_delta_reflectance`
+- [x] `perturbation_abs_delta_reflectance`
+- [x] `perturbation_summary_bar`
 
 ### Phase 4: P1 Plots And Bundles
 
-- [ ] `one_to_one_scatter`
-- [ ] `o2_line_status_counts`
-- [ ] `o2_isotope_contribution_bar`
-- [ ] `o2_cross_section_profile`
-- [ ] `single_scatter_albedo_profile`
-- [ ] `aerosol_optical_depth_profile`
-- [ ] `cloud_optical_depth_profile`
-- [ ] `cloud_share_spectrum`
-- [ ] `cia_cross_section_temperature`
-- [ ] `instrument_response_matrix`
-- [ ] `instrument_weight_rank`
-- [ ] `rt_proxy_share_bar`
-- [ ] `perturbation_delta_heatmap`
-- [ ] `micro_window_marker_spectrum`
-- [ ] `o2_line_window` bundle
-- [ ] `atmospheric_budget` bundle
-- [ ] `cia_budget` bundle
-- [ ] `instrument_response` bundle
-- [ ] `radiative_transfer_budget` bundle
-- [ ] `perturbation_sensitivity` bundle
+- [x] `one_to_one_scatter`
+- [x] `o2_line_status_counts`
+- [x] `o2_isotope_contribution_bar`
+- [x] `o2_cross_section_profile`
+- [x] `single_scatter_albedo_profile`
+- [x] `aerosol_optical_depth_profile`
+- [x] `cloud_optical_depth_profile`
+- [x] `cloud_share_spectrum`
+- [x] `cia_cross_section_temperature`
+- [x] `instrument_response_matrix`
+- [x] `instrument_weight_rank`
+- [x] `rt_proxy_share_bar`
+- [x] `perturbation_delta_heatmap`
+- [x] `micro_window_marker_spectrum`
+- [x] `o2_line_window` bundle
+- [x] `atmospheric_budget` bundle
+- [x] `cia_budget` bundle
+- [x] `instrument_response` bundle
+- [x] `radiative_transfer_budget` bundle
+- [x] `perturbation_sensitivity` bundle
 
 ### Phase 5: P2 And Future Retrieval-Oriented Plots
 
-- [ ] `pseudo_spherical_airmass_profile`
+- [x] `pseudo_spherical_airmass_profile`
 - [ ] `information_content_micro_window`
 - [ ] `retrieval_iteration_trace`
 - [ ] `spectral_covariance_heatmap`
-- [ ] Mark required native/Python data contracts for Jacobians,
+- [x] Mark required native/Python data contracts for Jacobians,
   covariance/error matrices, and retrieval iterations before implementing P2
   retrieval plots.
 
 ### Phase 6: Bound Convenience API
 
-- [ ] Add `bound.py` and `zp.for_prepared(prepared)`.
-- [ ] Ensure bound helpers never silently run an expensive forward model.
-- [ ] Require bound diagnostic helpers to make diagnostic wavelengths explicit.
-- [ ] Add tests that direct and bound APIs produce equivalent Altair specs for
+- [x] Add `bound.py` and `zp.for_prepared(prepared)`.
+- [x] Ensure bound helpers never silently run an expensive forward model.
+- [x] Require bound diagnostic helpers to make diagnostic wavelengths explicit.
+- [x] Add tests that direct and bound APIs produce equivalent Altair specs for
   the same materialized inputs.
 
 ### Phase 7: Verification And Export

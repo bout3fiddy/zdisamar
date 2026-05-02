@@ -158,6 +158,43 @@ def marker_strip(
     )
 
 
+def micro_window_marker_spectrum(
+    spectrum,
+    *,
+    windows: dict[str, tuple[float, float]] | None = None,
+    markers_nm: Sequence[float] = (),
+    window_nm: tuple[float, float] | None = (755.0, 776.0),
+):
+    import pandas as pd
+
+    windows = windows or {"O2 A band": (755.0, 776.0)}
+    chart = reflectance(
+        spectrum,
+        window_nm=window_nm,
+        markers_nm=markers_nm,
+        show_minimum=False,
+        title="Micro-window reflectance",
+    )
+    rows = [
+        {"window": name, "start_nm": float(bounds[0]), "end_nm": float(bounds[1])}
+        for name, bounds in windows.items()
+    ]
+    bands = (
+        alt.Chart(pd.DataFrame.from_records(rows))
+        .mark_rect(color="#D9D9D9", opacity=0.35)
+        .encode(
+            x="start_nm:Q",
+            x2="end_nm:Q",
+            tooltip=[
+                alt.Tooltip("window:N", title="Window"),
+                alt.Tooltip("start_nm:Q", title="Start (nm)", format=".3f"),
+                alt.Tooltip("end_nm:Q", title="End (nm)", format=".3f"),
+            ],
+        )
+    )
+    return alt.layer(bands, chart).resolve_scale(y="independent")
+
+
 def _quantity_chart(
     spectrum,
     quantity: str,

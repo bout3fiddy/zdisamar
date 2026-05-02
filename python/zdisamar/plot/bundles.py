@@ -6,7 +6,9 @@ from collections.abc import Sequence
 
 import altair as alt
 
-from . import fields
+from . import atmosphere, cia, fields, o2_lines, perturbation
+from . import instrument_response as instrument_response_plots
+from . import radiative_transfer as radiative_transfer_plots
 from . import spectrum as spectrum_plots
 from . import validation
 
@@ -59,3 +61,70 @@ def validation_against_reference(
         panels.append(validation.residual_histogram(current, reference, quantity=quantities[0]))
     panels.append(validation.metrics_bar(current, reference, quantities=quantities))
     return alt.vconcat(*panels).resolve_scale(color="independent")
+
+
+def o2_line_window(
+    spectrum,
+    lines,
+    *,
+    center_nm: float = 760.76,
+    window_nm: tuple[float, float] | None = None,
+    top_n: int = 40,
+):
+    return o2_lines.window(spectrum, lines, center_nm=center_nm, window_nm=window_nm, top_n=top_n)
+
+
+def atmospheric_budget(budget, *, markers_nm=(755.0, 760.76, 776.0)):
+    selected = tuple(markers_nm)
+    return alt.vconcat(
+        atmosphere.optical_depth_heatmap(budget, markers_nm=selected),
+        atmosphere.component_stack(budget),
+        alt.hconcat(
+            atmosphere.optical_depth_profile(budget, wavelengths_nm=selected),
+            atmosphere.single_scatter_albedo_profile(budget, wavelengths_nm=selected),
+        ),
+    ).resolve_scale(color="independent")
+
+
+def cia_budget(cia_table):
+    return alt.vconcat(
+        alt.hconcat(cia.share_spectrum(cia_table), cia.share_profile(cia_table)),
+        alt.hconcat(
+            atmosphere.optical_depth_profile(cia_table, quantity=fields.CIA_OPTICAL_DEPTH),
+            cia.cross_section_temperature(cia_table),
+        ),
+    ).resolve_scale(color="independent")
+
+
+def instrument_response_bundle(response, *, nominal_wavelength_nm: float = 760.76):
+    return alt.vconcat(
+        alt.hconcat(
+            instrument_response_plots.kernel(response, nominal_wavelength_nm=nominal_wavelength_nm),
+            instrument_response_plots.support_width(response),
+        ),
+        instrument_response_plots.matrix(response),
+        instrument_response_plots.weight_rank(response, nominal_wavelength_nm=nominal_wavelength_nm),
+    ).resolve_scale(color="independent")
+
+
+def instrument_response(response, *, nominal_wavelength_nm: float = 760.76):
+    return instrument_response_bundle(response, nominal_wavelength_nm=nominal_wavelength_nm)
+
+
+def radiative_transfer_budget(rt):
+    return alt.vconcat(
+        alt.hconcat(
+            radiative_transfer_plots.cumulative_transmission(rt),
+            radiative_transfer_plots.source_profile(rt),
+        ),
+        radiative_transfer_plots.proxy_share_bar(rt),
+    ).resolve_scale(color="independent")
+
+
+def perturbation_sensitivity(results):
+    return alt.vconcat(
+        perturbation.delta_reflectance(results),
+        perturbation.abs_delta_reflectance(results),
+        perturbation.delta_heatmap(results),
+        perturbation.summary_bar(results),
+    ).resolve_scale(color="independent")
