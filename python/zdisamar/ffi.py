@@ -912,7 +912,99 @@ class Context:
         self.close()
 
 
-class PreparedDefaultO2A:
+class _PreparedO2ABase:
+    """Shared prepared O2A wrapper behavior."""
+
+    @property
+    def input(self) -> O2AInput:
+        return copy.deepcopy(self._input)
+
+    @property
+    def library_path(self) -> Optional[str | os.PathLike[str]]:
+        return self._library_path
+
+    def _require_context(self) -> Context:
+        if self._ctx is None:
+            raise RuntimeError("prepared input is closed")
+        return self._ctx
+
+    def forward_model(self) -> Spectrum:
+        return self._require_context().forward_model()
+
+    @property
+    def atmosphere(self) -> AtmosphereDiagnostics:
+        self._require_context()
+        return AtmosphereDiagnostics(self)
+
+    @property
+    def o2_lines(self) -> O2LineDiagnostics:
+        self._require_context()
+        return O2LineDiagnostics(self)
+
+    @property
+    def o2_o2_cia(self):
+        self._require_context()
+        from .diagnostics import O2O2CIADiagnostics
+
+        return O2O2CIADiagnostics(self)
+
+    @property
+    def instrument_response(self):
+        self._require_context()
+        from .diagnostics import InstrumentResponseDiagnostics
+
+        return InstrumentResponseDiagnostics(self)
+
+    @property
+    def radiative_transfer(self):
+        self._require_context()
+        from .diagnostics import RadiativeTransferDiagnostics
+
+        return RadiativeTransferDiagnostics(self)
+
+    @property
+    def perturbations(self):
+        self._require_context()
+        from .diagnostics import PerturbationDiagnostics
+
+        return PerturbationDiagnostics(self)
+
+    def atmospheric_budget(self, wavelengths_nm) -> AtmosphericBudget:
+        return self._require_context().atmospheric_budget(wavelengths_nm)
+
+    def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
+        return self._require_context().o2_line_contributions(wavelengths_nm, max_rows=max_rows)
+
+    def instrument_response_sampling(
+        self,
+        wavelengths_nm,
+        channels: tuple[str, ...] = ("radiance", "irradiance"),
+    ) -> InstrumentResponseTable:
+        return self._require_context().instrument_response_sampling(wavelengths_nm, channels=channels)
+
+    def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
+        return self._require_context().o2_o2_cia_diagnostics(wavelengths_nm)
+
+    def radiative_transfer_diagnostics(
+        self,
+        wavelengths_nm,
+        spectrum: Spectrum | None = None,
+    ) -> RadiativeTransferDiagnosticTable:
+        return self._require_context().radiative_transfer_diagnostics(wavelengths_nm, spectrum=spectrum)
+
+    def close(self) -> None:
+        if self._ctx is not None:
+            self._ctx.close()
+            self._ctx = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+class PreparedDefaultO2A(_PreparedO2ABase):
     """Prepared default O2A input for research-facing forward-model calls."""
 
     def __init__(self, library_path: Optional[str | os.PathLike[str]] = None):
@@ -926,109 +1018,8 @@ class PreparedDefaultO2A:
         self._ctx: Optional[Context] = ctx
         self._library_path = library_path
 
-    @property
-    def input(self) -> O2AInput:
-        return copy.deepcopy(self._input)
 
-    @property
-    def library_path(self) -> Optional[str | os.PathLike[str]]:
-        return self._library_path
-
-    def forward_model(self) -> Spectrum:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.forward_model()
-
-    @property
-    def atmosphere(self) -> AtmosphereDiagnostics:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return AtmosphereDiagnostics(self)
-
-    @property
-    def o2_lines(self) -> O2LineDiagnostics:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return O2LineDiagnostics(self)
-
-    @property
-    def o2_o2_cia(self):
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        from .diagnostics import O2O2CIADiagnostics
-
-        return O2O2CIADiagnostics(self)
-
-    @property
-    def instrument_response(self):
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        from .diagnostics import InstrumentResponseDiagnostics
-
-        return InstrumentResponseDiagnostics(self)
-
-    @property
-    def radiative_transfer(self):
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        from .diagnostics import RadiativeTransferDiagnostics
-
-        return RadiativeTransferDiagnostics(self)
-
-    @property
-    def perturbations(self):
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        from .diagnostics import PerturbationDiagnostics
-
-        return PerturbationDiagnostics(self)
-
-    def atmospheric_budget(self, wavelengths_nm) -> AtmosphericBudget:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.atmospheric_budget(wavelengths_nm)
-
-    def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
-
-    def instrument_response_sampling(
-        self,
-        wavelengths_nm,
-        channels: tuple[str, ...] = ("radiance", "irradiance"),
-    ) -> InstrumentResponseTable:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.instrument_response_sampling(wavelengths_nm, channels=channels)
-
-    def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.o2_o2_cia_diagnostics(wavelengths_nm)
-
-    def radiative_transfer_diagnostics(
-        self,
-        wavelengths_nm,
-        spectrum: Spectrum | None = None,
-    ) -> RadiativeTransferDiagnosticTable:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.radiative_transfer_diagnostics(wavelengths_nm, spectrum=spectrum)
-
-    def close(self) -> None:
-        if self._ctx is not None:
-            self._ctx.close()
-            self._ctx = None
-
-    def __enter__(self) -> "PreparedDefaultO2A":
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self.close()
-
-
-class PreparedO2A:
+class PreparedO2A(_PreparedO2ABase):
     """Prepared O2A input for research-facing forward-model calls."""
 
     def __init__(self, input: O2AInput, library_path: Optional[str | os.PathLike[str]] = None):
@@ -1041,107 +1032,6 @@ class PreparedO2A:
         self._ctx: Optional[Context] = ctx
         self._input = copy.deepcopy(input)
         self._library_path = library_path
-
-    @property
-    def input(self) -> O2AInput:
-        return copy.deepcopy(self._input)
-
-    @property
-    def library_path(self) -> Optional[str | os.PathLike[str]]:
-        return self._library_path
-
-    def forward_model(self) -> Spectrum:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.forward_model()
-
-    @property
-    def atmosphere(self) -> AtmosphereDiagnostics:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return AtmosphereDiagnostics(self)
-
-    @property
-    def o2_lines(self) -> O2LineDiagnostics:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return O2LineDiagnostics(self)
-
-    @property
-    def o2_o2_cia(self):
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        from .diagnostics import O2O2CIADiagnostics
-
-        return O2O2CIADiagnostics(self)
-
-    @property
-    def instrument_response(self):
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        from .diagnostics import InstrumentResponseDiagnostics
-
-        return InstrumentResponseDiagnostics(self)
-
-    @property
-    def radiative_transfer(self):
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        from .diagnostics import RadiativeTransferDiagnostics
-
-        return RadiativeTransferDiagnostics(self)
-
-    @property
-    def perturbations(self):
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        from .diagnostics import PerturbationDiagnostics
-
-        return PerturbationDiagnostics(self)
-
-    def atmospheric_budget(self, wavelengths_nm) -> AtmosphericBudget:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.atmospheric_budget(wavelengths_nm)
-
-    def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
-
-    def instrument_response_sampling(
-        self,
-        wavelengths_nm,
-        channels: tuple[str, ...] = ("radiance", "irradiance"),
-    ) -> InstrumentResponseTable:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.instrument_response_sampling(wavelengths_nm, channels=channels)
-
-    def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.o2_o2_cia_diagnostics(wavelengths_nm)
-
-    def radiative_transfer_diagnostics(
-        self,
-        wavelengths_nm,
-        spectrum: Spectrum | None = None,
-    ) -> RadiativeTransferDiagnosticTable:
-        if self._ctx is None:
-            raise RuntimeError("prepared input is closed")
-        return self._ctx.radiative_transfer_diagnostics(wavelengths_nm, spectrum=spectrum)
-
-    def close(self) -> None:
-        if self._ctx is not None:
-            self._ctx.close()
-            self._ctx = None
-
-    def __enter__(self) -> "PreparedO2A":
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self.close()
 
 
 def o2a_disamar_reference_input(
