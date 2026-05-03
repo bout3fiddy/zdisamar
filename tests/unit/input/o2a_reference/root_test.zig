@@ -48,6 +48,29 @@ test "O2A input validation rejects invalid sampling and assets" {
     try std.testing.expectError(error.InvalidReferenceAsset, zdisamar.o2a.validateInput(&input));
 }
 
+test "O2A input validation consumes plan fields" {
+    var input = zdisamar.defaultO2AInput();
+    input.plan.execution_solver_mode = "polarized";
+    input.rtm_controls.stokes_dimension = 3;
+    try zdisamar.o2a.validateInput(&input);
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.model_family = "unsupported";
+    try std.testing.expectError(error.UnsupportedModelFamily, zdisamar.o2a.validateInput(&input));
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.transport_solver = "unsupported";
+    try std.testing.expectError(error.UnsupportedTransportSolver, zdisamar.o2a.validateInput(&input));
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.execution_solver_mode = "unsupported";
+    try std.testing.expectError(error.UnsupportedExecutionMode, zdisamar.o2a.validateInput(&input));
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.execution_derivative_mode = "unsupported";
+    try std.testing.expectError(error.UnsupportedDerivativeMode, zdisamar.o2a.validateInput(&input));
+}
+
 test "O2A plan modes are consumed when preparing the route" {
     var input = zdisamar.defaultO2AInput();
     input.plan.execution_solver_mode = "scalar";
@@ -73,7 +96,7 @@ test "O2A route preparation rejects unsupported plan modes" {
     input.plan.execution_derivative_mode = "unsupported";
 
     try std.testing.expectError(
-        error.UnsupportedExecutionMode,
+        error.UnsupportedDerivativeMode,
         zdisamar.prepareO2A(std.testing.allocator, &input),
     );
 }

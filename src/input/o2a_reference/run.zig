@@ -378,23 +378,10 @@ pub fn prepareResolvedVendorO2ARoute(
 ) !Route {
     return transport_common.prepareRoute(.{
         .regime = scene.observation_model.regime,
-        .execution_mode = try parseExecutionMode(plan.execution_solver_mode),
-        .derivative_mode = try parseDerivativeMode(plan.execution_derivative_mode),
+        .execution_mode = try plan.executionMode(),
+        .derivative_mode = try plan.derivativeMode(),
         .rtm_controls = rtm_controls,
     });
-}
-
-fn parseExecutionMode(value: []const u8) !transport_common.ExecutionMode {
-    if (std.mem.eql(u8, value, "scalar")) return .scalar;
-    if (std.mem.eql(u8, value, "polarized")) return .polarized;
-    return error.UnsupportedExecutionMode;
-}
-
-fn parseDerivativeMode(value: []const u8) !transport_common.DerivativeMode {
-    if (std.mem.eql(u8, value, "none")) return .none;
-    if (std.mem.eql(u8, value, "semi_analytical")) return .semi_analytical;
-    if (std.mem.eql(u8, value, "numerical")) return .numerical;
-    return error.UnsupportedExecutionMode;
 }
 
 pub fn runResolvedVendorO2AReflectanceCase(
