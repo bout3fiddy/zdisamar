@@ -7,7 +7,7 @@ from typing import Literal
 import altair as alt
 
 from . import fields
-from ._common import label
+from ._common import label, numeric_cell_bounds
 from .data import filter_window, require_columns, to_dataframe
 from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
 from .theme import MATPLOTLIB_RED
@@ -68,12 +68,19 @@ def delta_heatmap(
     field = fields.DELTA_REFLECTANCE if signed else fields.ABS_DELTA_REFLECTANCE
     data = _results_frame(results)
     require_columns(data, [fields.WAVELENGTH_NM, field, "label"])
+    data = numeric_cell_bounds(data, fields.WAVELENGTH_NM)
     scale = alt.Scale(scheme="redblue", domainMid=0) if signed else alt.Scale(scheme="greys")
     return (
         alt.Chart(data)
         .mark_rect()
         .encode(
-            x=alt.X(f"{fields.WAVELENGTH_NM}:Q", title=label(fields.WAVELENGTH_NM)),
+            x=alt.X(
+                "_x_start:Q",
+                title=label(fields.WAVELENGTH_NM),
+                scale=alt.Scale(zero=False),
+                axis=alt.Axis(tickMinStep=5),
+            ),
+            x2="_x_end:Q",
             y=alt.Y("label:N", title="Perturbation"),
             color=alt.Color(f"{field}:Q", title=label(field), scale=scale),
             tooltip=[
@@ -97,7 +104,7 @@ def summary_bar(
         alt.Chart(data)
         .mark_bar(color=MATPLOTLIB_RED)
         .encode(
-            x=alt.X("label:N", title="Perturbation"),
+            x=alt.X("label:N", title="Perturbation", axis=alt.Axis(labelAngle=0, labelLimit=360)),
             y=alt.Y(f"{metric}:Q", title=label(metric)),
             tooltip=[alt.Tooltip("label:N"), alt.Tooltip(f"{metric}:Q", format=".3e")],
         )

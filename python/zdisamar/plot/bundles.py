@@ -11,6 +11,7 @@ from . import instrument_response as instrument_response_plots
 from . import radiative_transfer as radiative_transfer_plots
 from . import spectrum as spectrum_plots
 from . import validation
+from ._common import nearest_wavelength_rows
 
 
 def o2a_forward_summary(
@@ -69,7 +70,7 @@ def o2_line_window(
     *,
     center_nm: float = 760.76,
     window_nm: tuple[float, float] | None = None,
-    top_n: int = 40,
+    top_n: int = 25,
 ):
     return o2_lines.window(spectrum, lines, center_nm=center_nm, window_nm=window_nm, top_n=top_n)
 
@@ -86,38 +87,30 @@ def atmospheric_budget(budget, *, markers_nm=(755.0, 760.76, 776.0)):
     ).resolve_scale(color="independent")
 
 
-def cia_budget(cia_table):
+def cia_budget(cia_table, *, wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0)):
+    selected = nearest_wavelength_rows(cia_table, wavelengths_nm)
     return alt.vconcat(
-        alt.hconcat(cia.share_spectrum(cia_table), cia.share_profile(cia_table)),
+        alt.hconcat(cia.share_spectrum(cia_table), cia.share_profile(selected)),
         alt.hconcat(
-            atmosphere.optical_depth_profile(cia_table, quantity=fields.CIA_OPTICAL_DEPTH),
-            cia.cross_section_temperature(cia_table),
+            atmosphere.optical_depth_profile(selected, quantity=fields.CIA_OPTICAL_DEPTH, wavelengths_nm=wavelengths_nm),
+            cia.cross_section_temperature(selected),
         ),
     ).resolve_scale(color="independent")
 
 
 def instrument_response_bundle(response, *, nominal_wavelength_nm: float = 760.76):
-    return alt.vconcat(
-        alt.hconcat(
-            instrument_response_plots.kernel(response, nominal_wavelength_nm=nominal_wavelength_nm),
-            instrument_response_plots.support_width(response),
-        ),
-        instrument_response_plots.matrix(response),
-        instrument_response_plots.weight_rank(response, nominal_wavelength_nm=nominal_wavelength_nm),
-    ).resolve_scale(color="independent")
+    return instrument_response_plots.isrf(response, nominal_wavelength_nm=nominal_wavelength_nm)
 
 
 def instrument_response(response, *, nominal_wavelength_nm: float = 760.76):
     return instrument_response_bundle(response, nominal_wavelength_nm=nominal_wavelength_nm)
 
 
-def radiative_transfer_budget(rt):
-    return alt.vconcat(
-        alt.hconcat(
-            radiative_transfer_plots.cumulative_transmission(rt),
-            radiative_transfer_plots.source_profile(rt),
-        ),
-        radiative_transfer_plots.proxy_share_bar(rt),
+def radiative_transfer_budget(rt, *, wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0)):
+    selected = nearest_wavelength_rows(rt, wavelengths_nm)
+    return alt.hconcat(
+        radiative_transfer_plots.cumulative_transmission(selected),
+        radiative_transfer_plots.source_profile(selected),
     ).resolve_scale(color="independent")
 
 

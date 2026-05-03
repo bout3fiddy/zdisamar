@@ -102,12 +102,89 @@ pub const ZdsO2LineContributions = extern struct {
     rows: [*]const ZdsO2LineContributionRow = undefined,
 };
 
+pub const ZdsInstrumentResponseRow = extern struct {
+    nominal_index: i32 = 0,
+    nominal_wavelength_nm: f64 = 0.0,
+    channel: u32 = 0,
+    sample_index: u32 = 0,
+    support_count: u32 = 0,
+    offset_nm: f64 = 0.0,
+    support_wavelength_nm: f64 = 0.0,
+    weight: f64 = 0.0,
+    support_width_nm: f64 = 0.0,
+    instrument_fwhm_nm: f64 = 0.0,
+    high_resolution_step_nm: f64 = 0.0,
+    high_resolution_half_span_nm: f64 = 0.0,
+    integration_mode: u32 = 0,
+    response_enabled: u8 = 0,
+};
+
+pub const ZdsInstrumentResponse = extern struct {
+    len: usize = 0,
+    rows: [*]const ZdsInstrumentResponseRow = undefined,
+};
+
+pub const ZdsO2O2CIARow = extern struct {
+    wavelength_nm: f64 = 0.0,
+    layer_index: u32 = 0,
+    sublayer_index: u32 = 0,
+    global_sublayer_index: u32 = 0,
+    interval_index_1based: u32 = 0,
+    altitude_km: f64 = 0.0,
+    pressure_hpa: f64 = 0.0,
+    temperature_k: f64 = 0.0,
+    oxygen_number_density_cm3: f64 = 0.0,
+    path_length_cm: f64 = 0.0,
+    cia_cross_section_cm5_per_molecule2: f64 = 0.0,
+    cia_optical_depth: f64 = 0.0,
+    total_absorption_optical_depth: f64 = 0.0,
+    total_optical_depth: f64 = 0.0,
+    cia_share_of_total_absorption: f64 = 0.0,
+    cia_share_of_total_optical_depth: f64 = 0.0,
+};
+
+pub const ZdsO2O2CIADiagnostics = extern struct {
+    len: usize = 0,
+    rows: [*]const ZdsO2O2CIARow = undefined,
+};
+
+pub const ZdsRadiativeTransferDiagnosticRow = extern struct {
+    wavelength_nm: f64 = 0.0,
+    layer_index: u32 = 0,
+    sublayer_index: u32 = 0,
+    global_sublayer_index: u32 = 0,
+    interval_index_1based: u32 = 0,
+    altitude_km: f64 = 0.0,
+    total_optical_depth: f64 = 0.0,
+    total_absorption_optical_depth: f64 = 0.0,
+    total_scattering_optical_depth: f64 = 0.0,
+    single_scatter_albedo: f64 = 0.0,
+    cumulative_optical_depth_above: f64 = 0.0,
+    mid_layer_transmission_proxy: f64 = 0.0,
+    direct_surface_transmission_proxy: f64 = 0.0,
+    atmospheric_scattering_source_proxy: f64 = 0.0,
+    absorption_loss_proxy: f64 = 0.0,
+    pseudo_spherical_airmass_factor: f64 = 0.0,
+    n_streams: u32 = 0,
+    integrate_source_function: u8 = 0,
+    final_reflectance: f64 = 0.0,
+    final_radiance: f64 = 0.0,
+};
+
+pub const ZdsRadiativeTransferDiagnostics = extern struct {
+    len: usize = 0,
+    rows: [*]const ZdsRadiativeTransferDiagnosticRow = undefined,
+};
+
 const Context = struct {
     prepared: ?zdisamar.PreparedO2A = null,
     parsed_input: ?std.json.Parsed(zdisamar.O2AInput) = null,
     results: std.ArrayList(*zdisamar.Output) = .empty,
     atmospheric_budgets: std.ArrayList([]ZdsAtmosphericBudgetRow) = .empty,
     o2_line_contribution_tables: std.ArrayList([]ZdsO2LineContributionRow) = .empty,
+    instrument_response_tables: std.ArrayList([]ZdsInstrumentResponseRow) = .empty,
+    o2_o2_cia_tables: std.ArrayList([]ZdsO2O2CIARow) = .empty,
+    radiative_transfer_tables: std.ArrayList([]ZdsRadiativeTransferDiagnosticRow) = .empty,
     last_error: [256:0]u8 = [_:0]u8{0} ** 256,
 
     fn clearResults(self: *Context) void {
@@ -126,6 +203,21 @@ const Context = struct {
     fn clearO2LineContributionTables(self: *Context) void {
         for (self.o2_line_contribution_tables.items) |rows| allocator.free(rows);
         self.o2_line_contribution_tables.clearAndFree(allocator);
+    }
+
+    fn clearInstrumentResponseTables(self: *Context) void {
+        for (self.instrument_response_tables.items) |rows| allocator.free(rows);
+        self.instrument_response_tables.clearAndFree(allocator);
+    }
+
+    fn clearO2O2CIATables(self: *Context) void {
+        for (self.o2_o2_cia_tables.items) |rows| allocator.free(rows);
+        self.o2_o2_cia_tables.clearAndFree(allocator);
+    }
+
+    fn clearRadiativeTransferTables(self: *Context) void {
+        for (self.radiative_transfer_tables.items) |rows| allocator.free(rows);
+        self.radiative_transfer_tables.clearAndFree(allocator);
     }
 
     fn removeResult(self: *Context, result: *zdisamar.Output) bool {
@@ -154,6 +246,36 @@ const Context = struct {
         for (self.o2_line_contribution_tables.items, 0..) |stored, index| {
             if (stored.ptr == rows_ptr) {
                 return self.o2_line_contribution_tables.swapRemove(index);
+            }
+        }
+        return null;
+    }
+
+    fn removeInstrumentResponseTable(self: *Context, rows_ptr: [*]const ZdsInstrumentResponseRow) ?[]ZdsInstrumentResponseRow {
+        for (self.instrument_response_tables.items, 0..) |stored, index| {
+            if (stored.ptr == rows_ptr) {
+                return self.instrument_response_tables.swapRemove(index);
+            }
+        }
+        return null;
+    }
+
+    fn removeO2O2CIATable(self: *Context, rows_ptr: [*]const ZdsO2O2CIARow) ?[]ZdsO2O2CIARow {
+        for (self.o2_o2_cia_tables.items, 0..) |stored, index| {
+            if (stored.ptr == rows_ptr) {
+                return self.o2_o2_cia_tables.swapRemove(index);
+            }
+        }
+        return null;
+    }
+
+    fn removeRadiativeTransferTable(
+        self: *Context,
+        rows_ptr: [*]const ZdsRadiativeTransferDiagnosticRow,
+    ) ?[]ZdsRadiativeTransferDiagnosticRow {
+        for (self.radiative_transfer_tables.items, 0..) |stored, index| {
+            if (stored.ptr == rows_ptr) {
+                return self.radiative_transfer_tables.swapRemove(index);
             }
         }
         return null;
@@ -191,6 +313,9 @@ export fn zds_context_destroy(ctx: ?*Context) void {
     resolved.clearResults();
     resolved.clearAtmosphericBudgets();
     resolved.clearO2LineContributionTables();
+    resolved.clearInstrumentResponseTables();
+    resolved.clearO2O2CIATables();
+    resolved.clearRadiativeTransferTables();
     resolved.clearPrepared();
     allocator.destroy(resolved);
 }
@@ -370,6 +495,7 @@ export fn zds_atmospheric_budget(
     for (native_rows, rows) |native, *row| row.* = copyAtmosphericBudgetRow(native);
 
     resolved.atmospheric_budgets.append(allocator, rows) catch |err| {
+        allocator.free(rows);
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -430,6 +556,7 @@ export fn zds_o2_line_contributions(
     for (native_table.rows, rows) |native, *row| row.* = copyO2LineContributionRow(native);
 
     resolved.o2_line_contribution_tables.append(allocator, rows) catch |err| {
+        allocator.free(rows);
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -437,6 +564,183 @@ export fn zds_o2_line_contributions(
         .len = rows.len,
         .total_row_count = native_table.total_row_count,
         .truncated = if (native_table.truncated) 1 else 0,
+        .rows = rows.ptr,
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_instrument_response_sampling(
+    ctx: ?*Context,
+    wavelengths_ptr: ?[*]const f64,
+    wavelength_count: usize,
+    channel_mask: u32,
+    out: ?*ZdsInstrumentResponse,
+) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const resolved_out = out orelse {
+        resolved.setError("null instrument response table");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const wavelengths = wavelengths_ptr orelse {
+        resolved.setError("null wavelengths");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (wavelength_count == 0) {
+        resolved.setError("empty wavelengths");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    if (resolved.prepared == null) {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    const prepared = &resolved.prepared.?;
+
+    const native_rows = zdisamar.buildInstrumentResponse(
+        allocator,
+        &prepared.scene,
+        &prepared.prepared,
+        wavelengths[0..wavelength_count],
+        channel_mask,
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    defer allocator.free(native_rows);
+
+    const rows = allocator.alloc(ZdsInstrumentResponseRow, native_rows.len) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer allocator.free(rows);
+    for (native_rows, rows) |native, *row| row.* = copyInstrumentResponseRow(native);
+
+    resolved.instrument_response_tables.append(allocator, rows) catch |err| {
+        allocator.free(rows);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved_out.* = .{
+        .len = rows.len,
+        .rows = rows.ptr,
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_o2_o2_cia_diagnostics(
+    ctx: ?*Context,
+    wavelengths_ptr: ?[*]const f64,
+    wavelength_count: usize,
+    out: ?*ZdsO2O2CIADiagnostics,
+) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const resolved_out = out orelse {
+        resolved.setError("null O2-O2 CIA table");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const wavelengths = wavelengths_ptr orelse {
+        resolved.setError("null wavelengths");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (wavelength_count == 0) {
+        resolved.setError("empty wavelengths");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    if (resolved.prepared == null) {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    const prepared = &resolved.prepared.?;
+
+    const native_rows = zdisamar.buildO2O2CIADiagnostics(
+        allocator,
+        &prepared.scene,
+        &prepared.prepared,
+        wavelengths[0..wavelength_count],
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    defer allocator.free(native_rows);
+
+    const rows = allocator.alloc(ZdsO2O2CIARow, native_rows.len) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer allocator.free(rows);
+    for (native_rows, rows) |native, *row| row.* = copyO2O2CIARow(native);
+
+    resolved.o2_o2_cia_tables.append(allocator, rows) catch |err| {
+        allocator.free(rows);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved_out.* = .{
+        .len = rows.len,
+        .rows = rows.ptr,
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_radiative_transfer_diagnostics(
+    ctx: ?*Context,
+    wavelengths_ptr: ?[*]const f64,
+    wavelength_count: usize,
+    spectrum: ?*const ZdsSpectrum,
+    out: ?*ZdsRadiativeTransferDiagnostics,
+) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const resolved_out = out orelse {
+        resolved.setError("null radiative-transfer table");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    const wavelengths = wavelengths_ptr orelse {
+        resolved.setError("null wavelengths");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (wavelength_count == 0) {
+        resolved.setError("empty wavelengths");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    if (resolved.prepared == null) {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    const prepared = &resolved.prepared.?;
+    const spectrum_view = spectrumView(resolved, spectrum) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    const native_rows = zdisamar.buildRadiativeTransferDiagnostics(
+        allocator,
+        &prepared.scene,
+        &prepared.prepared,
+        prepared.route,
+        wavelengths[0..wavelength_count],
+        spectrum_view,
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    defer allocator.free(native_rows);
+
+    const rows = allocator.alloc(ZdsRadiativeTransferDiagnosticRow, native_rows.len) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer allocator.free(rows);
+    for (native_rows, rows) |native, *row| row.* = copyRadiativeTransferDiagnosticRow(native);
+
+    resolved.radiative_transfer_tables.append(allocator, rows) catch |err| {
+        allocator.free(rows);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved_out.* = .{
+        .len = rows.len,
         .rows = rows.ptr,
     };
     resolved.setError("");
@@ -474,9 +778,48 @@ export fn zds_o2_line_contributions_free(ctx: ?*Context, out: ?*ZdsO2LineContrib
     table.* = .{};
 }
 
+export fn zds_instrument_response_free(ctx: ?*Context, out: ?*ZdsInstrumentResponse) void {
+    const resolved = ctx orelse return;
+    const table = out orelse return;
+    if (table.len != 0) {
+        if (resolved.removeInstrumentResponseTable(table.rows)) |rows| allocator.free(rows);
+    }
+    table.* = .{};
+}
+
+export fn zds_o2_o2_cia_diagnostics_free(ctx: ?*Context, out: ?*ZdsO2O2CIADiagnostics) void {
+    const resolved = ctx orelse return;
+    const table = out orelse return;
+    if (table.len != 0) {
+        if (resolved.removeO2O2CIATable(table.rows)) |rows| allocator.free(rows);
+    }
+    table.* = .{};
+}
+
+export fn zds_radiative_transfer_diagnostics_free(ctx: ?*Context, out: ?*ZdsRadiativeTransferDiagnostics) void {
+    const resolved = ctx orelse return;
+    const table = out orelse return;
+    if (table.len != 0) {
+        if (resolved.removeRadiativeTransferTable(table.rows)) |rows| allocator.free(rows);
+    }
+    table.* = .{};
+}
+
 export fn zds_last_error(ctx: ?*Context) [*:0]const u8 {
     const resolved = ctx orelse return "null context";
     return @ptrCast(&resolved.last_error);
+}
+
+fn spectrumView(resolved: *const Context, spectrum: ?*const ZdsSpectrum) !?zdisamar.RadiativeTransferSpectrumView {
+    const raw = spectrum orelse return null;
+    const handle = raw.result_handle orelse return error.SpectrumClosed;
+    const result: *zdisamar.Output = @ptrCast(@alignCast(handle));
+    if (!resolved.ownsResult(result)) return error.UnknownSpectrumResult;
+    return .{
+        .wavelength_nm = raw.wavelength_nm[0..raw.len],
+        .reflectance = raw.reflectance[0..raw.len],
+        .radiance = raw.radiance[0..raw.len],
+    };
 }
 
 fn copyAtmosphericBudgetRow(row: zdisamar.AtmosphericBudgetRow) ZdsAtmosphericBudgetRow {
@@ -544,5 +887,72 @@ fn copyO2LineContributionRow(row: zdisamar.O2LineContributionRow) ZdsO2LineContr
         .line_mixing_sigma_cm2_per_molecule = row.line_mixing_sigma_cm2_per_molecule,
         .total_sigma_cm2_per_molecule = row.total_sigma_cm2_per_molecule,
         .abs_total_sigma_cm2_per_molecule = row.abs_total_sigma_cm2_per_molecule,
+    };
+}
+
+fn copyInstrumentResponseRow(row: zdisamar.InstrumentResponseRow) ZdsInstrumentResponseRow {
+    return .{
+        .nominal_index = row.nominal_index,
+        .nominal_wavelength_nm = row.nominal_wavelength_nm,
+        .channel = row.channel,
+        .sample_index = row.sample_index,
+        .support_count = row.support_count,
+        .offset_nm = row.offset_nm,
+        .support_wavelength_nm = row.support_wavelength_nm,
+        .weight = row.weight,
+        .support_width_nm = row.support_width_nm,
+        .instrument_fwhm_nm = row.instrument_fwhm_nm,
+        .high_resolution_step_nm = row.high_resolution_step_nm,
+        .high_resolution_half_span_nm = row.high_resolution_half_span_nm,
+        .integration_mode = row.integration_mode,
+        .response_enabled = row.response_enabled,
+    };
+}
+
+fn copyO2O2CIARow(row: zdisamar.O2O2CIARow) ZdsO2O2CIARow {
+    return .{
+        .wavelength_nm = row.wavelength_nm,
+        .layer_index = row.layer_index,
+        .sublayer_index = row.sublayer_index,
+        .global_sublayer_index = row.global_sublayer_index,
+        .interval_index_1based = row.interval_index_1based,
+        .altitude_km = row.altitude_km,
+        .pressure_hpa = row.pressure_hpa,
+        .temperature_k = row.temperature_k,
+        .oxygen_number_density_cm3 = row.oxygen_number_density_cm3,
+        .path_length_cm = row.path_length_cm,
+        .cia_cross_section_cm5_per_molecule2 = row.cia_cross_section_cm5_per_molecule2,
+        .cia_optical_depth = row.cia_optical_depth,
+        .total_absorption_optical_depth = row.total_absorption_optical_depth,
+        .total_optical_depth = row.total_optical_depth,
+        .cia_share_of_total_absorption = row.cia_share_of_total_absorption,
+        .cia_share_of_total_optical_depth = row.cia_share_of_total_optical_depth,
+    };
+}
+
+fn copyRadiativeTransferDiagnosticRow(
+    row: zdisamar.RadiativeTransferDiagnosticRow,
+) ZdsRadiativeTransferDiagnosticRow {
+    return .{
+        .wavelength_nm = row.wavelength_nm,
+        .layer_index = row.layer_index,
+        .sublayer_index = row.sublayer_index,
+        .global_sublayer_index = row.global_sublayer_index,
+        .interval_index_1based = row.interval_index_1based,
+        .altitude_km = row.altitude_km,
+        .total_optical_depth = row.total_optical_depth,
+        .total_absorption_optical_depth = row.total_absorption_optical_depth,
+        .total_scattering_optical_depth = row.total_scattering_optical_depth,
+        .single_scatter_albedo = row.single_scatter_albedo,
+        .cumulative_optical_depth_above = row.cumulative_optical_depth_above,
+        .mid_layer_transmission_proxy = row.mid_layer_transmission_proxy,
+        .direct_surface_transmission_proxy = row.direct_surface_transmission_proxy,
+        .atmospheric_scattering_source_proxy = row.atmospheric_scattering_source_proxy,
+        .absorption_loss_proxy = row.absorption_loss_proxy,
+        .pseudo_spherical_airmass_factor = row.pseudo_spherical_airmass_factor,
+        .n_streams = row.n_streams,
+        .integrate_source_function = row.integrate_source_function,
+        .final_reflectance = row.final_reflectance,
+        .final_radiance = row.final_radiance,
     };
 }

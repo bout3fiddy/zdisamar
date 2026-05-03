@@ -35,10 +35,10 @@ def source_profile(
         .encode(
             x=alt.X(f"{fields.VALUE}:Q", title="Proxy value"),
             y=_vertical_y(vertical_axis),
-            color=alt.Color("component:N", title="Component"),
+            color=alt.Color("component_label:N", title="Component", legend=alt.Legend(orient="right")),
             column=alt.Column(f"{fields.WAVELENGTH_NM}:N", title="Wavelength (nm)"),
             tooltip=[
-                alt.Tooltip("component:N", title="Component"),
+                alt.Tooltip("component_label:N", title="Component"),
                 alt.Tooltip(f"{vertical_axis}:Q", title=label(vertical_axis), format=".4g"),
                 alt.Tooltip(f"{fields.VALUE}:Q", title="Value", format=".3g"),
             ],
@@ -63,10 +63,10 @@ def cumulative_transmission(
         .encode(
             x=alt.X(f"{fields.VALUE}:Q", title="Value"),
             y=_vertical_y(vertical_axis),
-            color=alt.Color("component:N", title="Quantity"),
+            color=alt.Color("component_label:N", title="Quantity", legend=alt.Legend(orient="right")),
             column=alt.Column(f"{fields.WAVELENGTH_NM}:N", title="Wavelength (nm)"),
             tooltip=[
-                alt.Tooltip("component:N", title="Quantity"),
+                alt.Tooltip("component_label:N", title="Quantity"),
                 alt.Tooltip(f"{vertical_axis}:Q", title=label(vertical_axis), format=".4g"),
                 alt.Tooltip(f"{fields.VALUE}:Q", title="Value", format=".3g"),
             ],
@@ -83,7 +83,7 @@ def proxy_share_bar(
     normalize: bool = True,
 ):
     data = melt_components(rt, components, id_vars=(fields.WAVELENGTH_NM,))
-    grouped = data.groupby([fields.WAVELENGTH_NM, "component"], as_index=False)[fields.VALUE].sum()
+    grouped = data.groupby([fields.WAVELENGTH_NM, "component", "component_label"], as_index=False)[fields.VALUE].sum()
     if normalize:
         totals = grouped.groupby(fields.WAVELENGTH_NM)[fields.VALUE].transform("sum")
         grouped[fields.VALUE] = grouped[fields.VALUE] / totals.where(totals != 0.0, 1.0)
@@ -93,10 +93,10 @@ def proxy_share_bar(
         .encode(
             x=alt.X(f"{fields.WAVELENGTH_NM}:N", title="Wavelength (nm)"),
             y=alt.Y(f"{fields.VALUE}:Q", title="Share" if normalize else "Contribution"),
-            color=alt.Color("component:N", title="Component"),
+            color=alt.Color("component_label:N", title="Component", legend=alt.Legend(orient="right")),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:N", title="Wavelength (nm)"),
-                alt.Tooltip("component:N", title="Component"),
+                alt.Tooltip("component_label:N", title="Component"),
                 alt.Tooltip(f"{fields.VALUE}:Q", title="Value", format=".3g"),
             ],
         )

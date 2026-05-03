@@ -44,3 +44,6 @@ validation/perf/
 validation/plugin_tests/
 validation/reference/
 validation/release/
+
+# Local editor settings
+.zed/

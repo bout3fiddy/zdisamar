@@ -119,6 +119,92 @@ class _CO2LineContributions(ctypes.Structure):
     ]
 
 
+class _CInstrumentResponseRow(ctypes.Structure):
+    _fields_ = [
+        ("nominal_index", ctypes.c_int32),
+        ("nominal_wavelength_nm", ctypes.c_double),
+        ("channel", ctypes.c_uint32),
+        ("sample_index", ctypes.c_uint32),
+        ("support_count", ctypes.c_uint32),
+        ("offset_nm", ctypes.c_double),
+        ("support_wavelength_nm", ctypes.c_double),
+        ("weight", ctypes.c_double),
+        ("support_width_nm", ctypes.c_double),
+        ("instrument_fwhm_nm", ctypes.c_double),
+        ("high_resolution_step_nm", ctypes.c_double),
+        ("high_resolution_half_span_nm", ctypes.c_double),
+        ("integration_mode", ctypes.c_uint32),
+        ("response_enabled", ctypes.c_uint8),
+    ]
+
+
+class _CInstrumentResponse(ctypes.Structure):
+    _fields_ = [
+        ("len", ctypes.c_size_t),
+        ("rows", ctypes.POINTER(_CInstrumentResponseRow)),
+    ]
+
+
+class _CO2O2CIARow(ctypes.Structure):
+    _fields_ = [
+        ("wavelength_nm", ctypes.c_double),
+        ("layer_index", ctypes.c_uint32),
+        ("sublayer_index", ctypes.c_uint32),
+        ("global_sublayer_index", ctypes.c_uint32),
+        ("interval_index_1based", ctypes.c_uint32),
+        ("altitude_km", ctypes.c_double),
+        ("pressure_hpa", ctypes.c_double),
+        ("temperature_k", ctypes.c_double),
+        ("oxygen_number_density_cm3", ctypes.c_double),
+        ("path_length_cm", ctypes.c_double),
+        ("cia_cross_section_cm5_per_molecule2", ctypes.c_double),
+        ("cia_optical_depth", ctypes.c_double),
+        ("total_absorption_optical_depth", ctypes.c_double),
+        ("total_optical_depth", ctypes.c_double),
+        ("cia_share_of_total_absorption", ctypes.c_double),
+        ("cia_share_of_total_optical_depth", ctypes.c_double),
+    ]
+
+
+class _CO2O2CIADiagnostics(ctypes.Structure):
+    _fields_ = [
+        ("len", ctypes.c_size_t),
+        ("rows", ctypes.POINTER(_CO2O2CIARow)),
+    ]
+
+
+class _CRadiativeTransferDiagnosticRow(ctypes.Structure):
+    _fields_ = [
+        ("wavelength_nm", ctypes.c_double),
+        ("layer_index", ctypes.c_uint32),
+        ("sublayer_index", ctypes.c_uint32),
+        ("global_sublayer_index", ctypes.c_uint32),
+        ("interval_index_1based", ctypes.c_uint32),
+        ("altitude_km", ctypes.c_double),
+        ("total_optical_depth", ctypes.c_double),
+        ("total_absorption_optical_depth", ctypes.c_double),
+        ("total_scattering_optical_depth", ctypes.c_double),
+        ("single_scatter_albedo", ctypes.c_double),
+        ("cumulative_optical_depth_above", ctypes.c_double),
+        ("mid_layer_transmission_proxy", ctypes.c_double),
+        ("direct_surface_transmission_proxy", ctypes.c_double),
+        ("atmospheric_scattering_source_proxy", ctypes.c_double),
+        ("absorption_loss_proxy", ctypes.c_double),
+        ("pseudo_spherical_airmass_factor", ctypes.c_double),
+        ("n_streams", ctypes.c_uint32),
+        ("integrate_source_function", ctypes.c_uint8),
+        ("final_reflectance", ctypes.c_double),
+        ("final_radiance", ctypes.c_double),
+    ]
+
+
+class _CRadiativeTransferDiagnostics(ctypes.Structure):
+    _fields_ = [
+        ("len", ctypes.c_size_t),
+        ("rows", ctypes.POINTER(_CRadiativeTransferDiagnosticRow)),
+    ]
+
+
 @dataclass(frozen=True)
 class DiagnosticReport:
     sample_count: int
@@ -196,12 +282,44 @@ def _configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(_CO2LineContributions),
     ]
     lib.zds_o2_line_contributions.restype = ctypes.c_int
+    lib.zds_instrument_response_sampling.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.POINTER(_CInstrumentResponse),
+    ]
+    lib.zds_instrument_response_sampling.restype = ctypes.c_int
+    lib.zds_o2_o2_cia_diagnostics.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_size_t,
+        ctypes.POINTER(_CO2O2CIADiagnostics),
+    ]
+    lib.zds_o2_o2_cia_diagnostics.restype = ctypes.c_int
+    lib.zds_radiative_transfer_diagnostics.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_size_t,
+        ctypes.POINTER(_CSpectrum),
+        ctypes.POINTER(_CRadiativeTransferDiagnostics),
+    ]
+    lib.zds_radiative_transfer_diagnostics.restype = ctypes.c_int
     lib.zds_spectrum_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CSpectrum)]
     lib.zds_spectrum_free.restype = None
     lib.zds_atmospheric_budget_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CAtmosphericBudget)]
     lib.zds_atmospheric_budget_free.restype = None
     lib.zds_o2_line_contributions_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CO2LineContributions)]
     lib.zds_o2_line_contributions_free.restype = None
+    lib.zds_instrument_response_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CInstrumentResponse)]
+    lib.zds_instrument_response_free.restype = None
+    lib.zds_o2_o2_cia_diagnostics_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CO2O2CIADiagnostics)]
+    lib.zds_o2_o2_cia_diagnostics_free.restype = None
+    lib.zds_radiative_transfer_diagnostics_free.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_CRadiativeTransferDiagnostics),
+    ]
+    lib.zds_radiative_transfer_diagnostics_free.restype = None
     lib.zds_last_error.argtypes = [ctypes.c_void_p]
     lib.zds_last_error.restype = ctypes.c_char_p
     return lib
@@ -424,6 +542,160 @@ class O2LineContributions:
         self.close()
 
 
+class InstrumentResponseTable:
+    """Native instrument response support-weight table."""
+
+    channel_labels = {
+        0: "radiance",
+        1: "irradiance",
+    }
+    integration_mode_labels = {
+        0: "auto",
+        1: "explicit_hr_grid",
+        2: "disamar_hr_grid",
+        3: "adaptive",
+    }
+    columns = tuple(name for name, _ctype in _CInstrumentResponseRow._fields_)
+
+    def __init__(self, owner: "Context", raw: _CInstrumentResponse):
+        self._owner = owner
+        self._raw = raw
+
+    def _require_open(self) -> None:
+        if self._owner is None or self._owner._ctx is None:
+            raise RuntimeError("instrument response table is closed")
+
+    @property
+    def row_count(self) -> int:
+        return int(self._raw.len)
+
+    @property
+    def table(self):
+        self._require_open()
+        import numpy as np
+
+        return np.ctypeslib.as_array(self._raw.rows, shape=(self._raw.len,))
+
+    def to_rows(self) -> list[dict[str, float | int | str]]:
+        rows: list[dict[str, float | int | str]] = []
+        for row in self.table:
+            item = {name: row[name].item() for name in self.columns}
+            item["channel_label"] = self.channel_labels.get(int(item["channel"]), "unknown")
+            item["integration_mode_label"] = self.integration_mode_labels.get(
+                int(item["integration_mode"]),
+                "unknown",
+            )
+            rows.append(item)
+        return rows
+
+    def to_pandas(self):
+        import pandas as pd
+
+        return pd.DataFrame.from_records(self.to_rows())
+
+    def close(self) -> None:
+        if self._owner is not None:
+            self._owner._free_instrument_response(self._raw)
+            self._owner = None
+            self._raw = _CInstrumentResponse()
+
+    def __enter__(self) -> "InstrumentResponseTable":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+class O2O2CIADiagnosticTable:
+    """Native O2-O2 CIA diagnostic table."""
+
+    columns = tuple(name for name, _ctype in _CO2O2CIARow._fields_)
+
+    def __init__(self, owner: "Context", raw: _CO2O2CIADiagnostics):
+        self._owner = owner
+        self._raw = raw
+
+    def _require_open(self) -> None:
+        if self._owner is None or self._owner._ctx is None:
+            raise RuntimeError("O2-O2 CIA diagnostic table is closed")
+
+    @property
+    def row_count(self) -> int:
+        return int(self._raw.len)
+
+    @property
+    def table(self):
+        self._require_open()
+        import numpy as np
+
+        return np.ctypeslib.as_array(self._raw.rows, shape=(self._raw.len,))
+
+    def to_rows(self) -> list[dict[str, float | int]]:
+        return [{name: row[name].item() for name in self.columns} for row in self.table]
+
+    def to_pandas(self):
+        import pandas as pd
+
+        return pd.DataFrame.from_records(self.to_rows())
+
+    def close(self) -> None:
+        if self._owner is not None:
+            self._owner._free_o2_o2_cia_diagnostics(self._raw)
+            self._owner = None
+            self._raw = _CO2O2CIADiagnostics()
+
+    def __enter__(self) -> "O2O2CIADiagnosticTable":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+class RadiativeTransferDiagnosticTable:
+    """Native bounded radiative-transfer diagnostic table."""
+
+    columns = tuple(name for name, _ctype in _CRadiativeTransferDiagnosticRow._fields_)
+
+    def __init__(self, owner: "Context", raw: _CRadiativeTransferDiagnostics):
+        self._owner = owner
+        self._raw = raw
+
+    def _require_open(self) -> None:
+        if self._owner is None or self._owner._ctx is None:
+            raise RuntimeError("radiative-transfer diagnostic table is closed")
+
+    @property
+    def row_count(self) -> int:
+        return int(self._raw.len)
+
+    @property
+    def table(self):
+        self._require_open()
+        import numpy as np
+
+        return np.ctypeslib.as_array(self._raw.rows, shape=(self._raw.len,))
+
+    def to_rows(self) -> list[dict[str, float | int]]:
+        return [{name: row[name].item() for name in self.columns} for row in self.table]
+
+    def to_pandas(self):
+        import pandas as pd
+
+        return pd.DataFrame.from_records(self.to_rows())
+
+    def close(self) -> None:
+        if self._owner is not None:
+            self._owner._free_radiative_transfer_diagnostics(self._raw)
+            self._owner = None
+            self._raw = _CRadiativeTransferDiagnostics()
+
+    def __enter__(self) -> "RadiativeTransferDiagnosticTable":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
 class AtmosphereDiagnostics:
     """Prepared atmospheric diagnostic entrypoints."""
 
@@ -442,6 +714,30 @@ class O2LineDiagnostics:
 
     def contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
         return self._prepared.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
+
+
+def _contiguous_wavelengths(wavelengths_nm):
+    import numpy as np
+
+    wavelengths = np.ascontiguousarray(wavelengths_nm, dtype=np.float64)
+    if wavelengths.ndim != 1:
+        raise ValueError("wavelengths_nm must be one-dimensional")
+    if wavelengths.size == 0:
+        raise ValueError("wavelengths_nm must not be empty")
+    return wavelengths
+
+
+def _channel_mask(channels: tuple[str, ...]) -> int:
+    masks = {"radiance": 1, "irradiance": 2}
+    mask = 0
+    for channel in channels:
+        try:
+            mask |= masks[channel]
+        except KeyError as exc:
+            raise ValueError(f"unsupported spectral channel: {channel}") from exc
+    if mask == 0:
+        raise ValueError("channels must not be empty")
+    return mask
 
 
 class Context:
@@ -508,13 +804,7 @@ class Context:
         )
 
     def atmospheric_budget(self, wavelengths_nm) -> AtmosphericBudget:
-        import numpy as np
-
-        wavelengths = np.ascontiguousarray(wavelengths_nm, dtype=np.float64)
-        if wavelengths.ndim != 1:
-            raise ValueError("wavelengths_nm must be one-dimensional")
-        if wavelengths.size == 0:
-            raise ValueError("wavelengths_nm must not be empty")
+        wavelengths = _contiguous_wavelengths(wavelengths_nm)
         raw = _CAtmosphericBudget()
         self._check(
             self._lib.zds_atmospheric_budget(
@@ -527,13 +817,7 @@ class Context:
         return AtmosphericBudget(self, raw)
 
     def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
-        import numpy as np
-
-        wavelengths = np.ascontiguousarray(wavelengths_nm, dtype=np.float64)
-        if wavelengths.ndim != 1:
-            raise ValueError("wavelengths_nm must be one-dimensional")
-        if wavelengths.size == 0:
-            raise ValueError("wavelengths_nm must not be empty")
+        wavelengths = _contiguous_wavelengths(wavelengths_nm)
         if max_rows <= 0:
             raise ValueError("max_rows must be positive")
         raw = _CO2LineContributions()
@@ -548,6 +832,55 @@ class Context:
         )
         return O2LineContributions(self, raw)
 
+    def instrument_response_sampling(
+        self,
+        wavelengths_nm,
+        channels: tuple[str, ...] = ("radiance", "irradiance"),
+    ) -> InstrumentResponseTable:
+        wavelengths = _contiguous_wavelengths(wavelengths_nm)
+        raw = _CInstrumentResponse()
+        self._check(
+            self._lib.zds_instrument_response_sampling(
+                self._ctx,
+                wavelengths.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+                wavelengths.size,
+                _channel_mask(channels),
+                ctypes.byref(raw),
+            )
+        )
+        return InstrumentResponseTable(self, raw)
+
+    def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
+        wavelengths = _contiguous_wavelengths(wavelengths_nm)
+        raw = _CO2O2CIADiagnostics()
+        self._check(
+            self._lib.zds_o2_o2_cia_diagnostics(
+                self._ctx,
+                wavelengths.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+                wavelengths.size,
+                ctypes.byref(raw),
+            )
+        )
+        return O2O2CIADiagnosticTable(self, raw)
+
+    def radiative_transfer_diagnostics(self, wavelengths_nm, spectrum: Spectrum | None = None) -> RadiativeTransferDiagnosticTable:
+        wavelengths = _contiguous_wavelengths(wavelengths_nm)
+        raw = _CRadiativeTransferDiagnostics()
+        spectrum_ptr = None
+        if spectrum is not None:
+            spectrum._require_open()
+            spectrum_ptr = ctypes.byref(spectrum._raw)
+        self._check(
+            self._lib.zds_radiative_transfer_diagnostics(
+                self._ctx,
+                wavelengths.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+                wavelengths.size,
+                spectrum_ptr,
+                ctypes.byref(raw),
+            )
+        )
+        return RadiativeTransferDiagnosticTable(self, raw)
+
     def _free_spectrum(self, raw: _CSpectrum) -> None:
         self._lib.zds_spectrum_free(self._ctx, ctypes.byref(raw))
 
@@ -556,6 +889,15 @@ class Context:
 
     def _free_o2_line_contributions(self, raw: _CO2LineContributions) -> None:
         self._lib.zds_o2_line_contributions_free(self._ctx, ctypes.byref(raw))
+
+    def _free_instrument_response(self, raw: _CInstrumentResponse) -> None:
+        self._lib.zds_instrument_response_free(self._ctx, ctypes.byref(raw))
+
+    def _free_o2_o2_cia_diagnostics(self, raw: _CO2O2CIADiagnostics) -> None:
+        self._lib.zds_o2_o2_cia_diagnostics_free(self._ctx, ctypes.byref(raw))
+
+    def _free_radiative_transfer_diagnostics(self, raw: _CRadiativeTransferDiagnostics) -> None:
+        self._lib.zds_radiative_transfer_diagnostics_free(self._ctx, ctypes.byref(raw))
 
     def _check(self, status: int) -> None:
         if status == 0:
@@ -651,6 +993,29 @@ class PreparedDefaultO2A:
             raise RuntimeError("prepared input is closed")
         return self._ctx.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
 
+    def instrument_response_sampling(
+        self,
+        wavelengths_nm,
+        channels: tuple[str, ...] = ("radiance", "irradiance"),
+    ) -> InstrumentResponseTable:
+        if self._ctx is None:
+            raise RuntimeError("prepared input is closed")
+        return self._ctx.instrument_response_sampling(wavelengths_nm, channels=channels)
+
+    def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
+        if self._ctx is None:
+            raise RuntimeError("prepared input is closed")
+        return self._ctx.o2_o2_cia_diagnostics(wavelengths_nm)
+
+    def radiative_transfer_diagnostics(
+        self,
+        wavelengths_nm,
+        spectrum: Spectrum | None = None,
+    ) -> RadiativeTransferDiagnosticTable:
+        if self._ctx is None:
+            raise RuntimeError("prepared input is closed")
+        return self._ctx.radiative_transfer_diagnostics(wavelengths_nm, spectrum=spectrum)
+
     def close(self) -> None:
         if self._ctx is not None:
             self._ctx.close()
@@ -743,6 +1108,29 @@ class PreparedO2A:
         if self._ctx is None:
             raise RuntimeError("prepared input is closed")
         return self._ctx.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
+
+    def instrument_response_sampling(
+        self,
+        wavelengths_nm,
+        channels: tuple[str, ...] = ("radiance", "irradiance"),
+    ) -> InstrumentResponseTable:
+        if self._ctx is None:
+            raise RuntimeError("prepared input is closed")
+        return self._ctx.instrument_response_sampling(wavelengths_nm, channels=channels)
+
+    def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
+        if self._ctx is None:
+            raise RuntimeError("prepared input is closed")
+        return self._ctx.o2_o2_cia_diagnostics(wavelengths_nm)
+
+    def radiative_transfer_diagnostics(
+        self,
+        wavelengths_nm,
+        spectrum: Spectrum | None = None,
+    ) -> RadiativeTransferDiagnosticTable:
+        if self._ctx is None:
+            raise RuntimeError("prepared input is closed")
+        return self._ctx.radiative_transfer_diagnostics(wavelengths_nm, spectrum=spectrum)
 
     def close(self) -> None:
         if self._ctx is not None:

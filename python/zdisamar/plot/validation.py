@@ -17,8 +17,8 @@ def overlay(
     reference,
     *,
     quantity: str = fields.REFLECTANCE,
-    reference_label: str = "reference implementation",
-    current_label: str = "zig implementation",
+    reference_label: str = "Reference implementation",
+    current_label: str = "Zig implementation",
     window_nm: tuple[float, float] | None = None,
 ):
     comparison = comparison_frame(current, reference, quantity, window_nm=window_nm)
@@ -232,6 +232,30 @@ def residual_histogram_report(
     return alt.vconcat(spectrum_panel, histogram_panel, residual_panel).resolve_scale(x="independent")
 
 
+def residual_highlight_spectrum(
+    current,
+    reference,
+    *,
+    quantity: str = fields.REFLECTANCE,
+    residual_threshold: float,
+    relative: bool = False,
+):
+    comparison = comparison_frame(current, reference, quantity, relative=relative)
+    return _residual_highlight_spectrum(comparison, quantity, residual_threshold)
+
+
+def residual_by_wavelength(
+    current,
+    reference,
+    *,
+    quantity: str = fields.REFLECTANCE,
+    residual_threshold: float,
+    relative: bool = False,
+):
+    comparison = comparison_frame(current, reference, quantity, relative=relative)
+    return _residual_line_panel(comparison, quantity, residual_threshold, relative=relative)
+
+
 def metrics_bar(
     current,
     reference,
@@ -240,22 +264,27 @@ def metrics_bar(
     metrics: Sequence[str] = ("mae", "rmse", "max_abs", "mean_signed"),
 ):
     frame = metric_frame(current, reference, quantities, metrics)
+    frame = frame.copy()
+    frame["metric_quantity"] = frame[fields.QUANTITY] + " " + frame[fields.METRIC]
     return (
         alt.Chart(frame)
         .mark_bar()
         .encode(
-            x=alt.X(f"{fields.METRIC}:N", title="Metric"),
+            x=alt.X(
+                "metric_quantity:N",
+                title="Quantity and metric",
+                sort=None,
+                axis=alt.Axis(labelAngle=-32, labelLimit=220),
+            ),
             y=alt.Y(f"{fields.VALUE}:Q", title="Value", axis=alt.Axis(format=".2e", tickCount=6)),
             color=alt.Color(f"{fields.METRIC}:N", title="Metric", legend=None),
-            column=alt.Column(f"{fields.QUANTITY}:N", title=None),
             tooltip=[
                 alt.Tooltip(f"{fields.QUANTITY}:N", title="Quantity"),
                 alt.Tooltip(f"{fields.METRIC}:N", title="Metric"),
                 alt.Tooltip(f"{fields.VALUE}:Q", title="Value", format=".8g"),
             ],
         )
-        .properties(width=340, height=340, title="Validation metrics")
-        .resolve_scale(y="independent")
+        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Validation metrics")
     )
 
 

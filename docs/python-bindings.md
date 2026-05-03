@@ -75,13 +75,13 @@ an optional extra, so generated plots can be produced from the same `uv run ...`
 environment as the other Python helpers.
 
 Generated preview plots should go under `out/plots/`, which is gitignored. The
-phase-2 plotting smoke harness writes inspectable HTML, SVG, and PNG files to:
+real O2 A Python plotting bundle writes inspectable CSV, JSON, and PNG files to:
 
 ```bash
 out/plots/python_plotting/
 ```
 
-Each smoke artifact includes the full sampled spectrum for orientation, either
+Each plot artifact includes the full sampled spectrum for orientation, either
 as the plot itself or as a context panel above the derived diagnostic panel.
 
 Run the first feedback-loop script:
@@ -95,5 +95,6 @@ zig build python-o2-o2-cia-diagnostics
 zig build python-instrument-response
 zig build python-radiative-transfer-diagnostics
 zig build python-parameter-perturbation
-zig build python-plotting-library-smoke
+zig build python-o2a-plot-bundle
+zig build test-python-o2a-plot-bundle
 ```

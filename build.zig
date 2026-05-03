@@ -388,16 +388,31 @@ pub fn build(b: *std.Build) void {
     );
     python_parameter_perturbation_step.dependOn(&python_parameter_perturbation_cmd.step);
 
-    const python_plotting_library_smoke_cmd = b.addSystemCommand(&.{
+    const python_o2a_plot_bundle_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "scripts/testing_harness/python_plotting_library_smoke.py",
+        "scripts/testing_harness/python_o2a_plot_bundle.py",
+        "--library",
     });
-    const python_plotting_library_smoke_step = b.step(
-        "python-plotting-library-smoke",
-        "Build inspectable Altair plots for the Python plotting package",
+    python_o2a_plot_bundle_cmd.addFileArg(c_api_lib.getEmittedBin());
+    python_o2a_plot_bundle_cmd.step.dependOn(&c_api_install.step);
+    const python_o2a_plot_bundle_step = b.step(
+        "python-o2a-plot-bundle",
+        "Build real core-backed Altair plots and data for the Python plotting package",
     );
-    python_plotting_library_smoke_step.dependOn(&python_plotting_library_smoke_cmd.step);
+    python_o2a_plot_bundle_step.dependOn(&python_o2a_plot_bundle_cmd.step);
+
+    const python_o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_o2a_plot_bundle_test.py",
+    });
+    python_o2a_plot_bundle_test_cmd.step.dependOn(&python_o2a_plot_bundle_cmd.step);
+    const python_o2a_plot_bundle_test_step = b.step(
+        "test-python-o2a-plot-bundle",
+        "Verify the real core-backed Python plotting bundle outputs",
+    );
+    python_o2a_plot_bundle_test_step.dependOn(&python_o2a_plot_bundle_test_cmd.step);
 
     const no_inline_src_tests_cmd = b.addSystemCommand(&.{
         "scripts/check-no-inline-src-tests.sh",
