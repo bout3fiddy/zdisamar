@@ -1,284 +1,299 @@
-# Python Research Wrapper Ideas
+# Python Research Interface
 
-This note records ideas for a future Python interface to the O2 A-band
-forward calculation. It is intentionally not an implementation plan for the
-current code. Before building this, the repository should first align its
-public names and documentation more closely with DISAMAR terminology.
+This note records the intended shape of the Python research interface for the
+O2 A-band forward model. The first spectrum/report slice is implemented; the
+larger diagnostic interface remains a design target for later work.
+
+The interface should use DISAMAR and atmospheric remote-sensing language. It
+should not expose private implementation wording unless the user explicitly
+asks for implementation details.
+
+## Current Public Model
+
+The repository now presents the O2 A path as:
+
+```text
+input -> forward model -> output
+```
+
+The public Zig surface is:
+
+- `Input`
+- `PreparedInput`
+- `ReferenceData`
+- `OpticalProperties`
+- `CalculationStorage`
+- `RadiativeTransferControls`
+- `Output`
+- `DiagnosticReport`
+
+The Python research interface should follow that shape. It should feel like a
+thin scientific interface over DISAMAR-style forward-model stages, not like a
+mirror of internal file names.
 
 ## Goal
 
-The Python interface should let a researcher run an O2 A-band simulation and
-inspect the scientific calculation in stages. It should be useful both for a
-simple forward run and for detailed investigation of why a spectrum has a
-particular shape.
+The Python interface should let a researcher:
 
-The interface should expose data in bulk, not one scalar at a time. Python
-should ask for tables or arrays such as a spectrum, atmospheric layers,
-absorption contributions, instrument response samples, or radiative-transfer
-diagnostic outputs. The expensive calculations should remain in Zig.
+1. configure an O2 A-band input;
+2. run the forward model;
+3. inspect the resulting spectrum;
+4. inspect selected scientific diagnostics without rerunning the full forward
+   model unless explicitly requested;
+5. run controlled parameter perturbations for sensitivity studies.
 
-## Preferred User Language
+The expensive calculation stays in Zig. Python receives bulk arrays and tables
+that can be viewed as NumPy, Pandas, or xarray data.
 
-Use DISAMAR-facing scientific names in the Python API and docs. Avoid exposing
-project-internal terms when a clearer DISAMAR-style term exists.
+## Naming Principles
 
-Prefer:
+Use these terms in Python-facing APIs and docs:
 
+- `input`
 - `forward_model`
+- `reference_data`
+- `optical_properties`
 - `atmosphere`
 - `atmospheric_layers`
 - `absorbers`
 - `o2_lines`
 - `o2_o2_cia`
 - `aerosol`
+- `cloud`
 - `surface`
 - `geometry`
 - `instrument_response`
+- `instrument_grid`
+- `wavelength_sampling`
 - `high_resolution_wavelengths`
 - `radiative_transfer`
+- `doubling_adding`
+- `labos`
 - `source_function`
-- `spherical_correction`
+- `pseudo_spherical_correction`
 - `reflectance`
 - `radiance`
 - `irradiance`
+- `diagnostic_report`
+- `diagnostics`
 
-Avoid making users learn internal terms such as `routine`, private
-radiative-transfer module names, or wavelength-sampling filenames unless they
-are explicitly documented as implementation details.
+Avoid exposing these as user-facing terms:
+
+- `kernel`
+- `sample_plan`
+- `workspace`
+- `engine`
+- `planner`
+- `plugin`
+- `provider`
+- `ABI`
+- `trace`
+
+When these appear in source paths or private implementation modules, document
+them only as implementation details.
 
 ## Example Python Shape
 
 ```python
 import zdisamar as zd
 
-case = zd.o2a_case(
-    wavelength_range_nm=(755.0, 776.0),
-    sample_count=701,
-    geometry={
-        "solar_zenith_deg": 60.0,
-        "viewing_zenith_deg": 30.0,
-        "relative_azimuth_deg": 120.0,
-    },
-    aerosol={
-        "optical_depth_550_nm": 0.3,
-        "single_scatter_albedo": 1.0,
-        "asymmetry_factor": 0.7,
-        "layer_center_km": 5.4,
-        "layer_width_km": 0.4,
-    },
-)
+input = zd.o2a_disamar_reference_input()
+input.spectral_grid.sample_count = 701
+input.geometry.solar_zenith_deg = 60.0
+input.aerosol.optical_depth_550_nm = 0.3
+input.radiative_transfer.n_streams = 20
 
-with zd.prepare(case) as run:
-    spectrum = run.forward_model()
-    absorption = run.atmosphere.absorption_budget(
-        wavelengths_nm=spectrum.wavelength_nm,
+with zd.prepare(input) as prepared:
+    output = prepared.forward_model()
+    budget = prepared.atmosphere.absorption_budget(
+        wavelengths_nm=output.wavelength_nm,
     )
-    lines = run.o2_lines.contributions(
+    lines = prepared.o2_lines.contributions(
         wavelengths_nm=[761.75],
         max_rows=50_000,
     )
 ```
 
-In this example, `forward_model()` performs the full simulated spectrum run.
-The later calls inspect prepared scientific state or evaluate selected
-diagnostic quantities. They should not rerun the full forward model unless the
-user explicitly asks for radiative-transfer diagnostics or parameter sensitivity.
+In this example:
 
-## Data To Expose
+- `forward_model()` runs the full spectrum calculation.
+- `absorption_budget()` inspects prepared optical properties.
+- `o2_lines.contributions()` evaluates selected spectroscopy diagnostics.
+- Neither diagnostic call should rerun the full forward model.
 
-### Case And Inputs
-
-- wavelength range and sample count
-- solar/viewing geometry
-- surface albedo and surface pressure
-- aerosol optical depth, placement, single-scatter albedo, and phase parameters
-- atmospheric pressure, temperature, altitude, and density profile
-- absorber setup, especially O2 and O2-O2 CIA controls
-- line-mixing factor, isotope selection, line threshold, and cutoff settings
-- instrument spectral response shape, FWHM, and high-resolution sampling rules
-- reference data identifiers and file provenance
-
-### Atmospheric State
-
-- layer and sublayer index
-- altitude, pressure, temperature, air number density
-- oxygen number density
-- path length
-- interval identity
-- aerosol and cloud fractions when enabled
-
-### Absorption And Scattering Budget
-
-- O2 line absorption optical depth
-- O2 line-mixing contribution
-- O2-O2 CIA contribution
-- gas scattering optical depth
-- aerosol optical depth
-- aerosol scattering optical depth
-- cloud optical depth if enabled
-- total absorption optical depth
-- total scattering optical depth
-- total optical depth
-- single-scatter albedo
-- selected phase-function coefficients
-
-### O2 Line Details
-
-- line center
-- isotope number
-- line strength
-- pressure shift
-- lower-state energy
-- air-broadened half width
-- weak-line contribution
-- strong-line contribution
-- line-mixing contribution
-- whether a weak line was included or excluded
-- matched strong-line sidecar, when present
-
-### O2-O2 CIA Details
-
-- CIA cross section by wavelength and temperature
-- CIA optical depth by layer or sublayer
-- share of total absorption due to CIA
-- wavelengths where CIA contribution is largest
-
-### Instrument Response
-
-- nominal wavelength
-- high-resolution wavelengths used for that nominal sample
-- response weights
-- radiance and irradiance response samples
-- integrated radiance and irradiance before final reflectance
-- whether adaptive high-resolution sampling was used
-
-### Radiative-Transfer Diagnostics
-
-This should be explicit and opt-in because it can be large.
-
-- selected wavelength
-- selected high-resolution sample wavelength
-- layer optical properties passed to radiative transfer
-- source-function terms
-- multiple-scattering order or Fourier contribution where available
-- attenuation terms
-- spherical-correction path samples
-- final contribution to radiance and reflectance
-
-## Research Questions The Wrapper Should Help Answer
-
-### Aerosol Questions
-
-- Which wavelengths have the largest aerosol share of total optical depth?
-- Which wavelengths have the largest aerosol share of scattering optical depth?
-- Which wavelengths are most sensitive to aerosol optical depth?
-- Does aerosol sensitivity change more with solar zenith angle or viewing zenith angle?
-- Which atmospheric interval contributes most to the aerosol signal?
-- How much does aerosol layer placement inside the O2 A-band absorption region matter?
-- Does spherical correction change the aerosol contribution for long slant paths?
-
-Example:
+Radiative-transfer diagnostics are different. They may need selected
+radiative-transfer evaluations, so they should be explicit:
 
 ```python
-with zd.prepare(case) as run:
-    spectrum = run.forward_model()
-    budget = run.atmosphere.absorption_budget(spectrum.wavelength_nm)
-
-    budget["aerosol_fraction"] = (
-        budget.aerosol_optical_depth / budget.total_optical_depth
-    )
-    strongest = budget.groupby("wavelength_nm").aerosol_fraction.sum().idxmax()
-```
-
-For observed reflectance impact, use a parameter perturbation:
-
-```python
-with zd.prepare(case) as run:
-    sensitivity = run.sensitivity(
-        parameter="aerosol.optical_depth_550_nm",
-        delta=0.01,
-    )
-    strongest = sensitivity.reflectance_delta.abs().idxmax()
-```
-
-### O2 Spectroscopy Questions
-
-- Which O2 lines dominate a reflectance trough?
-- Which weak lines are included, excluded, or replaced by strong-line handling?
-- Which isotope contributes most in a selected wavelength region?
-- How much of the cross section comes from weak lines, strong lines, and line mixing?
-- Which wavelengths are most sensitive to the line-mixing factor?
-- Are residuals concentrated in line cores, line wings, or continuum regions?
-
-### O2-O2 CIA Questions
-
-- Where does O2-O2 CIA contribute most to total absorption?
-- How does the CIA contribution change with temperature?
-- Which layers dominate CIA optical depth?
-- Does CIA change the apparent continuum or specific O2 A-band structures?
-
-### Instrument Questions
-
-- Which nominal channels use the broadest high-resolution wavelength support?
-- Which response samples dominate a nominal channel?
-- Does a spectral residual come from line physics or from instrument response integration?
-- How does changing FWHM change the apparent O2 A-band depth?
-- Which channels are most sensitive to wavelength shift?
-
-### Radiative-Transfer Questions
-
-- Which layers dominate the final radiance for a selected wavelength?
-- How much of the signal is direct surface reflection versus atmospheric scattering?
-- Which source-function terms matter most?
-- Does multiple scattering materially change the reflectance in a selected band?
-- How much does spherical correction change the path through each layer?
-
-### Parity And Debugging Questions
-
-- At a wavelength where DISAMAR and this implementation differ, which scientific stage first diverges?
-- Is a difference caused by line absorption, line mixing, CIA, aerosol placement, instrument response, solar irradiance, or radiative transfer?
-- Which intermediate table should be compared against DISAMAR for a focused parity check?
-
-## Runtime Expectations
-
-A full forward model run should remain a single coarse native call. Additional
-diagnostic calls should reuse the prepared state.
-
-Expected cost pattern:
-
-- final spectrum: full forward-model cost
-- atmospheric budget: moderate, scales with wavelengths and layers
-- O2 line contribution table: potentially high, scales with wavelengths,
-  thermodynamic states, and relevant line count
-- instrument response table: low to moderate
-- radiative-transfer diagnostic output: high, should be filtered and row-limited
-- parameter sensitivity: usually one extra forward run per perturbation unless
-  an analytical derivative is available
-
-The API should make expensive diagnostics explicit:
-
-```python
-diagnostics = run.radiative_transfer.diagnostics(
+diagnostics = prepared.radiative_transfer.diagnostics(
     wavelengths_nm=[761.75],
-    include=["source_function", "spherical_correction"],
+    include=["source_function", "pseudo_spherical_correction"],
     max_rows=100_000,
 )
 ```
 
+## Output Checkpoints
+
+Each output checkpoint records what Python should expose, where the feature
+lives when implemented, and how to test it. Pending rows intentionally name the
+future test command so progress can be tracked as the wrapper grows.
+
+| Status | Output | Created In | Test |
+| --- | --- | --- | --- |
+| [x] | Final spectrum arrays: `wavelength_nm`, `radiance`, `irradiance`, `reflectance` | `ZdsSpectrum` in `src/api/c.zig`; `Spectrum` in `python/zdisamar/ffi.py` | `zig build python-forward-summary` or `uv run scripts/testing_harness/python_forward_summary.py`; writes `out/ci/python_forward_summary_plot.png` |
+| [x] | Current `DiagnosticReport`: sample count, wavelength range, mean radiance, mean irradiance, mean reflectance | `ZdsDiagnosticReport` and `zds_spectrum_report` in `src/api/c.zig`; `Spectrum.diagnostic_report` in `python/zdisamar/ffi.py` | Same as above; the script checks report-vs-array agreement, validation sampling, timing, and closed-spectrum failure |
+| [x] | Typed DISAMAR O2 A setup: wavelength grid, atmosphere intervals, geometry, surface, aerosol, O2 line controls, O2-O2 CIA, instrument response, reference assets, radiative-transfer controls | Shared native O2 A setup in `src/input/o2a_reference/`; JSON C boundary in `src/api/c.zig`; Python dataclasses in `python/zdisamar/types.py` | `zig build python-o2a-setup-roundtrip`; verifies typed setup matches `prepare_default_o2a()` |
+| [ ] | Input summary: compact read-only summary of the prepared setup | Pending input-summary table | Pending `zig build python-input-summary` |
+| [ ] | Reference-data summary: atmosphere profile, O2 line list, O2 strong-line sidecars, O2 line-mixing data, O2-O2 CIA table, solar irradiance data, air-mass-factor tables, aerosol/cloud phase data, asset provenance | Pending reference-data diagnostic table | Pending `zig build python-reference-data-summary` |
+| [x] | Atmospheric layer and optical-property budget: layer/sublayer index, altitude, pressure, temperature, number densities, interval identity, absorber/scatterer optical depths, total optical depths, single-scatter albedo | `AtmosphericBudgetRow` in `src/output/atmospheric_budget.zig`; `zds_atmospheric_budget` in `src/api/c.zig`; `AtmosphericBudget` and `PreparedO2A.atmosphere.budget(...)` in `python/zdisamar/ffi.py` | `zig build python-atmosphere-budget`; writes `out/ci/python_atmosphere_budget.csv` and science-question answers in `out/ci/python_atmosphere_budget_questions.json` |
+| [x] | O2 line diagnostics: wavelength, spectroscopy profile node, altitude, pressure, temperature, line center, isotope, strength, pressure shift, lower-state energy, half width, weak/strong/line-mixing contributions, inclusion status, matched strong-line sidecar | `O2LineContributionRow` in `src/output/o2_line_contributions.zig`; `zds_o2_line_contributions` in `src/api/c.zig`; `O2LineContributions` and `PreparedO2A.o2_lines.contributions(...)` in `python/zdisamar/ffi.py` | `zig build python-o2-line-diagnostics`; writes `out/ci/python_o2_line_contributions.csv` and science-question answers in `out/ci/python_o2_line_questions.json` |
+| [x] | O2-O2 CIA diagnostics: cross sections, layer optical depths, share of total absorption, largest-contribution wavelengths | `O2O2CIADiagnostics` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.o2_o2_cia.diagnostics(...)` | `zig build python-o2-o2-cia-diagnostics`; writes `out/ci/python_o2_o2_cia_diagnostics.csv` and answers in `out/ci/python_o2_o2_cia_questions.json` |
+| [x] | Instrument response and instrument grid: nominal wavelengths, high-resolution wavelengths, response weights, high-resolution support width, adaptive sampling controls | `InstrumentResponseDiagnostics` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.instrument_response.sampling_table(...)` | `zig build python-instrument-response`; writes `out/ci/python_instrument_response.csv` and answers in `out/ci/python_instrument_response_questions.json` |
+| [x] | Radiative-transfer diagnostics: selected wavelengths, layer optical properties, bounded source/attenuation proxy terms, pseudo-spherical path proxy, final radiance/reflectance | `RadiativeTransferDiagnostics` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.radiative_transfer.diagnostics(...)` | `zig build python-radiative-transfer-diagnostics`; writes `out/ci/python_radiative_transfer_diagnostics.csv` and answers in `out/ci/python_radiative_transfer_questions.json` |
+| [x] | Parameter perturbation output: perturbed parameter, delta, baseline spectrum, perturbed spectrum, reflectance delta, sensitivity ranking | `PerturbationDiagnostics` and `PerturbationResult` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.perturbations` | `zig build python-parameter-perturbation`; writes `out/ci/python_parameter_perturbation.csv` and answers in `out/ci/python_parameter_perturbation_questions.json` |
+
+## Research Question Checkpoints
+
+### Implemented Starter Question
+
+- [x] Which sampled wavelength has the minimum reflectance for the Python-defined DISAMAR O2 A input? Output: final spectrum arrays, `DiagnosticReport`, one-line timing/residual summary, and `out/ci/python_forward_summary_plot.png`. Created in `scripts/testing_harness/python_forward_summary.py`, `scripts/testing_harness/o2a_spectrum_plot.py`, `python/zdisamar/ffi.py`, and `src/api/c.zig`. Test: `zig build python-forward-summary`.
+- [x] Can Python directly reproduce the DISAMAR O2 A reference setup? Output: typed setup JSON roundtrip, default-vs-typed array agreement, and diagnostic-report checks. Created in `src/input/o2a_reference/`, `python/zdisamar/types.py`, `python/zdisamar/ffi.py`, and `scripts/testing_harness/python_o2a_setup_roundtrip.py`. Test: `zig build python-o2a-setup-roundtrip`.
+
+### Aerosol
+
+- [x] Which wavelengths have the largest aerosol share of total optical depth? Output: atmospheric budget table plus ranked wavelength answer. Created in `src/output/atmospheric_budget.zig`, `python/zdisamar/ffi.py`, and `scripts/testing_harness/python_atmosphere_budget.py`. Test: `zig build python-atmosphere-budget`.
+- [x] Which wavelengths have the largest aerosol share of scattering optical depth? Output: atmospheric budget table plus ranked wavelength answer. Created in `src/output/atmospheric_budget.zig`, `python/zdisamar/ffi.py`, and `scripts/testing_harness/python_atmosphere_budget.py`. Test: `zig build python-atmosphere-budget`.
+- [x] Which wavelengths are most sensitive to aerosol optical depth? Output: parameter perturbation reflectance-delta table for aerosol optical depth. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_parameter_perturbation.py`. Test: `zig build python-parameter-perturbation`.
+- [ ] Does aerosol sensitivity change more with solar zenith angle or viewing zenith angle? Output needed: input builder plus perturbation output across geometry changes. Checkpoint: pending input builder and perturbation helper.
+- [x] Which atmospheric interval contributes most to the aerosol signal? Output: interval-resolved aerosol optical-depth aggregation from the atmospheric budget table. Created in `src/output/atmospheric_budget.zig`, `python/zdisamar/ffi.py`, and `scripts/testing_harness/python_atmosphere_budget.py`. Test: `zig build python-atmosphere-budget`.
+- [ ] How much does aerosol placement inside the O2 A-band absorption region matter? Output needed: input builder plus aerosol placement perturbation output. Checkpoint: pending input builder and perturbation helper.
+- [ ] Does pseudo-spherical correction change the aerosol contribution for long slant paths? Output needed: radiative-transfer diagnostics plus aerosol budget. Checkpoint: pending radiative-transfer diagnostic slice.
+
+### O2 Spectroscopy
+
+- [x] Which O2 lines dominate a selected O2 A trough? Output: O2 line contribution table plus top rows ranked by absolute total cross section. Created in `src/output/o2_line_contributions.zig`, `python/zdisamar/ffi.py`, and `scripts/testing_harness/python_o2_line_diagnostics.py`. Test: `zig build python-o2-line-diagnostics`.
+- [x] Which weak lines are included, excluded, or handled through strong-line data? Output: O2 line inclusion/status table with row-kind and status counts. Created in `src/output/o2_line_contributions.zig`, `python/zdisamar/ffi.py`, and `scripts/testing_harness/python_o2_line_diagnostics.py`. Test: `zig build python-o2-line-diagnostics`.
+- [x] Which isotope contributes most in a selected wavelength region? Output: isotope-resolved O2 line contribution table ranked by absolute total cross-section sum. Created in `src/output/o2_line_contributions.zig`, `python/zdisamar/ffi.py`, and `scripts/testing_harness/python_o2_line_diagnostics.py`. Test: `zig build python-o2-line-diagnostics`.
+- [x] How much of the cross section comes from weak lines, strong lines, and line mixing? Output: weak/strong/line-mixing contribution columns and summed shares. Created in `src/output/o2_line_contributions.zig`, `python/zdisamar/ffi.py`, and `scripts/testing_harness/python_o2_line_diagnostics.py`. Test: `zig build python-o2-line-diagnostics`.
+- [x] Which wavelengths are most sensitive to the line-mixing factor? Output: parameter perturbation reflectance-delta table for line-mixing factor. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_parameter_perturbation.py`. Test: `zig build python-parameter-perturbation`.
+- [ ] Are residuals concentrated in line cores, line wings, or continuum regions? Output needed: O2 line diagnostics plus DISAMAR reference comparison metrics. Checkpoint: pending O2 line diagnostics and comparison helper.
+
+### O2-O2 CIA
+
+- [x] Where does O2-O2 CIA contribute most to total absorption? Output: CIA share of total absorption by wavelength and layer. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_o2_o2_cia_diagnostics.py`. Test: `zig build python-o2-o2-cia-diagnostics`.
+- [x] How does the CIA contribution change with temperature? Output: temperature-resolved CIA cross-section summary. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_o2_o2_cia_diagnostics.py`. Test: `zig build python-o2-o2-cia-diagnostics`.
+- [x] Which layers dominate CIA optical depth? Output: interval/layer-resolved CIA optical-depth ranking. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_o2_o2_cia_diagnostics.py`. Test: `zig build python-o2-o2-cia-diagnostics`.
+- [x] Does CIA change the apparent continuum or specific O2 A-band structures? Output: CIA-enabled/disabled reflectance perturbation table. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_parameter_perturbation.py`. Test: `zig build python-parameter-perturbation`.
+
+### Instrument Response
+
+- [x] Which nominal wavelengths use the broadest high-resolution support? Output: instrument response high-resolution sampling table. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_instrument_response.py`. Test: `zig build python-instrument-response`.
+- [x] Which high-resolution wavelengths dominate a nominal wavelength? Output: response weights by nominal wavelength. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_instrument_response.py`. Test: `zig build python-instrument-response`.
+- [ ] Does a residual come from line physics or instrument response integration? Output needed: O2 line diagnostics plus instrument response samples. Checkpoint: pending O2 line diagnostics and instrument response slice.
+- [x] How does changing FWHM change the apparent O2 A-band depth? Output: instrument-FWHM reflectance perturbation table. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_parameter_perturbation.py`. Test: `zig build python-parameter-perturbation`.
+- [ ] Which channels are most sensitive to wavelength shift? Output needed: wavelength-shift perturbation output. Checkpoint: pending perturbation helper.
+
+### Radiative Transfer
+
+- [x] Which layers dominate final radiance for a selected wavelength? Output: bounded radiative-transfer layer table with final radiance/reflectance and scattering proxy ranking. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_radiative_transfer_diagnostics.py`. Test: `zig build python-radiative-transfer-diagnostics`.
+- [x] How much of the signal is direct surface reflection versus atmospheric scattering? Output: direct-surface and atmospheric-scattering proxy columns. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_radiative_transfer_diagnostics.py`. Test: `zig build python-radiative-transfer-diagnostics`.
+- [x] Which source-function terms matter most? Output: bounded source proxy columns and ranked layer terms. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_radiative_transfer_diagnostics.py`. Test: `zig build python-radiative-transfer-diagnostics`.
+- [x] Does multiple scattering materially change reflectance in a selected band? Output: multiple-vs-single scattering reflectance perturbation table. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_parameter_perturbation.py`. Test: `zig build python-parameter-perturbation`.
+- [x] How much does pseudo-spherical correction change the path through each layer? Output: pseudo-spherical airmass/path proxy column. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_radiative_transfer_diagnostics.py`. Test: `zig build python-radiative-transfer-diagnostics`.
+
+### DISAMAR Reference Comparison
+
+- [ ] At a wavelength where this implementation differs from DISAMAR reference evidence, which scientific stage first diverges? Output needed: staged diagnostic tables plus comparison metrics. Checkpoint: pending comparison helper.
+- [ ] Is a difference caused by line absorption, line mixing, CIA, aerosol placement, instrument response, solar irradiance, or radiative transfer? Output needed: staged diagnostic tables covering those terms. Checkpoint: pending staged diagnostics.
+- [ ] Which intermediate diagnostic table should be compared against DISAMAR for a focused validation check? Output needed: versioned diagnostic table schemas and comparison metadata. Checkpoint: pending table-schema registry.
+
+## Runtime Expectations
+
+A full forward model run should remain one coarse native call. Additional
+diagnostic calls should reuse `PreparedInput`.
+
+Expected cost pattern:
+
+- final spectrum: full forward-model cost
+- atmospheric absorption and scattering budget: moderate, scales with
+  wavelengths and layers
+- O2 line contribution table: potentially high, scales with wavelengths,
+  thermodynamic states, and relevant line count
+- instrument response table: low to moderate
+- radiative-transfer diagnostics: high, should be filtered and row-limited
+- parameter sensitivity: usually one extra forward-model run per perturbation
+  unless an analytical derivative is available
+
+The Python API should make expensive diagnostics explicit and should avoid
+scalar per-wavelength calls across the native boundary.
+
+## Native Boundary
+
+The existing low-level C interface is the native boundary for the coarse
+spectrum path. A future research interface should extend that approach with
+versioned table schemas instead of exposing Zig structs directly.
+
+The native side should return column-oriented tables:
+
+- table id
+- schema version
+- row count
+- column names
+- units
+- data type
+- array pointer
+- ownership/free function
+
+Python should convert those tables to:
+
+- NumPy arrays for numerical work
+- Pandas data frames for diagnostic tables
+- xarray datasets for dimensioned wavelength/layer data
+
 ## Implementation Direction
 
-The first useful slice should be an atmospheric absorption/scattering budget,
-because it answers real research questions without rerunning full radiative
-transfer.
+After the spectrum/report foundation, the first larger research slice should be
+an atmospheric absorption and scattering budget, because it answers real
+research questions without rerunning full radiative transfer.
 
-Suggested staged order:
+Suggested staged checklist:
 
-1. expose final spectrum and current diagnostic report cleanly;
-2. expose atmospheric layer and absorption/scattering budget tables;
-3. expose O2 line contribution tables;
-4. expose instrument response samples;
-5. expose selected radiative-transfer diagnostics;
-6. expose parameter perturbation helpers.
+- [x] Expose final spectrum and current diagnostic report cleanly.
+- [x] Expose a typed Python DISAMAR O2 A setup that uses the same native reference route as validation.
+- [x] Expose atmospheric layer and absorption/scattering budget tables.
+- [x] Expose O2 line contribution tables.
+- [x] Expose O2-O2 CIA diagnostics.
+- [x] Expose instrument response and high-resolution wavelength sampling tables.
+- [x] Expose selected radiative-transfer diagnostics.
+- [x] Expose parameter perturbation helpers.
 
-Each stage should return versioned table schemas so Python can convert them to
-NumPy, Pandas, or xarray without knowing Zig's internal struct layout.
+The implemented foundation exposes DISAMAR O2 A reference setup controls, final
+spectrum arrays, a `DiagnosticReport` for the same native result, atmospheric
+budget tables, O2 line contribution tables, O2-O2 CIA tables, instrument
+response tables, bounded radiative-transfer diagnostics, and parameter
+perturbation outputs. The report is reached through `Spectrum.diagnostic_report`,
+so reading it does not run the forward model again. The forward-summary harness
+defines the O2 A case directly in Python, writes a parity plot under `out/ci/`,
+and emits one compact CLI line with timing and residual diagnostics. The
+setup-roundtrip harness checks that the typed Python setup matches the default
+parity entrypoint. The diagnostic harnesses write machine-readable tables plus
+JSON answers to their checkpointed science questions:
+
+```bash
+zig build python-forward-summary
+zig build python-o2a-setup-roundtrip
+zig build python-atmosphere-budget
+zig build python-o2-line-diagnostics
+zig build python-o2-o2-cia-diagnostics
+zig build python-instrument-response
+zig build python-radiative-transfer-diagnostics
+zig build python-parameter-perturbation
+```
+
+Implementation should stay consistent with the current source-tree rules:
+
+- file loading and parsing stay outside forward-model routines;
+- scientific routines stay free of hidden global state;
+- no parsed control is silently ignored;
+- every public diagnostic table gets a documented schema;
+- expensive diagnostics are opt-in and bounded.
