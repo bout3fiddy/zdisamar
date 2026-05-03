@@ -373,14 +373,28 @@ pub fn buildResolvedVendorO2AScene(
 
 pub fn prepareResolvedVendorO2ARoute(
     scene: *const Scene,
+    plan: PlanSpec,
     rtm_controls: RadiativeTransferControls,
 ) !Route {
     return transport_common.prepareRoute(.{
         .regime = scene.observation_model.regime,
-        .execution_mode = .scalar,
-        .derivative_mode = .none,
+        .execution_mode = try parseExecutionMode(plan.execution_solver_mode),
+        .derivative_mode = try parseDerivativeMode(plan.execution_derivative_mode),
         .rtm_controls = rtm_controls,
     });
+}
+
+fn parseExecutionMode(value: []const u8) !transport_common.ExecutionMode {
+    if (std.mem.eql(u8, value, "scalar")) return .scalar;
+    if (std.mem.eql(u8, value, "polarized")) return .polarized;
+    return error.UnsupportedExecutionMode;
+}
+
+fn parseDerivativeMode(value: []const u8) !transport_common.DerivativeMode {
+    if (std.mem.eql(u8, value, "none")) return .none;
+    if (std.mem.eql(u8, value, "semi_analytical")) return .semi_analytical;
+    if (std.mem.eql(u8, value, "numerical")) return .numerical;
+    return error.UnsupportedExecutionMode;
 }
 
 pub fn runResolvedVendorO2AReflectanceCase(
@@ -450,7 +464,7 @@ pub fn prepareResolvedVendorO2ACase(
     try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
     try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
 
-    const route = try prepareResolvedVendorO2ARoute(&scene, resolved.rtm_controls);
+    const route = try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
 
     return .{
         .reference = reference,
