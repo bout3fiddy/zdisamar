@@ -163,22 +163,30 @@ fn accumulateOrderContribution(
     start_level: usize,
     end_level: usize,
     nmutot: usize,
+    track_sum_local: bool,
 ) void {
     for (start_level..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
             const orde_u = ud_orde[ilevel].U.col[imu0].data;
             const orde_d = ud_orde[ilevel].D.col[imu0].data;
-            const local_u = ud_local[ilevel].U.col[imu0].data;
-            const local_d = ud_local[ilevel].D.col[imu0].data;
             const ud_u = &ud[ilevel].U.col[imu0].data;
             const ud_d = &ud[ilevel].D.col[imu0].data;
-            const sum_u = &ud_sum_local[ilevel].U.col[imu0].data;
-            const sum_d = &ud_sum_local[ilevel].D.col[imu0].data;
-            for (0..nmutot) |imu| {
-                ud_u[imu] += orde_u[imu];
-                ud_d[imu] += orde_d[imu];
-                sum_u[imu] += local_u[imu];
-                sum_d[imu] += local_d[imu];
+            if (track_sum_local) {
+                const local_u = ud_local[ilevel].U.col[imu0].data;
+                const local_d = ud_local[ilevel].D.col[imu0].data;
+                const sum_u = &ud_sum_local[ilevel].U.col[imu0].data;
+                const sum_d = &ud_sum_local[ilevel].D.col[imu0].data;
+                for (0..nmutot) |imu| {
+                    ud_u[imu] += orde_u[imu];
+                    ud_d[imu] += orde_d[imu];
+                    sum_u[imu] += local_u[imu];
+                    sum_d[imu] += local_d[imu];
+                }
+            } else {
+                for (0..nmutot) |imu| {
+                    ud_u[imu] += orde_u[imu];
+                    ud_d[imu] += orde_d[imu];
+                }
             }
         }
     }
@@ -196,6 +204,7 @@ fn ordersScatInternal(
     rt: []const basis.LayerRT,
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
+    track_sum_local: bool,
 ) OrdersResultView {
     const nmutot = geo.nmutot;
     const n_gauss = geo.n_gauss;
@@ -252,9 +261,11 @@ fn ordersScatInternal(
         }
     }
 
-    for (start_level..end_level + 1) |ilevel| {
-        ud_sum_local_view[ilevel].U = ud_local_view[ilevel].U;
-        ud_sum_local_view[ilevel].D = ud_local_view[ilevel].D;
+    if (track_sum_local) {
+        for (start_level..end_level + 1) |ilevel| {
+            ud_sum_local_view[ilevel].U = ud_local_view[ilevel].U;
+            ud_sum_local_view[ilevel].D = ud_local_view[ilevel].D;
+        }
     }
 
     transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
@@ -346,6 +357,7 @@ fn ordersScatInternal(
             start_level,
             end_level,
             nmutot,
+            track_sum_local,
         );
     }
 
@@ -377,6 +389,33 @@ pub fn ordersScatInto(
         rt,
         controls,
         num_orders_max,
+        true,
+    );
+}
+
+pub fn ordersScatTransportInto(
+    storage: *OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: *const basis.Geometry,
+    atten: anytype,
+    rt: []const basis.LayerRT,
+    controls: common.RadiativeTransferControls,
+    num_orders_max: usize,
+) OrdersResultView {
+    return ordersScatInternal(
+        storage.ud,
+        storage.ud_sum_local,
+        storage.ud_orde,
+        storage.ud_local,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+        false,
     );
 }
 
@@ -425,6 +464,7 @@ pub fn ordersScat(
         rt,
         controls,
         num_orders_max,
+        true,
     );
     return result;
 }
