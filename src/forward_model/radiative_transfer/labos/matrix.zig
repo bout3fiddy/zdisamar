@@ -65,6 +65,7 @@ fn smul12x10(a: *const Mat, b: *const Mat) Mat {
 }
 
 pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
+    if (n == 12) return esmul12(e, a);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         var idx = j;
@@ -77,6 +78,7 @@ pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
 }
 
 pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
+    if (n == 12) return semul12(a, e);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         const ej = e.data[j];
@@ -96,6 +98,7 @@ pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
 }
 
 pub fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
+    if (n == 12) return matAddSemul3_12(a, b, e, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         const ej = e.data[j];
@@ -109,6 +112,7 @@ pub fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *c
 }
 
 pub fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
+    if (n == 12) return matAddEsmul3_12(a, e, b, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         var idx = j;
@@ -121,6 +125,7 @@ pub fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *c
 }
 
 pub fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
+    if (n == 12) return semulAdd12(a, e, b);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         const ej = e.data[j];
@@ -134,6 +139,7 @@ pub fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
 }
 
 pub fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
+    if (n == 12) return esmulSemulAdd12(e, a, b, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
         const ej = e.data[j];
@@ -141,6 +147,82 @@ pub fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *
         for (0..n) |i| {
             result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + c.data[idx];
             idx += n;
+        }
+    }
+    return result;
+}
+
+fn esmul12(e: *const Vec, a: *const Mat) Mat {
+    var result = Mat{ .data = undefined, .n = 12 };
+    for (0..12) |j| {
+        var idx = j;
+        for (0..12) |i| {
+            result.data[idx] = e.data[i] * a.data[idx];
+            idx += 12;
+        }
+    }
+    return result;
+}
+
+fn semul12(a: *const Mat, e: *const Vec) Mat {
+    var result = Mat{ .data = undefined, .n = 12 };
+    for (0..12) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..12) |_| {
+            result.data[idx] = a.data[idx] * ej;
+            idx += 12;
+        }
+    }
+    return result;
+}
+
+fn matAddSemul3_12(a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
+    var result = Mat{ .data = undefined, .n = 12 };
+    for (0..12) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..12) |_| {
+            result.data[idx] = (a.data[idx] + b.data[idx] * ej) + c.data[idx];
+            idx += 12;
+        }
+    }
+    return result;
+}
+
+fn matAddEsmul3_12(a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
+    var result = Mat{ .data = undefined, .n = 12 };
+    for (0..12) |j| {
+        var idx = j;
+        for (0..12) |i| {
+            result.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + c.data[idx];
+            idx += 12;
+        }
+    }
+    return result;
+}
+
+fn semulAdd12(a: *const Mat, e: *const Vec, b: *const Mat) Mat {
+    var result = Mat{ .data = undefined, .n = 12 };
+    for (0..12) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..12) |_| {
+            result.data[idx] = a.data[idx] * ej + b.data[idx];
+            idx += 12;
+        }
+    }
+    return result;
+}
+
+fn esmulSemulAdd12(e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
+    var result = Mat{ .data = undefined, .n = 12 };
+    for (0..12) |j| {
+        const ej = e.data[j];
+        var idx = j;
+        for (0..12) |i| {
+            result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + c.data[idx];
+            idx += 12;
         }
     }
     return result;
