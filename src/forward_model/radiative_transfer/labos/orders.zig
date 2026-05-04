@@ -461,7 +461,7 @@ pub fn ordersScatTransportInto(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
-    return ordersScatInternal(
+    const result = ordersScatInternal(
         false,
         storage.ud,
         storage.ud_sum_local,
@@ -475,6 +475,10 @@ pub fn ordersScatTransportInto(
         controls,
         num_orders_max,
     );
+    return .{
+        .ud = result.ud,
+        .ud_sum_local = &.{},
+    };
 }
 
 pub fn ordersScat(

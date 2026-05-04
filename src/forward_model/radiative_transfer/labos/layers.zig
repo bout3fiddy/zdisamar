@@ -254,7 +254,8 @@ fn singleScatterR12(
     Zmin: *const basis.Mat,
     geo: *const basis.Geometry,
 ) basis.Mat {
-    var result = basis.Mat.zero(12);
+    // INVARIANT: the fixed 12x12 loops assign every active matrix element.
+    var result = basis.Mat{ .data = undefined, .n = 12 };
 
     inline for (0..12) |j| {
         const ej = E.data[j];
@@ -304,7 +305,8 @@ fn singleScatterT12(
     Zplus: *const basis.Mat,
     geo: *const basis.Geometry,
 ) basis.Mat {
-    var result = basis.Mat.zero(12);
+    // INVARIANT: the fixed 12x12 loops assign every active matrix element.
+    var result = basis.Mat{ .data = undefined, .n = 12 };
 
     inline for (0..12) |j| {
         const ej = E.data[j];
