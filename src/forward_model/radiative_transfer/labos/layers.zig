@@ -325,6 +325,13 @@ fn singleScatterT12(
     return result;
 }
 
+fn matIsZero(n: usize, mat: *const basis.Mat) bool {
+    for (mat.data[0 .. n * n]) |value| {
+        if (value != 0.0) return false;
+    }
+    return true;
+}
+
 // Perform ndouble doubling steps on R, T, E for a layer.
 fn doDouble(
     ndouble: usize,
@@ -346,13 +353,19 @@ fn doDouble(
         const Q = basis.qseries(n, n_gauss, threshold_mul, R, R);
         if (profile_sample) |sample| sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
 
-        const smul_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-        const qt = basis.smul(n, n_gauss, threshold_mul, &Q, T);
-        if (profile_sample) |sample| sample.double_qt_ns += std.time.nanoTimestamp() - smul_start;
+        const q_is_zero = matIsZero(n, &Q);
+        const D = if (q_is_zero) blk: {
+            break :blk T.*;
+        } else blk: {
+            const smul_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
+            const qt = basis.smul(n, n_gauss, threshold_mul, &Q, T);
+            if (profile_sample) |sample| sample.double_qt_ns += std.time.nanoTimestamp() - smul_start;
 
-        const combine_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-        const D = basis.matAddSemul3(n, T, &Q, E, &qt);
-        if (profile_sample) |sample| sample.double_d_ns += std.time.nanoTimestamp() - combine_start;
+            const combine_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
+            const combined = basis.matAddSemul3(n, T, &Q, E, &qt);
+            if (profile_sample) |sample| sample.double_d_ns += std.time.nanoTimestamp() - combine_start;
+            break :blk combined;
+        };
 
         const rd_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const rd = basis.smul(n, n_gauss, threshold_mul, R, &D);
