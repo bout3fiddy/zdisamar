@@ -37,8 +37,8 @@ pub const FourierPlmBasis = struct {
         var result = FourierPlmBasis{
             .i_fourier = i_fourier,
             .max_phase_index = max_phase_index,
-            .plus = [_][types.max_nmutot]f64{.{0.0} ** types.max_nmutot} ** types.max_phase_coef,
-            .minus = [_][types.max_nmutot]f64{.{0.0} ** types.max_nmutot} ** types.max_phase_coef,
+            .plus = undefined,
+            .minus = undefined,
         };
         if (max_phase_index < i_fourier) return result;
 
