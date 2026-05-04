@@ -178,6 +178,53 @@ pub fn evaluateReducedLayerFromSupportRowsWithSpectroscopyCache(
     );
 }
 
+pub fn evaluateReducedLayerFromSupportRowsWithCarrierCache(
+    self: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    layer_geometry: SharedRtmLayerGeometry,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+) EvaluatedLayer {
+    var breakdown: OpticalDepthBreakdown = .{};
+    var phase_numerator = [_]f64{0.0} ** phase_coefficient_count;
+    if (support_sublayers.len < 2) {
+        return evaluatedLayerFromSharedCarrier(
+            scene,
+            wavelength_nm,
+            layer_geometry.midpoint_altitude_km,
+            breakdown,
+            phase_numerator,
+        );
+    }
+
+    for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
+        const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
+        if (weight_km <= 0.0) continue;
+        const strong_line_state = if (strong_line_states) |states|
+            if (local_index < states.len) &states[local_index] else null
+        else
+            null;
+        const carrier = carrier_eval.sharedOpticalCarrierAtSupportRowWithCarrierCache(
+            self,
+            wavelength_nm,
+            support_sublayer,
+            @intCast(support_sublayer.global_sublayer_index),
+            strong_line_state,
+            wavelength_cache,
+        );
+        accumulateSharedCarrier(&breakdown, &phase_numerator, carrier, weight_km);
+    }
+    return evaluatedLayerFromSharedCarrier(
+        scene,
+        wavelength_nm,
+        layer_geometry.midpoint_altitude_km,
+        breakdown,
+        phase_numerator,
+    );
+}
+
 pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
     self: *const PreparedOpticalState,
     wavelength_nm: f64,
@@ -204,6 +251,48 @@ pub fn fillSharedPseudoSphericalSamplesFromSupportRows(
                 @intCast(support_sublayer.global_sublayer_index),
                 strong_line_state,
                 profile_cache,
+            ).totalOpticalDepthPerKm()
+        else
+            0.0;
+        attenuation_samples[sample_index] = .{
+            .altitude_km = support_sublayer.altitude_km,
+            .thickness_km = weight_km,
+            .optical_depth = optical_depth,
+        };
+        if (sample_index < attenuation_layers.len) {
+            attenuation_layers[sample_index] = .{ .optical_depth = optical_depth };
+        }
+        sample_index += 1;
+    }
+    return sample_index;
+}
+
+pub fn fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
+    self: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    support_sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    attenuation_layers: []transport_common.LayerInput,
+    attenuation_samples: []transport_common.PseudoSphericalSample,
+    sample_index_start: usize,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+) usize {
+    var sample_index = sample_index_start;
+    if (support_sublayers.len < 2) return sample_index;
+    for (support_sublayers[1 .. support_sublayers.len - 1], 1..) |support_sublayer, local_index| {
+        const weight_km = @max(support_sublayer.path_length_cm / 1.0e5, 0.0);
+        const strong_line_state = if (strong_line_states) |states|
+            if (local_index < states.len) &states[local_index] else null
+        else
+            null;
+        const optical_depth = if (weight_km > 0.0)
+            weight_km * carrier_eval.sharedOpticalCarrierAtSupportRowWithCarrierCache(
+                self,
+                wavelength_nm,
+                support_sublayer,
+                @intCast(support_sublayer.global_sublayer_index),
+                strong_line_state,
+                wavelength_cache,
             ).totalOpticalDepthPerKm()
         else
             0.0;

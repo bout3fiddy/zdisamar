@@ -227,7 +227,36 @@ pub fn fillAttenuationDynamicWithGrid(
 ) !DynamicAttenArray {
     const nlayer = layers.len;
     const nlevel = nlayer + 1;
-    var atten = try DynamicAttenArray.init(allocator, geo.nmutot, nlevel);
+    const data = try allocator.alloc(f64, geo.nmutot * nlevel * nlevel);
+    return fillAttenuationDynamicWithGridInBuffer(
+        allocator,
+        data,
+        layers,
+        pseudo_spherical_grid,
+        geo,
+        use_spherical_correction,
+    );
+}
+
+pub fn fillAttenuationDynamicWithGridInBuffer(
+    allocator: Allocator,
+    data: []f64,
+    layers: []const common.LayerInput,
+    pseudo_spherical_grid: common.PseudoSphericalGrid,
+    geo: *const basis.Geometry,
+    use_spherical_correction: bool,
+) DynamicAttenArray {
+    const nlayer = layers.len;
+    const nlevel = nlayer + 1;
+    const required_len = geo.nmutot * nlevel * nlevel;
+    std.debug.assert(data.len >= required_len);
+    for (data[0..required_len]) |*value| value.* = 1.0;
+    var atten = DynamicAttenArray{
+        .allocator = allocator,
+        .data = data[0..required_len],
+        .nmutot = geo.nmutot,
+        .nlevel = nlevel,
+    };
 
     for (0..nlayer) |ilTo_0| {
         const ilTo = ilTo_0 + 1;

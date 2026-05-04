@@ -1,0 +1,86 @@
+const std = @import("std");
+const basis = @import("basis.zig");
+const common = @import("../root.zig");
+const attenuation_mod = @import("attenuation.zig");
+const orders_mod = @import("orders.zig");
+
+const Allocator = std.mem.Allocator;
+
+pub const Workspace = struct {
+    allocator: Allocator,
+    attenuation_data: []f64 = &.{},
+    rt_layers: []basis.LayerRT = &.{},
+    orders: ?orders_mod.OrdersWorkspace = null,
+    layer_phase_kernels: []basis.PhaseKernel = &.{},
+    layer_phase_kernel_valid: []bool = &.{},
+
+    pub fn init(allocator: Allocator) Workspace {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Workspace) void {
+        if (self.orders) |*orders| orders.deinit();
+        self.allocator.free(self.attenuation_data);
+        self.allocator.free(self.rt_layers);
+        self.allocator.free(self.layer_phase_kernels);
+        self.allocator.free(self.layer_phase_kernel_valid);
+        self.* = undefined;
+    }
+
+    pub fn attenuation(
+        self: *Workspace,
+        layers: []const common.LayerInput,
+        pseudo_spherical_grid: common.PseudoSphericalGrid,
+        geo: *const basis.Geometry,
+        use_spherical_correction: bool,
+    ) !attenuation_mod.DynamicAttenArray {
+        const nlevel = layers.len + 1;
+        const required_len = geo.nmutot * nlevel * nlevel;
+        try ensureCapacity(f64, self.allocator, &self.attenuation_data, required_len);
+        return attenuation_mod.fillAttenuationDynamicWithGridInBuffer(
+            self.allocator,
+            self.attenuation_data,
+            layers,
+            pseudo_spherical_grid,
+            geo,
+            use_spherical_correction,
+        );
+    }
+
+    pub fn layerRt(self: *Workspace, nlevel: usize) ![]basis.LayerRT {
+        try ensureCapacity(basis.LayerRT, self.allocator, &self.rt_layers, nlevel);
+        return self.rt_layers[0..nlevel];
+    }
+
+    pub fn ordersWorkspace(self: *Workspace, nlevel: usize) !*orders_mod.OrdersWorkspace {
+        if (self.orders) |*orders| {
+            if (orders.ud.len >= nlevel) return orders;
+            orders.deinit();
+            self.orders = null;
+        }
+        self.orders = try orders_mod.OrdersWorkspace.init(self.allocator, nlevel);
+        return &(self.orders.?);
+    }
+
+    pub fn phaseKernelCache(self: *Workspace, nlevel: usize) ![]basis.PhaseKernel {
+        try ensureCapacity(basis.PhaseKernel, self.allocator, &self.layer_phase_kernels, nlevel);
+        return self.layer_phase_kernels[0..nlevel];
+    }
+
+    pub fn phaseKernelValid(self: *Workspace, nlevel: usize) ![]bool {
+        try ensureCapacity(bool, self.allocator, &self.layer_phase_kernel_valid, nlevel);
+        return self.layer_phase_kernel_valid[0..nlevel];
+    }
+};
+
+fn ensureCapacity(
+    comptime T: type,
+    allocator: Allocator,
+    buffer: *[]T,
+    required_len: usize,
+) !void {
+    if (buffer.*.len >= required_len) return;
+    const replacement = try allocator.alloc(T, required_len);
+    allocator.free(buffer.*);
+    buffer.* = replacement;
+}

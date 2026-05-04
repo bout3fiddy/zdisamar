@@ -1,7 +1,7 @@
 const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
-const OpticsSpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
+const CarrierEval = @import("../../optical_properties/state_build/carrier_eval.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const Storage = @import("storage.zig");
 
@@ -59,17 +59,31 @@ pub fn configuredForwardInput(
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
+    support_carrier_valid: []bool,
+    support_carriers: []CarrierEval.SharedOpticalCarrier,
     profile: ?*Profile,
 ) common.ExecuteError!common.ForwardInput {
     const cache_start = std.time.nanoTimestamp();
-    var profile_cache = OpticsSpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm);
+    var wavelength_cache = CarrierEval.WavelengthCarrierCache.init(
+        prepared,
+        wavelength_nm,
+        support_carrier_valid,
+        support_carriers,
+    );
     const layers_start = std.time.nanoTimestamp();
-    var input = OpticsPreparation.transport.toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
+    const optical_depths = OpticsPreparation.transport.fillForwardLayersAtWavelengthWithCarrierCache(
         prepared,
         scene,
         wavelength_nm,
         layer_inputs,
-        &profile_cache,
+        &wavelength_cache,
+    );
+    var input = OpticsPreparation.transport.forwardInputFromOpticalDepths(
+        prepared,
+        scene,
+        wavelength_nm,
+        optical_depths,
+        layer_inputs,
     );
     const rtm_start = std.time.nanoTimestamp();
     const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
@@ -78,12 +92,12 @@ pub fn configuredForwardInput(
         // DECISION:
         //   Only attach RTM quadrature when the route requests integrated
         //   source-function evaluation.
-        const has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
+        const has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
             prepared,
             wavelength_nm,
             input.layers,
             rtm_quadrature_levels[0 .. input.layers.len + 1],
-            &profile_cache,
+            &wavelength_cache,
         );
         if (has_rtm_quadrature) {
             input.rtm_quadrature = .{
@@ -98,12 +112,12 @@ pub fn configuredForwardInput(
         }
     }
     const source_start = std.time.nanoTimestamp();
-    OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
+    OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
         prepared,
         wavelength_nm,
         input.layers,
         source_interface_slice,
-        &profile_cache,
+        &wavelength_cache,
     );
     const pseudo_start = std.time.nanoTimestamp();
     if (route.rtm_controls.use_spherical_correction) {
@@ -112,7 +126,7 @@ pub fn configuredForwardInput(
         //   the geometric correction. Explicit shared-grid routes rebuild the
         //   dense wavelength-specific attenuation contract directly from the
         //   RTM subgrid instead of reusing midpoint-style layer surrogates.
-        const has_pseudo_spherical_grid = OpticsPreparation.transport.fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
+        const has_pseudo_spherical_grid = OpticsPreparation.transport.fillPseudoSphericalGridAtWavelengthWithCarrierCache(
             prepared,
             scene,
             wavelength_nm,
@@ -121,7 +135,7 @@ pub fn configuredForwardInput(
             pseudo_spherical_samples,
             pseudo_spherical_level_starts,
             pseudo_spherical_level_altitudes,
-            &profile_cache,
+            &wavelength_cache,
         );
         if (has_pseudo_spherical_grid) {
             const pseudo_spherical_sample_count = pseudo_spherical_level_starts[input.layers.len];

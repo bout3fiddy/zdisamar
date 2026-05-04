@@ -7,6 +7,7 @@ const State = @import("state.zig");
 const Evaluation = @import("evaluation.zig");
 const shared_geometry = @import("shared_geometry.zig");
 const shared_carrier = @import("shared_carrier.zig");
+const carrier_eval = @import("carrier_eval.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
 
 const PreparedOpticalState = State.PreparedOpticalState;
@@ -79,6 +80,22 @@ pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
         )
     else
         prepared.opticalDepthBreakdownAtWavelength(wavelength_nm);
+    return forwardInputFromOpticalDepths(
+        prepared,
+        scene,
+        wavelength_nm,
+        optical_depths,
+        if (layer_inputs) |owned_layers| owned_layers else &.{},
+    );
+}
+
+pub fn forwardInputFromOpticalDepths(
+    prepared: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    optical_depths: OpticalDepthBreakdown,
+    layers: []transport_common.LayerInput,
+) transport_common.ForwardInput {
     const mu0 = scene.geometry.solarCosineAtAltitude(0.0);
     const muv = scene.geometry.viewingCosineAtAltitude(0.0);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
@@ -106,7 +123,7 @@ pub fn toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
             optical_depths.singleScatterAlbedo()
         else
             prepared.effective_single_scatter_albedo,
-        .layers = if (layer_inputs) |owned_layers| owned_layers else &.{},
+        .layers = layers,
     };
 }
 
@@ -301,4 +318,52 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
         totals.cloud_scattering_optical_depth += cloud_scattering_optical_depth;
     }
     return totals;
+}
+
+pub fn fillForwardLayersAtWavelengthWithCarrierCache(
+    self: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    layer_inputs: []transport_common.LayerInput,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+) OpticalDepthBreakdown {
+    if (layer_inputs.len == 0) return self.opticalDepthBreakdownAtWavelength(wavelength_nm);
+
+    if (self.sublayers) |sublayers| {
+        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+            if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
+                var totals: OpticalDepthBreakdown = .{};
+                for (geometry.layers, layer_inputs) |layer_geometry, *layer_input| {
+                    const support_start_index: usize = @intCast(layer_geometry.support_start_index);
+                    const support_count: usize = @intCast(layer_geometry.support_count);
+                    const support = shared_geometry.sharedSupportSlices(
+                        self,
+                        sublayers,
+                        support_start_index,
+                        support_count,
+                    );
+                    const evaluated = shared_carrier.evaluateReducedLayerFromSupportRowsWithCarrierCache(
+                        self,
+                        scene,
+                        wavelength_nm,
+                        support.sublayers,
+                        support.strong_line_states,
+                        layer_geometry,
+                        wavelength_cache,
+                    );
+                    layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
+                    Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
+                }
+                return totals;
+            }
+        }
+    }
+
+    return fillForwardLayersAtWavelengthWithSpectroscopyCache(
+        self,
+        scene,
+        wavelength_nm,
+        layer_inputs,
+        &wavelength_cache.profile_cache,
+    );
 }

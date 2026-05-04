@@ -42,32 +42,17 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
     if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
         if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
             for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
-                const level_carrier: LevelCarrier = if (level_geometry.weight_km > 0.0) blk: {
-                    const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
-                        self,
-                        wavelength_nm,
-                        sublayers,
-                        if (self.strong_line_states) |states| states else null,
-                        level_geometry,
-                        profile_cache,
-                    );
-                    break :blk LevelCarrier{
-                        .ksca = boundary_carrier.ksca_above,
-                        .phase_coefficients = boundary_carrier.phase_coefficients_above,
-                    };
-                } else blk: {
-                    const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
-                        self,
-                        wavelength_nm,
-                        sublayers,
-                        if (self.strong_line_states) |states| states else null,
-                        level_geometry,
-                        profile_cache,
-                    );
-                    break :blk LevelCarrier{
-                        .ksca = boundary_carrier.ksca_above,
-                        .phase_coefficients = boundary_carrier.phase_coefficients_above,
-                    };
+                const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
+                    self,
+                    wavelength_nm,
+                    sublayers,
+                    if (self.strong_line_states) |states| states else null,
+                    level_geometry,
+                    profile_cache,
+                );
+                const level_carrier = LevelCarrier{
+                    .ksca = boundary_carrier.ksca_above,
+                    .phase_coefficients = boundary_carrier.phase_coefficients_above,
                 };
                 rtm_level.* = .{
                     .altitude_km = level_geometry.altitude_km,
@@ -100,7 +85,6 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                 .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
             };
         }
-
         return false;
     }
 
@@ -179,5 +163,64 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
         }
     }
 
+    return has_active_quadrature;
+}
+
+pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
+    self: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    layer_inputs: []const transport_common.LayerInput,
+    rtm_levels: []transport_common.RtmQuadratureLevel,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+) bool {
+    const sublayers = self.sublayers orelse return false;
+    if (rtm_levels.len != layer_inputs.len + 1) return false;
+
+    if (!shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+        return fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
+            self,
+            wavelength_nm,
+            layer_inputs,
+            rtm_levels,
+            &wavelength_cache.profile_cache,
+        );
+    }
+
+    const geometry = shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len) orelse {
+        for (rtm_levels) |*rtm_level| {
+            rtm_level.* = .{
+                .altitude_km = 0.0,
+                .weight = 0.0,
+                .ksca = 0.0,
+                .phase_coefficients = PhaseFunctions.zeroPhaseCoefficients(),
+            };
+        }
+        return false;
+    };
+
+    for (rtm_levels, geometry.levels) |*rtm_level, level_geometry| {
+        const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithCarrierCache(
+            self,
+            wavelength_nm,
+            sublayers,
+            if (self.strong_line_states) |states| states else null,
+            level_geometry,
+            wavelength_cache,
+        );
+        rtm_level.* = .{
+            .altitude_km = level_geometry.altitude_km,
+            .weight = level_geometry.weight_km,
+            .ksca = boundary_carrier.ksca_above,
+            .phase_coefficients = boundary_carrier.phase_coefficients_above,
+        };
+    }
+
+    var has_active_quadrature = false;
+    for (rtm_levels) |rtm_level| {
+        if (rtm_level.weightedScattering() > 0.0) {
+            has_active_quadrature = true;
+            break;
+        }
+    }
     return has_active_quadrature;
 }

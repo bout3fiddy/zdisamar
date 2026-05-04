@@ -12,11 +12,20 @@ pub fn executePrepared(
     route: common.Route,
     input: common.ForwardInput,
 ) common.ExecuteError!common.ForwardResult {
+    return executePreparedWithLabosWorkspace(allocator, route, input, null);
+}
+
+pub fn executePreparedWithLabosWorkspace(
+    allocator: std.mem.Allocator,
+    route: common.Route,
+    input: common.ForwardInput,
+    workspace: ?*labos.Workspace,
+) common.ExecuteError!common.ForwardResult {
     // DECISION:
     //   Dispatch by resolved family instead of re-evaluating route policy here.
     return switch (route.family) {
         .adding => adding.execute(allocator, route, input),
-        .labos => labos.execute(allocator, route, input),
+        .labos => labos.executeWithWorkspace(allocator, route, input, workspace),
     };
 }
 
