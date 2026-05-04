@@ -121,6 +121,55 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
     return s;
 }
 
+const DotPair = struct {
+    col0: f64,
+    col1: f64,
+};
+
+fn dotGaussPair(
+    mat: *const basis.Mat,
+    row: usize,
+    vec_col0: *const basis.Vec,
+    vec_col1: *const basis.Vec,
+    n_gauss: usize,
+) DotPair {
+    const row_offset = row * mat.n;
+    if (n_gauss == 10) {
+        const data = mat.data[row_offset..];
+        const vec0 = vec_col0.data;
+        const vec1 = vec_col1.data;
+        var s0 = data[0] * vec0[0];
+        var s1 = data[0] * vec1[0];
+        s0 += data[1] * vec0[1];
+        s1 += data[1] * vec1[1];
+        s0 += data[2] * vec0[2];
+        s1 += data[2] * vec1[2];
+        s0 += data[3] * vec0[3];
+        s1 += data[3] * vec1[3];
+        s0 += data[4] * vec0[4];
+        s1 += data[4] * vec1[4];
+        s0 += data[5] * vec0[5];
+        s1 += data[5] * vec1[5];
+        s0 += data[6] * vec0[6];
+        s1 += data[6] * vec1[6];
+        s0 += data[7] * vec0[7];
+        s1 += data[7] * vec1[7];
+        s0 += data[8] * vec0[8];
+        s1 += data[8] * vec1[8];
+        s0 += data[9] * vec0[9];
+        s1 += data[9] * vec1[9];
+        return .{ .col0 = s0, .col1 = s1 };
+    }
+    var s0: f64 = 0.0;
+    var s1: f64 = 0.0;
+    for (0..n_gauss) |k| {
+        const value = mat.data[row_offset + k];
+        s0 += value * vec_col0.data[k];
+        s1 += value * vec_col1.data[k];
+    }
+    return .{ .col0 = s0, .col1 = s1 };
+}
+
 fn initializeOrdersBuffers(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -299,37 +348,43 @@ fn ordersScatInternal(
         num_orders += 1;
 
         for (start_level..end_level) |ilevel| {
-            for (0..2) |imu0| {
-                const local_d = &ud_local_view[ilevel].D.col[imu0].data;
-                const prev_u = &ud_orde_view[ilevel].U.col[imu0];
-                const prev_d = &ud_orde_view[ilevel + 1].D.col[imu0];
-                for (0..nmutot) |imu| {
-                    const rst_dot_u = dotGauss(&rt[ilevel + 1].R, imu, prev_u, n_gauss);
-                    const t_dot_d = dotGauss(&rt[ilevel + 1].T, imu, prev_d, n_gauss);
-                    local_d[imu] = rst_dot_u + t_dot_d;
-                }
+            const local_d0 = &ud_local_view[ilevel].D.col[0].data;
+            const local_d1 = &ud_local_view[ilevel].D.col[1].data;
+            const prev_u0 = &ud_orde_view[ilevel].U.col[0];
+            const prev_u1 = &ud_orde_view[ilevel].U.col[1];
+            const prev_d0 = &ud_orde_view[ilevel + 1].D.col[0];
+            const prev_d1 = &ud_orde_view[ilevel + 1].D.col[1];
+            for (0..nmutot) |imu| {
+                const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
+                const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
+                local_d0[imu] = rst_dot_u.col0 + t_dot_d.col0;
+                local_d1[imu] = rst_dot_u.col1 + t_dot_d.col1;
             }
         }
         ud_local_view[end_level].D = basis.Vec2.zero(nmutot);
 
-        for (0..2) |imu0| {
-            const local_u = &ud_local_view[start_level].U.col[imu0].data;
-            const prev_d = &ud_orde_view[start_level].D.col[imu0];
-            for (0..nmutot) |imu| {
-                local_u[imu] = dotGauss(&rt[start_level].R, imu, prev_d, n_gauss);
-            }
+        const local_u_start0 = &ud_local_view[start_level].U.col[0].data;
+        const local_u_start1 = &ud_local_view[start_level].U.col[1].data;
+        const prev_d_start0 = &ud_orde_view[start_level].D.col[0];
+        const prev_d_start1 = &ud_orde_view[start_level].D.col[1];
+        for (0..nmutot) |imu| {
+            const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
+            local_u_start0[imu] = r_dot_d.col0;
+            local_u_start1[imu] = r_dot_d.col1;
         }
 
         for (start_level + 1..end_level + 1) |ilevel| {
-            for (0..2) |imu0| {
-                const local_u = &ud_local_view[ilevel].U.col[imu0].data;
-                const prev_d = &ud_orde_view[ilevel].D.col[imu0];
-                const prev_u = &ud_orde_view[ilevel - 1].U.col[imu0];
-                for (0..nmutot) |imu| {
-                    const r_dot_d = dotGauss(&rt[ilevel].R, imu, prev_d, n_gauss);
-                    const tst_dot_u = dotGauss(&rt[ilevel].T, imu, prev_u, n_gauss);
-                    local_u[imu] = r_dot_d + tst_dot_u;
-                }
+            const local_u0 = &ud_local_view[ilevel].U.col[0].data;
+            const local_u1 = &ud_local_view[ilevel].U.col[1].data;
+            const prev_d0 = &ud_orde_view[ilevel].D.col[0];
+            const prev_d1 = &ud_orde_view[ilevel].D.col[1];
+            const prev_u0 = &ud_orde_view[ilevel - 1].U.col[0];
+            const prev_u1 = &ud_orde_view[ilevel - 1].U.col[1];
+            for (0..nmutot) |imu| {
+                const r_dot_d = dotGaussPair(&rt[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
+                const tst_dot_u = dotGaussPair(&rt[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
+                local_u0[imu] = r_dot_d.col0 + tst_dot_u.col0;
+                local_u1[imu] = r_dot_d.col1 + tst_dot_u.col1;
             }
         }
 
