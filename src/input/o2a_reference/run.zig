@@ -17,7 +17,7 @@ const reference_types = @import("types.zig");
 const adaptive_plan = @import("../../forward_model/implementations/instrument/adaptive_plan.zig");
 const instrument_types = @import("../../forward_model/implementations/instrument/types.zig");
 const fixed_asset_cache = @import("fixed_asset_cache.zig");
-const prepare_trace = @import("prepare_trace.zig");
+const prepare_trace = @import("../../common/prepare_trace.zig");
 
 const Allocator = std.mem.Allocator;
 pub const AbsorberSpecies = reference_types.AbsorberSpecies;

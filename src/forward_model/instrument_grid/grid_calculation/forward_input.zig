@@ -88,7 +88,6 @@ pub fn configuredForwardInput(
     );
     const rtm_start = if (should_profile) std.time.nanoTimestamp() else 0;
     const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
-    input.source_interfaces = source_interface_slice;
     var has_rtm_quadrature = false;
     if (route.rtm_controls.integrate_source_function) {
         // DECISION:
@@ -122,6 +121,7 @@ pub fn configuredForwardInput(
             source_interface_slice,
             &wavelength_cache,
         );
+        input.source_interfaces = source_interface_slice;
     }
     const pseudo_start = if (should_profile) std.time.nanoTimestamp() else 0;
     if (route.rtm_controls.use_spherical_correction) {
