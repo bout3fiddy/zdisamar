@@ -207,26 +207,31 @@ pub fn calcIntegratedReflectanceWithBasis(
         };
         var pmin_ed: f64 = 0.0;
 
+        const zmin_view_offset = view_idx * z.Zmin.n;
+        const zplus_view_offset = view_idx * z.Zplus.n;
+        const level = ud[ilevel];
+        const level_d = level.D.col[solar_col].data;
+        const level_u = level.U.col[solar_col].data;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
-            const pmin = 0.25 * z.Zmin.get(view_idx, imu) / (view_mu * mu);
-            pmin_ed += pmin * ud[ilevel].D.col[solar_col].get(imu);
+            const pmin = 0.25 * z.Zmin.data[zmin_view_offset + imu] / (view_mu * mu);
+            pmin_ed += pmin * level_d[imu];
         }
 
         const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
-        const pmin_direct = 0.25 * z.Zmin.get(view_idx, solar_idx) / (view_mu * solar_mu);
-        pmin_ed += pmin_direct * ud[ilevel].E.get(solar_idx);
+        const pmin_direct = 0.25 * z.Zmin.data[zmin_view_offset + solar_idx] / (view_mu * solar_mu);
+        pmin_ed += pmin_direct * level.E.data[solar_idx];
 
         var pplusst_u: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
-            const pplusst = 0.25 * z.Zplus.get(view_idx, imu) / (view_mu * mu);
-            pplusst_u += pplusst * ud[ilevel].U.col[solar_col].get(imu);
+            const pplusst = 0.25 * z.Zplus.data[zplus_view_offset + imu] / (view_mu * mu);
+            pplusst_u += pplusst * level_u[imu];
         }
 
         // PARITY: `LabosModule::CalcReflectance` forms the level source as
         // `E * ksca * (...)`, then applies `RTMweight` in a separate reduction.
-        const contribution = ud[ilevel].E.get(view_idx) *
+        const contribution = level.E.data[view_idx] *
             source_ksca *
             (pmin_ed + pplusst_u);
         reflectance += source_rtm_weight * contribution;
