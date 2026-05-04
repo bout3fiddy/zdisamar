@@ -71,12 +71,6 @@ pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
     return result;
 }
 
-pub fn matAdd3(n: usize, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
-    var result = Mat{ .data = undefined, .n = n };
-    for (0..n * n) |idx| result.data[idx] = (a.data[idx] + b.data[idx]) + c.data[idx];
-    return result;
-}
-
 pub fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
