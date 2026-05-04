@@ -25,7 +25,7 @@ const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
-const fourier_tail_reflectance_epsilon: f64 = 1.0e-16;
+const fourier_tail_reflectance_epsilon: f64 = 1.0e-14;
 
 pub const Profile = struct {
     mutex: std.Thread.Mutex = .{},
