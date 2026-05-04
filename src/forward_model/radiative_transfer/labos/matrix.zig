@@ -67,7 +67,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
 
 fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
-    for (0..12) |i| {
+    inline for (0..12) |i| {
         const row = i * 12;
         const a0 = a.data[row];
         const a1 = a.data[row + 1];
@@ -79,17 +79,27 @@ fn smul12x10(a: *const Mat, b: *const Mat) Mat {
         const a7 = a.data[row + 7];
         const a8 = a.data[row + 8];
         const a9 = a.data[row + 9];
-        for (0..12) |j| {
-            var s = a0 * b.data[j];
-            s += a1 * b.data[12 + j];
-            s += a2 * b.data[24 + j];
-            s += a3 * b.data[36 + j];
-            s += a4 * b.data[48 + j];
-            s += a5 * b.data[60 + j];
-            s += a6 * b.data[72 + j];
-            s += a7 * b.data[84 + j];
-            s += a8 * b.data[96 + j];
-            s += a9 * b.data[108 + j];
+        const b0 = b.data[0..12];
+        const b1 = b.data[12..24];
+        const b2 = b.data[24..36];
+        const b3 = b.data[36..48];
+        const b4 = b.data[48..60];
+        const b5 = b.data[60..72];
+        const b6 = b.data[72..84];
+        const b7 = b.data[84..96];
+        const b8 = b.data[96..108];
+        const b9 = b.data[108..120];
+        inline for (0..12) |j| {
+            var s = a0 * b0[j];
+            s += a1 * b1[j];
+            s += a2 * b2[j];
+            s += a3 * b3[j];
+            s += a4 * b4[j];
+            s += a5 * b5[j];
+            s += a6 * b6[j];
+            s += a7 * b7[j];
+            s += a8 * b8[j];
+            s += a9 * b9[j];
             result.data[row + j] = s;
         }
     }
@@ -186,9 +196,9 @@ pub fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *
 
 fn esmul12(e: *const Vec, a: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
-    for (0..12) |j| {
+    inline for (0..12) |j| {
         var idx = j;
-        for (0..12) |i| {
+        inline for (0..12) |i| {
             result.data[idx] = e.data[i] * a.data[idx];
             idx += 12;
         }
@@ -198,10 +208,10 @@ fn esmul12(e: *const Vec, a: *const Mat) Mat {
 
 fn semul12(a: *const Mat, e: *const Vec) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
-    for (0..12) |j| {
+    inline for (0..12) |j| {
         const ej = e.data[j];
         var idx = j;
-        for (0..12) |_| {
+        inline for (0..12) |_| {
             result.data[idx] = a.data[idx] * ej;
             idx += 12;
         }
@@ -211,10 +221,10 @@ fn semul12(a: *const Mat, e: *const Vec) Mat {
 
 fn matAddSemul3_12(a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
-    for (0..12) |j| {
+    inline for (0..12) |j| {
         const ej = e.data[j];
         var idx = j;
-        for (0..12) |_| {
+        inline for (0..12) |_| {
             result.data[idx] = (a.data[idx] + b.data[idx] * ej) + c.data[idx];
             idx += 12;
         }
@@ -224,9 +234,9 @@ fn matAddSemul3_12(a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) M
 
 fn matAddEsmul3_12(a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
-    for (0..12) |j| {
+    inline for (0..12) |j| {
         var idx = j;
-        for (0..12) |i| {
+        inline for (0..12) |i| {
             result.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + c.data[idx];
             idx += 12;
         }
@@ -236,10 +246,10 @@ fn matAddEsmul3_12(a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) M
 
 fn semulAdd12(a: *const Mat, e: *const Vec, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
-    for (0..12) |j| {
+    inline for (0..12) |j| {
         const ej = e.data[j];
         var idx = j;
-        for (0..12) |_| {
+        inline for (0..12) |_| {
             result.data[idx] = a.data[idx] * ej + b.data[idx];
             idx += 12;
         }
@@ -249,10 +259,10 @@ fn semulAdd12(a: *const Mat, e: *const Vec, b: *const Mat) Mat {
 
 fn esmulSemulAdd12(e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
-    for (0..12) |j| {
+    inline for (0..12) |j| {
         const ej = e.data[j];
         var idx = j;
-        for (0..12) |i| {
+        inline for (0..12) |i| {
             result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + c.data[idx];
             idx += 12;
         }

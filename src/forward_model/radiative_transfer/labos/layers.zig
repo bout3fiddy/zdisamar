@@ -17,8 +17,14 @@ pub const Profile = struct {
     renorm_ns: i128 = 0,
     doubling_ns: i128 = 0,
     double_qseries_ns: i128 = 0,
-    double_smul_ns: i128 = 0,
-    double_combine_ns: i128 = 0,
+    double_qt_ns: i128 = 0,
+    double_d_ns: i128 = 0,
+    double_rd_ns: i128 = 0,
+    double_u_ns: i128 = 0,
+    double_tu_ns: i128 = 0,
+    double_r_new_ns: i128 = 0,
+    double_td_ns: i128 = 0,
+    double_t_new_ns: i128 = 0,
     double_exponent_ns: i128 = 0,
     store_ns: i128 = 0,
     layer_count: usize = 0,
@@ -34,8 +40,14 @@ pub const Profile = struct {
         renorm_ns: i128 = 0,
         doubling_ns: i128 = 0,
         double_qseries_ns: i128 = 0,
-        double_smul_ns: i128 = 0,
-        double_combine_ns: i128 = 0,
+        double_qt_ns: i128 = 0,
+        double_d_ns: i128 = 0,
+        double_rd_ns: i128 = 0,
+        double_u_ns: i128 = 0,
+        double_tu_ns: i128 = 0,
+        double_r_new_ns: i128 = 0,
+        double_td_ns: i128 = 0,
+        double_t_new_ns: i128 = 0,
         double_exponent_ns: i128 = 0,
         store_ns: i128 = 0,
         layer_count: usize = 0,
@@ -54,8 +66,14 @@ pub const Profile = struct {
         self.renorm_ns += sample.renorm_ns;
         self.doubling_ns += sample.doubling_ns;
         self.double_qseries_ns += sample.double_qseries_ns;
-        self.double_smul_ns += sample.double_smul_ns;
-        self.double_combine_ns += sample.double_combine_ns;
+        self.double_qt_ns += sample.double_qt_ns;
+        self.double_d_ns += sample.double_d_ns;
+        self.double_rd_ns += sample.double_rd_ns;
+        self.double_u_ns += sample.double_u_ns;
+        self.double_tu_ns += sample.double_tu_ns;
+        self.double_r_new_ns += sample.double_r_new_ns;
+        self.double_td_ns += sample.double_td_ns;
+        self.double_t_new_ns += sample.double_t_new_ns;
         self.double_exponent_ns += sample.double_exponent_ns;
         self.store_ns += sample.store_ns;
         self.layer_count += sample.layer_count;
@@ -66,7 +84,7 @@ pub const Profile = struct {
     pub fn print(self: *Profile) void {
         const layer_denom = @max(@as(f64, @floatFromInt(self.layer_count)), 1.0);
         std.debug.print(
-            "[zds-profile] labos_layers={} doubled_layers={} double_steps={} zero_rt={d:.3}ms fill_phase={d:.3}ms max_beta={d:.3}ms exponent={d:.3}ms single_scatter={d:.3}ms renorm={d:.3}ms doubling={d:.3}ms double_qseries={d:.3}ms double_smul={d:.3}ms double_combine={d:.3}ms double_exponent={d:.3}ms store={d:.3}ms fill_phase_mean={d:.6}ms/layer doubling_mean={d:.6}ms/layer\n",
+            "[zds-profile] labos_layers={} doubled_layers={} double_steps={} zero_rt={d:.3}ms fill_phase={d:.3}ms max_beta={d:.3}ms exponent={d:.3}ms single_scatter={d:.3}ms renorm={d:.3}ms doubling={d:.3}ms double_qseries={d:.3}ms double_qt={d:.3}ms double_d={d:.3}ms double_rd={d:.3}ms double_u={d:.3}ms double_tu={d:.3}ms double_r_new={d:.3}ms double_td={d:.3}ms double_t_new={d:.3}ms double_exponent={d:.3}ms store={d:.3}ms fill_phase_mean={d:.6}ms/layer doubling_mean={d:.6}ms/layer\n",
             .{
                 self.layer_count,
                 self.doubling_count,
@@ -79,8 +97,14 @@ pub const Profile = struct {
                 nsToMs(self.renorm_ns),
                 nsToMs(self.doubling_ns),
                 nsToMs(self.double_qseries_ns),
-                nsToMs(self.double_smul_ns),
-                nsToMs(self.double_combine_ns),
+                nsToMs(self.double_qt_ns),
+                nsToMs(self.double_d_ns),
+                nsToMs(self.double_rd_ns),
+                nsToMs(self.double_u_ns),
+                nsToMs(self.double_tu_ns),
+                nsToMs(self.double_r_new_ns),
+                nsToMs(self.double_td_ns),
+                nsToMs(self.double_t_new_ns),
                 nsToMs(self.double_exponent_ns),
                 nsToMs(self.store_ns),
                 nsToMs(self.fill_phase_ns) / layer_denom,
@@ -209,6 +233,7 @@ fn singleScatterR(
     geo: *const basis.Geometry,
 ) basis.Mat {
     const n = geo.nmutot;
+    if (n == 12) return singleScatterR12(a, E, Zmin, geo);
     var result = basis.Mat.zero(n);
 
     for (0..n) |j| {
@@ -223,6 +248,26 @@ fn singleScatterR(
     return result;
 }
 
+fn singleScatterR12(
+    a: f64,
+    E: *const basis.Vec,
+    Zmin: *const basis.Mat,
+    geo: *const basis.Geometry,
+) basis.Mat {
+    var result = basis.Mat.zero(12);
+
+    inline for (0..12) |j| {
+        const ej = E.data[j];
+        var idx = j;
+        inline for (0..12) |i| {
+            const eer = E.data[i] * ej;
+            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
+            idx += 12;
+        }
+    }
+    return result;
+}
+
 // Tsingle: single-scattering transmission for a homogeneous layer.
 fn singleScatterT(
     a: f64,
@@ -232,6 +277,7 @@ fn singleScatterT(
     geo: *const basis.Geometry,
 ) basis.Mat {
     const n = geo.nmutot;
+    if (n == 12) return singleScatterT12(a, b, E, Zplus, geo);
     var result = basis.Mat.zero(n);
 
     for (0..n) |j| {
@@ -246,6 +292,32 @@ fn singleScatterT(
             }
             result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
             idx += n;
+        }
+    }
+    return result;
+}
+
+fn singleScatterT12(
+    a: f64,
+    b: f64,
+    E: *const basis.Vec,
+    Zplus: *const basis.Mat,
+    geo: *const basis.Geometry,
+) basis.Mat {
+    var result = basis.Mat.zero(12);
+
+    inline for (0..12) |j| {
+        const ej = E.data[j];
+        var idx = j;
+        inline for (0..12) |i| {
+            var eet: f64 = undefined;
+            if (geo.dmu_same[idx]) {
+                eet = b * E.data[i];
+            } else {
+                eet = E.data[i] - ej;
+            }
+            result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
+            idx += 12;
         }
     }
     return result;
@@ -274,35 +346,35 @@ fn doDouble(
 
         const smul_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const qt = basis.smul(n, n_gauss, threshold_mul, &Q, T);
-        if (profile_sample) |sample| sample.double_smul_ns += std.time.nanoTimestamp() - smul_start;
+        if (profile_sample) |sample| sample.double_qt_ns += std.time.nanoTimestamp() - smul_start;
 
         const combine_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const D = basis.matAddSemul3(n, T, &Q, E, &qt);
-        if (profile_sample) |sample| sample.double_combine_ns += std.time.nanoTimestamp() - combine_start;
+        if (profile_sample) |sample| sample.double_d_ns += std.time.nanoTimestamp() - combine_start;
 
         const rd_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const rd = basis.smul(n, n_gauss, threshold_mul, R, &D);
-        if (profile_sample) |sample| sample.double_smul_ns += std.time.nanoTimestamp() - rd_start;
+        if (profile_sample) |sample| sample.double_rd_ns += std.time.nanoTimestamp() - rd_start;
 
         const u_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const U = basis.semulAdd(n, R, E, &rd);
-        if (profile_sample) |sample| sample.double_combine_ns += std.time.nanoTimestamp() - u_start;
+        if (profile_sample) |sample| sample.double_u_ns += std.time.nanoTimestamp() - u_start;
 
         const tu_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const tu = basis.smul(n, n_gauss, threshold_mul, T, &U);
-        if (profile_sample) |sample| sample.double_smul_ns += std.time.nanoTimestamp() - tu_start;
+        if (profile_sample) |sample| sample.double_tu_ns += std.time.nanoTimestamp() - tu_start;
 
         const r_new_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const R_new = basis.matAddEsmul3(n, R, E, &U, &tu);
-        if (profile_sample) |sample| sample.double_combine_ns += std.time.nanoTimestamp() - r_new_start;
+        if (profile_sample) |sample| sample.double_r_new_ns += std.time.nanoTimestamp() - r_new_start;
 
         const td_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const td = basis.smul(n, n_gauss, threshold_mul, T, &D);
-        if (profile_sample) |sample| sample.double_smul_ns += std.time.nanoTimestamp() - td_start;
+        if (profile_sample) |sample| sample.double_td_ns += std.time.nanoTimestamp() - td_start;
 
         const t_new_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const T_new = basis.esmulSemulAdd(n, E, &D, T, &td);
-        if (profile_sample) |sample| sample.double_combine_ns += std.time.nanoTimestamp() - t_new_start;
+        if (profile_sample) |sample| sample.double_t_new_ns += std.time.nanoTimestamp() - t_new_start;
 
         // PARITY: DISAMAR's whole-array assignments evaluate both RHS values
         // from the pre-step operators before storing the doubled layer state.

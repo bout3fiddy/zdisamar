@@ -194,6 +194,15 @@ pub fn fillZplusZminFromBasisLimited(
     plm_basis: *const FourierPlmBasis,
 ) PhaseKernel {
     const n = geo.nmutot;
+    if (n == 12) {
+        return fillZplusZminFromBasisLimited12(
+            i_fourier,
+            phase_coefs,
+            max_phase_index,
+            geo,
+            plm_basis,
+        );
+    }
     const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
     if (i_fourier > bounded_max_phase_index) return .{ .Zplus = Mat.zero(n), .Zmin = Mat.zero(n) };
 
@@ -254,6 +263,77 @@ pub fn fillZplusZminFromBasisLimited(
         first_order = false;
     }
     if (first_order) return .{ .Zplus = Mat.zero(n), .Zmin = Mat.zero(n) };
+
+    return .{ .Zplus = zplus, .Zmin = zmin };
+}
+
+fn fillZplusZminFromBasisLimited12(
+    i_fourier: usize,
+    phase_coefs: [types.max_phase_coef]f64,
+    max_phase_index: usize,
+    geo: *const Geometry,
+    plm_basis: *const FourierPlmBasis,
+) PhaseKernel {
+    const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
+    if (i_fourier > bounded_max_phase_index) return .{ .Zplus = Mat.zero(12), .Zmin = Mat.zero(12) };
+
+    var zplus = Mat{ .data = undefined, .n = 12 };
+    var zmin = Mat{ .data = undefined, .n = 12 };
+    var first_order = true;
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
+        const alpha1 = phase_coefs[l];
+        if (alpha1 == 0.0) continue;
+        if (l <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[l];
+            const minus_l = &plm_basis.minus[l];
+            if (first_order) {
+                inline for (0..12) |i| {
+                    const scaled_plus_i = alpha1 * plus_l[i];
+                    const scaled_minus_i = alpha1 * minus_l[i];
+                    const row = i * 12;
+                    inline for (0..12) |j| {
+                        zplus.data[row + j] = scaled_plus_i * plus_l[j];
+                        zmin.data[row + j] = scaled_minus_i * plus_l[j];
+                    }
+                }
+            } else {
+                inline for (0..12) |i| {
+                    const scaled_plus_i = alpha1 * plus_l[i];
+                    const scaled_minus_i = alpha1 * minus_l[i];
+                    const row = i * 12;
+                    inline for (0..12) |j| {
+                        zplus.data[row + j] += scaled_plus_i * plus_l[j];
+                        zmin.data[row + j] += scaled_minus_i * plus_l[j];
+                    }
+                }
+            }
+        } else {
+            const plm = computePlm(i_fourier, l, geo);
+            if (first_order) {
+                inline for (0..12) |i| {
+                    const scaled_plus_i = alpha1 * plm.plus[i];
+                    const scaled_minus_i = alpha1 * plm.minus[i];
+                    const row = i * 12;
+                    inline for (0..12) |j| {
+                        zplus.data[row + j] = scaled_plus_i * plm.plus[j];
+                        zmin.data[row + j] = scaled_minus_i * plm.plus[j];
+                    }
+                }
+            } else {
+                inline for (0..12) |i| {
+                    const scaled_plus_i = alpha1 * plm.plus[i];
+                    const scaled_minus_i = alpha1 * plm.minus[i];
+                    const row = i * 12;
+                    inline for (0..12) |j| {
+                        zplus.data[row + j] += scaled_plus_i * plm.plus[j];
+                        zmin.data[row + j] += scaled_minus_i * plm.plus[j];
+                    }
+                }
+            }
+        }
+        first_order = false;
+    }
+    if (first_order) return .{ .Zplus = Mat.zero(12), .Zmin = Mat.zero(12) };
 
     return .{ .Zplus = zplus, .Zmin = zmin };
 }
