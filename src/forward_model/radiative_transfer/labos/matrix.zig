@@ -60,6 +60,53 @@ pub fn matAdd3(n: usize, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
     return result;
 }
 
+pub fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
+    var result = Mat.zero(n);
+    for (0..n) |j| {
+        const ej = e.data[j];
+        for (0..n) |i| {
+            const idx = i * n + j;
+            result.data[idx] = (a.data[idx] + b.data[idx] * ej) + c.data[idx];
+        }
+    }
+    return result;
+}
+
+pub fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
+    var result = Mat.zero(n);
+    for (0..n) |j| {
+        for (0..n) |i| {
+            const idx = i * n + j;
+            result.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + c.data[idx];
+        }
+    }
+    return result;
+}
+
+pub fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
+    var result = Mat.zero(n);
+    for (0..n) |j| {
+        const ej = e.data[j];
+        for (0..n) |i| {
+            const idx = i * n + j;
+            result.data[idx] = a.data[idx] * ej + b.data[idx];
+        }
+    }
+    return result;
+}
+
+pub fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
+    var result = Mat.zero(n);
+    for (0..n) |j| {
+        const ej = e.data[j];
+        for (0..n) |i| {
+            const idx = i * n + j;
+            result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + c.data[idx];
+        }
+    }
+    return result;
+}
+
 pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     const ab = smul(n, n_gauss, threshold_mul, a, b);
 
