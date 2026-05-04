@@ -86,29 +86,17 @@ pub const ProfileNodeSpectroscopyCache = struct {
             cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
         }
         const altitudes = cache.altitudes_km[0..node_count];
-        spline.endpointSecantSecondDerivatives(
+        spline.endpointSecantSecondDerivatives5(
             altitudes,
             cache.weak_values[0..node_count],
-            cache.weak_second[0..node_count],
-        ) catch return .{};
-        spline.endpointSecantSecondDerivatives(
-            altitudes,
             cache.strong_values[0..node_count],
-            cache.strong_second[0..node_count],
-        ) catch return .{};
-        spline.endpointSecantSecondDerivatives(
-            altitudes,
             cache.line_values[0..node_count],
-            cache.line_second[0..node_count],
-        ) catch return .{};
-        spline.endpointSecantSecondDerivatives(
-            altitudes,
             cache.line_mixing_values[0..node_count],
-            cache.line_mixing_second[0..node_count],
-        ) catch return .{};
-        spline.endpointSecantSecondDerivatives(
-            altitudes,
             cache.total_values[0..node_count],
+            cache.weak_second[0..node_count],
+            cache.strong_second[0..node_count],
+            cache.line_second[0..node_count],
+            cache.line_mixing_second[0..node_count],
             cache.total_second[0..node_count],
         ) catch return .{};
         return cache;
