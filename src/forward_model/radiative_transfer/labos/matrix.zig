@@ -45,17 +45,27 @@ fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     for (0..12) |i| {
         const row = i * 12;
+        const a0 = a.data[row];
+        const a1 = a.data[row + 1];
+        const a2 = a.data[row + 2];
+        const a3 = a.data[row + 3];
+        const a4 = a.data[row + 4];
+        const a5 = a.data[row + 5];
+        const a6 = a.data[row + 6];
+        const a7 = a.data[row + 7];
+        const a8 = a.data[row + 8];
+        const a9 = a.data[row + 9];
         for (0..12) |j| {
-            var s = a.data[row] * b.data[j];
-            s += a.data[row + 1] * b.data[12 + j];
-            s += a.data[row + 2] * b.data[24 + j];
-            s += a.data[row + 3] * b.data[36 + j];
-            s += a.data[row + 4] * b.data[48 + j];
-            s += a.data[row + 5] * b.data[60 + j];
-            s += a.data[row + 6] * b.data[72 + j];
-            s += a.data[row + 7] * b.data[84 + j];
-            s += a.data[row + 8] * b.data[96 + j];
-            s += a.data[row + 9] * b.data[108 + j];
+            var s = a0 * b.data[j];
+            s += a1 * b.data[12 + j];
+            s += a2 * b.data[24 + j];
+            s += a3 * b.data[36 + j];
+            s += a4 * b.data[48 + j];
+            s += a5 * b.data[60 + j];
+            s += a6 * b.data[72 + j];
+            s += a7 * b.data[84 + j];
+            s += a8 * b.data[96 + j];
+            s += a9 * b.data[108 + j];
             result.data[row + j] = s;
         }
     }
