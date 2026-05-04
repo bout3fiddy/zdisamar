@@ -207,7 +207,9 @@ fn layerResolvedLabosWithWorkspace(
             layer_phase_kernels,
             layer_phase_kernel_valid,
         );
-        rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
+        if (i_fourier == 0) {
+            rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
+        }
         const orders_result = orders_mod.ordersScatInto(
             orders_workspace,
             0,
@@ -270,7 +272,9 @@ fn singleLayerLabos(
     defer orders_workspace.deinit();
     for (0..fourier_max + 1) |i_fourier| {
         var rt = calcRTlayers(&layers, i_fourier, &geo, controls);
-        rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
+        if (i_fourier == 0) {
+            rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
+        }
         const orders_result = orders_mod.ordersScatInto(
             &orders_workspace,
             0,
