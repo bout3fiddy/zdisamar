@@ -41,6 +41,11 @@ pub const ProfileNodeSpectroscopyCache = struct {
         var cache = ProfileNodeSpectroscopyCache{
             .node_count = node_count,
             .altitudes_km = self.spectroscopy_profile_altitudes_km[0..node_count],
+            .weak_values = undefined,
+            .strong_values = undefined,
+            .line_values = undefined,
+            .line_mixing_values = undefined,
+            .total_values = undefined,
         };
         const wavelength_window = if (prepared_states != null)
             LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
