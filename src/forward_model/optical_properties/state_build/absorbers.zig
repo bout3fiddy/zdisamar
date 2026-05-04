@@ -4,6 +4,7 @@ const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").Oper
 const ReferenceData = @import("../../../input/ReferenceData.zig");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const Context = @import("context.zig").PreparationContext;
+const ProfileStateCache = @import("profile_state_cache.zig");
 const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
 
@@ -144,18 +145,53 @@ pub fn build(
         for (states[0..state.profile_weak_line_state_count]) |*weak_line_state| weak_line_state.deinit(allocator);
         allocator.free(states);
     };
-    if (state.profile_weak_line_states) |states| {
-        const line_list = state.owned_lines.?;
-        for (states, context.spectroscopy_profile_temperatures_k, context.spectroscopy_profile_pressures_hpa) |*slot, temperature_k, pressure_hpa| {
-            slot.* = try line_list.prepareWeakLineState(allocator, temperature_k, pressure_hpa);
-            state.profile_weak_line_state_count += 1;
+    var loaded_profile_states = false;
+    if (state.profile_weak_line_states) |weak_states| {
+        if (state.profile_strong_line_states) |strong_states| {
+            const line_list = state.owned_lines.?;
+            loaded_profile_states = try ProfileStateCache.load(
+                allocator,
+                line_list,
+                context.spectroscopy_profile_temperatures_k,
+                context.spectroscopy_profile_pressures_hpa,
+                weak_states,
+                strong_states,
+            );
+            if (loaded_profile_states) {
+                state.profile_weak_line_state_count = weak_states.len;
+                state.profile_strong_line_state_count = strong_states.len;
+            }
         }
     }
-    if (state.profile_strong_line_states) |states| {
-        const line_list = state.owned_lines.?;
-        for (states, context.spectroscopy_profile_temperatures_k, context.spectroscopy_profile_pressures_hpa) |*slot, temperature_k, pressure_hpa| {
-            slot.* = (try line_list.prepareStrongLineState(allocator, temperature_k, pressure_hpa)).?;
-            state.profile_strong_line_state_count += 1;
+    if (!loaded_profile_states) {
+        if (state.profile_weak_line_states) |states| {
+            const line_list = state.owned_lines.?;
+            for (states, context.spectroscopy_profile_temperatures_k, context.spectroscopy_profile_pressures_hpa) |*slot, temperature_k, pressure_hpa| {
+                slot.* = try line_list.prepareWeakLineState(allocator, temperature_k, pressure_hpa);
+                state.profile_weak_line_state_count += 1;
+            }
+        }
+    }
+    if (!loaded_profile_states) {
+        if (state.profile_strong_line_states) |states| {
+            const line_list = state.owned_lines.?;
+            for (states, context.spectroscopy_profile_temperatures_k, context.spectroscopy_profile_pressures_hpa) |*slot, temperature_k, pressure_hpa| {
+                slot.* = (try line_list.prepareStrongLineState(allocator, temperature_k, pressure_hpa)).?;
+                state.profile_strong_line_state_count += 1;
+            }
+        }
+    }
+    if (!loaded_profile_states) {
+        if (state.profile_weak_line_states) |weak_states| {
+            if (state.profile_strong_line_states) |strong_states| {
+                try ProfileStateCache.store(
+                    state.owned_lines.?,
+                    context.spectroscopy_profile_temperatures_k,
+                    context.spectroscopy_profile_pressures_hpa,
+                    weak_states,
+                    strong_states,
+                );
+            }
         }
     }
 
