@@ -8,6 +8,9 @@ const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
 pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {
+    if (requestsUnresolvedCrossSectionSpectroscopy(scene)) {
+        return error.UnsupportedSpectroscopyConfiguration;
+    }
     // UNITS:
     //   The fallback table preserves the scene's spectral grid in nanometers while keeping the
     //   continuum coefficient identically zero.
@@ -41,6 +44,17 @@ pub fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Ref
 fn requestsLineByLineSpectroscopy(scene: *const Scene) bool {
     for (scene.absorbers.items) |absorber| {
         if (absorber.spectroscopy.mode == .line_by_line) return true;
+    }
+    return false;
+}
+
+fn requestsUnresolvedCrossSectionSpectroscopy(scene: *const Scene) bool {
+    for (scene.absorbers.items) |absorber| {
+        if (absorber.spectroscopy.mode != .cross_sections) continue;
+        switch (absorber.spectroscopy.resolvedAbsorptionRepresentation()) {
+            .xsec_table, .xsec_lut => continue,
+            .line_abs, .none => return true,
+        }
     }
     return false;
 }
