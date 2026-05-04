@@ -204,23 +204,35 @@ pub fn fillZplusZminFromBasisLimited(
         if (l <= plm_basis.max_phase_index) {
             const plus_l = &plm_basis.plus[l];
             const minus_l = &plm_basis.minus[l];
+            var scaled_plus: [types.max_nmutot]f64 = undefined;
+            var scaled_minus: [types.max_nmutot]f64 = undefined;
+            for (0..n) |i| {
+                scaled_plus[i] = alpha1 * plus_l[i];
+                scaled_minus[i] = alpha1 * minus_l[i];
+            }
             for (0..n) |j| {
                 const plus_j = plus_l[j];
                 var idx = j;
                 for (0..n) |i| {
-                    zplus.data[idx] += alpha1 * plus_l[i] * plus_j;
-                    zmin.data[idx] += alpha1 * minus_l[i] * plus_j;
+                    zplus.data[idx] += scaled_plus[i] * plus_j;
+                    zmin.data[idx] += scaled_minus[i] * plus_j;
                     idx += n;
                 }
             }
         } else {
             const plm = computePlm(i_fourier, l, geo);
+            var scaled_plus: [types.max_nmutot]f64 = undefined;
+            var scaled_minus: [types.max_nmutot]f64 = undefined;
+            for (0..n) |i| {
+                scaled_plus[i] = alpha1 * plm.plus[i];
+                scaled_minus[i] = alpha1 * plm.minus[i];
+            }
             for (0..n) |j| {
                 const plus_j = plm.plus[j];
                 var idx = j;
                 for (0..n) |i| {
-                    zplus.data[idx] += alpha1 * plm.plus[i] * plus_j;
-                    zmin.data[idx] += alpha1 * plm.minus[i] * plus_j;
+                    zplus.data[idx] += scaled_plus[i] * plus_j;
+                    zmin.data[idx] += scaled_minus[i] * plus_j;
                     idx += n;
                 }
             }
