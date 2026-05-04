@@ -159,12 +159,22 @@ pub fn populate(
         @as(f64, 1.0)
     else
         @as(f64, 0.0);
+    var profile_spectroscopy_cache = LayerSpectroscopy.ProfileSpectroscopyCache.init(
+        context,
+        absorbers,
+        context.midpoint_nm,
+    );
+    const profile_spectroscopy_cache_ptr = if (profile_spectroscopy_cache.node_count != 0)
+        &profile_spectroscopy_cache
+    else
+        null;
 
     if (usesDisamarParitySupportGrid(context)) {
         try populateParitySupportRows(
             allocator,
             context,
             absorbers,
+            profile_spectroscopy_cache_ptr,
             &totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
@@ -194,6 +204,7 @@ pub fn populate(
             allocator,
             context,
             absorbers,
+            profile_spectroscopy_cache_ptr,
             &totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
@@ -217,6 +228,7 @@ fn populateParitySupportRows(
     allocator: Allocator,
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
+    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
@@ -268,6 +280,7 @@ fn populateParitySupportRows(
             allocator,
             context,
             absorbers,
+            profile_spectroscopy_cache,
             totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
@@ -404,6 +417,7 @@ fn populateLayer(
     allocator: Allocator,
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
+    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
@@ -450,6 +464,7 @@ fn populateLayer(
             allocator,
             context,
             absorbers,
+            profile_spectroscopy_cache,
             totals,
             aerosol_sublayer_distribution,
             cloud_sublayer_distribution,
@@ -554,6 +569,7 @@ fn populateSublayer(
     allocator: Allocator,
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
+    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
     totals: *LayerAccumulation,
     aerosol_sublayer_distribution: []const f64,
     cloud_sublayer_distribution: []const f64,
@@ -667,6 +683,7 @@ fn populateSublayer(
         oxygen_mixing_ratio,
         sublayer_path_length_cm,
         &absorber_density_cm3,
+        profile_spectroscopy_cache,
     );
 
     const o2_density_cm3 = density * oxygen_mixing_ratio;

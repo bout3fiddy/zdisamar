@@ -1,6 +1,7 @@
 const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const ReferenceData = @import("../../../input/ReferenceData.zig");
+const LineListEval = @import("../../../input/reference/spectroscopy/line_list_eval.zig");
 const OperationalReferenceGrid = @import("../../../input/Instrument.zig").OperationalReferenceGrid;
 const OperationalCrossSectionLut = @import("../../../input/Instrument.zig").OperationalCrossSectionLut;
 
@@ -25,16 +26,36 @@ pub fn computeBandLineMeans(
         @max(effective_pressure_hpa, 1.0),
     );
     defer if (prepared_state) |*state| state.deinit(allocator);
+    var prepared_weak_state = if (prepared_state != null)
+        try line_list.prepareWeakLineState(
+            allocator,
+            @max(effective_temperature_k, 150.0),
+            @max(effective_pressure_hpa, 1.0),
+        )
+    else
+        null;
+    defer if (prepared_weak_state) |*state| state.deinit(allocator);
 
     var line_sum: f64 = 0.0;
     var line_mixing_sum: f64 = 0.0;
     for (0..sample_count) |index| {
         const wavelength_nm = scene.spectral_grid.start_nm + wavelength_step * @as(f64, @floatFromInt(index));
-        const evaluation = line_list.evaluateAtPrepared(
+        const evaluation = if (prepared_state) |*state| blk: {
+            const window = LineListEval.prepareStrongLineWavelengthWindow(line_list.*, wavelength_nm);
+            break :blk LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
+                line_list.*,
+                wavelength_nm,
+                @max(effective_temperature_k, 150.0),
+                @max(effective_pressure_hpa, 1.0),
+                state,
+                if (prepared_weak_state) |*weak_state| weak_state else null,
+                &window,
+            );
+        } else line_list.evaluateAtPrepared(
             wavelength_nm,
             @max(effective_temperature_k, 150.0),
             @max(effective_pressure_hpa, 1.0),
-            if (prepared_state) |*state| state else null,
+            null,
         );
         line_sum += evaluation.line_sigma_cm2_per_molecule;
         line_mixing_sum += evaluation.line_mixing_sigma_cm2_per_molecule;
