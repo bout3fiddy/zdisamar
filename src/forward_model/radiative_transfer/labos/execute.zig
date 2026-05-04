@@ -25,6 +25,8 @@ const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
+const fourier_tail_reflectance_epsilon: f64 = 1.0e-16;
+
 pub const Profile = struct {
     mutex: std.Thread.Mutex = .{},
     attenuation_ns: i128 = 0,
@@ -376,7 +378,9 @@ fn layerResolvedLabosWithWorkspace(
             1.0
         else
             2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
-        reflectance += fourier_weight * refl_fc;
+        const weighted_refl_fc = fourier_weight * refl_fc;
+        reflectance += weighted_refl_fc;
+        if (i_fourier >= controls.fourier_floor_scalar and @abs(weighted_refl_fc) <= fourier_tail_reflectance_epsilon) break;
     }
 
     if (active_profile) |profiler| profiler.addSample(profile_sample);
