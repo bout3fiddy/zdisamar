@@ -123,44 +123,79 @@ pub const ProfileNodeSpectroscopyCache = struct {
             altitude_km > self.altitudes_km[self.node_count - 1]) return null;
 
         const altitudes = self.altitudes_km[0..self.node_count];
+        var klo: usize = 0;
+        var khi: usize = self.node_count - 1;
+        while (khi - klo > 1) {
+            const mid = (khi + klo) / 2;
+            if (altitudes[mid] > altitude_km) {
+                khi = mid;
+            } else {
+                klo = mid;
+            }
+        }
         return .{
-            .weak_line_sigma_cm2_per_molecule = spline.sampleWithSecondDerivatives(
+            .weak_line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.weak_values[0..self.node_count],
                 self.weak_second[0..self.node_count],
                 altitude_km,
-            ) catch return null,
-            .strong_line_sigma_cm2_per_molecule = spline.sampleWithSecondDerivatives(
+                klo,
+                khi,
+            ),
+            .strong_line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.strong_values[0..self.node_count],
                 self.strong_second[0..self.node_count],
                 altitude_km,
-            ) catch return null,
-            .line_sigma_cm2_per_molecule = spline.sampleWithSecondDerivatives(
+                klo,
+                khi,
+            ),
+            .line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.line_values[0..self.node_count],
                 self.line_second[0..self.node_count],
                 altitude_km,
-            ) catch return null,
-            .line_mixing_sigma_cm2_per_molecule = spline.sampleWithSecondDerivatives(
+                klo,
+                khi,
+            ),
+            .line_mixing_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.line_mixing_values[0..self.node_count],
                 self.line_mixing_second[0..self.node_count],
                 altitude_km,
-            ) catch return null,
+                klo,
+                khi,
+            ),
             .total_sigma_cm2_per_molecule = @max(
-                spline.sampleWithSecondDerivatives(
+                sampleCachedEndpointSecant(
                     altitudes,
                     self.total_values[0..self.node_count],
                     self.total_second[0..self.node_count],
                     altitude_km,
-                ) catch return null,
+                    klo,
+                    khi,
+                ),
                 0.0,
             ),
             .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
         };
     }
 };
+
+fn sampleCachedEndpointSecant(
+    x: []const f64,
+    y: []const f64,
+    second: []const f64,
+    target_x: f64,
+    klo: usize,
+    khi: usize,
+) f64 {
+    const h = x[khi] - x[klo];
+    const a = (x[khi] - target_x) / h;
+    const b = (target_x - x[klo]) / h;
+    return a * y[klo] + b * y[khi] +
+        ((a * a * a - a) * second[klo] + (b * b * b - b) * second[khi]) * (h * h) / 6.0;
+}
 
 pub fn totalCrossSectionAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
     const continuum = if (self.cross_section_absorbers.len == 0)
