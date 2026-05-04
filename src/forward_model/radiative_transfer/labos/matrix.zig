@@ -14,6 +14,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
         trb += b.data[idx];
     }
     if (@abs(tra * trb) <= threshold_mul) return Mat.zero(n);
+    if (n == 12 and n_gauss == 10) return smul12x10(a, b);
 
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
@@ -35,6 +36,29 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
                 idx += n;
                 a_idx += n;
             }
+        }
+    }
+    return result;
+}
+
+fn smul12x10(a: *const Mat, b: *const Mat) Mat {
+    var result = Mat{ .data = undefined, .n = 12 };
+    for (0..12) |j| {
+        var idx = j;
+        for (0..12) |i| {
+            const row = i * 12;
+            var s = a.data[row] * b.data[j];
+            s += a.data[row + 1] * b.data[12 + j];
+            s += a.data[row + 2] * b.data[24 + j];
+            s += a.data[row + 3] * b.data[36 + j];
+            s += a.data[row + 4] * b.data[48 + j];
+            s += a.data[row + 5] * b.data[60 + j];
+            s += a.data[row + 6] * b.data[72 + j];
+            s += a.data[row + 7] * b.data[84 + j];
+            s += a.data[row + 8] * b.data[96 + j];
+            s += a.data[row + 9] * b.data[108 + j];
+            result.data[idx] = s;
+            idx += 12;
         }
     }
     return result;
