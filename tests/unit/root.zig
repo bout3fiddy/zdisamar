@@ -54,6 +54,31 @@ test "prepared lifecycle owns resolved O2A state" {
     try std.testing.expect(prepared.optical_properties.total_optical_depth >= 0.0);
 }
 
+test "unsupported bundled line-by-line spectroscopy fails instead of dropping absorption" {
+    const absorbers = [_]Absorber{.{
+        .id = "no2",
+        .species = "no2",
+        .profile_source = .atmosphere,
+        .spectroscopy = .{
+            .mode = .line_by_line,
+        },
+    }};
+    var input: zdisamar.Input = .{
+        .id = "unsupported-line-by-line",
+        .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 3 },
+        .absorbers = .{ .items = absorbers[0..] },
+        .observation_model = .{
+            .instrument = .tropomi,
+            .instrument_line_fwhm_nm = 0.38,
+        },
+    };
+
+    try std.testing.expectError(
+        error.UnsupportedSpectroscopyConfiguration,
+        zdisamar.prepare(std.testing.allocator, &input),
+    );
+}
+
 test "generated O2A LUTs live only in operational band support" {
     const support = [_]OperationalBandSupport{.{
         .id = "primary",

@@ -31,7 +31,18 @@ pub fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Ref
         return try assets.loadO2aSpectroscopyLineList(allocator);
     }
 
+    if (requestsLineByLineSpectroscopy(scene)) {
+        return error.UnsupportedSpectroscopyConfiguration;
+    }
+
     return null;
+}
+
+fn requestsLineByLineSpectroscopy(scene: *const Scene) bool {
+    for (scene.absorbers.items) |absorber| {
+        if (absorber.spectroscopy.mode == .line_by_line) return true;
+    }
+    return false;
 }
 
 pub fn loadCollisionInducedAbsorptionForScene(
