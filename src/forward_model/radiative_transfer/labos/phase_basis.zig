@@ -212,23 +212,23 @@ pub fn fillZplusZminFromBasisLimited(
                 scaled_minus[i] = alpha1 * minus_l[i];
             }
             if (first_order) {
-                for (0..n) |j| {
-                    const plus_j = plus_l[j];
-                    var idx = j;
-                    for (0..n) |i| {
-                        zplus.data[idx] = scaled_plus[i] * plus_j;
-                        zmin.data[idx] = scaled_minus[i] * plus_j;
-                        idx += n;
+                for (0..n) |i| {
+                    const scaled_plus_i = scaled_plus[i];
+                    const scaled_minus_i = scaled_minus[i];
+                    const row = i * n;
+                    for (0..n) |j| {
+                        zplus.data[row + j] = scaled_plus_i * plus_l[j];
+                        zmin.data[row + j] = scaled_minus_i * plus_l[j];
                     }
                 }
             } else {
-                for (0..n) |j| {
-                    const plus_j = plus_l[j];
-                    var idx = j;
-                    for (0..n) |i| {
-                        zplus.data[idx] += scaled_plus[i] * plus_j;
-                        zmin.data[idx] += scaled_minus[i] * plus_j;
-                        idx += n;
+                for (0..n) |i| {
+                    const scaled_plus_i = scaled_plus[i];
+                    const scaled_minus_i = scaled_minus[i];
+                    const row = i * n;
+                    for (0..n) |j| {
+                        zplus.data[row + j] += scaled_plus_i * plus_l[j];
+                        zmin.data[row + j] += scaled_minus_i * plus_l[j];
                     }
                 }
             }
@@ -241,23 +241,23 @@ pub fn fillZplusZminFromBasisLimited(
                 scaled_minus[i] = alpha1 * plm.minus[i];
             }
             if (first_order) {
-                for (0..n) |j| {
-                    const plus_j = plm.plus[j];
-                    var idx = j;
-                    for (0..n) |i| {
-                        zplus.data[idx] = scaled_plus[i] * plus_j;
-                        zmin.data[idx] = scaled_minus[i] * plus_j;
-                        idx += n;
+                for (0..n) |i| {
+                    const scaled_plus_i = scaled_plus[i];
+                    const scaled_minus_i = scaled_minus[i];
+                    const row = i * n;
+                    for (0..n) |j| {
+                        zplus.data[row + j] = scaled_plus_i * plm.plus[j];
+                        zmin.data[row + j] = scaled_minus_i * plm.plus[j];
                     }
                 }
             } else {
-                for (0..n) |j| {
-                    const plus_j = plm.plus[j];
-                    var idx = j;
-                    for (0..n) |i| {
-                        zplus.data[idx] += scaled_plus[i] * plus_j;
-                        zmin.data[idx] += scaled_minus[i] * plus_j;
-                        idx += n;
+                for (0..n) |i| {
+                    const scaled_plus_i = scaled_plus[i];
+                    const scaled_minus_i = scaled_minus[i];
+                    const row = i * n;
+                    for (0..n) |j| {
+                        zplus.data[row + j] += scaled_plus_i * plm.plus[j];
+                        zmin.data[row + j] += scaled_minus_i * plm.plus[j];
                     }
                 }
             }
