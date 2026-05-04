@@ -117,14 +117,11 @@ fn singleScatterR(
     var result = basis.Mat.zero(n);
 
     for (0..n) |j| {
-        const uj = geo.u[j];
         const ej = E.data[j];
         var idx = j;
         for (0..n) |i| {
-            const ui = geo.u[i];
-            const dmu_plus = 0.25 / @max(ui + uj, 1.0e-12);
             const eer = E.data[i] * ej;
-            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * dmu_plus;
+            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
             idx += n;
         }
     }
@@ -143,22 +140,16 @@ fn singleScatterT(
     var result = basis.Mat.zero(n);
 
     for (0..n) |j| {
-        const uj = geo.u[j];
         const ej = E.data[j];
         var idx = j;
         for (0..n) |i| {
-            const ui = geo.u[i];
-            const du = ui - uj;
             var eet: f64 = undefined;
-            var dmu_min: f64 = undefined;
-            if (@abs(du) < 1.0e-6) {
+            if (geo.dmu_same[idx]) {
                 eet = b * E.data[i];
-                dmu_min = 0.25 / @max(ui * uj, 1.0e-12);
             } else {
                 eet = E.data[i] - ej;
-                dmu_min = 0.25 / du;
             }
-            result.data[idx] = a * Zplus.data[idx] * eet * dmu_min;
+            result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
             idx += n;
         }
     }
