@@ -202,6 +202,7 @@ pub fn fillZplusZminFromBasisLimited(
     var first_order = true;
     for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = phase_coefs[l];
+        if (alpha1 == 0.0) continue;
         if (l <= plm_basis.max_phase_index) {
             const plus_l = &plm_basis.plus[l];
             const minus_l = &plm_basis.minus[l];
@@ -264,6 +265,7 @@ pub fn fillZplusZminFromBasisLimited(
         }
         first_order = false;
     }
+    if (first_order) return .{ .Zplus = Mat.zero(n), .Zmin = Mat.zero(n) };
 
     return .{ .Zplus = zplus, .Zmin = zmin };
 }
