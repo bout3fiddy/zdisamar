@@ -20,6 +20,7 @@ pub const smul = matrix.smul;
 pub const esmul = matrix.esmul;
 pub const semul = matrix.semul;
 pub const matAdd = matrix.matAdd;
+pub const matAdd3 = matrix.matAdd3;
 pub const qseries = matrix.qseries;
 
 pub const PhaseKernel = phase_basis.PhaseKernel;

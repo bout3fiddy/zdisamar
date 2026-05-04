@@ -180,8 +180,7 @@ fn doDouble(
         const Q = basis.qseries(n, n_gauss, threshold_mul, R, R);
         const qe = basis.semul(n, &Q, E);
         const qt = basis.smul(n, n_gauss, threshold_mul, &Q, T);
-        var D = basis.matAdd(n, T, &qe);
-        D = basis.matAdd(n, &D, &qt);
+        const D = basis.matAdd3(n, T, &qe, &qt);
 
         const re = basis.semul(n, R, E);
         const rd = basis.smul(n, n_gauss, threshold_mul, R, &D);
@@ -189,14 +188,12 @@ fn doDouble(
 
         const eu = basis.esmul(n, E, &U);
         const tu = basis.smul(n, n_gauss, threshold_mul, T, &U);
-        var R_new = basis.matAdd(n, R, &eu);
-        R_new = basis.matAdd(n, &R_new, &tu);
+        const R_new = basis.matAdd3(n, R, &eu, &tu);
 
         const ed = basis.esmul(n, E, &D);
         const te = basis.semul(n, T, E);
         const td = basis.smul(n, n_gauss, threshold_mul, T, &D);
-        var T_new = basis.matAdd(n, &ed, &te);
-        T_new = basis.matAdd(n, &T_new, &td);
+        const T_new = basis.matAdd3(n, &ed, &te, &td);
 
         // PARITY: DISAMAR's whole-array assignments evaluate both RHS values
         // from the pre-step operators before storing the doubled layer state.

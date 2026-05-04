@@ -54,6 +54,12 @@ pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
     return result;
 }
 
+pub fn matAdd3(n: usize, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
+    var result = Mat.zero(n);
+    for (0..n * n) |idx| result.data[idx] = (a.data[idx] + b.data[idx]) + c.data[idx];
+    return result;
+}
+
 pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     const ab = smul(n, n_gauss, threshold_mul, a, b);
 
