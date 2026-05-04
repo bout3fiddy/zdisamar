@@ -19,10 +19,22 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     for (0..n) |j| {
         if (n_gauss == 0) break;
         const b0j = b.data[j];
-        for (0..n) |i| result.data[i * n + j] = a.data[i * n] * b0j;
+        var idx = j;
+        var a_idx: usize = 0;
+        for (0..n) |_| {
+            result.data[idx] = a.data[a_idx] * b0j;
+            idx += n;
+            a_idx += n;
+        }
         for (1..n_gauss) |k| {
             const bkj = b.data[k * n + j];
-            for (0..n) |i| result.data[i * n + j] += a.data[i * n + k] * bkj;
+            idx = j;
+            a_idx = k;
+            for (0..n) |_| {
+                result.data[idx] += a.data[a_idx] * bkj;
+                idx += n;
+                a_idx += n;
+            }
         }
     }
     return result;
@@ -31,9 +43,10 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
 pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
     var result = Mat.zero(n);
     for (0..n) |j| {
+        var idx = j;
         for (0..n) |i| {
-            const idx = i * n + j;
             result.data[idx] = e.data[i] * a.data[idx];
+            idx += n;
         }
     }
     return result;
@@ -43,9 +56,10 @@ pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
     var result = Mat.zero(n);
     for (0..n) |j| {
         const ej = e.data[j];
-        for (0..n) |i| {
-            const idx = i * n + j;
+        var idx = j;
+        for (0..n) |_| {
             result.data[idx] = a.data[idx] * ej;
+            idx += n;
         }
     }
     return result;
@@ -67,9 +81,10 @@ pub fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *c
     var result = Mat.zero(n);
     for (0..n) |j| {
         const ej = e.data[j];
-        for (0..n) |i| {
-            const idx = i * n + j;
+        var idx = j;
+        for (0..n) |_| {
             result.data[idx] = (a.data[idx] + b.data[idx] * ej) + c.data[idx];
+            idx += n;
         }
     }
     return result;
@@ -78,9 +93,10 @@ pub fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *c
 pub fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
     var result = Mat.zero(n);
     for (0..n) |j| {
+        var idx = j;
         for (0..n) |i| {
-            const idx = i * n + j;
             result.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + c.data[idx];
+            idx += n;
         }
     }
     return result;
@@ -90,9 +106,10 @@ pub fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
     var result = Mat.zero(n);
     for (0..n) |j| {
         const ej = e.data[j];
-        for (0..n) |i| {
-            const idx = i * n + j;
+        var idx = j;
+        for (0..n) |_| {
             result.data[idx] = a.data[idx] * ej + b.data[idx];
+            idx += n;
         }
     }
     return result;
@@ -102,9 +119,10 @@ pub fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *
     var result = Mat.zero(n);
     for (0..n) |j| {
         const ej = e.data[j];
+        var idx = j;
         for (0..n) |i| {
-            const idx = i * n + j;
             result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + c.data[idx];
+            idx += n;
         }
     }
     return result;
