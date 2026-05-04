@@ -194,11 +194,12 @@ pub fn fillZplusZminFromBasisLimited(
     plm_basis: *const FourierPlmBasis,
 ) PhaseKernel {
     const n = geo.nmutot;
-    var zplus = Mat.zero(n);
-    var zmin = Mat.zero(n);
     const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
-    if (i_fourier > bounded_max_phase_index) return .{ .Zplus = zplus, .Zmin = zmin };
+    if (i_fourier > bounded_max_phase_index) return .{ .Zplus = Mat.zero(n), .Zmin = Mat.zero(n) };
 
+    var zplus = Mat{ .data = undefined, .n = n };
+    var zmin = Mat{ .data = undefined, .n = n };
+    var first_order = true;
     for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = phase_coefs[l];
         if (l <= plm_basis.max_phase_index) {
@@ -213,10 +214,18 @@ pub fn fillZplusZminFromBasisLimited(
             for (0..n) |j| {
                 const plus_j = plus_l[j];
                 var idx = j;
-                for (0..n) |i| {
-                    zplus.data[idx] += scaled_plus[i] * plus_j;
-                    zmin.data[idx] += scaled_minus[i] * plus_j;
-                    idx += n;
+                if (first_order) {
+                    for (0..n) |i| {
+                        zplus.data[idx] = scaled_plus[i] * plus_j;
+                        zmin.data[idx] = scaled_minus[i] * plus_j;
+                        idx += n;
+                    }
+                } else {
+                    for (0..n) |i| {
+                        zplus.data[idx] += scaled_plus[i] * plus_j;
+                        zmin.data[idx] += scaled_minus[i] * plus_j;
+                        idx += n;
+                    }
                 }
             }
         } else {
@@ -230,13 +239,22 @@ pub fn fillZplusZminFromBasisLimited(
             for (0..n) |j| {
                 const plus_j = plm.plus[j];
                 var idx = j;
-                for (0..n) |i| {
-                    zplus.data[idx] += scaled_plus[i] * plus_j;
-                    zmin.data[idx] += scaled_minus[i] * plus_j;
-                    idx += n;
+                if (first_order) {
+                    for (0..n) |i| {
+                        zplus.data[idx] = scaled_plus[i] * plus_j;
+                        zmin.data[idx] = scaled_minus[i] * plus_j;
+                        idx += n;
+                    }
+                } else {
+                    for (0..n) |i| {
+                        zplus.data[idx] += scaled_plus[i] * plus_j;
+                        zmin.data[idx] += scaled_minus[i] * plus_j;
+                        idx += n;
+                    }
                 }
             }
         }
+        first_order = false;
     }
 
     return .{ .Zplus = zplus, .Zmin = zmin };
