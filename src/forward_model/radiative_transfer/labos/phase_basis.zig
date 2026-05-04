@@ -203,19 +203,21 @@ pub fn fillZplusZminFromBasisLimited(
         const alpha1 = phase_coefs[l];
         if (l <= plm_basis.max_phase_index) {
             for (0..n) |j| {
-                const pj = plm_basis.plus[l][j];
+                const plus_j = plm_basis.plus[l][j];
                 for (0..n) |i| {
-                    zplus.addTo(i, j, alpha1 * plm_basis.plus[l][i] * pj);
-                    zmin.addTo(i, j, alpha1 * plm_basis.minus[l][i] * pj);
+                    const idx = i * n + j;
+                    zplus.data[idx] += alpha1 * plm_basis.plus[l][i] * plus_j;
+                    zmin.data[idx] += alpha1 * plm_basis.minus[l][i] * plus_j;
                 }
             }
         } else {
             const plm = computePlm(i_fourier, l, geo);
             for (0..n) |j| {
-                const pj = plm.plus[j];
+                const plus_j = plm.plus[j];
                 for (0..n) |i| {
-                    zplus.addTo(i, j, alpha1 * plm.plus[i] * pj);
-                    zmin.addTo(i, j, alpha1 * plm.minus[i] * pj);
+                    const idx = i * n + j;
+                    zplus.data[idx] += alpha1 * plm.plus[i] * plus_j;
+                    zmin.data[idx] += alpha1 * plm.minus[i] * plus_j;
                 }
             }
         }
