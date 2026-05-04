@@ -10,15 +10,16 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     var tra: f64 = 0.0;
     var trb: f64 = 0.0;
     for (0..n_gauss) |k| {
-        tra += a.get(k, k);
-        trb += b.get(k, k);
+        const idx = k * n + k;
+        tra += a.data[idx];
+        trb += b.data[idx];
     }
     if (@abs(tra * trb) <= threshold_mul) return result;
 
     for (0..n) |j| {
         for (0..n_gauss) |k| {
-            const bkj = b.get(k, j);
-            for (0..n) |i| result.addTo(i, j, a.get(i, k) * bkj);
+            const bkj = b.data[k * n + j];
+            for (0..n) |i| result.data[i * n + j] += a.data[i * n + k] * bkj;
         }
     }
     return result;
@@ -27,7 +28,10 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
 pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
     var result = Mat.zero(n);
     for (0..n) |j| {
-        for (0..n) |i| result.set(i, j, e.get(i) * a.get(i, j));
+        for (0..n) |i| {
+            const idx = i * n + j;
+            result.data[idx] = e.data[i] * a.data[idx];
+        }
     }
     return result;
 }
@@ -35,8 +39,11 @@ pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
 pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
     var result = Mat.zero(n);
     for (0..n) |j| {
-        const ej = e.get(j);
-        for (0..n) |i| result.set(i, j, a.get(i, j) * ej);
+        const ej = e.data[j];
+        for (0..n) |i| {
+            const idx = i * n + j;
+            result.data[idx] = a.data[idx] * ej;
+        }
     }
     return result;
 }
@@ -51,7 +58,7 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
     const ab = smul(n, n_gauss, threshold_mul, a, b);
 
     var trab: f64 = 0.0;
-    for (0..n_gauss) |k| trab += ab.get(k, k);
+    for (0..n_gauss) |k| trab += ab.data[k * n + k];
     if (@abs(trab) < threshold_q) return ab;
 
     const n_extra = n - n_gauss;
@@ -60,7 +67,7 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
     for (0..n_gauss) |i| {
         for (0..n_gauss) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
-            one_minus_ab_gg[i * n_gauss + j] = delta - ab.get(i, j);
+            one_minus_ab_gg[i * n_gauss + j] = delta - ab.data[i * n + j];
         }
     }
 
@@ -118,15 +125,16 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
     for (0..n_gauss) |i| {
         for (0..n_gauss) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
-            result.set(i, j, inverse[i * n_gauss + j] - delta);
+            result.data[i * n + j] = inverse[i * n_gauss + j] - delta;
         }
     }
 
     for (0..n_extra) |ja| {
+        const j = n_gauss + ja;
         for (0..n_gauss) |i| {
             var s: f64 = 0.0;
-            for (0..n_gauss) |k| s += inverse[i * n_gauss + k] * ab.get(k, n_gauss + ja);
-            result.set(i, n_gauss + ja, s);
+            for (0..n_gauss) |k| s += inverse[i * n_gauss + k] * ab.data[k * n + j];
+            result.data[i * n + j] = s;
         }
     }
 
@@ -134,17 +142,19 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
     for (0..n_extra) |ia| {
         for (0..n_gauss) |j| {
             var s: f64 = 0.0;
-            for (0..n_gauss) |k| s += ab.get(n_gauss + ia, k) * inverse[k * n_gauss + j];
+            for (0..n_gauss) |k| s += ab.data[(n_gauss + ia) * n + k] * inverse[k * n_gauss + j];
             tmp[ia * n_gauss + j] = s;
-            result.set(n_gauss + ia, j, s);
+            result.data[(n_gauss + ia) * n + j] = s;
         }
     }
 
     for (0..n_extra) |ia| {
+        const i = n_gauss + ia;
         for (0..n_extra) |ja| {
+            const j = n_gauss + ja;
             var s: f64 = 0.0;
-            for (0..n_gauss) |k| s += tmp[ia * n_gauss + k] * ab.get(k, n_gauss + ja);
-            result.set(n_gauss + ia, n_gauss + ja, s + ab.get(n_gauss + ia, n_gauss + ja));
+            for (0..n_gauss) |k| s += tmp[ia * n_gauss + k] * ab.data[k * n + j];
+            result.data[i * n + j] = s + ab.data[i * n + j];
         }
     }
 
