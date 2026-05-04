@@ -476,6 +476,13 @@ pub fn calcRTlayersIntoWithBasis(
             if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
             continue;
         }
+        if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
+            const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (rt_active) |active| active[rt_idx] = false;
+            if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
+            continue;
+        }
 
         const fill_phase_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         var z = basis.fillZplusZminFromBasisLimited(
@@ -490,14 +497,6 @@ pub fn calcRTlayersIntoWithBasis(
             cache[rt_idx] = z;
             if (phase_kernel_valid) |valid| valid[rt_idx] = true;
         }
-        if (layer.optical_depth < 1.0e-20) {
-            const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
-            rt[rt_idx] = zeroLayerRt(geo.nmutot);
-            if (rt_active) |active| active[rt_idx] = false;
-            if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
-            continue;
-        }
-
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
 
