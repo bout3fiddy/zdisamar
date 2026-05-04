@@ -2,6 +2,11 @@ const std = @import("std");
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 
+const PhaseRows = struct {
+    zplus: []const f64,
+    zmin: []const f64,
+};
+
 fn sourceInterfaceAtLevel(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -122,6 +127,7 @@ pub fn calcIntegratedReflectance(
         null,
         null,
         null,
+        null,
     );
 }
 
@@ -137,6 +143,7 @@ pub fn calcIntegratedReflectanceWithBasis(
     adjacent_layer_phase_max_indices: ?[]const usize,
     layer_phase_kernel_cache: ?[]const basis.PhaseKernel,
     layer_phase_kernel_valid: ?[]const bool,
+    profile_sample: ?*IntegratedReflectanceProfileSample,
 ) f64 {
     const solar_col: usize = 1;
     const view_idx = geo.viewIdx();
@@ -184,48 +191,61 @@ pub fn calcIntegratedReflectanceWithBasis(
             continue;
         }
 
-        const z = blk: {
+        const phase_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
+        var computed_row: basis.PhaseKernelRow = undefined;
+        const phase_rows: PhaseRows = blk: {
             if (!use_rtm_quadrature) {
                 if (reuseLayerKernelIndex(layers, source_interface, ilevel)) |above_index| {
                     if (layer_phase_kernel_cache) |cache| {
                         if (layer_phase_kernel_valid) |valid| {
                             const cache_index = above_index + 1;
                             if (cache_index < cache.len and cache_index < valid.len and valid[cache_index]) {
-                                break :blk cache[cache_index];
+                                const z = &cache[cache_index];
+                                const row_offset = view_idx * z.Zplus.n;
+                                break :blk PhaseRows{
+                                    .zplus = z.Zplus.data[row_offset .. row_offset + z.Zplus.n],
+                                    .zmin = z.Zmin.data[row_offset .. row_offset + z.Zmin.n],
+                                };
                             }
                         }
                     }
                 }
             }
-            break :blk basis.fillZplusZminFromBasisLimited(
+            computed_row = basis.fillZplusZminRowFromBasisLimited(
                 i_fourier,
                 phase_coefficients,
                 source_max_phase_index,
                 geo,
                 plm_basis,
+                view_idx,
             );
+            break :blk PhaseRows{
+                .zplus = computed_row.zplus[0..computed_row.n],
+                .zmin = computed_row.zmin[0..computed_row.n],
+            };
         };
+        if (profile_sample) |sample| sample.phase_kernel_ns += std.time.nanoTimestamp() - phase_start;
+
+        const contribution_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         var pmin_ed: f64 = 0.0;
 
-        const zmin_view_offset = view_idx * z.Zmin.n;
-        const zplus_view_offset = view_idx * z.Zplus.n;
         const level = ud[ilevel];
         const level_d = level.D.col[solar_col].data;
         const level_u = level.U.col[solar_col].data;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
-            const pmin = 0.25 * z.Zmin.data[zmin_view_offset + imu] / (view_mu * mu);
+            const pmin = 0.25 * phase_rows.zmin[imu] / (view_mu * mu);
             pmin_ed += pmin * level_d[imu];
         }
 
         const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
-        const pmin_direct = 0.25 * z.Zmin.data[zmin_view_offset + solar_idx] / (view_mu * solar_mu);
+        const pmin_direct = 0.25 * phase_rows.zmin[solar_idx] / (view_mu * solar_mu);
         pmin_ed += pmin_direct * level.E.data[solar_idx];
 
         var pplusst_u: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
-            const pplusst = 0.25 * z.Zplus.data[zplus_view_offset + imu] / (view_mu * mu);
+            const pplusst = 0.25 * phase_rows.zplus[imu] / (view_mu * mu);
             pplusst_u += pplusst * level_u[imu];
         }
 
@@ -235,6 +255,7 @@ pub fn calcIntegratedReflectanceWithBasis(
             source_ksca *
             (pmin_ed + pplusst_u);
         reflectance += source_rtm_weight * contribution;
+        if (profile_sample) |sample| sample.contribution_ns += std.time.nanoTimestamp() - contribution_start;
     }
 
     if (i_fourier == 0) {
@@ -245,6 +266,11 @@ pub fn calcIntegratedReflectanceWithBasis(
 
     return reflectance;
 }
+
+pub const IntegratedReflectanceProfileSample = struct {
+    phase_kernel_ns: i128 = 0,
+    contribution_ns: i128 = 0,
+};
 
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     var total: f64 = 0.0;

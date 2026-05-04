@@ -35,6 +35,8 @@ pub const Profile = struct {
     surface_ns: i128 = 0,
     orders_ns: i128 = 0,
     reflectance_ns: i128 = 0,
+    reflectance_phase_kernel_ns: i128 = 0,
+    reflectance_contribution_ns: i128 = 0,
     sample_count: usize = 0,
     fourier_count: usize = 0,
 
@@ -47,6 +49,8 @@ pub const Profile = struct {
         surface_ns: i128 = 0,
         orders_ns: i128 = 0,
         reflectance_ns: i128 = 0,
+        reflectance_phase_kernel_ns: i128 = 0,
+        reflectance_contribution_ns: i128 = 0,
         fourier_count: usize = 0,
     };
 
@@ -61,6 +65,8 @@ pub const Profile = struct {
         self.surface_ns += sample.surface_ns;
         self.orders_ns += sample.orders_ns;
         self.reflectance_ns += sample.reflectance_ns;
+        self.reflectance_phase_kernel_ns += sample.reflectance_phase_kernel_ns;
+        self.reflectance_contribution_ns += sample.reflectance_contribution_ns;
         self.sample_count += 1;
         self.fourier_count += sample.fourier_count;
     }
@@ -68,7 +74,7 @@ pub const Profile = struct {
     pub fn print(self: *Profile) void {
         const fourier_denom = @max(@as(f64, @floatFromInt(self.fourier_count)), 1.0);
         std.debug.print(
-            "[zds-profile] labos_samples={} fourier_terms={} attenuation={d:.3}ms allocation={d:.3}ms phase_indices={d:.3}ms plm_basis={d:.3}ms rt_layers={d:.3}ms surface={d:.3}ms orders={d:.3}ms reflectance={d:.3}ms orders_mean={d:.3}ms/fourier rt_layers_mean={d:.3}ms/fourier\n",
+            "[zds-profile] labos_samples={} fourier_terms={} attenuation={d:.3}ms allocation={d:.3}ms phase_indices={d:.3}ms plm_basis={d:.3}ms rt_layers={d:.3}ms surface={d:.3}ms orders={d:.3}ms reflectance={d:.3}ms reflectance_phase_kernel={d:.3}ms reflectance_contribution={d:.3}ms orders_mean={d:.3}ms/fourier rt_layers_mean={d:.3}ms/fourier\n",
             .{
                 self.sample_count,
                 self.fourier_count,
@@ -80,6 +86,8 @@ pub const Profile = struct {
                 nsToMs(self.surface_ns),
                 nsToMs(self.orders_ns),
                 nsToMs(self.reflectance_ns),
+                nsToMs(self.reflectance_phase_kernel_ns),
+                nsToMs(self.reflectance_contribution_ns),
                 nsToMs(self.orders_ns) / fourier_denom,
                 nsToMs(self.rt_layers_ns) / fourier_denom,
             },
@@ -335,6 +343,7 @@ fn layerResolvedLabosWithWorkspace(
             );
         if (profile_enabled) profile_sample.orders_ns += std.time.nanoTimestamp() - orders_start;
         const reflectance_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
+        var reflectance_profile = reflectance_mod.IntegratedReflectanceProfileSample{};
         const refl_fc = if (use_integrated_source)
             calcIntegratedReflectanceWithBasis(
                 input.layers,
@@ -348,10 +357,15 @@ fn layerResolvedLabosWithWorkspace(
                 adjacent_layer_phase_max_indices,
                 layer_phase_kernels,
                 layer_phase_kernel_valid,
+                if (profile_enabled) &reflectance_profile else null,
             )
         else
             calcReflectance(orders_result.ud, nlayer, geo);
-        if (profile_enabled) profile_sample.reflectance_ns += std.time.nanoTimestamp() - reflectance_start;
+        if (profile_enabled) {
+            profile_sample.reflectance_ns += std.time.nanoTimestamp() - reflectance_start;
+            profile_sample.reflectance_phase_kernel_ns += reflectance_profile.phase_kernel_ns;
+            profile_sample.reflectance_contribution_ns += reflectance_profile.contribution_ns;
+        }
         const fourier_weight = if (i_fourier == 0)
             1.0
         else

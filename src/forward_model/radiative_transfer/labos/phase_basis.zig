@@ -14,6 +14,12 @@ pub const PhaseKernel = struct {
     Zmin: Mat,
 };
 
+pub const PhaseKernelRow = struct {
+    zplus: [types.max_nmutot]f64,
+    zmin: [types.max_nmutot]f64,
+    n: usize,
+};
+
 pub const FourierPlmBasis = struct {
     i_fourier: usize,
     max_phase_index: usize,
@@ -265,6 +271,77 @@ pub fn fillZplusZminFromBasisLimited(
     if (first_order) return .{ .Zplus = Mat.zero(n), .Zmin = Mat.zero(n) };
 
     return .{ .Zplus = zplus, .Zmin = zmin };
+}
+
+pub fn fillZplusZminRowFromBasisLimited(
+    i_fourier: usize,
+    phase_coefs: [types.max_phase_coef]f64,
+    max_phase_index: usize,
+    geo: *const Geometry,
+    plm_basis: *const FourierPlmBasis,
+    row_index: usize,
+) PhaseKernelRow {
+    const n = geo.nmutot;
+    const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
+    if (row_index >= n or i_fourier > bounded_max_phase_index) {
+        return .{
+            .zplus = .{0.0} ** types.max_nmutot,
+            .zmin = .{0.0} ** types.max_nmutot,
+            .n = n,
+        };
+    }
+
+    var row = PhaseKernelRow{
+        .zplus = undefined,
+        .zmin = undefined,
+        .n = n,
+    };
+    var first_order = true;
+    for (i_fourier..bounded_max_phase_index + 1) |l| {
+        const alpha1 = phase_coefs[l];
+        if (alpha1 == 0.0) continue;
+        if (l <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[l];
+            const minus_l = &plm_basis.minus[l];
+            const scaled_plus_row = alpha1 * plus_l[row_index];
+            const scaled_minus_row = alpha1 * minus_l[row_index];
+            if (first_order) {
+                for (0..n) |j| {
+                    row.zplus[j] = scaled_plus_row * plus_l[j];
+                    row.zmin[j] = scaled_minus_row * plus_l[j];
+                }
+            } else {
+                for (0..n) |j| {
+                    row.zplus[j] += scaled_plus_row * plus_l[j];
+                    row.zmin[j] += scaled_minus_row * plus_l[j];
+                }
+            }
+        } else {
+            const plm = computePlm(i_fourier, l, geo);
+            const scaled_plus_row = alpha1 * plm.plus[row_index];
+            const scaled_minus_row = alpha1 * plm.minus[row_index];
+            if (first_order) {
+                for (0..n) |j| {
+                    row.zplus[j] = scaled_plus_row * plm.plus[j];
+                    row.zmin[j] = scaled_minus_row * plm.plus[j];
+                }
+            } else {
+                for (0..n) |j| {
+                    row.zplus[j] += scaled_plus_row * plm.plus[j];
+                    row.zmin[j] += scaled_minus_row * plm.plus[j];
+                }
+            }
+        }
+        first_order = false;
+    }
+    if (first_order) {
+        return .{
+            .zplus = .{0.0} ** types.max_nmutot,
+            .zmin = .{0.0} ** types.max_nmutot,
+            .n = n,
+        };
+    }
+    return row;
 }
 
 fn fillZplusZminFromBasisLimited12(
