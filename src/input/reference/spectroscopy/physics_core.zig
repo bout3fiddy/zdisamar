@@ -442,6 +442,34 @@ pub fn weakLineContributionPrepared(
     };
 }
 
+pub fn weakLinePreparedStimulatedEmissionScale(
+    wavelength_state: WeakLineWavelengthState,
+    prepared_line: Types.WeakLinePreparedLineState,
+) f64 {
+    return wavelength_state.evaluation_wavenumber_cm1 *
+        (1.0 - @exp(-Types.hitran_hc_over_kb_cm_k * wavelength_state.evaluation_wavenumber_cm1 / prepared_line.safe_temperature));
+}
+
+pub fn weakLineSigmaPreparedWithStimulatedEmissionScale(
+    wavelength_state: WeakLineWavelengthState,
+    prepared_line: Types.WeakLinePreparedLineState,
+    runtime_controls: Types.SpectroscopyRuntimeControls,
+    stimulated_emission_scale: f64,
+) f64 {
+    if (!preparedWeakLineInsideVendorCutoff(prepared_line, runtime_controls, wavelength_state)) return 0.0;
+    const cpf = complexProbabilityFunction(
+        (prepared_line.shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1) * prepared_line.cte,
+        prepared_line.line_shape_y,
+    );
+    const prefactor = prepared_line.prefactor_base *
+        stimulated_emission_scale *
+        prepared_line.safe_temperature *
+        Types.hitran_boltzmann_constant_cm3_hpa_per_k /
+        prepared_line.safe_pressure /
+        1013.25;
+    return @max(prefactor * cpf.wr, 0.0);
+}
+
 fn preparedWeakLineInsideVendorCutoff(
     prepared_line: Types.WeakLinePreparedLineState,
     runtime_controls: Types.SpectroscopyRuntimeControls,
