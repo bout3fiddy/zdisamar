@@ -128,28 +128,31 @@ fn initializeOrdersBuffers(
     ud_local: []basis.UDLocal,
     nmutot: usize,
 ) void {
-    const vec = basis.Vec{ .data = undefined, .n = nmutot };
-    const vec2 = basis.Vec2{ .col = .{ vec, vec }, .n = nmutot };
     for (ud, ud_sum_local, ud_orde, ud_local) |*field, *sum_local, *orde, *local| {
-        field.* = .{
-            .E = vec,
-            .U = vec2,
-            .D = vec2,
-        };
-        sum_local.* = .{
-            .U = vec2,
-            .D = vec2,
-        };
-        orde.* = .{
-            .E = vec,
-            .U = vec2,
-            .D = vec2,
-        };
-        local.* = .{
-            .U = vec2,
-            .D = vec2,
-        };
+        field.* = undefined;
+        field.E.n = nmutot;
+        initVec2Metadata(&field.U, nmutot);
+        initVec2Metadata(&field.D, nmutot);
+
+        sum_local.* = undefined;
+        initVec2Metadata(&sum_local.U, nmutot);
+        initVec2Metadata(&sum_local.D, nmutot);
+
+        orde.* = undefined;
+        orde.E.n = nmutot;
+        initVec2Metadata(&orde.U, nmutot);
+        initVec2Metadata(&orde.D, nmutot);
+
+        local.* = undefined;
+        initVec2Metadata(&local.U, nmutot);
+        initVec2Metadata(&local.D, nmutot);
     }
+}
+
+fn initVec2Metadata(vec2: *basis.Vec2, nmutot: usize) void {
+    vec2.n = nmutot;
+    vec2.col[0].n = nmutot;
+    vec2.col[1].n = nmutot;
 }
 
 fn accumulateOrderContribution(
