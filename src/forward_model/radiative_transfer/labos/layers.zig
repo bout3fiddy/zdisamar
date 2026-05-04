@@ -222,6 +222,16 @@ fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
     return max_index;
 }
 
+pub fn fillLayerPhaseMaxIndices(
+    layer_phase_max_indices: []usize,
+    layers: []const common.LayerInput,
+) void {
+    std.debug.assert(layer_phase_max_indices.len >= layers.len);
+    for (layers, layer_phase_max_indices[0..layers.len]) |layer, *max_index| {
+        max_index.* = phase_functions.maxPhaseCoefficientIndex(layer.phase_coefficients);
+    }
+}
+
 pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
@@ -229,6 +239,7 @@ pub fn calcRTlayersIntoWithBasis(
     geo: *const basis.Geometry,
     controls: common.RadiativeTransferControls,
     plm_basis: *const basis.FourierPlmBasis,
+    layer_phase_max_indices: ?[]const usize,
     phase_kernel_cache: ?[]basis.PhaseKernel,
     phase_kernel_valid: ?[]bool,
 ) void {
@@ -248,7 +259,10 @@ pub fn calcRTlayersIntoWithBasis(
         if (i_fourier >= basis.max_phase_coef) continue;
 
         const phase_coefs = layer.phase_coefficients;
-        const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);
+        const max_phase_index = if (layer_phase_max_indices) |indices|
+            indices[layer_idx]
+        else
+            phase_functions.maxPhaseCoefficientIndex(phase_coefs);
         if (i_fourier > max_phase_index) continue;
 
         var z = basis.fillZplusZminFromBasis(i_fourier, phase_coefs, geo, plm_basis);
@@ -328,6 +342,7 @@ pub fn calcRTlayersInto(
         geo,
         controls,
         &plm_basis,
+        null,
         null,
         null,
     );

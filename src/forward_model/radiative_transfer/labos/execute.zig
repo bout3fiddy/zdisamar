@@ -17,8 +17,10 @@ const fillAttenuationDynamicWithGrid = attenuation.fillAttenuationDynamicWithGri
 const fillSurface = layers_mod.fillSurface;
 const calcRTlayers = layers_mod.calcRTlayers;
 const calcRTlayersIntoWithBasis = layers_mod.calcRTlayersIntoWithBasis;
+const fillLayerPhaseMaxIndices = layers_mod.fillLayerPhaseMaxIndices;
 const calcReflectance = reflectance_mod.calcReflectance;
 const calcIntegratedReflectanceWithBasis = reflectance_mod.calcIntegratedReflectanceWithBasis;
+const fillAdjacentLayerPhaseMaxIndices = reflectance_mod.fillAdjacentLayerPhaseMaxIndices;
 const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
@@ -178,6 +180,19 @@ fn layerResolvedLabosWithWorkspace(
     else
         null;
     defer if (workspace == null) if (layer_phase_kernel_valid) |valid| allocator.free(valid);
+    const layer_phase_max_indices = if (workspace) |scratch| blk: {
+        const indices = try scratch.layerPhaseMaxIndices(nlayer);
+        fillLayerPhaseMaxIndices(indices, input.layers);
+        break :blk indices;
+    } else null;
+    const adjacent_layer_phase_max_indices = if (workspace) |scratch| blk: {
+        if (layer_phase_max_indices) |layer_indices| {
+            const indices = try scratch.sourcePhaseMaxIndices(nlayer + 1);
+            fillAdjacentLayerPhaseMaxIndices(indices, layer_indices);
+            break :blk indices;
+        }
+        break :blk null;
+    } else null;
 
     for (0..fourier_max + 1) |i_fourier| {
         const plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, &geo);
@@ -188,6 +203,7 @@ fn layerResolvedLabosWithWorkspace(
             &geo,
             controls,
             &plm_basis,
+            layer_phase_max_indices,
             layer_phase_kernels,
             layer_phase_kernel_valid,
         );
@@ -212,6 +228,7 @@ fn layerResolvedLabosWithWorkspace(
                 i_fourier,
                 &geo,
                 &plm_basis,
+                adjacent_layer_phase_max_indices,
                 layer_phase_kernels,
                 layer_phase_kernel_valid,
             )

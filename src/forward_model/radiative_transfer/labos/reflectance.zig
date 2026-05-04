@@ -48,6 +48,27 @@ fn adjacentLayerPhaseCoefficientIndex(
     );
 }
 
+pub fn fillAdjacentLayerPhaseMaxIndices(
+    source_phase_max_indices: []usize,
+    layer_phase_max_indices: []const usize,
+) void {
+    const nlayer = layer_phase_max_indices.len;
+    std.debug.assert(source_phase_max_indices.len >= nlayer + 1);
+    if (nlayer == 0) {
+        if (source_phase_max_indices.len != 0) source_phase_max_indices[0] = 0;
+        return;
+    }
+
+    source_phase_max_indices[0] = layer_phase_max_indices[0];
+    for (1..nlayer) |ilevel| {
+        source_phase_max_indices[ilevel] = @max(
+            layer_phase_max_indices[ilevel - 1],
+            layer_phase_max_indices[ilevel],
+        );
+    }
+    source_phase_max_indices[nlayer] = layer_phase_max_indices[nlayer - 1];
+}
+
 fn reuseLayerKernelIndex(
     layers: []const common.LayerInput,
     source_interface: common.SourceInterfaceInput,
@@ -100,6 +121,7 @@ pub fn calcIntegratedReflectance(
         &plm_basis,
         null,
         null,
+        null,
     );
 }
 
@@ -112,6 +134,7 @@ pub fn calcIntegratedReflectanceWithBasis(
     i_fourier: usize,
     geo: *const basis.Geometry,
     plm_basis: *const basis.FourierPlmBasis,
+    adjacent_layer_phase_max_indices: ?[]const usize,
     layer_phase_kernel_cache: ?[]const basis.PhaseKernel,
     layer_phase_kernel_valid: ?[]const bool,
 ) f64 {
@@ -147,9 +170,9 @@ pub fn calcIntegratedReflectanceWithBasis(
             rtm_quadrature.levels[ilevel].phase_coefficients
         else
             source_interface.phase_coefficients_above;
-        const source_max_phase_index = if (use_rtm_quadrature)
-            adjacentLayerPhaseCoefficientIndex(layers, ilevel)
-        else if (layers.len != 0)
+        const source_max_phase_index = if (adjacent_layer_phase_max_indices) |indices|
+            indices[ilevel]
+        else if (use_rtm_quadrature or layers.len != 0)
             adjacentLayerPhaseCoefficientIndex(layers, ilevel)
         else
             maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel);

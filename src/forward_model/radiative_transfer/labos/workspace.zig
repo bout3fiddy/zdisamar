@@ -9,7 +9,10 @@ const Allocator = std.mem.Allocator;
 pub const Workspace = struct {
     allocator: Allocator,
     attenuation_data: []f64 = &.{},
+    attenuation_layer_transmittance: []f64 = &.{},
     rt_layers: []basis.LayerRT = &.{},
+    layer_phase_max_indices: []usize = &.{},
+    source_phase_max_indices: []usize = &.{},
     orders: ?orders_mod.OrdersWorkspace = null,
     layer_phase_kernels: []basis.PhaseKernel = &.{},
     layer_phase_kernel_valid: []bool = &.{},
@@ -21,7 +24,10 @@ pub const Workspace = struct {
     pub fn deinit(self: *Workspace) void {
         if (self.orders) |*orders| orders.deinit();
         self.allocator.free(self.attenuation_data);
+        self.allocator.free(self.attenuation_layer_transmittance);
         self.allocator.free(self.rt_layers);
+        self.allocator.free(self.layer_phase_max_indices);
+        self.allocator.free(self.source_phase_max_indices);
         self.allocator.free(self.layer_phase_kernels);
         self.allocator.free(self.layer_phase_kernel_valid);
         self.* = undefined;
@@ -37,9 +43,11 @@ pub const Workspace = struct {
         const nlevel = layers.len + 1;
         const required_len = geo.nmutot * nlevel * nlevel;
         try ensureCapacity(f64, self.allocator, &self.attenuation_data, required_len);
-        return attenuation_mod.fillAttenuationDynamicWithGridInBuffer(
+        try ensureCapacity(f64, self.allocator, &self.attenuation_layer_transmittance, geo.nmutot * layers.len);
+        return attenuation_mod.fillAttenuationDynamicWithGridInBufferAndLayerCache(
             self.allocator,
             self.attenuation_data,
+            self.attenuation_layer_transmittance,
             layers,
             pseudo_spherical_grid,
             geo,
@@ -50,6 +58,16 @@ pub const Workspace = struct {
     pub fn layerRt(self: *Workspace, nlevel: usize) ![]basis.LayerRT {
         try ensureCapacity(basis.LayerRT, self.allocator, &self.rt_layers, nlevel);
         return self.rt_layers[0..nlevel];
+    }
+
+    pub fn layerPhaseMaxIndices(self: *Workspace, nlayer: usize) ![]usize {
+        try ensureCapacity(usize, self.allocator, &self.layer_phase_max_indices, nlayer);
+        return self.layer_phase_max_indices[0..nlayer];
+    }
+
+    pub fn sourcePhaseMaxIndices(self: *Workspace, nlevel: usize) ![]usize {
+        try ensureCapacity(usize, self.allocator, &self.source_phase_max_indices, nlevel);
+        return self.source_phase_max_indices[0..nlevel];
     }
 
     pub fn ordersWorkspace(self: *Workspace, nlevel: usize) !*orders_mod.OrdersWorkspace {

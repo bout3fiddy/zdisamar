@@ -67,11 +67,12 @@ fn transportToOtherLevels(
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
+            const local_u = ud_local[ilevel].U.col[imu0].data;
+            const prev_u = ud_orde[ilevel - 1].U.col[imu0].data;
+            const out_u = &ud_orde[ilevel].U.col[imu0].data;
             for (0..nmutot) |imu| {
-                const local_val = ud_local[ilevel].U.col[imu0].get(imu);
-                const prev_val = ud_orde[ilevel - 1].U.col[imu0].get(imu);
                 const att = atten.get(imu, ilevel - 1, ilevel);
-                ud_orde[ilevel].U.col[imu0].set(imu, local_val + att * prev_val);
+                out_u[imu] = local_u[imu] + att * prev_u[imu];
             }
         }
     }
@@ -81,20 +82,22 @@ fn transportToOtherLevels(
     while (ilevel > start_level) {
         ilevel -= 1;
         for (0..2) |imu0| {
+            const local_d = ud_local[ilevel].D.col[imu0].data;
+            const prev_d = ud_orde[ilevel + 1].D.col[imu0].data;
+            const out_d = &ud_orde[ilevel].D.col[imu0].data;
             for (0..nmutot) |imu| {
-                const local_val = ud_local[ilevel].D.col[imu0].get(imu);
-                const prev_val = ud_orde[ilevel + 1].D.col[imu0].get(imu);
                 const att = atten.get(imu, ilevel + 1, ilevel);
-                ud_orde[ilevel].D.col[imu0].set(imu, local_val + att * prev_val);
+                out_d[imu] = local_d[imu] + att * prev_d[imu];
             }
         }
     }
 }
 
 pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_gauss: usize) f64 {
+    const row_offset = row * mat.n;
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
-        s += mat.get(row, k) * vec_col.get(k);
+        s += mat.data[row_offset + k] * vec_col.data[k];
     }
     return s;
 }
@@ -139,15 +142,19 @@ fn accumulateOrderContribution(
 ) void {
     for (start_level..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
+            const orde_u = ud_orde[ilevel].U.col[imu0].data;
+            const orde_d = ud_orde[ilevel].D.col[imu0].data;
+            const local_u = ud_local[ilevel].U.col[imu0].data;
+            const local_d = ud_local[ilevel].D.col[imu0].data;
+            const ud_u = &ud[ilevel].U.col[imu0].data;
+            const ud_d = &ud[ilevel].D.col[imu0].data;
+            const sum_u = &ud_sum_local[ilevel].U.col[imu0].data;
+            const sum_d = &ud_sum_local[ilevel].D.col[imu0].data;
             for (0..nmutot) |imu| {
-                const uval = ud[ilevel].U.col[imu0].get(imu) + ud_orde[ilevel].U.col[imu0].get(imu);
-                ud[ilevel].U.col[imu0].set(imu, uval);
-                const dval = ud[ilevel].D.col[imu0].get(imu) + ud_orde[ilevel].D.col[imu0].get(imu);
-                ud[ilevel].D.col[imu0].set(imu, dval);
-                const su = ud_sum_local[ilevel].U.col[imu0].get(imu) + ud_local[ilevel].U.col[imu0].get(imu);
-                ud_sum_local[ilevel].U.col[imu0].set(imu, su);
-                const sd = ud_sum_local[ilevel].D.col[imu0].get(imu) + ud_local[ilevel].D.col[imu0].get(imu);
-                ud_sum_local[ilevel].D.col[imu0].set(imu, sd);
+                ud_u[imu] += orde_u[imu];
+                ud_d[imu] += orde_d[imu];
+                sum_u[imu] += local_u[imu];
+                sum_d[imu] += local_d[imu];
             }
         }
     }
@@ -181,10 +188,12 @@ fn ordersScatInternal(
     initializeOrdersBuffers(ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
 
     for (start_level..end_level + 1) |ilevel| {
+        const e_data = &ud_view[ilevel].E.data;
+        const orde_e_data = &ud_orde_view[ilevel].E.data;
         for (0..nmutot) |imu| {
             const att = atten.get(imu, end_level, ilevel);
-            ud_orde_view[ilevel].E.set(imu, att);
-            ud_view[ilevel].E.set(imu, att);
+            orde_e_data[imu] = att;
+            e_data[imu] = att;
         }
     }
 
@@ -192,8 +201,11 @@ fn ordersScatInternal(
         for (0..2) |imu0| {
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel + 1);
+            const local_d = &ud_local_view[ilevel].D.col[imu0].data;
+            const rt_t = &rt[ilevel + 1].T;
+            const rt_col_offset = col_idx;
             for (0..nmutot) |imu| {
-                ud_local_view[ilevel].D.col[imu0].set(imu, rt[ilevel + 1].T.get(imu, col_idx) * att);
+                local_d[imu] = rt_t.data[imu * rt_t.n + rt_col_offset] * att;
             }
         }
     }
@@ -203,8 +215,11 @@ fn ordersScatInternal(
         for (0..2) |imu0| {
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel);
+            const local_u = &ud_local_view[ilevel].U.col[imu0].data;
+            const rt_r = &rt[ilevel].R;
+            const rt_col_offset = col_idx;
             for (0..nmutot) |imu| {
-                ud_local_view[ilevel].U.col[imu0].set(imu, rt[ilevel].R.get(imu, col_idx) * att);
+                local_u[imu] = rt_r.data[imu * rt_r.n + rt_col_offset] * att;
             }
         }
     }
@@ -223,8 +238,9 @@ fn ordersScatInternal(
 
     var max_value: f64 = 0.0;
     for (0..2) |imu0| {
+        const end_u = ud_orde_view[end_level].U.col[imu0].data;
         for (n_gauss..nmutot) |imu| {
-            const val = @abs(ud_orde_view[end_level].U.col[imu0].get(imu));
+            const val = @abs(end_u[imu]);
             if (val > max_value) max_value = val;
         }
     }
@@ -242,28 +258,35 @@ fn ordersScatInternal(
 
         for (start_level..end_level) |ilevel| {
             for (0..2) |imu0| {
+                const local_d = &ud_local_view[ilevel].D.col[imu0].data;
+                const prev_u = &ud_orde_view[ilevel].U.col[imu0];
+                const prev_d = &ud_orde_view[ilevel + 1].D.col[imu0];
                 for (0..nmutot) |imu| {
-                    const rst_dot_u = dotGauss(&rt[ilevel + 1].R, imu, &ud_orde_view[ilevel].U.col[imu0], n_gauss);
-                    const t_dot_d = dotGauss(&rt[ilevel + 1].T, imu, &ud_orde_view[ilevel + 1].D.col[imu0], n_gauss);
-                    ud_local_view[ilevel].D.col[imu0].set(imu, rst_dot_u + t_dot_d);
+                    const rst_dot_u = dotGauss(&rt[ilevel + 1].R, imu, prev_u, n_gauss);
+                    const t_dot_d = dotGauss(&rt[ilevel + 1].T, imu, prev_d, n_gauss);
+                    local_d[imu] = rst_dot_u + t_dot_d;
                 }
             }
         }
         ud_local_view[end_level].D = basis.Vec2.zero(nmutot);
 
         for (0..2) |imu0| {
+            const local_u = &ud_local_view[start_level].U.col[imu0].data;
+            const prev_d = &ud_orde_view[start_level].D.col[imu0];
             for (0..nmutot) |imu| {
-                const r_dot_d = dotGauss(&rt[start_level].R, imu, &ud_orde_view[start_level].D.col[imu0], n_gauss);
-                ud_local_view[start_level].U.col[imu0].set(imu, r_dot_d);
+                local_u[imu] = dotGauss(&rt[start_level].R, imu, prev_d, n_gauss);
             }
         }
 
         for (start_level + 1..end_level + 1) |ilevel| {
             for (0..2) |imu0| {
+                const local_u = &ud_local_view[ilevel].U.col[imu0].data;
+                const prev_d = &ud_orde_view[ilevel].D.col[imu0];
+                const prev_u = &ud_orde_view[ilevel - 1].U.col[imu0];
                 for (0..nmutot) |imu| {
-                    const r_dot_d = dotGauss(&rt[ilevel].R, imu, &ud_orde_view[ilevel].D.col[imu0], n_gauss);
-                    const tst_dot_u = dotGauss(&rt[ilevel].T, imu, &ud_orde_view[ilevel - 1].U.col[imu0], n_gauss);
-                    ud_local_view[ilevel].U.col[imu0].set(imu, r_dot_d + tst_dot_u);
+                    const r_dot_d = dotGauss(&rt[ilevel].R, imu, prev_d, n_gauss);
+                    const tst_dot_u = dotGauss(&rt[ilevel].T, imu, prev_u, n_gauss);
+                    local_u[imu] = r_dot_d + tst_dot_u;
                 }
             }
         }
@@ -272,8 +295,9 @@ fn ordersScatInternal(
 
         max_value = 0.0;
         for (0..2) |imu0| {
+            const end_u = ud_orde_view[end_level].U.col[imu0].data;
             for (n_gauss..nmutot) |imu| {
-                const val = @abs(ud_orde_view[end_level].U.col[imu0].get(imu));
+                const val = @abs(end_u[imu]);
                 if (val > max_value) max_value = val;
             }
         }
