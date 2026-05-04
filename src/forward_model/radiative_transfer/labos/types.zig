@@ -30,10 +30,6 @@ pub const Mat = struct {
     pub fn set(self: *Self, i: usize, j: usize, val: f64) void {
         self.data[i * self.n + j] = val;
     }
-
-    pub fn addTo(self: *Self, i: usize, j: usize, val: f64) void {
-        self.data[i * self.n + j] += val;
-    }
 };
 
 pub const Vec = struct {
