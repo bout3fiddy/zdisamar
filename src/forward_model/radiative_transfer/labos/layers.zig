@@ -45,14 +45,14 @@ pub fn renormalizeZeroFourierPhaseKernel(
         const column_weight = @max(geo.w[imu0], 1.0e-30);
         for (0..geo.nmutot) |imu| {
             const row_weight = @max(geo.w[imu], 1.0e-30);
-            zp[imu][imu0] = zplus.get(imu, imu0) / (row_weight * column_weight);
+            zp[imu][imu0] = zplus.data[imu * zplus.n + imu0] / (row_weight * column_weight);
         }
     }
 
     for (0..geo.n_gauss) |imu0| {
         var integral: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
-            integral += geo.wg[imu] * (zp[imu][imu0] + zmin.get(imu, imu0) / (@max(geo.w[imu], 1.0e-30) * @max(geo.w[imu0], 1.0e-30)));
+            integral += geo.wg[imu] * (zp[imu][imu0] + zmin.data[imu * zmin.n + imu0] / (@max(geo.w[imu], 1.0e-30) * @max(geo.w[imu0], 1.0e-30)));
         }
         const denominator = zp[imu0][imu0] * geo.wg[imu0];
         if (@abs(denominator) <= 1.0e-30) continue;
@@ -64,7 +64,7 @@ pub fn renormalizeZeroFourierPhaseKernel(
         const target_mu = geo.u[imu0];
         var integral: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
-            integral += geo.wg[imu] * (zp[imu][imu0] + zmin.get(imu, imu0) / (@max(geo.w[imu], 1.0e-30) * @max(geo.w[imu0], 1.0e-30)));
+            integral += geo.wg[imu] * (zp[imu][imu0] + zmin.data[imu * zmin.n + imu0] / (@max(geo.w[imu], 1.0e-30) * @max(geo.w[imu0], 1.0e-30)));
         }
         const delta = 2.0 - integral;
 
@@ -101,7 +101,7 @@ pub fn renormalizeZeroFourierPhaseKernel(
     for (0..geo.nmutot) |imu0| {
         const column_weight = geo.w[imu0];
         for (0..geo.nmutot) |imu| {
-            zplus.set(imu, imu0, zp[imu][imu0] * geo.w[imu] * column_weight);
+            zplus.data[imu * zplus.n + imu0] = zp[imu][imu0] * geo.w[imu] * column_weight;
         }
     }
 }
@@ -206,12 +206,12 @@ fn doDouble(
         b *= 2.0;
         if (b < 0.001) {
             for (0..geo.nmutot) |imu| {
-                E.set(imu, math.exp(-b / @max(geo.u[imu], 1.0e-12)));
+                E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
             }
         } else {
             for (0..geo.nmutot) |imu| {
-                const e = E.get(imu);
-                E.set(imu, e * e);
+                const e = E.data[imu];
+                E.data[imu] = e * e;
             }
         }
     }
@@ -312,7 +312,7 @@ pub fn calcRTlayersIntoWithBasis(
 
         var E = basis.Vec.zero(geo.nmutot);
         for (0..geo.nmutot) |imu| {
-            E.set(imu, math.exp(-b_start / @max(geo.u[imu], 1.0e-12)));
+            E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
         }
 
         var R = singleScatterR(a, &E, &z.Zmin, geo);
