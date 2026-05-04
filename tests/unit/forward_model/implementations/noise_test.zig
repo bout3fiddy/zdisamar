@@ -54,8 +54,8 @@ test "s5p operational noise uses the operational reference grid as the reference
 test "s5p operational noise falls back to spectral-grid spacing when measured wavelengths are absent" {
     const scene: Scene = .{
         .spectral_grid = .{
-            .start_nm = 405.0,
-            .end_nm = 406.0,
+            .start_nm = 760.0,
+            .end_nm = 761.0,
             .sample_count = 3,
         },
         .observation_model = .{
@@ -68,7 +68,7 @@ test "s5p operational noise falls back to spectral-grid spacing when measured wa
 
     const signal = [_]f64{ 40.0, 80.0, 160.0 };
     var sigma: [3]f64 = undefined;
-    try s5pOperationalSigma(&scene, .radiance, &.{ 405.0, 405.25, 405.5 }, &signal, &sigma);
+    try s5pOperationalSigma(&scene, .radiance, &.{ 760.0, 760.25, 760.5 }, &signal, &sigma);
 
     try std.testing.expectApproxEqRel(@as(f64, 0.0565685424949238), sigma[0], 1.0e-12);
     try std.testing.expectApproxEqRel(@as(f64, 0.0848528137423857), sigma[1], 1.0e-12);
@@ -94,7 +94,7 @@ test "lab operational noise uses explicit per-channel coefficients" {
     };
     const signal = [_]f64{ 1.0e6, 1.5e6 };
     var sigma: [2]f64 = undefined;
-    try labOperationalSigma(&scene, .radiance, &.{ 405.0, 406.0 }, &signal, &sigma);
+    try labOperationalSigma(&scene, .radiance, &.{ 760.0, 761.0 }, &signal, &sigma);
     try std.testing.expect(sigma[0] > 0.0);
     try std.testing.expect(sigma[1] > sigma[0]);
 }

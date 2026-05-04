@@ -7,7 +7,6 @@ const OperationalO2 = @import("operational_o2.zig");
 const State = @import("state.zig");
 
 const Allocator = std.mem.Allocator;
-const default_no2_volume_mixing_ratio = 5.0e-8;
 pub const default_o2_volume_mixing_ratio = 0.20946;
 
 pub fn collectActiveLineAbsorbers(allocator: Allocator, scene: *const Scene) ![]State.ActiveLineAbsorber {
@@ -136,7 +135,6 @@ pub fn speciesMixingRatioAtPressure(
 
 pub fn defaultVolumeMixingRatio(species: AbsorberModel.AbsorberSpecies) ?f64 {
     return switch (species) {
-        .no2, .trop_no2, .strat_no2 => default_no2_volume_mixing_ratio,
         else => null,
     };
 }
@@ -145,16 +143,8 @@ fn defaultVolumeMixingRatioForScene(
     scene: *const Scene,
     species: AbsorberModel.AbsorberSpecies,
 ) ?f64 {
-    // DECISION:
-    //   Split NO2 defaults equally between tropospheric and stratospheric
-    //   absorbers when neither profile is supplied.
-    return switch (species) {
-        .trop_no2, .strat_no2 => if (usesSplitNo2PartitionFallback(scene))
-            default_no2_volume_mixing_ratio * 0.5
-        else
-            default_no2_volume_mixing_ratio,
-        else => defaultVolumeMixingRatio(species),
-    };
+    _ = scene;
+    return defaultVolumeMixingRatio(species);
 }
 
 fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) ?AbsorberModel.AbsorberSpecies {
@@ -169,13 +159,7 @@ fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) ?AbsorberMode
 
 fn speciesForHitranIndex(gas_index: u16) ?AbsorberModel.AbsorberSpecies {
     return switch (gas_index) {
-        1 => .h2o,
-        2 => .co2,
-        5 => .co,
-        6 => .ch4,
         7 => .o2,
-        10 => .no2,
-        11 => .nh3,
         else => null,
     };
 }
@@ -188,13 +172,6 @@ fn findAbsorberBySpecies(
         if (resolvedAbsorberSpecies(absorber.*) == species) return absorber;
     }
     return null;
-}
-
-fn usesSplitNo2PartitionFallback(scene: *const Scene) bool {
-    const trop = findAbsorberBySpecies(scene, .trop_no2) orelse return false;
-    const strat = findAbsorberBySpecies(scene, .strat_no2) orelse return false;
-    return trop.volume_mixing_ratio_profile_ppmv.len == 0 and
-        strat.volume_mixing_ratio_profile_ppmv.len == 0;
 }
 
 fn interpolateMixingRatioProfileFraction(profile_ppmv: []const [2]f64, pressure_hpa: f64) f64 {

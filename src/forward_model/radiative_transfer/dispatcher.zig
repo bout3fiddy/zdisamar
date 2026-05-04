@@ -1,5 +1,4 @@
 const std = @import("std");
-const adding = @import("adding/root.zig");
 const common = @import("root.zig");
 const labos = @import("labos/root.zig");
 
@@ -21,12 +20,10 @@ pub fn executePreparedWithLabosWorkspace(
     input: common.ForwardInput,
     workspace: ?*labos.Workspace,
 ) common.ExecuteError!common.ForwardResult {
-    // DECISION:
-    //   Dispatch by resolved family instead of re-evaluating route policy here.
-    return switch (route.family) {
-        .adding => adding.execute(allocator, route, input),
-        .labos => labos.executeWithWorkspace(allocator, route, input, workspace),
-    };
+    if (route.regime != .nadir) return common.Error.UnsupportedObservationRegime;
+    if (route.execution_mode != .scalar) return common.Error.UnsupportedExecutionMode;
+    if (route.derivative_mode != .none) return common.Error.UnsupportedDerivativeMode;
+    return labos.executeWithWorkspace(allocator, route, input, workspace);
 }
 
 pub fn execute(

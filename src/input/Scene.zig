@@ -22,21 +22,16 @@ pub const Aerosol = @import("Aerosol.zig").Aerosol;
 pub const Instrument = @import("Instrument.zig").Instrument;
 pub const ObservationModel = @import("ObservationModel.zig").ObservationModel;
 pub const ObservationRegime = @import("ObservationModel.zig").ObservationRegime;
-pub const StateVector = @import("StateVector.zig").StateVector;
-pub const StateParameter = @import("StateVector.zig").Parameter;
-pub const StateTarget = @import("StateVector.zig").Target;
-pub const StateBounds = @import("StateVector.zig").Bounds;
-pub const StatePrior = @import("StateVector.zig").Prior;
-pub const StateTransform = @import("StateVector.zig").Transform;
 pub const Measurement = @import("Measurement.zig").Measurement;
 pub const MeasurementVector = @import("Measurement.zig").MeasurementVector;
 pub const MeasurementMask = @import("Measurement.zig").SpectralMask;
 pub const MeasurementErrorModel = @import("Measurement.zig").ErrorModel;
-pub const InverseProblem = @import("InverseProblem.zig").InverseProblem;
-pub const CovarianceBlock = @import("InverseProblem.zig").CovarianceBlock;
-pub const FitControls = @import("InverseProblem.zig").FitControls;
-pub const Convergence = @import("InverseProblem.zig").Convergence;
-pub const DerivativeMode = @import("InverseProblem.zig").DerivativeMode;
+
+pub const DerivativeMode = enum {
+    none,
+    semi_analytical,
+    numerical,
+};
 
 pub const Scene = struct {
     id: []const u8 = "scene-0",

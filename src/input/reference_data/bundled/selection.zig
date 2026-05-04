@@ -8,10 +8,6 @@ const Allocator = std.mem.Allocator;
 const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 
 pub fn loadContinuumForScene(allocator: Allocator, scene: *const Scene) !ReferenceData.CrossSectionTable {
-    if (assets.shouldLoadVisibleBandContinuum(scene)) {
-        return try assets.loadVisibleBandContinuumTable(allocator);
-    }
-
     // UNITS:
     //   The fallback table preserves the scene's spectral grid in nanometers while keeping the
     //   continuum coefficient identically zero.
@@ -33,10 +29,6 @@ pub fn loadSpectroscopyForScene(allocator: Allocator, scene: *const Scene) !?Ref
         assets.overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 760.8, 771.5))
     {
         return try assets.loadO2aSpectroscopyLineList(allocator);
-    }
-
-    if (assets.shouldLoadVisibleBandLineList(scene)) {
-        return try assets.loadVisibleBandLineList(allocator);
     }
 
     return null;

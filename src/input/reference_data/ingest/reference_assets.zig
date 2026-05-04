@@ -202,7 +202,7 @@ fn externalAssetSpec(kind: AssetKind, asset_format: []const u8) formats.AssetSpe
         },
         .cross_section_table => .{
             .format = "csv",
-            .columns = &.{ "wavelength_nm", "no2_sigma_cm2_per_molecule" },
+            .columns = &.{ "wavelength_nm", "absorber_sigma_cm2_per_molecule" },
         },
         .collision_induced_absorption_table => .{
             .format = "bira_cia_poly",

@@ -47,7 +47,5 @@ changing irradiance physics or support data.
 
 - The live executable YAML surface is currently the retained O2A parity case at
   `data/examples/vendor_o2a_parity.yaml`.
-- Older YAML examples under `data/examples/` are design-only reference shapes
-  until they are backed by a real runtime path again.
 - Validation-lane tests should stay aligned with the live YAML contract instead
   of the broader historical canonical-config story.

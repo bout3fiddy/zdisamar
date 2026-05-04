@@ -45,7 +45,7 @@ test "measurement storage transport hint follows explicit interval totals" {
         },
     };
     const route: common.Route = .{
-        .family = .adding,
+        .family = .labos,
         .regime = .nadir,
         .execution_mode = .scalar,
         .derivative_mode = .none,

@@ -12,8 +12,6 @@ pub const bundle_manifest_paths = struct {
 
 pub const asset_ids = struct {
     pub const standard_climatology_profile = "us_standard_1976_profile";
-    pub const visible_band_continuum = "no2_405_465_demo";
-    pub const visible_band_line_list = "no2_demo_lines";
     pub const o2a_line_list = "o2a_hitran_07_hit08_tropomi";
     pub const o2a_strong_line_set = "o2a_lisa_sdf";
     pub const o2a_relaxation_matrix = "o2a_lisa_rmf";
@@ -58,32 +56,6 @@ pub fn loadStandardClimatologyProfile(
     );
     defer asset.deinit(allocator);
     return try asset.toClimatologyProfile(allocator);
-}
-
-pub fn loadVisibleBandContinuumTable(
-    allocator: Allocator,
-) !ReferenceData.CrossSectionTable {
-    var asset = try reference_assets.loadCsvBundleAsset(
-        allocator,
-        .cross_section_table,
-        bundle_manifest_paths.cross_sections,
-        asset_ids.visible_band_continuum,
-    );
-    defer asset.deinit(allocator);
-    return try asset.toCrossSectionTable(allocator);
-}
-
-pub fn loadVisibleBandLineList(
-    allocator: Allocator,
-) !ReferenceData.SpectroscopyLineList {
-    var asset = try reference_assets.loadCsvBundleAsset(
-        allocator,
-        .spectroscopy_line_list,
-        bundle_manifest_paths.cross_sections,
-        asset_ids.visible_band_line_list,
-    );
-    defer asset.deinit(allocator);
-    return try asset.toSpectroscopyLineList(allocator);
 }
 
 pub fn loadO2ALineList(
@@ -178,28 +150,6 @@ pub fn loadMiePhaseTable(
     );
     defer asset.deinit(allocator);
     return try asset.toMiePhaseTable(allocator);
-}
-
-pub fn shouldLoadVisibleBandContinuum(scene: *const Scene) bool {
-    // PARITY:
-    //   The visible-band bundle uses the same 405-465 nm gate as the vendor reference path.
-    return overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 405.0, 465.0);
-}
-
-pub fn shouldLoadVisibleBandLineList(scene: *const Scene) bool {
-    if (!overlapsRange(scene.spectral_grid.start_nm, scene.spectral_grid.end_nm, 405.0, 465.0)) {
-        return false;
-    }
-    if (scene.absorbers.items.len == 0) return true;
-    var uses_only_implicit_absorbers = true;
-    for (scene.absorbers.items) |absorber| {
-        switch (absorber.spectroscopy.mode) {
-            .line_by_line => return true,
-            .none => {},
-            .cross_sections, .cia => uses_only_implicit_absorbers = false,
-        }
-    }
-    return uses_only_implicit_absorbers;
 }
 
 pub fn shouldLoadBundledO2ALineList(scene: *const Scene) bool {
