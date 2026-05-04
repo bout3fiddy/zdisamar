@@ -201,9 +201,8 @@ fn initializeOrdersBuffers(
         initVec2Metadata(&field.D, nmutot);
 
         if (track_sum_local) {
-            sum_local.* = undefined;
-            initVec2Metadata(&sum_local.U, nmutot);
-            initVec2Metadata(&sum_local.D, nmutot);
+            sum_local.U = basis.Vec2.zero(nmutot);
+            sum_local.D = basis.Vec2.zero(nmutot);
         }
 
         orde.* = undefined;
@@ -211,9 +210,8 @@ fn initializeOrdersBuffers(
         initVec2Metadata(&orde.U, nmutot);
         initVec2Metadata(&orde.D, nmutot);
 
-        local.* = undefined;
-        initVec2Metadata(&local.U, nmutot);
-        initVec2Metadata(&local.D, nmutot);
+        local.U = basis.Vec2.zero(nmutot);
+        local.D = basis.Vec2.zero(nmutot);
     }
 }
 
