@@ -88,11 +88,12 @@ pub fn configuredForwardInput(
     const rtm_start = std.time.nanoTimestamp();
     const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
     input.source_interfaces = source_interface_slice;
+    var has_rtm_quadrature = false;
     if (route.rtm_controls.integrate_source_function) {
         // DECISION:
         //   Only attach RTM quadrature when the route requests integrated
         //   source-function evaluation.
-        const has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
+        has_rtm_quadrature = OpticsPreparation.transport.fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
             prepared,
             wavelength_nm,
             input.layers,
@@ -112,13 +113,15 @@ pub fn configuredForwardInput(
         }
     }
     const source_start = std.time.nanoTimestamp();
-    OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
-        prepared,
-        wavelength_nm,
-        input.layers,
-        source_interface_slice,
-        &wavelength_cache,
-    );
+    if (!has_rtm_quadrature) {
+        OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
+            prepared,
+            wavelength_nm,
+            input.layers,
+            source_interface_slice,
+            &wavelength_cache,
+        );
+    }
     const pseudo_start = std.time.nanoTimestamp();
     if (route.rtm_controls.use_spherical_correction) {
         // DECISION:
