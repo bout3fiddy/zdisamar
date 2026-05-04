@@ -48,6 +48,30 @@ pub const PlanSpec = struct {
     transport_solver: []const u8,
     execution_solver_mode: []const u8,
     execution_derivative_mode: []const u8,
+
+    pub fn validate(self: PlanSpec) !void {
+        if (!std.mem.eql(u8, self.model_family, "disamar_standard")) {
+            return error.UnsupportedModelFamily;
+        }
+        if (!std.mem.eql(u8, self.transport_solver, "dispatcher")) {
+            return error.UnsupportedTransportSolver;
+        }
+        _ = try self.executionMode();
+        _ = try self.derivativeMode();
+    }
+
+    pub fn executionMode(self: PlanSpec) !transport_common.ExecutionMode {
+        if (std.mem.eql(u8, self.execution_solver_mode, "scalar")) return .scalar;
+        if (std.mem.eql(u8, self.execution_solver_mode, "polarized")) return .polarized;
+        return error.UnsupportedExecutionMode;
+    }
+
+    pub fn derivativeMode(self: PlanSpec) !transport_common.DerivativeMode {
+        if (std.mem.eql(u8, self.execution_derivative_mode, "none")) return .none;
+        if (std.mem.eql(u8, self.execution_derivative_mode, "semi_analytical")) return .semi_analytical;
+        if (std.mem.eql(u8, self.execution_derivative_mode, "numerical")) return .numerical;
+        return error.UnsupportedDerivativeMode;
+    }
 };
 
 pub const Metadata = struct {

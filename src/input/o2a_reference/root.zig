@@ -261,7 +261,8 @@ pub fn validateInput(input: *const O2AInput) !void {
     if (input.intervals.len == 0) return error.InvalidAtmosphere;
     for (input.intervals) |interval| try interval.validate();
     try input.aerosol.placement.validate();
-    try input.rtm_controls.validate(.scalar);
+    try input.plan.validate();
+    try input.rtm_controls.validate(try input.plan.executionMode());
     try requireAsset(input.inputs.atmosphere_profile);
     try requireAsset(input.inputs.vendor_reference_csv);
     try requireAsset(input.inputs.raw_solar_reference);

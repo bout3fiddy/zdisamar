@@ -48,6 +48,59 @@ test "O2A input validation rejects invalid sampling and assets" {
     try std.testing.expectError(error.InvalidReferenceAsset, zdisamar.o2a.validateInput(&input));
 }
 
+test "O2A input validation consumes plan fields" {
+    var input = zdisamar.defaultO2AInput();
+    input.plan.execution_solver_mode = "polarized";
+    input.rtm_controls.stokes_dimension = 3;
+    try zdisamar.o2a.validateInput(&input);
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.model_family = "unsupported";
+    try std.testing.expectError(error.UnsupportedModelFamily, zdisamar.o2a.validateInput(&input));
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.transport_solver = "unsupported";
+    try std.testing.expectError(error.UnsupportedTransportSolver, zdisamar.o2a.validateInput(&input));
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.execution_solver_mode = "unsupported";
+    try std.testing.expectError(error.UnsupportedExecutionMode, zdisamar.o2a.validateInput(&input));
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.execution_derivative_mode = "unsupported";
+    try std.testing.expectError(error.UnsupportedDerivativeMode, zdisamar.o2a.validateInput(&input));
+}
+
+test "O2A plan modes are consumed when preparing the route" {
+    var input = zdisamar.defaultO2AInput();
+    input.plan.execution_solver_mode = "scalar";
+    input.plan.execution_derivative_mode = "semi_analytical";
+
+    var prepared = try zdisamar.prepareO2A(std.testing.allocator, &input);
+    defer prepared.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.scalar, prepared.route.execution_mode);
+    try std.testing.expectEqual(.semi_analytical, prepared.route.derivative_mode);
+}
+
+test "O2A route preparation rejects unsupported plan modes" {
+    var input = zdisamar.defaultO2AInput();
+    input.plan.execution_solver_mode = "unsupported";
+
+    try std.testing.expectError(
+        error.UnsupportedExecutionMode,
+        zdisamar.prepareO2A(std.testing.allocator, &input),
+    );
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.execution_derivative_mode = "unsupported";
+
+    try std.testing.expectError(
+        error.UnsupportedDerivativeMode,
+        zdisamar.prepareO2A(std.testing.allocator, &input),
+    );
+}
+
 test "validation YAML resolves into the shared native O2A input type" {
     var loaded = try zdisamar.disamar_reference.loadDefaultResolvedCase(std.testing.allocator);
     defer loaded.deinit();

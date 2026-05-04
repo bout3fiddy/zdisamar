@@ -373,12 +373,13 @@ pub fn buildResolvedVendorO2AScene(
 
 pub fn prepareResolvedVendorO2ARoute(
     scene: *const Scene,
+    plan: PlanSpec,
     rtm_controls: RadiativeTransferControls,
 ) !Route {
     return transport_common.prepareRoute(.{
         .regime = scene.observation_model.regime,
-        .execution_mode = .scalar,
-        .derivative_mode = .none,
+        .execution_mode = try plan.executionMode(),
+        .derivative_mode = try plan.derivativeMode(),
         .rtm_controls = rtm_controls,
     });
 }
@@ -450,7 +451,7 @@ pub fn prepareResolvedVendorO2ACase(
     try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
     try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
 
-    const route = try prepareResolvedVendorO2ARoute(&scene, resolved.rtm_controls);
+    const route = try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
 
     return .{
         .reference = reference,

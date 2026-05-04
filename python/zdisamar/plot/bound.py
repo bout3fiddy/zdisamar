@@ -135,12 +135,12 @@ class BoundCIAPlots:
         self._prepared = prepared
 
     def budget(self, *, wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0)):
-        diagnostics = self._prepared.o2_o2_cia.diagnostics(wavelengths_nm=wavelengths_nm)
-        return bundles.cia_budget(diagnostics, wavelengths_nm=wavelengths_nm)
+        with self._prepared.o2_o2_cia.diagnostics(wavelengths_nm=wavelengths_nm) as diagnostics:
+            return bundles.cia_budget(diagnostics, wavelengths_nm=wavelengths_nm)
 
     def share_spectrum(self, *, wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0)):
-        diagnostics = self._prepared.o2_o2_cia.diagnostics(wavelengths_nm=wavelengths_nm)
-        return cia_plots.share_spectrum(diagnostics)
+        with self._prepared.o2_o2_cia.diagnostics(wavelengths_nm=wavelengths_nm) as diagnostics:
+            return cia_plots.share_spectrum(diagnostics)
 
 
 class BoundInstrumentResponsePlots:
@@ -148,12 +148,12 @@ class BoundInstrumentResponsePlots:
         self._prepared = prepared
 
     def isrf(self, *, wavelengths_nm: Sequence[float] = (760.76,), channel: str = "radiance"):
-        table = self._prepared.instrument_response.sampling_table(wavelengths_nm=wavelengths_nm, channels=(channel,))
-        return instrument_response_plots.isrf(table, nominal_wavelength_nm=wavelengths_nm[0], channel=channel)
+        with self._prepared.instrument_response.sampling_table(wavelengths_nm=wavelengths_nm, channels=(channel,)) as table:
+            return instrument_response_plots.isrf(table, nominal_wavelength_nm=wavelengths_nm[0], channel=channel)
 
     def budget(self, *, wavelengths_nm: Sequence[float] = (760.76,)):
-        table = self._prepared.instrument_response.sampling_table(wavelengths_nm=wavelengths_nm)
-        return bundles.instrument_response(table, nominal_wavelength_nm=wavelengths_nm[0])
+        with self._prepared.instrument_response.sampling_table(wavelengths_nm=wavelengths_nm) as table:
+            return bundles.instrument_response(table, nominal_wavelength_nm=wavelengths_nm[0])
 
 
 class BoundRadiativeTransferPlots:
@@ -168,17 +168,17 @@ class BoundRadiativeTransferPlots:
         run_forward: bool = False,
     ):
         if spectrum is not None:
-            table = self._prepared.radiative_transfer.diagnostics(wavelengths_nm=wavelengths_nm, spectrum=spectrum)
-            return bundles.radiative_transfer_budget(table, wavelengths_nm=wavelengths_nm)
+            with self._prepared.radiative_transfer.diagnostics(wavelengths_nm=wavelengths_nm, spectrum=spectrum) as table:
+                return bundles.radiative_transfer_budget(table, wavelengths_nm=wavelengths_nm)
         if not run_forward:
             raise ValueError("pass spectrum=... or set run_forward=True")
         with self._prepared.forward_model() as result:
-            table = self._prepared.radiative_transfer.diagnostics(wavelengths_nm=wavelengths_nm, spectrum=result)
-            return bundles.radiative_transfer_budget(table, wavelengths_nm=wavelengths_nm)
+            with self._prepared.radiative_transfer.diagnostics(wavelengths_nm=wavelengths_nm, spectrum=result) as table:
+                return bundles.radiative_transfer_budget(table, wavelengths_nm=wavelengths_nm)
 
     def source_profile(self, *, wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0)):
-        table = self._prepared.radiative_transfer.diagnostics(wavelengths_nm=wavelengths_nm)
-        return rt_plots.source_profile(table)
+        with self._prepared.radiative_transfer.diagnostics(wavelengths_nm=wavelengths_nm) as table:
+            return rt_plots.source_profile(table)
 
 
 class BoundPerturbationPlots:
