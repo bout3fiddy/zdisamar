@@ -263,8 +263,23 @@ fn esmulSemulAdd12(e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) M
 pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     const ab = smul(n, n_gauss, threshold_mul, a, b);
 
-    var trab: f64 = 0.0;
-    for (0..n_gauss) |k| trab += ab.data[k * n + k];
+    const trab: f64 = if (n == 12 and n_gauss == 10) blk: {
+        var trace = ab.data[0];
+        trace += ab.data[13];
+        trace += ab.data[26];
+        trace += ab.data[39];
+        trace += ab.data[52];
+        trace += ab.data[65];
+        trace += ab.data[78];
+        trace += ab.data[91];
+        trace += ab.data[104];
+        trace += ab.data[117];
+        break :blk trace;
+    } else blk: {
+        var trace: f64 = 0.0;
+        for (0..n_gauss) |k| trace += ab.data[k * n + k];
+        break :blk trace;
+    };
     if (@abs(trab) < threshold_q) return ab;
 
     const n_extra = n - n_gauss;
