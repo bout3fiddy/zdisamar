@@ -391,7 +391,7 @@ fn layerResolvedLabosWithWorkspace(
             2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
         const weighted_refl_fc = fourier_weight * refl_fc;
         reflectance += weighted_refl_fc;
-        if (i_fourier >= controls.fourier_floor_scalar and @abs(weighted_refl_fc) <= fourier_tail_reflectance_epsilon) break;
+        if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) break;
     }
 
     if (active_profile) |profiler| profiler.addSample(profile_sample);
