@@ -196,10 +196,7 @@ pub fn fillZplusZminFromBasisLimited(
     const n = geo.nmutot;
     var zplus = Mat.zero(n);
     var zmin = Mat.zero(n);
-    const bounded_max_phase_index = @min(
-        max_phase_index,
-        phase_functions.maxPhaseCoefficientIndex(phase_coefs),
-    );
+    const bounded_max_phase_index = @min(max_phase_index, types.max_phase_coef - 1);
     if (i_fourier > bounded_max_phase_index) return .{ .Zplus = zplus, .Zmin = zmin };
 
     for (i_fourier..bounded_max_phase_index + 1) |l| {

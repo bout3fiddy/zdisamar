@@ -265,7 +265,13 @@ pub fn calcRTlayersIntoWithBasis(
             phase_functions.maxPhaseCoefficientIndex(phase_coefs);
         if (i_fourier > max_phase_index) continue;
 
-        var z = basis.fillZplusZminFromBasis(i_fourier, phase_coefs, geo, plm_basis);
+        var z = basis.fillZplusZminFromBasisLimited(
+            i_fourier,
+            phase_coefs,
+            max_phase_index,
+            geo,
+            plm_basis,
+        );
         if (phase_kernel_cache) |cache| {
             cache[rt_idx] = z;
             if (phase_kernel_valid) |valid| valid[rt_idx] = true;
