@@ -179,6 +179,7 @@ fn sampleCachedEndpointSecant(
     khi: usize,
 ) f64 {
     const h = x[khi] - x[klo];
+    if (h == 0.0) return y[klo];
     const a = (x[khi] - target_x) / h;
     const b = (target_x - x[klo]) / h;
     return a * y[klo] + b * y[khi] +
