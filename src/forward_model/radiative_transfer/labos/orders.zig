@@ -3,8 +3,6 @@ const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 
-const max_order_levels: usize = 128;
-
 pub const OrdersResult = struct {
     allocator: Allocator,
     ud: []basis.UDField,
@@ -28,6 +26,7 @@ pub const OrdersWorkspace = struct {
     ud_sum_local: []basis.UDLocal,
     ud_orde: []basis.UDField,
     ud_local: []basis.UDLocal,
+    rt_active: []bool,
 
     pub fn init(
         allocator: Allocator,
@@ -40,12 +39,15 @@ pub const OrdersWorkspace = struct {
         const ud_orde = try allocator.alloc(basis.UDField, nlevel);
         errdefer allocator.free(ud_orde);
         const ud_local = try allocator.alloc(basis.UDLocal, nlevel);
+        errdefer allocator.free(ud_local);
+        const rt_active = try allocator.alloc(bool, nlevel);
         return .{
             .allocator = allocator,
             .ud = ud,
             .ud_sum_local = ud_sum_local,
             .ud_orde = ud_orde,
             .ud_local = ud_local,
+            .rt_active = rt_active,
         };
     }
 
@@ -54,6 +56,7 @@ pub const OrdersWorkspace = struct {
         self.allocator.free(self.ud_sum_local);
         self.allocator.free(self.ud_orde);
         self.allocator.free(self.ud_local);
+        self.allocator.free(self.rt_active);
         self.* = undefined;
     }
 };
@@ -263,6 +266,7 @@ fn ordersScatInternal(
     ud_sum_local: []basis.UDLocal,
     ud_orde: []basis.UDField,
     ud_local: []basis.UDLocal,
+    rt_active: []bool,
     start_level: usize,
     end_level: usize,
     geo: *const basis.Geometry,
@@ -278,16 +282,16 @@ fn ordersScatInternal(
     std.debug.assert(ud_sum_local.len >= nlevel);
     std.debug.assert(ud_orde.len >= nlevel);
     std.debug.assert(ud_local.len >= nlevel);
+    std.debug.assert(rt_active.len >= nlevel);
 
     const ud_view = ud[0..nlevel];
     const ud_sum_local_view = ud_sum_local[0..nlevel];
     const ud_orde_view = ud_orde[0..nlevel];
     const ud_local_view = ud_local[0..nlevel];
+    const rt_active_view = rt_active[0..nlevel];
     initializeOrdersBuffers(track_sum_local, ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
 
-    std.debug.assert(nlevel <= max_order_levels);
-    var rt_active: [max_order_levels]bool = undefined;
-    for (rt[0..nlevel], rt_active[0..nlevel]) |*layer_rt, *active| {
+    for (rt[0..nlevel], rt_active_view) |*layer_rt, *active| {
         active.* = rtLayerHasSignal(layer_rt, nmutot);
     }
 
@@ -303,7 +307,7 @@ fn ordersScatInternal(
 
     for (start_level..end_level) |ilevel| {
         for (0..2) |imu0| {
-            if (!rt_active[ilevel + 1]) {
+            if (!rt_active_view[ilevel + 1]) {
                 ud_local_view[ilevel].D.col[imu0] = basis.Vec.zero(nmutot);
                 continue;
             }
@@ -323,7 +327,7 @@ fn ordersScatInternal(
 
     for (start_level..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
-            if (!rt_active[ilevel]) {
+            if (!rt_active_view[ilevel]) {
                 ud_local_view[ilevel].U.col[imu0] = basis.Vec.zero(nmutot);
                 continue;
             }
@@ -377,7 +381,7 @@ fn ordersScatInternal(
         for (start_level..end_level) |ilevel| {
             const local_d0 = &ud_local_view[ilevel].D.col[0].data;
             const local_d1 = &ud_local_view[ilevel].D.col[1].data;
-            if (!rt_active[ilevel + 1]) {
+            if (!rt_active_view[ilevel + 1]) {
                 for (0..nmutot) |imu| {
                     local_d0[imu] = 0.0;
                     local_d1[imu] = 0.0;
@@ -401,7 +405,7 @@ fn ordersScatInternal(
         const local_u_start1 = &ud_local_view[start_level].U.col[1].data;
         const prev_d_start0 = &ud_orde_view[start_level].D.col[0];
         const prev_d_start1 = &ud_orde_view[start_level].D.col[1];
-        if (rt_active[start_level]) {
+        if (rt_active_view[start_level]) {
             for (0..nmutot) |imu| {
                 const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
                 local_u_start0[imu] = r_dot_d.col0;
@@ -417,7 +421,7 @@ fn ordersScatInternal(
         for (start_level + 1..end_level + 1) |ilevel| {
             const local_u0 = &ud_local_view[ilevel].U.col[0].data;
             const local_u1 = &ud_local_view[ilevel].U.col[1].data;
-            if (!rt_active[ilevel]) {
+            if (!rt_active_view[ilevel]) {
                 for (0..nmutot) |imu| {
                     local_u0[imu] = 0.0;
                     local_u1[imu] = 0.0;
@@ -494,6 +498,7 @@ pub fn ordersScatInto(
         storage.ud_sum_local,
         storage.ud_orde,
         storage.ud_local,
+        storage.rt_active,
         start_level,
         end_level,
         geo,
@@ -524,6 +529,7 @@ pub fn ordersScatTransportInto(
         storage.ud_sum_local,
         storage.ud_orde,
         storage.ud_local,
+        storage.rt_active,
         start_level,
         end_level,
         geo,
@@ -570,6 +576,8 @@ pub fn ordersScat(
     defer allocator.free(ud_orde);
     const ud_local = try allocator.alloc(basis.UDLocal, nlevel);
     defer allocator.free(ud_local);
+    const rt_active = try allocator.alloc(bool, nlevel);
+    defer allocator.free(rt_active);
 
     _ = ordersScatInternal(
         true,
@@ -577,6 +585,7 @@ pub fn ordersScat(
         result.ud_sum_local,
         ud_orde,
         ud_local,
+        rt_active,
         start_level,
         end_level,
         geo,
