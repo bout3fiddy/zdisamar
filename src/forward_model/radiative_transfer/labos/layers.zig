@@ -118,13 +118,14 @@ fn singleScatterR(
 
     for (0..n) |j| {
         const uj = geo.u[j];
-        const ej = E.get(j);
+        const ej = E.data[j];
+        var idx = j;
         for (0..n) |i| {
             const ui = geo.u[i];
             const dmu_plus = 0.25 / @max(ui + uj, 1.0e-12);
-            const idx = i * n + j;
             const eer = E.data[i] * ej;
             result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * dmu_plus;
+            idx += n;
         }
     }
     return result;
@@ -144,6 +145,7 @@ fn singleScatterT(
     for (0..n) |j| {
         const uj = geo.u[j];
         const ej = E.data[j];
+        var idx = j;
         for (0..n) |i| {
             const ui = geo.u[i];
             const du = ui - uj;
@@ -156,8 +158,8 @@ fn singleScatterT(
                 eet = E.data[i] - ej;
                 dmu_min = 0.25 / du;
             }
-            const idx = i * n + j;
             result.data[idx] = a * Zplus.data[idx] * eet * dmu_min;
+            idx += n;
         }
     }
     return result;
