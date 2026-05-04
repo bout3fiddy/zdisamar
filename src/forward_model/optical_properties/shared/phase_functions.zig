@@ -25,13 +25,12 @@ pub fn phaseCoefficientsFromCompact(
 }
 
 pub fn maxPhaseCoefficientIndex(phase_coefficients: [phase_coefficient_count]f64) usize {
-    var max_index: usize = 0;
-    for (1..phase_coefficient_count) |idx| {
-        if (@abs(phase_coefficients[idx]) > 1.0e-12) {
-            max_index = idx;
-        }
+    var idx = phase_coefficient_count;
+    while (idx > 1) {
+        idx -= 1;
+        if (@abs(phase_coefficients[idx]) > 1.0e-12) return idx;
     }
-    return max_index;
+    return 0;
 }
 
 pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
