@@ -233,25 +233,26 @@ pub fn calcRTlayersIntoWithBasis(
 ) void {
     const nlayer = layers.len;
 
-    for (rt) |*entry| {
-        entry.* = .{
-            .R = basis.Mat.zero(geo.nmutot),
-            .T = basis.Mat.zero(geo.nmutot),
-        };
-    }
+    rt[0] = zeroLayerRt(geo.nmutot);
     if (phase_kernel_valid) |valid| @memset(valid, false);
 
     for (0..nlayer) |layer_idx| {
         const rt_idx = layer_idx + 1;
         const layer = layers[layer_idx];
-        if (i_fourier >= basis.max_phase_coef) continue;
+        if (i_fourier >= basis.max_phase_coef) {
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            continue;
+        }
 
         const phase_coefs = layer.phase_coefficients;
         const max_phase_index = if (layer_phase_max_indices) |indices|
             indices[layer_idx]
         else
             phase_functions.maxPhaseCoefficientIndex(phase_coefs);
-        if (i_fourier > max_phase_index) continue;
+        if (i_fourier > max_phase_index) {
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            continue;
+        }
 
         var z = basis.fillZplusZminFromBasisLimited(
             i_fourier,
@@ -264,7 +265,10 @@ pub fn calcRTlayersIntoWithBasis(
             cache[rt_idx] = z;
             if (phase_kernel_valid) |valid| valid[rt_idx] = true;
         }
-        if (layer.optical_depth < 1.0e-20) continue;
+        if (layer.optical_depth < 1.0e-20) {
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            continue;
+        }
 
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
@@ -315,6 +319,13 @@ pub fn calcRTlayersIntoWithBasis(
         rt[rt_idx].R = R;
         rt[rt_idx].T = T;
     }
+}
+
+fn zeroLayerRt(n: usize) LayerRT {
+    return .{
+        .R = basis.Mat.zero(n),
+        .T = basis.Mat.zero(n),
+    };
 }
 
 pub fn calcRTlayersInto(
