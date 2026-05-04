@@ -202,12 +202,14 @@ pub fn fillZplusZminFromBasisLimited(
     for (i_fourier..bounded_max_phase_index + 1) |l| {
         const alpha1 = phase_coefs[l];
         if (l <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[l];
+            const minus_l = &plm_basis.minus[l];
             for (0..n) |j| {
-                const plus_j = plm_basis.plus[l][j];
+                const plus_j = plus_l[j];
                 for (0..n) |i| {
                     const idx = i * n + j;
-                    zplus.data[idx] += alpha1 * plm_basis.plus[l][i] * plus_j;
-                    zmin.data[idx] += alpha1 * plm_basis.minus[l][i] * plus_j;
+                    zplus.data[idx] += alpha1 * plus_l[i] * plus_j;
+                    zmin.data[idx] += alpha1 * minus_l[i] * plus_j;
                 }
             }
         } else {
