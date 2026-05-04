@@ -17,6 +17,7 @@ pub const UDLocal = types.UDLocal;
 pub const Geometry = types.Geometry;
 
 pub const smul = matrix.smul;
+pub const smulInto = matrix.smulInto;
 pub const esmul = matrix.esmul;
 pub const semul = matrix.semul;
 pub const matAdd = matrix.matAdd;

@@ -65,8 +65,46 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     return result;
 }
 
+pub fn smulInto(out: *Mat, n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) void {
+    if (n == 12 and n_gauss == 10) {
+        var tra = a.data[0];
+        tra += a.data[13];
+        tra += a.data[26];
+        tra += a.data[39];
+        tra += a.data[52];
+        tra += a.data[65];
+        tra += a.data[78];
+        tra += a.data[91];
+        tra += a.data[104];
+        tra += a.data[117];
+        var trb = b.data[0];
+        trb += b.data[13];
+        trb += b.data[26];
+        trb += b.data[39];
+        trb += b.data[52];
+        trb += b.data[65];
+        trb += b.data[78];
+        trb += b.data[91];
+        trb += b.data[104];
+        trb += b.data[117];
+        if (@abs(tra * trb) <= threshold_mul) {
+            out.* = Mat.zero(n);
+            return;
+        }
+        smul12x10Into(out, a, b);
+        return;
+    }
+    out.* = smul(n, n_gauss, threshold_mul, a, b);
+}
+
 fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
+    smul12x10Into(&result, a, b);
+    return result;
+}
+
+fn smul12x10Into(result: *Mat, a: *const Mat, b: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
         const a0 = a.data[row];
@@ -103,7 +141,6 @@ fn smul12x10(a: *const Mat, b: *const Mat) Mat {
             result.data[row + j] = s;
         }
     }
-    return result;
 }
 
 pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {

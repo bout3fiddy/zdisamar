@@ -358,7 +358,8 @@ fn doDouble(
             break :blk T.*;
         } else blk: {
             const smul_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-            const qt = basis.smul(n, n_gauss, threshold_mul, &Q, T);
+            var qt: basis.Mat = undefined;
+            basis.smulInto(&qt, n, n_gauss, threshold_mul, &Q, T);
             if (profile_sample) |sample| sample.double_qt_ns += std.time.nanoTimestamp() - smul_start;
 
             const combine_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
@@ -368,7 +369,8 @@ fn doDouble(
         };
 
         const rd_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-        const rd = basis.smul(n, n_gauss, threshold_mul, R, &D);
+        var rd: basis.Mat = undefined;
+        basis.smulInto(&rd, n, n_gauss, threshold_mul, R, &D);
         if (profile_sample) |sample| sample.double_rd_ns += std.time.nanoTimestamp() - rd_start;
 
         const u_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
@@ -376,7 +378,8 @@ fn doDouble(
         if (profile_sample) |sample| sample.double_u_ns += std.time.nanoTimestamp() - u_start;
 
         const tu_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-        const tu = basis.smul(n, n_gauss, threshold_mul, T, &U);
+        var tu: basis.Mat = undefined;
+        basis.smulInto(&tu, n, n_gauss, threshold_mul, T, &U);
         if (profile_sample) |sample| sample.double_tu_ns += std.time.nanoTimestamp() - tu_start;
 
         const r_new_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
@@ -384,7 +387,8 @@ fn doDouble(
         if (profile_sample) |sample| sample.double_r_new_ns += std.time.nanoTimestamp() - r_new_start;
 
         const td_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-        const td = basis.smul(n, n_gauss, threshold_mul, T, &D);
+        var td: basis.Mat = undefined;
+        basis.smulInto(&td, n, n_gauss, threshold_mul, T, &D);
         if (profile_sample) |sample| sample.double_td_ns += std.time.nanoTimestamp() - td_start;
 
         const t_new_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
