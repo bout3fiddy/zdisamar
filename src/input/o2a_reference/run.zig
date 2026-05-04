@@ -16,6 +16,7 @@ const transport_common = @import("../../forward_model/radiative_transfer/root.zi
 const reference_types = @import("types.zig");
 const adaptive_plan = @import("../../forward_model/implementations/instrument/adaptive_plan.zig");
 const instrument_types = @import("../../forward_model/implementations/instrument/types.zig");
+const fixed_asset_cache = @import("fixed_asset_cache.zig");
 const prepare_trace = @import("prepare_trace.zig");
 
 const Allocator = std.mem.Allocator;
@@ -643,6 +644,10 @@ pub fn loadResolvedVendorO2ALineList(
     allocator: Allocator,
     spec: LineGasSpec,
 ) !ReferenceDataModel.SpectroscopyLineList {
+    if (try fixed_asset_cache.loadLineList(allocator, spec)) |cached| {
+        return cached;
+    }
+
     var asset = try reference_assets.loadExternalAsset(
         allocator,
         .spectroscopy_line_list,
@@ -680,5 +685,6 @@ pub fn loadResolvedVendorO2ALineList(
     defer relaxation_matrix.deinit(allocator);
 
     try line_list.attachStrongLineSidecars(allocator, strong_lines, relaxation_matrix);
+    try fixed_asset_cache.storeLineList(spec, line_list);
     return line_list;
 }
