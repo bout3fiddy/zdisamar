@@ -43,6 +43,7 @@ pub const WavelengthCarrierCache = struct {
     support_row_valid: []bool,
     support_row_carriers: []SharedOpticalCarrier,
     continuum_sigma: f64,
+    cia_coefficients: ?CiaWavelengthCoefficients,
     rayleigh_cross_section_cm2: f64,
     rayleigh_phase_coefficient2: f64,
 
@@ -62,6 +63,7 @@ pub const WavelengthCarrierCache = struct {
                 continuum_table.interpolateSigma(wavelength_nm)
             else
                 0.0,
+            .cia_coefficients = CiaWavelengthCoefficients.init(prepared, wavelength_nm),
             .rayleigh_cross_section_cm2 = Rayleigh.crossSectionCm2(wavelength_nm),
             .rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
         };
@@ -97,12 +99,43 @@ pub const WavelengthCarrierCache = struct {
                     strong_line_state,
                     &self.profile_cache,
                     self.continuum_sigma,
+                    self.cia_coefficients,
                     self.rayleigh_cross_section_cm2,
                     self.rayleigh_phase_coefficient2,
                 );
             self.support_row_valid[global_sublayer_index] = true;
         }
         return self.support_row_carriers[global_sublayer_index];
+    }
+};
+
+const CiaWavelengthCoefficients = struct {
+    scale_factor_cm5_per_molecule2: f64,
+    a0: f64,
+    a1: f64,
+    a2: f64,
+
+    fn init(
+        prepared: *const State.PreparedOpticalState,
+        wavelength_nm: f64,
+    ) ?CiaWavelengthCoefficients {
+        if (prepared.operational_o2o2_lut.enabled()) return null;
+        const table = prepared.collision_induced_absorption orelse return null;
+        const coefficients = table.interpolateCoefficients(wavelength_nm);
+        return .{
+            .scale_factor_cm5_per_molecule2 = table.scale_factor_cm5_per_molecule2,
+            .a0 = coefficients.a0,
+            .a1 = coefficients.a1,
+            .a2 = coefficients.a2,
+        };
+    }
+
+    fn sigmaAtTemperature(self: CiaWavelengthCoefficients, temperature_k: f64) f64 {
+        const temperature_c = temperature_k - 273.15;
+        const raw_sigma = self.a0 +
+            self.a1 * temperature_c +
+            self.a2 * temperature_c * temperature_c;
+        return self.scale_factor_cm5_per_molecule2 * @max(raw_sigma, 0.0);
     }
 };
 
@@ -752,6 +785,7 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         strong_line_state,
         profile_cache,
         continuum_sigma,
+        null,
         Rayleigh.crossSectionCm2(wavelength_nm),
         PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
     );
@@ -765,6 +799,7 @@ fn sharedOpticalCarrierAtSupportRowWithScalarCache(
     strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
     profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     continuum_sigma: f64,
+    cia_coefficients: ?CiaWavelengthCoefficients,
     rayleigh_cross_section_cm2: f64,
     rayleigh_phase_coefficient2: f64,
 ) SharedOpticalCarrier {
@@ -822,12 +857,16 @@ fn sharedOpticalCarrierAtSupportRowWithScalarCache(
         rayleigh_cross_section_cm2 *
         sublayer.number_density_cm3 *
         centimeters_per_kilometer;
-    const cia_optical_depth_per_km =
+    const cia_sigma_cm5_per_molecule2 = if (cia_coefficients) |coefficients|
+        coefficients.sigmaAtTemperature(sublayer.temperature_k)
+    else
         self.ciaSigmaAtWavelength(
             wavelength_nm,
             sublayer.temperature_k,
             sublayer.pressure_hpa,
-        ) *
+        );
+    const cia_optical_depth_per_km =
+        cia_sigma_cm5_per_molecule2 *
         sublayer.ciaPairDensityCm6() *
         centimeters_per_kilometer;
     const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
