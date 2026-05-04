@@ -147,6 +147,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
                     response,
                     nominal_wavelength_nm,
                     cache,
+                    channel == .irradiance,
                     kernel,
                 )) {
                     return;
@@ -157,6 +158,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
                 prepared_state,
                 response,
                 nominal_wavelength_nm,
+                channel == .irradiance,
                 kernel,
             )) {
                 return;
@@ -215,6 +217,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
                 response,
                 nominal_wavelength_nm,
                 cache,
+                channel == .irradiance,
                 kernel,
             )) {
                 return;
@@ -226,6 +229,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
                 prepared_state,
                 response,
                 nominal_wavelength_nm,
+                channel == .irradiance,
                 kernel,
             )) {
                 return;

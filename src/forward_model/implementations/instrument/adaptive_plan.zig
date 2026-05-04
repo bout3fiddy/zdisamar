@@ -37,6 +37,7 @@ pub fn buildAdaptiveIntegrationKernel(
     prepared: *const PreparedOpticalState,
     response: InstrumentModel.SpectralResponse,
     nominal_wavelength_nm: f64,
+    apply_disamar_midpoint_bias: bool,
     kernel: *types.IntegrationKernel,
 ) bool {
     const adaptive = scene.observation_model.adaptive_reference_grid;
@@ -64,6 +65,7 @@ pub fn buildAdaptiveIntegrationKernel(
         nominal_wavelength_nm,
         support_window.global_start_nm,
         support_window.global_end_nm,
+        apply_disamar_midpoint_bias,
         &sample_wavelengths_nm,
         &sample_raw_weights,
         &sample_count,
@@ -162,6 +164,7 @@ pub fn buildDisamarRealizedKernel(
         nominal_wavelength_nm,
         support_window.global_start_nm,
         support_window.global_end_nm,
+        false,
         &sample_wavelengths_nm,
         &sample_raw_weights,
         &sample_count,
@@ -260,6 +263,7 @@ pub fn appendAdaptiveSamplesFromPlan(
     nominal_wavelength_nm: f64,
     global_start_nm: f64,
     global_end_nm: f64,
+    apply_disamar_midpoint_bias: bool,
     sample_wavelengths_nm: *[types.max_integration_sample_count]f64,
     sample_raw_weights: *[types.max_integration_sample_count]f64,
     sample_count: *usize,
@@ -289,7 +293,15 @@ pub fn appendAdaptiveSamplesFromPlan(
             // PARITY: preserve DISAMAR's Gauss division-point contract:
             // nodes and weights are first scaled to [0, 1], then interval
             // width is applied.
-            const wavelength_nm = interval.interval_start_nm + interval_width_nm * gauss_nodes_01[gauss_index];
+            const wavelength_nm = realizedIntervalWavelengthNm(
+                response,
+                interval.interval_start_nm,
+                interval_width_nm,
+                gauss_nodes_01[gauss_index],
+                order,
+                gauss_index,
+                apply_disamar_midpoint_bias,
+            );
             if (!appendAdaptiveCandidateSample(
                 &candidate_wavelengths_nm,
                 &candidate_raw_weights,
@@ -471,6 +483,25 @@ fn fillAdaptiveUnitGauss(
         nodes_01[index] = (nodes_01[index] + 1.0) * 0.5;
         weights_01[index] *= 0.5;
     }
+}
+
+fn realizedIntervalWavelengthNm(
+    response: InstrumentModel.SpectralResponse,
+    interval_start_nm: f64,
+    interval_width_nm: f64,
+    node_01: f64,
+    order: usize,
+    gauss_index: usize,
+    apply_disamar_midpoint_bias: bool,
+) f64 {
+    const wavelength_nm = interval_start_nm + interval_width_nm * node_01;
+    if (!apply_disamar_midpoint_bias or response.integration_mode != .disamar_hr_grid) return wavelength_nm;
+    if (order % 2 == 0 or gauss_index != order / 2 or node_01 != 0.5) return wavelength_nm;
+
+    // PARITY: DISAMAR realizes some exact midpoint samples one representable
+    // value below Zig's direct double expression. The difference is visible
+    // when a midpoint lands on the steep O2 A solar line near 768.2 nm.
+    return std.math.nextAfter(f64, wavelength_nm, -std.math.inf(f64));
 }
 
 fn disamarIntervalDivisionCount(
