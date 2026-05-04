@@ -110,15 +110,7 @@ pub fn loadResolvedVendorO2AInputs(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !LoadedVendorO2AInputs {
-    var profile_asset = try reference_assets.loadExternalAsset(
-        allocator,
-        .climatology_profile,
-        resolved.inputs.atmosphere_profile.id,
-        resolved.inputs.atmosphere_profile.path,
-        resolved.inputs.atmosphere_profile.format,
-    );
-    defer profile_asset.deinit(allocator);
-    var profile = try profile_asset.toClimatologyProfile(allocator);
+    var profile = try loadFixedClimatologyProfile(allocator, resolved.inputs.atmosphere_profile);
     errdefer profile.deinit(allocator);
     var dense_profile = try profile.densifyVendorPressureGrid(allocator, resolved.surface_pressure_hpa);
     errdefer dense_profile.deinit(allocator);
@@ -142,31 +134,15 @@ pub fn loadResolvedVendorO2AInputs(
     errdefer if (cia_table) |*table| table.deinit(allocator);
     if (resolved.o2o2.enabled) {
         const cia_asset = resolved.o2o2.cia_asset orelse return error.MissingCollisionInducedAbsorptionAsset;
-        var loaded_cia = try reference_assets.loadExternalAsset(
-            allocator,
-            .collision_induced_absorption_table,
-            cia_asset.id,
-            cia_asset.path,
-            cia_asset.format,
-        );
-        defer loaded_cia.deinit(allocator);
-        cia_table = try loaded_cia.toCollisionInducedAbsorptionTable(allocator);
+        cia_table = try loadFixedCiaTable(allocator, cia_asset);
     }
 
-    var lut_asset = try reference_assets.loadExternalAsset(
-        allocator,
-        .lookup_table,
-        resolved.inputs.airmass_factor_lut.id,
-        resolved.inputs.airmass_factor_lut.path,
-        resolved.inputs.airmass_factor_lut.format,
-    );
-    defer lut_asset.deinit(allocator);
-    var lut = try lut_asset.toAirmassFactorLut(allocator);
+    var lut = try loadFixedAirmassLut(allocator, resolved.inputs.airmass_factor_lut);
     errdefer lut.deinit(allocator);
 
-    const reference = try loadReferenceSamples(allocator, resolved.inputs.vendor_reference_csv.path);
+    const reference = try loadFixedReferenceSamples(allocator, resolved.inputs.vendor_reference_csv);
     errdefer allocator.free(reference);
-    const raw_solar_spectrum = try loadSolarSpectrumSamples(allocator, resolved.inputs.raw_solar_reference);
+    const raw_solar_spectrum = try loadFixedSolarSpectrumSamples(allocator, resolved.inputs.raw_solar_reference);
     errdefer allocator.free(raw_solar_spectrum);
 
     return .{
@@ -185,15 +161,91 @@ pub fn loadResolvedVendorO2AAtmosphereProfile(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !ReferenceDataModel.ClimatologyProfile {
+    return loadFixedClimatologyProfile(allocator, resolved.inputs.atmosphere_profile);
+}
+
+fn loadFixedClimatologyProfile(
+    allocator: Allocator,
+    asset: ExternalAsset,
+) !ReferenceDataModel.ClimatologyProfile {
+    if (try fixed_asset_cache.loadProfile(allocator, asset)) |cached| return cached;
+
     var profile_asset = try reference_assets.loadExternalAsset(
         allocator,
         .climatology_profile,
-        resolved.inputs.atmosphere_profile.id,
-        resolved.inputs.atmosphere_profile.path,
-        resolved.inputs.atmosphere_profile.format,
+        asset.id,
+        asset.path,
+        asset.format,
     );
     defer profile_asset.deinit(allocator);
-    return profile_asset.toClimatologyProfile(allocator);
+    var profile = try profile_asset.toClimatologyProfile(allocator);
+    errdefer profile.deinit(allocator);
+    try fixed_asset_cache.storeProfile(asset, profile);
+    return profile;
+}
+
+fn loadFixedCiaTable(
+    allocator: Allocator,
+    asset: ExternalAsset,
+) !ReferenceDataModel.CollisionInducedAbsorptionTable {
+    if (try fixed_asset_cache.loadCia(allocator, asset)) |cached| return cached;
+
+    var loaded_cia = try reference_assets.loadExternalAsset(
+        allocator,
+        .collision_induced_absorption_table,
+        asset.id,
+        asset.path,
+        asset.format,
+    );
+    defer loaded_cia.deinit(allocator);
+    var table = try loaded_cia.toCollisionInducedAbsorptionTable(allocator);
+    errdefer table.deinit(allocator);
+    try fixed_asset_cache.storeCia(asset, table);
+    return table;
+}
+
+fn loadFixedAirmassLut(
+    allocator: Allocator,
+    asset: ExternalAsset,
+) !ReferenceDataModel.AirmassFactorLut {
+    if (try fixed_asset_cache.loadAirmassLut(allocator, asset)) |cached| return cached;
+
+    var lut_asset = try reference_assets.loadExternalAsset(
+        allocator,
+        .lookup_table,
+        asset.id,
+        asset.path,
+        asset.format,
+    );
+    defer lut_asset.deinit(allocator);
+    var lut = try lut_asset.toAirmassFactorLut(allocator);
+    errdefer lut.deinit(allocator);
+    try fixed_asset_cache.storeAirmassLut(asset, lut);
+    return lut;
+}
+
+fn loadFixedReferenceSamples(
+    allocator: Allocator,
+    asset: ExternalAsset,
+) ![]ReferenceSample {
+    if (try fixed_asset_cache.loadReferenceSamples(allocator, asset)) |cached| return cached;
+
+    const samples = try loadReferenceSamples(allocator, asset.path);
+    errdefer allocator.free(samples);
+    try fixed_asset_cache.storeReferenceSamples(asset, samples);
+    return samples;
+}
+
+fn loadFixedSolarSpectrumSamples(
+    allocator: Allocator,
+    asset: ExternalAsset,
+) ![]SolarSpectrumSample {
+    if (try fixed_asset_cache.loadSolarSamples(allocator, asset)) |cached| return cached;
+
+    const samples = try loadSolarSpectrumSamples(allocator, asset);
+    errdefer allocator.free(samples);
+    try fixed_asset_cache.storeSolarSamples(asset, samples);
+    return samples;
 }
 
 fn buildVendorTraceGasSpectroscopyProfile(
