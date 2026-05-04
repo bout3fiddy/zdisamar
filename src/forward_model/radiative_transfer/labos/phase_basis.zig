@@ -206,20 +206,22 @@ pub fn fillZplusZminFromBasisLimited(
             const minus_l = &plm_basis.minus[l];
             for (0..n) |j| {
                 const plus_j = plus_l[j];
+                var idx = j;
                 for (0..n) |i| {
-                    const idx = i * n + j;
                     zplus.data[idx] += alpha1 * plus_l[i] * plus_j;
                     zmin.data[idx] += alpha1 * minus_l[i] * plus_j;
+                    idx += n;
                 }
             }
         } else {
             const plm = computePlm(i_fourier, l, geo);
             for (0..n) |j| {
                 const plus_j = plm.plus[j];
+                var idx = j;
                 for (0..n) |i| {
-                    const idx = i * n + j;
                     zplus.data[idx] += alpha1 * plm.plus[i] * plus_j;
                     zmin.data[idx] += alpha1 * plm.minus[i] * plus_j;
+                    idx += n;
                 }
             }
         }
