@@ -146,13 +146,17 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
     }
 
     var pivot: [types.max_gauss]usize = undefined;
-    for (0..n_gauss) |i| pivot[i] = i;
+    var pivot_offset: [types.max_gauss]usize = undefined;
+    for (0..n_gauss) |i| {
+        pivot[i] = i;
+        pivot_offset[i] = i * n_gauss;
+    }
 
     for (0..n_gauss) |col| {
-        var max_val: f64 = @abs(one_minus_ab_gg[pivot[col] * n_gauss + col]);
+        var max_val: f64 = @abs(one_minus_ab_gg[pivot_offset[col] + col]);
         var max_row: usize = col;
         for (col + 1..n_gauss) |row| {
-            const val = @abs(one_minus_ab_gg[pivot[row] * n_gauss + col]);
+            const val = @abs(one_minus_ab_gg[pivot_offset[row] + col]);
             if (val > max_val) {
                 max_val = val;
                 max_row = row;
@@ -162,15 +166,20 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
             const tmp = pivot[col];
             pivot[col] = pivot[max_row];
             pivot[max_row] = tmp;
+            const tmp_offset = pivot_offset[col];
+            pivot_offset[col] = pivot_offset[max_row];
+            pivot_offset[max_row] = tmp_offset;
         }
-        const diag = one_minus_ab_gg[pivot[col] * n_gauss + col];
+        const diag = one_minus_ab_gg[pivot_offset[col] + col];
         if (@abs(diag) < 1.0e-30) return ab;
         for (col + 1..n_gauss) |row| {
-            const factor = one_minus_ab_gg[pivot[row] * n_gauss + col] / diag;
-            one_minus_ab_gg[pivot[row] * n_gauss + col] = factor;
+            const row_offset = pivot_offset[row];
+            const col_offset = pivot_offset[col];
+            const factor = one_minus_ab_gg[row_offset + col] / diag;
+            one_minus_ab_gg[row_offset + col] = factor;
             for (col + 1..n_gauss) |k| {
-                one_minus_ab_gg[pivot[row] * n_gauss + k] -=
-                    factor * one_minus_ab_gg[pivot[col] * n_gauss + k];
+                one_minus_ab_gg[row_offset + k] -=
+                    factor * one_minus_ab_gg[col_offset + k];
             }
         }
     }
@@ -180,7 +189,8 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
         var y: [types.max_gauss]f64 = undefined;
         for (0..n_gauss) |i| {
             var s: f64 = if (pivot[i] == rhs_col) 1.0 else 0.0;
-            for (0..i) |j| s -= one_minus_ab_gg[pivot[i] * n_gauss + j] * y[j];
+            const row_offset = pivot_offset[i];
+            for (0..i) |j| s -= one_minus_ab_gg[row_offset + j] * y[j];
             y[i] = s;
         }
 
@@ -189,8 +199,9 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
         while (ii > 0) {
             ii -= 1;
             var s: f64 = y[ii];
-            for (ii + 1..n_gauss) |j| s -= one_minus_ab_gg[pivot[ii] * n_gauss + j] * x[j];
-            x[ii] = s / one_minus_ab_gg[pivot[ii] * n_gauss + ii];
+            const row_offset = pivot_offset[ii];
+            for (ii + 1..n_gauss) |j| s -= one_minus_ab_gg[row_offset + j] * x[j];
+            x[ii] = s / one_minus_ab_gg[row_offset + ii];
         }
         for (0..n_gauss) |i| inverse[i * n_gauss + rhs_col] = x[i];
     }
