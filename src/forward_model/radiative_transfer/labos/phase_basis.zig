@@ -211,16 +211,20 @@ pub fn fillZplusZminFromBasisLimited(
                 scaled_plus[i] = alpha1 * plus_l[i];
                 scaled_minus[i] = alpha1 * minus_l[i];
             }
-            for (0..n) |j| {
-                const plus_j = plus_l[j];
-                var idx = j;
-                if (first_order) {
+            if (first_order) {
+                for (0..n) |j| {
+                    const plus_j = plus_l[j];
+                    var idx = j;
                     for (0..n) |i| {
                         zplus.data[idx] = scaled_plus[i] * plus_j;
                         zmin.data[idx] = scaled_minus[i] * plus_j;
                         idx += n;
                     }
-                } else {
+                }
+            } else {
+                for (0..n) |j| {
+                    const plus_j = plus_l[j];
+                    var idx = j;
                     for (0..n) |i| {
                         zplus.data[idx] += scaled_plus[i] * plus_j;
                         zmin.data[idx] += scaled_minus[i] * plus_j;
@@ -236,16 +240,20 @@ pub fn fillZplusZminFromBasisLimited(
                 scaled_plus[i] = alpha1 * plm.plus[i];
                 scaled_minus[i] = alpha1 * plm.minus[i];
             }
-            for (0..n) |j| {
-                const plus_j = plm.plus[j];
-                var idx = j;
-                if (first_order) {
+            if (first_order) {
+                for (0..n) |j| {
+                    const plus_j = plm.plus[j];
+                    var idx = j;
                     for (0..n) |i| {
                         zplus.data[idx] = scaled_plus[i] * plus_j;
                         zmin.data[idx] = scaled_minus[i] * plus_j;
                         idx += n;
                     }
-                } else {
+                }
+            } else {
+                for (0..n) |j| {
+                    const plus_j = plm.plus[j];
+                    var idx = j;
                     for (0..n) |i| {
                         zplus.data[idx] += scaled_plus[i] * plus_j;
                         zmin.data[idx] += scaled_minus[i] * plus_j;
