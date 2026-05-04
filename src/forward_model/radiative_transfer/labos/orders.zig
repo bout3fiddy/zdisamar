@@ -66,14 +66,16 @@ fn transportToOtherLevels(
 ) void {
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
-        for (0..2) |imu0| {
-            const local_u = ud_local[ilevel].U.col[imu0].data;
-            const prev_u = ud_orde[ilevel - 1].U.col[imu0].data;
-            const out_u = &ud_orde[ilevel].U.col[imu0].data;
-            for (0..nmutot) |imu| {
-                const att = atten.get(imu, ilevel - 1, ilevel);
-                out_u[imu] = local_u[imu] + att * prev_u[imu];
-            }
+        const local_u0 = ud_local[ilevel].U.col[0].data;
+        const local_u1 = ud_local[ilevel].U.col[1].data;
+        const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
+        const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+        const out_u0 = &ud_orde[ilevel].U.col[0].data;
+        const out_u1 = &ud_orde[ilevel].U.col[1].data;
+        for (0..nmutot) |imu| {
+            const att = atten.get(imu, ilevel - 1, ilevel);
+            out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
+            out_u1[imu] = local_u1[imu] + att * prev_u1[imu];
         }
     }
 
@@ -81,14 +83,16 @@ fn transportToOtherLevels(
     var ilevel = end_level;
     while (ilevel > start_level) {
         ilevel -= 1;
-        for (0..2) |imu0| {
-            const local_d = ud_local[ilevel].D.col[imu0].data;
-            const prev_d = ud_orde[ilevel + 1].D.col[imu0].data;
-            const out_d = &ud_orde[ilevel].D.col[imu0].data;
-            for (0..nmutot) |imu| {
-                const att = atten.get(imu, ilevel + 1, ilevel);
-                out_d[imu] = local_d[imu] + att * prev_d[imu];
-            }
+        const local_d0 = ud_local[ilevel].D.col[0].data;
+        const local_d1 = ud_local[ilevel].D.col[1].data;
+        const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
+        const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+        const out_d0 = &ud_orde[ilevel].D.col[0].data;
+        const out_d1 = &ud_orde[ilevel].D.col[1].data;
+        for (0..nmutot) |imu| {
+            const att = atten.get(imu, ilevel + 1, ilevel);
+            out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
+            out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
         }
     }
 }
@@ -204,8 +208,10 @@ fn ordersScatInternal(
             const local_d = &ud_local_view[ilevel].D.col[imu0].data;
             const rt_t = &rt[ilevel + 1].T;
             const rt_col_offset = col_idx;
+            var rt_idx = rt_col_offset;
             for (0..nmutot) |imu| {
-                local_d[imu] = rt_t.data[imu * rt_t.n + rt_col_offset] * att;
+                local_d[imu] = rt_t.data[rt_idx] * att;
+                rt_idx += rt_t.n;
             }
         }
     }
@@ -218,8 +224,10 @@ fn ordersScatInternal(
             const local_u = &ud_local_view[ilevel].U.col[imu0].data;
             const rt_r = &rt[ilevel].R;
             const rt_col_offset = col_idx;
+            var rt_idx = rt_col_offset;
             for (0..nmutot) |imu| {
-                local_u[imu] = rt_r.data[imu * rt_r.n + rt_col_offset] * att;
+                local_u[imu] = rt_r.data[rt_idx] * att;
+                rt_idx += rt_r.n;
             }
         }
     }
