@@ -6,6 +6,31 @@ const Vec = types.Vec;
 const threshold_q: f64 = 1.0e-3;
 
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
+    if (n == 12 and n_gauss == 10) {
+        var tra = a.data[0];
+        tra += a.data[13];
+        tra += a.data[26];
+        tra += a.data[39];
+        tra += a.data[52];
+        tra += a.data[65];
+        tra += a.data[78];
+        tra += a.data[91];
+        tra += a.data[104];
+        tra += a.data[117];
+        var trb = b.data[0];
+        trb += b.data[13];
+        trb += b.data[26];
+        trb += b.data[39];
+        trb += b.data[52];
+        trb += b.data[65];
+        trb += b.data[78];
+        trb += b.data[91];
+        trb += b.data[104];
+        trb += b.data[117];
+        if (@abs(tra * trb) <= threshold_mul) return Mat.zero(n);
+        return smul12x10(a, b);
+    }
+
     var tra: f64 = 0.0;
     var trb: f64 = 0.0;
     for (0..n_gauss) |k| {
@@ -14,7 +39,6 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
         trb += b.data[idx];
     }
     if (@abs(tra * trb) <= threshold_mul) return Mat.zero(n);
-    if (n == 12 and n_gauss == 10) return smul12x10(a, b);
 
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
