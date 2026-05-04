@@ -48,6 +48,7 @@ pub const setLayersProfile = layers_mod.setProfile;
 pub const dotGauss = orders_mod.dotGauss;
 pub const OrdersWorkspace = orders_mod.OrdersWorkspace;
 pub const ordersScatInto = orders_mod.ordersScatInto;
+pub const ordersScatIntoWithActive = orders_mod.ordersScatIntoWithActive;
 
 pub const calcReflectance = reflectance_mod.calcReflectance;
 pub const calcIntegratedReflectance = reflectance_mod.calcIntegratedReflectance;

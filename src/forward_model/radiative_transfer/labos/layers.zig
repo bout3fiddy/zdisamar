@@ -440,6 +440,7 @@ pub fn calcRTlayersIntoWithBasis(
     layer_phase_max_indices: ?[]const usize,
     phase_kernel_cache: ?[]basis.PhaseKernel,
     phase_kernel_valid: ?[]bool,
+    rt_active: ?[]bool,
 ) void {
     const nlayer = layers.len;
     const profile_enabled = active_profile != null;
@@ -447,6 +448,7 @@ pub fn calcRTlayersIntoWithBasis(
 
     const zero_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
     rt[0] = zeroLayerRt(geo.nmutot);
+    if (rt_active) |active| active[0] = false;
     if (phase_kernel_valid) |valid| @memset(valid, false);
     if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_start;
 
@@ -457,6 +459,7 @@ pub fn calcRTlayersIntoWithBasis(
         if (i_fourier >= basis.max_phase_coef) {
             const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (rt_active) |active| active[rt_idx] = false;
             if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
             continue;
         }
@@ -469,6 +472,7 @@ pub fn calcRTlayersIntoWithBasis(
         if (i_fourier > max_phase_index) {
             const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (rt_active) |active| active[rt_idx] = false;
             if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
             continue;
         }
@@ -489,6 +493,7 @@ pub fn calcRTlayersIntoWithBasis(
         if (layer.optical_depth < 1.0e-20) {
             const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (rt_active) |active| active[rt_idx] = false;
             if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
             continue;
         }
@@ -555,6 +560,7 @@ pub fn calcRTlayersIntoWithBasis(
         const store_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         rt[rt_idx].R = R;
         rt[rt_idx].T = T;
+        if (rt_active) |active| active[rt_idx] = a != 0.0;
         if (profile_enabled) profile_sample.store_ns += std.time.nanoTimestamp() - store_start;
     }
 
@@ -587,6 +593,7 @@ pub fn calcRTlayersInto(
         geo,
         controls,
         &plm_basis,
+        null,
         null,
         null,
         null,

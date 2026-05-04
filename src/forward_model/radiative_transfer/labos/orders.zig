@@ -260,6 +260,7 @@ fn accumulateOrderContribution(
 
 fn ordersScatInternal(
     comptime track_sum_local: bool,
+    comptime rt_active_ready: bool,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
     ud_orde: []basis.UDField,
@@ -289,8 +290,10 @@ fn ordersScatInternal(
     const rt_active_view = rt_active[0..nlevel];
     initializeOrdersBuffers(track_sum_local, ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
 
-    for (rt[0..nlevel], rt_active_view) |*layer_rt, *active| {
-        active.* = rtLayerHasSignal(layer_rt, nmutot);
+    if (!rt_active_ready) {
+        for (rt[0..nlevel], rt_active_view) |*layer_rt, *active| {
+            active.* = rtLayerHasSignal(layer_rt, nmutot);
+        }
     }
 
     for (start_level..end_level + 1) |ilevel| {
@@ -492,6 +495,43 @@ pub fn ordersScatInto(
     //   spending time accumulating unobserved data.
     const result = ordersScatInternal(
         false,
+        false,
+        storage.ud,
+        storage.ud_sum_local,
+        storage.ud_orde,
+        storage.ud_local,
+        storage.rt_active,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    );
+    return .{
+        .ud = result.ud,
+        .ud_sum_local = &.{},
+    };
+}
+
+pub fn ordersScatIntoWithActive(
+    storage: *OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: *const basis.Geometry,
+    atten: anytype,
+    rt: []const basis.LayerRT,
+    controls: common.RadiativeTransferControls,
+    num_orders_max: usize,
+) OrdersResultView {
+    // INVARIANT:
+    //   `rt_active` is populated by the paired LABOS layer builder for the
+    //   same Fourier order. It may conservatively mark zero matrices active,
+    //   but it must not mark a nonzero layer inactive.
+    const result = ordersScatInternal(
+        false,
+        true,
         storage.ud,
         storage.ud_sum_local,
         storage.ud_orde,
@@ -522,6 +562,7 @@ pub fn ordersScatTransportInto(
     num_orders_max: usize,
 ) OrdersResultView {
     const result = ordersScatInternal(
+        false,
         false,
         storage.ud,
         storage.ud_sum_local,
@@ -579,6 +620,7 @@ pub fn ordersScat(
 
     _ = ordersScatInternal(
         true,
+        false,
         result.ud,
         result.ud_sum_local,
         ud_orde,

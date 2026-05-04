@@ -321,14 +321,25 @@ fn layerResolvedLabosWithWorkspace(
             layer_phase_max_indices,
             layer_phase_kernels,
             layer_phase_kernel_valid,
+            if (workspace != null) orders_workspace.rt_active else null,
         );
         if (profile_enabled) profile_sample.rt_layers_ns += std.time.nanoTimestamp() - rt_layers_start;
         const surface_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
+        if (workspace != null) orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
         if (profile_enabled) profile_sample.surface_ns += std.time.nanoTimestamp() - surface_start;
         const orders_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         const orders_result = if (use_integrated_source)
-            orders_mod.ordersScatInto(
+            if (workspace != null) orders_mod.ordersScatIntoWithActive(
+                orders_workspace,
+                0,
+                nlayer,
+                geo,
+                &atten,
+                rt,
+                controls,
+                num_orders_max,
+            ) else orders_mod.ordersScatInto(
                 orders_workspace,
                 0,
                 nlayer,
