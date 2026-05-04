@@ -196,7 +196,7 @@ pub fn build(
     }
 
     state.active_line_species = if (state.owned_line_absorbers.len == 0)
-        Spectroscopy.resolveActiveLineSpecies(single_active_line_absorber, state.owned_lines, operational_o2_lut)
+        try Spectroscopy.resolveActiveLineSpecies(single_active_line_absorber, state.owned_lines, operational_o2_lut)
     else
         null;
     state.continuum_owner_species = Spectroscopy.resolveContinuumOwnerSpecies(

@@ -76,14 +76,14 @@ pub fn resolveActiveLineSpecies(
     active_line_absorber: ?State.ActiveLineAbsorber,
     line_list: ?ReferenceData.SpectroscopyLineList,
     operational_o2_lut: OperationalCrossSectionLut,
-) ?AbsorberModel.AbsorberSpecies {
+) !?AbsorberModel.AbsorberSpecies {
     if (active_line_absorber) |line_absorber| return line_absorber.species;
     if (operational_o2_lut.enabled()) return .o2;
     const spectroscopy_lines = line_list orelse return null;
     if (spectroscopy_lines.runtime_controls.gas_index) |gas_index| {
-        return speciesForHitranIndex(gas_index);
+        return speciesForHitranIndex(gas_index) orelse error.UnsupportedSpectroscopyConfiguration;
     }
-    return inferLineSpecies(spectroscopy_lines.lines);
+    return try inferLineSpecies(spectroscopy_lines.lines);
 }
 
 pub fn resolveContinuumOwnerSpecies(
@@ -147,14 +147,14 @@ fn defaultVolumeMixingRatioForScene(
     return defaultVolumeMixingRatio(species);
 }
 
-fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) ?AbsorberModel.AbsorberSpecies {
+fn inferLineSpecies(lines: []const ReferenceData.SpectroscopyLine) !?AbsorberModel.AbsorberSpecies {
     if (lines.len == 0) return null;
     const first_gas_index = lines[0].gas_index;
     if (first_gas_index == 0) return null;
     for (lines[1..]) |line| {
         if (line.gas_index != first_gas_index) return null;
     }
-    return speciesForHitranIndex(first_gas_index);
+    return speciesForHitranIndex(first_gas_index) orelse error.UnsupportedSpectroscopyConfiguration;
 }
 
 fn speciesForHitranIndex(gas_index: u16) ?AbsorberModel.AbsorberSpecies {

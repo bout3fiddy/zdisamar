@@ -59,6 +59,7 @@ test {
     _ = @import("forward_model/optical_properties/state_build/forward_layers_test.zig");
     _ = @import("forward_model/optical_properties/state_build/root_test.zig");
     _ = @import("forward_model/optical_properties/state_build/source_interfaces_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/spectroscopy_test.zig");
     _ = @import("forward_model/implementations/instrument/integration_test.zig");
     _ = @import("forward_model/implementations/noise_test.zig");
     _ = @import("forward_model/implementations/radiative_transfer_test.zig");
