@@ -18,6 +18,11 @@ pub const ProfileNodeSpectroscopyCache = struct {
     line_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     line_mixing_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     total_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    weak_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    strong_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    line_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    line_mixing_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    total_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
 
     pub fn init(
         self: *const PreparedOpticalState,
@@ -46,6 +51,11 @@ pub const ProfileNodeSpectroscopyCache = struct {
             .line_values = undefined,
             .line_mixing_values = undefined,
             .total_values = undefined,
+            .weak_second = undefined,
+            .strong_second = undefined,
+            .line_second = undefined,
+            .line_mixing_second = undefined,
+            .total_second = undefined,
         };
         const wavelength_window = if (prepared_states != null)
             LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
@@ -75,6 +85,32 @@ pub const ProfileNodeSpectroscopyCache = struct {
             cache.line_mixing_values[index] = evaluation.line_mixing_sigma_cm2_per_molecule;
             cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
         }
+        const altitudes = cache.altitudes_km[0..node_count];
+        spline.endpointSecantSecondDerivatives(
+            altitudes,
+            cache.weak_values[0..node_count],
+            cache.weak_second[0..node_count],
+        ) catch return .{};
+        spline.endpointSecantSecondDerivatives(
+            altitudes,
+            cache.strong_values[0..node_count],
+            cache.strong_second[0..node_count],
+        ) catch return .{};
+        spline.endpointSecantSecondDerivatives(
+            altitudes,
+            cache.line_values[0..node_count],
+            cache.line_second[0..node_count],
+        ) catch return .{};
+        spline.endpointSecantSecondDerivatives(
+            altitudes,
+            cache.line_mixing_values[0..node_count],
+            cache.line_mixing_second[0..node_count],
+        ) catch return .{};
+        spline.endpointSecantSecondDerivatives(
+            altitudes,
+            cache.total_values[0..node_count],
+            cache.total_second[0..node_count],
+        ) catch return .{};
         return cache;
     }
 
@@ -88,30 +124,35 @@ pub const ProfileNodeSpectroscopyCache = struct {
 
         const altitudes = self.altitudes_km[0..self.node_count];
         return .{
-            .weak_line_sigma_cm2_per_molecule = spline.sampleEndpointSecant(
+            .weak_line_sigma_cm2_per_molecule = spline.sampleWithSecondDerivatives(
                 altitudes,
                 self.weak_values[0..self.node_count],
+                self.weak_second[0..self.node_count],
                 altitude_km,
             ) catch return null,
-            .strong_line_sigma_cm2_per_molecule = spline.sampleEndpointSecant(
+            .strong_line_sigma_cm2_per_molecule = spline.sampleWithSecondDerivatives(
                 altitudes,
                 self.strong_values[0..self.node_count],
+                self.strong_second[0..self.node_count],
                 altitude_km,
             ) catch return null,
-            .line_sigma_cm2_per_molecule = spline.sampleEndpointSecant(
+            .line_sigma_cm2_per_molecule = spline.sampleWithSecondDerivatives(
                 altitudes,
                 self.line_values[0..self.node_count],
+                self.line_second[0..self.node_count],
                 altitude_km,
             ) catch return null,
-            .line_mixing_sigma_cm2_per_molecule = spline.sampleEndpointSecant(
+            .line_mixing_sigma_cm2_per_molecule = spline.sampleWithSecondDerivatives(
                 altitudes,
                 self.line_mixing_values[0..self.node_count],
+                self.line_mixing_second[0..self.node_count],
                 altitude_km,
             ) catch return null,
             .total_sigma_cm2_per_molecule = @max(
-                spline.sampleEndpointSecant(
+                spline.sampleWithSecondDerivatives(
                     altitudes,
                     self.total_values[0..self.node_count],
+                    self.total_second[0..self.node_count],
                     altitude_km,
                 ) catch return null,
                 0.0,

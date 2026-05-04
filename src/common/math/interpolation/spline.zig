@@ -60,11 +60,25 @@ pub fn sampleEndpointSecant(x: []const f64, y: []const f64, target_x: f64) Error
     if (target_x < x[0] or target_x > x[x.len - 1]) return Error.OutOfDomain;
 
     var second: [max_spline_point_count]f64 = undefined;
+    if (x.len > second.len) return Error.NotEnoughPoints;
+
+    try endpointSecantSecondDerivatives(x, y, second[0..x.len]);
+    return sampleWithSecondDerivatives(x, y, second[0..x.len], target_x);
+}
+
+pub fn endpointSecantSecondDerivatives(
+    x: []const f64,
+    y: []const f64,
+    second: []f64,
+) Error!void {
+    if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
+    if (x.len < 3) return Error.NotEnoughPoints;
+    if (x.len > max_spline_point_count) return Error.NotEnoughPoints;
+
     var c1: [max_spline_point_count]f64 = undefined;
     var c2: [max_spline_point_count]f64 = undefined;
     var c3: [max_spline_point_count]f64 = undefined;
     var c4: [max_spline_point_count]f64 = undefined;
-    if (x.len > second.len) return Error.NotEnoughPoints;
 
     // PARITY:
     //   DISAMAR `mathTools::spline` wraps de Boor `cubspl` with endpoint
@@ -117,6 +131,17 @@ pub fn sampleEndpointSecant(x: []const f64, y: []const f64, target_x: f64) Error
         second[index] = c3[index];
     }
     second[x.len - 1] = -0.5 * c3[x.len - 2];
+}
+
+pub fn sampleWithSecondDerivatives(
+    x: []const f64,
+    y: []const f64,
+    second: []const f64,
+    target_x: f64,
+) Error!f64 {
+    if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
+    if (x.len < 3) return Error.NotEnoughPoints;
+    if (target_x < x[0] or target_x > x[x.len - 1]) return Error.OutOfDomain;
 
     var klo: usize = 0;
     var khi: usize = x.len - 1;
