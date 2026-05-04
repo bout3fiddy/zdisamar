@@ -199,10 +199,10 @@ pub fn selectStrongLineAnchors(
     start_index: usize,
 ) [Types.max_strong_line_sidecars]?usize {
     var anchors = [_]?usize{null} ** Types.max_strong_line_sidecars;
-    var deltas = [_]f64{std.math.inf(f64)} ** Types.max_strong_line_sidecars;
     const strong_lines = self.strong_lines orelse return anchors;
     if (usesVendorStrongLinePartition(self)) return anchors;
 
+    var deltas = [_]f64{std.math.inf(f64)} ** Types.max_strong_line_sidecars;
     for (relevant_lines, 0..) |line, line_index| {
         const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse continue;
         const delta = @abs(strong_lines[strong_index].center_wavelength_nm - line.center_wavelength_nm);
