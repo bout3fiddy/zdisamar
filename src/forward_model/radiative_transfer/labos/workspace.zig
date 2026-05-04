@@ -16,6 +16,8 @@ pub const Workspace = struct {
     orders: ?orders_mod.OrdersWorkspace = null,
     layer_phase_kernels: []basis.PhaseKernel = &.{},
     layer_phase_kernel_valid: []bool = &.{},
+    cached_geometry: basis.Geometry = undefined,
+    cached_geometry_valid: bool = false,
 
     pub fn init(allocator: Allocator) Workspace {
         return .{ .allocator = allocator };
@@ -53,6 +55,23 @@ pub const Workspace = struct {
             geo,
             use_spherical_correction,
         );
+    }
+
+    pub fn geometry(
+        self: *Workspace,
+        n_gauss: usize,
+        mu0: f64,
+        muv: f64,
+    ) *const basis.Geometry {
+        if (!self.cached_geometry_valid or
+            self.cached_geometry.n_gauss != n_gauss or
+            self.cached_geometry.mu0 != mu0 or
+            self.cached_geometry.muv != muv)
+        {
+            self.cached_geometry = basis.Geometry.init(n_gauss, mu0, muv);
+            self.cached_geometry_valid = true;
+        }
+        return &self.cached_geometry;
     }
 
     pub fn layerRt(self: *Workspace, nlevel: usize) ![]basis.LayerRT {

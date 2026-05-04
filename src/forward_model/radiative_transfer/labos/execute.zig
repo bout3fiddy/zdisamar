@@ -42,13 +42,19 @@ fn directSurfaceOnlyReflectanceResolvedWithWorkspace(
 
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
-    const geo = Geometry.init(controls.nGauss(), mu0, muv);
+    var owned_geo: Geometry = undefined;
+    const geo = if (workspace) |scratch|
+        scratch.geometry(controls.nGauss(), mu0, muv)
+    else blk: {
+        owned_geo = Geometry.init(controls.nGauss(), mu0, muv);
+        break :blk &owned_geo;
+    };
     const owned_atten = workspace == null;
     var atten = if (workspace) |scratch|
         try scratch.attenuation(
             input.layers,
             input.pseudo_spherical_grid,
-            &geo,
+            geo,
             controls.use_spherical_correction,
         )
     else
@@ -56,14 +62,14 @@ fn directSurfaceOnlyReflectanceResolvedWithWorkspace(
             allocator,
             input.layers,
             input.pseudo_spherical_grid,
-            &geo,
+            geo,
             controls.use_spherical_correction,
         );
     defer if (owned_atten) atten.deinit();
 
     const view_idx = geo.viewIdx();
     const solar_idx = geo.n_gauss + 1;
-    const surface = fillSurface(0, input.surface_albedo, &geo);
+    const surface = fillSurface(0, input.surface_albedo, geo);
     var upward_path: f64 = 1.0;
     for (1..input.layers.len + 1) |ilevel| upward_path *= atten.get(view_idx, ilevel - 1, ilevel);
 
@@ -125,13 +131,19 @@ fn layerResolvedLabosWithWorkspace(
 
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
-    const geo = Geometry.init(controls.nGauss(), mu0, muv);
+    var owned_geo: Geometry = undefined;
+    const geo = if (workspace) |scratch|
+        scratch.geometry(controls.nGauss(), mu0, muv)
+    else blk: {
+        owned_geo = Geometry.init(controls.nGauss(), mu0, muv);
+        break :blk &owned_geo;
+    };
     const owned_atten = workspace == null;
     var atten = if (workspace) |scratch|
         try scratch.attenuation(
             input.layers,
             input.pseudo_spherical_grid,
-            &geo,
+            geo,
             controls.use_spherical_correction,
         )
     else
@@ -139,7 +151,7 @@ fn layerResolvedLabosWithWorkspace(
             allocator,
             input.layers,
             input.pseudo_spherical_grid,
-            &geo,
+            geo,
             controls.use_spherical_correction,
         );
     defer if (owned_atten) atten.deinit();
@@ -195,12 +207,12 @@ fn layerResolvedLabosWithWorkspace(
     } else null;
 
     for (0..fourier_max + 1) |i_fourier| {
-        const plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, &geo);
+        const plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
         calcRTlayersIntoWithBasis(
             rt,
             input.layers,
             i_fourier,
-            &geo,
+            geo,
             controls,
             &plm_basis,
             layer_phase_max_indices,
@@ -208,13 +220,13 @@ fn layerResolvedLabosWithWorkspace(
             layer_phase_kernel_valid,
         );
         if (i_fourier == 0) {
-            rt[0] = fillSurface(i_fourier, input.surface_albedo, &geo);
+            rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
         }
         const orders_result = orders_mod.ordersScatInto(
             orders_workspace,
             0,
             nlayer,
-            &geo,
+            geo,
             &atten,
             rt,
             controls,
@@ -228,14 +240,14 @@ fn layerResolvedLabosWithWorkspace(
                 orders_result.ud,
                 nlayer,
                 i_fourier,
-                &geo,
+                geo,
                 &plm_basis,
                 adjacent_layer_phase_max_indices,
                 layer_phase_kernels,
                 layer_phase_kernel_valid,
             )
         else
-            calcReflectance(orders_result.ud, nlayer, &geo);
+            calcReflectance(orders_result.ud, nlayer, geo);
         const fourier_weight = if (i_fourier == 0)
             1.0
         else
