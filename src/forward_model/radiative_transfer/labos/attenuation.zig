@@ -302,7 +302,6 @@ pub fn fillAttenuationDynamicWithGridInBufferAndLayerCache(
     const required_len = geo.nmutot * nlevel * nlevel;
     std.debug.assert(data.len >= required_len);
     std.debug.assert(layer_transmittance.len >= geo.nmutot * nlayer);
-    for (data[0..required_len]) |*value| value.* = 1.0;
     fillLayerTransmittance(layer_transmittance, layers, geo);
     var atten = DynamicAttenArray{
         .allocator = allocator,
@@ -310,6 +309,11 @@ pub fn fillAttenuationDynamicWithGridInBufferAndLayerCache(
         .nmutot = geo.nmutot,
         .nlevel = nlevel,
     };
+    for (0..geo.nmutot) |imu| {
+        for (0..nlevel) |level| {
+            atten.set(imu, level, level, 1.0);
+        }
+    }
 
     for (0..nlayer) |ilTo_0| {
         const ilTo = ilTo_0 + 1;
@@ -354,13 +358,17 @@ fn fillAttenuationDynamicWithGridInBufferRepeatedExp(
     const nlevel = nlayer + 1;
     const required_len = geo.nmutot * nlevel * nlevel;
     std.debug.assert(data.len >= required_len);
-    for (data[0..required_len]) |*value| value.* = 1.0;
     var atten = DynamicAttenArray{
         .allocator = allocator,
         .data = data[0..required_len],
         .nmutot = geo.nmutot,
         .nlevel = nlevel,
     };
+    for (0..geo.nmutot) |imu| {
+        for (0..nlevel) |level| {
+            atten.set(imu, level, level, 1.0);
+        }
+    }
 
     for (0..nlayer) |ilTo_0| {
         const ilTo = ilTo_0 + 1;
