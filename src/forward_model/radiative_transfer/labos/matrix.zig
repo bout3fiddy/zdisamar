@@ -175,16 +175,16 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
         }
     }
 
-    var inverse: [types.max_gauss * types.max_gauss]f64 = .{0.0} ** (types.max_gauss * types.max_gauss);
+    var inverse: [types.max_gauss * types.max_gauss]f64 = undefined;
     for (0..n_gauss) |rhs_col| {
-        var y: [types.max_gauss]f64 = .{0.0} ** types.max_gauss;
+        var y: [types.max_gauss]f64 = undefined;
         for (0..n_gauss) |i| {
             var s: f64 = if (pivot[i] == rhs_col) 1.0 else 0.0;
             for (0..i) |j| s -= one_minus_ab_gg[pivot[i] * n_gauss + j] * y[j];
             y[i] = s;
         }
 
-        var x: [types.max_gauss]f64 = .{0.0} ** types.max_gauss;
+        var x: [types.max_gauss]f64 = undefined;
         var ii: usize = n_gauss;
         while (ii > 0) {
             ii -= 1;
@@ -195,7 +195,7 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
         for (0..n_gauss) |i| inverse[i * n_gauss + rhs_col] = x[i];
     }
 
-    var result = Mat.zero(n);
+    var result = Mat{ .data = undefined, .n = n };
     for (0..n_gauss) |i| {
         for (0..n_gauss) |j| {
             const delta: f64 = if (i == j) 1.0 else 0.0;
@@ -212,7 +212,7 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
         }
     }
 
-    var tmp: [types.max_extra * types.max_gauss]f64 = .{0.0} ** (types.max_extra * types.max_gauss);
+    var tmp: [types.max_extra * types.max_gauss]f64 = undefined;
     for (0..n_extra) |ia| {
         for (0..n_gauss) |j| {
             var s: f64 = 0.0;
