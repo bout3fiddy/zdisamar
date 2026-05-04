@@ -300,7 +300,13 @@ fn layerResolvedLabosWithWorkspace(
     for (0..fourier_max + 1) |i_fourier| {
         profile_sample.fourier_count += 1;
         const plm_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
-        const plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
+        var owned_plm_basis: basis.FourierPlmBasis = undefined;
+        const plm_basis = if (workspace) |scratch|
+            try scratch.fourierPlmBasis(i_fourier, phase_max, geo)
+        else blk: {
+            owned_plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
+            break :blk &owned_plm_basis;
+        };
         if (profile_enabled) profile_sample.plm_basis_ns += std.time.nanoTimestamp() - plm_start;
         const rt_layers_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         calcRTlayersIntoWithBasis(
@@ -309,7 +315,7 @@ fn layerResolvedLabosWithWorkspace(
             i_fourier,
             geo,
             controls,
-            &plm_basis,
+            plm_basis,
             layer_phase_max_indices,
             layer_phase_kernels,
             layer_phase_kernel_valid,
@@ -353,7 +359,7 @@ fn layerResolvedLabosWithWorkspace(
                 nlayer,
                 i_fourier,
                 geo,
-                &plm_basis,
+                plm_basis,
                 adjacent_layer_phase_max_indices,
                 layer_phase_kernels,
                 layer_phase_kernel_valid,

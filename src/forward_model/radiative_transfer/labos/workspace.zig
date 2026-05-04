@@ -16,6 +16,8 @@ pub const Workspace = struct {
     orders: ?orders_mod.OrdersWorkspace = null,
     layer_phase_kernels: []basis.PhaseKernel = &.{},
     layer_phase_kernel_valid: []bool = &.{},
+    plm_basis_cache: []basis.FourierPlmBasis = &.{},
+    plm_basis_cache_valid: []bool = &.{},
     cached_geometry: basis.Geometry = undefined,
     cached_geometry_valid: bool = false,
 
@@ -32,6 +34,8 @@ pub const Workspace = struct {
         self.allocator.free(self.source_phase_max_indices);
         self.allocator.free(self.layer_phase_kernels);
         self.allocator.free(self.layer_phase_kernel_valid);
+        self.allocator.free(self.plm_basis_cache);
+        self.allocator.free(self.plm_basis_cache_valid);
         self.* = undefined;
     }
 
@@ -70,6 +74,7 @@ pub const Workspace = struct {
         {
             self.cached_geometry = basis.Geometry.init(n_gauss, mu0, muv);
             self.cached_geometry_valid = true;
+            @memset(self.plm_basis_cache_valid, false);
         }
         return &self.cached_geometry;
     }
@@ -107,6 +112,29 @@ pub const Workspace = struct {
     pub fn phaseKernelValid(self: *Workspace, nlevel: usize) ![]bool {
         try ensureCapacity(bool, self.allocator, &self.layer_phase_kernel_valid, nlevel);
         return self.layer_phase_kernel_valid[0..nlevel];
+    }
+
+    pub fn fourierPlmBasis(
+        self: *Workspace,
+        i_fourier: usize,
+        max_phase_index: usize,
+        geo: *const basis.Geometry,
+    ) !*const basis.FourierPlmBasis {
+        std.debug.assert(i_fourier < basis.max_phase_coef);
+        const previous_cache_len = self.plm_basis_cache.len;
+        const previous_valid_len = self.plm_basis_cache_valid.len;
+        try ensureCapacity(basis.FourierPlmBasis, self.allocator, &self.plm_basis_cache, basis.max_phase_coef);
+        try ensureCapacity(bool, self.allocator, &self.plm_basis_cache_valid, basis.max_phase_coef);
+        if (previous_cache_len < basis.max_phase_coef or previous_valid_len < basis.max_phase_coef) {
+            @memset(self.plm_basis_cache_valid, false);
+        }
+        if (!self.plm_basis_cache_valid[i_fourier] or
+            self.plm_basis_cache[i_fourier].max_phase_index < max_phase_index)
+        {
+            self.plm_basis_cache[i_fourier] = basis.FourierPlmBasis.init(i_fourier, max_phase_index, geo);
+            self.plm_basis_cache_valid[i_fourier] = true;
+        }
+        return &self.plm_basis_cache[i_fourier];
     }
 };
 
