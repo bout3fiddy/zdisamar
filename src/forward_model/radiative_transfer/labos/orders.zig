@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 
+const max_order_levels: usize = 128;
+
 pub const OrdersResult = struct {
     allocator: Allocator,
     ud: []basis.UDField,
@@ -170,6 +172,17 @@ fn dotGaussPair(
     return .{ .col0 = s0, .col1 = s1 };
 }
 
+fn rtLayerHasSignal(rt: *const basis.LayerRT, nmutot: usize) bool {
+    const count = nmutot * nmutot;
+    for (rt.R.data[0..count]) |value| {
+        if (value != 0.0) return true;
+    }
+    for (rt.T.data[0..count]) |value| {
+        if (value != 0.0) return true;
+    }
+    return false;
+}
+
 fn initializeOrdersBuffers(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -272,6 +285,12 @@ fn ordersScatInternal(
     const ud_local_view = ud_local[0..nlevel];
     initializeOrdersBuffers(track_sum_local, ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
 
+    std.debug.assert(nlevel <= max_order_levels);
+    var rt_active: [max_order_levels]bool = undefined;
+    for (rt[0..nlevel], rt_active[0..nlevel]) |*layer_rt, *active| {
+        active.* = rtLayerHasSignal(layer_rt, nmutot);
+    }
+
     for (start_level..end_level + 1) |ilevel| {
         const e_data = &ud_view[ilevel].E.data;
         const orde_e_data = &ud_orde_view[ilevel].E.data;
@@ -284,6 +303,10 @@ fn ordersScatInternal(
 
     for (start_level..end_level) |ilevel| {
         for (0..2) |imu0| {
+            if (!rt_active[ilevel + 1]) {
+                ud_local_view[ilevel].D.col[imu0] = basis.Vec.zero(nmutot);
+                continue;
+            }
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel + 1);
             const local_d = &ud_local_view[ilevel].D.col[imu0].data;
@@ -300,6 +323,10 @@ fn ordersScatInternal(
 
     for (start_level..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
+            if (!rt_active[ilevel]) {
+                ud_local_view[ilevel].U.col[imu0] = basis.Vec.zero(nmutot);
+                continue;
+            }
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel);
             const local_u = &ud_local_view[ilevel].U.col[imu0].data;
@@ -350,6 +377,13 @@ fn ordersScatInternal(
         for (start_level..end_level) |ilevel| {
             const local_d0 = &ud_local_view[ilevel].D.col[0].data;
             const local_d1 = &ud_local_view[ilevel].D.col[1].data;
+            if (!rt_active[ilevel + 1]) {
+                for (0..nmutot) |imu| {
+                    local_d0[imu] = 0.0;
+                    local_d1[imu] = 0.0;
+                }
+                continue;
+            }
             const prev_u0 = &ud_orde_view[ilevel].U.col[0];
             const prev_u1 = &ud_orde_view[ilevel].U.col[1];
             const prev_d0 = &ud_orde_view[ilevel + 1].D.col[0];
@@ -367,15 +401,29 @@ fn ordersScatInternal(
         const local_u_start1 = &ud_local_view[start_level].U.col[1].data;
         const prev_d_start0 = &ud_orde_view[start_level].D.col[0];
         const prev_d_start1 = &ud_orde_view[start_level].D.col[1];
-        for (0..nmutot) |imu| {
-            const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
-            local_u_start0[imu] = r_dot_d.col0;
-            local_u_start1[imu] = r_dot_d.col1;
+        if (rt_active[start_level]) {
+            for (0..nmutot) |imu| {
+                const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
+                local_u_start0[imu] = r_dot_d.col0;
+                local_u_start1[imu] = r_dot_d.col1;
+            }
+        } else {
+            for (0..nmutot) |imu| {
+                local_u_start0[imu] = 0.0;
+                local_u_start1[imu] = 0.0;
+            }
         }
 
         for (start_level + 1..end_level + 1) |ilevel| {
             const local_u0 = &ud_local_view[ilevel].U.col[0].data;
             const local_u1 = &ud_local_view[ilevel].U.col[1].data;
+            if (!rt_active[ilevel]) {
+                for (0..nmutot) |imu| {
+                    local_u0[imu] = 0.0;
+                    local_u1[imu] = 0.0;
+                }
+                continue;
+            }
             const prev_d0 = &ud_orde_view[ilevel].D.col[0];
             const prev_d1 = &ud_orde_view[ilevel].D.col[1];
             const prev_u0 = &ud_orde_view[ilevel - 1].U.col[0];
