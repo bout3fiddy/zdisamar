@@ -435,8 +435,13 @@ pub fn ordersScatInto(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
-    return ordersScatInternal(
-        true,
+    // INVARIANT:
+    //   The current LABOS integrated-source reflectance path consumes the
+    //   propagated UD field only. The local-source sum is legacy output from
+    //   older callers, so the workspace path leaves it empty instead of
+    //   spending time accumulating unobserved data.
+    const result = ordersScatInternal(
+        false,
         storage.ud,
         storage.ud_sum_local,
         storage.ud_orde,
@@ -449,6 +454,10 @@ pub fn ordersScatInto(
         controls,
         num_orders_max,
     );
+    return .{
+        .ud = result.ud,
+        .ud_sum_local = &.{},
+    };
 }
 
 pub fn ordersScatTransportInto(
