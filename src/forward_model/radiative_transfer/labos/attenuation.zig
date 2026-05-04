@@ -170,7 +170,11 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
                 if (sample.optical_depth <= 0.0) continue;
                 const sample_radius = rearth_km + sample.altitude_km;
                 const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
-                sumkext += (sample.optical_depth * sample_radius) / @max(denominator, 1.0e-12);
+                const numerator = if (sample.thickness_km > 0.0)
+                    (sample.thickness_km * sample_radius) * (sample.optical_depth / sample.thickness_km)
+                else
+                    sample.optical_depth * sample_radius;
+                sumkext += numerator / @max(denominator, 1.0e-12);
             }
             atten.set(imu, top_level, level, math.exp(-sumkext));
         }

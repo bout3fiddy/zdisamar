@@ -234,18 +234,18 @@ pub fn calcIntegratedReflectanceWithBasis(
         const level_u = level.U.col[solar_col].data;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
-            const pmin = 0.25 * phase_rows.zmin[imu] / (view_mu * mu);
+            const pmin = (0.25 * phase_rows.zmin[imu] / view_mu) / mu;
             pmin_ed += pmin * level_d[imu];
         }
 
         const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
-        const pmin_direct = 0.25 * phase_rows.zmin[solar_idx] / (view_mu * solar_mu);
+        const pmin_direct = (0.25 * phase_rows.zmin[solar_idx] / view_mu) / solar_mu;
         pmin_ed += pmin_direct * level.E.data[solar_idx];
 
         var pplusst_u: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
-            const pplusst = 0.25 * phase_rows.zplus[imu] / (view_mu * mu);
+            const pplusst = (0.25 * phase_rows.zplus[imu] / view_mu) / mu;
             pplusst_u += pplusst * level_u[imu];
         }
 

@@ -385,11 +385,12 @@ fn layerResolvedLabosWithWorkspace(
             profile_sample.reflectance_phase_kernel_ns += reflectance_profile.phase_kernel_ns;
             profile_sample.reflectance_contribution_ns += reflectance_profile.contribution_ns;
         }
-        const fourier_weight = if (i_fourier == 0)
-            1.0
-        else
-            2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
-        const weighted_refl_fc = fourier_weight * refl_fc;
+        const weighted_refl_fc = if (i_fourier == 0) blk: {
+            break :blk refl_fc;
+        } else blk: {
+            const cos_m_dphi = math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+            break :blk (2.0 * refl_fc) * cos_m_dphi;
+        };
         reflectance += weighted_refl_fc;
         if (i_fourier >= controls.fourier_floor_scalar and @abs(weighted_refl_fc) <= fourier_tail_reflectance_epsilon) break;
     }
