@@ -128,24 +128,26 @@ fn initializeOrdersBuffers(
     ud_local: []basis.UDLocal,
     nmutot: usize,
 ) void {
+    const vec = basis.Vec{ .data = undefined, .n = nmutot };
+    const vec2 = basis.Vec2{ .col = .{ vec, vec }, .n = nmutot };
     for (ud, ud_sum_local, ud_orde, ud_local) |*field, *sum_local, *orde, *local| {
         field.* = .{
-            .E = basis.Vec.zero(nmutot),
-            .U = basis.Vec2.zero(nmutot),
-            .D = basis.Vec2.zero(nmutot),
+            .E = vec,
+            .U = vec2,
+            .D = vec2,
         };
         sum_local.* = .{
-            .U = basis.Vec2.zero(nmutot),
-            .D = basis.Vec2.zero(nmutot),
+            .U = vec2,
+            .D = vec2,
         };
         orde.* = .{
-            .E = basis.Vec.zero(nmutot),
-            .U = basis.Vec2.zero(nmutot),
-            .D = basis.Vec2.zero(nmutot),
+            .E = vec,
+            .U = vec2,
+            .D = vec2,
         };
         local.* = .{
-            .U = basis.Vec2.zero(nmutot),
-            .D = basis.Vec2.zero(nmutot),
+            .U = vec2,
+            .D = vec2,
         };
     }
 }
