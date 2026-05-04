@@ -99,6 +99,21 @@ fn transportToOtherLevels(
 
 pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_gauss: usize) f64 {
     const row_offset = row * mat.n;
+    if (n_gauss == 10) {
+        const data = mat.data[row_offset..];
+        const vec_data = vec_col.data;
+        var s = data[0] * vec_data[0];
+        s += data[1] * vec_data[1];
+        s += data[2] * vec_data[2];
+        s += data[3] * vec_data[3];
+        s += data[4] * vec_data[4];
+        s += data[5] * vec_data[5];
+        s += data[6] * vec_data[6];
+        s += data[7] * vec_data[7];
+        s += data[8] * vec_data[8];
+        s += data[9] * vec_data[9];
+        return s;
+    }
     var s: f64 = 0.0;
     for (0..n_gauss) |k| {
         s += mat.data[row_offset + k] * vec_col.data[k];
