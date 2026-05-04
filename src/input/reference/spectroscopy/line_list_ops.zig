@@ -201,6 +201,7 @@ pub fn selectStrongLineAnchors(
     var anchors = [_]?usize{null} ** Types.max_strong_line_sidecars;
     var deltas = [_]f64{std.math.inf(f64)} ** Types.max_strong_line_sidecars;
     const strong_lines = self.strong_lines orelse return anchors;
+    if (usesVendorStrongLinePartition(self)) return anchors;
 
     for (relevant_lines, 0..) |line, line_index| {
         const strong_index = matchedStrongIndexForRelevantLine(self, start_index, line, line_index) orelse continue;
