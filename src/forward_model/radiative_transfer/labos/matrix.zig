@@ -43,10 +43,9 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
 
 fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
-    for (0..12) |j| {
-        var idx = j;
-        for (0..12) |i| {
-            const row = i * 12;
+    for (0..12) |i| {
+        const row = i * 12;
+        for (0..12) |j| {
             var s = a.data[row] * b.data[j];
             s += a.data[row + 1] * b.data[12 + j];
             s += a.data[row + 2] * b.data[24 + j];
@@ -57,8 +56,7 @@ fn smul12x10(a: *const Mat, b: *const Mat) Mat {
             s += a.data[row + 7] * b.data[84 + j];
             s += a.data[row + 8] * b.data[96 + j];
             s += a.data[row + 9] * b.data[108 + j];
-            result.data[idx] = s;
-            idx += 12;
+            result.data[row + j] = s;
         }
     }
     return result;
