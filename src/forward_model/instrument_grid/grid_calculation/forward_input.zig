@@ -63,14 +63,15 @@ pub fn configuredForwardInput(
     support_carriers: []CarrierEval.SharedOpticalCarrier,
     profile: ?*Profile,
 ) common.ExecuteError!common.ForwardInput {
-    const cache_start = std.time.nanoTimestamp();
+    const should_profile = profile != null;
+    const cache_start = if (should_profile) std.time.nanoTimestamp() else 0;
     var wavelength_cache = CarrierEval.WavelengthCarrierCache.init(
         prepared,
         wavelength_nm,
         support_carrier_valid,
         support_carriers,
     );
-    const layers_start = std.time.nanoTimestamp();
+    const layers_start = if (should_profile) std.time.nanoTimestamp() else 0;
     const optical_depths = OpticsPreparation.transport.fillForwardLayersAtWavelengthWithCarrierCache(
         prepared,
         scene,
@@ -85,7 +86,7 @@ pub fn configuredForwardInput(
         optical_depths,
         layer_inputs,
     );
-    const rtm_start = std.time.nanoTimestamp();
+    const rtm_start = if (should_profile) std.time.nanoTimestamp() else 0;
     const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
     input.source_interfaces = source_interface_slice;
     var has_rtm_quadrature = false;
@@ -112,7 +113,7 @@ pub fn configuredForwardInput(
             return error.MissingExplicitRtmQuadrature;
         }
     }
-    const source_start = std.time.nanoTimestamp();
+    const source_start = if (should_profile) std.time.nanoTimestamp() else 0;
     if (!has_rtm_quadrature) {
         OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
             prepared,
@@ -122,7 +123,7 @@ pub fn configuredForwardInput(
             &wavelength_cache,
         );
     }
-    const pseudo_start = std.time.nanoTimestamp();
+    const pseudo_start = if (should_profile) std.time.nanoTimestamp() else 0;
     if (route.rtm_controls.use_spherical_correction) {
         // DECISION:
         //   Pseudo-spherical samples are only attached for routes that request
@@ -149,8 +150,8 @@ pub fn configuredForwardInput(
             };
         }
     }
-    const end = std.time.nanoTimestamp();
     if (profile) |profiler| {
+        const end = std.time.nanoTimestamp();
         profiler.add(
             layers_start - cache_start,
             rtm_start - layers_start,

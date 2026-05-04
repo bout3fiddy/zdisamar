@@ -239,7 +239,8 @@ fn computeForwardSampleAtWavelengthProfiled(
     profile: ?*ForwardPrefetchProfile,
     input_profile: ?*ForwardInput.Profile,
 ) Error!ForwardIntegratedSample {
-    const configured_start = std.time.nanoTimestamp();
+    const should_profile = profile != null;
+    const configured_start = if (should_profile) std.time.nanoTimestamp() else 0;
     const input = try ForwardInput.configuredForwardInput(
         scene,
         route,
@@ -256,14 +257,14 @@ fn computeForwardSampleAtWavelengthProfiled(
         support_carriers,
         input_profile,
     );
-    const transport_start = std.time.nanoTimestamp();
+    const transport_start = if (should_profile) std.time.nanoTimestamp() else 0;
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
     const forward = if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
         try execute_with_workspace(allocator, effective_route, input, labos_workspace)
     else
         try implementations.transport.executePrepared(allocator, effective_route, input);
-    const radiance_start = std.time.nanoTimestamp();
+    const radiance_start = if (should_profile) std.time.nanoTimestamp() else 0;
     const radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
     if (profile) |profiler| {
         const end = std.time.nanoTimestamp();
