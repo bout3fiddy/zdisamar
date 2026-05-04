@@ -42,6 +42,8 @@ pub const calcRTlayersInto = layers_mod.calcRTlayersInto;
 pub const calcRTlayersIntoWithBasis = layers_mod.calcRTlayersIntoWithBasis;
 pub const calcRTlayers = layers_mod.calcRTlayers;
 pub const fillSurface = layers_mod.fillSurface;
+pub const LayersProfile = layers_mod.Profile;
+pub const setLayersProfile = layers_mod.setProfile;
 
 pub const dotGauss = orders_mod.dotGauss;
 pub const OrdersWorkspace = orders_mod.OrdersWorkspace;
@@ -54,5 +56,7 @@ pub const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 pub const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 pub const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
+pub const Profile = execute_mod.Profile;
+pub const setProfile = execute_mod.setProfile;
 pub const execute = execute_mod.execute;
 pub const executeWithWorkspace = execute_mod.executeWithWorkspace;

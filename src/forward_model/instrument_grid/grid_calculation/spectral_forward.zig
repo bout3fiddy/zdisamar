@@ -116,6 +116,8 @@ const ForwardPrefetchWorker = struct {
     error_state: *ForwardPrefetchErrorState,
     profile: ?*ForwardPrefetchProfile,
     input_profile: ?*ForwardInput.Profile,
+    labos_profile: ?*labos.Profile,
+    labos_layers_profile: ?*labos.LayersProfile,
 };
 
 const ForwardPrefetchProfile = struct {
@@ -215,6 +217,8 @@ pub fn computeForwardSampleAtWavelength(
         &labos_workspace,
         null,
         null,
+        null,
+        null,
     );
 }
 
@@ -238,6 +242,8 @@ fn computeForwardSampleAtWavelengthProfiled(
     labos_workspace: *labos.Workspace,
     profile: ?*ForwardPrefetchProfile,
     input_profile: ?*ForwardInput.Profile,
+    labos_profile: ?*labos.Profile,
+    labos_layers_profile: ?*labos.LayersProfile,
 ) Error!ForwardIntegratedSample {
     const should_profile = profile != null;
     const configured_start = if (should_profile) std.time.nanoTimestamp() else 0;
@@ -260,7 +266,16 @@ fn computeForwardSampleAtWavelengthProfiled(
     const transport_start = if (should_profile) std.time.nanoTimestamp() else 0;
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
-    const forward = if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
+    const forward = if (labos_profile != null or labos_layers_profile != null) blk: {
+        const previous_labos_profile = labos.setProfile(labos_profile);
+        defer _ = labos.setProfile(previous_labos_profile);
+        const previous_labos_layers_profile = labos.setLayersProfile(labos_layers_profile);
+        defer _ = labos.setLayersProfile(previous_labos_layers_profile);
+        break :blk if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
+            try execute_with_workspace(allocator, effective_route, input, labos_workspace)
+        else
+            try implementations.transport.executePrepared(allocator, effective_route, input);
+    } else if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
         try execute_with_workspace(allocator, effective_route, input, labos_workspace)
     else
         try implementations.transport.executePrepared(allocator, effective_route, input);
@@ -313,6 +328,8 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
             &scratch.labos_workspace,
             worker.profile,
             worker.input_profile,
+            worker.labos_profile,
+            worker.labos_layers_profile,
         ) catch |err| {
             worker.error_state.store(err);
             return;
@@ -358,6 +375,8 @@ pub fn prefetchForwardSamples(
                 &scratch.labos_workspace,
                 null,
                 null,
+                null,
+                null,
             );
         }
         return;
@@ -366,8 +385,12 @@ pub fn prefetchForwardSamples(
     var error_state = ForwardPrefetchErrorState{};
     var profile = ForwardPrefetchProfile{};
     var input_profile = ForwardInput.Profile{};
+    var labos_profile = labos.Profile{};
+    var labos_layers_profile = labos.LayersProfile{};
     const profile_ptr: ?*ForwardPrefetchProfile = if (std.process.hasEnvVarConstant("ZDISAMAR_PROFILE_FORWARD")) &profile else null;
     const input_profile_ptr: ?*ForwardInput.Profile = if (std.process.hasEnvVarConstant("ZDISAMAR_PROFILE_FORWARD")) &input_profile else null;
+    const labos_profile_ptr: ?*labos.Profile = if (std.process.hasEnvVarConstant("ZDISAMAR_PROFILE_FORWARD")) &labos_profile else null;
+    const labos_layers_profile_ptr: ?*labos.LayersProfile = if (std.process.hasEnvVarConstant("ZDISAMAR_PROFILE_FORWARD")) &labos_layers_profile else null;
     const workers = try allocator.alloc(ForwardPrefetchWorker, worker_count);
     defer allocator.free(workers);
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
@@ -391,6 +414,8 @@ pub fn prefetchForwardSamples(
             .error_state = &error_state,
             .profile = profile_ptr,
             .input_profile = input_profile_ptr,
+            .labos_profile = labos_profile_ptr,
+            .labos_layers_profile = labos_layers_profile_ptr,
         };
         if (worker_index + 1 < worker_count) {
             threads[started_thread_count] = std.Thread.spawn(
@@ -411,6 +436,8 @@ pub fn prefetchForwardSamples(
     for (threads[0..started_thread_count]) |thread| thread.join();
     if (error_state.err) |err| return err;
     if (input_profile_ptr) |profiler| profiler.print();
+    if (labos_profile_ptr) |profiler| profiler.print();
+    if (labos_layers_profile_ptr) |profiler| profiler.print();
     if (profile_ptr) |profiler| profiler.print();
 }
 

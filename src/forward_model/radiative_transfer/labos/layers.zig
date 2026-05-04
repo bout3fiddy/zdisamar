@@ -7,6 +7,101 @@ const common = @import("../root.zig");
 
 pub const LayerRT = basis.LayerRT;
 
+pub const Profile = struct {
+    mutex: std.Thread.Mutex = .{},
+    zero_rt_ns: i128 = 0,
+    fill_phase_ns: i128 = 0,
+    max_beta_ns: i128 = 0,
+    exponent_ns: i128 = 0,
+    single_scatter_ns: i128 = 0,
+    renorm_ns: i128 = 0,
+    doubling_ns: i128 = 0,
+    double_qseries_ns: i128 = 0,
+    double_smul_ns: i128 = 0,
+    double_combine_ns: i128 = 0,
+    double_exponent_ns: i128 = 0,
+    store_ns: i128 = 0,
+    layer_count: usize = 0,
+    doubling_count: usize = 0,
+    double_step_count: usize = 0,
+
+    pub const Sample = struct {
+        zero_rt_ns: i128 = 0,
+        fill_phase_ns: i128 = 0,
+        max_beta_ns: i128 = 0,
+        exponent_ns: i128 = 0,
+        single_scatter_ns: i128 = 0,
+        renorm_ns: i128 = 0,
+        doubling_ns: i128 = 0,
+        double_qseries_ns: i128 = 0,
+        double_smul_ns: i128 = 0,
+        double_combine_ns: i128 = 0,
+        double_exponent_ns: i128 = 0,
+        store_ns: i128 = 0,
+        layer_count: usize = 0,
+        doubling_count: usize = 0,
+        double_step_count: usize = 0,
+    };
+
+    pub fn addSample(self: *Profile, sample: Sample) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.zero_rt_ns += sample.zero_rt_ns;
+        self.fill_phase_ns += sample.fill_phase_ns;
+        self.max_beta_ns += sample.max_beta_ns;
+        self.exponent_ns += sample.exponent_ns;
+        self.single_scatter_ns += sample.single_scatter_ns;
+        self.renorm_ns += sample.renorm_ns;
+        self.doubling_ns += sample.doubling_ns;
+        self.double_qseries_ns += sample.double_qseries_ns;
+        self.double_smul_ns += sample.double_smul_ns;
+        self.double_combine_ns += sample.double_combine_ns;
+        self.double_exponent_ns += sample.double_exponent_ns;
+        self.store_ns += sample.store_ns;
+        self.layer_count += sample.layer_count;
+        self.doubling_count += sample.doubling_count;
+        self.double_step_count += sample.double_step_count;
+    }
+
+    pub fn print(self: *Profile) void {
+        const layer_denom = @max(@as(f64, @floatFromInt(self.layer_count)), 1.0);
+        std.debug.print(
+            "[zds-profile] labos_layers={} doubled_layers={} double_steps={} zero_rt={d:.3}ms fill_phase={d:.3}ms max_beta={d:.3}ms exponent={d:.3}ms single_scatter={d:.3}ms renorm={d:.3}ms doubling={d:.3}ms double_qseries={d:.3}ms double_smul={d:.3}ms double_combine={d:.3}ms double_exponent={d:.3}ms store={d:.3}ms fill_phase_mean={d:.6}ms/layer doubling_mean={d:.6}ms/layer\n",
+            .{
+                self.layer_count,
+                self.doubling_count,
+                self.double_step_count,
+                nsToMs(self.zero_rt_ns),
+                nsToMs(self.fill_phase_ns),
+                nsToMs(self.max_beta_ns),
+                nsToMs(self.exponent_ns),
+                nsToMs(self.single_scatter_ns),
+                nsToMs(self.renorm_ns),
+                nsToMs(self.doubling_ns),
+                nsToMs(self.double_qseries_ns),
+                nsToMs(self.double_smul_ns),
+                nsToMs(self.double_combine_ns),
+                nsToMs(self.double_exponent_ns),
+                nsToMs(self.store_ns),
+                nsToMs(self.fill_phase_ns) / layer_denom,
+                nsToMs(self.doubling_ns) / layer_denom,
+            },
+        );
+    }
+};
+
+threadlocal var active_profile: ?*Profile = null;
+
+pub fn setProfile(profile: ?*Profile) ?*Profile {
+    const previous = active_profile;
+    active_profile = profile;
+    return previous;
+}
+
+fn nsToMs(ns: i128) f64 {
+    return @as(f64, @floatFromInt(ns)) / 1.0e6;
+}
+
 fn locateLowerIndex(values: []const f64, target: f64) usize {
     if (values.len <= 1) return 0;
     var index: usize = 0;
@@ -167,21 +262,47 @@ fn doDouble(
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
+    profile_sample: ?*Profile.Sample,
 ) void {
     var b = b_start;
     for (0..ndouble) |_| {
+        if (profile_sample) |sample| sample.double_step_count += 1;
+
+        const q_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const Q = basis.qseries(n, n_gauss, threshold_mul, R, R);
+        if (profile_sample) |sample| sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
+
+        const smul_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const qt = basis.smul(n, n_gauss, threshold_mul, &Q, T);
+        if (profile_sample) |sample| sample.double_smul_ns += std.time.nanoTimestamp() - smul_start;
+
+        const combine_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const D = basis.matAddSemul3(n, T, &Q, E, &qt);
+        if (profile_sample) |sample| sample.double_combine_ns += std.time.nanoTimestamp() - combine_start;
 
+        const rd_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const rd = basis.smul(n, n_gauss, threshold_mul, R, &D);
+        if (profile_sample) |sample| sample.double_smul_ns += std.time.nanoTimestamp() - rd_start;
+
+        const u_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const U = basis.semulAdd(n, R, E, &rd);
+        if (profile_sample) |sample| sample.double_combine_ns += std.time.nanoTimestamp() - u_start;
 
+        const tu_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const tu = basis.smul(n, n_gauss, threshold_mul, T, &U);
-        const R_new = basis.matAddEsmul3(n, R, E, &U, &tu);
+        if (profile_sample) |sample| sample.double_smul_ns += std.time.nanoTimestamp() - tu_start;
 
+        const r_new_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
+        const R_new = basis.matAddEsmul3(n, R, E, &U, &tu);
+        if (profile_sample) |sample| sample.double_combine_ns += std.time.nanoTimestamp() - r_new_start;
+
+        const td_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const td = basis.smul(n, n_gauss, threshold_mul, T, &D);
+        if (profile_sample) |sample| sample.double_smul_ns += std.time.nanoTimestamp() - td_start;
+
+        const t_new_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const T_new = basis.esmulSemulAdd(n, E, &D, T, &td);
+        if (profile_sample) |sample| sample.double_combine_ns += std.time.nanoTimestamp() - t_new_start;
 
         // PARITY: DISAMAR's whole-array assignments evaluate both RHS values
         // from the pre-step operators before storing the doubled layer state.
@@ -189,6 +310,7 @@ fn doDouble(
         T.* = T_new;
 
         b *= 2.0;
+        const exponent_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         if (b < 0.001) {
             for (0..geo.nmutot) |imu| {
                 E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
@@ -199,6 +321,7 @@ fn doDouble(
                 E.data[imu] = e * e;
             }
         }
+        if (profile_sample) |sample| sample.double_exponent_ns += std.time.nanoTimestamp() - exponent_start;
     }
 }
 
@@ -232,15 +355,22 @@ pub fn calcRTlayersIntoWithBasis(
     phase_kernel_valid: ?[]bool,
 ) void {
     const nlayer = layers.len;
+    const profile_enabled = active_profile != null;
+    var profile_sample = Profile.Sample{};
 
+    const zero_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
     rt[0] = zeroLayerRt(geo.nmutot);
     if (phase_kernel_valid) |valid| @memset(valid, false);
+    if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_start;
 
     for (0..nlayer) |layer_idx| {
         const rt_idx = layer_idx + 1;
         const layer = layers[layer_idx];
+        profile_sample.layer_count += 1;
         if (i_fourier >= basis.max_phase_coef) {
+            const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
             continue;
         }
 
@@ -250,10 +380,13 @@ pub fn calcRTlayersIntoWithBasis(
         else
             phase_functions.maxPhaseCoefficientIndex(phase_coefs);
         if (i_fourier > max_phase_index) {
+            const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
             continue;
         }
 
+        const fill_phase_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         var z = basis.fillZplusZminFromBasisLimited(
             i_fourier,
             phase_coefs,
@@ -261,18 +394,22 @@ pub fn calcRTlayersIntoWithBasis(
             geo,
             plm_basis,
         );
+        if (profile_enabled) profile_sample.fill_phase_ns += std.time.nanoTimestamp() - fill_phase_start;
         if (phase_kernel_cache) |cache| {
             cache[rt_idx] = z;
             if (phase_kernel_valid) |valid| valid[rt_idx] = true;
         }
         if (layer.optical_depth < 1.0e-20) {
+            const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
             continue;
         }
 
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
 
+        const max_beta_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         var max_beta_eff: f64 = 0.0;
         for (i_fourier..max_phase_index + 1) |ic| {
             const icf: f64 = @floatFromInt(ic);
@@ -280,6 +417,7 @@ pub fn calcRTlayersIntoWithBasis(
             if (beta_eff > max_beta_eff) max_beta_eff = beta_eff;
         }
         const a_eff = a * max_beta_eff;
+        if (profile_enabled) profile_sample.max_beta_ns += std.time.nanoTimestamp() - max_beta_start;
 
         var use_doubling = false;
         var b_start = b;
@@ -299,26 +437,41 @@ pub fn calcRTlayersIntoWithBasis(
             b_start = bd;
         }
 
+        const exponent_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         var E = basis.Vec.zero(geo.nmutot);
         for (0..geo.nmutot) |imu| {
             E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
         }
+        if (profile_enabled) profile_sample.exponent_ns += std.time.nanoTimestamp() - exponent_start;
 
+        const single_scatter_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         var R = singleScatterR(a, &E, &z.Zmin, geo);
         var T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
+        if (profile_enabled) profile_sample.single_scatter_ns += std.time.nanoTimestamp() - single_scatter_start;
 
         if (use_doubling) {
+            profile_sample.doubling_count += 1;
             if (i_fourier == 0 and controls.renorm_phase_function) {
+                const renorm_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
                 renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
+                if (profile_enabled) profile_sample.renorm_ns += std.time.nanoTimestamp() - renorm_start;
+                const renorm_scatter_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
                 R = singleScatterR(a, &E, &z.Zmin, geo);
                 T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
+                if (profile_enabled) profile_sample.single_scatter_ns += std.time.nanoTimestamp() - renorm_scatter_start;
             }
-            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E);
+            const doubling_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
+            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E, if (profile_enabled) &profile_sample else null);
+            if (profile_enabled) profile_sample.doubling_ns += std.time.nanoTimestamp() - doubling_start;
         }
 
+        const store_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         rt[rt_idx].R = R;
         rt[rt_idx].T = T;
+        if (profile_enabled) profile_sample.store_ns += std.time.nanoTimestamp() - store_start;
     }
+
+    if (active_profile) |profiler| profiler.addSample(profile_sample);
 }
 
 fn zeroLayerRt(n: usize) LayerRT {
