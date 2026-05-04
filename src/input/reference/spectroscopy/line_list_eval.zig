@@ -200,9 +200,16 @@ pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
         if (state.line_count == self.lines.len) state.lines else null
     else
         null;
+    const vendor_weak_exclusions = if (Ops.usesVendorStrongLinePartition(self) and !self.preserve_anchor_weak_lines)
+        self.strong_line_match_by_line
+    else
+        null;
 
     for (window.lines, 0..) |line, line_index| {
-        if (Ops.shouldExcludeWeakLine(self, window.start_index, line, line_index, &window.anchors)) continue;
+        if (vendor_weak_exclusions) |matches| {
+            const global_index = window.start_index + line_index;
+            if (global_index < matches.len and matches[global_index] != null) continue;
+        } else if (Ops.shouldExcludeWeakLine(self, window.start_index, line, line_index, &window.anchors)) continue;
         const contribution = if (weak_line_states) |states|
             Physics.weakLineContributionPrepared(
                 weak_line_wavelength_state,
