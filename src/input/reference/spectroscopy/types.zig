@@ -112,6 +112,7 @@ pub const SpectroscopyRuntimeControls = struct {
     threshold_line_scale: ?f64 = null,
     cutoff_cm1: ?f64 = null,
     cutoff_grid_wavelengths_nm: []const f64 = &.{},
+    cutoff_grid_wavenumbers_cm1: []const f64 = &.{},
     line_mixing_factor: f64 = 1.0,
 
     pub fn clone(self: SpectroscopyRuntimeControls, allocator: Allocator) !SpectroscopyRuntimeControls {
@@ -128,12 +129,16 @@ pub const SpectroscopyRuntimeControls = struct {
         if (self.cutoff_grid_wavelengths_nm.len != 0) {
             cloned.cutoff_grid_wavelengths_nm = try allocator.dupe(f64, self.cutoff_grid_wavelengths_nm);
         }
+        if (self.cutoff_grid_wavenumbers_cm1.len != 0) {
+            cloned.cutoff_grid_wavenumbers_cm1 = try allocator.dupe(f64, self.cutoff_grid_wavenumbers_cm1);
+        }
         return cloned;
     }
 
     pub fn deinitOwned(self: *SpectroscopyRuntimeControls, allocator: Allocator) void {
         if (self.active_isotopes.len != 0) allocator.free(self.active_isotopes);
         if (self.cutoff_grid_wavelengths_nm.len != 0) allocator.free(self.cutoff_grid_wavelengths_nm);
+        if (self.cutoff_grid_wavenumbers_cm1.len != 0) allocator.free(self.cutoff_grid_wavenumbers_cm1);
         self.* = .{};
     }
 
@@ -181,5 +186,24 @@ pub const StrongLinePreparedState = struct {
 
     pub fn weightAt(self: StrongLinePreparedState, row: usize, col: usize) f64 {
         return self.relaxation_weights[row * self.line_count + col];
+    }
+};
+
+pub const WeakLinePreparedLineState = struct {
+    shifted_center_wavenumber_cm1: f64,
+    cte: f64,
+    line_shape_y: f64,
+    prefactor_base: f64,
+    safe_temperature: f64,
+    safe_pressure: f64,
+};
+
+pub const WeakLinePreparedState = struct {
+    line_count: usize,
+    lines: []WeakLinePreparedLineState,
+
+    pub fn deinit(self: *WeakLinePreparedState, allocator: Allocator) void {
+        allocator.free(self.lines);
+        self.* = undefined;
     }
 };

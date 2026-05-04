@@ -82,6 +82,40 @@ const ForwardPrefetchWorker = struct {
     misses: []const ForwardCacheMiss,
     results: []ForwardIntegratedSample,
     error_state: *ForwardPrefetchErrorState,
+    profile: ?*ForwardPrefetchProfile,
+    input_profile: ?*ForwardInput.Profile,
+};
+
+const ForwardPrefetchProfile = struct {
+    mutex: std.Thread.Mutex = .{},
+    configured_input_ns: i128 = 0,
+    transport_ns: i128 = 0,
+    radiance_ns: i128 = 0,
+    sample_count: usize = 0,
+
+    fn add(self: *ForwardPrefetchProfile, configured_input_ns: i128, transport_ns: i128, radiance_ns: i128) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.configured_input_ns += configured_input_ns;
+        self.transport_ns += transport_ns;
+        self.radiance_ns += radiance_ns;
+        self.sample_count += 1;
+    }
+
+    fn print(self: *ForwardPrefetchProfile) void {
+        const denom = @max(@as(f64, @floatFromInt(self.sample_count)), 1.0);
+        std.debug.print(
+            "[zds-profile] forward_samples={} configured_input_total={d:.3}ms transport_total={d:.3}ms radiance_total={d:.3}ms configured_input_mean={d:.3}ms transport_mean={d:.3}ms\n",
+            .{
+                self.sample_count,
+                @as(f64, @floatFromInt(self.configured_input_ns)) / 1.0e6,
+                @as(f64, @floatFromInt(self.transport_ns)) / 1.0e6,
+                @as(f64, @floatFromInt(self.radiance_ns)) / 1.0e6,
+                (@as(f64, @floatFromInt(self.configured_input_ns)) / 1.0e6) / denom,
+                (@as(f64, @floatFromInt(self.transport_ns)) / 1.0e6) / denom,
+            },
+        );
+    }
 };
 
 pub fn radianceFromForward(
@@ -122,6 +156,45 @@ pub fn computeForwardSampleAtWavelength(
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
 ) Error!ForwardIntegratedSample {
+    return computeForwardSampleAtWavelengthProfiled(
+        allocator,
+        scene,
+        route,
+        prepared,
+        wavelength_nm,
+        safe_span,
+        implementations,
+        layer_inputs,
+        pseudo_spherical_layers,
+        source_interfaces,
+        rtm_quadrature_levels,
+        pseudo_spherical_samples,
+        pseudo_spherical_level_starts,
+        pseudo_spherical_level_altitudes,
+        null,
+        null,
+    );
+}
+
+fn computeForwardSampleAtWavelengthProfiled(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    wavelength_nm: f64,
+    safe_span: f64,
+    implementations: Types.Implementations,
+    layer_inputs: []common.LayerInput,
+    pseudo_spherical_layers: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
+    pseudo_spherical_level_altitudes: []f64,
+    profile: ?*ForwardPrefetchProfile,
+    input_profile: ?*ForwardInput.Profile,
+) Error!ForwardIntegratedSample {
+    const configured_start = std.time.nanoTimestamp();
     const input = try ForwardInput.configuredForwardInput(
         scene,
         route,
@@ -134,12 +207,20 @@ pub fn computeForwardSampleAtWavelength(
         pseudo_spherical_samples,
         pseudo_spherical_level_starts,
         pseudo_spherical_level_altitudes,
+        input_profile,
     );
+    const transport_start = std.time.nanoTimestamp();
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
     const forward = try implementations.transport.executePrepared(allocator, effective_route, input);
+    const radiance_start = std.time.nanoTimestamp();
+    const radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
+    if (profile) |profiler| {
+        const end = std.time.nanoTimestamp();
+        profiler.add(transport_start - configured_start, radiance_start - transport_start, end - radiance_start);
+    }
     return .{
-        .radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward),
+        .radiance = radiance,
         .jacobian = if (forward.jacobian_column) |value| value else 0.0,
     };
 }
@@ -160,7 +241,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     };
 
     for (worker.misses, worker.results) |miss, *result| {
-        result.* = computeForwardSampleAtWavelength(
+        result.* = computeForwardSampleAtWavelengthProfiled(
             allocator,
             worker.scene,
             worker.route,
@@ -175,6 +256,8 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
             scratch.pseudo_spherical_samples,
             scratch.pseudo_spherical_level_starts,
             scratch.pseudo_spherical_level_altitudes,
+            worker.profile,
+            worker.input_profile,
         ) catch |err| {
             worker.error_state.store(err);
             return;
@@ -221,6 +304,10 @@ pub fn prefetchForwardSamples(
     }
 
     var error_state = ForwardPrefetchErrorState{};
+    var profile = ForwardPrefetchProfile{};
+    var input_profile = ForwardInput.Profile{};
+    const profile_ptr: ?*ForwardPrefetchProfile = if (std.process.hasEnvVarConstant("ZDISAMAR_PROFILE_FORWARD")) &profile else null;
+    const input_profile_ptr: ?*ForwardInput.Profile = if (std.process.hasEnvVarConstant("ZDISAMAR_PROFILE_FORWARD")) &input_profile else null;
     const workers = try allocator.alloc(ForwardPrefetchWorker, worker_count);
     defer allocator.free(workers);
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
@@ -242,6 +329,8 @@ pub fn prefetchForwardSamples(
             .misses = misses[start_index..end_index],
             .results = results[start_index..end_index],
             .error_state = &error_state,
+            .profile = profile_ptr,
+            .input_profile = input_profile_ptr,
         };
         if (worker_index + 1 < worker_count) {
             threads[started_thread_count] = std.Thread.spawn(
@@ -261,6 +350,8 @@ pub fn prefetchForwardSamples(
     }
     for (threads[0..started_thread_count]) |thread| thread.join();
     if (error_state.err) |err| return err;
+    if (input_profile_ptr) |profiler| profiler.print();
+    if (profile_ptr) |profiler| profiler.print();
 }
 
 // PUB FOR TEST: re-exported via measurement/internal.zig.

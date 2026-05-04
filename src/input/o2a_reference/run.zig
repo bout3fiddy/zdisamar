@@ -501,10 +501,20 @@ fn installCutoffGridOnLineList(
 ) !void {
     if (line_list.runtime_controls.cutoff_cm1 == null) return;
     const owned_support = try allocator.dupe(f64, support_wavelengths_nm);
+    errdefer allocator.free(owned_support);
+    const owned_support_wavenumbers = try allocator.alloc(f64, support_wavelengths_nm.len);
+    errdefer allocator.free(owned_support_wavenumbers);
+    for (support_wavelengths_nm, owned_support_wavenumbers) |wavelength_nm, *wavenumber_cm1| {
+        wavenumber_cm1.* = 1.0e7 / @max(wavelength_nm, 1.0e-9);
+    }
     if (line_list.runtime_controls.cutoff_grid_wavelengths_nm.len != 0) {
         allocator.free(line_list.runtime_controls.cutoff_grid_wavelengths_nm);
     }
+    if (line_list.runtime_controls.cutoff_grid_wavenumbers_cm1.len != 0) {
+        allocator.free(line_list.runtime_controls.cutoff_grid_wavenumbers_cm1);
+    }
     line_list.runtime_controls.cutoff_grid_wavelengths_nm = owned_support;
+    line_list.runtime_controls.cutoff_grid_wavenumbers_cm1 = owned_support_wavenumbers;
 }
 
 fn rewindowParitySolarSupportToMeasurementKernel(

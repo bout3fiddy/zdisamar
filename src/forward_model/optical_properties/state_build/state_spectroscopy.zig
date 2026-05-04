@@ -29,18 +29,41 @@ pub const ProfileNodeSpectroscopyCache = struct {
         if (node_count < 3 or node_count > max_spectroscopy_profile_nodes) return .{};
         if (self.spectroscopy_profile_pressures_hpa.len != node_count or
             self.spectroscopy_profile_temperatures_k.len != node_count) return .{};
+        const prepared_states = if (self.spectroscopy_profile_strong_line_states) |states|
+            if (states.len == node_count) states else null
+        else
+            null;
+        const prepared_weak_states = if (self.spectroscopy_profile_weak_line_states) |states|
+            if (states.len == node_count) states else null
+        else
+            null;
 
         var cache = ProfileNodeSpectroscopyCache{
             .node_count = node_count,
             .altitudes_km = self.spectroscopy_profile_altitudes_km[0..node_count],
         };
+        const wavelength_window = if (prepared_states != null)
+            LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
+        else
+            null;
         for (0..node_count) |index| {
-            const evaluation = LineListEval.totalSigmaAt(
-                line_list,
-                wavelength_nm,
-                self.spectroscopy_profile_temperatures_k[index],
-                self.spectroscopy_profile_pressures_hpa[index],
-            );
+            const evaluation = if (prepared_states) |states|
+                LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
+                    line_list,
+                    wavelength_nm,
+                    self.spectroscopy_profile_temperatures_k[index],
+                    self.spectroscopy_profile_pressures_hpa[index],
+                    &states[index],
+                    if (prepared_weak_states) |weak_states| &weak_states[index] else null,
+                    &wavelength_window.?,
+                )
+            else
+                LineListEval.totalSigmaAt(
+                    line_list,
+                    wavelength_nm,
+                    self.spectroscopy_profile_temperatures_k[index],
+                    self.spectroscopy_profile_pressures_hpa[index],
+                );
             cache.weak_values[index] = evaluation.weak_line_sigma_cm2_per_molecule;
             cache.strong_values[index] = evaluation.strong_line_sigma_cm2_per_molecule;
             cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;

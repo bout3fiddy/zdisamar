@@ -9,6 +9,12 @@ const Types = @import("types.zig");
 
 const SpectroscopyLineList = LineList.SpectroscopyLineList;
 
+pub const StrongLineWavelengthWindow = struct {
+    lines: []const Types.SpectroscopyLine,
+    start_index: usize,
+    anchors: [Types.max_strong_line_sidecars]?usize,
+};
+
 pub fn evaluateAt(
     self: SpectroscopyLineList,
     wavelength_nm: f64,
@@ -146,27 +152,73 @@ pub fn totalSigmaWithPreparedStrongLineState(
 ) Types.SpectroscopyEvaluation {
     if (self.lines.len == 0) return Support.zeroEvaluation();
 
+    const window = prepareStrongLineWavelengthWindow(self, wavelength_nm);
+    return totalSigmaWithPreparedStrongLineStateAndWindow(
+        self,
+        wavelength_nm,
+        temperature_k,
+        pressure_hpa,
+        prepared_state,
+        null,
+        &window,
+    );
+}
+
+pub fn prepareStrongLineWavelengthWindow(
+    self: SpectroscopyLineList,
+    wavelength_nm: f64,
+) StrongLineWavelengthWindow {
+    const relevant_window = Ops.relevantLineWindowForWavelength(self, wavelength_nm);
+    return .{
+        .lines = relevant_window.lines,
+        .start_index = relevant_window.start_index,
+        .anchors = Ops.selectStrongLineAnchors(self, relevant_window.lines, relevant_window.start_index),
+    };
+}
+
+pub fn totalSigmaWithPreparedStrongLineStateAndWindow(
+    self: SpectroscopyLineList,
+    wavelength_nm: f64,
+    temperature_k: f64,
+    pressure_hpa: f64,
+    prepared_state: *const Types.StrongLinePreparedState,
+    prepared_weak_state: ?*const Types.WeakLinePreparedState,
+    window: *const StrongLineWavelengthWindow,
+) Types.SpectroscopyEvaluation {
+    if (self.lines.len == 0) return Support.zeroEvaluation();
+
     const strong_lines = self.strong_lines.?;
     const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
     const safe_temperature = @max(temperature_k, 150.0);
-    const relevant_window = Ops.relevantLineWindowForWavelength(self, wavelength_nm);
-    const relevant_lines = relevant_window.lines;
-    const strong_line_anchors = Ops.selectStrongLineAnchors(self, relevant_lines, relevant_window.start_index);
 
     var weak_line_sigma: f64 = 0.0;
     var strong_line_sigma: f64 = 0.0;
     var line_mixing_sigma: f64 = 0.0;
+    const weak_line_wavelength_state = Physics.prepareWeakLineWavelengthState(wavelength_nm, self.runtime_controls);
 
-    for (relevant_lines, 0..) |line, line_index| {
-        if (Ops.shouldExcludeWeakLine(self, relevant_window.start_index, line, line_index, &strong_line_anchors)) continue;
-        const contribution = Physics.weakLineContribution(
-            wavelength_nm,
-            line,
-            safe_temperature,
-            pressure_scale,
-            Types.hitran_reference_temperature_k,
-            self.runtime_controls,
-        );
+    const weak_line_states = if (prepared_weak_state) |state|
+        if (state.line_count == self.lines.len) state.lines else null
+    else
+        null;
+
+    for (window.lines, 0..) |line, line_index| {
+        if (Ops.shouldExcludeWeakLine(self, window.start_index, line, line_index, &window.anchors)) continue;
+        const contribution = if (weak_line_states) |states|
+            Physics.weakLineContributionPrepared(
+                weak_line_wavelength_state,
+                states[window.start_index + line_index],
+                self.runtime_controls,
+            )
+        else
+            Physics.weakLineContributionWithWavelengthState(
+                wavelength_nm,
+                line,
+                safe_temperature,
+                pressure_scale,
+                Types.hitran_reference_temperature_k,
+                self.runtime_controls,
+                weak_line_wavelength_state,
+            );
         weak_line_sigma += contribution.line_sigma_cm2_per_molecule;
     }
 

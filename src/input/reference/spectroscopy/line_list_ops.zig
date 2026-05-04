@@ -123,6 +123,29 @@ pub fn prepareStrongLineState(
     return try Physics.clonePreparedStrongLineState(allocator, stack_state);
 }
 
+pub fn prepareWeakLineState(
+    self: SpectroscopyLineList,
+    allocator: Types.Allocator,
+    temperature_k: f64,
+    pressure_hpa: f64,
+) !Types.WeakLinePreparedState {
+    const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
+    const lines = try allocator.alloc(Types.WeakLinePreparedLineState, self.lines.len);
+    errdefer allocator.free(lines);
+    for (self.lines, lines) |line, *slot| {
+        slot.* = Physics.prepareWeakLinePreparedLineState(
+            line,
+            temperature_k,
+            pressure_scale,
+            Types.hitran_reference_temperature_k,
+        );
+    }
+    return .{
+        .line_count = self.lines.len,
+        .lines = lines,
+    };
+}
+
 pub fn findStrongLineMatch(self: SpectroscopyLineList, wavelength_nm: f64) ?usize {
     const strong_lines = self.strong_lines orelse return null;
 

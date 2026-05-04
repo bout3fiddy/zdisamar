@@ -1,8 +1,51 @@
+const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const OpticsSpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const Storage = @import("storage.zig");
+
+pub const Profile = struct {
+    mutex: std.Thread.Mutex = .{},
+    cache_ns: i128 = 0,
+    layers_ns: i128 = 0,
+    rtm_ns: i128 = 0,
+    source_ns: i128 = 0,
+    pseudo_ns: i128 = 0,
+    calls: usize = 0,
+
+    pub fn add(
+        self: *Profile,
+        cache_ns: i128,
+        layers_ns: i128,
+        rtm_ns: i128,
+        source_ns: i128,
+        pseudo_ns: i128,
+    ) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.cache_ns += cache_ns;
+        self.layers_ns += layers_ns;
+        self.rtm_ns += rtm_ns;
+        self.source_ns += source_ns;
+        self.pseudo_ns += pseudo_ns;
+        self.calls += 1;
+    }
+
+    pub fn print(self: *const Profile) void {
+        std.debug.print(
+            "[zds-profile] configured_input_calls={} cache={d:.3}ms layers={d:.3}ms rtm_quadrature={d:.3}ms source_interfaces={d:.3}ms pseudo_spherical={d:.3}ms\n",
+            .{
+                self.calls,
+                @as(f64, @floatFromInt(self.cache_ns)) / 1.0e6,
+                @as(f64, @floatFromInt(self.layers_ns)) / 1.0e6,
+                @as(f64, @floatFromInt(self.rtm_ns)) / 1.0e6,
+                @as(f64, @floatFromInt(self.source_ns)) / 1.0e6,
+                @as(f64, @floatFromInt(self.pseudo_ns)) / 1.0e6,
+            },
+        );
+    }
+};
 
 pub fn configuredForwardInput(
     scene: *const Scene,
@@ -16,8 +59,11 @@ pub fn configuredForwardInput(
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
+    profile: ?*Profile,
 ) common.ExecuteError!common.ForwardInput {
+    const cache_start = std.time.nanoTimestamp();
     var profile_cache = OpticsSpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm);
+    const layers_start = std.time.nanoTimestamp();
     var input = OpticsPreparation.transport.toForwardInputAtWavelengthWithLayersAndSpectroscopyCache(
         prepared,
         scene,
@@ -25,6 +71,7 @@ pub fn configuredForwardInput(
         layer_inputs,
         &profile_cache,
     );
+    const rtm_start = std.time.nanoTimestamp();
     const source_interface_slice = source_interfaces[0 .. input.layers.len + 1];
     input.source_interfaces = source_interface_slice;
     if (route.rtm_controls.integrate_source_function) {
@@ -50,6 +97,7 @@ pub fn configuredForwardInput(
             return error.MissingExplicitRtmQuadrature;
         }
     }
+    const source_start = std.time.nanoTimestamp();
     OpticsPreparation.transport.fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
         prepared,
         wavelength_nm,
@@ -57,6 +105,7 @@ pub fn configuredForwardInput(
         source_interface_slice,
         &profile_cache,
     );
+    const pseudo_start = std.time.nanoTimestamp();
     if (route.rtm_controls.use_spherical_correction) {
         // DECISION:
         //   Pseudo-spherical samples are only attached for routes that request
@@ -82,6 +131,16 @@ pub fn configuredForwardInput(
                 .level_altitudes_km = pseudo_spherical_level_altitudes[0 .. input.layers.len + 1],
             };
         }
+    }
+    const end = std.time.nanoTimestamp();
+    if (profile) |profiler| {
+        profiler.add(
+            layers_start - cache_start,
+            rtm_start - layers_start,
+            source_start - rtm_start,
+            pseudo_start - source_start,
+            end - pseudo_start,
+        );
     }
     input.rtm_controls = route.rtm_controls;
     return input;

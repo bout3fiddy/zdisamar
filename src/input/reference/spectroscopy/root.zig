@@ -6,6 +6,7 @@ pub const RelaxationMatrix = Types.RelaxationMatrix;
 pub const SpectroscopyEvaluation = Types.SpectroscopyEvaluation;
 pub const SpectroscopyRuntimeControls = Types.SpectroscopyRuntimeControls;
 pub const StrongLinePreparedState = Types.StrongLinePreparedState;
+pub const WeakLinePreparedState = Types.WeakLinePreparedState;
 pub const SpectroscopyLineList = @import("line_list.zig").SpectroscopyLineList;
 pub const buildDemoSpectroscopyLines = @import("demo.zig").buildDemoSpectroscopyLines;
 pub const physics = @import("physics.zig");

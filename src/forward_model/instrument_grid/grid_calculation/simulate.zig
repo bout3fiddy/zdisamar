@@ -15,6 +15,36 @@ const Storage = @import("storage.zig");
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
 
+const StageTimer = struct {
+    enabled: bool,
+    last: i128,
+    sample_count: usize = 0,
+    forward_miss_count: usize = 0,
+
+    fn init() StageTimer {
+        return .{
+            .enabled = std.process.hasEnvVarConstant("ZDISAMAR_PROFILE_FORWARD"),
+            .last = std.time.nanoTimestamp(),
+        };
+    }
+
+    fn mark(self: *StageTimer, comptime label: []const u8) void {
+        if (!self.enabled) return;
+        const now = std.time.nanoTimestamp();
+        const elapsed_ms = @as(f64, @floatFromInt(now - self.last)) / 1.0e6;
+        std.debug.print("[zds-profile] {s}={d:.3}ms\n", .{ label, elapsed_ms });
+        self.last = now;
+    }
+
+    fn finish(self: *StageTimer) void {
+        if (!self.enabled) return;
+        std.debug.print(
+            "[zds-profile] sample_count={} forward_miss_count={}\n",
+            .{ self.sample_count, self.forward_miss_count },
+        );
+    }
+};
+
 pub fn simulateInternal(
     allocator: Allocator,
     scene: *const Scene,
@@ -24,8 +54,10 @@ pub fn simulateInternal(
     buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
 ) Storage.Error!Types.InstrumentGridSummary {
+    var timer = StageTimer.init();
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
+    timer.sample_count = sample_count;
     try Storage.validateBuffers(sample_count, buffers);
 
     const spectral_grid: grid.SpectralGrid = .{
@@ -57,11 +89,14 @@ pub fn simulateInternal(
         implementations,
     );
     defer allocator.free(wavelength_sampling);
+    timer.mark("wavelength_sampling");
     const forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
         allocator,
         wavelength_sampling,
     );
     defer allocator.free(forward_misses);
+    timer.forward_miss_count = forward_misses.len;
+    timer.mark("collect_forward_misses");
     try SpectralEval.prefetchForwardSamples(
         allocator,
         scene,
@@ -72,6 +107,7 @@ pub fn simulateInternal(
         forward_misses,
         evaluation_cache,
     );
+    timer.mark("prefetch_forward_samples");
 
     var radiance_sum: f64 = 0.0;
     var irradiance_sum: f64 = 0.0;
@@ -112,6 +148,7 @@ pub fn simulateInternal(
         buffers.scratch[index] = integrated.radiance;
         if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
     }
+    timer.mark("integrate_radiance_nominals");
     if (uses_integrated_radiance_sampling) {
         // DECISION:
         //   Integrated sampling bypasses slit convolution because the
@@ -129,6 +166,7 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
+    timer.mark("postprocess_radiance");
     for (wavelength_sampling, 0..) |plan, index| {
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,
@@ -139,6 +177,7 @@ pub fn simulateInternal(
             &plan.irradiance_integration,
         );
     }
+    timer.mark("integrate_irradiance_nominals");
     if (uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
@@ -160,6 +199,7 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
+    timer.mark("postprocess_irradiance");
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
         buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
@@ -168,6 +208,7 @@ pub fn simulateInternal(
         irradiance_sum += buffers.irradiance[index];
         reflectance_sum += buffers.reflectance[index];
     }
+    timer.mark("reflectance");
 
     const radiance_noise_sigma = if (buffers.radiance_noise_sigma) |sigma|
         sigma
@@ -223,6 +264,7 @@ pub fn simulateInternal(
     if (radiance_noise_sigma) |sigma| {
         for (sigma) |value| noise_sum += value;
     }
+    timer.mark("noise");
 
     var mean_jacobian: ?f64 = null;
     if (buffers.jacobian) |jacobian| {
@@ -245,6 +287,8 @@ pub fn simulateInternal(
         for (jacobian) |value| jacobian_sum += value;
         mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
     }
+    timer.mark("jacobian");
+    timer.finish();
     return .{
         .sample_count = @intCast(sample_count),
         .wavelength_start_nm = buffers.wavelengths[0],

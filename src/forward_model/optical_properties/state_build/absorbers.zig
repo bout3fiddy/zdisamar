@@ -19,6 +19,10 @@ pub const AbsorberBuildState = struct {
     owned_line_absorber_count: usize = 0,
     strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
     strong_line_state_count: usize = 0,
+    profile_strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
+    profile_strong_line_state_count: usize = 0,
+    profile_weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
+    profile_weak_line_state_count: usize = 0,
     owned_lines: ?ReferenceData.SpectroscopyLineList = null,
     active_line_species: ?AbsorberModel.AbsorberSpecies = null,
     continuum_owner_species: ?AbsorberModel.AbsorberSpecies = null,
@@ -30,6 +34,14 @@ pub const AbsorberBuildState = struct {
     pub fn deinit(self: *AbsorberBuildState, allocator: Allocator) void {
         if (self.strong_line_states) |states| {
             for (states[0..self.strong_line_state_count]) |*state| state.deinit(allocator);
+            if (states.len != 0) allocator.free(states);
+        }
+        if (self.profile_strong_line_states) |states| {
+            for (states[0..self.profile_strong_line_state_count]) |*state| state.deinit(allocator);
+            if (states.len != 0) allocator.free(states);
+        }
+        if (self.profile_weak_line_states) |states| {
+            for (states[0..self.profile_weak_line_state_count]) |*state| state.deinit(allocator);
             if (states.len != 0) allocator.free(states);
         }
         if (self.owned_line_absorbers.len != 0) {
@@ -104,6 +116,48 @@ pub fn build(
         for (states[0..state.strong_line_state_count]) |*strong_line_state| strong_line_state.deinit(allocator);
         allocator.free(states);
     };
+    state.profile_strong_line_states = if (state.owned_line_absorbers.len == 0)
+        if (state.owned_lines) |line_list|
+            if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len != 0)
+                try allocator.alloc(ReferenceData.StrongLinePreparedState, context.spectroscopy_profile_temperatures_k.len)
+            else
+                null
+        else
+            null
+    else
+        null;
+    errdefer if (state.profile_strong_line_states) |states| {
+        for (states[0..state.profile_strong_line_state_count]) |*strong_line_state| strong_line_state.deinit(allocator);
+        allocator.free(states);
+    };
+    state.profile_weak_line_states = if (state.owned_line_absorbers.len == 0)
+        if (state.owned_lines) |line_list|
+            if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len != 0)
+                try allocator.alloc(ReferenceData.WeakLinePreparedState, context.spectroscopy_profile_temperatures_k.len)
+            else
+                null
+        else
+            null
+    else
+        null;
+    errdefer if (state.profile_weak_line_states) |states| {
+        for (states[0..state.profile_weak_line_state_count]) |*weak_line_state| weak_line_state.deinit(allocator);
+        allocator.free(states);
+    };
+    if (state.profile_weak_line_states) |states| {
+        const line_list = state.owned_lines.?;
+        for (states, context.spectroscopy_profile_temperatures_k, context.spectroscopy_profile_pressures_hpa) |*slot, temperature_k, pressure_hpa| {
+            slot.* = try line_list.prepareWeakLineState(allocator, temperature_k, pressure_hpa);
+            state.profile_weak_line_state_count += 1;
+        }
+    }
+    if (state.profile_strong_line_states) |states| {
+        const line_list = state.owned_lines.?;
+        for (states, context.spectroscopy_profile_temperatures_k, context.spectroscopy_profile_pressures_hpa) |*slot, temperature_k, pressure_hpa| {
+            slot.* = (try line_list.prepareStrongLineState(allocator, temperature_k, pressure_hpa)).?;
+            state.profile_strong_line_state_count += 1;
+        }
+    }
 
     state.active_line_species = if (state.owned_line_absorbers.len == 0)
         Spectroscopy.resolveActiveLineSpecies(single_active_line_absorber, state.owned_lines, operational_o2_lut)

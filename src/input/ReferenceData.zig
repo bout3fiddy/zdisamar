@@ -23,6 +23,7 @@ pub const RelaxationMatrix = spectroscopy.RelaxationMatrix;
 pub const SpectroscopyEvaluation = spectroscopy.SpectroscopyEvaluation;
 pub const SpectroscopyRuntimeControls = spectroscopy.SpectroscopyRuntimeControls;
 pub const StrongLinePreparedState = spectroscopy.StrongLinePreparedState;
+pub const WeakLinePreparedState = spectroscopy.WeakLinePreparedState;
 pub const SpectroscopyLineList = spectroscopy.SpectroscopyLineList;
 
 pub const AirmassFactorPoint = airmass_phase.AirmassFactorPoint;

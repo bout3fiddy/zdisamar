@@ -15,6 +15,8 @@ pub const PreparedOpticalState = struct {
     layers: []Types.PreparedLayer,
     sublayers: ?[]Types.PreparedSublayer = null,
     strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
+    spectroscopy_profile_strong_line_states: ?[]ReferenceData.StrongLinePreparedState = null,
+    spectroscopy_profile_weak_line_states: ?[]ReferenceData.WeakLinePreparedState = null,
     shared_rtm_geometry: Types.SharedRtmGeometry = .{},
     continuum_points: []ReferenceData.CrossSectionPoint,
     collision_induced_absorption: ?ReferenceData.CollisionInducedAbsorptionTable = null,
@@ -90,6 +92,14 @@ pub const PreparedOpticalState = struct {
             allocator.free(self.line_absorbers);
         } else {
             if (self.strong_line_states) |states| {
+                for (states) |*state| state.deinit(allocator);
+                allocator.free(states);
+            }
+            if (self.spectroscopy_profile_strong_line_states) |states| {
+                for (states) |*state| state.deinit(allocator);
+                allocator.free(states);
+            }
+            if (self.spectroscopy_profile_weak_line_states) |states| {
                 for (states) |*state| state.deinit(allocator);
                 allocator.free(states);
             }
