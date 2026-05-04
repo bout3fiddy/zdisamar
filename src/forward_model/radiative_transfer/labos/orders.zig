@@ -122,6 +122,7 @@ pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_
 }
 
 fn initializeOrdersBuffers(
+    comptime track_sum_local: bool,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
     ud_orde: []basis.UDField,
@@ -134,9 +135,11 @@ fn initializeOrdersBuffers(
         initVec2Metadata(&field.U, nmutot);
         initVec2Metadata(&field.D, nmutot);
 
-        sum_local.* = undefined;
-        initVec2Metadata(&sum_local.U, nmutot);
-        initVec2Metadata(&sum_local.D, nmutot);
+        if (track_sum_local) {
+            sum_local.* = undefined;
+            initVec2Metadata(&sum_local.U, nmutot);
+            initVec2Metadata(&sum_local.D, nmutot);
+        }
 
         orde.* = undefined;
         orde.E.n = nmutot;
@@ -156,6 +159,7 @@ fn initVec2Metadata(vec2: *basis.Vec2, nmutot: usize) void {
 }
 
 fn accumulateOrderContribution(
+    comptime track_sum_local: bool,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
     ud_orde: []const basis.UDField,
@@ -163,7 +167,6 @@ fn accumulateOrderContribution(
     start_level: usize,
     end_level: usize,
     nmutot: usize,
-    track_sum_local: bool,
 ) void {
     for (start_level..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
@@ -193,6 +196,7 @@ fn accumulateOrderContribution(
 }
 
 fn ordersScatInternal(
+    comptime track_sum_local: bool,
     ud: []basis.UDField,
     ud_sum_local: []basis.UDLocal,
     ud_orde: []basis.UDField,
@@ -204,7 +208,6 @@ fn ordersScatInternal(
     rt: []const basis.LayerRT,
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
-    track_sum_local: bool,
 ) OrdersResultView {
     const nmutot = geo.nmutot;
     const n_gauss = geo.n_gauss;
@@ -218,7 +221,7 @@ fn ordersScatInternal(
     const ud_sum_local_view = ud_sum_local[0..nlevel];
     const ud_orde_view = ud_orde[0..nlevel];
     const ud_local_view = ud_local[0..nlevel];
-    initializeOrdersBuffers(ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
+    initializeOrdersBuffers(track_sum_local, ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
 
     for (start_level..end_level + 1) |ilevel| {
         const e_data = &ud_view[ilevel].E.data;
@@ -350,6 +353,7 @@ fn ordersScatInternal(
         }
 
         accumulateOrderContribution(
+            track_sum_local,
             ud_view,
             ud_sum_local_view,
             ud_orde_view,
@@ -357,7 +361,6 @@ fn ordersScatInternal(
             start_level,
             end_level,
             nmutot,
-            track_sum_local,
         );
     }
 
@@ -378,6 +381,7 @@ pub fn ordersScatInto(
     num_orders_max: usize,
 ) OrdersResultView {
     return ordersScatInternal(
+        true,
         storage.ud,
         storage.ud_sum_local,
         storage.ud_orde,
@@ -389,7 +393,6 @@ pub fn ordersScatInto(
         rt,
         controls,
         num_orders_max,
-        true,
     );
 }
 
@@ -404,6 +407,7 @@ pub fn ordersScatTransportInto(
     num_orders_max: usize,
 ) OrdersResultView {
     return ordersScatInternal(
+        false,
         storage.ud,
         storage.ud_sum_local,
         storage.ud_orde,
@@ -415,7 +419,6 @@ pub fn ordersScatTransportInto(
         rt,
         controls,
         num_orders_max,
-        false,
     );
 }
 
@@ -453,6 +456,7 @@ pub fn ordersScat(
     defer allocator.free(ud_local);
 
     _ = ordersScatInternal(
+        true,
         result.ud,
         result.ud_sum_local,
         ud_orde,
@@ -464,7 +468,6 @@ pub fn ordersScat(
         rt,
         controls,
         num_orders_max,
-        true,
     );
     return result;
 }
