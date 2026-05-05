@@ -176,7 +176,7 @@ pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
     return result;
 }
 
-pub fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
+pub inline fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
     if (n == 12) return matAddSemul3_12(a, b, e, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
@@ -190,7 +190,7 @@ pub fn matAddSemul3(n: usize, a: *const Mat, b: *const Mat, e: *const Vec, c: *c
     return result;
 }
 
-pub fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
+pub inline fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
     if (n == 12) return matAddEsmul3_12(a, e, b, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
@@ -203,7 +203,7 @@ pub fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *c
     return result;
 }
 
-pub fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
+pub inline fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
     if (n == 12) return semulAdd12(a, e, b);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
@@ -217,7 +217,7 @@ pub fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
     return result;
 }
 
-pub fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
+pub inline fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
     if (n == 12) return esmulSemulAdd12(e, a, b, c);
     var result = Mat{ .data = undefined, .n = n };
     for (0..n) |j| {
