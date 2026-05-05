@@ -7,7 +7,7 @@ from typing import Literal
 import altair as alt
 
 from . import fields
-from ._common import frame, interval_profile_rows, label, nearest_wavelength_value
+from .common import frame, interval_profile_rows, label, nearest_wavelength_value
 from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
 from .theme import SEMANTIC_COLORS
 

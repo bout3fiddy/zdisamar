@@ -7,6 +7,7 @@ from typing import Literal
 import altair as alt
 
 ThemeName = Literal["validation", "journal", "monochrome", "labbook", "talk"]
+_THEMES_REGISTERED = False
 
 MATPLOTLIB_BLUE = "#1f77b4"
 MATPLOTLIB_ORANGE = "#ff7f0e"
@@ -57,14 +58,15 @@ def use_theme(name: ThemeName = "validation") -> None:
 
 
 def _register_themes() -> None:
-    if getattr(_register_themes, "_done", False):
+    global _THEMES_REGISTERED
+    if _THEMES_REGISTERED:
         return
     alt.themes.register("zdisamar_validation", _validation_theme)
     alt.themes.register("zdisamar_journal", _journal_theme)
     alt.themes.register("zdisamar_monochrome", _monochrome_theme)
     alt.themes.register("zdisamar_labbook", _labbook_theme)
     alt.themes.register("zdisamar_talk", _talk_theme)
-    _register_themes._done = True
+    _THEMES_REGISTERED = True
 
 
 def _base_config(

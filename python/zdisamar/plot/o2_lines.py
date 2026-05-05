@@ -8,7 +8,7 @@ from typing import Literal
 import altair as alt
 
 from . import fields, spectrum as spectrum_plots
-from ._common import frame, label
+from .common import frame, label
 from .data import filter_window, to_dataframe
 from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
 from .theme import SEMANTIC_COLORS

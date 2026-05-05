@@ -11,7 +11,7 @@ from . import instrument_response as instrument_response_plots
 from . import radiative_transfer as radiative_transfer_plots
 from . import spectrum as spectrum_plots
 from . import validation
-from ._common import nearest_wavelength_rows
+from .common import nearest_wavelength_rows
 
 
 def o2a_forward_summary(

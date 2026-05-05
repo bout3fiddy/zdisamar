@@ -7,7 +7,7 @@ from typing import Literal
 import altair as alt
 
 from . import fields
-from ._common import label, numeric_cell_bounds
+from .common import label, numeric_cell_bounds
 from .data import filter_window, require_columns, to_dataframe
 from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
 from .theme import MATPLOTLIB_RED

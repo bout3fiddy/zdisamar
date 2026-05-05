@@ -14,6 +14,23 @@ def _float(value: Any) -> float:
     return float(value)
 
 
+def _optional_float(data: dict[str, Any], key: str) -> float | None:
+    value = data.get(key)
+    return None if value is None else _float(value)
+
+
+def _object_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
+    return dict(data[key])
+
+
+def _object_list(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    return [dict(item) for item in data.get(key, [])]
+
+
+def _asset_or_none(asset: ReferenceAsset | None) -> dict[str, Any] | None:
+    return None if asset is None else asset.to_dict()
+
+
 def _json_value(value: Any) -> Any:
     if isinstance(value, float) and math.isnan(value):
         return "nan"
@@ -258,10 +275,10 @@ class O2LineByLine:
             line_list_asset=ReferenceAsset.from_dict(data["line_list_asset"]),
             line_mixing_asset=ReferenceAsset.from_dict(data["line_mixing_asset"]),
             strong_lines_asset=ReferenceAsset.from_dict(data["strong_lines_asset"]),
-            line_mixing_factor=None if data.get("line_mixing_factor") is None else _float(data["line_mixing_factor"]),
+            line_mixing_factor=_optional_float(data, "line_mixing_factor"),
             isotopes_sim=[int(value) for value in data["isotopes_sim"]],
-            threshold_line_sim=None if data.get("threshold_line_sim") is None else _float(data["threshold_line_sim"]),
-            cutoff_sim_cm1=None if data.get("cutoff_sim_cm1") is None else _float(data["cutoff_sim_cm1"]),
+            threshold_line_sim=_optional_float(data, "threshold_line_sim"),
+            cutoff_sim_cm1=_optional_float(data, "cutoff_sim_cm1"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -292,7 +309,7 @@ class O2O2CIA:
     def to_dict(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
-            "cia_asset": None if self.cia_asset is None else self.cia_asset.to_dict(),
+            "cia_asset": _asset_or_none(self.cia_asset),
         }
 
 
@@ -412,8 +429,8 @@ class O2AInput:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "O2AInput":
         return cls(
-            metadata=dict(data["metadata"]),
-            plan=dict(data["plan"]),
+            metadata=_object_dict(data, "metadata"),
+            plan=_object_dict(data, "plan"),
             reference_assets=ReferenceAssets.from_dict(data["inputs"]),
             scene_id=str(data["scene_id"]),
             spectral_grid=SpectralGrid.from_dict(data["spectral_grid"]),
@@ -428,8 +445,8 @@ class O2AInput:
             o2_lines=O2LineByLine.from_dict(data["o2"]),
             o2_o2_cia=O2O2CIA.from_dict(data["o2o2"]),
             radiative_transfer=RadiativeTransferControls.from_dict(data["rtm_controls"]),
-            outputs=[dict(item) for item in data.get("outputs", [])],
-            validation=dict(data["validation"]),
+            outputs=_object_list(data, "outputs"),
+            validation=_object_dict(data, "validation"),
         )
 
     @classmethod
