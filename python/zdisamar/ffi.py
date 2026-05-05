@@ -340,9 +340,11 @@ class Spectrum:
 
         return np.ctypeslib.as_array(pointer, shape=(self._raw.len,))
 
-    def _require_open(self) -> None:
-        if self._owner is None or self._owner._ctx is None:
+    def _require_open(self) -> "Context":
+        owner = self._owner
+        if owner is None or owner._ctx is None:
             raise RuntimeError("spectrum is closed")
+        return owner
 
     @property
     def wavelength_nm(self):
@@ -362,10 +364,7 @@ class Spectrum:
 
     @property
     def diagnostic_report(self) -> DiagnosticReport:
-        self._require_open()
-        owner = self._owner
-        if owner is None:
-            raise RuntimeError("spectrum is closed")
+        owner = self._require_open()
         if self._diagnostic_report is None:
             self._diagnostic_report = owner._spectrum_report(self._raw)
         return self._diagnostic_report
