@@ -97,7 +97,7 @@ pub inline fn smulInto(noalias out: *Mat, n: usize, n_gauss: usize, threshold_mu
     out.* = smul(n, n_gauss, threshold_mul, a, b);
 }
 
-fn smul12x10(a: *const Mat, b: *const Mat) Mat {
+inline fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     smul12x10Into(&result, a, b);
     return result;
@@ -530,7 +530,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
     return result;
 }
 
-fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
+inline fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
     if (n == 12 and n_gauss == 10) return smul12x10(a, b);
 
     var result = Mat{ .data = undefined, .n = n };
