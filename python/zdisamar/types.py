@@ -243,6 +243,46 @@ class Aerosol:
 
 
 @dataclass
+class Cloud:
+    optical_thickness: float
+    single_scatter_albedo: float
+    asymmetry_factor: float
+    angstrom_exponent: float
+    reference_wavelength_nm: float
+    placement: AerosolPlacement
+    id: str = "cloud"
+    cloud_type: str = "hg_scattering"
+    enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Cloud":
+        return cls(
+            id=str(data.get("id", "cloud")),
+            cloud_type=str(data.get("cloud_type", "hg_scattering")),
+            enabled=bool(data.get("enabled", True)),
+            optical_thickness=_float(data["optical_thickness"]),
+            single_scatter_albedo=_float(data["single_scatter_albedo"]),
+            asymmetry_factor=_float(data["asymmetry_factor"]),
+            angstrom_exponent=_float(data["angstrom_exponent"]),
+            reference_wavelength_nm=_float(data["reference_wavelength_nm"]),
+            placement=AerosolPlacement.from_dict(data["placement"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "cloud_type": self.cloud_type,
+            "enabled": self.enabled,
+            "optical_thickness": self.optical_thickness,
+            "single_scatter_albedo": self.single_scatter_albedo,
+            "asymmetry_factor": self.asymmetry_factor,
+            "angstrom_exponent": self.angstrom_exponent,
+            "reference_wavelength_nm": self.reference_wavelength_nm,
+            "placement": self.placement.to_dict(),
+        }
+
+
+@dataclass
 class O2LineByLine:
     line_list_asset: ReferenceAsset
     line_mixing_asset: ReferenceAsset
@@ -408,9 +448,11 @@ class O2AInput:
     radiative_transfer: RadiativeTransferControls
     outputs: list[dict[str, Any]]
     validation: dict[str, Any]
+    cloud: Cloud | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "O2AInput":
+        cloud = data.get("cloud")
         return cls(
             metadata=dict(data["metadata"]),
             plan=dict(data["plan"]),
@@ -430,6 +472,7 @@ class O2AInput:
             radiative_transfer=RadiativeTransferControls.from_dict(data["rtm_controls"]),
             outputs=[dict(item) for item in data.get("outputs", [])],
             validation=dict(data["validation"]),
+            cloud=None if cloud is None else Cloud.from_dict(cloud),
         )
 
     @classmethod
@@ -437,7 +480,7 @@ class O2AInput:
         return cls.from_dict(json.loads(raw))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "metadata": self.metadata,
             "plan": self.plan,
             "inputs": self.reference_assets.to_dict(),
@@ -458,6 +501,9 @@ class O2AInput:
             "outputs": self.outputs,
             "validation": self.validation,
         }
+        if self.cloud is not None:
+            result["cloud"] = self.cloud.to_dict()
+        return result
 
     def to_json_bytes(self) -> bytes:
         return json.dumps(_json_value(self.to_dict()), sort_keys=True, separators=(",", ":")).encode("utf-8")

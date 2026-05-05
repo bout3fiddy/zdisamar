@@ -3,6 +3,7 @@ const zdisamar = @import("zdisamar");
 
 test "default O2A input renders and parses as strict JSON" {
     const input = zdisamar.defaultO2AInput();
+    try std.testing.expect(input.cloud == null);
     try std.testing.expectEqual(@as(u32, 701), input.spectral_grid.sample_count);
     try std.testing.expectEqual(@as(u16, 20), input.rtm_controls.n_streams);
     try std.testing.expect(input.rtm_controls.use_spherical_correction);
@@ -10,16 +11,40 @@ test "default O2A input renders and parses as strict JSON" {
 
     const json = try zdisamar.renderDefaultO2AInputJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"cloud\"") == null);
 
     var parsed = try zdisamar.parseO2AInputJson(std.testing.allocator, json);
     defer parsed.deinit();
 
     try std.testing.expectEqual(@as(u32, 701), parsed.value.spectral_grid.sample_count);
+    try std.testing.expect(parsed.value.cloud == null);
     try std.testing.expectEqualStrings(
         "data/reference_data/solar/o2a_solar_reference_753_778.csv",
         parsed.value.inputs.raw_solar_reference.path,
     );
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, parsed.value.o2.isotopes_sim);
+}
+
+test "O2A input validation accepts explicit cloud placement" {
+    var input = zdisamar.defaultO2AInput();
+    input.cloud = .{
+        .optical_thickness = 0.6,
+        .single_scatter_albedo = 0.99,
+        .asymmetry_factor = 0.82,
+        .angstrom_exponent = 0.0,
+        .reference_wavelength_nm = 550.0,
+        .placement = .{
+            .semantics = .explicit_interval_bounds,
+            .interval_index_1based = 2,
+            .top_pressure_hpa = 500.0,
+            .bottom_pressure_hpa = 520.0,
+        },
+    };
+
+    try zdisamar.o2a.validateInput(&input);
+
+    input.cloud.?.optical_thickness = -0.1;
+    try std.testing.expectError(error.InvalidRequest, zdisamar.o2a.validateInput(&input));
 }
 
 test "O2A JSON rejects unknown fields" {

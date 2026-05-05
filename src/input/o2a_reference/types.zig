@@ -1,6 +1,7 @@
 const std = @import("std");
 const AbsorberModel = @import("../../input/Absorber.zig");
 const AtmosphereModel = @import("../../input/Atmosphere.zig");
+const CloudModel = @import("../../input/Cloud.zig");
 const InstrumentModel = @import("../../input/Instrument.zig");
 const Instrument = InstrumentModel.Instrument;
 const ObservationModel = @import("../../input/ObservationModel.zig");
@@ -95,6 +96,18 @@ pub const AerosolSpec = struct {
     placement: AtmosphereModel.IntervalPlacement,
 };
 
+pub const CloudSpec = struct {
+    id: []const u8 = "cloud",
+    cloud_type: CloudModel.CloudType = .hg_scattering,
+    enabled: bool = true,
+    optical_thickness: f64,
+    single_scatter_albedo: f64,
+    asymmetry_factor: f64,
+    angstrom_exponent: f64,
+    reference_wavelength_nm: f64,
+    placement: AtmosphereModel.IntervalPlacement,
+};
+
 pub const ObservationSpec = struct {
     instrument_name: []const u8,
     regime: ObservationModel.ObservationRegime,
@@ -149,6 +162,7 @@ pub const ResolvedVendorO2ACase = struct {
     surface_albedo: f64,
     geometry: GeometrySpec,
     aerosol: AerosolSpec,
+    cloud: ?CloudSpec = null,
     observation: ObservationSpec,
     o2: LineGasSpec,
     o2o2: CiaSpec,
