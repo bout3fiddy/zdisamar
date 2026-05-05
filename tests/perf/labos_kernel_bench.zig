@@ -10,30 +10,32 @@ const threshold_mul = 1.0e-12;
 pub fn main() !void {
     var r = matrixSeed(0.008, 0.0003);
     var t = matrixSeed(0.41, 0.0008);
+    var c = matrixSeed(0.19, 0.0005);
     var e = vecSeed();
 
-    try runMatBench("qseries_12x10", 200_000, &r, &t, &e, benchQseries);
-    try runMatBench("qseries_nonzero_12x10", 200_000, &r, &t, &e, benchQseriesNonzero);
-    try runMatBench("smul_12x10", 800_000, &r, &t, &e, benchSmul);
-    try runMatBench("matAddSemul3_12", 3_000_000, &r, &t, &e, benchMatAddSemul3);
-    try runMatBench("matAddEsmul3_12", 3_000_000, &r, &t, &e, benchMatAddEsmul3);
-    try runMatBench("semulAdd_12", 3_000_000, &r, &t, &e, benchSemulAdd);
-    try runMatBench("esmulSemulAdd_12", 3_000_000, &r, &t, &e, benchEsmulSemulAdd);
+    try runMatBench("qseries_12x10", 200_000, &r, &t, &c, &e, benchQseries);
+    try runMatBench("qseries_nonzero_12x10", 200_000, &r, &t, &c, &e, benchQseriesNonzero);
+    try runMatBench("smul_12x10", 800_000, &r, &t, &c, &e, benchSmul);
+    try runMatBench("matAddSemul3_12", 3_000_000, &r, &t, &c, &e, benchMatAddSemul3);
+    try runMatBench("matAddEsmul3_12", 3_000_000, &r, &t, &c, &e, benchMatAddEsmul3);
+    try runMatBench("semulAdd_12", 3_000_000, &r, &t, &c, &e, benchSemulAdd);
+    try runMatBench("esmulSemulAdd_12", 3_000_000, &r, &t, &c, &e, benchEsmulSemulAdd);
 }
 
-const Kernel = *const fn (*const labos.Mat, *const labos.Mat, *const labos.Vec) labos.Mat;
+const Kernel = *const fn (*const labos.Mat, *const labos.Mat, *const labos.Mat, *const labos.Vec) labos.Mat;
 
 fn runMatBench(
     comptime name: []const u8,
     iterations: usize,
     r: *labos.Mat,
     t: *labos.Mat,
+    c: *labos.Mat,
     e: *labos.Vec,
     kernel: Kernel,
 ) !void {
     var warm_checksum: f64 = 0.0;
     for (0..2_000) |_| {
-        const result = kernel(r, t, e);
+        const result = kernel(r, t, c, e);
         warm_checksum += checksum(&result);
     }
     std.mem.doNotOptimizeAway(warm_checksum);
@@ -41,7 +43,7 @@ fn runMatBench(
     var timer = try std.time.Timer.start();
     var sum: f64 = 0.0;
     for (0..iterations) |_| {
-        const result = kernel(r, t, e);
+        const result = kernel(r, t, c, e);
         sum += checksum(&result);
     }
     const elapsed_ns = timer.read();
@@ -56,32 +58,32 @@ fn runMatBench(
     );
 }
 
-fn benchQseries(r: *const labos.Mat, _: *const labos.Mat, _: *const labos.Vec) labos.Mat {
+fn benchQseries(r: *const labos.Mat, _: *const labos.Mat, _: *const labos.Mat, _: *const labos.Vec) labos.Mat {
     return labos.qseries(n, n_gauss, threshold_mul, r, r);
 }
 
-fn benchQseriesNonzero(r: *const labos.Mat, _: *const labos.Mat, _: *const labos.Vec) labos.Mat {
+fn benchQseriesNonzero(r: *const labos.Mat, _: *const labos.Mat, _: *const labos.Mat, _: *const labos.Vec) labos.Mat {
     return labos.qseriesKnownNonzeroProduct(n, n_gauss, r, r);
 }
 
-fn benchSmul(r: *const labos.Mat, t: *const labos.Mat, _: *const labos.Vec) labos.Mat {
+fn benchSmul(r: *const labos.Mat, t: *const labos.Mat, _: *const labos.Mat, _: *const labos.Vec) labos.Mat {
     return labos.smul(n, n_gauss, threshold_mul, r, t);
 }
 
-fn benchMatAddSemul3(r: *const labos.Mat, t: *const labos.Mat, e: *const labos.Vec) labos.Mat {
-    return labos.matAddSemul3(n, r, t, e, r);
+fn benchMatAddSemul3(r: *const labos.Mat, t: *const labos.Mat, c: *const labos.Mat, e: *const labos.Vec) labos.Mat {
+    return labos.matAddSemul3(n, r, t, e, c);
 }
 
-fn benchMatAddEsmul3(r: *const labos.Mat, t: *const labos.Mat, e: *const labos.Vec) labos.Mat {
-    return labos.matAddEsmul3(n, r, e, t, r);
+fn benchMatAddEsmul3(r: *const labos.Mat, t: *const labos.Mat, c: *const labos.Mat, e: *const labos.Vec) labos.Mat {
+    return labos.matAddEsmul3(n, r, e, t, c);
 }
 
-fn benchSemulAdd(r: *const labos.Mat, t: *const labos.Mat, e: *const labos.Vec) labos.Mat {
+fn benchSemulAdd(r: *const labos.Mat, t: *const labos.Mat, _: *const labos.Mat, e: *const labos.Vec) labos.Mat {
     return labos.semulAdd(n, r, e, t);
 }
 
-fn benchEsmulSemulAdd(r: *const labos.Mat, t: *const labos.Mat, e: *const labos.Vec) labos.Mat {
-    return labos.esmulSemulAdd(n, e, r, t, r);
+fn benchEsmulSemulAdd(r: *const labos.Mat, t: *const labos.Mat, c: *const labos.Mat, e: *const labos.Vec) labos.Mat {
+    return labos.esmulSemulAdd(n, e, r, t, c);
 }
 
 fn matrixSeed(base: f64, delta: f64) labos.Mat {
