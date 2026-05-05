@@ -25,9 +25,6 @@ const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
-// Profiled O2 A validation keeps reflectance max_abs below 1e-13 here; 1e-13 is too loose.
-const fourier_tail_reflectance_epsilon: f64 = 3.0e-14;
-
 pub const Profile = struct {
     mutex: std.Thread.Mutex = .{},
     attenuation_ns: i128 = 0,
@@ -430,6 +427,7 @@ fn layerResolvedLabosWithWorkspace(
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
     const phase_max = resolvedPhaseCoefficientMax(input);
+    const tolerances = controls.accuracyTolerances();
     const use_integrated_source =
         controls.integrate_source_function and
         nlayer > 1 and
@@ -599,7 +597,7 @@ fn layerResolvedLabosWithWorkspace(
             weighted_terms[stored_fourier_terms] = weighted_refl_fc;
             stored_fourier_terms += 1;
         }
-        if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) break;
+        if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= tolerances.fourier_tail_reflectance_epsilon) break;
     }
 
     if (profile_enabled) {

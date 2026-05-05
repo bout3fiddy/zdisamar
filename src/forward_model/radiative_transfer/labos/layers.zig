@@ -417,6 +417,7 @@ fn doDouble(
     n: usize,
     n_gauss: usize,
     threshold_mul: f64,
+    qseries_trace_threshold: f64,
     geo: *const basis.Geometry,
     b_start: f64,
     R: *basis.Mat,
@@ -438,7 +439,7 @@ fn doDouble(
             break :blk T.*;
         } else blk: {
             const q_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-            const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
+            const Q = basis.qseriesKnownNonzeroProductWithThreshold(n, n_gauss, qseries_trace_threshold, R, R);
             if (profile_sample) |sample| {
                 sample.double_qseries_calls += 1;
                 sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
@@ -558,6 +559,7 @@ pub fn calcRTlayersIntoWithBasis(
     const nlayer = layers.len;
     const profile_enabled = active_profile != null;
     var profile_sample = Profile.Sample{};
+    const tolerances = controls.accuracyTolerances();
 
     const zero_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
     rt[0] = zeroLayerRt(geo.nmutot);
@@ -589,7 +591,7 @@ pub fn calcRTlayersIntoWithBasis(
             if (profile_enabled) profile_sample.zero_rt_ns += std.time.nanoTimestamp() - zero_layer_start;
             continue;
         }
-        if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
+        if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= tolerances.weak_scattering_tau_floor or layer.single_scatter_albedo <= 0.0) {
             const zero_layer_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
             if (rt_active) |active| active[rt_idx] = false;
@@ -627,7 +629,7 @@ pub fn calcRTlayersIntoWithBasis(
         var b_start = b;
         var ndouble: usize = 0;
 
-        if (controls.scattering == .multiple and a_eff * b > controls.threshold_doubl) {
+        if (controls.scattering == .multiple and a_eff * b > tolerances.threshold_doubl) {
             // DECISION:
             //   Trigger doubling only when the scaled optical thickness crosses
             //   the configured threshold.
@@ -636,7 +638,7 @@ pub fn calcRTlayersIntoWithBasis(
             for (0..60) |_| {
                 bd /= 2.0;
                 ndouble += 1;
-                if (a_eff * bd < controls.threshold_doubl) break;
+                if (a_eff * bd < tolerances.threshold_doubl) break;
             }
             b_start = bd;
         }
@@ -665,7 +667,7 @@ pub fn calcRTlayersIntoWithBasis(
                 if (profile_enabled) profile_sample.single_scatter_ns += std.time.nanoTimestamp() - renorm_scatter_start;
             }
             const doubling_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
-            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E, if (profile_enabled) &profile_sample else null);
+            doDouble(ndouble, geo.nmutot, geo.n_gauss, tolerances.threshold_mul, tolerances.qseries_trace_threshold, geo, b_start, &R, &T, &E, if (profile_enabled) &profile_sample else null);
             if (profile_enabled) profile_sample.doubling_ns += std.time.nanoTimestamp() - doubling_start;
         }
 

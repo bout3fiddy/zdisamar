@@ -22,10 +22,19 @@ pub const RadiativeTransferControls = struct {
     threshold_conv_mult: f64 = 1.0e-4,
     threshold_doubl: f64 = 0.1,
     threshold_mul: f64 = 1.0e-12,
+    accuracy_target: ?f64 = null,
     use_spherical_correction: bool = false,
     integrate_source_function: bool = true,
     renorm_phase_function: bool = true,
     stokes_dimension: u8 = 1,
+
+    pub const AccuracyTolerances = struct {
+        fourier_tail_reflectance_epsilon: f64,
+        threshold_doubl: f64,
+        threshold_mul: f64,
+        qseries_trace_threshold: f64,
+        weak_scattering_tau_floor: f64,
+    };
 
     pub fn nGauss(self: RadiativeTransferControls) u16 {
         return self.n_streams / 2;
@@ -52,12 +61,42 @@ pub const RadiativeTransferControls = struct {
         {
             return error.UnsupportedRadiativeTransferControls;
         }
+        if (self.accuracy_target) |target| {
+            if (target <= 0.0 or !std.math.isFinite(target)) {
+                return error.UnsupportedRadiativeTransferControls;
+            }
+        }
     }
 
     pub fn resolvedNumOrdersMax(self: RadiativeTransferControls, scattering_optical_depth: f64) u16 {
         if (self.num_orders_max != 0) return self.num_orders_max;
         const heuristic = @max(scattering_optical_depth, 0.0) + 15.0;
         return @intFromFloat(std.math.clamp(heuristic, 1.0, @as(f64, std.math.maxInt(u16))));
+    }
+
+    pub fn accuracyTolerances(self: RadiativeTransferControls) AccuracyTolerances {
+        const exact = AccuracyTolerances{
+            .fourier_tail_reflectance_epsilon = 3.0e-14,
+            .threshold_doubl = self.threshold_doubl,
+            .threshold_mul = self.threshold_mul,
+            .qseries_trace_threshold = 1.0e-3,
+            .weak_scattering_tau_floor = 0.0,
+        };
+        const target = self.accuracy_target orelse return exact;
+        if (target <= 1.0e-13) return exact;
+
+        // The user-facing knob is a reflectance error budget. Only the Fourier
+        // tail has a direct reflectance-scale stopping criterion today. The
+        // lower-level LABOS tolerances stay exact until they have their own
+        // residual-bounded estimators, because their local matrix errors can
+        // amplify through repeated layer doubling.
+        return .{
+            .fourier_tail_reflectance_epsilon = std.math.clamp(target * 0.01, exact.fourier_tail_reflectance_epsilon, 1.0e-8),
+            .threshold_doubl = exact.threshold_doubl,
+            .threshold_mul = exact.threshold_mul,
+            .qseries_trace_threshold = exact.qseries_trace_threshold,
+            .weak_scattering_tau_floor = exact.weak_scattering_tau_floor,
+        };
     }
 
     pub fn nDirections(self: RadiativeTransferControls) u16 {
@@ -78,6 +117,7 @@ pub const RadiativeTransferControls = struct {
         .threshold_conv_mult = 1.0e-4,
         .threshold_doubl = 0.1,
         .threshold_mul = 1.0e-12,
+        .accuracy_target = null,
         .use_spherical_correction = false,
         .integrate_source_function = true,
         .renorm_phase_function = true,
