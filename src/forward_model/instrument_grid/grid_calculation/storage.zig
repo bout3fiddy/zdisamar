@@ -5,6 +5,7 @@ const InstrumentIntegration = @import("../../implementations/instrument/integrat
 const NoiseProviders = @import("../../implementations/noise.zig");
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const common = @import("../../radiative_transfer/root.zig");
+const jacobian = @import("../../jacobian/root.zig");
 const Cache = @import("cache.zig");
 const grid = @import("../spectral_math/grid.zig");
 const convolution = @import("../spectral_math/convolution.zig");
@@ -129,7 +130,7 @@ pub const SummaryStorage = struct {
         try ensureIndexBufferCapacity(allocator, &self.pseudo_spherical_level_starts, layer_count + 1);
         try ensureBufferCapacity(allocator, &self.pseudo_spherical_level_altitudes, layer_count + 1);
         if (wants_jacobian) {
-            try ensureBufferCapacity(allocator, &self.jacobian, sample_count);
+            try ensureBufferCapacity(allocator, &self.jacobian, sample_count * jacobian.state_count);
         }
         if (wants_noise) {
             try ensureBufferCapacity(allocator, &self.noise_sigma, sample_count);
@@ -152,7 +153,7 @@ pub const SummaryStorage = struct {
             .pseudo_spherical_samples = self.pseudo_spherical_samples[0..pseudo_spherical_sample_count],
             .pseudo_spherical_level_starts = self.pseudo_spherical_level_starts[0 .. layer_count + 1],
             .pseudo_spherical_level_altitudes = self.pseudo_spherical_level_altitudes[0 .. layer_count + 1],
-            .jacobian = if (wants_jacobian) self.jacobian[0..sample_count] else null,
+            .jacobian = if (wants_jacobian) self.jacobian[0 .. sample_count * jacobian.state_count] else null,
             .noise_sigma = if (wants_noise) self.noise_sigma[0..sample_count] else null,
             .radiance_noise_sigma = if (wants_noise) self.radiance_noise_sigma[0..sample_count] else null,
             .irradiance_noise_sigma = if (wants_noise) self.irradiance_noise_sigma[0..sample_count] else null,
@@ -245,8 +246,8 @@ pub fn validateBuffers(sample_count: usize, buffers: Buffers) Error!void {
     {
         return error.ShapeMismatch;
     }
-    if (buffers.jacobian) |jacobian| {
-        if (jacobian.len != sample_count) return error.ShapeMismatch;
+    if (buffers.jacobian) |values| {
+        if (values.len != sample_count * jacobian.state_count) return error.ShapeMismatch;
     }
     if (buffers.noise_sigma) |noise_sigma| {
         if (noise_sigma.len != sample_count) return error.ShapeMismatch;

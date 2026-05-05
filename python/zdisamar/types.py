@@ -371,6 +371,7 @@ class RadiativeTransferControls:
     integrate_source_function: bool
     renorm_phase_function: bool
     stokes_dimension: int
+    phase_function_truncation_threshold: float = 1.0e-8
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RadiativeTransferControls":
@@ -387,6 +388,7 @@ class RadiativeTransferControls:
             use_spherical_correction=bool(data["use_spherical_correction"]),
             integrate_source_function=bool(data["integrate_source_function"]),
             renorm_phase_function=bool(data["renorm_phase_function"]),
+            phase_function_truncation_threshold=_float(data.get("phase_function_truncation_threshold", 1.0e-8)),
             stokes_dimension=int(data["stokes_dimension"]),
         )
 
@@ -404,6 +406,7 @@ class RadiativeTransferControls:
             "use_spherical_correction": self.use_spherical_correction,
             "integrate_source_function": self.integrate_source_function,
             "renorm_phase_function": self.renorm_phase_function,
+            "phase_function_truncation_threshold": self.phase_function_truncation_threshold,
             "stokes_dimension": self.stokes_dimension,
         }
 

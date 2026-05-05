@@ -6,7 +6,7 @@ const phase_functions = internal.forward_model.optical_properties.shared.phase_f
 const prepareRoute = common.prepareRoute;
 const fillSourceInterfacesFromLayers = common.fillSourceInterfacesFromLayers;
 
-test "prepare route keeps only the O2A LABOS scalar forward path executable" {
+test "prepare route keeps only O2A LABOS scalar spectrum and semi-analytical derivative paths executable" {
     const labos_route = try prepareRoute(.{
         .regime = .nadir,
         .execution_mode = .scalar,
@@ -41,10 +41,17 @@ test "prepare route keeps only the O2A LABOS scalar forward path executable" {
         .execution_mode = .polarized,
         .derivative_mode = .none,
     }));
-    try std.testing.expectError(common.Error.UnsupportedDerivativeMode, prepareRoute(.{
+    const jacobian_route = try prepareRoute(.{
         .regime = .nadir,
         .execution_mode = .scalar,
         .derivative_mode = .semi_analytical,
+    });
+    try std.testing.expectEqual(common.DerivativeMode.semi_analytical, jacobian_route.derivative_mode);
+    try std.testing.expectEqual(common.DerivativeSemantics.analytical, jacobian_route.derivativeSemantics());
+    try std.testing.expectError(common.Error.UnsupportedDerivativeMode, prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .numerical,
     }));
 }
 

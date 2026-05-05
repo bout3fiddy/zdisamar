@@ -15,6 +15,8 @@ class CSpectrum(ctypes.Structure):
         ("radiance", ctypes.POINTER(ctypes.c_double)),
         ("irradiance", ctypes.POINTER(ctypes.c_double)),
         ("reflectance", ctypes.POINTER(ctypes.c_double)),
+        ("jacobian", ctypes.POINTER(ctypes.c_double)),
+        ("jacobian_state_count", ctypes.c_size_t),
         ("result_handle", ctypes.c_void_p),
     ]
 
@@ -238,6 +240,8 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.zds_default_o2a_input_json.restype = ctypes.c_int
     lib.zds_run_spectrum.argtypes = [ctypes.c_void_p, ctypes.POINTER(CSpectrum)]
     lib.zds_run_spectrum.restype = ctypes.c_int
+    lib.zds_run_spectrum_jacobian.argtypes = [ctypes.c_void_p, ctypes.POINTER(CSpectrum)]
+    lib.zds_run_spectrum_jacobian.restype = ctypes.c_int
     lib.zds_spectrum_report.argtypes = [
         ctypes.c_void_p,
         ctypes.POINTER(CSpectrum),

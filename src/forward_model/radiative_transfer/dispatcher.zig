@@ -22,7 +22,7 @@ pub fn executePreparedWithLabosWorkspace(
 ) common.ExecuteError!common.ForwardResult {
     if (route.regime != .nadir) return common.Error.UnsupportedObservationRegime;
     if (route.execution_mode != .scalar) return common.Error.UnsupportedExecutionMode;
-    if (route.derivative_mode != .none) return common.Error.UnsupportedDerivativeMode;
+    if (route.derivative_mode == .numerical) return common.Error.UnsupportedDerivativeMode;
     return labos.executeWithWorkspace(allocator, route, input, workspace);
 }
 

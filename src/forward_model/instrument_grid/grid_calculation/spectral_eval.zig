@@ -2,6 +2,7 @@ const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const common = @import("../../radiative_transfer/root.zig");
+const jacobian = @import("../../jacobian/root.zig");
 const cache_module = @import("cache.zig");
 const spectral_forward = @import("spectral_forward.zig");
 const Types = @import("types.zig");
@@ -70,7 +71,7 @@ pub fn integrateForwardAtNominal(
     }
 
     var radiance_sum: f64 = 0.0;
-    var jacobian_sum: f64 = 0.0;
+    var jacobian_sum = jacobian.zero();
     for (0..integration.sample_count) |index| {
         const offset_nm = integration.offsets_nm[index];
         const weight = integration.weights[index];
@@ -93,7 +94,7 @@ pub fn integrateForwardAtNominal(
             cache,
         );
         radiance_sum += weight * sample.radiance;
-        jacobian_sum += weight * sample.jacobian;
+        jacobian.addScaled(&jacobian_sum, sample.jacobian, weight);
     }
 
     return .{

@@ -26,7 +26,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 OUT_DIR = REPO_ROOT / "out" / "ci"
 LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
 LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
-VENDOR_REFERENCE_PATH = REPO_ROOT / "validation" / "o2a_with_cia_disamar_reference.csv"
+VENDOR_REFERENCE_PATH = REPO_ROOT / "validation" / "data" / "o2a_with_cia_disamar_reference.csv"
 SUMMARY_OUTPUT = OUT_DIR / "python_forward_summary.json"
 PLOT_OUTPUT = OUT_DIR / "python_forward_summary_plot.png"
 TOLERANCE = 1.0e-12

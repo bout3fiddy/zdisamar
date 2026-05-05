@@ -259,6 +259,76 @@ pub fn fillAttenuationDynamicWithGrid(
     );
 }
 
+pub fn fillAttenuationTangentDynamic(
+    allocator: Allocator,
+    layers: []const common.LayerInput,
+    state: common.Jacobian.State,
+    geo: *const basis.Geometry,
+) !DynamicAttenArray {
+    const nlayer = layers.len;
+    const nlevel = nlayer + 1;
+    const data = try allocator.alloc(f64, geo.nmutot * nlevel * nlevel);
+    var atten = DynamicAttenArray{
+        .allocator = allocator,
+        .data = data[0 .. geo.nmutot * nlevel * nlevel],
+        .nmutot = geo.nmutot,
+        .nlevel = nlevel,
+    };
+    for (0..geo.nmutot) |imu| {
+        for (0..nlevel) |from| {
+            for (0..nlevel) |to| {
+                atten.set(imu, from, to, 0.0);
+            }
+        }
+    }
+
+    for (0..nlayer) |ilTo_0| {
+        const ilTo = ilTo_0 + 1;
+        var ilFrom_idx = ilTo;
+        while (ilFrom_idx >= 1) : (ilFrom_idx -= 1) {
+            const layer_idx = ilFrom_idx - 1;
+            for (0..geo.nmutot) |imu| {
+                const u = @max(geo.u[imu], 1.0e-6);
+                const trans = math.exp(-layers[layer_idx].optical_depth / u);
+                const dtrans = trans * (-common.Jacobian.get(layers[layer_idx].optical_depth_jacobian, state) / u);
+                atten.set(
+                    imu,
+                    ilFrom_idx - 1,
+                    ilTo,
+                    atten.get(imu, ilFrom_idx, ilTo) * trans + cumulativeBaseTransmittance(layers, geo, imu, ilFrom_idx, ilTo) * dtrans,
+                );
+            }
+        }
+    }
+
+    for (0..nlevel) |ilTo| {
+        for (ilTo..nlevel) |ilFrom| {
+            for (0..geo.nmutot) |imu| {
+                atten.set(imu, ilFrom, ilTo, atten.get(imu, ilTo, ilFrom));
+            }
+        }
+    }
+
+    return atten;
+}
+
+fn cumulativeBaseTransmittance(
+    layers: []const common.LayerInput,
+    geo: *const basis.Geometry,
+    imu: usize,
+    from_level: usize,
+    to_level: usize,
+) f64 {
+    var value: f64 = 1.0;
+    if (from_level >= to_level) return value;
+    const u = @max(geo.u[imu], 1.0e-6);
+    for (from_level..to_level) |layer_idx| {
+        if (layer_idx >= layers.len) break;
+        value *= math.exp(-layers[layer_idx].optical_depth / u);
+    }
+    return value;
+}
+
 pub fn fillAttenuationDynamicWithGridInBuffer(
     allocator: Allocator,
     data: []f64,

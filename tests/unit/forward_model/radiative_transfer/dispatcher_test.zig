@@ -22,5 +22,5 @@ test "dispatcher picks labos lane for the O2A scalar forward mode" {
 
     const result = try dispatcher.executePrepared(std.testing.allocator, route, .{});
     try std.testing.expectEqual(common.TransportFamily.labos, result.family);
-    try std.testing.expect(result.jacobian_column == null);
+    try std.testing.expect(result.jacobian == null);
 }

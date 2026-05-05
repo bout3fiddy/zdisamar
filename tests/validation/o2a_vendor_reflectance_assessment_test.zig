@@ -31,7 +31,7 @@ const LoadedBaselineAnchor = struct {
 fn loadBaselineAnchor(allocator: std.mem.Allocator) !LoadedBaselineAnchor {
     const raw = try std.fs.cwd().readFileAlloc(
         allocator,
-        "validation/o2a_vendor_forward_reflectance_baseline.json",
+        "validation/data/o2a_vendor_forward_reflectance_baseline.json",
         64 * 1024,
     );
     errdefer allocator.free(raw);

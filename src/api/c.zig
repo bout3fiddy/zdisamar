@@ -14,6 +14,8 @@ pub const ZdsSpectrum = extern struct {
     radiance: [*]const f64 = undefined,
     irradiance: [*]const f64 = undefined,
     reflectance: [*]const f64 = undefined,
+    jacobian: ?[*]const f64 = null,
+    jacobian_state_count: usize = 0,
     result_handle: ?*anyopaque = null,
 };
 
@@ -412,6 +414,46 @@ export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
         .radiance = result.radiance.ptr,
         .irradiance = result.irradiance.ptr,
         .reflectance = result.reflectance.ptr,
+        .jacobian = null,
+        .jacobian_state_count = 0,
+        .result_handle = @ptrCast(result),
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_run_spectrum_jacobian(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const output = out orelse return @intFromEnum(ZdsStatus.failure);
+    if (resolved.prepared == null) {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+    var prepared = resolved.prepared.?;
+    prepared.route.derivative_mode = .semi_analytical;
+    const result = allocator.create(zdisamar.Output) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    result.* = zdisamar.runO2A(allocator, &prepared) catch |err| {
+        allocator.destroy(result);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved.results.append(allocator, result) catch |err| {
+        result.deinit(allocator);
+        allocator.destroy(result);
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    output.* = .{
+        .len = result.wavelengths.len,
+        .wavelength_nm = result.wavelengths.ptr,
+        .radiance = result.radiance.ptr,
+        .irradiance = result.irradiance.ptr,
+        .reflectance = result.reflectance.ptr,
+        .jacobian = if (result.jacobian) |values| values.ptr else null,
+        .jacobian_state_count = zdisamar.RadiativeTransferJacobian.state_count,
         .result_handle = @ptrCast(result),
     };
     resolved.setError("");

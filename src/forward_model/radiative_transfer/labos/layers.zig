@@ -406,6 +406,82 @@ pub fn calcRTlayersIntoWithBasis(
     }
 }
 
+pub fn calcRTlayersTangentIntoWithBasis(
+    rt_tangent: []LayerRT,
+    layers: []const common.LayerInput,
+    state: common.Jacobian.State,
+    i_fourier: usize,
+    geo: *const basis.Geometry,
+    controls: common.RadiativeTransferControls,
+    plm_basis: *const basis.FourierPlmBasis,
+) void {
+    const nlevel = layers.len + 1;
+    std.debug.assert(rt_tangent.len >= nlevel);
+    for (rt_tangent[0..nlevel]) |*layer_rt| layer_rt.* = zeroLayerRt(geo.nmutot);
+    const eps: f64 = 1.0e-5;
+    const inv_span = 0.5 / eps;
+    for (layers, 0..) |layer, layer_idx| {
+        const d_optical_depth = common.Jacobian.get(layer.optical_depth_jacobian, state);
+        const d_scattering_optical_depth = common.Jacobian.get(layer.scattering_optical_depth_jacobian, state);
+        const d_single_scatter_albedo = common.Jacobian.get(layer.single_scatter_albedo_jacobian, state);
+        if (d_optical_depth == 0.0 and d_scattering_optical_depth == 0.0 and d_single_scatter_albedo == 0.0) continue;
+
+        var plus_layer = layer;
+        plus_layer.optical_depth = @max(layer.optical_depth + eps * d_optical_depth, 0.0);
+        plus_layer.scattering_optical_depth = @max(layer.scattering_optical_depth + eps * d_scattering_optical_depth, 0.0);
+        plus_layer.single_scatter_albedo = std.math.clamp(layer.single_scatter_albedo + eps * d_single_scatter_albedo, 0.0, 1.0);
+        var minus_layer = layer;
+        minus_layer.optical_depth = @max(layer.optical_depth - eps * d_optical_depth, 0.0);
+        minus_layer.scattering_optical_depth = @max(layer.scattering_optical_depth - eps * d_scattering_optical_depth, 0.0);
+        minus_layer.single_scatter_albedo = std.math.clamp(layer.single_scatter_albedo - eps * d_single_scatter_albedo, 0.0, 1.0);
+
+        const plus_layers = [_]common.LayerInput{plus_layer};
+        const minus_layers = [_]common.LayerInput{minus_layer};
+        var plus_rt: [2]LayerRT = undefined;
+        var minus_rt: [2]LayerRT = undefined;
+        calcRTlayersIntoWithBasis(
+            &plus_rt,
+            &plus_layers,
+            i_fourier,
+            geo,
+            controls,
+            plm_basis,
+            null,
+            null,
+            null,
+            null,
+        );
+        calcRTlayersIntoWithBasis(
+            &minus_rt,
+            &minus_layers,
+            i_fourier,
+            geo,
+            controls,
+            plm_basis,
+            null,
+            null,
+            null,
+            null,
+        );
+        rt_tangent[layer_idx + 1] = layerRtDifferenceScaled(plus_rt[1], minus_rt[1], inv_span);
+    }
+}
+
+fn layerRtDifferenceScaled(plus: LayerRT, minus: LayerRT, scale: f64) LayerRT {
+    return .{
+        .R = matDifferenceScaled(plus.R, minus.R, scale),
+        .T = matDifferenceScaled(plus.T, minus.T, scale),
+    };
+}
+
+fn matDifferenceScaled(plus: basis.Mat, minus: basis.Mat, scale: f64) basis.Mat {
+    var result = basis.Mat{ .data = undefined, .n = plus.n };
+    for (0..plus.n * plus.n) |index| {
+        result.data[index] = (plus.data[index] - minus.data[index]) * scale;
+    }
+    return result;
+}
+
 fn zeroLayerRt(n: usize) LayerRT {
     return .{
         .R = basis.Mat.zero(n),

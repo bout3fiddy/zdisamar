@@ -138,6 +138,7 @@ pub const forward_model = struct {
         pub const PseudoSphericalSample = root.PseudoSphericalSample;
         pub const PseudoSphericalGrid = root.PseudoSphericalGrid;
         pub const ForwardInput = root.ForwardInput;
+        pub const Jacobian = root.Jacobian;
         pub const ForwardResult = root.ForwardResult;
         pub const PrepareError = root.PrepareError;
         pub const ExecuteError = root.ExecuteError;

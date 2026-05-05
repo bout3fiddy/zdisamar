@@ -46,7 +46,9 @@ pub const fillSurface = layers_mod.fillSurface;
 pub const dotGauss = orders_mod.dotGauss;
 pub const OrdersWorkspace = orders_mod.OrdersWorkspace;
 pub const ordersScatInto = orders_mod.ordersScatInto;
+pub const ordersScatIntoWithLocalSum = orders_mod.ordersScatIntoWithLocalSum;
 pub const ordersScatIntoWithActive = orders_mod.ordersScatIntoWithActive;
+pub const ordersScatIntoWithActiveLocalSum = orders_mod.ordersScatIntoWithActiveLocalSum;
 
 pub const calcReflectance = reflectance_mod.calcReflectance;
 pub const calcIntegratedReflectance = reflectance_mod.calcIntegratedReflectance;

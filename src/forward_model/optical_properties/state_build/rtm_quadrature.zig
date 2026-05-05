@@ -10,8 +10,101 @@ const SpectroscopyState = @import("state_spectroscopy.zig");
 const PreparedOpticalState = State.PreparedOpticalState;
 const LevelCarrier = struct {
     ksca: f64,
+    aerosol_scattering_optical_depth_per_km: f64 = 0.0,
+    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64 = PhaseFunctions.zeroPhaseCoefficients(),
     phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
 };
+
+fn fillAerosolSourceJacobian(
+    self: *const PreparedOpticalState,
+    rtm_level: *transport_common.RtmQuadratureLevel,
+    aerosol_scattering_optical_depth_per_km: f64,
+    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+) void {
+    if (self.aerosol_optical_depth <= 0.0 or aerosol_scattering_optical_depth_per_km <= 0.0) return;
+    const state_index = transport_common.Jacobian.stateIndex(.aerosol_optical_depth);
+    const derivative_scale = aerosol_scattering_optical_depth_per_km / self.aerosol_optical_depth;
+    for (0..PhaseFunctions.phase_coefficient_count) |index| {
+        rtm_level.ksca_phase_coefficient_jacobian[state_index][index] =
+            derivative_scale * aerosol_phase_coefficients[index];
+    }
+}
+
+fn scaledAerosolPhasePerKm(
+    aerosol_scattering_optical_depth_per_km: f64,
+    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+) [PhaseFunctions.phase_coefficient_count]f64 {
+    var scaled = PhaseFunctions.zeroPhaseCoefficients();
+    if (aerosol_scattering_optical_depth_per_km <= 0.0) return scaled;
+    for (0..PhaseFunctions.phase_coefficient_count) |index| {
+        scaled[index] = aerosol_scattering_optical_depth_per_km * aerosol_phase_coefficients[index];
+    }
+    return scaled;
+}
+
+fn fillSharedAerosolSourceJacobianFromLayers(
+    sublayers: []const State.PreparedSublayer,
+    layer_inputs: []const transport_common.LayerInput,
+    rtm_levels: []transport_common.RtmQuadratureLevel,
+) void {
+    const state_index = transport_common.Jacobian.stateIndex(.aerosol_optical_depth);
+    var total_weight: f64 = 0.0;
+    var total_scattering_derivative: f64 = 0.0;
+    const phase_coefficients = blk: {
+        for (sublayers) |sublayer| {
+            if (sublayer.aerosol_optical_depth > 0.0) {
+                break :blk sublayer.aerosol_phase_coefficients;
+            }
+        }
+        break :blk PhaseFunctions.zeroPhaseCoefficients();
+    };
+
+    for (layer_inputs) |layer| {
+        const derivative = transport_common.Jacobian.get(
+            layer.scattering_optical_depth_jacobian,
+            .aerosol_optical_depth,
+        );
+        if (derivative <= 0.0) continue;
+        total_scattering_derivative += derivative;
+    }
+    if (total_scattering_derivative <= 0.0 or phase_coefficients[0] == 0.0) return;
+
+    for (rtm_levels, 0..) |level, level_index| {
+        if (level.weight <= 0.0) continue;
+        const below_active = level_index > 0 and
+            transport_common.Jacobian.get(
+                layer_inputs[level_index - 1].scattering_optical_depth_jacobian,
+                .aerosol_optical_depth,
+            ) > 0.0;
+        const above_active = level_index < layer_inputs.len and
+            transport_common.Jacobian.get(
+                layer_inputs[level_index].scattering_optical_depth_jacobian,
+                .aerosol_optical_depth,
+            ) > 0.0;
+        if (below_active or above_active) total_weight += level.weight;
+    }
+    if (total_weight <= 0.0) return;
+
+    const derivative_per_km = total_scattering_derivative / total_weight;
+    for (rtm_levels, 0..) |*level, level_index| {
+        if (level.weight <= 0.0) continue;
+        const below_active = level_index > 0 and
+            transport_common.Jacobian.get(
+                layer_inputs[level_index - 1].scattering_optical_depth_jacobian,
+                .aerosol_optical_depth,
+            ) > 0.0;
+        const above_active = level_index < layer_inputs.len and
+            transport_common.Jacobian.get(
+                layer_inputs[level_index].scattering_optical_depth_jacobian,
+                .aerosol_optical_depth,
+            ) > 0.0;
+        if (!below_active and !above_active) continue;
+        for (0..PhaseFunctions.phase_coefficient_count) |index| {
+            level.ksca_phase_coefficient_jacobian[state_index][index] =
+                derivative_per_km * phase_coefficients[index];
+        }
+    }
+}
 
 pub fn fillRtmQuadratureAtWavelengthWithLayers(
     self: *const PreparedOpticalState,
@@ -52,6 +145,8 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                 );
                 const level_carrier = LevelCarrier{
                     .ksca = boundary_carrier.ksca_above,
+                    .aerosol_scattering_optical_depth_per_km = boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
+                    .aerosol_phase_coefficients = boundary_carrier.aerosol_phase_coefficients_above,
                     .phase_coefficients = boundary_carrier.phase_coefficients_above,
                 };
                 rtm_level.* = .{
@@ -59,9 +154,22 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
                     .weight = level_geometry.weight_km,
                     .ksca = level_carrier.ksca,
                     .phase_coefficients = level_carrier.phase_coefficients,
+                    .aerosol_ksca_phase_above_per_km = scaledAerosolPhasePerKm(
+                        boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
+                        boundary_carrier.aerosol_phase_coefficients_above,
+                    ),
+                    .aerosol_ksca_phase_below_per_km = scaledAerosolPhasePerKm(
+                        boundary_carrier.aerosol_scattering_optical_depth_below_per_km,
+                        boundary_carrier.aerosol_phase_coefficients_below,
+                    ),
                 };
+                fillAerosolSourceJacobian(
+                    self,
+                    rtm_level,
+                    level_carrier.aerosol_scattering_optical_depth_per_km,
+                    level_carrier.aerosol_phase_coefficients,
+                );
             }
-
             // PARITY:
             //   DISAMAR's integrated-source reflectance uses RTMweight(level)
             //   multiplied by the scattering carrier sampled at that coarse
@@ -139,6 +247,17 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             rtm_levels[level].weight = 0.5 * rule.weights[node_index] * total_span_km;
             rtm_levels[level].ksca = carrier.ksca;
             rtm_levels[level].phase_coefficients = carrier.phase_coefficients;
+            rtm_levels[level].aerosol_ksca_phase_above_per_km = scaledAerosolPhasePerKm(
+                carrier.aerosol_scattering_optical_depth_per_km,
+                carrier.aerosol_phase_coefficients,
+            );
+            rtm_levels[level].aerosol_ksca_phase_below_per_km = rtm_levels[level].aerosol_ksca_phase_above_per_km;
+            fillAerosolSourceJacobian(
+                self,
+                &rtm_levels[level],
+                carrier.aerosol_scattering_optical_depth_per_km,
+                carrier.aerosol_phase_coefficients,
+            );
             raw_scattering_sum += rtm_levels[level].weightedScattering();
         }
 
@@ -153,6 +272,11 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndSpectroscopyCache(
             const scale = total_scattering / raw_scattering_sum;
             for (start + 1..stop) |level| {
                 rtm_levels[level].ksca *= scale;
+                for (&rtm_levels[level].aerosol_ksca_phase_above_per_km) |*value| value.* *= scale;
+                for (&rtm_levels[level].aerosol_ksca_phase_below_per_km) |*value| value.* *= scale;
+                for (&rtm_levels[level].ksca_phase_coefficient_jacobian) |*state_row| {
+                    for (state_row) |*value| value.* *= scale;
+                }
             }
             has_active_quadrature = true;
         } else {
@@ -212,8 +336,23 @@ pub fn fillRtmQuadratureAtWavelengthWithLayersAndCarrierCache(
             .weight = level_geometry.weight_km,
             .ksca = boundary_carrier.ksca_above,
             .phase_coefficients = boundary_carrier.phase_coefficients_above,
+            .aerosol_ksca_phase_above_per_km = scaledAerosolPhasePerKm(
+                boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
+                boundary_carrier.aerosol_phase_coefficients_above,
+            ),
+            .aerosol_ksca_phase_below_per_km = scaledAerosolPhasePerKm(
+                boundary_carrier.aerosol_scattering_optical_depth_below_per_km,
+                boundary_carrier.aerosol_phase_coefficients_below,
+            ),
         };
+        fillAerosolSourceJacobian(
+            self,
+            rtm_level,
+            boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
+            boundary_carrier.aerosol_phase_coefficients_above,
+        );
     }
+    fillSharedAerosolSourceJacobianFromLayers(sublayers, layer_inputs, rtm_levels);
 
     var has_active_quadrature = false;
     for (rtm_levels) |rtm_level| {

@@ -6,6 +6,7 @@ const calibration = @import("../spectral_math/calibration.zig");
 const convolution = @import("../spectral_math/convolution.zig");
 const grid = @import("../spectral_math/grid.zig");
 const common = @import("../../radiative_transfer/root.zig");
+const jacobian = @import("../../jacobian/root.zig");
 const Postprocess = @import("postprocess.zig");
 const WavelengthSampling = @import("wavelength_sampling.zig");
 const SpectralEval = @import("spectral_eval.zig");
@@ -77,7 +78,7 @@ pub fn simulateInternal(
     var irradiance_sum: f64 = 0.0;
     var reflectance_sum: f64 = 0.0;
     var noise_sum: f64 = 0.0;
-    var jacobian_sum: f64 = 0.0;
+    var jacobian_sum = jacobian.zero();
     const transport_layer_count = Storage.resolvedTransportLayerCount(route, prepared);
     if (buffers.layer_inputs.len < transport_layer_count or
         buffers.source_interfaces.len < transport_layer_count + 1 or
@@ -110,7 +111,7 @@ pub fn simulateInternal(
             &plan.radiance_integration,
         );
         buffers.scratch[index] = integrated.radiance;
-        if (buffers.jacobian) |jacobian| jacobian[index] = integrated.jacobian;
+        if (buffers.jacobian) |jacobian_buffer| writeJacobianRow(jacobian_buffer, index, integrated.jacobian);
     }
     if (uses_integrated_radiance_sampling) {
         // DECISION:
@@ -224,26 +225,35 @@ pub fn simulateInternal(
         for (sigma) |value| noise_sum += value;
     }
 
-    var mean_jacobian: ?f64 = null;
-    if (buffers.jacobian) |jacobian| {
+    var mean_jacobian: ?jacobian.Vector = null;
+    if (buffers.jacobian) |jacobian_buffer| {
         if (!uses_integrated_radiance_sampling) {
-            try convolution.apply(jacobian, radiance_slit_kernel[0..], buffers.scratch);
-            @memcpy(jacobian, buffers.scratch);
+            for (0..jacobian.state_count) |state_index| {
+                copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
+                try convolution.apply(buffers.scratch, radiance_slit_kernel[0..], buffers.scratch_aux);
+                copyScratchToJacobianColumn(buffers.scratch_aux, jacobian_buffer, state_index);
+            }
         }
-        try Postprocess.applyChannelJacobianCorrections(
-            scene,
-            .radiance,
-            radiance_calibration,
-            prepared.depolarization_factor,
-            buffers.wavelengths,
-            jacobian,
-            buffers.scratch_aux,
-        );
+        for (0..jacobian.state_count) |state_index| {
+            copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
+            try Postprocess.applyChannelJacobianCorrections(
+                scene,
+                .radiance,
+                radiance_calibration,
+                prepared.depolarization_factor,
+                buffers.wavelengths,
+                buffers.scratch,
+                buffers.scratch_aux,
+            );
+            copyScratchToJacobianColumn(buffers.scratch, jacobian_buffer, state_index);
+        }
         // DECISION:
         //   Ring synthesis uses the irradiance-only basis from the current
         //   forward model, so it does not change the routed radiance Jacobian.
-        for (jacobian) |value| jacobian_sum += value;
-        mean_jacobian = jacobian_sum / @as(f64, @floatFromInt(sample_count));
+        for (0..sample_count) |index| {
+            jacobian.addScaled(&jacobian_sum, readJacobianRow(jacobian_buffer, index), 1.0);
+        }
+        mean_jacobian = jacobian.scale(jacobian_sum, 1.0 / @as(f64, @floatFromInt(sample_count)));
     }
     return .{
         .sample_count = @intCast(sample_count),
@@ -258,6 +268,36 @@ pub fn simulateInternal(
             0.0,
         .mean_jacobian = mean_jacobian,
     };
+}
+
+fn jacobianOffset(sample_index: usize, state_index: usize) usize {
+    return sample_index * jacobian.state_count + state_index;
+}
+
+fn writeJacobianRow(buffer: []f64, sample_index: usize, values: jacobian.Vector) void {
+    for (0..jacobian.state_count) |state_index| {
+        buffer[jacobianOffset(sample_index, state_index)] = values[state_index];
+    }
+}
+
+fn readJacobianRow(buffer: []const f64, sample_index: usize) jacobian.Vector {
+    var values = jacobian.zero();
+    for (0..jacobian.state_count) |state_index| {
+        values[state_index] = buffer[jacobianOffset(sample_index, state_index)];
+    }
+    return values;
+}
+
+fn copyJacobianColumnToScratch(buffer: []const f64, state_index: usize, scratch: []f64) void {
+    for (scratch, 0..) |*value, sample_index| {
+        value.* = buffer[jacobianOffset(sample_index, state_index)];
+    }
+}
+
+fn copyScratchToJacobianColumn(scratch: []const f64, buffer: []f64, state_index: usize) void {
+    for (scratch, 0..) |value, sample_index| {
+        buffer[jacobianOffset(sample_index, state_index)] = value;
+    }
 }
 
 pub fn simulate(

@@ -276,25 +276,12 @@ pub fn build(b: *std.Build) void {
     const fmt_check_step = b.step("fmt-check", "Verify Zig formatting without rewriting files");
     fmt_check_step.dependOn(&fmt_check_cmd.step);
 
-    const plot_spectrum_install = b.addInstallArtifact(plot_spectrum_exe, .{});
-    const o2a_plot_bundle_spectrum_run = b.addRunArtifact(plot_spectrum_exe);
-    o2a_plot_bundle_spectrum_run.addArg("--output-dir");
-    o2a_plot_bundle_spectrum_run.addArg("out/analysis/o2a/plot_bundle_tmp");
     const o2a_plot_bundle_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "validation/o2a_plot_bundle.py",
-        "--current-spectrum",
-        "out/analysis/o2a/plot_bundle_tmp/generated_spectrum.csv",
-        "--vendor-reference",
-        "validation/o2a_with_cia_disamar_reference.csv",
-        "--output-dir",
-        "validation",
-        "--canonical-command",
-        "zig build o2a-plots",
+        "validation/plot_validation.py",
     });
-    o2a_plot_bundle_cmd.step.dependOn(&plot_spectrum_install.step);
-    o2a_plot_bundle_cmd.step.dependOn(&o2a_plot_bundle_spectrum_run.step);
+    o2a_plot_bundle_cmd.step.dependOn(&c_api_install.step);
     const o2a_plot_bundle_step = b.step(
         "o2a-plot-bundle",
         "Generate the tracked O2A plot bundle under validation",
@@ -309,8 +296,9 @@ pub fn build(b: *std.Build) void {
     const o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "validation/o2a_plot_bundle_test.py",
+        "validation/plot_validation_test.py",
     });
+    o2a_plot_bundle_test_cmd.step.dependOn(&c_api_install.step);
     const o2a_plot_bundle_test_step = b.step(
         "test-validation-o2a-plot-bundle",
         "Run the O2A plot bundle harness smoke test",
@@ -328,6 +316,19 @@ pub fn build(b: *std.Build) void {
         "Run the Python-defined DISAMAR O2A spectrum summary script",
     );
     python_forward_summary_step.dependOn(&python_forward_summary_cmd.step);
+
+    const python_o2a_jacobian_summary_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "scripts/testing_harness/python_o2a_jacobian_summary.py",
+        "--enforce",
+    });
+    python_o2a_jacobian_summary_cmd.step.dependOn(&c_api_install.step);
+    const python_o2a_jacobian_summary_step = b.step(
+        "python-o2a-jacobian-summary",
+        "Measure opt-in Python O2A Jacobian residuals and spectrum+Jacobian timing",
+    );
+    python_o2a_jacobian_summary_step.dependOn(&python_o2a_jacobian_summary_cmd.step);
 
     const python_o2a_setup_roundtrip_cmd = b.addSystemCommand(&.{
         "uv",

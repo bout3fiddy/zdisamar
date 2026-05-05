@@ -9,6 +9,7 @@ const shared_geometry = @import("shared_geometry.zig");
 const shared_carrier = @import("shared_carrier.zig");
 const carrier_eval = @import("carrier_eval.zig");
 const SpectroscopyState = @import("state_spectroscopy.zig");
+const jacobian = transport_common.Jacobian;
 
 const PreparedOpticalState = State.PreparedOpticalState;
 const OpticalDepthBreakdown = State.OpticalDepthBreakdown;
@@ -182,6 +183,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                         profile_cache,
                     );
                     layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
+                    attachAerosolOpticalDepthJacobian(scene, layer_input);
                     Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
                 }
                 return totals;
@@ -210,6 +212,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                     profile_cache,
                 );
                 layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
+                attachAerosolOpticalDepthJacobian(scene, layer_input);
                 Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
             }
             return totals;
@@ -228,6 +231,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                     profile_cache,
                 );
                 layer_inputs[sublayer_index] = Evaluation.layerInputFromEvaluated(evaluated);
+                attachAerosolOpticalDepthJacobian(scene, &layer_inputs[sublayer_index]);
                 Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
             }
             return totals;
@@ -247,6 +251,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
                 profile_cache,
             );
             layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
+            attachAerosolOpticalDepthJacobian(scene, layer_input);
             Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
         }
         return totals;
@@ -309,6 +314,7 @@ pub fn fillForwardLayersAtWavelengthWithSpectroscopyCache(
             .view_mu = scene.geometry.viewingCosineAtAltitude(layer.altitude_km),
             .phase_coefficients = PhaseFunctions.hgPhaseCoefficients(scene.aerosol.asymmetry_factor),
         };
+        attachAerosolOpticalDepthJacobian(scene, layer_input);
         totals.gas_absorption_optical_depth += gas_absorption_optical_depth;
         totals.gas_scattering_optical_depth += gas_scattering_optical_depth;
         totals.cia_optical_depth += layer.cia_optical_depth;
@@ -352,6 +358,7 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
                         wavelength_cache,
                     );
                     layer_input.* = Evaluation.layerInputFromEvaluated(evaluated);
+                    attachAerosolOpticalDepthJacobian(scene, layer_input);
                     Evaluation.accumulateBreakdown(&totals, evaluated.breakdown);
                 }
                 return totals;
@@ -366,4 +373,24 @@ pub fn fillForwardLayersAtWavelengthWithCarrierCache(
         layer_inputs,
         &wavelength_cache.profile_cache,
     );
+}
+
+fn attachAerosolOpticalDepthJacobian(
+    scene: *const Scene,
+    layer_input: *transport_common.LayerInput,
+) void {
+    const aerosol_tau = scene.aerosol.optical_depth;
+    if (aerosol_tau <= 0.0) return;
+    const optical_derivative = layer_input.aerosol_optical_depth / aerosol_tau;
+    const scattering_derivative = layer_input.aerosol_scattering_optical_depth / aerosol_tau;
+    jacobian.set(&layer_input.optical_depth_jacobian, .aerosol_optical_depth, optical_derivative);
+    jacobian.set(&layer_input.scattering_optical_depth_jacobian, .aerosol_optical_depth, scattering_derivative);
+    const optical_depth = layer_input.optical_depth;
+    if (optical_depth > 0.0) {
+        const derivative =
+            (scattering_derivative * optical_depth -
+                layer_input.scattering_optical_depth * optical_derivative) /
+            (optical_depth * optical_depth);
+        jacobian.set(&layer_input.single_scatter_albedo_jacobian, .aerosol_optical_depth, derivative);
+    }
 }
