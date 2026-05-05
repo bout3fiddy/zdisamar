@@ -171,7 +171,7 @@ pub fn radianceFromForward(
         .phase = phase,
         .forward = forward,
     });
-    return solar_irradiance * solar_cosine * forward.toa_reflectance_factor * surface_gain / std.math.pi;
+    return solar_cosine * (forward.toa_reflectance_factor * surface_gain) * solar_irradiance / std.math.pi;
 }
 
 pub fn computeForwardSampleAtWavelength(

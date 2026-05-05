@@ -25,23 +25,17 @@ analysis belong under `out/`, not under this directory.
 `zig build o2a-plot-bundle` regenerates the tracked plot files in this
 directory.
 
-## Irradiance Residual Note
+## Residual Note
 
-The remaining O2 A irradiance residuals are best understood as floating-point
-evaluation noise, not a physical or interpolation mismatch. Retained parity
-checks show exact agreement in sample wavelengths and support irradiance values,
-with the first differences appearing in kernel-weight/product arithmetic. At an
-irradiance scale near `5e14`, one binary64 ULP is about `0.0625`, so residuals such as
-`0.125`, `0.375`, and `0.4375` are only a few representable floating-point
-steps.
+The committed DISAMAR reference should come from a fresh vendored DISAMAR run,
+not from earlier scratch output. Refreshing the reference with the current
+vendored run removes the structured O2 A reflectance spike around 756.8 nm: the
+tracked reflectance comparison now has max absolute residual near `3.4e-15`
+and RMS below `1.0e-15`.
 
-The jagged residual shape is therefore the fingerprint of last-bit arithmetic
-through the slit convolution: tiny kernel-weight differences around `1e-17`,
-multiplied by large irradiance values and accumulated over hundreds of samples.
-The absolute residual looks visually structured because the y-axis is in raw
-irradiance units, but the relative error is around `1e-15`. Further reduction
-here likely requires matching Fortran's exact dot-product/summation path, not
-changing irradiance physics or support data.
+The remaining raw radiance and irradiance residuals are last-bit-scale relative
+to signals near `1e13` and `5e14`. They remain useful as regression evidence,
+but the reflectance residual is the primary O2 A parity signal for this bundle.
 
 ## YAML Runtime Coverage
 
