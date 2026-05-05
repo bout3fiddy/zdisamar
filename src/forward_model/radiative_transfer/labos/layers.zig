@@ -17,6 +17,7 @@ pub const Profile = struct {
     renorm_ns: i128 = 0,
     doubling_ns: i128 = 0,
     double_qseries_ns: i128 = 0,
+    double_zero_check_ns: i128 = 0,
     double_qt_ns: i128 = 0,
     double_d_ns: i128 = 0,
     double_rd_ns: i128 = 0,
@@ -40,6 +41,7 @@ pub const Profile = struct {
         renorm_ns: i128 = 0,
         doubling_ns: i128 = 0,
         double_qseries_ns: i128 = 0,
+        double_zero_check_ns: i128 = 0,
         double_qt_ns: i128 = 0,
         double_d_ns: i128 = 0,
         double_rd_ns: i128 = 0,
@@ -66,6 +68,7 @@ pub const Profile = struct {
         self.renorm_ns += sample.renorm_ns;
         self.doubling_ns += sample.doubling_ns;
         self.double_qseries_ns += sample.double_qseries_ns;
+        self.double_zero_check_ns += sample.double_zero_check_ns;
         self.double_qt_ns += sample.double_qt_ns;
         self.double_d_ns += sample.double_d_ns;
         self.double_rd_ns += sample.double_rd_ns;
@@ -84,7 +87,7 @@ pub const Profile = struct {
     pub fn print(self: *Profile) void {
         const layer_denom = @max(@as(f64, @floatFromInt(self.layer_count)), 1.0);
         std.debug.print(
-            "[zds-profile] labos_layers={} doubled_layers={} double_steps={} zero_rt={d:.3}ms fill_phase={d:.3}ms max_beta={d:.3}ms exponent={d:.3}ms single_scatter={d:.3}ms renorm={d:.3}ms doubling={d:.3}ms double_qseries={d:.3}ms double_qt={d:.3}ms double_d={d:.3}ms double_rd={d:.3}ms double_u={d:.3}ms double_tu={d:.3}ms double_r_new={d:.3}ms double_td={d:.3}ms double_t_new={d:.3}ms double_exponent={d:.3}ms store={d:.3}ms fill_phase_mean={d:.6}ms/layer doubling_mean={d:.6}ms/layer\n",
+            "[zds-profile] labos_layers={} doubled_layers={} double_steps={} zero_rt={d:.3}ms fill_phase={d:.3}ms max_beta={d:.3}ms exponent={d:.3}ms single_scatter={d:.3}ms renorm={d:.3}ms doubling={d:.3}ms double_qseries={d:.3}ms double_zero_check={d:.3}ms double_qt={d:.3}ms double_d={d:.3}ms double_rd={d:.3}ms double_u={d:.3}ms double_tu={d:.3}ms double_r_new={d:.3}ms double_td={d:.3}ms double_t_new={d:.3}ms double_exponent={d:.3}ms store={d:.3}ms fill_phase_mean={d:.6}ms/layer doubling_mean={d:.6}ms/layer\n",
             .{
                 self.layer_count,
                 self.doubling_count,
@@ -97,6 +100,7 @@ pub const Profile = struct {
                 nsToMs(self.renorm_ns),
                 nsToMs(self.doubling_ns),
                 nsToMs(self.double_qseries_ns),
+                nsToMs(self.double_zero_check_ns),
                 nsToMs(self.double_qt_ns),
                 nsToMs(self.double_d_ns),
                 nsToMs(self.double_rd_ns),
@@ -325,11 +329,23 @@ fn singleScatterT12(
     return result;
 }
 
-fn matIsZero(n: usize, mat: *const basis.Mat) bool {
-    for (mat.data[0 .. n * n]) |value| {
-        if (value != 0.0) return false;
+fn gaussTrace(n: usize, n_gauss: usize, mat: *const basis.Mat) f64 {
+    if (n == 12 and n_gauss == 10) {
+        var trace = mat.data[0];
+        trace += mat.data[13];
+        trace += mat.data[26];
+        trace += mat.data[39];
+        trace += mat.data[52];
+        trace += mat.data[65];
+        trace += mat.data[78];
+        trace += mat.data[91];
+        trace += mat.data[104];
+        trace += mat.data[117];
+        return trace;
     }
-    return true;
+    var trace: f64 = 0.0;
+    for (0..n_gauss) |k| trace += mat.data[k * n + k];
+    return trace;
 }
 
 // Perform ndouble doubling steps on R, T, E for a layer.
@@ -349,14 +365,18 @@ fn doDouble(
     for (0..ndouble) |_| {
         if (profile_sample) |sample| sample.double_step_count += 1;
 
-        const q_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-        const Q = basis.qseries(n, n_gauss, threshold_mul, R, R);
-        if (profile_sample) |sample| sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
+        const zero_check_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
+        const trace_r = gaussTrace(n, n_gauss, R);
+        const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
+        if (profile_sample) |sample| sample.double_zero_check_ns += std.time.nanoTimestamp() - zero_check_start;
 
-        const q_is_zero = matIsZero(n, &Q);
         const D = if (q_is_zero) blk: {
             break :blk T.*;
         } else blk: {
+            const q_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
+            const Q = basis.qseries(n, n_gauss, threshold_mul, R, R);
+            if (profile_sample) |sample| sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
+
             const smul_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
             var qt: basis.Mat = undefined;
             basis.smulInto(&qt, n, n_gauss, threshold_mul, &Q, T);
