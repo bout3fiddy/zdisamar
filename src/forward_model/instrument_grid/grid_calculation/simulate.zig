@@ -202,8 +202,8 @@ pub fn simulateInternal(
     timer.mark("postprocess_irradiance");
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
-        buffers.reflectance[index] = ((buffers.radiance[index] * std.math.pi) / solar_cosine) /
-            @max(buffers.irradiance[index], 1e-9);
+        buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
+            @max(buffers.irradiance[index] * solar_cosine, 1e-9);
         radiance_sum += buffers.radiance[index];
         irradiance_sum += buffers.irradiance[index];
         reflectance_sum += buffers.reflectance[index];

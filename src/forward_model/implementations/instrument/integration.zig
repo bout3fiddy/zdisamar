@@ -167,6 +167,7 @@ pub fn integrationForWavelengthWithAdaptiveCacheChecked(
             scene,
             response,
             nominal_wavelength_nm,
+            channel == .irradiance,
             kernel,
         )) {
             return;

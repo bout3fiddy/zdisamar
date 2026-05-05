@@ -136,6 +136,7 @@ pub fn buildDisamarRealizedKernel(
     scene: *const Scene,
     response: InstrumentModel.SpectralResponse,
     nominal_wavelength_nm: f64,
+    apply_disamar_midpoint_bias: bool,
     kernel: *types.IntegrationKernel,
 ) bool {
     if (response.fwhm_nm <= 0.0) return false;
@@ -164,7 +165,7 @@ pub fn buildDisamarRealizedKernel(
         nominal_wavelength_nm,
         support_window.global_start_nm,
         support_window.global_end_nm,
-        false,
+        apply_disamar_midpoint_bias,
         &sample_wavelengths_nm,
         &sample_raw_weights,
         &sample_count,
