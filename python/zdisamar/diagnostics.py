@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
-
-if TYPE_CHECKING:
-    from .ffi import PreparedDefaultO2A, PreparedO2A
+from typing import Any, Callable
 
 
 class DiagnosticTable:
@@ -77,7 +74,7 @@ class PerturbationResult(DiagnosticTable):
 class O2O2CIADiagnostics:
     """O2-O2 collision-induced absorption diagnostics from the native core."""
 
-    def __init__(self, prepared: "PreparedO2A | PreparedDefaultO2A"):
+    def __init__(self, prepared: Any):
         self._prepared = prepared
 
     def diagnostics(self, wavelengths_nm):
@@ -87,7 +84,7 @@ class O2O2CIADiagnostics:
 class InstrumentResponseDiagnostics:
     """Instrument response and high-resolution wavelength sampling diagnostics from the native core."""
 
-    def __init__(self, prepared: "PreparedO2A | PreparedDefaultO2A"):
+    def __init__(self, prepared: Any):
         self._prepared = prepared
 
     def sampling_table(
@@ -105,7 +102,7 @@ class InstrumentResponseDiagnostics:
 class RadiativeTransferDiagnostics:
     """Bounded layer diagnostics from the native core."""
 
-    def __init__(self, prepared: "PreparedO2A | PreparedDefaultO2A"):
+    def __init__(self, prepared: Any):
         self._prepared = prepared
 
     def diagnostics(self, wavelengths_nm, spectrum=None):
@@ -115,7 +112,7 @@ class RadiativeTransferDiagnostics:
 class PerturbationDiagnostics:
     """Coarse forward-model perturbation helper."""
 
-    def __init__(self, prepared: "PreparedO2A | PreparedDefaultO2A"):
+    def __init__(self, prepared: Any):
         self._prepared = prepared
 
     def spectrum_delta(
@@ -172,7 +169,7 @@ class PerturbationDiagnostics:
         baseline_value = _get_path(baseline_case, parameter_path)
         return self.spectrum_delta(
             parameter_path,
-            baseline_value * factor,
+            float(baseline_value) * factor,
             label or f"{parameter_path}x{factor:g}",
         )
 
@@ -297,8 +294,9 @@ def _spectrum_delta_from_arrays(
 
 
 def _run_spectrum(case, library_path) -> dict[str, object]:
-    from .ffi import prepare
+    import importlib
 
+    prepare = importlib.import_module("zdisamar.ffi").prepare
     with prepare(case, library_path=library_path) as prepared:
         with prepared.forward_model() as spectrum:
             return {

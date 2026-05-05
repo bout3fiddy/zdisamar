@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import altair as alt
 
 from . import fields
-from ._common import frame, label, melt_components
+from .common import frame, label, melt_components
 from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
 
 SOURCE_COMPONENTS = (

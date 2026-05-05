@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 from . import bundles, fields
 from . import atmosphere as atmosphere_plots
@@ -92,7 +93,7 @@ class BoundAtmospherePlots:
         *,
         wavelengths_nm: Sequence[float],
         quantity: str = fields.TOTAL_OPTICAL_DEPTH,
-        vertical_axis: str = "altitude_km",
+        vertical_axis: Literal["altitude_km", "pressure_hpa"] = "altitude_km",
     ):
         with self._prepared.atmosphere.budget(wavelengths_nm=wavelengths_nm) as budget:
             return atmosphere_plots.optical_depth_heatmap(
@@ -147,7 +148,12 @@ class BoundInstrumentResponsePlots:
     def __init__(self, prepared):
         self._prepared = prepared
 
-    def isrf(self, *, wavelengths_nm: Sequence[float] = (760.76,), channel: str = "radiance"):
+    def isrf(
+        self,
+        *,
+        wavelengths_nm: Sequence[float] = (760.76,),
+        channel: Literal["radiance", "irradiance"] = "radiance",
+    ):
         with self._prepared.instrument_response.sampling_table(wavelengths_nm=wavelengths_nm, channels=(channel,)) as table:
             return instrument_response_plots.isrf(table, nominal_wavelength_nm=wavelengths_nm[0], channel=channel)
 

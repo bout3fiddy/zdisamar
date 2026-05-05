@@ -6,7 +6,7 @@ from typing import Literal
 
 import altair as alt
 
-from ._common import frame, label, numeric_cell_bounds, with_channel_labels
+from .common import frame, label, numeric_cell_bounds, with_channel_labels
 from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
 
 
