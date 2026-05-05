@@ -25,7 +25,8 @@ const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
-const fourier_tail_reflectance_epsilon: f64 = 1.0e-14;
+// Profiled O2 A validation keeps reflectance max_abs below 1e-13 here; 1e-13 is too loose.
+const fourier_tail_reflectance_epsilon: f64 = 3.0e-14;
 
 pub const Profile = struct {
     mutex: std.Thread.Mutex = .{},
@@ -41,6 +42,28 @@ pub const Profile = struct {
     reflectance_contribution_ns: i128 = 0,
     sample_count: usize = 0,
     fourier_count: usize = 0,
+    geometry_cache_hits: usize = 0,
+    geometry_cache_misses: usize = 0,
+    plm_basis_hits: usize = 0,
+    plm_basis_misses: usize = 0,
+    plm_basis_extensions: usize = 0,
+    phase_signature_layers: usize = 0,
+    phase_signature_max_matches: usize = 0,
+    phase_signature_matches: usize = 0,
+    reusable_layer_templates: usize = 0,
+    possible_layer_templates: usize = 0,
+    cutoff_1e13_samples: usize = 0,
+    cutoff_1e13_saved_terms: usize = 0,
+    cutoff_1e13_tail_abs: f64 = 0.0,
+    cutoff_1e13_tail_signed_abs: f64 = 0.0,
+    cutoff_1e12_samples: usize = 0,
+    cutoff_1e12_saved_terms: usize = 0,
+    cutoff_1e12_tail_abs: f64 = 0.0,
+    cutoff_1e12_tail_signed_abs: f64 = 0.0,
+    cutoff_1e10_samples: usize = 0,
+    cutoff_1e10_saved_terms: usize = 0,
+    cutoff_1e10_tail_abs: f64 = 0.0,
+    cutoff_1e10_tail_signed_abs: f64 = 0.0,
 
     pub const Sample = struct {
         attenuation_ns: i128 = 0,
@@ -54,6 +77,28 @@ pub const Profile = struct {
         reflectance_phase_kernel_ns: i128 = 0,
         reflectance_contribution_ns: i128 = 0,
         fourier_count: usize = 0,
+        geometry_cache_hits: usize = 0,
+        geometry_cache_misses: usize = 0,
+        plm_basis_hits: usize = 0,
+        plm_basis_misses: usize = 0,
+        plm_basis_extensions: usize = 0,
+        phase_signature_layers: usize = 0,
+        phase_signature_max_matches: usize = 0,
+        phase_signature_matches: usize = 0,
+        reusable_layer_templates: usize = 0,
+        possible_layer_templates: usize = 0,
+        cutoff_1e13_samples: usize = 0,
+        cutoff_1e13_saved_terms: usize = 0,
+        cutoff_1e13_tail_abs: f64 = 0.0,
+        cutoff_1e13_tail_signed_abs: f64 = 0.0,
+        cutoff_1e12_samples: usize = 0,
+        cutoff_1e12_saved_terms: usize = 0,
+        cutoff_1e12_tail_abs: f64 = 0.0,
+        cutoff_1e12_tail_signed_abs: f64 = 0.0,
+        cutoff_1e10_samples: usize = 0,
+        cutoff_1e10_saved_terms: usize = 0,
+        cutoff_1e10_tail_abs: f64 = 0.0,
+        cutoff_1e10_tail_signed_abs: f64 = 0.0,
     };
 
     pub fn addSample(self: *Profile, sample: Sample) void {
@@ -71,10 +116,36 @@ pub const Profile = struct {
         self.reflectance_contribution_ns += sample.reflectance_contribution_ns;
         self.sample_count += 1;
         self.fourier_count += sample.fourier_count;
+        self.geometry_cache_hits += sample.geometry_cache_hits;
+        self.geometry_cache_misses += sample.geometry_cache_misses;
+        self.plm_basis_hits += sample.plm_basis_hits;
+        self.plm_basis_misses += sample.plm_basis_misses;
+        self.plm_basis_extensions += sample.plm_basis_extensions;
+        self.phase_signature_layers += sample.phase_signature_layers;
+        self.phase_signature_max_matches += sample.phase_signature_max_matches;
+        self.phase_signature_matches += sample.phase_signature_matches;
+        self.reusable_layer_templates += sample.reusable_layer_templates;
+        self.possible_layer_templates += sample.possible_layer_templates;
+        self.cutoff_1e13_samples += sample.cutoff_1e13_samples;
+        self.cutoff_1e13_saved_terms += sample.cutoff_1e13_saved_terms;
+        self.cutoff_1e13_tail_abs += sample.cutoff_1e13_tail_abs;
+        self.cutoff_1e13_tail_signed_abs += sample.cutoff_1e13_tail_signed_abs;
+        self.cutoff_1e12_samples += sample.cutoff_1e12_samples;
+        self.cutoff_1e12_saved_terms += sample.cutoff_1e12_saved_terms;
+        self.cutoff_1e12_tail_abs += sample.cutoff_1e12_tail_abs;
+        self.cutoff_1e12_tail_signed_abs += sample.cutoff_1e12_tail_signed_abs;
+        self.cutoff_1e10_samples += sample.cutoff_1e10_samples;
+        self.cutoff_1e10_saved_terms += sample.cutoff_1e10_saved_terms;
+        self.cutoff_1e10_tail_abs += sample.cutoff_1e10_tail_abs;
+        self.cutoff_1e10_tail_signed_abs += sample.cutoff_1e10_tail_signed_abs;
     }
 
     pub fn print(self: *Profile) void {
         const fourier_denom = @max(@as(f64, @floatFromInt(self.fourier_count)), 1.0);
+        const geometry_total = self.geometry_cache_hits + self.geometry_cache_misses;
+        const plm_total = self.plm_basis_hits + self.plm_basis_misses + self.plm_basis_extensions;
+        const phase_layer_denom = @max(@as(f64, @floatFromInt(self.phase_signature_layers)), 1.0);
+        const phase_template_denom = @max(@as(f64, @floatFromInt(self.possible_layer_templates)), 1.0);
         std.debug.print(
             "[zds-profile] labos_samples={} fourier_terms={} attenuation={d:.3}ms allocation={d:.3}ms phase_indices={d:.3}ms plm_basis={d:.3}ms rt_layers={d:.3}ms surface={d:.3}ms orders={d:.3}ms reflectance={d:.3}ms reflectance_phase_kernel={d:.3}ms reflectance_contribution={d:.3}ms orders_mean={d:.3}ms/fourier rt_layers_mean={d:.3}ms/fourier\n",
             .{
@@ -94,6 +165,41 @@ pub const Profile = struct {
                 nsToMs(self.rt_layers_ns) / fourier_denom,
             },
         );
+        std.debug.print(
+            "[zds-profile] labos_reuse geometry_hits={} geometry_misses={} geometry_hit_rate={d:.3} plm_hits={} plm_misses={} plm_extensions={} plm_hit_rate={d:.3} phase_max_matches={} phase_signature_matches={} phase_signature_match_rate={d:.3} reusable_layer_templates={} possible_layer_templates={} layer_template_reuse_rate={d:.3}\n",
+            .{
+                self.geometry_cache_hits,
+                self.geometry_cache_misses,
+                ratio(self.geometry_cache_hits, geometry_total),
+                self.plm_basis_hits,
+                self.plm_basis_misses,
+                self.plm_basis_extensions,
+                ratio(self.plm_basis_hits, plm_total),
+                self.phase_signature_max_matches,
+                self.phase_signature_matches,
+                @as(f64, @floatFromInt(self.phase_signature_matches)) / phase_layer_denom,
+                self.reusable_layer_templates,
+                self.possible_layer_templates,
+                @as(f64, @floatFromInt(self.reusable_layer_templates)) / phase_template_denom,
+            },
+        );
+        std.debug.print(
+            "[zds-profile] labos_fourier_cutoffs tol_1e-13_samples={} tol_1e-13_saved_terms={} tol_1e-13_tail_abs={e:.6} tol_1e-13_tail_signed_abs={e:.6} tol_1e-12_samples={} tol_1e-12_saved_terms={} tol_1e-12_tail_abs={e:.6} tol_1e-12_tail_signed_abs={e:.6} tol_1e-10_samples={} tol_1e-10_saved_terms={} tol_1e-10_tail_abs={e:.6} tol_1e-10_tail_signed_abs={e:.6}\n",
+            .{
+                self.cutoff_1e13_samples,
+                self.cutoff_1e13_saved_terms,
+                self.cutoff_1e13_tail_abs,
+                self.cutoff_1e13_tail_signed_abs,
+                self.cutoff_1e12_samples,
+                self.cutoff_1e12_saved_terms,
+                self.cutoff_1e12_tail_abs,
+                self.cutoff_1e12_tail_signed_abs,
+                self.cutoff_1e10_samples,
+                self.cutoff_1e10_saved_terms,
+                self.cutoff_1e10_tail_abs,
+                self.cutoff_1e10_tail_signed_abs,
+            },
+        );
     }
 };
 
@@ -107,6 +213,64 @@ pub fn setProfile(profile: ?*Profile) ?*Profile {
 
 fn nsToMs(ns: i128) f64 {
     return @as(f64, @floatFromInt(ns)) / 1.0e6;
+}
+
+fn ratio(numerator: usize, denominator: usize) f64 {
+    if (denominator == 0) return 0.0;
+    return @as(f64, @floatFromInt(numerator)) / @as(f64, @floatFromInt(denominator));
+}
+
+const FourierCutoffStats = struct {
+    sample_count: usize = 0,
+    saved_terms: usize = 0,
+    tail_abs: f64 = 0.0,
+    tail_signed_abs: f64 = 0.0,
+};
+
+fn fourierCutoffStats(
+    raw_abs_terms: []const f64,
+    weighted_terms: []const f64,
+    floor_scalar: usize,
+    tolerance: f64,
+) FourierCutoffStats {
+    std.debug.assert(raw_abs_terms.len == weighted_terms.len);
+    for (raw_abs_terms, 0..) |raw_abs, index| {
+        if (index < floor_scalar or raw_abs > tolerance) continue;
+
+        var tail_abs: f64 = 0.0;
+        var tail_signed: f64 = 0.0;
+        for (weighted_terms[index + 1 ..]) |weighted| {
+            tail_abs += @abs(weighted);
+            tail_signed += weighted;
+        }
+        return .{
+            .sample_count = 1,
+            .saved_terms = raw_abs_terms.len - index - 1,
+            .tail_abs = tail_abs,
+            .tail_signed_abs = @abs(tail_signed),
+        };
+    }
+    return .{};
+}
+
+fn addCutoffStats(sample: *Profile.Sample, raw_abs_terms: []const f64, weighted_terms: []const f64, floor_scalar: usize) void {
+    const stats_1e13 = fourierCutoffStats(raw_abs_terms, weighted_terms, floor_scalar, 1.0e-13);
+    sample.cutoff_1e13_samples += stats_1e13.sample_count;
+    sample.cutoff_1e13_saved_terms += stats_1e13.saved_terms;
+    sample.cutoff_1e13_tail_abs += stats_1e13.tail_abs;
+    sample.cutoff_1e13_tail_signed_abs += stats_1e13.tail_signed_abs;
+
+    const stats_1e12 = fourierCutoffStats(raw_abs_terms, weighted_terms, floor_scalar, 1.0e-12);
+    sample.cutoff_1e12_samples += stats_1e12.sample_count;
+    sample.cutoff_1e12_saved_terms += stats_1e12.saved_terms;
+    sample.cutoff_1e12_tail_abs += stats_1e12.tail_abs;
+    sample.cutoff_1e12_tail_signed_abs += stats_1e12.tail_signed_abs;
+
+    const stats_1e10 = fourierCutoffStats(raw_abs_terms, weighted_terms, floor_scalar, 1.0e-10);
+    sample.cutoff_1e10_samples += stats_1e10.sample_count;
+    sample.cutoff_1e10_saved_terms += stats_1e10.saved_terms;
+    sample.cutoff_1e10_tail_abs += stats_1e10.tail_abs;
+    sample.cutoff_1e10_tail_signed_abs += stats_1e10.tail_signed_abs;
 }
 
 fn directSurfaceOnlyReflectance(input: common.ForwardInput) f64 {
@@ -218,10 +382,20 @@ fn layerResolvedLabosWithWorkspace(
     var owned_geo: Geometry = undefined;
     const profile_enabled = active_profile != null;
     var profile_sample = Profile.Sample{};
-    const geo = if (workspace) |scratch|
-        scratch.geometry(controls.nGauss(), mu0, muv)
-    else blk: {
+    const geo = if (workspace) |scratch| blk: {
+        if (profile_enabled) {
+            const status = scratch.geometryWithStatus(controls.nGauss(), mu0, muv);
+            if (status.hit) {
+                profile_sample.geometry_cache_hits += 1;
+            } else {
+                profile_sample.geometry_cache_misses += 1;
+            }
+            break :blk status.geometry;
+        }
+        break :blk scratch.geometry(controls.nGauss(), mu0, muv);
+    } else blk: {
         owned_geo = Geometry.init(controls.nGauss(), mu0, muv);
+        if (profile_enabled) profile_sample.geometry_cache_misses += 1;
         break :blk &owned_geo;
     };
     const owned_atten = workspace == null;
@@ -297,16 +471,44 @@ fn layerResolvedLabosWithWorkspace(
         }
         break :blk null;
     } else null;
+    if (profile_enabled) {
+        if (workspace) |scratch| {
+            if (layer_phase_max_indices) |indices| {
+                const probe = try scratch.probeLayerPhaseSignatures(input.layers, indices, fourier_max);
+                profile_sample.phase_signature_layers += probe.layer_count;
+                profile_sample.phase_signature_max_matches += probe.max_index_matches;
+                profile_sample.phase_signature_matches += probe.signature_matches;
+                profile_sample.reusable_layer_templates += probe.reusable_fourier_layer_templates;
+                profile_sample.possible_layer_templates += probe.possible_fourier_layer_templates;
+            }
+        }
+    }
     if (profile_enabled) profile_sample.phase_index_ns += std.time.nanoTimestamp() - phase_index_start;
+
+    var raw_abs_terms: [basis.max_phase_coef]f64 = undefined;
+    var weighted_terms: [basis.max_phase_coef]f64 = undefined;
+    var stored_fourier_terms: usize = 0;
 
     for (0..fourier_max + 1) |i_fourier| {
         profile_sample.fourier_count += 1;
         const plm_start = if (profile_enabled) std.time.nanoTimestamp() else 0;
         var owned_plm_basis: basis.FourierPlmBasis = undefined;
-        const plm_basis = if (workspace) |scratch|
-            try scratch.fourierPlmBasis(i_fourier, phase_max, geo)
-        else blk: {
+        const plm_basis = if (workspace) |scratch| blk: {
+            if (profile_enabled) {
+                const status = try scratch.fourierPlmBasisWithStatus(i_fourier, phase_max, geo);
+                if (status.hit) {
+                    profile_sample.plm_basis_hits += 1;
+                } else if (status.extended) {
+                    profile_sample.plm_basis_extensions += 1;
+                } else {
+                    profile_sample.plm_basis_misses += 1;
+                }
+                break :blk status.plm_basis;
+            }
+            break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, geo);
+        } else blk: {
             owned_plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
+            if (profile_enabled) profile_sample.plm_basis_misses += 1;
             break :blk &owned_plm_basis;
         };
         if (profile_enabled) profile_sample.plm_basis_ns += std.time.nanoTimestamp() - plm_start;
@@ -392,7 +594,21 @@ fn layerResolvedLabosWithWorkspace(
             break :blk (2.0 * refl_fc) * cos_m_dphi;
         };
         reflectance += weighted_refl_fc;
+        if (profile_enabled and stored_fourier_terms < raw_abs_terms.len) {
+            raw_abs_terms[stored_fourier_terms] = @abs(refl_fc);
+            weighted_terms[stored_fourier_terms] = weighted_refl_fc;
+            stored_fourier_terms += 1;
+        }
         if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) break;
+    }
+
+    if (profile_enabled) {
+        addCutoffStats(
+            &profile_sample,
+            raw_abs_terms[0..stored_fourier_terms],
+            weighted_terms[0..stored_fourier_terms],
+            controls.fourier_floor_scalar,
+        );
     }
 
     if (active_profile) |profiler| profiler.addSample(profile_sample);

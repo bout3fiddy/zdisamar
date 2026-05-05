@@ -18,6 +18,8 @@ pub const Workspace = struct {
     layer_phase_kernel_valid: []bool = &.{},
     plm_basis_cache: []basis.FourierPlmBasis = &.{},
     plm_basis_cache_valid: []bool = &.{},
+    previous_layer_phase_signatures: []u64 = &.{},
+    previous_layer_phase_signature_valid: []bool = &.{},
     cached_geometry: basis.Geometry = undefined,
     cached_geometry_valid: bool = false,
 
@@ -36,6 +38,8 @@ pub const Workspace = struct {
         self.allocator.free(self.layer_phase_kernel_valid);
         self.allocator.free(self.plm_basis_cache);
         self.allocator.free(self.plm_basis_cache_valid);
+        self.allocator.free(self.previous_layer_phase_signatures);
+        self.allocator.free(self.previous_layer_phase_signature_valid);
         self.* = undefined;
     }
 
@@ -67,6 +71,24 @@ pub const Workspace = struct {
         mu0: f64,
         muv: f64,
     ) *const basis.Geometry {
+        return self.geometryWithStatus(n_gauss, mu0, muv).geometry;
+    }
+
+    pub const GeometryCacheStatus = struct {
+        geometry: *const basis.Geometry,
+        hit: bool,
+    };
+
+    pub fn geometryWithStatus(
+        self: *Workspace,
+        n_gauss: usize,
+        mu0: f64,
+        muv: f64,
+    ) GeometryCacheStatus {
+        const hit = self.cached_geometry_valid and
+            self.cached_geometry.n_gauss == n_gauss and
+            self.cached_geometry.mu0 == mu0 and
+            self.cached_geometry.muv == muv;
         if (!self.cached_geometry_valid or
             self.cached_geometry.n_gauss != n_gauss or
             self.cached_geometry.mu0 != mu0 or
@@ -75,8 +97,9 @@ pub const Workspace = struct {
             self.cached_geometry = basis.Geometry.init(n_gauss, mu0, muv);
             self.cached_geometry_valid = true;
             @memset(self.plm_basis_cache_valid, false);
+            @memset(self.previous_layer_phase_signature_valid, false);
         }
-        return &self.cached_geometry;
+        return .{ .geometry = &self.cached_geometry, .hit = hit };
     }
 
     pub fn layerRt(self: *Workspace, nlevel: usize) ![]basis.LayerRT {
@@ -120,6 +143,21 @@ pub const Workspace = struct {
         max_phase_index: usize,
         geo: *const basis.Geometry,
     ) !*const basis.FourierPlmBasis {
+        return (try self.fourierPlmBasisWithStatus(i_fourier, max_phase_index, geo)).plm_basis;
+    }
+
+    pub const PlmBasisCacheStatus = struct {
+        plm_basis: *const basis.FourierPlmBasis,
+        hit: bool,
+        extended: bool,
+    };
+
+    pub fn fourierPlmBasisWithStatus(
+        self: *Workspace,
+        i_fourier: usize,
+        max_phase_index: usize,
+        geo: *const basis.Geometry,
+    ) !PlmBasisCacheStatus {
         std.debug.assert(i_fourier < basis.max_phase_coef);
         const previous_cache_len = self.plm_basis_cache.len;
         const previous_valid_len = self.plm_basis_cache_valid.len;
@@ -128,15 +166,74 @@ pub const Workspace = struct {
         if (previous_cache_len < basis.max_phase_coef or previous_valid_len < basis.max_phase_coef) {
             @memset(self.plm_basis_cache_valid, false);
         }
-        if (!self.plm_basis_cache_valid[i_fourier] or
-            self.plm_basis_cache[i_fourier].max_phase_index < max_phase_index)
-        {
+        const was_valid = self.plm_basis_cache_valid[i_fourier];
+        const needs_extend = was_valid and self.plm_basis_cache[i_fourier].max_phase_index < max_phase_index;
+        if (!was_valid or needs_extend) {
             self.plm_basis_cache[i_fourier] = basis.FourierPlmBasis.init(i_fourier, max_phase_index, geo);
             self.plm_basis_cache_valid[i_fourier] = true;
         }
-        return &self.plm_basis_cache[i_fourier];
+        return .{
+            .plm_basis = &self.plm_basis_cache[i_fourier],
+            .hit = was_valid and !needs_extend,
+            .extended = needs_extend,
+        };
+    }
+
+    pub const LayerPhaseSignatureProbe = struct {
+        layer_count: usize = 0,
+        max_index_matches: usize = 0,
+        signature_matches: usize = 0,
+        reusable_fourier_layer_templates: usize = 0,
+        possible_fourier_layer_templates: usize = 0,
+    };
+
+    pub fn probeLayerPhaseSignatures(
+        self: *Workspace,
+        layers: []const common.LayerInput,
+        layer_phase_max_indices: []const usize,
+        fourier_max: usize,
+    ) !LayerPhaseSignatureProbe {
+        std.debug.assert(layer_phase_max_indices.len >= layers.len);
+        try ensureCapacity(u64, self.allocator, &self.previous_layer_phase_signatures, layers.len);
+        const previous_valid_len = self.previous_layer_phase_signature_valid.len;
+        try ensureCapacity(bool, self.allocator, &self.previous_layer_phase_signature_valid, layers.len);
+        if (previous_valid_len < layers.len) {
+            @memset(self.previous_layer_phase_signature_valid, false);
+        }
+
+        var probe = LayerPhaseSignatureProbe{ .layer_count = layers.len };
+        for (layers, layer_phase_max_indices[0..layers.len], 0..) |layer, max_index, layer_idx| {
+            const signature = layerPhaseSignature(layer.phase_coefficients, max_index);
+            const possible_templates = @min(max_index, fourier_max) + 1;
+            probe.possible_fourier_layer_templates += possible_templates;
+            if (self.previous_layer_phase_signature_valid[layer_idx]) {
+                const previous_signature = self.previous_layer_phase_signatures[layer_idx];
+                if (signatureMaxIndex(previous_signature) == max_index) probe.max_index_matches += 1;
+                if (previous_signature == signature) {
+                    probe.signature_matches += 1;
+                    probe.reusable_fourier_layer_templates += possible_templates;
+                }
+            }
+            self.previous_layer_phase_signatures[layer_idx] = signature;
+            self.previous_layer_phase_signature_valid[layer_idx] = true;
+        }
+        return probe;
     }
 };
+
+fn layerPhaseSignature(phase_coefficients: [common.phase_coefficient_count]f64, max_index: usize) u64 {
+    var hasher = std.hash.Wyhash.init(0x9e37_79b9_7f4a_7c15);
+    hasher.update(std.mem.asBytes(&max_index));
+    for (phase_coefficients[0 .. max_index + 1]) |coefficient| {
+        const bits = @as(u64, @bitCast(coefficient));
+        hasher.update(std.mem.asBytes(&bits));
+    }
+    return (@as(u64, @intCast(max_index)) << 56) ^ (hasher.final() & 0x00ff_ffff_ffff_ffff);
+}
+
+fn signatureMaxIndex(signature: u64) usize {
+    return @intCast(signature >> 56);
+}
 
 fn ensureCapacity(
     comptime T: type,
