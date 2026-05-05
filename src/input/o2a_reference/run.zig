@@ -32,7 +32,6 @@ pub const PlanSpec = reference_types.PlanSpec;
 pub const Metadata = reference_types.Metadata;
 pub const GeometrySpec = reference_types.GeometrySpec;
 pub const AerosolSpec = reference_types.AerosolSpec;
-pub const CloudSpec = reference_types.CloudSpec;
 pub const ObservationSpec = reference_types.ObservationSpec;
 pub const LineGasSpec = reference_types.LineGasSpec;
 pub const CiaSpec = reference_types.CiaSpec;
@@ -348,11 +347,6 @@ pub fn buildResolvedVendorO2AScene(
         .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
     };
 
-    const cloud_enabled = if (resolved.cloud) |cloud|
-        cloud.enabled and cloud.optical_thickness > 0.0
-    else
-        false;
-
     var scene: Scene = .{
         .id = resolved.scene_id,
         .surface = .{
@@ -370,17 +364,6 @@ pub fn buildResolvedVendorO2AScene(
             .layer_width_km = resolved.aerosol.layer_width_km,
             .placement = resolved.aerosol.placement,
         },
-        .cloud = if (resolved.cloud) |cloud| .{
-            .id = cloud.id,
-            .cloud_type = cloud.cloud_type,
-            .enabled = cloud.enabled,
-            .optical_thickness = cloud.optical_thickness,
-            .single_scatter_albedo = cloud.single_scatter_albedo,
-            .asymmetry_factor = cloud.asymmetry_factor,
-            .angstrom_exponent = cloud.angstrom_exponent,
-            .reference_wavelength_nm = cloud.reference_wavelength_nm,
-            .placement = cloud.placement,
-        } else .{},
         .geometry = .{
             .model = resolved.geometry.model,
             .solar_zenith_deg = resolved.geometry.solar_zenith_deg,
@@ -392,7 +375,6 @@ pub fn buildResolvedVendorO2AScene(
             .sublayer_divisions = resolved.sublayer_divisions,
             .surface_pressure_hpa = resolved.surface_pressure_hpa,
             .has_aerosols = true,
-            .has_clouds = cloud_enabled,
         },
         .spectral_grid = resolved.spectral_grid,
         .absorbers = .{

@@ -1,6 +1,5 @@
 const std = @import("std");
 const AtmosphereModel = @import("../Atmosphere.zig");
-const CloudModel = @import("../Cloud.zig");
 const InstrumentGrid = @import("../../forward_model/instrument_grid/root.zig");
 const implementations = @import("../../forward_model/implementations/root.zig");
 const metrics = @import("metrics.zig");
@@ -213,7 +212,6 @@ pub fn renderInputJson(allocator: Allocator, input: *const O2AInput) ![]u8 {
         .surface_albedo = input.surface_albedo,
         .geometry = input.geometry,
         .aerosol = input.aerosol,
-        .cloud = input.cloud,
         .observation = input.observation,
         .o2 = .{
             .line_list_asset = input.o2.line_list_asset,
@@ -232,10 +230,7 @@ pub fn renderInputJson(allocator: Allocator, input: *const O2AInput) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
         "{f}\n",
-        .{std.json.fmt(view, .{
-            .whitespace = .indent_2,
-            .emit_null_optional_fields = false,
-        })},
+        .{std.json.fmt(view, .{ .whitespace = .indent_2 })},
     );
 }
 
@@ -266,20 +261,6 @@ pub fn validateInput(input: *const O2AInput) !void {
     if (input.intervals.len == 0) return error.InvalidAtmosphere;
     for (input.intervals) |interval| try interval.validate();
     try input.aerosol.placement.validate();
-    if (input.cloud) |cloud| {
-        const native_cloud: CloudModel.Cloud = .{
-            .id = cloud.id,
-            .cloud_type = cloud.cloud_type,
-            .enabled = cloud.enabled,
-            .optical_thickness = cloud.optical_thickness,
-            .single_scatter_albedo = cloud.single_scatter_albedo,
-            .asymmetry_factor = cloud.asymmetry_factor,
-            .angstrom_exponent = cloud.angstrom_exponent,
-            .reference_wavelength_nm = cloud.reference_wavelength_nm,
-            .placement = cloud.placement,
-        };
-        try native_cloud.validate();
-    }
     try input.plan.validate();
     try input.rtm_controls.validate(try input.plan.executionMode());
     try requireAsset(input.inputs.atmosphere_profile);
