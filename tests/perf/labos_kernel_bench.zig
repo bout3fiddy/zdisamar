@@ -13,6 +13,7 @@ pub fn main() !void {
     var e = vecSeed();
 
     try runMatBench("qseries_12x10", 200_000, &r, &t, &e, benchQseries);
+    try runMatBench("qseries_nonzero_12x10", 200_000, &r, &t, &e, benchQseriesNonzero);
     try runMatBench("smul_12x10", 800_000, &r, &t, &e, benchSmul);
     try runMatBench("matAddSemul3_12", 3_000_000, &r, &t, &e, benchMatAddSemul3);
     try runMatBench("matAddEsmul3_12", 3_000_000, &r, &t, &e, benchMatAddEsmul3);
@@ -57,6 +58,10 @@ fn runMatBench(
 
 fn benchQseries(r: *const labos.Mat, _: *const labos.Mat, _: *const labos.Vec) labos.Mat {
     return labos.qseries(n, n_gauss, threshold_mul, r, r);
+}
+
+fn benchQseriesNonzero(r: *const labos.Mat, _: *const labos.Mat, _: *const labos.Vec) labos.Mat {
+    return labos.qseriesKnownNonzeroProduct(n, n_gauss, r, r);
 }
 
 fn benchSmul(r: *const labos.Mat, t: *const labos.Mat, _: *const labos.Vec) labos.Mat {

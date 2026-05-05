@@ -26,6 +26,7 @@ pub const matAddEsmul3 = matrix.matAddEsmul3;
 pub const semulAdd = matrix.semulAdd;
 pub const esmulSemulAdd = matrix.esmulSemulAdd;
 pub const qseries = matrix.qseries;
+pub const qseriesKnownNonzeroProduct = matrix.qseriesKnownNonzeroProduct;
 
 pub const PhaseKernel = phase_basis.PhaseKernel;
 pub const PhaseKernelRow = phase_basis.PhaseKernelRow;

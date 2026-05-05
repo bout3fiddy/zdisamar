@@ -374,7 +374,7 @@ fn doDouble(
             break :blk T.*;
         } else blk: {
             const q_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-            const Q = basis.qseries(n, n_gauss, threshold_mul, R, R);
+            const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
             if (profile_sample) |sample| sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
 
             const smul_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;

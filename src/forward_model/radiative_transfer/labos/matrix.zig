@@ -309,7 +309,15 @@ fn esmulSemulAdd12(e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) M
 
 pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     const ab = smul(n, n_gauss, threshold_mul, a, b);
+    return qseriesFromProduct(n, n_gauss, &ab);
+}
 
+pub fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
+    const ab = smulNonzeroProduct(n, n_gauss, a, b);
+    return qseriesFromProduct(n, n_gauss, &ab);
+}
+
+fn qseriesFromProduct(n: usize, n_gauss: usize, ab: *const Mat) Mat {
     const trab: f64 = if (n == 12 and n_gauss == 10) blk: {
         var trace = ab.data[0];
         trace += ab.data[13];
@@ -327,7 +335,7 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
         for (0..n_gauss) |k| trace += ab.data[k * n + k];
         break :blk trace;
     };
-    if (@abs(trab) < threshold_q) return ab;
+    if (@abs(trab) < threshold_q) return ab.*;
 
     const n_extra = n - n_gauss;
 
@@ -365,7 +373,7 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
             pivot_offset[max_row] = tmp_offset;
         }
         const diag = one_minus_ab_gg[pivot_offset[col] + col];
-        if (@abs(diag) < 1.0e-30) return ab;
+        if (@abs(diag) < 1.0e-30) return ab.*;
         for (col + 1..n_gauss) |row| {
             const row_offset = pivot_offset[row];
             const col_offset = pivot_offset[col];
@@ -437,5 +445,33 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
         }
     }
 
+    return result;
+}
+
+fn smulNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
+    if (n == 12 and n_gauss == 10) return smul12x10(a, b);
+
+    var result = Mat{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        if (n_gauss == 0) break;
+        const b0j = b.data[j];
+        var idx = j;
+        var a_idx: usize = 0;
+        for (0..n) |_| {
+            result.data[idx] = a.data[a_idx] * b0j;
+            idx += n;
+            a_idx += n;
+        }
+        for (1..n_gauss) |k| {
+            const bkj = b.data[k * n + j];
+            idx = j;
+            a_idx = k;
+            for (0..n) |_| {
+                result.data[idx] += a.data[a_idx] * bkj;
+                idx += n;
+                a_idx += n;
+            }
+        }
+    }
     return result;
 }
