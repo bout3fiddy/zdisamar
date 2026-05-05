@@ -354,7 +354,6 @@ class RadiativeTransferControls:
     integrate_source_function: bool
     renorm_phase_function: bool
     stokes_dimension: int
-    accuracy_target: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RadiativeTransferControls":
@@ -368,7 +367,6 @@ class RadiativeTransferControls:
             threshold_conv_mult=_float(data["threshold_conv_mult"]),
             threshold_doubl=_float(data["threshold_doubl"]),
             threshold_mul=_float(data["threshold_mul"]),
-            accuracy_target=None if data.get("accuracy_target") is None else _float(data["accuracy_target"]),
             use_spherical_correction=bool(data["use_spherical_correction"]),
             integrate_source_function=bool(data["integrate_source_function"]),
             renorm_phase_function=bool(data["renorm_phase_function"]),
@@ -386,7 +384,6 @@ class RadiativeTransferControls:
             "threshold_conv_mult": self.threshold_conv_mult,
             "threshold_doubl": self.threshold_doubl,
             "threshold_mul": self.threshold_mul,
-            "accuracy_target": self.accuracy_target,
             "use_spherical_correction": self.use_spherical_correction,
             "integrate_source_function": self.integrate_source_function,
             "renorm_phase_function": self.renorm_phase_function,

@@ -391,19 +391,15 @@ fn esmulSemulAdd12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *con
 
 pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     const ab = smul(n, n_gauss, threshold_mul, a, b);
-    return qseriesFromProduct(n, n_gauss, &ab, threshold_q);
+    return qseriesFromProduct(n, n_gauss, &ab);
 }
 
 pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
-    return qseriesKnownNonzeroProductWithThreshold(n, n_gauss, threshold_q, a, b);
-}
-
-pub inline fn qseriesKnownNonzeroProductWithThreshold(n: usize, n_gauss: usize, qseries_trace_threshold: f64, a: *const Mat, b: *const Mat) Mat {
     const ab = smulNonzeroProduct(n, n_gauss, a, b);
-    return qseriesFromProduct(n, n_gauss, &ab, qseries_trace_threshold);
+    return qseriesFromProduct(n, n_gauss, &ab);
 }
 
-inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat, qseries_trace_threshold: f64) Mat {
+inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) Mat {
     const trab: f64 = if (n == 12 and n_gauss == 10) blk: {
         var trace = ab.data[0];
         trace += ab.data[13];
@@ -421,7 +417,7 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat, q
         for (0..n_gauss) |k| trace += ab.data[k * n + k];
         break :blk trace;
     };
-    if (@abs(trab) < qseries_trace_threshold) return ab.*;
+    if (@abs(trab) < threshold_q) return ab.*;
 
     const n_extra = n - n_gauss;
 
