@@ -27,6 +27,18 @@ pub const Profile = struct {
     double_td_ns: i128 = 0,
     double_t_new_ns: i128 = 0,
     double_exponent_ns: i128 = 0,
+    double_qseries_calls: usize = 0,
+    double_d_kernel_calls: usize = 0,
+    double_rd_smul_calls: usize = 0,
+    double_rd_zero_skips: usize = 0,
+    double_u_kernel_calls: usize = 0,
+    double_tu_smul_calls: usize = 0,
+    double_tu_zero_skips: usize = 0,
+    double_r_new_kernel_calls: usize = 0,
+    double_td_smul_calls: usize = 0,
+    double_td_zero_skips: usize = 0,
+    double_t_new_kernel_calls: usize = 0,
+    double_q_zero_skips: usize = 0,
     store_ns: i128 = 0,
     layer_count: usize = 0,
     doubling_count: usize = 0,
@@ -51,6 +63,18 @@ pub const Profile = struct {
         double_td_ns: i128 = 0,
         double_t_new_ns: i128 = 0,
         double_exponent_ns: i128 = 0,
+        double_qseries_calls: usize = 0,
+        double_d_kernel_calls: usize = 0,
+        double_rd_smul_calls: usize = 0,
+        double_rd_zero_skips: usize = 0,
+        double_u_kernel_calls: usize = 0,
+        double_tu_smul_calls: usize = 0,
+        double_tu_zero_skips: usize = 0,
+        double_r_new_kernel_calls: usize = 0,
+        double_td_smul_calls: usize = 0,
+        double_td_zero_skips: usize = 0,
+        double_t_new_kernel_calls: usize = 0,
+        double_q_zero_skips: usize = 0,
         store_ns: i128 = 0,
         layer_count: usize = 0,
         doubling_count: usize = 0,
@@ -78,6 +102,18 @@ pub const Profile = struct {
         self.double_td_ns += sample.double_td_ns;
         self.double_t_new_ns += sample.double_t_new_ns;
         self.double_exponent_ns += sample.double_exponent_ns;
+        self.double_qseries_calls += sample.double_qseries_calls;
+        self.double_d_kernel_calls += sample.double_d_kernel_calls;
+        self.double_rd_smul_calls += sample.double_rd_smul_calls;
+        self.double_rd_zero_skips += sample.double_rd_zero_skips;
+        self.double_u_kernel_calls += sample.double_u_kernel_calls;
+        self.double_tu_smul_calls += sample.double_tu_smul_calls;
+        self.double_tu_zero_skips += sample.double_tu_zero_skips;
+        self.double_r_new_kernel_calls += sample.double_r_new_kernel_calls;
+        self.double_td_smul_calls += sample.double_td_smul_calls;
+        self.double_td_zero_skips += sample.double_td_zero_skips;
+        self.double_t_new_kernel_calls += sample.double_t_new_kernel_calls;
+        self.double_q_zero_skips += sample.double_q_zero_skips;
         self.store_ns += sample.store_ns;
         self.layer_count += sample.layer_count;
         self.doubling_count += sample.doubling_count;
@@ -113,6 +149,23 @@ pub const Profile = struct {
                 nsToMs(self.store_ns),
                 nsToMs(self.fill_phase_ns) / layer_denom,
                 nsToMs(self.doubling_ns) / layer_denom,
+            },
+        );
+        std.debug.print(
+            "[zds-profile] labos_matrix_calls qseries={} d={} rd={} u={} tu={} r_new={} td={} t_new={} zero_skips_q={} zero_skips_rd={} zero_skips_tu={} zero_skips_td={}\n",
+            .{
+                self.double_qseries_calls,
+                self.double_d_kernel_calls,
+                self.double_rd_smul_calls,
+                self.double_u_kernel_calls,
+                self.double_tu_smul_calls,
+                self.double_r_new_kernel_calls,
+                self.double_td_smul_calls,
+                self.double_t_new_kernel_calls,
+                self.double_q_zero_skips,
+                self.double_rd_zero_skips,
+                self.double_tu_zero_skips,
+                self.double_td_zero_skips,
             },
         );
     }
@@ -348,6 +401,16 @@ fn gaussTrace(n: usize, n_gauss: usize, mat: *const basis.Mat) f64 {
     return trace;
 }
 
+fn smulWouldSkip(
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    a: *const basis.Mat,
+    b: *const basis.Mat,
+) bool {
+    return @abs(gaussTrace(n, n_gauss, a) * gaussTrace(n, n_gauss, b)) <= threshold_mul;
+}
+
 // Perform ndouble doubling steps on R, T, E for a layer.
 fn doDouble(
     ndouble: usize,
@@ -371,44 +434,75 @@ fn doDouble(
         if (profile_sample) |sample| sample.double_zero_check_ns += std.time.nanoTimestamp() - zero_check_start;
 
         const D = if (q_is_zero) blk: {
+            if (profile_sample) |sample| sample.double_q_zero_skips += 1;
             break :blk T.*;
         } else blk: {
             const q_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
             const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
-            if (profile_sample) |sample| sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
+            if (profile_sample) |sample| {
+                sample.double_qseries_calls += 1;
+                sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
+            }
 
             const combine_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
             const combined = basis.smulAddSemul3(n, n_gauss, threshold_mul, &Q, E, T);
-            if (profile_sample) |sample| sample.double_qt_ns += std.time.nanoTimestamp() - combine_start;
+            if (profile_sample) |sample| {
+                sample.double_d_kernel_calls += 1;
+                sample.double_qt_ns += std.time.nanoTimestamp() - combine_start;
+            }
             break :blk combined;
         };
 
         const rd_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         var rd: basis.Mat = undefined;
+        const rd_skipped = if (profile_sample != null) smulWouldSkip(n, n_gauss, threshold_mul, R, &D) else false;
         basis.smulInto(&rd, n, n_gauss, threshold_mul, R, &D);
-        if (profile_sample) |sample| sample.double_rd_ns += std.time.nanoTimestamp() - rd_start;
+        if (profile_sample) |sample| {
+            sample.double_rd_smul_calls += 1;
+            if (rd_skipped) sample.double_rd_zero_skips += 1;
+            sample.double_rd_ns += std.time.nanoTimestamp() - rd_start;
+        }
 
         const u_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const U = basis.semulAdd(n, R, E, &rd);
-        if (profile_sample) |sample| sample.double_u_ns += std.time.nanoTimestamp() - u_start;
+        if (profile_sample) |sample| {
+            sample.double_u_kernel_calls += 1;
+            sample.double_u_ns += std.time.nanoTimestamp() - u_start;
+        }
 
         const tu_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         var tu: basis.Mat = undefined;
+        const tu_skipped = if (profile_sample != null) smulWouldSkip(n, n_gauss, threshold_mul, T, &U) else false;
         basis.smulInto(&tu, n, n_gauss, threshold_mul, T, &U);
-        if (profile_sample) |sample| sample.double_tu_ns += std.time.nanoTimestamp() - tu_start;
+        if (profile_sample) |sample| {
+            sample.double_tu_smul_calls += 1;
+            if (tu_skipped) sample.double_tu_zero_skips += 1;
+            sample.double_tu_ns += std.time.nanoTimestamp() - tu_start;
+        }
 
         const r_new_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const R_new = basis.matAddEsmul3(n, R, E, &U, &tu);
-        if (profile_sample) |sample| sample.double_r_new_ns += std.time.nanoTimestamp() - r_new_start;
+        if (profile_sample) |sample| {
+            sample.double_r_new_kernel_calls += 1;
+            sample.double_r_new_ns += std.time.nanoTimestamp() - r_new_start;
+        }
 
         const td_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         var td: basis.Mat = undefined;
+        const td_skipped = if (profile_sample != null) smulWouldSkip(n, n_gauss, threshold_mul, T, &D) else false;
         basis.smulInto(&td, n, n_gauss, threshold_mul, T, &D);
-        if (profile_sample) |sample| sample.double_td_ns += std.time.nanoTimestamp() - td_start;
+        if (profile_sample) |sample| {
+            sample.double_td_smul_calls += 1;
+            if (td_skipped) sample.double_td_zero_skips += 1;
+            sample.double_td_ns += std.time.nanoTimestamp() - td_start;
+        }
 
         const t_new_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         const T_new = basis.esmulSemulAdd(n, E, &D, T, &td);
-        if (profile_sample) |sample| sample.double_t_new_ns += std.time.nanoTimestamp() - t_new_start;
+        if (profile_sample) |sample| {
+            sample.double_t_new_kernel_calls += 1;
+            sample.double_t_new_ns += std.time.nanoTimestamp() - t_new_start;
+        }
 
         // PARITY: DISAMAR's whole-array assignments evaluate both RHS values
         // from the pre-step operators before storing the doubled layer state.
