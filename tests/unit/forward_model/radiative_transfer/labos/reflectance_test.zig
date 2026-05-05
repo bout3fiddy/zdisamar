@@ -89,7 +89,6 @@ test "cached layer kernels preserve integrated reflectance when source interface
         null,
         &kernel_cache,
         &kernel_valid,
-        null,
     );
 
     try std.testing.expectApproxEqAbs(baseline, cached, 1.0e-12);
@@ -159,7 +158,6 @@ test "integrated source truncates quadrature phase kernels by adjacent layers" {
         null,
         null,
         null,
-        null,
     );
     const expected = calcIntegratedReflectanceWithBasis(
         &layers,
@@ -170,7 +168,6 @@ test "integrated source truncates quadrature phase kernels by adjacent layers" {
         i_fourier,
         &geo,
         &plm_basis,
-        null,
         null,
         null,
         null,

@@ -17,7 +17,6 @@ const reference_types = @import("types.zig");
 const adaptive_plan = @import("../../forward_model/implementations/instrument/adaptive_plan.zig");
 const instrument_types = @import("../../forward_model/implementations/instrument/types.zig");
 const fixed_asset_cache = @import("fixed_asset_cache.zig");
-const prepare_trace = @import("../../common/prepare_trace.zig");
 
 const Allocator = std.mem.Allocator;
 pub const AbsorberSpecies = reference_types.AbsorberSpecies;
@@ -482,14 +481,11 @@ pub fn prepareResolvedVendorO2ACase(
     route: Route,
     prepared: OpticsPrepare.PreparedOpticalState,
 } {
-    var trace = prepare_trace.Trace.init();
     var inputs = try loadResolvedVendorO2AInputs(allocator, resolved);
     defer inputs.deinit(allocator);
-    trace.mark("load_inputs");
 
     var scene = try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
     errdefer scene.deinitOwned(allocator);
-    trace.mark("build_scene");
 
     const reference = inputs.reference;
     inputs.reference = inputs.reference[0..0];
@@ -504,15 +500,11 @@ pub fn prepareResolvedVendorO2ACase(
         .lut = &inputs.lut,
     });
     errdefer prepared.deinit(allocator);
-    trace.mark("optics_prepare");
 
     try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
-    trace.mark("install_weak_cutoff_grid");
     try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
-    trace.mark("rewindow_solar_support");
 
     const route = try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
-    trace.mark("prepare_route");
 
     return .{
         .reference = reference,

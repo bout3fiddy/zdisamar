@@ -3,7 +3,6 @@ const BandMeans = @import("../shared/band_means.zig");
 const LayerAccumulation = @import("layer_accumulation.zig");
 const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
-const prepare_trace = @import("../../../common/prepare_trace.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -39,16 +38,13 @@ pub fn accumulate(
     context: *Context,
     absorbers: *Absorbers.AbsorberBuildState,
 ) !AccumulationResult {
-    var trace = prepare_trace.Trace.init();
     const layer_totals = try LayerAccumulation.populate(allocator, context, absorbers);
-    trace.mark("accumulate.populate_layers");
     const means = try computePreparedMeans(
         allocator,
         context,
         absorbers,
         layer_totals,
     );
-    trace.mark("accumulate.compute_means");
     return .{ .means = means };
 }
 

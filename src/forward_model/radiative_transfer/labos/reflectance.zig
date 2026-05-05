@@ -127,7 +127,6 @@ pub fn calcIntegratedReflectance(
         null,
         null,
         null,
-        null,
     );
 }
 
@@ -143,7 +142,6 @@ pub fn calcIntegratedReflectanceWithBasis(
     adjacent_layer_phase_max_indices: ?[]const usize,
     layer_phase_kernel_cache: ?[]const basis.PhaseKernel,
     layer_phase_kernel_valid: ?[]const bool,
-    profile_sample: ?*IntegratedReflectanceProfileSample,
 ) f64 {
     const solar_col: usize = 1;
     const view_idx = geo.viewIdx();
@@ -191,7 +189,6 @@ pub fn calcIntegratedReflectanceWithBasis(
             continue;
         }
 
-        const phase_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         var computed_row: basis.PhaseKernelRow = undefined;
         const phase_rows: PhaseRows = blk: {
             if (!use_rtm_quadrature) {
@@ -224,9 +221,7 @@ pub fn calcIntegratedReflectanceWithBasis(
                 .zmin = computed_row.zmin[0..computed_row.n],
             };
         };
-        if (profile_sample) |sample| sample.phase_kernel_ns += std.time.nanoTimestamp() - phase_start;
 
-        const contribution_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
         var pmin_ed: f64 = 0.0;
 
         const level = ud[ilevel];
@@ -255,7 +250,6 @@ pub fn calcIntegratedReflectanceWithBasis(
             source_ksca *
             (pmin_ed + pplusst_u);
         reflectance += source_rtm_weight * contribution;
-        if (profile_sample) |sample| sample.contribution_ns += std.time.nanoTimestamp() - contribution_start;
     }
 
     if (i_fourier == 0) {
@@ -266,11 +260,6 @@ pub fn calcIntegratedReflectanceWithBasis(
 
     return reflectance;
 }
-
-pub const IntegratedReflectanceProfileSample = struct {
-    phase_kernel_ns: i128 = 0,
-    contribution_ns: i128 = 0,
-};
 
 pub fn totalScatteringOpticalDepth(layers: []const common.LayerInput) f64 {
     var total: f64 = 0.0;
