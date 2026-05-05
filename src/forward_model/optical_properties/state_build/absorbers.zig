@@ -113,10 +113,6 @@ pub fn build(
             null
     else
         null;
-    errdefer if (state.strong_line_states) |states| {
-        for (states[0..state.strong_line_state_count]) |*strong_line_state| strong_line_state.deinit(allocator);
-        allocator.free(states);
-    };
     state.profile_strong_line_states = if (state.owned_line_absorbers.len == 0)
         if (state.owned_lines) |line_list|
             if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len != 0)
@@ -127,10 +123,6 @@ pub fn build(
             null
     else
         null;
-    errdefer if (state.profile_strong_line_states) |states| {
-        for (states[0..state.profile_strong_line_state_count]) |*strong_line_state| strong_line_state.deinit(allocator);
-        allocator.free(states);
-    };
     state.profile_weak_line_states = if (state.owned_line_absorbers.len == 0)
         if (state.owned_lines) |line_list|
             if (!operational_o2_lut.enabled() and line_list.hasStrongLineSidecars() and context.spectroscopy_profile_temperatures_k.len != 0)
@@ -141,10 +133,6 @@ pub fn build(
             null
     else
         null;
-    errdefer if (state.profile_weak_line_states) |states| {
-        for (states[0..state.profile_weak_line_state_count]) |*weak_line_state| weak_line_state.deinit(allocator);
-        allocator.free(states);
-    };
     var loaded_profile_states = false;
     if (state.profile_weak_line_states) |weak_states| {
         if (state.profile_strong_line_states) |strong_states| {
