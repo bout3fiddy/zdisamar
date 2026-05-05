@@ -317,7 +317,7 @@ pub fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *c
     return qseriesFromProduct(n, n_gauss, &ab);
 }
 
-fn qseriesFromProduct(n: usize, n_gauss: usize, ab: *const Mat) Mat {
+fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) Mat {
     const trab: f64 = if (n == 12 and n_gauss == 10) blk: {
         var trace = ab.data[0];
         trace += ab.data[13];
