@@ -240,6 +240,35 @@ pub fn build(b: *std.Build) void {
         "tests/validation/o2a_transport_smoke_test.zig",
     );
 
+    const labos_kernel_bench_module = b.createModule(.{
+        .root_source_file = b.path("tests/perf/labos_kernel_bench.zig"),
+        .target = target,
+        .optimize = runtime_optimize,
+        .imports = &.{
+            .{
+                .name = "internal",
+                .module = b.createModule(.{
+                    .root_source_file = b.path("src/internal.zig"),
+                    .target = target,
+                    .optimize = runtime_optimize,
+                    .imports = &.{
+                        .{
+                            .name = "build_options",
+                            .module = build_options_module,
+                        },
+                    },
+                }),
+            },
+        },
+    });
+    const labos_kernel_bench_exe = b.addExecutable(.{
+        .name = "labos-kernel-bench",
+        .root_module = labos_kernel_bench_module,
+    });
+    const run_labos_kernel_bench = b.addRunArtifact(labos_kernel_bench_exe);
+    const bench_step = b.step("bench", "Run bounded LABOS kernel performance probes");
+    bench_step.dependOn(&run_labos_kernel_bench.step);
+
     const fmt_check_cmd = b.addFmt(.{
         .check = true,
         .paths = &.{ "build.zig", "src", "tests", "scripts" },
