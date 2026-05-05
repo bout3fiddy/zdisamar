@@ -294,9 +294,8 @@ def _spectrum_delta_from_arrays(
 
 
 def _run_spectrum(case, library_path) -> dict[str, object]:
-    import importlib
+    from .ffi import prepare
 
-    prepare = importlib.import_module("zdisamar.ffi").prepare
     with prepare(case, library_path=library_path) as prepared:
         with prepared.forward_model() as spectrum:
             return {
