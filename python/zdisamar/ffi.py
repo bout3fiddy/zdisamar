@@ -21,6 +21,7 @@ from .prepared import (
 )
 from .runtime import Context
 from .spectrum import DiagnosticReport, Spectrum
+from .types import O2AInput
 
 __all__ = [
     "AtmosphereDiagnostics",
@@ -31,6 +32,7 @@ __all__ = [
     "O2LineContributions",
     "O2LineDiagnostics",
     "O2O2CIADiagnosticTable",
+    "O2AInput",
     "PreparedDefaultO2A",
     "PreparedO2A",
     "RadiativeTransferDiagnosticTable",
