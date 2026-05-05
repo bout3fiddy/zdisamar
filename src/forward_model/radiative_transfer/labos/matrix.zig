@@ -103,7 +103,7 @@ fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     return result;
 }
 
-fn smul12x10Into(result: *Mat, a: *const Mat, b: *const Mat) void {
+fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
