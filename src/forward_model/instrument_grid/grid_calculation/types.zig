@@ -1,4 +1,5 @@
 const std = @import("std");
+const jacobian = @import("../../jacobian/root.zig");
 const InstrumentProviders = @import("../../implementations/instrument.zig");
 const NoiseProviders = @import("../../implementations/noise.zig");
 const SurfaceProviders = @import("../../implementations/surface.zig");
@@ -26,7 +27,7 @@ pub const InstrumentGridSummary = struct {
     mean_irradiance: f64,
     mean_reflectance: f64,
     mean_noise_sigma: f64,
-    mean_jacobian: ?f64 = null,
+    mean_jacobian: ?jacobian.Vector = null,
 };
 
 // Measurement-space product arrays and associated bulk optical properties.
@@ -111,8 +112,8 @@ pub const InstrumentGridProductView = struct {
         errdefer allocator.free(irradiance_noise_sigma);
         const reflectance_noise_sigma = try cloneF64Slice(allocator, self.reflectance_noise_sigma);
         errdefer allocator.free(reflectance_noise_sigma);
-        const jacobian = if (self.jacobian) |values| try cloneF64Slice(allocator, values) else null;
-        errdefer if (jacobian) |values| allocator.free(values);
+        const jacobian_values = if (self.jacobian) |values| try cloneF64Slice(allocator, values) else null;
+        errdefer if (jacobian_values) |values| allocator.free(values);
 
         return .{
             .summary = self.summary,
@@ -124,7 +125,7 @@ pub const InstrumentGridProductView = struct {
             .radiance_noise_sigma = radiance_noise_sigma,
             .irradiance_noise_sigma = irradiance_noise_sigma,
             .reflectance_noise_sigma = reflectance_noise_sigma,
-            .jacobian = jacobian,
+            .jacobian = jacobian_values,
             .effective_air_mass_factor = self.effective_air_mass_factor,
             .effective_single_scatter_albedo = self.effective_single_scatter_albedo,
             .effective_temperature_k = self.effective_temperature_k,

@@ -97,13 +97,14 @@ class Context:
         )
         return self
 
-    def run(self) -> Spectrum:
+    def run(self, *, jacobian: bool = False) -> Spectrum:
         raw = CSpectrum()
-        self._check(self._lib.zds_run_spectrum(self._ctx, ctypes.byref(raw)))
+        runner = self._lib.zds_run_spectrum_jacobian if jacobian else self._lib.zds_run_spectrum
+        self._check(runner(self._ctx, ctypes.byref(raw)))
         return Spectrum(self, raw)
 
-    def forward_model(self) -> Spectrum:
-        return self.run()
+    def forward_model(self, *, jacobian: bool = False) -> Spectrum:
+        return self.run(jacobian=jacobian)
 
     def _spectrum_report(self, raw: CSpectrum) -> DiagnosticReport:
         report = CDiagnosticReport()

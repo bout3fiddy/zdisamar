@@ -5,7 +5,18 @@ def asset(zd, id: str, path: str, format: str):
     return zd.ReferenceAsset(id=id, path=path, format=format)
 
 
-def build_o2a_case(zd):
+def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
+    aerosol_top_pressure_hpa = 875.0 if jacobian_reference_layer else 500.0
+    aerosol_bottom_pressure_hpa = 925.0 if jacobian_reference_layer else 520.0
+    viewing_zenith_deg = 0.0 if jacobian_reference_layer else 30.0
+    relative_azimuth_deg = 0.0 if jacobian_reference_layer else 120.0
+    upper_interval_divisions = 28
+    aerosol_interval_divisions = 2 if jacobian_reference_layer else 6
+    lower_interval_divisions = 4 if jacobian_reference_layer else 8
+    spectral_start_nm = 755.0
+    spectral_end_nm = 776.0
+    spectral_sample_count = 701
+
     return zd.O2AInput(
         metadata={
             "id": "disamar_reference_o2a",
@@ -28,7 +39,7 @@ def build_o2a_case(zd):
             vendor_reference_csv=asset(
                 zd,
                 "vendor_reference_csv",
-                "validation/o2a_with_cia_disamar_reference.csv",
+                "validation/data/o2a_with_cia_disamar_reference.csv",
                 "disamar_o2a_reference_csv",
             ),
             raw_solar_reference=asset(
@@ -45,7 +56,11 @@ def build_o2a_case(zd):
             ),
         ),
         scene_id="o2a_disamar_reference_python",
-        spectral_grid=zd.SpectralGrid(start_nm=755.0, end_nm=776.0, sample_count=701),
+        spectral_grid=zd.SpectralGrid(
+            start_nm=spectral_start_nm,
+            end_nm=spectral_end_nm,
+            sample_count=spectral_sample_count,
+        ),
         atmosphere=zd.Atmosphere(
             layer_count=3,
             sublayer_divisions=4,
@@ -54,20 +69,20 @@ def build_o2a_case(zd):
                 zd.VerticalInterval(
                     index_1based=1,
                     top_pressure_hpa=0.3,
-                    bottom_pressure_hpa=500.0,
-                    altitude_divisions=28,
+                    bottom_pressure_hpa=aerosol_top_pressure_hpa,
+                    altitude_divisions=upper_interval_divisions,
                 ),
                 zd.VerticalInterval(
                     index_1based=2,
-                    top_pressure_hpa=500.0,
-                    bottom_pressure_hpa=520.0,
-                    altitude_divisions=6,
+                    top_pressure_hpa=aerosol_top_pressure_hpa,
+                    bottom_pressure_hpa=aerosol_bottom_pressure_hpa,
+                    altitude_divisions=aerosol_interval_divisions,
                 ),
                 zd.VerticalInterval(
                     index_1based=3,
-                    top_pressure_hpa=520.0,
+                    top_pressure_hpa=aerosol_bottom_pressure_hpa,
                     bottom_pressure_hpa=1013.25,
-                    altitude_divisions=8,
+                    altitude_divisions=lower_interval_divisions,
                 ),
             ],
         ),
@@ -75,8 +90,8 @@ def build_o2a_case(zd):
         geometry=zd.Geometry(
             model="pseudo_spherical",
             solar_zenith_deg=60.0,
-            viewing_zenith_deg=30.0,
-            relative_azimuth_deg=120.0,
+            viewing_zenith_deg=viewing_zenith_deg,
+            relative_azimuth_deg=relative_azimuth_deg,
         ),
         aerosol=zd.Aerosol(
             optical_depth_550_nm=0.3,
@@ -89,8 +104,8 @@ def build_o2a_case(zd):
             placement=zd.AerosolPlacement(
                 semantics="explicit_interval_bounds",
                 interval_index_1based=2,
-                top_pressure_hpa=500.0,
-                bottom_pressure_hpa=520.0,
+                top_pressure_hpa=aerosol_top_pressure_hpa,
+                bottom_pressure_hpa=aerosol_bottom_pressure_hpa,
             ),
         ),
         instrument_response=zd.InstrumentResponse(
@@ -103,9 +118,9 @@ def build_o2a_case(zd):
             high_resolution_step_nm=0.01,
             high_resolution_half_span_nm=1.14,
             adaptive_reference_grid={
-                "points_per_fwhm": 20,
+                "points_per_fwhm": 12 if jacobian_reference_layer else 20,
                 "strong_line_min_divisions": 8,
-                "strong_line_max_divisions": 40,
+                "strong_line_max_divisions": 30 if jacobian_reference_layer else 40,
             },
             solar_reference_asset_id="raw_solar_reference",
         ),
@@ -155,6 +170,7 @@ def build_o2a_case(zd):
             use_spherical_correction=True,
             integrate_source_function=True,
             renorm_phase_function=True,
+            phase_function_truncation_threshold=1.0e-6 if jacobian_reference_layer else 1.0e-8,
             stokes_dimension=1,
         ),
         outputs=[],

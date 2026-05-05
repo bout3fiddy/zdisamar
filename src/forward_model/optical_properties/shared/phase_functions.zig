@@ -72,15 +72,23 @@ pub fn computeSingleScatterAlbedo(scene: *const Scene, wavelength_nm: f64) f64 {
 }
 
 pub fn hgPhaseCoefficients(asymmetry_factor: f64) [phase_coefficient_count]f64 {
+    return hgPhaseCoefficientsWithThreshold(asymmetry_factor, vendor_hg_truncation_threshold);
+}
+
+pub fn hgPhaseCoefficientsWithThreshold(
+    asymmetry_factor: f64,
+    truncation_threshold: f64,
+) [phase_coefficient_count]f64 {
     var coefficients = zeroPhaseCoefficients();
     const truncation_g = @abs(asymmetry_factor);
     if (truncation_g <= 0.0) return coefficients;
+    const threshold = @max(truncation_threshold, 0.0);
 
     var normalized_tail: f64 = 1.0;
     for (1..phase_coefficient_count) |index| {
         const order: f64 = @floatFromInt(index);
         normalized_tail *= truncation_g * (2.0 * order - 1.0) / (2.0 * order + 1.0);
-        if (normalized_tail < vendor_hg_truncation_threshold) break;
+        if (normalized_tail < threshold) break;
         coefficients[index] =
             (2.0 * order + 1.0) *
             std.math.pow(f64, asymmetry_factor, order);

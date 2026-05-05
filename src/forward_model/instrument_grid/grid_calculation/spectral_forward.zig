@@ -3,6 +3,7 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const CarrierEval = @import("../../optical_properties/state_build/carrier_eval.zig");
 const common = @import("../../radiative_transfer/root.zig");
+const jacobian = @import("../../jacobian/root.zig");
 const labos = @import("../../radiative_transfer/labos/root.zig");
 const ForwardInput = @import("forward_input.zig");
 const Types = @import("types.zig");
@@ -16,7 +17,7 @@ pub const min_parallel_forward_miss_count: usize = 32;
 
 pub const ForwardIntegratedSample = struct {
     radiance: f64,
-    jacobian: f64 = 0.0,
+    jacobian: jacobian.Vector = jacobian.zero(),
 };
 
 pub const ForwardCacheMiss = struct {
@@ -138,6 +139,29 @@ pub fn radianceFromForward(
     return solar_cosine * (forward.toa_reflectance_factor * surface_gain) * solar_irradiance / std.math.pi;
 }
 
+fn radianceJacobianFromForward(
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+    wavelength_nm: f64,
+    safe_span: f64,
+    phase: f64,
+    forward: common.ForwardResult,
+) jacobian.Vector {
+    const reflectance_jacobian = forward.jacobian orelse return jacobian.zero();
+    const solar_irradiance = solar_compat.irradianceAtWavelength(scene, wavelength_nm);
+    const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
+    const surface_gain = implementations.surface.brdfFactor(.{
+        .scene = scene,
+        .prepared = prepared,
+        .wavelength_nm = wavelength_nm,
+        .safe_span = safe_span,
+        .phase = phase,
+        .forward = forward,
+    });
+    return jacobian.scale(reflectance_jacobian, solar_cosine * surface_gain * solar_irradiance / std.math.pi);
+}
+
 pub fn computeForwardSampleAtWavelength(
     allocator: Allocator,
     scene: *const Scene,
@@ -225,7 +249,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
     const radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
     return .{
         .radiance = radiance,
-        .jacobian = if (forward.jacobian_column) |value| value else 0.0,
+        .jacobian = radianceJacobianFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward),
     };
 }
 

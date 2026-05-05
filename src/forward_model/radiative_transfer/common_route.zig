@@ -5,7 +5,7 @@ pub fn prepareRoute(request: common.DispatchRequest) common.PrepareError!common.
     if (request.rtm_controls.use_adding) return common.Error.UnsupportedTransportSolver;
     if (request.regime != .nadir) return common.Error.UnsupportedObservationRegime;
     if (request.execution_mode != .scalar) return common.Error.UnsupportedExecutionMode;
-    if (request.derivative_mode != .none) return common.Error.UnsupportedDerivativeMode;
+    if (request.derivative_mode == .numerical) return common.Error.UnsupportedDerivativeMode;
     try request.rtm_controls.validate(request.execution_mode);
     return .{
         .family = .labos,

@@ -45,6 +45,7 @@ pub const Scene = struct {
     aerosol: Aerosol = .{},
     observation_model: ObservationModel = .{},
     lut_controls: LutControls.Controls = .{},
+    phase_function_truncation_threshold: f64 = 1.0e-8,
 
     pub fn validate(self: *const Scene) errors.Error!void {
         if (self.id.len == 0) {
@@ -61,6 +62,11 @@ pub const Scene = struct {
         try self.aerosol.validate();
         try self.observation_model.validate();
         try self.lut_controls.validate();
+        if (!std.math.isFinite(self.phase_function_truncation_threshold) or
+            self.phase_function_truncation_threshold <= 0.0)
+        {
+            return errors.Error.InvalidRequest;
+        }
         try self.observation_model.cross_section_fit.validateForBandCount(self.bands.items.len);
         const explicit_operational_band_count = self.observation_model.operational_band_support.len;
         if (self.bands.items.len != 0 and

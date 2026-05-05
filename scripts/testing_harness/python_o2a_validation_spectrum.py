@@ -22,7 +22,7 @@ import python.zdisamar.plot as zp
 
 
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "out" / "ci" / "o2a_validation_spectrum"
-DEFAULT_REFERENCE = REPO_ROOT / "validation" / "o2a_with_cia_disamar_reference.csv"
+DEFAULT_REFERENCE = REPO_ROOT / "validation" / "data" / "o2a_with_cia_disamar_reference.csv"
 LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
 DEFAULT_LIBRARY = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
 MARKERS_NM = (755.0, 760.76, 776.0)
@@ -98,7 +98,7 @@ def build_o2a_validation_scene() -> zd.O2AInput:
             ),
             vendor_reference_csv=asset(
                 "vendor_reference_csv",
-                "validation/o2a_with_cia_disamar_reference.csv",
+                "validation/data/o2a_with_cia_disamar_reference.csv",
                 "disamar_o2a_reference_csv",
             ),
             raw_solar_reference=asset(

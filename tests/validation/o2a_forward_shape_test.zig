@@ -5,6 +5,22 @@ const disamar_reference = zdisamar.disamar_reference;
 const meanVectorInRange = disamar_reference.meanVectorInRange;
 const minVectorInRange = disamar_reference.minVectorInRange;
 
+test "tracked O2A DISAMAR jacobian fixtures expose the requested state columns" {
+    const retrieval_radiance = try readFixture("validation/data/o2a_jacobian_retrieval_instrument_radiance.csv");
+    defer std.testing.allocator.free(retrieval_radiance);
+    const simulation_reflectance = try readFixture("validation/data/o2a_jacobian_simulation_instrument_reflectance.csv");
+    defer std.testing.allocator.free(simulation_reflectance);
+
+    try expectJacobianFixtureShape(retrieval_radiance, 701);
+    try expectJacobianFixtureShape(simulation_reflectance, 701);
+}
+
+fn readFixture(path: []const u8) ![]u8 {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    return try file.readToEndAlloc(std.testing.allocator, 512 * 1024);
+}
+
 test "o2a forward reflectance tracks vendor reference morphology" {
     var disamar_case = try disamar_reference.runDefaultReflectanceCase(std.testing.allocator, .{
         .spectral_grid = .{
@@ -51,4 +67,26 @@ test "o2a forward reflectance tracks vendor reference morphology" {
     try std.testing.expect(@abs(metrics.rebound_peak_difference) < 0.10);
     try std.testing.expect(@abs(metrics.mid_band_mean_difference) < 0.075);
     try std.testing.expect(@abs(metrics.red_wing_mean_difference) < 0.060);
+}
+
+fn expectJacobianFixtureShape(bytes: []const u8, expected_rows: usize) !void {
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    const header = std.mem.trim(u8, lines.next() orelse return error.InvalidData, "\r \t");
+    try std.testing.expectEqualStrings("wavelength_nm,surfAlbedo,aerosolTau,intervalDP", header);
+
+    var row_count: usize = 0;
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, "\r \t");
+        if (trimmed.len == 0) continue;
+
+        var columns = std.mem.splitScalar(u8, trimmed, ',');
+        var column_count: usize = 0;
+        while (columns.next()) |column| {
+            _ = try std.fmt.parseFloat(f64, std.mem.trim(u8, column, " \t"));
+            column_count += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 4), column_count);
+        row_count += 1;
+    }
+    try std.testing.expectEqual(expected_rows, row_count);
 }

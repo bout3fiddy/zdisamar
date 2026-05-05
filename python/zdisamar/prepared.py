@@ -60,8 +60,8 @@ class PreparedO2ABase:
             raise RuntimeError("prepared input is closed")
         return self._ctx
 
-    def forward_model(self) -> Spectrum:
-        return self._require_context().forward_model()
+    def forward_model(self, *, jacobian: bool = False) -> Spectrum:
+        return self._require_context().forward_model(jacobian=jacobian)
 
     @property
     def atmosphere(self) -> AtmosphereDiagnostics:
@@ -183,12 +183,13 @@ def prepare_default_o2a(
     return PreparedDefaultO2A(library_path)
 
 
-def forward(library_path: LibraryPath = None) -> Spectrum:
+def forward(library_path: LibraryPath = None, *, jacobian: bool = False) -> Spectrum:
     ctx = Context(library_path)
     try:
         ctx.prepare_default_o2a()
         raw = CSpectrum()
-        ctx._check(ctx._lib.zds_run_spectrum(ctx._ctx, ctypes.byref(raw)))
+        runner = ctx._lib.zds_run_spectrum_jacobian if jacobian else ctx._lib.zds_run_spectrum
+        ctx._check(runner(ctx._ctx, ctypes.byref(raw)))
         return Spectrum(ctx, raw, close_owner=True)
     except Exception:
         ctx.close()

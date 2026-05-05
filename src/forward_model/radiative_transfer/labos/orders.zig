@@ -102,6 +102,56 @@ fn transportToOtherLevels(
     }
 }
 
+fn transportToOtherLevelsTangent(
+    start_level: usize,
+    end_level: usize,
+    nmutot: usize,
+    atten: anytype,
+    atten_tangent: anytype,
+    _: []const basis.UDLocal,
+    ud_local_tangent: []const basis.UDLocal,
+    ud_orde: []const basis.UDField,
+    ud_orde_tangent: []basis.UDField,
+) void {
+    ud_orde_tangent[start_level].U = ud_local_tangent[start_level].U;
+    for (start_level + 1..end_level + 1) |ilevel| {
+        const local_du0 = ud_local_tangent[ilevel].U.col[0].data;
+        const local_du1 = ud_local_tangent[ilevel].U.col[1].data;
+        const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
+        const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+        const prev_du0 = ud_orde_tangent[ilevel - 1].U.col[0].data;
+        const prev_du1 = ud_orde_tangent[ilevel - 1].U.col[1].data;
+        const out_u0 = &ud_orde_tangent[ilevel].U.col[0].data;
+        const out_u1 = &ud_orde_tangent[ilevel].U.col[1].data;
+        for (0..nmutot) |imu| {
+            const att = atten.get(imu, ilevel - 1, ilevel);
+            const datt = atten_tangent.get(imu, ilevel - 1, ilevel);
+            out_u0[imu] = local_du0[imu] + datt * prev_u0[imu] + att * prev_du0[imu];
+            out_u1[imu] = local_du1[imu] + datt * prev_u1[imu] + att * prev_du1[imu];
+        }
+    }
+
+    ud_orde_tangent[end_level].D = basis.Vec2.zero(nmutot);
+    var ilevel = end_level;
+    while (ilevel > start_level) {
+        ilevel -= 1;
+        const local_dd0 = ud_local_tangent[ilevel].D.col[0].data;
+        const local_dd1 = ud_local_tangent[ilevel].D.col[1].data;
+        const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
+        const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+        const prev_dd0 = ud_orde_tangent[ilevel + 1].D.col[0].data;
+        const prev_dd1 = ud_orde_tangent[ilevel + 1].D.col[1].data;
+        const out_d0 = &ud_orde_tangent[ilevel].D.col[0].data;
+        const out_d1 = &ud_orde_tangent[ilevel].D.col[1].data;
+        for (0..nmutot) |imu| {
+            const att = atten.get(imu, ilevel + 1, ilevel);
+            const datt = atten_tangent.get(imu, ilevel + 1, ilevel);
+            out_d0[imu] = local_dd0[imu] + datt * prev_d0[imu] + att * prev_dd0[imu];
+            out_d1[imu] = local_dd1[imu] + datt * prev_d1[imu] + att * prev_dd1[imu];
+        }
+    }
+}
+
 pub fn dotGauss(mat: *const basis.Mat, row: usize, vec_col: *const basis.Vec, n_gauss: usize) f64 {
     const row_offset = row * mat.n;
     if (n_gauss == 10) {
@@ -488,11 +538,6 @@ pub fn ordersScatInto(
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
 ) OrdersResultView {
-    // INVARIANT:
-    //   The current LABOS integrated-source reflectance path consumes the
-    //   propagated UD field only. The local-source sum is legacy output from
-    //   older callers, so the workspace path leaves it empty instead of
-    //   spending time accumulating unobserved data.
     const result = ordersScatInternal(
         false,
         false,
@@ -512,6 +557,38 @@ pub fn ordersScatInto(
     return .{
         .ud = result.ud,
         .ud_sum_local = &.{},
+    };
+}
+
+pub fn ordersScatIntoWithLocalSum(
+    storage: *OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: *const basis.Geometry,
+    atten: anytype,
+    rt: []const basis.LayerRT,
+    controls: common.RadiativeTransferControls,
+    num_orders_max: usize,
+) OrdersResultView {
+    const result = ordersScatInternal(
+        true,
+        false,
+        storage.ud,
+        storage.ud_sum_local,
+        storage.ud_orde,
+        storage.ud_local,
+        storage.rt_active,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    );
+    return .{
+        .ud = result.ud,
+        .ud_sum_local = result.ud_sum_local,
     };
 }
 
@@ -548,6 +625,42 @@ pub fn ordersScatIntoWithActive(
     return .{
         .ud = result.ud,
         .ud_sum_local = &.{},
+    };
+}
+
+pub fn ordersScatIntoWithActiveLocalSum(
+    storage: *OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: *const basis.Geometry,
+    atten: anytype,
+    rt: []const basis.LayerRT,
+    controls: common.RadiativeTransferControls,
+    num_orders_max: usize,
+) OrdersResultView {
+    // INVARIANT:
+    //   `rt_active` is populated by the paired LABOS layer builder for the
+    //   same Fourier order. It may conservatively mark zero matrices active,
+    //   but it must not mark a nonzero layer inactive.
+    const result = ordersScatInternal(
+        true,
+        true,
+        storage.ud,
+        storage.ud_sum_local,
+        storage.ud_orde,
+        storage.ud_local,
+        storage.rt_active,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    );
+    return .{
+        .ud = result.ud,
+        .ud_sum_local = result.ud_sum_local,
     };
 }
 
@@ -634,5 +747,271 @@ pub fn ordersScat(
         controls,
         num_orders_max,
     );
+    return result;
+}
+
+pub fn ordersScatTangent(
+    allocator: Allocator,
+    start_level: usize,
+    end_level: usize,
+    geo: *const basis.Geometry,
+    atten: anytype,
+    atten_tangent: anytype,
+    rt: []const basis.LayerRT,
+    rt_tangent: []const basis.LayerRT,
+    controls: common.RadiativeTransferControls,
+    num_orders_max: usize,
+) !OrdersResult {
+    const nlevel = end_level + 1;
+    const nmutot = geo.nmutot;
+    const n_gauss = geo.n_gauss;
+
+    const ud = try allocator.alloc(basis.UDField, nlevel);
+    var ud_owned_by_result = false;
+    errdefer if (!ud_owned_by_result) allocator.free(ud);
+    const ud_sum_local = try allocator.alloc(basis.UDLocal, nlevel);
+    var ud_sum_local_owned_by_result = false;
+    errdefer if (!ud_sum_local_owned_by_result) allocator.free(ud_sum_local);
+
+    var result = OrdersResult{
+        .allocator = allocator,
+        .ud = ud,
+        .ud_sum_local = ud_sum_local,
+    };
+    ud_owned_by_result = true;
+    ud_sum_local_owned_by_result = true;
+    errdefer result.deinit();
+
+    const base_ud = try allocator.alloc(basis.UDField, nlevel);
+    defer allocator.free(base_ud);
+    const base_ud_sum_local = try allocator.alloc(basis.UDLocal, nlevel);
+    defer allocator.free(base_ud_sum_local);
+    const base_orde = try allocator.alloc(basis.UDField, nlevel);
+    defer allocator.free(base_orde);
+    const base_local = try allocator.alloc(basis.UDLocal, nlevel);
+    defer allocator.free(base_local);
+    const tangent_orde = try allocator.alloc(basis.UDField, nlevel);
+    defer allocator.free(tangent_orde);
+    const tangent_local = try allocator.alloc(basis.UDLocal, nlevel);
+    defer allocator.free(tangent_local);
+    const rt_active = try allocator.alloc(bool, nlevel);
+    defer allocator.free(rt_active);
+
+    initializeOrdersBuffers(false, base_ud, base_ud_sum_local, base_orde, base_local, nmutot);
+    initializeOrdersBuffers(false, result.ud, result.ud_sum_local, tangent_orde, tangent_local, nmutot);
+
+    for (rt[0..nlevel], rt_active) |*layer_rt, *active| {
+        active.* = rtLayerHasSignal(layer_rt, nmutot);
+    }
+
+    for (start_level..end_level + 1) |ilevel| {
+        const e_data = &base_ud[ilevel].E.data;
+        const orde_e_data = &base_orde[ilevel].E.data;
+        const tangent_e_data = &result.ud[ilevel].E.data;
+        const tangent_orde_e_data = &tangent_orde[ilevel].E.data;
+        for (0..nmutot) |imu| {
+            const att = atten.get(imu, end_level, ilevel);
+            orde_e_data[imu] = att;
+            e_data[imu] = att;
+            tangent_e_data[imu] = 0.0;
+            tangent_orde_e_data[imu] = 0.0;
+        }
+    }
+
+    for (start_level..end_level) |ilevel| {
+        for (0..2) |imu0| {
+            const local_d = &base_local[ilevel].D.col[imu0].data;
+            const tangent_d = &tangent_local[ilevel].D.col[imu0].data;
+            if (!rt_active[ilevel + 1]) {
+                for (0..nmutot) |imu| {
+                    local_d[imu] = 0.0;
+                    tangent_d[imu] = 0.0;
+                }
+                continue;
+            }
+            const col_idx = n_gauss + imu0;
+            const att = atten.get(col_idx, end_level, ilevel + 1);
+            const rt_t = &rt[ilevel + 1].T;
+            const drt_t = &rt_tangent[ilevel + 1].T;
+            var rt_idx = col_idx;
+            for (0..nmutot) |imu| {
+                local_d[imu] = rt_t.data[rt_idx] * att;
+                tangent_d[imu] = drt_t.data[rt_idx] * att + rt_t.data[rt_idx] * atten_tangent.get(col_idx, end_level, ilevel + 1);
+                rt_idx += rt_t.n;
+            }
+        }
+    }
+    base_local[end_level].D = basis.Vec2.zero(nmutot);
+    tangent_local[end_level].D = basis.Vec2.zero(nmutot);
+
+    for (start_level..end_level + 1) |ilevel| {
+        for (0..2) |imu0| {
+            const local_u = &base_local[ilevel].U.col[imu0].data;
+            const tangent_u = &tangent_local[ilevel].U.col[imu0].data;
+            if (!rt_active[ilevel]) {
+                for (0..nmutot) |imu| {
+                    local_u[imu] = 0.0;
+                    tangent_u[imu] = 0.0;
+                }
+                continue;
+            }
+            const col_idx = n_gauss + imu0;
+            const att = atten.get(col_idx, end_level, ilevel);
+            const rt_r = &rt[ilevel].R;
+            const drt_r = &rt_tangent[ilevel].R;
+            var rt_idx = col_idx;
+            for (0..nmutot) |imu| {
+                local_u[imu] = rt_r.data[rt_idx] * att;
+                tangent_u[imu] = drt_r.data[rt_idx] * att + rt_r.data[rt_idx] * atten_tangent.get(col_idx, end_level, ilevel);
+                rt_idx += rt_r.n;
+            }
+        }
+    }
+
+    transportToOtherLevels(start_level, end_level, nmutot, atten, base_local, base_orde);
+    transportToOtherLevelsTangent(start_level, end_level, nmutot, atten, atten_tangent, base_local, tangent_local, base_orde, tangent_orde);
+
+    for (start_level..end_level + 1) |ilevel| {
+        base_ud[ilevel].U = base_orde[ilevel].U;
+        base_ud[ilevel].D = base_orde[ilevel].D;
+        result.ud[ilevel].U = tangent_orde[ilevel].U;
+        result.ud[ilevel].D = tangent_orde[ilevel].D;
+    }
+
+    var max_value: f64 = 0.0;
+    for (0..2) |imu0| {
+        const end_u = base_orde[end_level].U.col[imu0].data;
+        for (n_gauss..nmutot) |imu| {
+            const val = @abs(end_u[imu]);
+            if (val > max_value) max_value = val;
+        }
+    }
+    if (controls.scattering != .multiple or max_value < controls.threshold_conv_first) return result;
+
+    var num_orders: usize = 1;
+    while (true) {
+        num_orders += 1;
+
+        for (start_level..end_level) |ilevel| {
+            const local_d0 = &base_local[ilevel].D.col[0].data;
+            const local_d1 = &base_local[ilevel].D.col[1].data;
+            const tangent_d0 = &tangent_local[ilevel].D.col[0].data;
+            const tangent_d1 = &tangent_local[ilevel].D.col[1].data;
+            if (!rt_active[ilevel + 1]) {
+                for (0..nmutot) |imu| {
+                    local_d0[imu] = 0.0;
+                    local_d1[imu] = 0.0;
+                    tangent_d0[imu] = 0.0;
+                    tangent_d1[imu] = 0.0;
+                }
+                continue;
+            }
+            const prev_u0 = &base_orde[ilevel].U.col[0];
+            const prev_u1 = &base_orde[ilevel].U.col[1];
+            const prev_d0 = &base_orde[ilevel + 1].D.col[0];
+            const prev_d1 = &base_orde[ilevel + 1].D.col[1];
+            const tangent_prev_u0 = &tangent_orde[ilevel].U.col[0];
+            const tangent_prev_u1 = &tangent_orde[ilevel].U.col[1];
+            const tangent_prev_d0 = &tangent_orde[ilevel + 1].D.col[0];
+            const tangent_prev_d1 = &tangent_orde[ilevel + 1].D.col[1];
+            for (0..nmutot) |imu| {
+                const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
+                const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
+                local_d0[imu] = rst_dot_u.col0 + t_dot_d.col0;
+                local_d1[imu] = rst_dot_u.col1 + t_dot_d.col1;
+
+                const drst_dot_u = dotGaussPair(&rt_tangent[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
+                const rst_dot_du = dotGaussPair(&rt[ilevel + 1].R, imu, tangent_prev_u0, tangent_prev_u1, n_gauss);
+                const dt_dot_d = dotGaussPair(&rt_tangent[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
+                const t_dot_dd = dotGaussPair(&rt[ilevel + 1].T, imu, tangent_prev_d0, tangent_prev_d1, n_gauss);
+                tangent_d0[imu] = drst_dot_u.col0 + rst_dot_du.col0 + dt_dot_d.col0 + t_dot_dd.col0;
+                tangent_d1[imu] = drst_dot_u.col1 + rst_dot_du.col1 + dt_dot_d.col1 + t_dot_dd.col1;
+            }
+        }
+        base_local[end_level].D = basis.Vec2.zero(nmutot);
+        tangent_local[end_level].D = basis.Vec2.zero(nmutot);
+
+        const local_u_start0 = &base_local[start_level].U.col[0].data;
+        const local_u_start1 = &base_local[start_level].U.col[1].data;
+        const tangent_u_start0 = &tangent_local[start_level].U.col[0].data;
+        const tangent_u_start1 = &tangent_local[start_level].U.col[1].data;
+        const prev_d_start0 = &base_orde[start_level].D.col[0];
+        const prev_d_start1 = &base_orde[start_level].D.col[1];
+        const tangent_prev_d_start0 = &tangent_orde[start_level].D.col[0];
+        const tangent_prev_d_start1 = &tangent_orde[start_level].D.col[1];
+        if (rt_active[start_level]) {
+            for (0..nmutot) |imu| {
+                const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
+                local_u_start0[imu] = r_dot_d.col0;
+                local_u_start1[imu] = r_dot_d.col1;
+                const dr_dot_d = dotGaussPair(&rt_tangent[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
+                const r_dot_dd = dotGaussPair(&rt[start_level].R, imu, tangent_prev_d_start0, tangent_prev_d_start1, n_gauss);
+                tangent_u_start0[imu] = dr_dot_d.col0 + r_dot_dd.col0;
+                tangent_u_start1[imu] = dr_dot_d.col1 + r_dot_dd.col1;
+            }
+        } else {
+            for (0..nmutot) |imu| {
+                local_u_start0[imu] = 0.0;
+                local_u_start1[imu] = 0.0;
+                tangent_u_start0[imu] = 0.0;
+                tangent_u_start1[imu] = 0.0;
+            }
+        }
+
+        for (start_level + 1..end_level + 1) |ilevel| {
+            const local_u0 = &base_local[ilevel].U.col[0].data;
+            const local_u1 = &base_local[ilevel].U.col[1].data;
+            const tangent_u0 = &tangent_local[ilevel].U.col[0].data;
+            const tangent_u1 = &tangent_local[ilevel].U.col[1].data;
+            if (!rt_active[ilevel]) {
+                for (0..nmutot) |imu| {
+                    local_u0[imu] = 0.0;
+                    local_u1[imu] = 0.0;
+                    tangent_u0[imu] = 0.0;
+                    tangent_u1[imu] = 0.0;
+                }
+                continue;
+            }
+            const prev_d0 = &base_orde[ilevel].D.col[0];
+            const prev_d1 = &base_orde[ilevel].D.col[1];
+            const prev_u0 = &base_orde[ilevel - 1].U.col[0];
+            const prev_u1 = &base_orde[ilevel - 1].U.col[1];
+            const tangent_prev_d0 = &tangent_orde[ilevel].D.col[0];
+            const tangent_prev_d1 = &tangent_orde[ilevel].D.col[1];
+            const tangent_prev_u0 = &tangent_orde[ilevel - 1].U.col[0];
+            const tangent_prev_u1 = &tangent_orde[ilevel - 1].U.col[1];
+            for (0..nmutot) |imu| {
+                const r_dot_d = dotGaussPair(&rt[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
+                const tst_dot_u = dotGaussPair(&rt[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
+                local_u0[imu] = r_dot_d.col0 + tst_dot_u.col0;
+                local_u1[imu] = r_dot_d.col1 + tst_dot_u.col1;
+
+                const dr_dot_d = dotGaussPair(&rt_tangent[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
+                const r_dot_dd = dotGaussPair(&rt[ilevel].R, imu, tangent_prev_d0, tangent_prev_d1, n_gauss);
+                const dtst_dot_u = dotGaussPair(&rt_tangent[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
+                const tst_dot_du = dotGaussPair(&rt[ilevel].T, imu, tangent_prev_u0, tangent_prev_u1, n_gauss);
+                tangent_u0[imu] = dr_dot_d.col0 + r_dot_dd.col0 + dtst_dot_u.col0 + tst_dot_du.col0;
+                tangent_u1[imu] = dr_dot_d.col1 + r_dot_dd.col1 + dtst_dot_u.col1 + tst_dot_du.col1;
+            }
+        }
+
+        transportToOtherLevels(start_level, end_level, nmutot, atten, base_local, base_orde);
+        transportToOtherLevelsTangent(start_level, end_level, nmutot, atten, atten_tangent, base_local, tangent_local, base_orde, tangent_orde);
+
+        max_value = 0.0;
+        for (0..2) |imu0| {
+            const end_u = base_orde[end_level].U.col[imu0].data;
+            for (n_gauss..nmutot) |imu| {
+                const val = @abs(end_u[imu]);
+                if (val > max_value) max_value = val;
+            }
+        }
+
+        if (max_value < controls.threshold_conv_mult or num_orders >= num_orders_max) break;
+
+        accumulateOrderContribution(false, base_ud, base_ud_sum_local, base_orde, base_local, start_level, end_level, nmutot);
+        accumulateOrderContribution(false, result.ud, result.ud_sum_local, tangent_orde, tangent_local, start_level, end_level, nmutot);
+    }
+
     return result;
 }

@@ -69,6 +69,10 @@ test "O2A input validation consumes plan fields" {
     input = zdisamar.defaultO2AInput();
     input.plan.execution_derivative_mode = "unsupported";
     try std.testing.expectError(error.UnsupportedDerivativeMode, zdisamar.o2a.validateInput(&input));
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.execution_derivative_mode = "semi_analytical";
+    try zdisamar.o2a.validateInput(&input);
 }
 
 test "O2A plan modes are consumed when preparing the route" {
@@ -81,6 +85,12 @@ test "O2A plan modes are consumed when preparing the route" {
 
     try std.testing.expectEqual(.scalar, prepared.route.execution_mode);
     try std.testing.expectEqual(.none, prepared.route.derivative_mode);
+
+    input = zdisamar.defaultO2AInput();
+    input.plan.execution_derivative_mode = "semi_analytical";
+    var jacobian_prepared = try zdisamar.prepareO2A(std.testing.allocator, &input);
+    defer jacobian_prepared.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.semi_analytical, jacobian_prepared.route.derivative_mode);
 }
 
 test "O2A route preparation rejects unsupported plan modes" {

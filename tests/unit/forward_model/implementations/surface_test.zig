@@ -22,7 +22,7 @@ test "lambertian surface provider exposes a unit BRDF factor" {
             .execution_mode = .scalar,
             .derivative_mode = .none,
             .toa_reflectance_factor = 0.05,
-            .jacobian_column = null,
+            .jacobian = null,
         },
     });
     try std.testing.expectEqual(@as(f64, 1.0), factor);

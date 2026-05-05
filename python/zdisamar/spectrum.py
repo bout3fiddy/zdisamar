@@ -56,6 +56,29 @@ class Spectrum:
         return self._array(self._raw.reflectance)
 
     @property
+    def jacobian_state_names(self) -> tuple[str, ...]:
+        if self._raw.jacobian_state_count == 0:
+            return ()
+        return (
+            "surface_albedo",
+            "aerosol_optical_depth",
+            "aerosol_layer_mid_pressure_hpa",
+        )
+
+    @property
+    def radiance_jacobian(self) -> Any:
+        self._require_open()
+        if not self._raw.jacobian or self._raw.jacobian_state_count == 0:
+            raise RuntimeError("spectrum does not include a Jacobian")
+        import numpy as np
+
+        flat = np.ctypeslib.as_array(
+            self._raw.jacobian,
+            shape=(self._raw.len * self._raw.jacobian_state_count,),
+        )
+        return flat.reshape((self._raw.len, self._raw.jacobian_state_count))
+
+    @property
     def diagnostic_report(self) -> DiagnosticReport:
         owner = self._require_open()
         if self._diagnostic_report is None:

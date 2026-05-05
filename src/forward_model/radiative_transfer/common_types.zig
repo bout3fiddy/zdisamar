@@ -1,5 +1,6 @@
 const std = @import("std");
 const SceneModel = @import("../../input/Scene.zig");
+const jacobian = @import("../jacobian/root.zig");
 const phase_functions = @import("../optical_properties/shared/phase_functions.zig");
 
 pub const phase_coefficient_count = phase_functions.phase_coefficient_count;
@@ -25,6 +26,7 @@ pub const RadiativeTransferControls = struct {
     use_spherical_correction: bool = false,
     integrate_source_function: bool = true,
     renorm_phase_function: bool = true,
+    phase_function_truncation_threshold: f64 = phase_functions.vendor_hg_truncation_threshold,
     stokes_dimension: u8 = 1,
 
     pub fn nGauss(self: RadiativeTransferControls) u16 {
@@ -48,7 +50,9 @@ pub const RadiativeTransferControls = struct {
         if (self.threshold_conv_first <= 0.0 or
             self.threshold_conv_mult <= 0.0 or
             self.threshold_doubl <= 0.0 or
-            self.threshold_mul <= 0.0)
+            self.threshold_mul <= 0.0 or
+            self.phase_function_truncation_threshold <= 0.0 or
+            !std.math.isFinite(self.phase_function_truncation_threshold))
         {
             return error.UnsupportedRadiativeTransferControls;
         }
@@ -81,6 +85,7 @@ pub const RadiativeTransferControls = struct {
         .use_spherical_correction = false,
         .integrate_source_function = true,
         .renorm_phase_function = true,
+        .phase_function_truncation_threshold = phase_functions.vendor_hg_truncation_threshold,
         .stokes_dimension = 1,
     };
 };
@@ -155,6 +160,9 @@ pub const LayerInput = struct {
     optical_depth: f64 = 0.0,
     scattering_optical_depth: f64 = 0.0,
     single_scatter_albedo: f64 = 0.0,
+    optical_depth_jacobian: jacobian.Vector = jacobian.zero(),
+    scattering_optical_depth_jacobian: jacobian.Vector = jacobian.zero(),
+    single_scatter_albedo_jacobian: jacobian.Vector = jacobian.zero(),
     solar_mu: f64 = 1.0,
     view_mu: f64 = 1.0,
     phase_coefficients: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
@@ -185,6 +193,10 @@ pub const RtmQuadratureLevel = struct {
     weight: f64 = 0.0,
     ksca: f64 = 0.0,
     phase_coefficients: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
+    aerosol_ksca_phase_above_per_km: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
+    aerosol_ksca_phase_below_per_km: [phase_coefficient_count]f64 = phase_functions.zeroPhaseCoefficients(),
+    ksca_phase_coefficient_jacobian: [jacobian.state_count][phase_coefficient_count]f64 =
+        .{.{0.0} ** phase_coefficient_count} ** jacobian.state_count,
 
     pub fn weightedScattering(self: RtmQuadratureLevel) f64 {
         return self.weight * self.ksca;
@@ -257,7 +269,7 @@ pub const ForwardResult = struct {
     execution_mode: ExecutionMode,
     derivative_mode: DerivativeMode,
     toa_reflectance_factor: f64,
-    jacobian_column: ?f64,
+    jacobian: ?jacobian.Vector,
 };
 
 pub const PrepareError = error{

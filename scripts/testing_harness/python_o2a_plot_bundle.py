@@ -15,7 +15,7 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "out" / "plots" / "python_plotting"
-DEFAULT_REFERENCE = REPO_ROOT / "validation" / "o2a_with_cia_disamar_reference.csv"
+DEFAULT_REFERENCE = REPO_ROOT / "validation" / "data" / "o2a_with_cia_disamar_reference.csv"
 MARKERS_NM = (755.0, 760.76, 776.0)
 RESIDUAL_THRESHOLD = 1.0e-14
 

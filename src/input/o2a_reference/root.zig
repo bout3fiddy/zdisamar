@@ -68,7 +68,7 @@ pub fn defaultInput() O2AInput {
             ),
             .vendor_reference_csv = asset(
                 "vendor_reference_csv",
-                "validation/o2a_with_cia_disamar_reference.csv",
+                "validation/data/o2a_with_cia_disamar_reference.csv",
                 "disamar_o2a_reference_csv",
             ),
             .raw_solar_reference = asset(
@@ -173,6 +173,7 @@ pub fn defaultInput() O2AInput {
             .use_spherical_correction = true,
             .integrate_source_function = true,
             .renorm_phase_function = true,
+            .phase_function_truncation_threshold = 1.0e-8,
             .stokes_dimension = 1,
         },
         .outputs = &.{},

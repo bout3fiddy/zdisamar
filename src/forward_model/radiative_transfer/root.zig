@@ -20,6 +20,7 @@ pub const PseudoSphericalSample = common_types.PseudoSphericalSample;
 pub const PseudoSphericalGrid = common_types.PseudoSphericalGrid;
 pub const ForwardInput = common_types.ForwardInput;
 pub const ForwardResult = common_types.ForwardResult;
+pub const Jacobian = @import("../jacobian/root.zig");
 pub const PrepareError = common_types.PrepareError;
 pub const ExecuteError = common_types.ExecuteError;
 pub const Error = common_types.Error;

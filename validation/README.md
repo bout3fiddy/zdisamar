@@ -6,13 +6,19 @@ analysis belong under `out/`, not under this directory.
 
 ## Tracked O2 A Bundle
 
-- `o2a_with_cia_disamar_reference.csv`: committed DISAMAR reference spectrum.
-- `generated_spectrum.csv`: current zdisamar full-spectrum output from the
-  tracked plot refresh.
-- `comparison_metrics.json` and `bundle_manifest.json`:
+- `data/o2a_jacobian_retrieval_instrument_forward.csv`: DISAMAR 701-sample forward
+  reference used for the reflectance row.
+- `data/o2a_jacobian_simulation_instrument_reflectance.csv`: DISAMAR 701-sample
+  reflectance-Jacobian reference used for the derivative rows.
+- `plots/o2a_validation.png`: committed 4x2 validation plot for forward
+  reflectance and the three retained reflectance Jacobian columns.
+- `data/o2a_validation_data.csv`: current zdisamar/reference values and
+  residuals used by the plot.
+- `data/comparison_metrics.json` and `data/bundle_manifest.json`:
   metadata for the tracked plot refresh.
-- `current_vs_vendor_*.png`: committed full-spectrum comparison plots.
-- `o2a_vendor_forward_reflectance_baseline.json`: retained focused validation
+- `data/o2a_with_cia_disamar_reference.csv`: retained DISAMAR reference spectrum
+  still consumed by older forward validation tests.
+- `data/o2a_vendor_forward_reflectance_baseline.json`: retained focused validation
   baseline consumed by validation tests.
 
 ## Baseline Commands
@@ -22,20 +28,15 @@ analysis belong under `out/`, not under this directory.
 - `zig build test-validation-o2a-vendor`
 - `zig build o2a-plot-bundle`
 
-`zig build o2a-plot-bundle` regenerates the tracked plot files in this
-directory.
+`zig build o2a-plot-bundle` regenerates the tracked plot files under
+`validation/plots/` and `validation/data/` by running
+`validation/plot_validation.py`.
 
 ## Residual Note
 
-The committed DISAMAR reference should come from a fresh vendored DISAMAR run,
-not from earlier scratch output. Refreshing the reference with the current
-vendored run removes the structured O2 A reflectance spike around 756.8 nm: the
-tracked reflectance comparison now has max absolute residual near `3.4e-15`
-and RMS below `1.0e-15`.
-
-The remaining raw radiance and irradiance residuals are last-bit-scale relative
-to signals near `1e13` and `5e14`. They remain useful as regression evidence,
-but the reflectance residual is the primary O2 A parity signal for this bundle.
+The tracked validation plot compares reflectance-space quantities because those
+are the retrieval-facing parity signal. The retained threshold for every row in
+the bundle is `1e-13` max absolute residual.
 
 ## YAML Runtime Coverage
 

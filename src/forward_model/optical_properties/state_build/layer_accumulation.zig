@@ -132,11 +132,17 @@ pub fn populate(
     const aerosol_phase_coefficients = if (aerosol_mie_point) |point|
         PhaseFunctions.phaseCoefficientsFromCompact(point.phase_coefficients)
     else
-        PhaseFunctions.hgPhaseCoefficients(context.scene.aerosol.asymmetry_factor);
+        PhaseFunctions.hgPhaseCoefficientsWithThreshold(
+            context.scene.aerosol.asymmetry_factor,
+            context.scene.phase_function_truncation_threshold,
+        );
     const cloud_phase_coefficients = if (cloud_mie_point) |point|
         PhaseFunctions.phaseCoefficientsFromCompact(point.phase_coefficients)
     else
-        PhaseFunctions.hgPhaseCoefficients(context.scene.cloud.asymmetry_factor);
+        PhaseFunctions.hgPhaseCoefficientsWithThreshold(
+            context.scene.cloud.asymmetry_factor,
+            context.scene.phase_function_truncation_threshold,
+        );
     totals.aerosol_single_scatter_albedo = if (aerosol_mie_point) |point|
         point.single_scatter_albedo
     else
