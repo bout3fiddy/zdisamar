@@ -377,14 +377,9 @@ fn doDouble(
             const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
             if (profile_sample) |sample| sample.double_qseries_ns += std.time.nanoTimestamp() - q_start;
 
-            const smul_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-            var qt: basis.Mat = undefined;
-            basis.smulInto(&qt, n, n_gauss, threshold_mul, &Q, T);
-            if (profile_sample) |sample| sample.double_qt_ns += std.time.nanoTimestamp() - smul_start;
-
             const combine_start = if (profile_sample != null) std.time.nanoTimestamp() else 0;
-            const combined = basis.matAddSemul3(n, T, &Q, E, &qt);
-            if (profile_sample) |sample| sample.double_d_ns += std.time.nanoTimestamp() - combine_start;
+            const combined = basis.smulAddSemul3(n, n_gauss, threshold_mul, &Q, E, T);
+            if (profile_sample) |sample| sample.double_qt_ns += std.time.nanoTimestamp() - combine_start;
             break :blk combined;
         };
 

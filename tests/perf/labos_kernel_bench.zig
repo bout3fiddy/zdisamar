@@ -16,6 +16,7 @@ pub fn main() !void {
     try runMatBench("qseries_12x10", 200_000, &r, &t, &c, &e, benchQseries);
     try runMatBench("qseries_nonzero_12x10", 200_000, &r, &t, &c, &e, benchQseriesNonzero);
     try runMatBench("smul_12x10", 800_000, &r, &t, &c, &e, benchSmul);
+    try runMatBench("smulAddSemul3_12", 800_000, &r, &t, &c, &e, benchSmulAddSemul3);
     try runMatBench("matAddSemul3_12", 3_000_000, &r, &t, &c, &e, benchMatAddSemul3);
     try runMatBench("matAddEsmul3_12", 3_000_000, &r, &t, &c, &e, benchMatAddEsmul3);
     try runMatBench("semulAdd_12", 3_000_000, &r, &t, &c, &e, benchSemulAdd);
@@ -68,6 +69,10 @@ fn benchQseriesNonzero(r: *const labos.Mat, _: *const labos.Mat, _: *const labos
 
 fn benchSmul(r: *const labos.Mat, t: *const labos.Mat, _: *const labos.Mat, _: *const labos.Vec) labos.Mat {
     return labos.smul(n, n_gauss, threshold_mul, r, t);
+}
+
+fn benchSmulAddSemul3(r: *const labos.Mat, t: *const labos.Mat, _: *const labos.Mat, e: *const labos.Vec) labos.Mat {
+    return labos.smulAddSemul3(n, n_gauss, threshold_mul, r, e, t);
 }
 
 fn benchMatAddSemul3(r: *const labos.Mat, t: *const labos.Mat, c: *const labos.Mat, e: *const labos.Vec) labos.Mat {

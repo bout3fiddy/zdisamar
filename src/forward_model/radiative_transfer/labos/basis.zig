@@ -22,6 +22,7 @@ pub const esmul = matrix.esmul;
 pub const semul = matrix.semul;
 pub const matAdd = matrix.matAdd;
 pub const matAddSemul3 = matrix.matAddSemul3;
+pub const smulAddSemul3 = matrix.smulAddSemul3;
 pub const matAddEsmul3 = matrix.matAddEsmul3;
 pub const semulAdd = matrix.semulAdd;
 pub const esmulSemulAdd = matrix.esmulSemulAdd;
