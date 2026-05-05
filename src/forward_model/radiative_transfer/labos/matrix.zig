@@ -65,7 +65,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     return result;
 }
 
-pub fn smulInto(noalias out: *Mat, n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) void {
+pub inline fn smulInto(noalias out: *Mat, n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) void {
     if (n == 12 and n_gauss == 10) {
         var tra = a.data[0];
         tra += a.data[13];
@@ -103,7 +103,7 @@ fn smul12x10(a: *const Mat, b: *const Mat) Mat {
     return result;
 }
 
-fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
+inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
@@ -312,12 +312,12 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
     return qseriesFromProduct(n, n_gauss, &ab);
 }
 
-pub fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
+pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
     const ab = smulNonzeroProduct(n, n_gauss, a, b);
     return qseriesFromProduct(n, n_gauss, &ab);
 }
 
-fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) Mat {
+inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) Mat {
     const trab: f64 = if (n == 12 and n_gauss == 10) blk: {
         var trace = ab.data[0];
         trace += ab.data[13];
