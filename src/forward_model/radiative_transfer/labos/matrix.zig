@@ -65,7 +65,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
     return result;
 }
 
-pub fn smulInto(out: *Mat, n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) void {
+pub fn smulInto(noalias out: *Mat, n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) void {
     if (n == 12 and n_gauss == 10) {
         var tra = a.data[0];
         tra += a.data[13];
