@@ -4,6 +4,7 @@ const execute_mod = @import("execute.zig");
 const layers_mod = @import("layers.zig");
 const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
+const workspace_mod = @import("workspace.zig");
 
 pub const max_gauss = basis.max_gauss;
 pub const max_extra = basis.max_extra;
@@ -23,6 +24,7 @@ pub const FourierPlmBasis = basis.FourierPlmBasis;
 pub const fillZplusZminFromBasis = basis.fillZplusZminFromBasis;
 pub const AttenArray = attenuation.AttenArray;
 pub const DynamicAttenArray = attenuation.DynamicAttenArray;
+pub const Workspace = workspace_mod.Workspace;
 
 pub const smul = basis.smul;
 pub const esmul = basis.esmul;
@@ -44,6 +46,7 @@ pub const fillSurface = layers_mod.fillSurface;
 pub const dotGauss = orders_mod.dotGauss;
 pub const OrdersWorkspace = orders_mod.OrdersWorkspace;
 pub const ordersScatInto = orders_mod.ordersScatInto;
+pub const ordersScatIntoWithActive = orders_mod.ordersScatIntoWithActive;
 
 pub const calcReflectance = reflectance_mod.calcReflectance;
 pub const calcIntegratedReflectance = reflectance_mod.calcIntegratedReflectance;
@@ -53,3 +56,4 @@ pub const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficient
 pub const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
 pub const execute = execute_mod.execute;
+pub const executeWithWorkspace = execute_mod.executeWithWorkspace;

@@ -10,9 +10,8 @@ full upstream scientific databases.
 - `data/reference_data/cross_sections/`: absorber cross-section bundle metadata and baseline tables.
 - `data/reference_data/luts/`: LUT bundle metadata and baseline tables.
 - `data/reference_data/solar/`: solar reference spectra used by O2 A examples and validation.
-- `data/examples/`: tracked YAML and ingest fixtures. `vendor_o2a_parity.yaml`
-  is the current executable YAML example; the irradiance/radiance text files
-  are bounded parser fixtures.
+- `data/examples/`: tracked O2A validation input fixtures.
+  `vendor_o2a_parity.yaml` is the current executable YAML example.
 
 ## Provenance
 

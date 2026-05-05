@@ -21,6 +21,8 @@ pub fn scaleOpticalDepth(
     wavelength_nm: f64,
 ) f64 {
     if (optical_depth == 0.0) return 0.0;
+    if (angstrom_exponent == 0.0) return optical_depth;
+    if (reference_wavelength_nm == wavelength_nm) return optical_depth;
     const safe_wavelength = @max(wavelength_nm, 1.0);
     const safe_reference = @max(reference_wavelength_nm, 1.0);
     return optical_depth * std.math.pow(f64, safe_reference / safe_wavelength, angstrom_exponent);

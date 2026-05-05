@@ -39,14 +39,13 @@ pub fn accumulate(
     absorbers: *Absorbers.AbsorberBuildState,
 ) !AccumulationResult {
     const layer_totals = try LayerAccumulation.populate(allocator, context, absorbers);
-    return .{
-        .means = try computePreparedMeans(
-            allocator,
-            context,
-            absorbers,
-            layer_totals,
-        ),
-    };
+    const means = try computePreparedMeans(
+        allocator,
+        context,
+        absorbers,
+        layer_totals,
+    );
+    return .{ .means = means };
 }
 
 fn computePreparedMeans(

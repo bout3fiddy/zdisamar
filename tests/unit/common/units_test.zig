@@ -12,8 +12,8 @@ const AzimuthAngleDeg = units.AzimuthAngleDeg;
 
 test "wavelength range rejects inverted intervals" {
     try std.testing.expectError(Error.InvalidRange, (WavelengthRange{
-        .start_nm = 465.0,
-        .end_nm = 405.0,
+        .start_nm = 771.0,
+        .end_nm = 758.0,
     }).validate());
 }
 

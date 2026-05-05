@@ -2,24 +2,18 @@ const common = @import("common_types.zig");
 const phase_functions = @import("../optical_properties/shared/phase_functions.zig");
 
 pub fn prepareRoute(request: common.DispatchRequest) common.PrepareError!common.Route {
+    if (request.rtm_controls.use_adding) return common.Error.UnsupportedTransportSolver;
+    if (request.regime != .nadir) return common.Error.UnsupportedObservationRegime;
+    if (request.execution_mode != .scalar) return common.Error.UnsupportedExecutionMode;
+    if (request.derivative_mode != .none) return common.Error.UnsupportedDerivativeMode;
     try request.rtm_controls.validate(request.execution_mode);
-    const family = selectFamily(request);
-    if (family == .adding and request.execution_mode != .scalar) {
-        return common.Error.UnsupportedExecutionMode;
-    }
     return .{
-        .family = family,
+        .family = .labos,
         .regime = request.regime,
         .execution_mode = request.execution_mode,
         .derivative_mode = request.derivative_mode,
         .rtm_controls = request.rtm_controls,
     };
-}
-
-fn selectFamily(request: common.DispatchRequest) common.TransportFamily {
-    if (request.rtm_controls.use_adding) return .adding;
-    if (request.regime != .nadir) return .labos;
-    return .labos;
 }
 
 pub fn sourceInterfaceFromLayers(layers: []const common.LayerInput, ilevel: usize) common.SourceInterfaceInput {

@@ -36,6 +36,7 @@ pub fn buildAdaptiveIntegrationKernelFromCache(
     response: InstrumentModel.SpectralResponse,
     nominal_wavelength_nm: f64,
     cache: *const AdaptiveKernelCache,
+    apply_disamar_midpoint_bias: bool,
     kernel: *types.IntegrationKernel,
 ) bool {
     if (!cache.ready) return false;
@@ -49,6 +50,7 @@ pub fn buildAdaptiveIntegrationKernelFromCache(
         nominal_wavelength_nm,
         cache.global_start_nm,
         cache.global_end_nm,
+        apply_disamar_midpoint_bias,
         &sample_wavelengths_nm,
         &sample_raw_weights,
         &sample_count,

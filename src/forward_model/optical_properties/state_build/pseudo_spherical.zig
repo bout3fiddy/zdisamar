@@ -297,3 +297,73 @@ pub fn fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
     level_sample_starts[solver_layer_count] = sample_index;
     return true;
 }
+
+pub fn fillPseudoSphericalGridAtWavelengthWithCarrierCache(
+    self: *const PreparedOpticalState,
+    scene: *const Scene,
+    wavelength_nm: f64,
+    solver_layer_count: usize,
+    attenuation_layers: []transport_common.LayerInput,
+    attenuation_samples: []transport_common.PseudoSphericalSample,
+    level_sample_starts: []usize,
+    level_altitudes_km: []f64,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+) bool {
+    const sublayers = self.sublayers orelse return false;
+    const subgrid_divisions = @max(@as(usize, scene.atmosphere.sublayer_divisions), 1);
+    const sample_count = solver_layer_count * subgrid_divisions;
+    if (attenuation_samples.len < sample_count or
+        level_sample_starts.len != solver_layer_count + 1 or
+        level_altitudes_km.len != solver_layer_count + 1)
+    {
+        return false;
+    }
+
+    if (solver_layer_count != sublayers.len and solver_layer_count != self.layers.len) {
+        return false;
+    }
+    if (!shared_geometry.usesSharedRtmGrid(self, solver_layer_count)) {
+        return fillPseudoSphericalGridAtWavelengthWithSpectroscopyCache(
+            self,
+            scene,
+            wavelength_nm,
+            solver_layer_count,
+            attenuation_layers,
+            attenuation_samples,
+            level_sample_starts,
+            level_altitudes_km,
+            &wavelength_cache.profile_cache,
+        );
+    }
+
+    const geometry = shared_geometry.cachedSharedRtmGeometry(self, solver_layer_count) orelse return false;
+    for (level_altitudes_km, geometry.levels) |*altitude_km, level_geometry| {
+        altitude_km.* = level_geometry.altitude_km;
+    }
+
+    var sample_index: usize = 0;
+    for (geometry.layers, 0..) |layer_geometry, layer_index| {
+        level_sample_starts[layer_index] = sample_index;
+        const support_start_index: usize = @intCast(layer_geometry.support_start_index);
+        const support_count: usize = @intCast(layer_geometry.support_count);
+        const support = shared_geometry.sharedSupportSlices(
+            self,
+            sublayers,
+            support_start_index,
+            support_count,
+        );
+        sample_index = shared_carrier.fillSharedPseudoSphericalSamplesFromSupportRowsWithCarrierCache(
+            self,
+            wavelength_nm,
+            support.sublayers,
+            support.strong_line_states,
+            attenuation_layers,
+            attenuation_samples,
+            sample_index,
+            wavelength_cache,
+        );
+    }
+
+    level_sample_starts[solver_layer_count] = sample_index;
+    return true;
+}

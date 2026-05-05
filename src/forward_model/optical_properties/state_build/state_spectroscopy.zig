@@ -18,6 +18,11 @@ pub const ProfileNodeSpectroscopyCache = struct {
     line_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     line_mixing_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     total_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    weak_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    strong_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    line_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    line_mixing_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
+    total_second: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
 
     pub fn init(
         self: *const PreparedOpticalState,
@@ -29,24 +34,71 @@ pub const ProfileNodeSpectroscopyCache = struct {
         if (node_count < 3 or node_count > max_spectroscopy_profile_nodes) return .{};
         if (self.spectroscopy_profile_pressures_hpa.len != node_count or
             self.spectroscopy_profile_temperatures_k.len != node_count) return .{};
+        const prepared_states = if (self.spectroscopy_profile_strong_line_states) |states|
+            if (states.len == node_count) states else null
+        else
+            null;
+        const prepared_weak_states = if (self.spectroscopy_profile_weak_line_states) |states|
+            if (states.len == node_count) states else null
+        else
+            null;
 
         var cache = ProfileNodeSpectroscopyCache{
             .node_count = node_count,
             .altitudes_km = self.spectroscopy_profile_altitudes_km[0..node_count],
+            .weak_values = undefined,
+            .strong_values = undefined,
+            .line_values = undefined,
+            .line_mixing_values = undefined,
+            .total_values = undefined,
+            .weak_second = undefined,
+            .strong_second = undefined,
+            .line_second = undefined,
+            .line_mixing_second = undefined,
+            .total_second = undefined,
         };
+        const wavelength_window = if (prepared_states != null)
+            LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
+        else
+            null;
         for (0..node_count) |index| {
-            const evaluation = LineListEval.totalSigmaAt(
-                line_list,
-                wavelength_nm,
-                self.spectroscopy_profile_temperatures_k[index],
-                self.spectroscopy_profile_pressures_hpa[index],
-            );
+            const evaluation = if (prepared_states) |states|
+                LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
+                    line_list,
+                    wavelength_nm,
+                    self.spectroscopy_profile_temperatures_k[index],
+                    self.spectroscopy_profile_pressures_hpa[index],
+                    &states[index],
+                    if (prepared_weak_states) |weak_states| &weak_states[index] else null,
+                    &wavelength_window.?,
+                )
+            else
+                LineListEval.totalSigmaAt(
+                    line_list,
+                    wavelength_nm,
+                    self.spectroscopy_profile_temperatures_k[index],
+                    self.spectroscopy_profile_pressures_hpa[index],
+                );
             cache.weak_values[index] = evaluation.weak_line_sigma_cm2_per_molecule;
             cache.strong_values[index] = evaluation.strong_line_sigma_cm2_per_molecule;
             cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;
             cache.line_mixing_values[index] = evaluation.line_mixing_sigma_cm2_per_molecule;
             cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
         }
+        const altitudes = cache.altitudes_km[0..node_count];
+        spline.endpointSecantSecondDerivatives5(
+            altitudes,
+            cache.weak_values[0..node_count],
+            cache.strong_values[0..node_count],
+            cache.line_values[0..node_count],
+            cache.line_mixing_values[0..node_count],
+            cache.total_values[0..node_count],
+            cache.weak_second[0..node_count],
+            cache.strong_second[0..node_count],
+            cache.line_second[0..node_count],
+            cache.line_mixing_second[0..node_count],
+            cache.total_second[0..node_count],
+        ) catch return .{};
         return cache;
     }
 
@@ -59,39 +111,80 @@ pub const ProfileNodeSpectroscopyCache = struct {
             altitude_km > self.altitudes_km[self.node_count - 1]) return null;
 
         const altitudes = self.altitudes_km[0..self.node_count];
+        var klo: usize = 0;
+        var khi: usize = self.node_count - 1;
+        while (khi - klo > 1) {
+            const mid = (khi + klo) / 2;
+            if (altitudes[mid] > altitude_km) {
+                khi = mid;
+            } else {
+                klo = mid;
+            }
+        }
         return .{
-            .weak_line_sigma_cm2_per_molecule = spline.sampleEndpointSecant(
+            .weak_line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.weak_values[0..self.node_count],
+                self.weak_second[0..self.node_count],
                 altitude_km,
-            ) catch return null,
-            .strong_line_sigma_cm2_per_molecule = spline.sampleEndpointSecant(
+                klo,
+                khi,
+            ),
+            .strong_line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.strong_values[0..self.node_count],
+                self.strong_second[0..self.node_count],
                 altitude_km,
-            ) catch return null,
-            .line_sigma_cm2_per_molecule = spline.sampleEndpointSecant(
+                klo,
+                khi,
+            ),
+            .line_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.line_values[0..self.node_count],
+                self.line_second[0..self.node_count],
                 altitude_km,
-            ) catch return null,
-            .line_mixing_sigma_cm2_per_molecule = spline.sampleEndpointSecant(
+                klo,
+                khi,
+            ),
+            .line_mixing_sigma_cm2_per_molecule = sampleCachedEndpointSecant(
                 altitudes,
                 self.line_mixing_values[0..self.node_count],
+                self.line_mixing_second[0..self.node_count],
                 altitude_km,
-            ) catch return null,
+                klo,
+                khi,
+            ),
             .total_sigma_cm2_per_molecule = @max(
-                spline.sampleEndpointSecant(
+                sampleCachedEndpointSecant(
                     altitudes,
                     self.total_values[0..self.node_count],
+                    self.total_second[0..self.node_count],
                     altitude_km,
-                ) catch return null,
+                    klo,
+                    khi,
+                ),
                 0.0,
             ),
             .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
         };
     }
 };
+
+fn sampleCachedEndpointSecant(
+    x: []const f64,
+    y: []const f64,
+    second: []const f64,
+    target_x: f64,
+    klo: usize,
+    khi: usize,
+) f64 {
+    const h = x[khi] - x[klo];
+    if (h == 0.0) return y[klo];
+    const a = (x[khi] - target_x) / h;
+    const b = (target_x - x[klo]) / h;
+    return a * y[klo] + b * y[khi] +
+        ((a * a * a - a) * second[klo] + (b * b * b - b) * second[khi]) * (h * h) / 6.0;
+}
 
 pub fn totalCrossSectionAtWavelength(self: *const PreparedOpticalState, wavelength_nm: f64) f64 {
     const continuum = if (self.cross_section_absorbers.len == 0)

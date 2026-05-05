@@ -86,19 +86,16 @@ pub const RadiativeTransferControls = struct {
 };
 
 pub const TransportFamily = enum {
-    adding,
     labos,
 
     pub fn classification(self: TransportFamily) ImplementationClass {
         return switch (self) {
-            .adding => .baseline,
             .labos => .baseline,
         };
     }
 
     pub fn provenanceLabel(self: TransportFamily) []const u8 {
         return switch (self) {
-            .adding => "baseline_adding",
             .labos => "baseline_labos",
         };
     }
@@ -265,6 +262,9 @@ pub const ForwardResult = struct {
 
 pub const PrepareError = error{
     UnsupportedExecutionMode,
+    UnsupportedDerivativeMode,
+    UnsupportedTransportSolver,
+    UnsupportedObservationRegime,
     UnsupportedRadiativeTransferControls,
 };
 

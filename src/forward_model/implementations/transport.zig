@@ -1,11 +1,13 @@
 const common = @import("../radiative_transfer/root.zig");
 const dispatcher = @import("../radiative_transfer/dispatcher.zig");
+const labos = @import("../radiative_transfer/labos/root.zig");
 const std = @import("std");
 
 pub const Implementation = struct {
     id: []const u8,
     prepareRoute: *const fn (request: common.DispatchRequest) common.PrepareError!common.Route,
     executePrepared: *const fn (allocator: std.mem.Allocator, route: common.Route, input: common.ForwardInput) common.ExecuteError!common.ForwardResult,
+    executePreparedWithLabosWorkspace: ?*const fn (allocator: std.mem.Allocator, route: common.Route, input: common.ForwardInput, workspace: ?*labos.Workspace) common.ExecuteError!common.ForwardResult = null,
     classificationForRoute: *const fn (route: common.Route) common.ImplementationClass,
     provenanceLabelForRoute: *const fn (route: common.Route) []const u8,
     derivativeSemanticsForRoute: *const fn (route: common.Route) common.DerivativeSemantics,
@@ -17,6 +19,7 @@ pub fn resolve(provider_id: []const u8) ?Implementation {
             .id = provider_id,
             .prepareRoute = dispatcher.prepare,
             .executePrepared = dispatcher.executePrepared,
+            .executePreparedWithLabosWorkspace = dispatcher.executePreparedWithLabosWorkspace,
             .classificationForRoute = classificationForRoute,
             .provenanceLabelForRoute = provenanceLabelForRoute,
             .derivativeSemanticsForRoute = derivativeSemanticsForRoute,

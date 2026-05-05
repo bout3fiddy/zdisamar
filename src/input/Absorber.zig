@@ -333,6 +333,7 @@ pub const Absorber = struct {
         if (self.id.len == 0 or self.species.len == 0) {
             return errors.Error.InvalidRequest;
         }
+        _ = resolvedAbsorberSpecies(self) orelse return errors.Error.InvalidRequest;
         try self.profile_source.validate();
         try validateVolumeMixingRatioProfile(self.volume_mixing_ratio_profile_ppmv);
         try self.spectroscopy.validate();

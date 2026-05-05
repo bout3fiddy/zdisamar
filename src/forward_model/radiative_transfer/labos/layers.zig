@@ -45,14 +45,14 @@ pub fn renormalizeZeroFourierPhaseKernel(
         const column_weight = @max(geo.w[imu0], 1.0e-30);
         for (0..geo.nmutot) |imu| {
             const row_weight = @max(geo.w[imu], 1.0e-30);
-            zp[imu][imu0] = zplus.get(imu, imu0) / (row_weight * column_weight);
+            zp[imu][imu0] = zplus.data[imu * zplus.n + imu0] / (row_weight * column_weight);
         }
     }
 
     for (0..geo.n_gauss) |imu0| {
         var integral: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
-            integral += geo.wg[imu] * (zp[imu][imu0] + zmin.get(imu, imu0) / (@max(geo.w[imu], 1.0e-30) * @max(geo.w[imu0], 1.0e-30)));
+            integral += geo.wg[imu] * (zp[imu][imu0] + zmin.data[imu * zmin.n + imu0] / (@max(geo.w[imu], 1.0e-30) * @max(geo.w[imu0], 1.0e-30)));
         }
         const denominator = zp[imu0][imu0] * geo.wg[imu0];
         if (@abs(denominator) <= 1.0e-30) continue;
@@ -64,7 +64,7 @@ pub fn renormalizeZeroFourierPhaseKernel(
         const target_mu = geo.u[imu0];
         var integral: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
-            integral += geo.wg[imu] * (zp[imu][imu0] + zmin.get(imu, imu0) / (@max(geo.w[imu], 1.0e-30) * @max(geo.w[imu0], 1.0e-30)));
+            integral += geo.wg[imu] * (zp[imu][imu0] + zmin.data[imu * zmin.n + imu0] / (@max(geo.w[imu], 1.0e-30) * @max(geo.w[imu0], 1.0e-30)));
         }
         const delta = 2.0 - integral;
 
@@ -101,7 +101,7 @@ pub fn renormalizeZeroFourierPhaseKernel(
     for (0..geo.nmutot) |imu0| {
         const column_weight = geo.w[imu0];
         for (0..geo.nmutot) |imu| {
-            zplus.set(imu, imu0, zp[imu][imu0] * geo.w[imu] * column_weight);
+            zplus.data[imu * zplus.n + imu0] = zp[imu][imu0] * geo.w[imu] * column_weight;
         }
     }
 }
@@ -114,16 +114,37 @@ fn singleScatterR(
     geo: *const basis.Geometry,
 ) basis.Mat {
     const n = geo.nmutot;
+    if (n == 12) return singleScatterR12(a, E, Zmin, geo);
     var result = basis.Mat.zero(n);
 
     for (0..n) |j| {
-        const uj = geo.u[j];
-        const ej = E.get(j);
+        const ej = E.data[j];
+        var idx = j;
         for (0..n) |i| {
-            const ui = geo.u[i];
-            const dmu_plus = 0.25 / @max(ui + uj, 1.0e-12);
-            const eer = E.get(i) * ej;
-            result.set(i, j, a * Zmin.get(i, j) * (1.0 - eer) * dmu_plus);
+            const eer = E.data[i] * ej;
+            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
+            idx += n;
+        }
+    }
+    return result;
+}
+
+fn singleScatterR12(
+    a: f64,
+    E: *const basis.Vec,
+    Zmin: *const basis.Mat,
+    geo: *const basis.Geometry,
+) basis.Mat {
+    // INVARIANT: the fixed 12x12 loops assign every active matrix element.
+    var result = basis.Mat{ .data = undefined, .n = 12 };
+
+    inline for (0..12) |j| {
+        const ej = E.data[j];
+        var idx = j;
+        inline for (0..12) |i| {
+            const eer = E.data[i] * ej;
+            result.data[idx] = a * Zmin.data[idx] * (1.0 - eer) * geo.dmu_plus[idx];
+            idx += 12;
         }
     }
     return result;
@@ -138,26 +159,70 @@ fn singleScatterT(
     geo: *const basis.Geometry,
 ) basis.Mat {
     const n = geo.nmutot;
+    if (n == 12) return singleScatterT12(a, b, E, Zplus, geo);
     var result = basis.Mat.zero(n);
 
     for (0..n) |j| {
-        const uj = geo.u[j];
+        const ej = E.data[j];
+        var idx = j;
         for (0..n) |i| {
-            const ui = geo.u[i];
-            const du = ui - uj;
             var eet: f64 = undefined;
-            var dmu_min: f64 = undefined;
-            if (@abs(du) < 1.0e-6) {
-                eet = b * E.get(i);
-                dmu_min = 0.25 / @max(ui * uj, 1.0e-12);
+            if (geo.dmu_same[idx]) {
+                eet = b * E.data[i];
             } else {
-                eet = E.get(i) - E.get(j);
-                dmu_min = 0.25 / du;
+                eet = E.data[i] - ej;
             }
-            result.set(i, j, a * Zplus.get(i, j) * eet * dmu_min);
+            result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
+            idx += n;
         }
     }
     return result;
+}
+
+fn singleScatterT12(
+    a: f64,
+    b: f64,
+    E: *const basis.Vec,
+    Zplus: *const basis.Mat,
+    geo: *const basis.Geometry,
+) basis.Mat {
+    // INVARIANT: the fixed 12x12 loops assign every active matrix element.
+    var result = basis.Mat{ .data = undefined, .n = 12 };
+
+    inline for (0..12) |j| {
+        const ej = E.data[j];
+        var idx = j;
+        inline for (0..12) |i| {
+            var eet: f64 = undefined;
+            if (geo.dmu_same[idx]) {
+                eet = b * E.data[i];
+            } else {
+                eet = E.data[i] - ej;
+            }
+            result.data[idx] = a * Zplus.data[idx] * eet * geo.dmu_min[idx];
+            idx += 12;
+        }
+    }
+    return result;
+}
+
+fn gaussTrace(n: usize, n_gauss: usize, mat: *const basis.Mat) f64 {
+    if (n == 12 and n_gauss == 10) {
+        var trace = mat.data[0];
+        trace += mat.data[13];
+        trace += mat.data[26];
+        trace += mat.data[39];
+        trace += mat.data[52];
+        trace += mat.data[65];
+        trace += mat.data[78];
+        trace += mat.data[91];
+        trace += mat.data[104];
+        trace += mat.data[117];
+        return trace;
+    }
+    var trace: f64 = 0.0;
+    for (0..n_gauss) |k| trace += mat.data[k * n + k];
+    return trace;
 }
 
 // Perform ndouble doubling steps on R, T, E for a layer.
@@ -174,26 +239,30 @@ fn doDouble(
 ) void {
     var b = b_start;
     for (0..ndouble) |_| {
-        const Q = basis.qseries(n, n_gauss, threshold_mul, R, R);
-        const qe = basis.semul(n, &Q, E);
-        const qt = basis.smul(n, n_gauss, threshold_mul, &Q, T);
-        var D = basis.matAdd(n, T, &qe);
-        D = basis.matAdd(n, &D, &qt);
+        const trace_r = gaussTrace(n, n_gauss, R);
+        const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
 
-        const re = basis.semul(n, R, E);
-        const rd = basis.smul(n, n_gauss, threshold_mul, R, &D);
-        const U = basis.matAdd(n, &re, &rd);
+        const D = if (q_is_zero) blk: {
+            break :blk T.*;
+        } else blk: {
+            const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
+            break :blk basis.smulAddSemul3(n, n_gauss, threshold_mul, &Q, E, T);
+        };
 
-        const eu = basis.esmul(n, E, &U);
-        const tu = basis.smul(n, n_gauss, threshold_mul, T, &U);
-        var R_new = basis.matAdd(n, R, &eu);
-        R_new = basis.matAdd(n, &R_new, &tu);
+        var rd: basis.Mat = undefined;
+        basis.smulInto(&rd, n, n_gauss, threshold_mul, R, &D);
 
-        const ed = basis.esmul(n, E, &D);
-        const te = basis.semul(n, T, E);
-        const td = basis.smul(n, n_gauss, threshold_mul, T, &D);
-        var T_new = basis.matAdd(n, &ed, &te);
-        T_new = basis.matAdd(n, &T_new, &td);
+        const U = basis.semulAdd(n, R, E, &rd);
+
+        var tu: basis.Mat = undefined;
+        basis.smulInto(&tu, n, n_gauss, threshold_mul, T, &U);
+
+        const R_new = basis.matAddEsmul3(n, R, E, &U, &tu);
+
+        var td: basis.Mat = undefined;
+        basis.smulInto(&td, n, n_gauss, threshold_mul, T, &D);
+
+        const T_new = basis.esmulSemulAdd(n, E, &D, T, &td);
 
         // PARITY: DISAMAR's whole-array assignments evaluate both RHS values
         // from the pre-step operators before storing the doubled layer state.
@@ -203,12 +272,12 @@ fn doDouble(
         b *= 2.0;
         if (b < 0.001) {
             for (0..geo.nmutot) |imu| {
-                E.set(imu, math.exp(-b / @max(geo.u[imu], 1.0e-12)));
+                E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
             }
         } else {
             for (0..geo.nmutot) |imu| {
-                const e = E.get(imu);
-                E.set(imu, e * e);
+                const e = E.data[imu];
+                E.data[imu] = e * e;
             }
         }
     }
@@ -222,6 +291,16 @@ fn maxLayerPhaseCoefficientIndex(layers: []const common.LayerInput) usize {
     return max_index;
 }
 
+pub fn fillLayerPhaseMaxIndices(
+    layer_phase_max_indices: []usize,
+    layers: []const common.LayerInput,
+) void {
+    std.debug.assert(layer_phase_max_indices.len >= layers.len);
+    for (layers, layer_phase_max_indices[0..layers.len]) |layer, *max_index| {
+        max_index.* = phase_functions.maxPhaseCoefficientIndex(layer.phase_coefficients);
+    }
+}
+
 pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
@@ -229,35 +308,52 @@ pub fn calcRTlayersIntoWithBasis(
     geo: *const basis.Geometry,
     controls: common.RadiativeTransferControls,
     plm_basis: *const basis.FourierPlmBasis,
+    layer_phase_max_indices: ?[]const usize,
     phase_kernel_cache: ?[]basis.PhaseKernel,
     phase_kernel_valid: ?[]bool,
+    rt_active: ?[]bool,
 ) void {
     const nlayer = layers.len;
-
-    for (rt) |*entry| {
-        entry.* = .{
-            .R = basis.Mat.zero(geo.nmutot),
-            .T = basis.Mat.zero(geo.nmutot),
-        };
-    }
+    rt[0] = zeroLayerRt(geo.nmutot);
+    if (rt_active) |active| active[0] = false;
     if (phase_kernel_valid) |valid| @memset(valid, false);
 
     for (0..nlayer) |layer_idx| {
         const rt_idx = layer_idx + 1;
         const layer = layers[layer_idx];
-        if (i_fourier >= basis.max_phase_coef) continue;
+        if (i_fourier >= basis.max_phase_coef) {
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (rt_active) |active| active[rt_idx] = false;
+            continue;
+        }
 
         const phase_coefs = layer.phase_coefficients;
-        const max_phase_index = phase_functions.maxPhaseCoefficientIndex(phase_coefs);
-        if (i_fourier > max_phase_index) continue;
+        const max_phase_index = if (layer_phase_max_indices) |indices|
+            indices[layer_idx]
+        else
+            phase_functions.maxPhaseCoefficientIndex(phase_coefs);
+        if (i_fourier > max_phase_index) {
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (rt_active) |active| active[rt_idx] = false;
+            continue;
+        }
+        if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            if (rt_active) |active| active[rt_idx] = false;
+            continue;
+        }
 
-        var z = basis.fillZplusZminFromBasis(i_fourier, phase_coefs, geo, plm_basis);
+        var z = basis.fillZplusZminFromBasisLimited(
+            i_fourier,
+            phase_coefs,
+            max_phase_index,
+            geo,
+            plm_basis,
+        );
         if (phase_kernel_cache) |cache| {
             cache[rt_idx] = z;
             if (phase_kernel_valid) |valid| valid[rt_idx] = true;
         }
-        if (layer.optical_depth < 1.0e-20) continue;
-
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
 
@@ -289,7 +385,7 @@ pub fn calcRTlayersIntoWithBasis(
 
         var E = basis.Vec.zero(geo.nmutot);
         for (0..geo.nmutot) |imu| {
-            E.set(imu, math.exp(-b_start / @max(geo.u[imu], 1.0e-12)));
+            E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
         }
 
         var R = singleScatterR(a, &E, &z.Zmin, geo);
@@ -306,7 +402,15 @@ pub fn calcRTlayersIntoWithBasis(
 
         rt[rt_idx].R = R;
         rt[rt_idx].T = T;
+        if (rt_active) |active| active[rt_idx] = a != 0.0;
     }
+}
+
+fn zeroLayerRt(n: usize) LayerRT {
+    return .{
+        .R = basis.Mat.zero(n),
+        .T = basis.Mat.zero(n),
+    };
 }
 
 pub fn calcRTlayersInto(
@@ -328,6 +432,8 @@ pub fn calcRTlayersInto(
         geo,
         controls,
         &plm_basis,
+        null,
+        null,
         null,
         null,
     );

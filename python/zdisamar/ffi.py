@@ -80,7 +80,7 @@ class _CAtmosphericBudget(ctypes.Structure):
     ]
 
 
-class _CO2LineContributionRow(ctypes.Structure):
+class _O2LineContributionRow(ctypes.Structure):
     _fields_ = [
         ("wavelength_nm", ctypes.c_double),
         ("profile_node_index", ctypes.c_uint32),
@@ -110,12 +110,12 @@ class _CO2LineContributionRow(ctypes.Structure):
     ]
 
 
-class _CO2LineContributions(ctypes.Structure):
+class _O2LineContributions(ctypes.Structure):
     _fields_ = [
         ("len", ctypes.c_size_t),
         ("total_row_count", ctypes.c_size_t),
         ("truncated", ctypes.c_uint8),
-        ("rows", ctypes.POINTER(_CO2LineContributionRow)),
+        ("rows", ctypes.POINTER(_O2LineContributionRow)),
     ]
 
 
@@ -145,7 +145,7 @@ class _CInstrumentResponse(ctypes.Structure):
     ]
 
 
-class _CO2O2CIARow(ctypes.Structure):
+class _O2O2CIARow(ctypes.Structure):
     _fields_ = [
         ("wavelength_nm", ctypes.c_double),
         ("layer_index", ctypes.c_uint32),
@@ -166,10 +166,10 @@ class _CO2O2CIARow(ctypes.Structure):
     ]
 
 
-class _CO2O2CIADiagnostics(ctypes.Structure):
+class _O2O2CIADiagnostics(ctypes.Structure):
     _fields_ = [
         ("len", ctypes.c_size_t),
-        ("rows", ctypes.POINTER(_CO2O2CIARow)),
+        ("rows", ctypes.POINTER(_O2O2CIARow)),
     ]
 
 
@@ -279,7 +279,7 @@ def _configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_double),
         ctypes.c_size_t,
         ctypes.c_size_t,
-        ctypes.POINTER(_CO2LineContributions),
+        ctypes.POINTER(_O2LineContributions),
     ]
     lib.zds_o2_line_contributions.restype = ctypes.c_int
     lib.zds_instrument_response_sampling.argtypes = [
@@ -294,7 +294,7 @@ def _configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_double),
         ctypes.c_size_t,
-        ctypes.POINTER(_CO2O2CIADiagnostics),
+        ctypes.POINTER(_O2O2CIADiagnostics),
     ]
     lib.zds_o2_o2_cia_diagnostics.restype = ctypes.c_int
     lib.zds_radiative_transfer_diagnostics.argtypes = [
@@ -309,11 +309,11 @@ def _configure(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.zds_spectrum_free.restype = None
     lib.zds_atmospheric_budget_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CAtmosphericBudget)]
     lib.zds_atmospheric_budget_free.restype = None
-    lib.zds_o2_line_contributions_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CO2LineContributions)]
+    lib.zds_o2_line_contributions_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_O2LineContributions)]
     lib.zds_o2_line_contributions_free.restype = None
     lib.zds_instrument_response_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CInstrumentResponse)]
     lib.zds_instrument_response_free.restype = None
-    lib.zds_o2_o2_cia_diagnostics_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CO2O2CIADiagnostics)]
+    lib.zds_o2_o2_cia_diagnostics_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(_O2O2CIADiagnostics)]
     lib.zds_o2_o2_cia_diagnostics_free.restype = None
     lib.zds_radiative_transfer_diagnostics_free.argtypes = [
         ctypes.c_void_p,
@@ -334,15 +334,17 @@ class Spectrum:
         self._close_owner = close_owner
         self._diagnostic_report: Optional[DiagnosticReport] = None
 
-    def _array(self, pointer: ctypes.POINTER(ctypes.c_double)):
+    def _array(self, pointer: object):
         self._require_open()
         import numpy as np
 
         return np.ctypeslib.as_array(pointer, shape=(self._raw.len,))
 
-    def _require_open(self) -> None:
-        if self._owner is None or self._owner._ctx is None:
+    def _require_open(self) -> "Context":
+        owner = self._owner
+        if owner is None or owner._ctx is None:
             raise RuntimeError("spectrum is closed")
+        return owner
 
     @property
     def wavelength_nm(self):
@@ -362,9 +364,9 @@ class Spectrum:
 
     @property
     def diagnostic_report(self) -> DiagnosticReport:
-        self._require_open()
+        owner = self._require_open()
         if self._diagnostic_report is None:
-            self._diagnostic_report = self._owner._spectrum_report(self._raw)
+            self._diagnostic_report = owner._spectrum_report(self._raw)
         return self._diagnostic_report
 
     def close(self) -> None:
@@ -473,9 +475,9 @@ class O2LineContributions:
         2: "strong_sidecar",
         3: "weak_zero_after_cutoff",
     }
-    columns = tuple(name for name, _ctype in _CO2LineContributionRow._fields_)
+    columns = tuple(name for name, _ctype in _O2LineContributionRow._fields_)
 
-    def __init__(self, owner: "Context", raw: _CO2LineContributions):
+    def __init__(self, owner: "Context", raw: _O2LineContributions):
         self._owner = owner
         self._raw = raw
 
@@ -533,7 +535,7 @@ class O2LineContributions:
         if self._owner is not None:
             self._owner._free_o2_line_contributions(self._raw)
             self._owner = None
-            self._raw = _CO2LineContributions()
+            self._raw = _O2LineContributions()
 
     def __enter__(self) -> "O2LineContributions":
         return self
@@ -609,9 +611,9 @@ class InstrumentResponseTable:
 class O2O2CIADiagnosticTable:
     """Native O2-O2 CIA diagnostic table."""
 
-    columns = tuple(name for name, _ctype in _CO2O2CIARow._fields_)
+    columns = tuple(name for name, _ctype in _O2O2CIARow._fields_)
 
-    def __init__(self, owner: "Context", raw: _CO2O2CIADiagnostics):
+    def __init__(self, owner: "Context", raw: _O2O2CIADiagnostics):
         self._owner = owner
         self._raw = raw
 
@@ -642,7 +644,7 @@ class O2O2CIADiagnosticTable:
         if self._owner is not None:
             self._owner._free_o2_o2_cia_diagnostics(self._raw)
             self._owner = None
-            self._raw = _CO2O2CIADiagnostics()
+            self._raw = _O2O2CIADiagnostics()
 
     def __enter__(self) -> "O2O2CIADiagnosticTable":
         return self
@@ -820,7 +822,7 @@ class Context:
         wavelengths = _contiguous_wavelengths(wavelengths_nm)
         if max_rows <= 0:
             raise ValueError("max_rows must be positive")
-        raw = _CO2LineContributions()
+        raw = _O2LineContributions()
         self._check(
             self._lib.zds_o2_line_contributions(
                 self._ctx,
@@ -852,7 +854,7 @@ class Context:
 
     def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
         wavelengths = _contiguous_wavelengths(wavelengths_nm)
-        raw = _CO2O2CIADiagnostics()
+        raw = _O2O2CIADiagnostics()
         self._check(
             self._lib.zds_o2_o2_cia_diagnostics(
                 self._ctx,
@@ -887,13 +889,13 @@ class Context:
     def _free_atmospheric_budget(self, raw: _CAtmosphericBudget) -> None:
         self._lib.zds_atmospheric_budget_free(self._ctx, ctypes.byref(raw))
 
-    def _free_o2_line_contributions(self, raw: _CO2LineContributions) -> None:
+    def _free_o2_line_contributions(self, raw: _O2LineContributions) -> None:
         self._lib.zds_o2_line_contributions_free(self._ctx, ctypes.byref(raw))
 
     def _free_instrument_response(self, raw: _CInstrumentResponse) -> None:
         self._lib.zds_instrument_response_free(self._ctx, ctypes.byref(raw))
 
-    def _free_o2_o2_cia_diagnostics(self, raw: _CO2O2CIADiagnostics) -> None:
+    def _free_o2_o2_cia_diagnostics(self, raw: _O2O2CIADiagnostics) -> None:
         self._lib.zds_o2_o2_cia_diagnostics_free(self._ctx, ctypes.byref(raw))
 
     def _free_radiative_transfer_diagnostics(self, raw: _CRadiativeTransferDiagnostics) -> None:
@@ -915,6 +917,10 @@ class Context:
 class _PreparedO2ABase:
     """Shared prepared O2A wrapper behavior."""
 
+    _ctx: Optional[Context]
+    _input: O2AInput
+    _library_path: Optional[str | os.PathLike[str]]
+
     @property
     def input(self) -> O2AInput:
         return copy.deepcopy(self._input)
@@ -932,38 +938,38 @@ class _PreparedO2ABase:
         return self._require_context().forward_model()
 
     @property
-    def atmosphere(self) -> AtmosphereDiagnostics:
+    def atmosphere(self: "PreparedO2A | PreparedDefaultO2A") -> AtmosphereDiagnostics:
         self._require_context()
         return AtmosphereDiagnostics(self)
 
     @property
-    def o2_lines(self) -> O2LineDiagnostics:
+    def o2_lines(self: "PreparedO2A | PreparedDefaultO2A") -> O2LineDiagnostics:
         self._require_context()
         return O2LineDiagnostics(self)
 
     @property
-    def o2_o2_cia(self):
+    def o2_o2_cia(self: "PreparedO2A | PreparedDefaultO2A"):
         self._require_context()
         from .diagnostics import O2O2CIADiagnostics
 
         return O2O2CIADiagnostics(self)
 
     @property
-    def instrument_response(self):
+    def instrument_response(self: "PreparedO2A | PreparedDefaultO2A"):
         self._require_context()
         from .diagnostics import InstrumentResponseDiagnostics
 
         return InstrumentResponseDiagnostics(self)
 
     @property
-    def radiative_transfer(self):
+    def radiative_transfer(self: "PreparedO2A | PreparedDefaultO2A"):
         self._require_context()
         from .diagnostics import RadiativeTransferDiagnostics
 
         return RadiativeTransferDiagnostics(self)
 
     @property
-    def perturbations(self):
+    def perturbations(self: "PreparedO2A | PreparedDefaultO2A"):
         self._require_context()
         from .diagnostics import PerturbationDiagnostics
 

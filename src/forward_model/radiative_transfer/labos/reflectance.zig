@@ -2,6 +2,11 @@ const std = @import("std");
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
 
+const PhaseRows = struct {
+    zplus: []const f64,
+    zmin: []const f64,
+};
+
 fn sourceInterfaceAtLevel(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -46,6 +51,27 @@ fn adjacentLayerPhaseCoefficientIndex(
         maxPhaseCoefficientIndex(layers[ilevel - 1].phase_coefficients),
         maxPhaseCoefficientIndex(layers[ilevel].phase_coefficients),
     );
+}
+
+pub fn fillAdjacentLayerPhaseMaxIndices(
+    source_phase_max_indices: []usize,
+    layer_phase_max_indices: []const usize,
+) void {
+    const nlayer = layer_phase_max_indices.len;
+    std.debug.assert(source_phase_max_indices.len >= nlayer + 1);
+    if (nlayer == 0) {
+        if (source_phase_max_indices.len != 0) source_phase_max_indices[0] = 0;
+        return;
+    }
+
+    source_phase_max_indices[0] = layer_phase_max_indices[0];
+    for (1..nlayer) |ilevel| {
+        source_phase_max_indices[ilevel] = @max(
+            layer_phase_max_indices[ilevel - 1],
+            layer_phase_max_indices[ilevel],
+        );
+    }
+    source_phase_max_indices[nlayer] = layer_phase_max_indices[nlayer - 1];
 }
 
 fn reuseLayerKernelIndex(
@@ -100,6 +126,7 @@ pub fn calcIntegratedReflectance(
         &plm_basis,
         null,
         null,
+        null,
     );
 }
 
@@ -112,6 +139,7 @@ pub fn calcIntegratedReflectanceWithBasis(
     i_fourier: usize,
     geo: *const basis.Geometry,
     plm_basis: *const basis.FourierPlmBasis,
+    adjacent_layer_phase_max_indices: ?[]const usize,
     layer_phase_kernel_cache: ?[]const basis.PhaseKernel,
     layer_phase_kernel_valid: ?[]const bool,
 ) f64 {
@@ -147,9 +175,9 @@ pub fn calcIntegratedReflectanceWithBasis(
             rtm_quadrature.levels[ilevel].phase_coefficients
         else
             source_interface.phase_coefficients_above;
-        const source_max_phase_index = if (use_rtm_quadrature)
-            adjacentLayerPhaseCoefficientIndex(layers, ilevel)
-        else if (layers.len != 0)
+        const source_max_phase_index = if (adjacent_layer_phase_max_indices) |indices|
+            indices[ilevel]
+        else if (use_rtm_quadrature or layers.len != 0)
             adjacentLayerPhaseCoefficientIndex(layers, ilevel)
         else
             maxInterfacePhaseCoefficientIndex(layers, source_interfaces, ilevel);
@@ -161,49 +189,64 @@ pub fn calcIntegratedReflectanceWithBasis(
             continue;
         }
 
-        const z = blk: {
+        var computed_row: basis.PhaseKernelRow = undefined;
+        const phase_rows: PhaseRows = blk: {
             if (!use_rtm_quadrature) {
                 if (reuseLayerKernelIndex(layers, source_interface, ilevel)) |above_index| {
                     if (layer_phase_kernel_cache) |cache| {
                         if (layer_phase_kernel_valid) |valid| {
                             const cache_index = above_index + 1;
                             if (cache_index < cache.len and cache_index < valid.len and valid[cache_index]) {
-                                break :blk cache[cache_index];
+                                const z = &cache[cache_index];
+                                const row_offset = view_idx * z.Zplus.n;
+                                break :blk PhaseRows{
+                                    .zplus = z.Zplus.data[row_offset .. row_offset + z.Zplus.n],
+                                    .zmin = z.Zmin.data[row_offset .. row_offset + z.Zmin.n],
+                                };
                             }
                         }
                     }
                 }
             }
-            break :blk basis.fillZplusZminFromBasisLimited(
+            computed_row = basis.fillZplusZminRowFromBasisLimited(
                 i_fourier,
                 phase_coefficients,
                 source_max_phase_index,
                 geo,
                 plm_basis,
+                view_idx,
             );
+            break :blk PhaseRows{
+                .zplus = computed_row.zplus[0..computed_row.n],
+                .zmin = computed_row.zmin[0..computed_row.n],
+            };
         };
+
         var pmin_ed: f64 = 0.0;
 
+        const level = ud[ilevel];
+        const level_d = level.D.col[solar_col].data;
+        const level_u = level.U.col[solar_col].data;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
-            const pmin = 0.25 * z.Zmin.get(view_idx, imu) / (view_mu * mu);
-            pmin_ed += pmin * ud[ilevel].D.col[solar_col].get(imu);
+            const pmin = (0.25 * phase_rows.zmin[imu] / view_mu) / mu;
+            pmin_ed += pmin * level_d[imu];
         }
 
         const solar_mu = @max(geo.u[solar_idx], 1.0e-12);
-        const pmin_direct = 0.25 * z.Zmin.get(view_idx, solar_idx) / (view_mu * solar_mu);
-        pmin_ed += pmin_direct * ud[ilevel].E.get(solar_idx);
+        const pmin_direct = (0.25 * phase_rows.zmin[solar_idx] / view_mu) / solar_mu;
+        pmin_ed += pmin_direct * level.E.data[solar_idx];
 
         var pplusst_u: f64 = 0.0;
         for (0..geo.n_gauss) |imu| {
             const mu = @max(geo.u[imu], 1.0e-12);
-            const pplusst = 0.25 * z.Zplus.get(view_idx, imu) / (view_mu * mu);
-            pplusst_u += pplusst * ud[ilevel].U.col[solar_col].get(imu);
+            const pplusst = (0.25 * phase_rows.zplus[imu] / view_mu) / mu;
+            pplusst_u += pplusst * level_u[imu];
         }
 
         // PARITY: `LabosModule::CalcReflectance` forms the level source as
         // `E * ksca * (...)`, then applies `RTMweight` in a separate reduction.
-        const contribution = ud[ilevel].E.get(view_idx) *
+        const contribution = level.E.data[view_idx] *
             source_ksca *
             (pmin_ed + pplusst_u);
         reflectance += source_rtm_weight * contribution;

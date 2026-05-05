@@ -50,8 +50,8 @@ test "O2A input validation rejects invalid sampling and assets" {
 
 test "O2A input validation consumes plan fields" {
     var input = zdisamar.defaultO2AInput();
-    input.plan.execution_solver_mode = "polarized";
-    input.rtm_controls.stokes_dimension = 3;
+    input.plan.execution_solver_mode = "scalar";
+    input.plan.execution_derivative_mode = "none";
     try zdisamar.o2a.validateInput(&input);
 
     input = zdisamar.defaultO2AInput();
@@ -74,13 +74,13 @@ test "O2A input validation consumes plan fields" {
 test "O2A plan modes are consumed when preparing the route" {
     var input = zdisamar.defaultO2AInput();
     input.plan.execution_solver_mode = "scalar";
-    input.plan.execution_derivative_mode = "semi_analytical";
+    input.plan.execution_derivative_mode = "none";
 
     var prepared = try zdisamar.prepareO2A(std.testing.allocator, &input);
     defer prepared.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(.scalar, prepared.route.execution_mode);
-    try std.testing.expectEqual(.semi_analytical, prepared.route.derivative_mode);
+    try std.testing.expectEqual(.none, prepared.route.derivative_mode);
 }
 
 test "O2A route preparation rejects unsupported plan modes" {

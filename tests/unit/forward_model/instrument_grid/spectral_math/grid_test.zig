@@ -9,13 +9,13 @@ const sampleAtExplicit = grid_mod.sampleAtExplicit;
 
 test "spectral grid validates and resolves sample coordinates" {
     const grid = SpectralGrid{
-        .start_nm = 405.0,
-        .end_nm = 465.0,
+        .start_nm = 758.0,
+        .end_nm = 771.0,
         .sample_count = 7,
     };
     try grid.validate();
-    try std.testing.expectApproxEqRel(@as(f64, 405.0), try grid.sampleAt(0), 1e-12);
-    try std.testing.expectApproxEqRel(@as(f64, 465.0), try grid.sampleAt(6), 1e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 758.0), try grid.sampleAt(0), 1e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 771.0), try grid.sampleAt(6), 1e-12);
 }
 
 test "explicit spectral axes validate strict monotonic measured-channel wavelengths" {

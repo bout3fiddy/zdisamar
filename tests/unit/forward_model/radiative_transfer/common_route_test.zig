@@ -6,46 +6,15 @@ const phase_functions = internal.forward_model.optical_properties.shared.phase_f
 const prepareRoute = common.prepareRoute;
 const fillSourceInterfacesFromLayers = common.fillSourceInterfacesFromLayers;
 
-test "prepare route resolves families and keeps derivative mode explicit" {
-    const adding_route = try prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
-        .derivative_mode = .semi_analytical,
-        .rtm_controls = .{ .use_adding = true },
-    });
-    try std.testing.expectEqual(common.TransportFamily.adding, adding_route.family);
-    try std.testing.expectEqual(common.DerivativeMode.semi_analytical, adding_route.derivative_mode);
-    try std.testing.expectEqual(common.DerivativeSemantics.analytical, adding_route.derivativeSemantics());
-    try std.testing.expectEqual(common.ImplementationClass.baseline, adding_route.family.classification());
-    try std.testing.expectEqualStrings("baseline_adding", adding_route.family.provenanceLabel());
-
-    const adding_no_scattering_route = try prepareRoute(.{
+test "prepare route keeps only the O2A LABOS scalar forward path executable" {
+    const labos_route = try prepareRoute(.{
         .regime = .nadir,
         .execution_mode = .scalar,
         .derivative_mode = .none,
-        .rtm_controls = .{
-            .use_adding = true,
-            .scattering = .none,
-        },
-    });
-    try std.testing.expectEqual(common.TransportFamily.adding, adding_no_scattering_route.family);
-    try std.testing.expectEqual(common.ScatteringMode.none, adding_no_scattering_route.rtm_controls.scattering);
-
-    const nadir_default_route = try prepareRoute(.{
-        .regime = .nadir,
-        .execution_mode = .scalar,
-        .derivative_mode = .semi_analytical,
-    });
-    try std.testing.expectEqual(common.TransportFamily.labos, nadir_default_route.family);
-
-    const labos_route = try prepareRoute(.{
-        .regime = .limb,
-        .execution_mode = .scalar,
-        .derivative_mode = .semi_analytical,
     });
     try std.testing.expectEqual(common.TransportFamily.labos, labos_route.family);
-    try std.testing.expectEqual(common.DerivativeMode.semi_analytical, labos_route.derivative_mode);
-    try std.testing.expectEqual(common.DerivativeSemantics.analytical, labos_route.derivativeSemantics());
+    try std.testing.expectEqual(common.DerivativeMode.none, labos_route.derivative_mode);
+    try std.testing.expectEqual(common.DerivativeSemantics.none, labos_route.derivativeSemantics());
     try std.testing.expectEqualStrings("baseline_labos", labos_route.family.provenanceLabel());
 
     const twenty_stream_route = try prepareRoute(.{
@@ -56,20 +25,26 @@ test "prepare route resolves families and keeps derivative mode explicit" {
     });
     try std.testing.expectEqual(@as(u16, 20), twenty_stream_route.rtm_controls.n_streams);
 
+    try std.testing.expectError(common.Error.UnsupportedTransportSolver, prepareRoute(.{
+        .regime = .nadir,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+        .rtm_controls = .{ .use_adding = true },
+    }));
+    try std.testing.expectError(common.Error.UnsupportedObservationRegime, prepareRoute(.{
+        .regime = .limb,
+        .execution_mode = .scalar,
+        .derivative_mode = .none,
+    }));
     try std.testing.expectError(common.Error.UnsupportedExecutionMode, prepareRoute(.{
         .regime = .nadir,
         .execution_mode = .polarized,
         .derivative_mode = .none,
-        .rtm_controls = .{ .use_adding = true },
     }));
-    try std.testing.expectError(common.Error.UnsupportedRadiativeTransferControls, prepareRoute(.{
+    try std.testing.expectError(common.Error.UnsupportedDerivativeMode, prepareRoute(.{
         .regime = .nadir,
         .execution_mode = .scalar,
-        .derivative_mode = .none,
-        .rtm_controls = .{
-            .use_adding = true,
-            .scattering = .single,
-        },
+        .derivative_mode = .semi_analytical,
     }));
 }
 

@@ -38,49 +38,15 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
         if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
             if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
                 for (source_interfaces, geometry.levels) |*source_interface, level_geometry| {
-                    if (level_geometry.weight_km > 0.0) {
-                        const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
-                            self,
-                            wavelength_nm,
-                            sublayers,
-                            if (self.strong_line_states) |states| states else null,
-                            level_geometry,
-                            profile_cache,
-                        );
-                        source_interface.* = .{
-                            .source_weight = 0.0,
-                            .rtm_weight = level_geometry.weight_km,
-                            .gas_ksca = boundary_carrier.gas_scattering_optical_depth_per_km,
-                            .particle_ksca_above = boundary_carrier.particle_scattering_optical_depth_above_per_km,
-                            .particle_ksca_below = boundary_carrier.particle_scattering_optical_depth_below_per_km,
-                            .ksca_above = boundary_carrier.ksca_above,
-                            .ksca_below = boundary_carrier.ksca_below,
-                            .gas_phase_coefficients = boundary_carrier.gas_phase_coefficients,
-                            .phase_coefficients_above = boundary_carrier.phase_coefficients_above,
-                            .phase_coefficients_below = boundary_carrier.phase_coefficients_below,
-                        };
-                    } else {
-                        const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
-                            self,
-                            wavelength_nm,
-                            sublayers,
-                            if (self.strong_line_states) |states| states else null,
-                            level_geometry,
-                            profile_cache,
-                        );
-                        source_interface.* = .{
-                            .source_weight = 0.0,
-                            .rtm_weight = level_geometry.weight_km,
-                            .gas_ksca = boundary_carrier.gas_scattering_optical_depth_per_km,
-                            .particle_ksca_above = boundary_carrier.particle_scattering_optical_depth_above_per_km,
-                            .particle_ksca_below = boundary_carrier.particle_scattering_optical_depth_below_per_km,
-                            .ksca_above = boundary_carrier.ksca_above,
-                            .ksca_below = boundary_carrier.ksca_below,
-                            .gas_phase_coefficients = boundary_carrier.gas_phase_coefficients,
-                            .phase_coefficients_above = boundary_carrier.phase_coefficients_above,
-                            .phase_coefficients_below = boundary_carrier.phase_coefficients_below,
-                        };
-                    }
+                    const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
+                        self,
+                        wavelength_nm,
+                        sublayers,
+                        if (self.strong_line_states) |states| states else null,
+                        level_geometry,
+                        profile_cache,
+                    );
+                    source_interface.* = sourceInterfaceFromBoundaryCarrier(level_geometry.weight_km, boundary_carrier);
                 }
                 return;
             }
@@ -144,4 +110,61 @@ pub fn fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
         }
         return;
     }
+}
+
+pub fn fillSourceInterfacesAtWavelengthWithLayersAndCarrierCache(
+    self: *const PreparedOpticalState,
+    wavelength_nm: f64,
+    layer_inputs: []const transport_common.LayerInput,
+    source_interfaces: []transport_common.SourceInterfaceInput,
+    wavelength_cache: *carrier_eval.WavelengthCarrierCache,
+) void {
+    if (layer_inputs.len == 0 or source_interfaces.len != layer_inputs.len + 1) return;
+
+    if (self.sublayers) |sublayers| {
+        if (shared_geometry.usesSharedRtmGrid(self, layer_inputs.len)) {
+            if (shared_geometry.cachedSharedRtmGeometry(self, layer_inputs.len)) |geometry| {
+                for (source_interfaces, geometry.levels) |*source_interface, level_geometry| {
+                    const boundary_carrier = carrier_eval.sharedBoundaryCarrierAtLevelWithCarrierCache(
+                        self,
+                        wavelength_nm,
+                        sublayers,
+                        if (self.strong_line_states) |states| states else null,
+                        level_geometry,
+                        wavelength_cache,
+                    );
+                    source_interface.* = sourceInterfaceFromBoundaryCarrier(level_geometry.weight_km, boundary_carrier);
+                }
+                return;
+            }
+            for (source_interfaces) |*source_interface| source_interface.* = .{};
+            return;
+        }
+    }
+
+    fillSourceInterfacesAtWavelengthWithLayersAndSpectroscopyCache(
+        self,
+        wavelength_nm,
+        layer_inputs,
+        source_interfaces,
+        &wavelength_cache.profile_cache,
+    );
+}
+
+fn sourceInterfaceFromBoundaryCarrier(
+    rtm_weight: f64,
+    boundary_carrier: carrier_eval.SharedBoundaryCarrier,
+) transport_common.SourceInterfaceInput {
+    return .{
+        .source_weight = 0.0,
+        .rtm_weight = rtm_weight,
+        .gas_ksca = boundary_carrier.gas_scattering_optical_depth_per_km,
+        .particle_ksca_above = boundary_carrier.particle_scattering_optical_depth_above_per_km,
+        .particle_ksca_below = boundary_carrier.particle_scattering_optical_depth_below_per_km,
+        .ksca_above = boundary_carrier.ksca_above,
+        .ksca_below = boundary_carrier.ksca_below,
+        .gas_phase_coefficients = boundary_carrier.gas_phase_coefficients,
+        .phase_coefficients_above = boundary_carrier.phase_coefficients_above,
+        .phase_coefficients_below = boundary_carrier.phase_coefficients_below,
+    };
 }

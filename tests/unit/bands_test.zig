@@ -29,7 +29,7 @@ test "spectral band set rejects duplicate ids and invalid exclusion windows" {
         (SpectralBandSet{
             .items = &[_]SpectralBand{
                 .{ .id = "o2a", .start_nm = 758.0, .end_nm = 771.0, .step_nm = 0.01 },
-                .{ .id = "o2a", .start_nm = 405.0, .end_nm = 465.0, .step_nm = 0.1 },
+                .{ .id = "o2a", .start_nm = 772.0, .end_nm = 775.0, .step_nm = 0.01 },
             },
         }).validate(),
     );

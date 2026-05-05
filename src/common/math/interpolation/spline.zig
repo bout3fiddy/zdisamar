@@ -60,11 +60,25 @@ pub fn sampleEndpointSecant(x: []const f64, y: []const f64, target_x: f64) Error
     if (target_x < x[0] or target_x > x[x.len - 1]) return Error.OutOfDomain;
 
     var second: [max_spline_point_count]f64 = undefined;
+    if (x.len > second.len) return Error.NotEnoughPoints;
+
+    try endpointSecantSecondDerivatives(x, y, second[0..x.len]);
+    return sampleWithSecondDerivatives(x, y, second[0..x.len], target_x);
+}
+
+pub fn endpointSecantSecondDerivatives(
+    x: []const f64,
+    y: []const f64,
+    second: []f64,
+) Error!void {
+    if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
+    if (x.len < 3) return Error.NotEnoughPoints;
+    if (x.len > max_spline_point_count) return Error.NotEnoughPoints;
+
     var c1: [max_spline_point_count]f64 = undefined;
     var c2: [max_spline_point_count]f64 = undefined;
     var c3: [max_spline_point_count]f64 = undefined;
     var c4: [max_spline_point_count]f64 = undefined;
-    if (x.len > second.len) return Error.NotEnoughPoints;
 
     // PARITY:
     //   DISAMAR `mathTools::spline` wraps de Boor `cubspl` with endpoint
@@ -117,6 +131,101 @@ pub fn sampleEndpointSecant(x: []const f64, y: []const f64, target_x: f64) Error
         second[index] = c3[index];
     }
     second[x.len - 1] = -0.5 * c3[x.len - 2];
+}
+
+pub fn endpointSecantSecondDerivatives5(
+    x: []const f64,
+    y0: []const f64,
+    y1: []const f64,
+    y2: []const f64,
+    y3: []const f64,
+    y4: []const f64,
+    second0: []f64,
+    second1: []f64,
+    second2: []f64,
+    second3: []f64,
+    second4: []f64,
+) Error!void {
+    const values = [_][]const f64{ y0, y1, y2, y3, y4 };
+    const seconds = [_][]f64{ second0, second1, second2, second3, second4 };
+    inline for (values, seconds) |y, second| {
+        if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
+    }
+    if (x.len < 3) return Error.NotEnoughPoints;
+    if (x.len > max_spline_point_count) return Error.NotEnoughPoints;
+
+    var intervals: [max_spline_point_count]f64 = undefined;
+    var diagonal: [max_spline_point_count]f64 = undefined;
+    var slopes: [5][max_spline_point_count]f64 = undefined;
+    var c2: [5][max_spline_point_count]f64 = undefined;
+    var c3: [5][max_spline_point_count]f64 = undefined;
+
+    intervals[0] = 0.0;
+    diagonal[0] = 1.0;
+    inline for (0..5) |series| {
+        slopes[series][0] = 1.0;
+        c2[series][0] = (values[series][1] - values[series][0]) / (x[1] - x[0]);
+        c2[series][x.len - 1] =
+            (values[series][x.len - 1] - values[series][x.len - 2]) /
+            (x[x.len - 1] - x[x.len - 2]);
+    }
+
+    for (1..x.len) |index| {
+        intervals[index] = x[index] - x[index - 1];
+        inline for (0..5) |series| {
+            slopes[series][index] =
+                (values[series][index] - values[series][index - 1]) / intervals[index];
+        }
+    }
+
+    for (1..x.len - 1) |index| {
+        const g = -intervals[index + 1] / diagonal[index - 1];
+        inline for (0..5) |series| {
+            c2[series][index] = g * c2[series][index - 1] +
+                3.0 * (intervals[index] * slopes[series][index + 1] +
+                    intervals[index + 1] * slopes[series][index]);
+        }
+        diagonal[index] = g * intervals[index - 1] +
+            2.0 * (intervals[index] + intervals[index + 1]);
+    }
+
+    var solve_index = x.len - 1;
+    while (solve_index > 0) {
+        solve_index -= 1;
+        inline for (0..5) |series| {
+            c2[series][solve_index] =
+                (c2[series][solve_index] - intervals[solve_index] * c2[series][solve_index + 1]) /
+                diagonal[solve_index];
+        }
+    }
+
+    for (1..x.len) |index| {
+        const dtau = intervals[index];
+        inline for (0..5) |series| {
+            const divdf1 = slopes[series][index];
+            const divdf3 = c2[series][index - 1] + c2[series][index] - 2.0 * divdf1;
+            c3[series][index - 1] = 2.0 * (divdf1 - c2[series][index - 1] - divdf3) / dtau;
+        }
+    }
+
+    inline for (0..5) |series| {
+        seconds[series][0] = -0.5 * c3[series][1];
+        for (1..x.len - 1) |index| {
+            seconds[series][index] = c3[series][index];
+        }
+        seconds[series][x.len - 1] = -0.5 * c3[series][x.len - 2];
+    }
+}
+
+pub fn sampleWithSecondDerivatives(
+    x: []const f64,
+    y: []const f64,
+    second: []const f64,
+    target_x: f64,
+) Error!f64 {
+    if (x.len != y.len or x.len != second.len) return Error.ShapeMismatch;
+    if (x.len < 3) return Error.NotEnoughPoints;
+    if (target_x < x[0] or target_x > x[x.len - 1]) return Error.OutOfDomain;
 
     var klo: usize = 0;
     var khi: usize = x.len - 1;

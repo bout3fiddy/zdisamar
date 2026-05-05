@@ -38,6 +38,107 @@ pub const SharedOpticalCarrier = struct {
     }
 };
 
+pub const WavelengthCarrierCache = struct {
+    profile_cache: SpectroscopyState.ProfileNodeSpectroscopyCache,
+    support_row_valid: []bool,
+    support_row_carriers: []SharedOpticalCarrier,
+    continuum_sigma: f64,
+    cia_coefficients: ?CiaWavelengthCoefficients,
+    rayleigh_cross_section_cm2: f64,
+    rayleigh_phase_coefficient2: f64,
+
+    pub fn init(
+        prepared: *const State.PreparedOpticalState,
+        wavelength_nm: f64,
+        support_row_valid: []bool,
+        support_row_carriers: []SharedOpticalCarrier,
+    ) WavelengthCarrierCache {
+        @memset(support_row_valid, false);
+        const continuum_table: ReferenceData.CrossSectionTable = .{ .points = prepared.continuum_points };
+        return .{
+            .profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm),
+            .support_row_valid = support_row_valid,
+            .support_row_carriers = support_row_carriers,
+            .continuum_sigma = if (prepared.cross_section_absorbers.len == 0)
+                continuum_table.interpolateSigma(wavelength_nm)
+            else
+                0.0,
+            .cia_coefficients = CiaWavelengthCoefficients.init(prepared, wavelength_nm),
+            .rayleigh_cross_section_cm2 = Rayleigh.crossSectionCm2(wavelength_nm),
+            .rayleigh_phase_coefficient2 = PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+        };
+    }
+
+    fn cachedSupportRow(
+        self: *WavelengthCarrierCache,
+        prepared: *const State.PreparedOpticalState,
+        wavelength_nm: f64,
+        sublayer: PreparedSublayer,
+        global_sublayer_index: usize,
+        strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
+    ) SharedOpticalCarrier {
+        if (global_sublayer_index >= self.support_row_valid.len or
+            global_sublayer_index >= self.support_row_carriers.len)
+        {
+            return sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
+                prepared,
+                wavelength_nm,
+                sublayer,
+                global_sublayer_index,
+                strong_line_state,
+                &self.profile_cache,
+            );
+        }
+        if (!self.support_row_valid[global_sublayer_index]) {
+            self.support_row_carriers[global_sublayer_index] =
+                sharedOpticalCarrierAtSupportRowWithScalarCache(
+                    prepared,
+                    wavelength_nm,
+                    sublayer,
+                    global_sublayer_index,
+                    strong_line_state,
+                    &self.profile_cache,
+                    self.continuum_sigma,
+                    self.cia_coefficients,
+                    self.rayleigh_cross_section_cm2,
+                    self.rayleigh_phase_coefficient2,
+                );
+            self.support_row_valid[global_sublayer_index] = true;
+        }
+        return self.support_row_carriers[global_sublayer_index];
+    }
+};
+
+const CiaWavelengthCoefficients = struct {
+    scale_factor_cm5_per_molecule2: f64,
+    a0: f64,
+    a1: f64,
+    a2: f64,
+
+    fn init(
+        prepared: *const State.PreparedOpticalState,
+        wavelength_nm: f64,
+    ) ?CiaWavelengthCoefficients {
+        if (prepared.operational_o2o2_lut.enabled()) return null;
+        const table = prepared.collision_induced_absorption orelse return null;
+        const coefficients = table.interpolateCoefficients(wavelength_nm);
+        return .{
+            .scale_factor_cm5_per_molecule2 = table.scale_factor_cm5_per_molecule2,
+            .a0 = coefficients.a0,
+            .a1 = coefficients.a1,
+            .a2 = coefficients.a2,
+        };
+    }
+
+    fn sigmaAtTemperature(self: CiaWavelengthCoefficients, temperature_k: f64) f64 {
+        const temperature_c = temperature_k - 273.15;
+        const raw_sigma = self.a0 +
+            self.a1 * temperature_c +
+            self.a2 * temperature_c * temperature_c;
+        return self.scale_factor_cm5_per_molecule2 * @max(raw_sigma, 0.0);
+    }
+};
+
 pub const PreparedQuadratureCarrier = struct {
     ksca: f64,
     phase_coefficients: [phase_coefficient_count]f64,
@@ -202,6 +303,66 @@ pub fn sharedBoundaryCarrierAtLevelWithSpectroscopyCache(
         ),
         .phase_coefficients_below = PhaseFunctions.combinePhaseCoefficients(
             wavelength_nm,
+            gas_scattering_optical_depth_per_km,
+            particle_below.aerosol_scattering_optical_depth_per_km,
+            particle_below.cloud_scattering_optical_depth_per_km,
+            particle_below.aerosol_phase_coefficients,
+            particle_below.cloud_phase_coefficients,
+        ),
+    };
+}
+
+pub fn sharedBoundaryCarrierAtLevelWithCarrierCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: []const PreparedSublayer,
+    strong_line_states: ?[]const ReferenceData.StrongLinePreparedState,
+    level_geometry: SharedRtmLevelGeometry,
+    wavelength_cache: *WavelengthCarrierCache,
+) SharedBoundaryCarrier {
+    const boundary_row_index: usize = @intCast(level_geometry.support_row_index);
+    if (boundary_row_index >= sublayers.len) return .{};
+    const strong_line_state = if (strong_line_states) |states|
+        if (boundary_row_index < states.len) &states[boundary_row_index] else null
+    else
+        null;
+    const gas_carrier = wavelength_cache.cachedSupportRow(
+        self,
+        wavelength_nm,
+        sublayers[boundary_row_index],
+        boundary_row_index,
+        strong_line_state,
+    );
+    const particle_above = particleBoundaryCarrierFromIndex(
+        self,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_above_support_row_index,
+    );
+    const particle_below = particleBoundaryCarrierFromIndex(
+        self,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_below_support_row_index,
+    );
+    const gas_scattering_optical_depth_per_km = gas_carrier.gas_scattering_optical_depth_per_km;
+    return .{
+        .gas_scattering_optical_depth_per_km = gas_scattering_optical_depth_per_km,
+        .particle_scattering_optical_depth_above_per_km = particle_above.totalScatteringOpticalDepthPerKm(),
+        .particle_scattering_optical_depth_below_per_km = particle_below.totalScatteringOpticalDepthPerKm(),
+        .ksca_above = gas_scattering_optical_depth_per_km + particle_above.totalScatteringOpticalDepthPerKm(),
+        .ksca_below = gas_scattering_optical_depth_per_km + particle_below.totalScatteringOpticalDepthPerKm(),
+        .gas_phase_coefficients = PhaseFunctions.gasPhaseCoefficientsFromRayleigh2(wavelength_cache.rayleigh_phase_coefficient2),
+        .phase_coefficients_above = PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
+            wavelength_cache.rayleigh_phase_coefficient2,
+            gas_scattering_optical_depth_per_km,
+            particle_above.aerosol_scattering_optical_depth_per_km,
+            particle_above.cloud_scattering_optical_depth_per_km,
+            particle_above.aerosol_phase_coefficients,
+            particle_above.cloud_phase_coefficients,
+        ),
+        .phase_coefficients_below = PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
+            wavelength_cache.rayleigh_phase_coefficient2,
             gas_scattering_optical_depth_per_km,
             particle_below.aerosol_scattering_optical_depth_per_km,
             particle_below.cloud_scattering_optical_depth_per_km,
@@ -616,6 +777,32 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         continuum_table.interpolateSigma(wavelength_nm)
     else
         0.0;
+    return sharedOpticalCarrierAtSupportRowWithScalarCache(
+        self,
+        wavelength_nm,
+        sublayer,
+        global_sublayer_index,
+        strong_line_state,
+        profile_cache,
+        continuum_sigma,
+        null,
+        Rayleigh.crossSectionCm2(wavelength_nm),
+        PhaseFunctions.rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+    );
+}
+
+fn sharedOpticalCarrierAtSupportRowWithScalarCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
+    profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
+    continuum_sigma: f64,
+    cia_coefficients: ?CiaWavelengthCoefficients,
+    rayleigh_cross_section_cm2: f64,
+    rayleigh_phase_coefficient2: f64,
+) SharedOpticalCarrier {
     const spectroscopy_eval = if (self.line_absorbers.len != 0)
         weightedSpectroscopyEvaluationAtSupportRow(
             self,
@@ -667,15 +854,19 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         cross_section_absorption_optical_depth_per_km +
         spectroscopy_eval.total_sigma_cm2_per_molecule * line_absorber_density_cm3 * centimeters_per_kilometer;
     const gas_scattering_optical_depth_per_km =
-        Rayleigh.crossSectionCm2(wavelength_nm) *
+        rayleigh_cross_section_cm2 *
         sublayer.number_density_cm3 *
         centimeters_per_kilometer;
-    const cia_optical_depth_per_km =
+    const cia_sigma_cm5_per_molecule2 = if (cia_coefficients) |coefficients|
+        coefficients.sigmaAtTemperature(sublayer.temperature_k)
+    else
         self.ciaSigmaAtWavelength(
             wavelength_nm,
             sublayer.temperature_k,
             sublayer.pressure_hpa,
-        ) *
+        );
+    const cia_optical_depth_per_km =
+        cia_sigma_cm5_per_molecule2 *
         sublayer.ciaPairDensityCm6() *
         centimeters_per_kilometer;
     const aerosol_optical_depth_per_km = ParticleProfiles.scaleOpticalDepth(
@@ -702,8 +893,8 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
         .aerosol_scattering_optical_depth_per_km = aerosol_scattering_optical_depth_per_km,
         .cloud_optical_depth_per_km = cloud_optical_depth_per_km,
         .cloud_scattering_optical_depth_per_km = cloud_scattering_optical_depth_per_km,
-        .phase_coefficients = PhaseFunctions.combinePhaseCoefficients(
-            wavelength_nm,
+        .phase_coefficients = PhaseFunctions.combinePhaseCoefficientsWithRayleigh2(
+            rayleigh_phase_coefficient2,
             gas_scattering_optical_depth_per_km,
             aerosol_scattering_optical_depth_per_km,
             cloud_scattering_optical_depth_per_km,
@@ -711,6 +902,23 @@ pub fn sharedOpticalCarrierAtSupportRowWithSpectroscopyCache(
             sublayer.cloud_phase_coefficients,
         ),
     };
+}
+
+pub fn sharedOpticalCarrierAtSupportRowWithCarrierCache(
+    self: *const State.PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    strong_line_state: ?*const ReferenceData.StrongLinePreparedState,
+    wavelength_cache: *WavelengthCarrierCache,
+) SharedOpticalCarrier {
+    return wavelength_cache.cachedSupportRow(
+        self,
+        wavelength_nm,
+        sublayer,
+        global_sublayer_index,
+        strong_line_state,
+    );
 }
 
 pub fn sharedOpticalCarrierAtAltitude(

@@ -13,11 +13,11 @@ const demo_profile_rows = [_]climatology.ClimatologyPoint{
 };
 
 const demo_cross_section_points = [_]cross_sections.CrossSectionPoint{
-    .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 6.21e-19 },
-    .{ .wavelength_nm = 430.0, .sigma_cm2_per_molecule = 5.72e-19 },
-    .{ .wavelength_nm = 450.0, .sigma_cm2_per_molecule = 5.13e-19 },
-    .{ .wavelength_nm = 470.0, .sigma_cm2_per_molecule = 4.42e-19 },
-    .{ .wavelength_nm = 490.0, .sigma_cm2_per_molecule = 3.98e-19 },
+    .{ .wavelength_nm = 758.0, .sigma_cm2_per_molecule = 1.2e-24 },
+    .{ .wavelength_nm = 761.0, .sigma_cm2_per_molecule = 2.8e-24 },
+    .{ .wavelength_nm = 764.0, .sigma_cm2_per_molecule = 3.6e-24 },
+    .{ .wavelength_nm = 768.0, .sigma_cm2_per_molecule = 2.1e-24 },
+    .{ .wavelength_nm = 771.0, .sigma_cm2_per_molecule = 1.5e-24 },
 };
 
 const demo_airmass_factor_points = [_]airmass_phase.AirmassFactorPoint{

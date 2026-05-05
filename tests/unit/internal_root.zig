@@ -37,8 +37,6 @@ test {
     _ = @import("bands_test.zig");
     _ = @import("binding_test.zig");
     _ = @import("geometry_test.zig");
-    _ = @import("inverse_problem_test.zig");
-    _ = @import("state_vector_test.zig");
     _ = @import("surface_test.zig");
     _ = @import("measurement_model_test.zig");
 
@@ -61,11 +59,11 @@ test {
     _ = @import("forward_model/optical_properties/state_build/forward_layers_test.zig");
     _ = @import("forward_model/optical_properties/state_build/root_test.zig");
     _ = @import("forward_model/optical_properties/state_build/source_interfaces_test.zig");
+    _ = @import("forward_model/optical_properties/state_build/spectroscopy_test.zig");
     _ = @import("forward_model/implementations/instrument/integration_test.zig");
     _ = @import("forward_model/implementations/noise_test.zig");
     _ = @import("forward_model/implementations/radiative_transfer_test.zig");
 
-    _ = @import("forward_model/radiative_transfer/adding/root_test.zig");
     _ = @import("forward_model/instrument_grid/grid_calculation/root_test.zig");
     _ = @import("forward_model/instrument_grid/grid_calculation/spectral_forward_test.zig");
 }

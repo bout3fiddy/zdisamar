@@ -2,8 +2,6 @@ const std = @import("std");
 const internal = @import("internal");
 
 const Scene = internal.Scene;
-const InverseProblem = internal.scene.InverseProblem;
-const StateParameter = internal.scene.StateParameter;
 const SpectralBand = internal.scene.SpectralBand;
 const Absorber = internal.scene.Absorber;
 const Instrument = internal.scene.Instrument;
@@ -14,23 +12,6 @@ test "scene validation rejects missing instrument and accepts valid scene" {
 
     scene.observation_model.instrument = .unset;
     try std.testing.expectError(error.MissingObservationInstrument, scene.validate());
-}
-
-test "inverse problem exposes validation contracts" {
-    try (InverseProblem{
-        .id = "retrieval-1",
-        .state_vector = .{
-            .parameters = &[_]StateParameter{
-                .{ .name = "albedo", .target = .surface_albedo },
-                .{ .name = "aerosol_tau", .target = .aerosol_optical_depth_550_nm },
-            },
-        },
-        .measurements = .{
-            .product_name = "slant_column",
-            .observable = .slant_column,
-            .sample_count = 121,
-        },
-    }).validate();
 }
 
 test "scene derives LUT compatibility keys from geometry and instrument settings" {

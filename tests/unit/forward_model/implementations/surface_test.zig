@@ -17,7 +17,7 @@ test "lambertian surface provider exposes a unit BRDF factor" {
         .safe_span = 1.0,
         .phase = 0.0,
         .forward = .{
-            .family = .adding,
+            .family = .labos,
             .regime = .nadir,
             .execution_mode = .scalar,
             .derivative_mode = .none,

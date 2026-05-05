@@ -6,9 +6,7 @@ pub const bands = @import("input/Bands.zig");
 pub const binding = @import("input/Binding.zig");
 pub const geometry = @import("input/Geometry.zig");
 pub const instrument = @import("input/Instrument.zig");
-pub const inverse_problem = @import("input/InverseProblem.zig");
 pub const measurement = @import("input/Measurement.zig");
-pub const state_vector = @import("input/StateVector.zig");
 pub const surface = @import("input/Surface.zig");
 pub const hitran_partition_tables = @import("input/hitran_partition_tables.zig");
 pub const reference_data = @import("input/ReferenceData.zig");
@@ -151,7 +149,6 @@ pub const forward_model = struct {
         pub const derivatives = @import("forward_model/radiative_transfer/derivatives.zig");
         pub const dispatcher = @import("forward_model/radiative_transfer/dispatcher.zig");
         pub const labos = @import("forward_model/radiative_transfer/labos/root.zig");
-        pub const adding = @import("forward_model/radiative_transfer/adding/root.zig");
     };
 
     pub const implementations = struct {

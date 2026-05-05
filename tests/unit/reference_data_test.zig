@@ -69,8 +69,8 @@ test "reference data helpers interpolate physical tables deterministically" {
 
     var cross_sections = CrossSectionTable{
         .points = try std.testing.allocator.dupe(CrossSectionPoint, &.{
-            .{ .wavelength_nm = 405.0, .sigma_cm2_per_molecule = 6.21e-19 },
-            .{ .wavelength_nm = 465.0, .sigma_cm2_per_molecule = 4.17e-19 },
+            .{ .wavelength_nm = 758.0, .sigma_cm2_per_molecule = 1.2e-24 },
+            .{ .wavelength_nm = 771.0, .sigma_cm2_per_molecule = 3.8e-24 },
         }),
     };
     defer cross_sections.deinit(std.testing.allocator);
@@ -85,7 +85,7 @@ test "reference data helpers interpolate physical tables deterministically" {
 
     try std.testing.expectApproxEqAbs(@as(f64, 1.58e19), profile.interpolateDensity(5.0), 1e16);
     try std.testing.expectApproxEqAbs(@as(f64, 630.0), profile.interpolatePressure(5.0), 1.0);
-    try std.testing.expectApproxEqAbs(@as(f64, 5.19e-19), cross_sections.meanSigmaInRange(405.0, 465.0), 1e-22);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5e-24), cross_sections.meanSigmaInRange(758.0, 771.0), 1e-27);
     try std.testing.expectApproxEqAbs(@as(f64, 1.241), lut.nearest(42.0, 11.0, 35.0), 1e-9);
 }
 

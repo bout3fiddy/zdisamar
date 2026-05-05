@@ -29,6 +29,8 @@ pub fn assemble(
         .layers = context.layers,
         .sublayers = context.sublayers,
         .strong_line_states = absorbers.strong_line_states,
+        .spectroscopy_profile_strong_line_states = absorbers.profile_strong_line_states,
+        .spectroscopy_profile_weak_line_states = absorbers.profile_weak_line_states,
         .continuum_points = context.continuum_points,
         .collision_induced_absorption = context.collision_induced_absorption,
         .spectroscopy_lines = absorbers.owned_lines,
@@ -105,6 +107,10 @@ pub fn assemble(
     absorbers.owned_line_absorber_count = 0;
     absorbers.strong_line_states = null;
     absorbers.strong_line_state_count = 0;
+    absorbers.profile_strong_line_states = null;
+    absorbers.profile_strong_line_state_count = 0;
+    absorbers.profile_weak_line_states = null;
+    absorbers.profile_weak_line_state_count = 0;
     absorbers.owned_lines = null;
 
     return prepared;

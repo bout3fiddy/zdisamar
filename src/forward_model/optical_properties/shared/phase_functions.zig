@@ -25,13 +25,12 @@ pub fn phaseCoefficientsFromCompact(
 }
 
 pub fn maxPhaseCoefficientIndex(phase_coefficients: [phase_coefficient_count]f64) usize {
-    var max_index: usize = 0;
-    for (1..phase_coefficient_count) |idx| {
-        if (@abs(phase_coefficients[idx]) > 1.0e-12) {
-            max_index = idx;
-        }
+    var idx = phase_coefficient_count;
+    while (idx > 1) {
+        idx -= 1;
+        if (@abs(phase_coefficients[idx]) > 1.0e-12) return idx;
     }
-    return max_index;
+    return 0;
 }
 
 pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
@@ -39,8 +38,12 @@ pub fn gasPhaseCoefficients() [phase_coefficient_count]f64 {
 }
 
 pub fn gasPhaseCoefficientsAtWavelength(wavelength_nm: f64) [phase_coefficient_count]f64 {
+    return gasPhaseCoefficientsFromRayleigh2(rayleighPhaseCoefficient2AtWavelength(wavelength_nm));
+}
+
+pub fn gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2: f64) [phase_coefficient_count]f64 {
     var coefficients = zeroPhaseCoefficients();
-    coefficients[2] = rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
+    coefficients[2] = rayleigh_coef2;
     return coefficients;
 }
 
@@ -93,16 +96,43 @@ pub fn combinePhaseCoefficients(
     aerosol_phase_coefficients: [phase_coefficient_count]f64,
     cloud_phase_coefficients: [phase_coefficient_count]f64,
 ) [phase_coefficient_count]f64 {
-    const gas_phase_coefficients = gasPhaseCoefficientsAtWavelength(wavelength_nm);
-    const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
-    if (total_scattering == 0.0) return gas_phase_coefficients;
+    return combinePhaseCoefficientsWithRayleigh2(
+        rayleighPhaseCoefficient2AtWavelength(wavelength_nm),
+        gas_scattering_optical_depth,
+        aerosol_scattering_optical_depth,
+        cloud_scattering_optical_depth,
+        aerosol_phase_coefficients,
+        cloud_phase_coefficients,
+    );
+}
 
-    var combined = zeroPhaseCoefficients();
+pub fn combinePhaseCoefficientsWithRayleigh2(
+    rayleigh_coef2: f64,
+    gas_scattering_optical_depth: f64,
+    aerosol_scattering_optical_depth: f64,
+    cloud_scattering_optical_depth: f64,
+    aerosol_phase_coefficients: [phase_coefficient_count]f64,
+    cloud_phase_coefficients: [phase_coefficient_count]f64,
+) [phase_coefficient_count]f64 {
+    const total_scattering = gas_scattering_optical_depth + aerosol_scattering_optical_depth + cloud_scattering_optical_depth;
+    if (total_scattering == 0.0) return gasPhaseCoefficientsFromRayleigh2(rayleigh_coef2);
+
+    var combined: [phase_coefficient_count]f64 = undefined;
     for (0..phase_coefficient_count) |index| {
-        combined[index] =
-            (gas_scattering_optical_depth * gas_phase_coefficients[index] +
-                aerosol_scattering_optical_depth * aerosol_phase_coefficients[index] +
-                cloud_scattering_optical_depth * cloud_phase_coefficients[index]) / total_scattering;
+        const gas_phase_coefficient: f64 = if (index == 0)
+            1.0
+        else if (index == 2)
+            rayleigh_coef2
+        else
+            0.0;
+        var numerator = gas_scattering_optical_depth * gas_phase_coefficient;
+        if (aerosol_scattering_optical_depth != 0.0) {
+            numerator += aerosol_scattering_optical_depth * aerosol_phase_coefficients[index];
+        }
+        if (cloud_scattering_optical_depth != 0.0) {
+            numerator += cloud_scattering_optical_depth * cloud_phase_coefficients[index];
+        }
+        combined[index] = numerator / total_scattering;
     }
     combined[0] = 1.0;
     return combined;

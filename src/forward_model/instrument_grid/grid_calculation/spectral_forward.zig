@@ -1,7 +1,9 @@
 const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
+const CarrierEval = @import("../../optical_properties/state_build/carrier_eval.zig");
 const common = @import("../../radiative_transfer/root.zig");
+const labos = @import("../../radiative_transfer/labos/root.zig");
 const ForwardInput = @import("forward_input.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
@@ -30,6 +32,9 @@ const ForwardSampleScratch = struct {
     pseudo_spherical_samples: []common.PseudoSphericalSample,
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
+    support_carrier_valid: []bool,
+    support_carriers: []CarrierEval.SharedOpticalCarrier,
+    labos_workspace: labos.Workspace,
 
     fn init(
         allocator: Allocator,
@@ -39,18 +44,43 @@ const ForwardSampleScratch = struct {
     ) !ForwardSampleScratch {
         const layer_count = Storage.resolvedTransportLayerCount(route, prepared);
         const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, route, prepared);
+        const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_count;
+
+        const layer_inputs = try allocator.alloc(common.LayerInput, layer_count);
+        errdefer allocator.free(layer_inputs);
+        const pseudo_spherical_layers = try allocator.alloc(common.LayerInput, pseudo_spherical_sample_count);
+        errdefer allocator.free(pseudo_spherical_layers);
+        const source_interfaces = try allocator.alloc(common.SourceInterfaceInput, layer_count + 1);
+        errdefer allocator.free(source_interfaces);
+        const rtm_quadrature_levels = try allocator.alloc(common.RtmQuadratureLevel, layer_count + 1);
+        errdefer allocator.free(rtm_quadrature_levels);
+        const pseudo_spherical_samples = try allocator.alloc(common.PseudoSphericalSample, pseudo_spherical_sample_count);
+        errdefer allocator.free(pseudo_spherical_samples);
+        const pseudo_spherical_level_starts = try allocator.alloc(usize, layer_count + 1);
+        errdefer allocator.free(pseudo_spherical_level_starts);
+        const pseudo_spherical_level_altitudes = try allocator.alloc(f64, layer_count + 1);
+        errdefer allocator.free(pseudo_spherical_level_altitudes);
+        const support_carrier_valid = try allocator.alloc(bool, support_cache_count);
+        errdefer allocator.free(support_carrier_valid);
+        const support_carriers = try allocator.alloc(CarrierEval.SharedOpticalCarrier, support_cache_count);
+        errdefer allocator.free(support_carriers);
+
         return .{
-            .layer_inputs = try allocator.alloc(common.LayerInput, layer_count),
-            .pseudo_spherical_layers = try allocator.alloc(common.LayerInput, pseudo_spherical_sample_count),
-            .source_interfaces = try allocator.alloc(common.SourceInterfaceInput, layer_count + 1),
-            .rtm_quadrature_levels = try allocator.alloc(common.RtmQuadratureLevel, layer_count + 1),
-            .pseudo_spherical_samples = try allocator.alloc(common.PseudoSphericalSample, pseudo_spherical_sample_count),
-            .pseudo_spherical_level_starts = try allocator.alloc(usize, layer_count + 1),
-            .pseudo_spherical_level_altitudes = try allocator.alloc(f64, layer_count + 1),
+            .layer_inputs = layer_inputs,
+            .pseudo_spherical_layers = pseudo_spherical_layers,
+            .source_interfaces = source_interfaces,
+            .rtm_quadrature_levels = rtm_quadrature_levels,
+            .pseudo_spherical_samples = pseudo_spherical_samples,
+            .pseudo_spherical_level_starts = pseudo_spherical_level_starts,
+            .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
+            .support_carrier_valid = support_carrier_valid,
+            .support_carriers = support_carriers,
+            .labos_workspace = labos.Workspace.init(allocator),
         };
     }
 
     fn deinit(self: *ForwardSampleScratch, allocator: Allocator) void {
+        self.labos_workspace.deinit();
         allocator.free(self.layer_inputs);
         allocator.free(self.pseudo_spherical_layers);
         allocator.free(self.source_interfaces);
@@ -58,6 +88,8 @@ const ForwardSampleScratch = struct {
         allocator.free(self.pseudo_spherical_samples);
         allocator.free(self.pseudo_spherical_level_starts);
         allocator.free(self.pseudo_spherical_level_altitudes);
+        allocator.free(self.support_carrier_valid);
+        allocator.free(self.support_carriers);
         self.* = undefined;
     }
 };
@@ -103,7 +135,7 @@ pub fn radianceFromForward(
         .phase = phase,
         .forward = forward,
     });
-    return solar_irradiance * solar_cosine * forward.toa_reflectance_factor * surface_gain / std.math.pi;
+    return solar_cosine * (forward.toa_reflectance_factor * surface_gain) * solar_irradiance / std.math.pi;
 }
 
 pub fn computeForwardSampleAtWavelength(
@@ -122,6 +154,53 @@ pub fn computeForwardSampleAtWavelength(
     pseudo_spherical_level_starts: []usize,
     pseudo_spherical_level_altitudes: []f64,
 ) Error!ForwardIntegratedSample {
+    const support_cache_count = if (prepared.sublayers) |sublayers| sublayers.len else layer_inputs.len;
+    const support_carrier_valid = try allocator.alloc(bool, support_cache_count);
+    defer allocator.free(support_carrier_valid);
+    const support_carriers = try allocator.alloc(CarrierEval.SharedOpticalCarrier, support_cache_count);
+    defer allocator.free(support_carriers);
+    var labos_workspace = labos.Workspace.init(allocator);
+    defer labos_workspace.deinit();
+    return computeForwardSampleAtWavelengthWithScratch(
+        allocator,
+        scene,
+        route,
+        prepared,
+        wavelength_nm,
+        safe_span,
+        implementations,
+        layer_inputs,
+        pseudo_spherical_layers,
+        source_interfaces,
+        rtm_quadrature_levels,
+        pseudo_spherical_samples,
+        pseudo_spherical_level_starts,
+        pseudo_spherical_level_altitudes,
+        support_carrier_valid,
+        support_carriers,
+        &labos_workspace,
+    );
+}
+
+fn computeForwardSampleAtWavelengthWithScratch(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    wavelength_nm: f64,
+    safe_span: f64,
+    implementations: Types.Implementations,
+    layer_inputs: []common.LayerInput,
+    pseudo_spherical_layers: []common.LayerInput,
+    source_interfaces: []common.SourceInterfaceInput,
+    rtm_quadrature_levels: []common.RtmQuadratureLevel,
+    pseudo_spherical_samples: []common.PseudoSphericalSample,
+    pseudo_spherical_level_starts: []usize,
+    pseudo_spherical_level_altitudes: []f64,
+    support_carrier_valid: []bool,
+    support_carriers: []CarrierEval.SharedOpticalCarrier,
+    labos_workspace: *labos.Workspace,
+) Error!ForwardIntegratedSample {
     const input = try ForwardInput.configuredForwardInput(
         scene,
         route,
@@ -134,12 +213,18 @@ pub fn computeForwardSampleAtWavelength(
         pseudo_spherical_samples,
         pseudo_spherical_level_starts,
         pseudo_spherical_level_altitudes,
+        support_carrier_valid,
+        support_carriers,
     );
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
-    const forward = try implementations.transport.executePrepared(allocator, effective_route, input);
+    const forward = if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
+        try execute_with_workspace(allocator, effective_route, input, labos_workspace)
+    else
+        try implementations.transport.executePrepared(allocator, effective_route, input);
+    const radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
     return .{
-        .radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward),
+        .radiance = radiance,
         .jacobian = if (forward.jacobian_column) |value| value else 0.0,
     };
 }
@@ -149,7 +234,7 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const scratch = ForwardSampleScratch.init(
+    var scratch = ForwardSampleScratch.init(
         allocator,
         worker.scene,
         worker.route,
@@ -158,9 +243,10 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
         worker.error_state.store(err);
         return;
     };
+    defer scratch.deinit(allocator);
 
     for (worker.misses, worker.results) |miss, *result| {
-        result.* = computeForwardSampleAtWavelength(
+        result.* = computeForwardSampleAtWavelengthWithScratch(
             allocator,
             worker.scene,
             worker.route,
@@ -175,6 +261,9 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
             scratch.pseudo_spherical_samples,
             scratch.pseudo_spherical_level_starts,
             scratch.pseudo_spherical_level_altitudes,
+            scratch.support_carrier_valid,
+            scratch.support_carriers,
+            &scratch.labos_workspace,
         ) catch |err| {
             worker.error_state.store(err);
             return;
@@ -200,7 +289,7 @@ pub fn prefetchForwardSamples(
         var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared);
         defer scratch.deinit(allocator);
         for (misses, results) |miss, *result| {
-            result.* = try computeForwardSampleAtWavelength(
+            result.* = try computeForwardSampleAtWavelengthWithScratch(
                 allocator,
                 scene,
                 route,
@@ -215,6 +304,9 @@ pub fn prefetchForwardSamples(
                 scratch.pseudo_spherical_samples,
                 scratch.pseudo_spherical_level_starts,
                 scratch.pseudo_spherical_level_altitudes,
+                scratch.support_carrier_valid,
+                scratch.support_carriers,
+                &scratch.labos_workspace,
             );
         }
         return;

@@ -37,12 +37,12 @@ test "absorber set validates explicit spectroscopy bindings" {
                 },
             },
             .{
-                .id = "no2",
-                .species = "no2",
+                .id = "o2o2_direct",
+                .species = "o2o2",
                 .profile_source = .atmosphere,
                 .spectroscopy = .{
                     .mode = .cross_sections,
-                    .cross_section_table = .{ .asset = .{ .name = "no2_demo" } },
+                    .cross_section_table = .{ .asset = .{ .name = "o2o2_direct_demo" } },
                 },
             },
         },
@@ -70,16 +70,16 @@ test "absorber set validates explicit spectroscopy bindings" {
         (AbsorberSet{
             .items = &[_]Absorber{
                 .{
-                    .id = "o3",
-                    .species = "o3",
+                    .id = "o2o2",
+                    .species = "o2o2",
                     .profile_source = .atmosphere,
                     .spectroscopy = .{
                         .mode = .cross_sections,
-                        .cross_section_table = .{ .asset = .{ .name = "o3_table" } },
+                        .cross_section_table = .{ .asset = .{ .name = "o2o2_table" } },
                         .operational_lut = .{ .ingest = .{
-                            .full_name = "demo.o3_operational_lut",
+                            .full_name = "demo.o2o2_operational_lut",
                             .ingest_name = "demo",
-                            .output_name = "o3_operational_lut",
+                            .output_name = "o2o2_operational_lut",
                         } },
                     },
                 },
@@ -111,7 +111,7 @@ test "spectroscopy resolves explicit absorption representation tags" {
         .points = &.{},
     };
     const lut: OperationalCrossSectionLut = .{
-        .wavelengths_nm = &.{ 405.0, 406.0 },
+        .wavelengths_nm = &.{ 760.0, 761.0 },
         .coefficients = &.{ 1.0, 0.0, 1.1, 0.0 },
         .temperature_coefficient_count = 1,
         .pressure_coefficient_count = 2,

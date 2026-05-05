@@ -146,6 +146,15 @@ pub const SpectroscopyLineList = struct {
         return @import("line_list_ops.zig").prepareStrongLineState(self, allocator, temperature_k, pressure_hpa);
     }
 
+    pub fn prepareWeakLineState(
+        self: SpectroscopyLineList,
+        allocator: Types.Allocator,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) !Types.WeakLinePreparedState {
+        return @import("line_list_ops.zig").prepareWeakLineState(self, allocator, temperature_k, pressure_hpa);
+    }
+
     pub fn evaluateAt(
         self: SpectroscopyLineList,
         wavelength_nm: f64,

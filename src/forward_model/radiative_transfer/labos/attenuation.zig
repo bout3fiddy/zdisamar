@@ -55,6 +55,26 @@ pub const DynamicAttenArray = struct {
     }
 };
 
+fn layerTransmittanceIndex(nlayer: usize, imu: usize, layer_index: usize) usize {
+    return imu * nlayer + layer_index;
+}
+
+fn fillLayerTransmittance(
+    layer_transmittance: []f64,
+    layers: []const common.LayerInput,
+    geo: *const basis.Geometry,
+) void {
+    const nlayer = layers.len;
+    std.debug.assert(layer_transmittance.len >= geo.nmutot * nlayer);
+    for (0..geo.nmutot) |imu| {
+        const u = @max(geo.u[imu], 1.0e-6);
+        for (layers, 0..) |layer, layer_index| {
+            layer_transmittance[layerTransmittanceIndex(nlayer, imu, layer_index)] =
+                math.exp(-layer.optical_depth / u);
+        }
+    }
+}
+
 fn pseudoSphericalDirectionCosine(
     geo: *const basis.Geometry,
     layer: common.LayerInput,
@@ -150,7 +170,8 @@ fn applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(
                 if (sample.optical_depth <= 0.0) continue;
                 const sample_radius = rearth_km + sample.altitude_km;
                 const denominator = @sqrt(@abs(sample_radius * sample_radius - sqrx_sin2theta));
-                sumkext += (sample.optical_depth * sample_radius) / @max(denominator, 1.0e-12);
+                const numerator = sample.optical_depth * sample_radius;
+                sumkext += numerator / @max(denominator, 1.0e-12);
             }
             atten.set(imu, top_level, level, math.exp(-sumkext));
         }
@@ -227,7 +248,128 @@ pub fn fillAttenuationDynamicWithGrid(
 ) !DynamicAttenArray {
     const nlayer = layers.len;
     const nlevel = nlayer + 1;
-    var atten = try DynamicAttenArray.init(allocator, geo.nmutot, nlevel);
+    const data = try allocator.alloc(f64, geo.nmutot * nlevel * nlevel);
+    return fillAttenuationDynamicWithGridInBuffer(
+        allocator,
+        data,
+        layers,
+        pseudo_spherical_grid,
+        geo,
+        use_spherical_correction,
+    );
+}
+
+pub fn fillAttenuationDynamicWithGridInBuffer(
+    allocator: Allocator,
+    data: []f64,
+    layers: []const common.LayerInput,
+    pseudo_spherical_grid: common.PseudoSphericalGrid,
+    geo: *const basis.Geometry,
+    use_spherical_correction: bool,
+) DynamicAttenArray {
+    if (layers.len <= AttenArray.max_levels) {
+        var layer_transmittance: [basis.max_nmutot * AttenArray.max_levels]f64 = undefined;
+        return fillAttenuationDynamicWithGridInBufferAndLayerCache(
+            allocator,
+            data,
+            layer_transmittance[0 .. geo.nmutot * layers.len],
+            layers,
+            pseudo_spherical_grid,
+            geo,
+            use_spherical_correction,
+        );
+    }
+    return fillAttenuationDynamicWithGridInBufferRepeatedExp(
+        allocator,
+        data,
+        layers,
+        pseudo_spherical_grid,
+        geo,
+        use_spherical_correction,
+    );
+}
+
+pub fn fillAttenuationDynamicWithGridInBufferAndLayerCache(
+    allocator: Allocator,
+    data: []f64,
+    layer_transmittance: []f64,
+    layers: []const common.LayerInput,
+    pseudo_spherical_grid: common.PseudoSphericalGrid,
+    geo: *const basis.Geometry,
+    use_spherical_correction: bool,
+) DynamicAttenArray {
+    const nlayer = layers.len;
+    const nlevel = nlayer + 1;
+    const required_len = geo.nmutot * nlevel * nlevel;
+    std.debug.assert(data.len >= required_len);
+    std.debug.assert(layer_transmittance.len >= geo.nmutot * nlayer);
+    fillLayerTransmittance(layer_transmittance, layers, geo);
+    var atten = DynamicAttenArray{
+        .allocator = allocator,
+        .data = data[0..required_len],
+        .nmutot = geo.nmutot,
+        .nlevel = nlevel,
+    };
+    for (0..geo.nmutot) |imu| {
+        for (0..nlevel) |level| {
+            atten.set(imu, level, level, 1.0);
+        }
+    }
+
+    for (0..nlayer) |ilTo_0| {
+        const ilTo = ilTo_0 + 1;
+        var ilFrom_idx = ilTo;
+        while (ilFrom_idx >= 1) : (ilFrom_idx -= 1) {
+            const layer_idx = ilFrom_idx - 1;
+            for (0..geo.nmutot) |imu| {
+                const atten_lay = layer_transmittance[layerTransmittanceIndex(nlayer, imu, layer_idx)];
+                atten.set(imu, ilFrom_idx - 1, ilTo, atten.get(imu, ilFrom_idx, ilTo) * atten_lay);
+            }
+        }
+    }
+
+    for (0..nlevel) |ilTo| {
+        for (ilTo..nlevel) |ilFrom| {
+            for (0..geo.nmutot) |imu| {
+                atten.set(imu, ilFrom, ilTo, atten.get(imu, ilTo, ilFrom));
+            }
+        }
+    }
+
+    if (use_spherical_correction) {
+        if (pseudo_spherical_grid.isValidFor(nlayer)) {
+            applyPseudoSphericalTopLevelAttenuationDynamicWithGrid(&atten, pseudo_spherical_grid, geo);
+        } else {
+            applyPseudoSphericalTopLevelAttenuationDynamic(&atten, layers, geo);
+        }
+    }
+
+    return atten;
+}
+
+fn fillAttenuationDynamicWithGridInBufferRepeatedExp(
+    allocator: Allocator,
+    data: []f64,
+    layers: []const common.LayerInput,
+    pseudo_spherical_grid: common.PseudoSphericalGrid,
+    geo: *const basis.Geometry,
+    use_spherical_correction: bool,
+) DynamicAttenArray {
+    const nlayer = layers.len;
+    const nlevel = nlayer + 1;
+    const required_len = geo.nmutot * nlevel * nlevel;
+    std.debug.assert(data.len >= required_len);
+    var atten = DynamicAttenArray{
+        .allocator = allocator,
+        .data = data[0..required_len],
+        .nmutot = geo.nmutot,
+        .nlevel = nlevel,
+    };
+    for (0..geo.nmutot) |imu| {
+        for (0..nlevel) |level| {
+            atten.set(imu, level, level, 1.0);
+        }
+    }
 
     for (0..nlayer) |ilTo_0| {
         const ilTo = ilTo_0 + 1;

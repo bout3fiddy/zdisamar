@@ -4,50 +4,6 @@ const internal = @import("internal");
 const reference_assets = internal.input_reference_data.ingest_reference_assets;
 const loadBundleAsset = reference_assets.loadBundleAsset;
 
-test "reference asset loader validates hashes and parses numeric tables" {
-    var asset = try loadBundleAsset(
-        std.testing.allocator,
-        .cross_section_table,
-        "data/reference_data/cross_sections/bundle_manifest.json",
-        "no2_405_465_demo",
-    );
-    defer asset.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("disamar_standard", asset.owner_package);
-    try std.testing.expectEqual(@as(u32, 5), asset.row_count);
-    try std.testing.expectEqual(@as(usize, 2), asset.columnCount());
-    try std.testing.expectApproxEqAbs(@as(f64, 405.0), asset.value(0, 0), 1e-9);
-    try std.testing.expectApproxEqAbs(@as(f64, 4.17e-19), asset.value(4, 1), 1e-25);
-
-    var cross_sections = try asset.toCrossSectionTable(std.testing.allocator);
-    defer cross_sections.deinit(std.testing.allocator);
-    try std.testing.expectApproxEqAbs(@as(f64, 5.02e-19), cross_sections.interpolateSigma(440.0), 1e-25);
-}
-
-test "reference asset loader parses HITRAN-style line lists into spectroscopy rows" {
-    var asset = try loadBundleAsset(
-        std.testing.allocator,
-        .spectroscopy_line_list,
-        "data/reference_data/cross_sections/bundle_manifest.json",
-        "no2_demo_lines",
-    );
-    defer asset.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(u32, 5), asset.row_count);
-    try std.testing.expectEqual(@as(usize, 10), asset.columnCount());
-
-    var lines = try asset.toSpectroscopyLineList(std.testing.allocator);
-    defer lines.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(u16, 10), lines.lines[0].gas_index);
-    try std.testing.expectEqual(@as(u8, 1), lines.lines[0].isotope_number);
-    try std.testing.expect(lines.lines[0].abundance_fraction > 0.9);
-    const near_line = lines.evaluateAt(434.6, 250.0, 800.0);
-    const off_line = lines.evaluateAt(420.0, 250.0, 800.0);
-    try std.testing.expect(near_line.total_sigma_cm2_per_molecule > off_line.total_sigma_cm2_per_molecule);
-    try std.testing.expectEqual(@as(f64, 0.0), near_line.line_mixing_sigma_cm2_per_molecule);
-}
-
 test "reference asset loader preserves vendor O2A filter metadata for bundled JPL line lists" {
     var asset = try loadBundleAsset(
         std.testing.allocator,

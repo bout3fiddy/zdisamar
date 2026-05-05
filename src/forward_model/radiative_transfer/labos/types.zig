@@ -30,10 +30,6 @@ pub const Mat = struct {
     pub fn set(self: *Self, i: usize, j: usize, val: f64) void {
         self.data[i * self.n + j] = val;
     }
-
-    pub fn addTo(self: *Self, i: usize, j: usize, val: f64) void {
-        self.data[i * self.n + j] += val;
-    }
 };
 
 pub const Vec = struct {
@@ -88,6 +84,9 @@ pub const Geometry = struct {
     w: [max_nmutot]f64,
     ug: [max_gauss]f64,
     wg: [max_gauss]f64,
+    dmu_plus: [max_n2]f64,
+    dmu_min: [max_n2]f64,
+    dmu_same: [max_n2]bool,
     mu0: f64,
     muv: f64,
 
@@ -126,6 +125,22 @@ pub const Geometry = struct {
         for (geo.n_gauss..max_gauss) |i| {
             geo.ug[i] = 0.0;
             geo.wg[i] = 0.0;
+        }
+        for (0..geo.nmutot) |j| {
+            const uj = geo.u[j];
+            for (0..geo.nmutot) |i| {
+                const ui = geo.u[i];
+                const idx = i * geo.nmutot + j;
+                geo.dmu_plus[idx] = 0.25 / @max(ui + uj, 1.0e-12);
+                const du = ui - uj;
+                if (@abs(du) < 1.0e-6) {
+                    geo.dmu_same[idx] = true;
+                    geo.dmu_min[idx] = 0.25 / @max(ui * uj, 1.0e-12);
+                } else {
+                    geo.dmu_same[idx] = false;
+                    geo.dmu_min[idx] = 0.25 / du;
+                }
+            }
         }
         return geo;
     }

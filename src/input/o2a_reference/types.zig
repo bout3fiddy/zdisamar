@@ -62,14 +62,11 @@ pub const PlanSpec = struct {
 
     pub fn executionMode(self: PlanSpec) !transport_common.ExecutionMode {
         if (std.mem.eql(u8, self.execution_solver_mode, "scalar")) return .scalar;
-        if (std.mem.eql(u8, self.execution_solver_mode, "polarized")) return .polarized;
         return error.UnsupportedExecutionMode;
     }
 
     pub fn derivativeMode(self: PlanSpec) !transport_common.DerivativeMode {
         if (std.mem.eql(u8, self.execution_derivative_mode, "none")) return .none;
-        if (std.mem.eql(u8, self.execution_derivative_mode, "semi_analytical")) return .semi_analytical;
-        if (std.mem.eql(u8, self.execution_derivative_mode, "numerical")) return .numerical;
         return error.UnsupportedDerivativeMode;
     }
 };
