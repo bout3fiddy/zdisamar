@@ -256,7 +256,7 @@ fn semul12(a: *const Mat, e: *const Vec) Mat {
     return result;
 }
 
-fn matAddSemul3_12(a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) Mat {
+fn matAddSemul3_12(noalias a: *const Mat, noalias b: *const Mat, noalias e: *const Vec, noalias c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     inline for (0..12) |j| {
         const ej = e.data[j];
@@ -269,7 +269,7 @@ fn matAddSemul3_12(a: *const Mat, b: *const Mat, e: *const Vec, c: *const Mat) M
     return result;
 }
 
-fn matAddEsmul3_12(a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
+fn matAddEsmul3_12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat, noalias c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     inline for (0..12) |j| {
         var idx = j;
@@ -281,7 +281,7 @@ fn matAddEsmul3_12(a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) M
     return result;
 }
 
-fn semulAdd12(a: *const Mat, e: *const Vec, b: *const Mat) Mat {
+fn semulAdd12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     inline for (0..12) |j| {
         const ej = e.data[j];
@@ -294,7 +294,7 @@ fn semulAdd12(a: *const Mat, e: *const Vec, b: *const Mat) Mat {
     return result;
 }
 
-fn esmulSemulAdd12(e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
+fn esmulSemulAdd12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat, noalias c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
     inline for (0..12) |j| {
         const ej = e.data[j];
