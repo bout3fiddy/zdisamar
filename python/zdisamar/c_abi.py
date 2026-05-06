@@ -142,7 +142,7 @@ class CInstrumentResponse(ctypes.Structure):
     ]
 
 
-class O2O2CIARow(ctypes.Structure):
+class OxygenCollisionInducedAbsorptionRow(ctypes.Structure):
     _fields_ = [
         ("wavelength_nm", ctypes.c_double),
         ("layer_index", ctypes.c_uint32),
@@ -163,10 +163,10 @@ class O2O2CIARow(ctypes.Structure):
     ]
 
 
-class O2O2CIADiagnosticsRaw(ctypes.Structure):
+class OxygenCollisionInducedAbsorptionDiagnosticsRaw(ctypes.Structure):
     _fields_ = [
         ("len", ctypes.c_size_t),
-        ("rows", ctypes.POINTER(O2O2CIARow)),
+        ("rows", ctypes.POINTER(OxygenCollisionInducedAbsorptionRow)),
     ]
 
 
@@ -275,7 +275,7 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_double),
         ctypes.c_size_t,
-        ctypes.POINTER(O2O2CIADiagnosticsRaw),
+        ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw),
     ]
     lib.zds_o2_o2_cia_diagnostics.restype = ctypes.c_int
     lib.zds_radiative_transfer_diagnostics.argtypes = [
@@ -294,7 +294,7 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.zds_o2_line_contributions_free.restype = None
     lib.zds_instrument_response_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(CInstrumentResponse)]
     lib.zds_instrument_response_free.restype = None
-    lib.zds_o2_o2_cia_diagnostics_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(O2O2CIADiagnosticsRaw)]
+    lib.zds_o2_o2_cia_diagnostics_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw)]
     lib.zds_o2_o2_cia_diagnostics_free.restype = None
     lib.zds_radiative_transfer_diagnostics_free.argtypes = [
         ctypes.c_void_p,

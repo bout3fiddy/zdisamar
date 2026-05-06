@@ -20,12 +20,17 @@ analysis belong under `out/`, not under this directory.
   still consumed by older forward validation tests.
 - `data/o2a_vendor_forward_reflectance_baseline.json`: retained focused validation
   baseline consumed by validation tests.
+- `optimal_estimation/data/disamar_o2a_two_state_reference.json`: DISAMAR optimal-estimation two-state aerosol
+  retrieval fixture for aerosol optical depth and fixed-thickness layer pressure.
+- `optimal_estimation/data/zdisamar_o2a_two_state_summary.json`: generated zdisamar optimal-estimation validation
+  summary.
 
 ## Baseline Commands
 
 - `zig build test`
 - `zig build test-validation-o2a`
 - `zig build test-validation-o2a-vendor`
+- `zig build test-validation-o2a-optimal-estimation`
 - `zig build o2a-plot-bundle`
 
 `zig build o2a-plot-bundle` regenerates the tracked plot files under

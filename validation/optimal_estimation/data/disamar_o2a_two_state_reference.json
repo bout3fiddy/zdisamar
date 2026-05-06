@@ -1,0 +1,24 @@
+{
+  "source": "DISAMAR 4.1.5 optimalEstimationModule.f90 with Config_O2A_XsecLUT.in, simulationOnly=0, wavelength_start=755.00, wavelength_end=776.00, wavelength_step=0.03, topPressureSim/Retr=925.0 875.0 0.3",
+  "state_vector": [
+    "aerosolTau",
+    "intervalDP"
+  ],
+  "expected_iterations": 1,
+  "retrieved": {
+    "aerosol_optical_depth": 0.3,
+    "aerosol_layer_top_pressure_hpa": 874.9991883098752,
+    "aerosol_layer_bottom_pressure_hpa": 924.9991883098752,
+    "aerosol_layer_mid_pressure_hpa": 899.9991883098752
+  },
+  "tolerances": {
+    "aerosol_optical_depth_abs": 1.0e-12,
+    "aerosol_layer_mid_pressure_hpa_abs": 1.0e-3
+  },
+  "disamar": {
+    "version": "4.1.5",
+    "solution_has_converged": true,
+    "chi2": 0.0,
+    "state_vector_convergence_threshold": 1.0
+  }
+}

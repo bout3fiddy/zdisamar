@@ -44,8 +44,8 @@ with zd.prepare(case) as prepared:
         print(table["total_sigma_cm2_per_molecule"])
         print(lines.truncated)
 
-    cia = prepared.o2_o2_cia.diagnostics(wavelengths_nm=wavelengths)
-    print(cia.table["cia_share_of_total_absorption"])
+    collision_induced_absorption = prepared.collision_induced_absorption.diagnostics(wavelengths_nm=wavelengths)
+    print(collision_induced_absorption.table["cia_share_of_total_absorption"])
 
     response = prepared.instrument_response.sampling_table(wavelengths_nm=[760.76])
     print(response.table["support_wavelength_nm"])
@@ -91,7 +91,7 @@ zig build python-forward-summary
 zig build python-o2a-setup-roundtrip
 zig build python-atmosphere-budget
 zig build python-o2-line-diagnostics
-zig build python-o2-o2-cia-diagnostics
+zig build python-collision-induced-absorption-diagnostics
 zig build python-instrument-response
 zig build python-radiative-transfer-diagnostics
 zig build python-parameter-perturbation

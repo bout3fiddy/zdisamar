@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import altair as alt
 
-from . import atmosphere, cia, fields, o2_lines, perturbation
+from . import atmosphere, collision_induced_absorption, fields, o2_lines, perturbation
 from . import instrument_response as instrument_response_plots
 from . import radiative_transfer as radiative_transfer_plots
 from . import spectrum as spectrum_plots
@@ -87,13 +87,20 @@ def atmospheric_budget(budget, *, markers_nm=(755.0, 760.76, 776.0)):
     ).resolve_scale(color="independent")
 
 
-def cia_budget(cia_table, *, wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0)):
-    selected = nearest_wavelength_rows(cia_table, wavelengths_nm)
+def collision_induced_absorption_budget(
+    table,
+    *,
+    wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0),
+):
+    selected = nearest_wavelength_rows(table, wavelengths_nm)
     return alt.vconcat(
-        alt.hconcat(cia.share_spectrum(cia_table), cia.share_profile(selected)),
         alt.hconcat(
-            atmosphere.optical_depth_profile(selected, quantity=fields.CIA_OPTICAL_DEPTH, wavelengths_nm=wavelengths_nm),
-            cia.cross_section_temperature(selected),
+            collision_induced_absorption.share_spectrum(table),
+            collision_induced_absorption.share_profile(selected),
+        ),
+        alt.hconcat(
+            atmosphere.optical_depth_profile(selected, quantity=fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH, wavelengths_nm=wavelengths_nm),
+            collision_induced_absorption.cross_section_temperature(selected),
         ),
     ).resolve_scale(color="independent")
 

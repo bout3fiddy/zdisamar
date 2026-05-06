@@ -294,22 +294,26 @@ class O2LineByLine:
 
 
 @dataclass
-class O2O2CIA:
+class OxygenCollisionInducedAbsorption:
     enabled: bool
-    cia_asset: ReferenceAsset | None
+    cross_section_asset: ReferenceAsset | None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "O2O2CIA":
-        cia_asset = data.get("cia_asset")
+    def from_dict(cls, data: dict[str, Any]) -> "OxygenCollisionInducedAbsorption":
+        cross_section_asset = data.get("cia_asset")
         return cls(
             enabled=bool(data["enabled"]),
-            cia_asset=None if cia_asset is None else ReferenceAsset.from_dict(cia_asset),
+            cross_section_asset=(
+                None
+                if cross_section_asset is None
+                else ReferenceAsset.from_dict(cross_section_asset)
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
-            "cia_asset": _asset_or_none(self.cia_asset),
+            "cia_asset": _asset_or_none(self.cross_section_asset),
         }
 
 
@@ -424,7 +428,7 @@ class O2AInput:
     aerosol: Aerosol
     instrument_response: InstrumentResponse
     o2_lines: O2LineByLine
-    o2_o2_cia: O2O2CIA
+    collision_induced_absorption: OxygenCollisionInducedAbsorption
     radiative_transfer: RadiativeTransferControls
     outputs: list[dict[str, Any]]
     validation: dict[str, Any]
@@ -446,7 +450,7 @@ class O2AInput:
             aerosol=Aerosol.from_dict(data["aerosol"]),
             instrument_response=InstrumentResponse.from_dict(data["observation"]),
             o2_lines=O2LineByLine.from_dict(data["o2"]),
-            o2_o2_cia=O2O2CIA.from_dict(data["o2o2"]),
+            collision_induced_absorption=OxygenCollisionInducedAbsorption.from_dict(data["o2o2"]),
             radiative_transfer=RadiativeTransferControls.from_dict(data["rtm_controls"]),
             outputs=_object_list(data, "outputs"),
             validation=_object_dict(data, "validation"),
@@ -473,7 +477,7 @@ class O2AInput:
             "aerosol": self.aerosol.to_dict(),
             "observation": self.instrument_response.to_dict(),
             "o2": self.o2_lines.to_dict(),
-            "o2o2": self.o2_o2_cia.to_dict(),
+            "o2o2": self.collision_induced_absorption.to_dict(),
             "rtm_controls": self.radiative_transfer.to_dict(),
             "outputs": self.outputs,
             "validation": self.validation,

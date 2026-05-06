@@ -138,9 +138,9 @@ def collect_core_outputs(zd, zp, library_path: str, reference_path: Path):
             progress("collecting atmospheric budget")
             with prepared.atmosphere.budget(wavelengths_nm=grid) as budget:
                 budget_frame = budget.to_pandas()
-            progress("collecting O2-O2 CIA diagnostics")
-            with prepared.o2_o2_cia.diagnostics(wavelengths_nm=grid) as cia:
-                cia_frame = cia.to_pandas()
+            progress("collecting O2-O2 collision-induced absorption diagnostics")
+            with prepared.collision_induced_absorption.diagnostics(wavelengths_nm=grid) as collision_induced_absorption:
+                collision_induced_absorption_frame = collision_induced_absorption.to_pandas()
             progress("collecting instrument-response diagnostics")
             with prepared.instrument_response.sampling_table(wavelengths_nm=response_wavelengths) as response:
                 response_frame = response.to_pandas()
@@ -158,7 +158,7 @@ def collect_core_outputs(zd, zp, library_path: str, reference_path: Path):
         "residuals": reflectance_residuals(spectrum_frame, reference),
         "metrics": validation_metrics(spectrum_frame, reference),
         "budget": budget_frame,
-        "cia": cia_frame,
+        "collision_induced_absorption": collision_induced_absorption_frame,
         "response": response_frame,
         "rt": rt_frame,
     }
@@ -171,7 +171,7 @@ def write_data_bundle(output_dir: Path, bundle: dict[str, object]) -> None:
     write_csv(data_dir / "reflectance_residuals.csv", bundle["residuals"])
     write_json(data_dir / "validation_metrics.json", bundle["metrics"])
     write_csv(data_dir / "atmospheric_budget.csv", bundle["budget"])
-    write_csv(data_dir / "o2_o2_cia_diagnostics.csv", bundle["cia"])
+    write_csv(data_dir / "collision_induced_absorption_diagnostics.csv", bundle["collision_induced_absorption"])
     write_csv(data_dir / "instrument_response.csv", bundle["response"])
     write_csv(data_dir / "radiative_transfer_diagnostics.csv", bundle["rt"])
 
@@ -217,7 +217,7 @@ def build_plots(zp, bundle: dict[str, object]) -> dict[str, object]:
             markers_nm=MARKERS_NM,
         ),
         "atmosphere/optical_depth_component_stack": zp.atmosphere.component_stack(bundle["budget"]),
-        "cia/cia_share_spectrum": zp.cia.share_spectrum(bundle["cia"]),
+        "collision_induced_absorption/share_spectrum": zp.collision_induced_absorption.share_spectrum(bundle["collision_induced_absorption"]),
         "instrument_response/isrf_" + wavelength_slug(760.76): zp.instrument_response.isrf(
             bundle["response"],
             nominal_wavelength_nm=760.76,
@@ -234,16 +234,16 @@ def build_plots(zp, bundle: dict[str, object]) -> dict[str, object]:
             bundle["budget"],
             wavelengths_nm=(wavelength_nm,),
         )
-        charts[f"cia/cia_share_profile_{suffix}"] = zp.cia.share_profile(
-            bundle["cia"],
+        charts[f"collision_induced_absorption/share_profile_{suffix}"] = zp.collision_induced_absorption.share_profile(
+            bundle["collision_induced_absorption"],
             wavelength_nm=wavelength_nm,
         )
-        charts[f"cia/cia_optical_depth_profile_{suffix}"] = zp.cia.optical_depth_profile(
-            bundle["cia"],
+        charts[f"collision_induced_absorption/optical_depth_profile_{suffix}"] = zp.collision_induced_absorption.optical_depth_profile(
+            bundle["collision_induced_absorption"],
             wavelength_nm=wavelength_nm,
         )
-        charts[f"cia/cia_cross_section_temperature_{suffix}"] = zp.cia.cross_section_temperature(
-            bundle["cia"],
+        charts[f"collision_induced_absorption/cross_section_temperature_{suffix}"] = zp.collision_induced_absorption.cross_section_temperature(
+            bundle["collision_induced_absorption"],
             wavelength_nm=wavelength_nm,
         )
     return charts
@@ -268,7 +268,7 @@ def write_manifest(output_dir: Path, bundle: dict[str, object], plots: list[str]
         "reflectance_residuals.csv": "core_reference_comparison",
         "validation_metrics.json": "core_reference_comparison",
         "atmospheric_budget.csv": "core",
-        "o2_o2_cia_diagnostics.csv": "core",
+        "collision_induced_absorption_diagnostics.csv": "core",
         "instrument_response.csv": "core",
         "radiative_transfer_diagnostics.csv": "core",
     }

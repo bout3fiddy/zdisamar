@@ -42,13 +42,13 @@ optical-depth rows. [S1]
 Third, implement O2 line diagnostics: line-center markers, line contribution
 stems, weak/strong/line-mixing partition bars, isotope contribution bars, and
 line-status counts. O2 A-band spectroscopy accuracy depends on line shape, line
-mixing, and CIA; current laboratory and database work emphasizes accurate line
+mixing, and collision-induced absorption; current laboratory and database work emphasizes accurate line
 intensities, cross sections, and line-by-line parameterization. [S4]
 
-Fourth, implement CIA plots: CIA optical-depth profiles, CIA share of total
-absorption, CIA share of total optical depth, and CIA cross-section diagnostics
-against temperature and pressure. HITRAN has a dedicated CIA section, O2-O2
-files are included in HITRAN2024, and current CIA updates extend O2-O2 and
+Fourth, implement collision-induced absorption plots: collision-induced absorption optical-depth profiles, collision-induced absorption share of total
+absorption, collision-induced absorption share of total optical depth, and collision-induced absorption cross-section diagnostics
+against temperature and pressure. HITRAN has a dedicated collision-induced absorption section, O2-O2
+files are included in HITRAN2024, and current collision-induced absorption updates extend O2-O2 and
 related data. [S6]
 
 Fifth, implement aerosol and cloud plots: aerosol share spectra, aerosol layer
@@ -82,9 +82,9 @@ perturbation outputs. [S11]
 | S1 | de Haan, Wang, Sneep, Veefkind, Stammes, 2022, "Introduction of the DISAMAR radiative transfer model," Geoscientific Model Development | DOI: 10.5194/gmd-15-7031-2022 | Altitude-grid schematics; DISAMAR-vs-DAK reflectance comparison; derivative comparison; altitude-resolved air-mass-factor profile | Anchors layer plots, RT diagnostics, derivative checks, and validation/parity overlays. |
 | S2 | de Graaf, Sneep, ter Linden, Tilstra, Donovan, van Zadelhoff, Veefkind, 2025, "Improvements in aerosol layer height retrievals from TROPOMI oxygen A-band measurements by surface albedo fitting in optimal estimation," Atmospheric Measurement Techniques | DOI: 10.5194/amt-18-2553-2025 | ALH histograms, CALIOP/TROPOMI one-to-one plots, curtain plots, land/ocean color split, QA/AOT/albedo filtering | Motivates validation plots, aerosol/surface-albedo sensitivity plots, and O2 A-band spectral-window defaults. |
 | S3 | O'Dell et al., 2018, "Improved retrievals of carbon dioxide from Orbiting Carbon Observatory-2 with the version 8 ACOS algorithm," Atmospheric Measurement Techniques | DOI: 10.5194/amt-11-6539-2018 | Filtering maps, bias-correction plots, TCCON one-to-one validation panels, fit lines, residual statistics | Motivates parity metrics, one-to-one validation, reference overlays, and O2 A-band screening residuals. |
-| S4 | Drouin et al., 2016/2017, "Multispectrum analysis of the oxygen A-band," Journal of Quantitative Spectroscopy and Radiative Transfer | DOI: 10.1016/j.jqsrt.2016.03.037 | Multispectrum spectroscopy diagnostics; line-shape, line-mixing, CIA and ABSCO database outputs | Motivates line-shape, line-mixing, O2 line contribution, and CIA budget plots. |
+| S4 | Drouin et al., 2016/2017, "Multispectrum analysis of the oxygen A-band," Journal of Quantitative Spectroscopy and Radiative Transfer | DOI: 10.1016/j.jqsrt.2016.03.037 | Multispectrum spectroscopy diagnostics; line-shape, line-mixing, collision-induced absorption and ABSCO database outputs | Motivates line-shape, line-mixing, O2 line contribution, and collision-induced absorption budget plots. |
 | S5 | Adkins, Yurchenko, Somogyi, Hodges, 2025, "An Accurate Determination of O2 A-band Line Intensities through Experiment and Theory," Journal of Quantitative Spectroscopy and Radiative Transfer | DOI: 10.1016/j.jqsrt.2025.109412 | Measured-versus-theory intensity comparisons and line-intensity uncertainty diagnostics | Supports line-strength and isotope/branch diagnostics for O2 A-band spectroscopy. |
-| S6 | HITRANonline CIA section and Terragni et al. HITRAN2024 CIA update, 2025 | HITRAN CIA page; JQSRT 347, article 109631 | CIA tables by collisional pair, spectral range, and temperature; database update summaries | Motivates O2-O2 CIA optical-depth, cross-section, and contribution-share plots. |
+| S6 | HITRANonline collision-induced absorption section and Terragni et al. HITRAN2024 collision-induced absorption update, 2025 | HITRAN collision-induced absorption page; JQSRT 347, article 109631 | collision-induced absorption tables by collisional pair, spectral range, and temperature; database update summaries | Motivates O2-O2 collision-induced absorption optical-depth, cross-section, and contribution-share plots. |
 | S7 | Wang, Stammes, van der A, Pinardi, van Roozendael, 2008, "FRESCO+: an improved O2 A-band cloud retrieval algorithm," Atmospheric Chemistry and Physics | DOI: 10.5194/acp-8-6565-2008 | Cloud fraction/cloud pressure comparisons; simulated and measured O2 A-band use | Supports cloud pressure, cloud optical depth, and cloud correction diagnostics. |
 | S8 | Kokhanovsky et al., 2006, "The semianalytical cloud retrieval algorithm for SCIAMACHY II," Atmospheric Chemistry and Physics | DOI: 10.5194/acp-6-4129-2006 | SCIAMACHY/MERIS cloud retrieval comparisons; O2 A-band 755-775 nm cloud top height use | Supports cloud optical-depth/profile plots and O2 A-band cloud-window defaults. |
 | S9 | van Diedenhoven, Hasekamp, Aben, 2005, "Surface pressure retrieval from SCIAMACHY measurements in the O2 A Band," Atmospheric Chemistry and Physics | DOI: 10.5194/acp-5-2109-2005 | Surface-pressure validation, aerosol sensitivity, calibration-offset discussion | Motivates validation residuals, continuum-offset diagnostics, surface-pressure and albedo-sensitivity plots. |
@@ -116,15 +116,15 @@ perturbation outputs. [S11]
 | `o2_cross_section_profile` | o2_lines | P1 | S4, S5 | How do dominant line contributions vary with altitude/pressure? | `O2LineContributions` | `total_sigma_cm2_per_molecule` or abs value | `altitude_km` or `pressure_hpa` | line or points | top line centers; color by `center_wavelength_nm` | 1 or facet by sampled wavelength | zero line if signed | top N lines | Use pressure reversed/log if `y="pressure_hpa"`. |
 | `optical_depth_profile` | atmosphere | P0 | S1, S2, S12 | Which layers contribute optical depth at selected wavelengths? | `AtmosphericBudget` | selected quantity, such as `total_optical_depth` | `altitude_km` or `pressure_hpa` | line/point | color by `wavelength_nm`; facet by component optional | 1 | optional layer boundary rules | selected wavelengths | Default y is altitude increasing upward; pressure y is reversed. |
 | `optical_depth_heatmap` | atmosphere | P0 | S1, S2, S12 | Where in wavelength-altitude space is optical depth concentrated? | `AtmosphericBudget` covering many wavelengths | `wavelength_nm`, nm | `altitude_km` or `pressure_hpa` | heatmap | color by selected optical-depth quantity | 1 | selected wavelength rules | full or sampled grid | Use continuous single-hue palette; allow log transform for color. |
-| `optical_depth_component_stack` | atmosphere | P0 | S1, S7, S12 | How does total optical depth split among gas, scattering, CIA, aerosol, cloud? | `AtmosphericBudget` aggregated by wavelength | `wavelength_nm`, nm | column-summed optical depth | stacked area | component palette: absorption, scattering, CIA, aerosol, cloud | 1 | optional total line | full grid | Components from current table: gas absorption, gas scattering, CIA, aerosol, cloud. |
+| `optical_depth_component_stack` | atmosphere | P0 | S1, S7, S12 | How does total optical depth split among gas, scattering, collision-induced absorption, aerosol, cloud? | `AtmosphericBudget` aggregated by wavelength | `wavelength_nm`, nm | column-summed optical depth | stacked area | component palette: absorption, scattering, collision-induced absorption, aerosol, cloud | 1 | optional total line | full grid | Components from current table: gas absorption, gas scattering, collision-induced absorption, aerosol, cloud. |
 | `single_scatter_albedo_profile` | atmosphere | P1 | S2, S12 | How does single-scatter albedo vary vertically? | `AtmosphericBudget` | `single_scatter_albedo` | `altitude_km` or `pressure_hpa` | line | color by `wavelength_nm` | 1 | valid range 0-1 rule | selected wavelengths | Important for aerosol/cloud sensitivity and scattering diagnostics. |
 | `aerosol_share_spectrum` | aerosol | P0 | S2, S11, S12, S13 | Which wavelengths are most affected by aerosol optical depth or scattering? | `AtmosphericBudget` aggregated by wavelength | `wavelength_nm`, nm | share: `sum(aerosol_optical_depth)/sum(total_optical_depth)` or scattering share | line | one line per share type | 1 | optional max marker | full or sampled grid | This directly matches the current harness science questions. |
 | `aerosol_optical_depth_profile` | aerosol | P1 | S2, S12 | Where is aerosol optical depth placed vertically? | `AtmosphericBudget` | `aerosol_optical_depth` | `altitude_km` or `pressure_hpa` | line/area | color by wavelength | 1 | aerosol layer center marker if input available | selected wavelengths | Use area fill only when nonnegative. |
 | `cloud_optical_depth_profile` | cloud | P1 | S7, S8, S10 | Where is cloud optical depth placed vertically? | `AtmosphericBudget` | `cloud_optical_depth` | `altitude_km` or `pressure_hpa` | line/area | color by wavelength | 1 | cloud top/base rules if available | selected wavelengths | Current default may be zero; still design it because cloud fields exist. |
 | `cloud_share_spectrum` | cloud | P1 | S7, S8, S10 | Which spectral points are cloud-dominated? | `AtmosphericBudget` aggregated by wavelength | `wavelength_nm`, nm | `sum(cloud_optical_depth)/sum(total_optical_depth)` | line | cloud semantic color | 1 | FRESCO/SACURA window markers | 755-775 nm | Useful for future cloud-enabled cases. |
-| `cia_share_profile` | cia | P0 | S4, S6 | Where is O2-O2 CIA important relative to total absorption? | `O2O2CIADiagnostics` | `cia_share_of_total_absorption` | `altitude_km` or `pressure_hpa` | line | color by `wavelength_nm` | 1 | zero/reference rules | selected wavelengths | y pressure reversed when chosen. |
-| `cia_share_spectrum` | cia | P0 | S4, S6 | Which wavelengths are dominated by CIA share? | `O2O2CIADiagnostics` aggregated by wavelength | `wavelength_nm`, nm | `sum(cia_optical_depth)/sum(total_absorption_optical_depth)` | line | CIA semantic color | 1 | max marker | full or sampled grid | Use total optical-depth share as optional second line. |
-| `cia_cross_section_temperature` | cia | P1 | S4, S6 | Does derived CIA cross section vary consistently with temperature and pressure? | `O2O2CIADiagnostics` | `temperature_k` | `cia_cross_section_cm5_per_molecule2` | point or line | color by `pressure_hpa`; facet by wavelength | facets by wavelength | none | selected wavelengths | Use log y by default when values span orders. |
+| `cia_share_profile` | cia | P0 | S4, S6 | Where is O2-O2 collision-induced absorption important relative to total absorption? | `OxygenCollisionInducedAbsorptionDiagnostics` | `cia_share_of_total_absorption` | `altitude_km` or `pressure_hpa` | line | color by `wavelength_nm` | 1 | zero/reference rules | selected wavelengths | y pressure reversed when chosen. |
+| `cia_share_spectrum` | cia | P0 | S4, S6 | Which wavelengths are dominated by collision-induced absorption share? | `OxygenCollisionInducedAbsorptionDiagnostics` aggregated by wavelength | `wavelength_nm`, nm | `sum(cia_optical_depth)/sum(total_absorption_optical_depth)` | line | collision-induced absorption semantic color | 1 | max marker | full or sampled grid | Use total optical-depth share as optional second line. |
+| `cia_cross_section_temperature` | cia | P1 | S4, S6 | Does derived collision-induced absorption cross section vary consistently with temperature and pressure? | `OxygenCollisionInducedAbsorptionDiagnostics` | `temperature_k` | `cia_cross_section_cm5_per_molecule2` | point or line | color by `pressure_hpa`; facet by wavelength | facets by wavelength | none | selected wavelengths | Use log y by default when values span orders. |
 | `instrument_response_kernel` | instrument_response | P0 | S10, S14, S15 | What high-resolution wavelengths feed a nominal grid point? | `InstrumentResponseDiagnostics.sampling_table()` | `offset_nm` or `support_wavelength_nm` | `weight` | line or area | color by channel; facet by nominal wavelength | 1 or small multiples | center-wavelength rule; FWHM markers | selected nominal wavelengths | Use line for signed/shape emphasis, area only for normalized nonnegative weights. |
 | `instrument_response_matrix` | instrument_response | P1 | S10, S14 | How do response weights map support wavelength to nominal wavelength? | sampling table with many nominal wavelengths | `support_wavelength_nm` | `nominal_wavelength_nm` | heatmap | color by `weight` | 1 | diagonal rule | sampled nominal grid | Plot is compact and useful for resampling bugs. |
 | `instrument_support_width` | instrument_response | P0 | S10, S14, S15 | Which nominal wavelengths have broadest support? | sampling table aggregated by nominal/channel | `nominal_wavelength_nm` | `support_width_nm` or `support_count` | line/point | color by channel | 1 | selected wavelength markers | sampled nominal grid | Directly matches current harness questions. |
@@ -184,12 +184,12 @@ selected wavelength rules, layer boundary rules if present. API accepts
 `AtmosphericBudget`; optional `wavelengths_nm`, `components`, `vertical_axis`.
 Return type: `alt.VConcatChart`.
 
-### `cia_budget`
+### `collision_induced_absorption_budget`
 
-Panels, in order: CIA share spectrum, CIA share profile, CIA optical-depth
-profile, CIA cross-section versus temperature/pressure. Layout: two rows x two
-columns. Shared selected wavelength coloring. Markers: maximum CIA share point,
-optional pressure labels. API accepts `O2O2CIADiagnostics` table. Return type:
+Panels, in order: collision-induced absorption share spectrum, collision-induced absorption share profile, collision-induced absorption optical-depth
+profile, collision-induced absorption cross-section versus temperature/pressure. Layout: two rows x two
+columns. Shared selected wavelength coloring. Markers: maximum collision-induced absorption share point,
+optional pressure labels. API accepts `OxygenCollisionInducedAbsorptionDiagnostics` table. Return type:
 `alt.VConcatChart` or nested `alt.HConcatChart`.
 
 ### `instrument_response`
@@ -236,7 +236,7 @@ python/zdisamar/plot/
   validation.py
   atmosphere.py
   o2_lines.py
-  cia.py
+  collision_induced_absorption.py
   aerosol.py
   cloud.py
   instrument_response.py
@@ -285,7 +285,7 @@ zp.fields.IRRADIANCE = "irradiance"
 zp.fields.TOTAL_OPTICAL_DEPTH = "total_optical_depth"
 zp.fields.TOTAL_ABSORPTION_OPTICAL_DEPTH = "total_absorption_optical_depth"
 zp.fields.TOTAL_SCATTERING_OPTICAL_DEPTH = "total_scattering_optical_depth"
-zp.fields.CIA_OPTICAL_DEPTH = "cia_optical_depth"
+zp.fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH = "cia_optical_depth"
 zp.fields.AEROSOL_OPTICAL_DEPTH = "aerosol_optical_depth"
 zp.fields.CLOUD_OPTICAL_DEPTH = "cloud_optical_depth"
 zp.fields.DELTA_REFLECTANCE = "delta_reflectance"
@@ -461,11 +461,11 @@ zp.o2_lines.isotope_bar(
 ) -> alt.Chart
 ```
 
-Direct CIA functions:
+Direct collision-induced absorption functions:
 
 ```python
-zp.cia.share_profile(
-    cia,
+zp.collision_induced_absorption.share_profile(
+    collision_induced_absorption,
     *,
     share: Literal[
         "cia_share_of_total_absorption",
@@ -474,14 +474,14 @@ zp.cia.share_profile(
     vertical_axis: str = "altitude_km",
 ) -> alt.Chart
 
-zp.cia.share_spectrum(
-    cia,
+zp.collision_induced_absorption.share_spectrum(
+    collision_induced_absorption,
     *,
     denominator: Literal["absorption", "total"] = "absorption",
 ) -> alt.LayerChart
 
-zp.cia.cross_section_temperature(
-    cia,
+zp.collision_induced_absorption.cross_section_temperature(
+    collision_induced_absorption,
     *,
     y: str = "cia_cross_section_cm5_per_molecule2",
     color: str = "pressure_hpa",
@@ -640,7 +640,7 @@ zp.bundles.o2_line_window(
 
 zp.bundles.atmospheric_budget(budget, *, markers_nm=(755.0, 760.76, 776.0)) -> alt.VConcatChart
 
-zp.bundles.cia_budget(cia) -> alt.VConcatChart
+zp.bundles.collision_induced_absorption_budget(collision_induced_absorption) -> alt.VConcatChart
 
 zp.bundles.instrument_response(response, *, nominal_wavelength_nm: float = 760.76) -> alt.VConcatChart
 
@@ -698,7 +698,7 @@ plots.o2_lines.window(
     run_forward: bool = False,
 ) -> alt.VConcatChart
 
-plots.cia.budget(
+plots.collision_induced_absorption.budget(
     *,
     wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0),
 ) -> alt.VConcatChart
@@ -844,7 +844,7 @@ Semantic colors:
 | total optical depth | `#222222` | black solid | Use as total line over component stacks. |
 | aerosol | `#9C6B1F` | dark gray dash-dot | Ochre/brown, not neon orange. |
 | cloud | `#6B6B6B` | medium gray solid | Neutral gray; cloud plots often already have context colors. |
-| CIA | `#8C3F2D` | black dotted | Rust/brown distinguishes CIA from ordinary gas absorption. |
+| collision-induced absorption | `#8C3F2D` | black dotted | Rust/brown distinguishes collision-induced absorption from ordinary gas absorption. |
 | O2 weak lines | `#4E6E8E` | gray dotted | Muted blue. |
 | O2 strong lines | `#111111` | black solid | Strong lines should dominate visually. |
 | O2 line mixing | `#6A4C7D` | gray dash-dot | Purple, muted. |
@@ -936,7 +936,7 @@ sequential scale and allow `log_color=True`.
 - [x] `micro_window_marker_spectrum`
 - [x] `o2_line_window` bundle
 - [x] `atmospheric_budget` bundle
-- [x] `cia_budget` bundle
+- [x] `collision_induced_absorption_budget` bundle
 - [x] `instrument_response` bundle
 - [x] `radiative_transfer_budget` bundle
 - [x] `perturbation_sensitivity` bundle

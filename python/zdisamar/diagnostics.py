@@ -71,14 +71,14 @@ class PerturbationResult(DiagnosticTable):
         self.summary = summary
 
 
-class O2O2CIADiagnostics:
+class OxygenCollisionInducedAbsorptionDiagnostics:
     """O2-O2 collision-induced absorption diagnostics from the native core."""
 
     def __init__(self, prepared: Any):
         self._prepared = prepared
 
     def diagnostics(self, wavelengths_nm):
-        return self._prepared.o2_o2_cia_diagnostics(wavelengths_nm)
+        return self._prepared.collision_induced_absorption_diagnostics(wavelengths_nm)
 
 
 class InstrumentResponseDiagnostics:
@@ -294,7 +294,7 @@ def _spectrum_delta_from_arrays(
 
 
 def _run_spectrum(case, library_path) -> dict[str, object]:
-    from .ffi import prepare
+    from .api import prepare
 
     with prepare(case, library_path=library_path) as prepared:
         with prepared.forward_model() as spectrum:

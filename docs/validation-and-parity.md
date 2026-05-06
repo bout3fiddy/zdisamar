@@ -20,7 +20,7 @@ Unit tests check scientific mechanics in isolation, for example:
 
 - spectroscopy evaluation,
 - line-shape and partition handling,
-- O2-O2 CIA interpolation,
+- O2-O2 collision-induced absorption interpolation,
 - Mie and phase-table interpolation,
 - operational reference-grid and solar-spectrum validation,
 - operational O2 and O2-O2 lookup-table evaluation,
@@ -44,7 +44,7 @@ The current implementation is tested and validated for a bounded but operational
 
 - bundle-backed climatology and spectroscopy ingestion,
 - typed HITRAN-style line lists and strong-line sidecars,
-- relaxation matrices and O2-O2 CIA subsets,
+- relaxation matrices and O2-O2 collision-induced absorption subsets,
 - aerosol and cloud phase-table preparation,
 - runtime preparation of optical state from tracked bundles,
 - instrument-grid materialization into owned arrays,

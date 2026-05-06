@@ -11,7 +11,7 @@ from .native_tables import (
     AtmosphericBudget,
     InstrumentResponseTable,
     O2LineContributions,
-    O2O2CIADiagnosticTable,
+    OxygenCollisionInducedAbsorptionDiagnosticTable,
     RadiativeTransferDiagnosticTable,
 )
 from .runtime import Context, LibraryPath
@@ -74,11 +74,11 @@ class PreparedO2ABase:
         return O2LineDiagnostics(self)
 
     @property
-    def o2_o2_cia(self):
+    def collision_induced_absorption(self):
         self._require_context()
-        from .diagnostics import O2O2CIADiagnostics
+        from .diagnostics import OxygenCollisionInducedAbsorptionDiagnostics
 
-        return O2O2CIADiagnostics(self)
+        return OxygenCollisionInducedAbsorptionDiagnostics(self)
 
     @property
     def instrument_response(self):
@@ -114,8 +114,8 @@ class PreparedO2ABase:
     ) -> InstrumentResponseTable:
         return self._require_context().instrument_response_sampling(wavelengths_nm, channels=channels)
 
-    def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
-        return self._require_context().o2_o2_cia_diagnostics(wavelengths_nm)
+    def collision_induced_absorption_diagnostics(self, wavelengths_nm) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
+        return self._require_context().collision_induced_absorption_diagnostics(wavelengths_nm)
 
     def radiative_transfer_diagnostics(
         self,

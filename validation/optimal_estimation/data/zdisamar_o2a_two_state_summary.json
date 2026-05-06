@@ -1,0 +1,50 @@
+{
+  "absolute_differences": {
+    "aerosol_layer_mid_pressure_hpa": 0.0008116901248058639,
+    "aerosol_optical_depth": 0.0
+  },
+  "averaging_kernel": [
+    [
+      0.9999999916373913,
+      1.2510191560776328e-12
+    ],
+    [
+      3.127556762839993e-07,
+      0.9999999997539256
+    ]
+  ],
+  "converged": true,
+  "expected_iterations": 1,
+  "iteration_match": true,
+  "iterations": 1,
+  "passes_disamar_two_state_fixture": true,
+  "posterior_covariance": [
+    [
+      8.362609311508865e-09,
+      -3.127556792791812e-07
+    ],
+    [
+      -3.1275567927918116e-07,
+      6.151909875862375e-05
+    ]
+  ],
+  "reference": {
+    "aerosol_layer_bottom_pressure_hpa": 924.9991883098752,
+    "aerosol_layer_mid_pressure_hpa": 899.9991883098752,
+    "aerosol_layer_top_pressure_hpa": 874.9991883098752,
+    "aerosol_optical_depth": 0.3
+  },
+  "retrieved": {
+    "aerosol_layer_mid_pressure_hpa": 900.0,
+    "aerosol_optical_depth": 0.3
+  },
+  "state_names": [
+    "aerosol_optical_depth",
+    "aerosol_layer_mid_pressure_hpa"
+  ],
+  "tolerances": {
+    "aerosol_layer_mid_pressure_hpa_abs": 0.001,
+    "aerosol_optical_depth_abs": 1e-12
+  },
+  "validation_case": "disamar_o2a_two_state_optimal_estimation"
+}

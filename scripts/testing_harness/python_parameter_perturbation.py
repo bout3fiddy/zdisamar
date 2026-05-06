@@ -109,10 +109,10 @@ def answer_questions(results) -> list[dict[str, object]]:
             "output": "parameter perturbation reflectance-delta table",
         },
         {
-            "question": "Does CIA change the apparent continuum or specific O2 A-band structures?",
+            "question": "Does collision-induced absorption change the apparent continuum or specific O2 A-band structures?",
             "answer": {
-                "summary": asdict(by_label["CIA disabled"].summary),
-                "top_wavelengths": top_wavelengths(by_label["CIA disabled"]),
+                "summary": asdict(by_label["collision-induced absorption disabled"].summary),
+                "top_wavelengths": top_wavelengths(by_label["collision-induced absorption disabled"]),
             },
             "output": "parameter perturbation reflectance-delta table",
         },
@@ -153,8 +153,8 @@ def run_parameter_perturbations() -> dict[str, object]:
             "value": 0.5,
         },
         {
-            "label": "CIA disabled",
-            "parameter_path": "o2_o2_cia.enabled",
+            "label": "collision-induced absorption disabled",
+            "parameter_path": "collision_induced_absorption.enabled",
             "value": False,
         },
         {

@@ -7,7 +7,7 @@ from typing import Literal
 
 from . import bundles, fields
 from . import atmosphere as atmosphere_plots
-from . import cia as cia_plots
+from . import collision_induced_absorption as collision_induced_absorption_plots
 from . import instrument_response as instrument_response_plots
 from . import o2_lines as o2_line_plots
 from . import perturbation as perturbation_plots
@@ -27,7 +27,7 @@ class PreparedPlots:
         self.validation = BoundValidationPlots(prepared)
         self.atmosphere = BoundAtmospherePlots(prepared)
         self.o2_lines = BoundO2LinePlots(prepared)
-        self.cia = BoundCIAPlots(prepared)
+        self.collision_induced_absorption = BoundCollisionInducedAbsorptionPlots(prepared)
         self.instrument_response = BoundInstrumentResponsePlots(prepared)
         self.radiative_transfer = BoundRadiativeTransferPlots(prepared)
         self.perturbation = BoundPerturbationPlots(prepared)
@@ -131,17 +131,17 @@ class BoundO2LinePlots:
                 return o2_line_plots.window(result, lines, center_nm=center_nm, top_n=top_n)
 
 
-class BoundCIAPlots:
+class BoundCollisionInducedAbsorptionPlots:
     def __init__(self, prepared):
         self._prepared = prepared
 
     def budget(self, *, wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0)):
-        with self._prepared.o2_o2_cia.diagnostics(wavelengths_nm=wavelengths_nm) as diagnostics:
-            return bundles.cia_budget(diagnostics, wavelengths_nm=wavelengths_nm)
+        with self._prepared.collision_induced_absorption.diagnostics(wavelengths_nm=wavelengths_nm) as diagnostics:
+            return bundles.collision_induced_absorption_budget(diagnostics, wavelengths_nm=wavelengths_nm)
 
     def share_spectrum(self, *, wavelengths_nm: Sequence[float] = (755.0, 760.76, 776.0)):
-        with self._prepared.o2_o2_cia.diagnostics(wavelengths_nm=wavelengths_nm) as diagnostics:
-            return cia_plots.share_spectrum(diagnostics)
+        with self._prepared.collision_induced_absorption.diagnostics(wavelengths_nm=wavelengths_nm) as diagnostics:
+            return collision_induced_absorption_plots.share_spectrum(diagnostics)
 
 
 class BoundInstrumentResponsePlots:

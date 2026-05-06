@@ -15,7 +15,7 @@ from .theme import SEMANTIC_COLORS
 DEFAULT_COMPONENTS = (
     "gas_absorption_optical_depth",
     "gas_scattering_optical_depth",
-    fields.CIA_OPTICAL_DEPTH,
+    fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH,
     fields.AEROSOL_OPTICAL_DEPTH,
     fields.CLOUD_OPTICAL_DEPTH,
 )

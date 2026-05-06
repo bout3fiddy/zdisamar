@@ -13,7 +13,7 @@ from .c_abi import (
     CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
-    O2O2CIADiagnosticsRaw,
+    OxygenCollisionInducedAbsorptionDiagnosticsRaw,
     configure,
     load_library,
 )
@@ -21,7 +21,7 @@ from .native_tables import (
     AtmosphericBudget,
     InstrumentResponseTable,
     O2LineContributions,
-    O2O2CIADiagnosticTable,
+    OxygenCollisionInducedAbsorptionDiagnosticTable,
     RadiativeTransferDiagnosticTable,
 )
 from .spectrum import DiagnosticReport, Spectrum
@@ -165,9 +165,9 @@ class Context:
         )
         return InstrumentResponseTable(self, raw)
 
-    def o2_o2_cia_diagnostics(self, wavelengths_nm) -> O2O2CIADiagnosticTable:
+    def collision_induced_absorption_diagnostics(self, wavelengths_nm) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
         wavelengths = contiguous_wavelengths(wavelengths_nm)
-        raw = O2O2CIADiagnosticsRaw()
+        raw = OxygenCollisionInducedAbsorptionDiagnosticsRaw()
         self._check(
             self._lib.zds_o2_o2_cia_diagnostics(
                 self._ctx,
@@ -176,7 +176,7 @@ class Context:
                 ctypes.byref(raw),
             )
         )
-        return O2O2CIADiagnosticTable(self, raw)
+        return OxygenCollisionInducedAbsorptionDiagnosticTable(self, raw)
 
     def radiative_transfer_diagnostics(
         self,
@@ -212,7 +212,7 @@ class Context:
     def _free_instrument_response(self, raw: CInstrumentResponse) -> None:
         self._lib.zds_instrument_response_free(self._ctx, ctypes.byref(raw))
 
-    def _free_o2_o2_cia_diagnostics(self, raw: O2O2CIADiagnosticsRaw) -> None:
+    def _free_collision_induced_absorption_diagnostics(self, raw: OxygenCollisionInducedAbsorptionDiagnosticsRaw) -> None:
         self._lib.zds_o2_o2_cia_diagnostics_free(self._ctx, ctypes.byref(raw))
 
     def _free_radiative_transfer_diagnostics(self, raw: CRadiativeTransferDiagnostics) -> None:

@@ -14,8 +14,8 @@ from .c_abi import (
     CRadiativeTransferDiagnostics,
     O2LineContributionRow,
     O2LineContributionsRaw,
-    O2O2CIADiagnosticsRaw,
-    O2O2CIARow,
+    OxygenCollisionInducedAbsorptionDiagnosticsRaw,
+    OxygenCollisionInducedAbsorptionRow,
 )
 
 
@@ -162,13 +162,13 @@ class InstrumentResponseTable(NativeTable):
     _raw_type = CInstrumentResponse
 
 
-class O2O2CIADiagnosticTable(NativeTable):
-    """Native O2-O2 CIA diagnostic table."""
+class OxygenCollisionInducedAbsorptionDiagnosticTable(NativeTable):
+    """Native O2-O2 collision-induced absorption diagnostic table."""
 
-    columns = field_names(O2O2CIARow)
-    _closed_message = "O2-O2 CIA diagnostic table is closed"
-    _free_method = "_free_o2_o2_cia_diagnostics"
-    _raw_type = O2O2CIADiagnosticsRaw
+    columns = field_names(OxygenCollisionInducedAbsorptionRow)
+    _closed_message = "O2-O2 collision-induced absorption diagnostic table is closed"
+    _free_method = "_free_collision_induced_absorption_diagnostics"
+    _raw_type = OxygenCollisionInducedAbsorptionDiagnosticsRaw
 
 
 class RadiativeTransferDiagnosticTable(NativeTable):

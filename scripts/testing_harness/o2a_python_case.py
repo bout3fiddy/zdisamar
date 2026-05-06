@@ -148,9 +148,9 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
             threshold_line_sim=3.0e-5,
             cutoff_sim_cm1=200.0,
         ),
-        o2_o2_cia=zd.O2O2CIA(
+        collision_induced_absorption=zd.OxygenCollisionInducedAbsorption(
             enabled=True,
-            cia_asset=asset(
+            cross_section_asset=asset(
                 zd,
                 "o2o2_cia",
                 "data/reference_data/cross_sections/o2o2_bira_o2a.dat",
