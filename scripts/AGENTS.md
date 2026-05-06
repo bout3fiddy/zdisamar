@@ -1,10 +1,12 @@
 # Scripts
 
 - Keep top-level `scripts/` for repo-wide automation entrypoints and bootstrap utilities.
-- Testing-harness helper scripts belong under `scripts/testing_harness/`, not beside unrelated bootstrap scripts.
-- Harness scripts should stay deterministic, take explicit CLI arguments, and write disposable outputs under `out/ci/`.
-- Prefer `zig build` steps as the public entrypoints; scripts should support those steps rather than become the primary interface.
-- Leave `bootstrap-upstream.sh` at the top level because it is a repo/bootstrap concern, not part of the test harness.
+- Keep `scripts/demo/` for executable explanatory notebooks and the minimal notebook runner that executes them.
+- Demo notebooks should explain the scientific question, inputs, Python API calls, generated tables or plots, and interpretation.
+- Demo notebook execution should write disposable outputs under `out/demo/` unless an existing CI-only output path is intentional.
+- Real tests and contract checks live under `tests/`; do not park test harnesses under `scripts/`.
+- DISAMAR-reference evidence and tracked validation bundle maintenance stay under `validation/`.
+- Prefer `zig build` steps as the public entrypoints; scripts and notebooks should support those steps rather than become the primary interface.
+- Leave `bootstrap-upstream.sh`, cache cleanup, the ephemeral Zig build wrapper, and the inline-test guard at the top level because they are repo automation.
 - Advisory policy scripts should emit stable finding codes and machine-readable reports so trends and recurring failure classes can be tracked across PRs.
-- Prefer growing repo-specific structural and contract checks in `scripts/testing_harness/` before introducing general-purpose linters. Add rules that target known failure modes such as silent no-op config application, duplicate physical scaling, aggregate-lane drift, and fragile ownership cleanup patterns.
 - If a script validates aggregate lanes or manifests, it should check both required inclusions and intentional exclusions so opt-in lanes do not leak into default verification by accident.

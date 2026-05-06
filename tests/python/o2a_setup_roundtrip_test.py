@@ -1,11 +1,3 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.14"
-# dependencies = [
-#   "numpy>=2.2",
-# ]
-# ///
-
 from __future__ import annotations
 
 import argparse
@@ -82,17 +74,37 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
         "sample_counts_match": bool(typed_arrays["wavelength_nm"].size == default_arrays["wavelength_nm"].size),
         "typed_report_matches_arrays": bool(
             typed_report.sample_count == typed_arrays["wavelength_nm"].size
-            and np.isclose(typed_report.mean_reflectance, np.mean(typed_arrays["reflectance"]), atol=tolerance, rtol=tolerance)
+            and np.isclose(
+                typed_report.mean_reflectance,
+                np.mean(typed_arrays["reflectance"]),
+                atol=tolerance,
+                rtol=tolerance,
+            )
         ),
         "default_report_matches_arrays": bool(
             default_report.sample_count == default_arrays["wavelength_nm"].size
-            and np.isclose(default_report.mean_reflectance, np.mean(default_arrays["reflectance"]), atol=tolerance, rtol=tolerance)
+            and np.isclose(
+                default_report.mean_reflectance,
+                np.mean(default_arrays["reflectance"]),
+                atol=tolerance,
+                rtol=tolerance,
+            )
         ),
         "default_matches_typed_arrays": bool(
             np.allclose(default_arrays["wavelength_nm"], typed_arrays["wavelength_nm"], atol=tolerance, rtol=tolerance)
             and np.allclose(default_arrays["radiance"], typed_arrays["radiance"], atol=tolerance, rtol=tolerance)
-            and np.allclose(default_arrays["irradiance"], typed_arrays["irradiance"], atol=tolerance, rtol=tolerance)
-            and np.allclose(default_arrays["reflectance"], typed_arrays["reflectance"], atol=tolerance, rtol=tolerance)
+            and np.allclose(
+                default_arrays["irradiance"],
+                typed_arrays["irradiance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+            and np.allclose(
+                default_arrays["reflectance"],
+                typed_arrays["reflectance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
         ),
         "parity_route_used": True,
         "tolerance": tolerance,
@@ -136,7 +148,8 @@ def main() -> int:
         f"default_matches_typed_arrays={checks['default_matches_typed_arrays']}"
     )
     print(f"json: {output_path}")
-    passed = all(value for key, value in checks.items() if key not in {"tolerance", "typed_sample_count", "default_sample_count"})
+    excluded = {"tolerance", "typed_sample_count", "default_sample_count"}
+    passed = all(value for key, value in checks.items() if key not in excluded)
     return 0 if passed else 1
 
 
