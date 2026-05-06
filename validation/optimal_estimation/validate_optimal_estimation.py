@@ -30,22 +30,14 @@ import zdisamar as zd
 from o2a_python_case import build_o2a_case
 
 
-def layer_mid_pressure(case) -> float:
-    placement = case.aerosol.placement
-    return 0.5 * (placement.top_pressure_hpa + placement.bottom_pressure_hpa)
-
-
-def main() -> int:
-    reference = json.loads(REFERENCE_PATH.read_text())
-    case = build_o2a_case(zd, jacobian_reference_layer=True)
+def build_state_vector(case, reference, profile):
     optimal_estimation = zd.inverse_method.optimal_estimation
-    profile = optimal_estimation.PressureAltitudeProfile.from_csv(PROFILE_PATH)
     prior = reference["a_priori"]
     layer_thickness = (
         case.aerosol.placement.bottom_pressure_hpa
         - case.aerosol.placement.top_pressure_hpa
     )
-    state_vector = optimal_estimation.StateVector(
+    return optimal_estimation.StateVector(
         [
             optimal_estimation.AerosolOpticalDepth(
                 initial=float(prior["aerosol_optical_depth"]),
@@ -63,11 +55,23 @@ def main() -> int:
             ),
         ]
     )
+
+
+def assert_layer_boundaries_are_contiguous(case, state_vector, prior) -> None:
+    optimal_estimation = zd.inverse_method.optimal_estimation
     inverse_model = optimal_estimation.O2AInverseForwardModel(case)
     moved_case = inverse_model.settings_for_state(
-        np.array([float(prior["aerosol_optical_depth"]), float(prior["aerosol_layer_top_altitude_km"]) + 0.02]),
+        np.array(
+            [
+                float(prior["aerosol_optical_depth"]),
+                float(prior["aerosol_layer_top_altitude_km"]) + 0.02,
+            ]
+        ),
         state_vector,
     )
+    # The altitude state is written back as pressure boundaries. This check
+    # catches broken interval updates before the retrieval can hide them behind
+    # a plausible-looking spectrum.
     assert (
         moved_case.atmosphere.intervals[0].bottom_pressure_hpa
         == moved_case.atmosphere.intervals[1].top_pressure_hpa
@@ -77,19 +81,44 @@ def main() -> int:
         == moved_case.atmosphere.intervals[2].top_pressure_hpa
     )
 
+
+def run_retrieval(case, state_vector):
+    optimal_estimation = zd.inverse_method.optimal_estimation
+    inverse_model = optimal_estimation.O2AInverseForwardModel(case)
+
+    # The measurement is simulated once from the truth scene. The inverse pass
+    # only sees this spectrum plus covariance, so a wrong retrieval trajectory
+    # cannot be excused by regenerating the target at each state.
     with zd.prepare(case) as prepared:
         measurement = optimal_estimation.measurement_from_prepared(
             prepared,
             reflectance_variance=1.0e-8,
         )
 
-    result = optimal_estimation.disamar_oe(
+    return optimal_estimation.disamar_oe(
         inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
         controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
     )
 
+
+def iteration_records(result) -> list[dict[str, float | int | bool]]:
+    return [
+        {
+            "index": iteration.index,
+            "aerosol_optical_depth": float(iteration.state[0]),
+            "aerosol_layer_top_altitude_km": float(iteration.state[1]),
+            "state_vector_convergence": iteration.state_vector_convergence,
+            "chi2_reflectance": iteration.chi2_reflectance,
+            "chi2_state_vector": iteration.chi2_state_vector,
+            "snr_normal": iteration.snr_normal,
+        }
+        for iteration in result.history
+    ]
+
+
+def build_summary(reference, result, profile, layer_thickness: float) -> dict[str, object]:
     retrieved = reference["retrieved"]
     tolerances = reference["tolerances"]
     aod = result.value("aerosol_optical_depth")
@@ -115,20 +144,7 @@ def main() -> int:
         and result.converged
     )
 
-    iteration_records = [
-        {
-            "index": iteration.index,
-            "aerosol_optical_depth": float(iteration.state[0]),
-            "aerosol_layer_top_altitude_km": float(iteration.state[1]),
-            "state_vector_convergence": iteration.state_vector_convergence,
-            "chi2_reflectance": iteration.chi2_reflectance,
-            "chi2_state_vector": iteration.chi2_state_vector,
-            "snr_normal": iteration.snr_normal,
-        }
-        for iteration in result.history
-    ]
-
-    summary = {
+    return {
         "validation_case": "disamar_o2a_two_state_optimal_estimation",
         "state_names": list(result.state_names),
         "iterations": result.iterations,
@@ -143,7 +159,7 @@ def main() -> int:
             "aerosol_layer_mid_pressure_hpa": mid_pressure,
         },
         "reference": retrieved,
-        "history": iteration_records,
+        "history": iteration_records(result),
         "reference_history": reference["iterations"],
         "absolute_differences": {
             "aerosol_optical_depth": aod_abs_diff,
@@ -156,8 +172,26 @@ def main() -> int:
         "averaging_kernel": np.asarray(result.averaging_kernel).tolist(),
         "passes_disamar_two_state_fixture": passed,
     }
+
+
+def main() -> int:
+    reference = json.loads(REFERENCE_PATH.read_text())
+    case = build_o2a_case(zd, jacobian_reference_layer=True)
+    optimal_estimation = zd.inverse_method.optimal_estimation
+    profile = optimal_estimation.PressureAltitudeProfile.from_csv(PROFILE_PATH)
+    state_vector = build_state_vector(case, reference, profile)
+    assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
+
+    result = run_retrieval(case, state_vector)
+    layer_thickness = (
+        case.aerosol.placement.bottom_pressure_hpa
+        - case.aerosol.placement.top_pressure_hpa
+    )
+    summary = build_summary(reference, result, profile, layer_thickness)
     SUMMARY_PATH.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    assert passed, json.dumps(summary, indent=2, sort_keys=True)
+    assert summary["passes_disamar_two_state_fixture"], json.dumps(
+        summary, indent=2, sort_keys=True
+    )
     return 0
 
 
