@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pandas as pd
 
-
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "out" / "plots" / "python_plotting"
 
 REQUIRED_DATA = {
@@ -17,7 +16,7 @@ REQUIRED_DATA = {
     "reflectance_residuals.csv",
     "validation_metrics.json",
     "atmospheric_budget.csv",
-    "o2_o2_cia_diagnostics.csv",
+    "collision_induced_absorption_diagnostics.csv",
     "instrument_response.csv",
     "radiative_transfer_diagnostics.csv",
 }
@@ -36,22 +35,24 @@ REQUIRED_PLOTS = {
     "atmosphere/single_scatter_albedo_profile_755_00000_nm.png",
     "atmosphere/single_scatter_albedo_profile_760_76000_nm.png",
     "atmosphere/single_scatter_albedo_profile_776_00000_nm.png",
-    "cia/cia_share_spectrum.png",
-    "cia/cia_share_profile_755_00000_nm.png",
-    "cia/cia_share_profile_760_76000_nm.png",
-    "cia/cia_share_profile_776_00000_nm.png",
-    "cia/cia_optical_depth_profile_755_00000_nm.png",
-    "cia/cia_optical_depth_profile_760_76000_nm.png",
-    "cia/cia_optical_depth_profile_776_00000_nm.png",
-    "cia/cia_cross_section_temperature_755_00000_nm.png",
-    "cia/cia_cross_section_temperature_760_76000_nm.png",
-    "cia/cia_cross_section_temperature_776_00000_nm.png",
+    "collision_induced_absorption/share_spectrum.png",
+    "collision_induced_absorption/share_profile_755_00000_nm.png",
+    "collision_induced_absorption/share_profile_760_76000_nm.png",
+    "collision_induced_absorption/share_profile_776_00000_nm.png",
+    "collision_induced_absorption/optical_depth_profile_755_00000_nm.png",
+    "collision_induced_absorption/optical_depth_profile_760_76000_nm.png",
+    "collision_induced_absorption/optical_depth_profile_776_00000_nm.png",
+    "collision_induced_absorption/cross_section_temperature_755_00000_nm.png",
+    "collision_induced_absorption/cross_section_temperature_760_76000_nm.png",
+    "collision_induced_absorption/cross_section_temperature_776_00000_nm.png",
     "instrument_response/isrf_760_76000_nm.png",
 }
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Verify the real O2 A Python plotting bundle outputs.")
+    parser = argparse.ArgumentParser(
+        description="Verify the real O2 A Python plotting bundle outputs."
+    )
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     return parser.parse_args()
 
@@ -101,7 +102,7 @@ def main() -> int:
 
     assert_rows(data_dir / "reflectance_residuals.csv", expected=701)
     assert_rows(data_dir / "atmospheric_budget.csv")
-    assert_rows(data_dir / "o2_o2_cia_diagnostics.csv")
+    assert_rows(data_dir / "collision_induced_absorption_diagnostics.csv")
     assert_rows(data_dir / "instrument_response.csv")
     assert_rows(data_dir / "radiative_transfer_diagnostics.csv")
 

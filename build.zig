@@ -279,7 +279,7 @@ pub fn build(b: *std.Build) void {
     const o2a_plot_bundle_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "validation/plot_validation.py",
+        "validation/spectra/plot_validation.py",
     });
     o2a_plot_bundle_cmd.step.dependOn(&c_api_install.step);
     const o2a_plot_bundle_step = b.step(
@@ -296,7 +296,7 @@ pub fn build(b: *std.Build) void {
     const o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "validation/plot_validation_test.py",
+        "validation/spectra/plot_validation_test.py",
     });
     o2a_plot_bundle_test_cmd.step.dependOn(&c_api_install.step);
     const o2a_plot_bundle_test_step = b.step(
@@ -304,6 +304,18 @@ pub fn build(b: *std.Build) void {
         "Run the O2A plot bundle harness smoke test",
     );
     o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
+
+    const o2a_optimal_estimation_validation_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "validation/optimal_estimation/validate_optimal_estimation.py",
+    });
+    o2a_optimal_estimation_validation_cmd.step.dependOn(&c_api_install.step);
+    const o2a_optimal_estimation_validation_step = b.step(
+        "test-validation-o2a-optimal-estimation",
+        "Run the DISAMAR reference two-state O2A optimal-estimation validation fixture",
+    );
+    o2a_optimal_estimation_validation_step.dependOn(&o2a_optimal_estimation_validation_cmd.step);
 
     const python_forward_summary_cmd = b.addSystemCommand(&.{
         "uv",
@@ -370,17 +382,17 @@ pub fn build(b: *std.Build) void {
     );
     python_o2_line_diagnostics_step.dependOn(&python_o2_line_diagnostics_cmd.step);
 
-    const python_o2_o2_cia_diagnostics_cmd = b.addSystemCommand(&.{
+    const python_collision_induced_absorption_diagnostics_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "scripts/testing_harness/python_o2_o2_cia_diagnostics.py",
+        "scripts/testing_harness/python_collision_induced_absorption_diagnostics.py",
     });
-    python_o2_o2_cia_diagnostics_cmd.step.dependOn(&c_api_install.step);
-    const python_o2_o2_cia_diagnostics_step = b.step(
-        "python-o2-o2-cia-diagnostics",
-        "Answer O2-O2 CIA science questions through the Python wrapper",
+    python_collision_induced_absorption_diagnostics_cmd.step.dependOn(&c_api_install.step);
+    const python_collision_induced_absorption_diagnostics_step = b.step(
+        "python-collision-induced-absorption-diagnostics",
+        "Answer O2-O2 collision-induced absorption science questions through the Python wrapper",
     );
-    python_o2_o2_cia_diagnostics_step.dependOn(&python_o2_o2_cia_diagnostics_cmd.step);
+    python_collision_induced_absorption_diagnostics_step.dependOn(&python_collision_induced_absorption_diagnostics_cmd.step);
 
     const python_instrument_response_cmd = b.addSystemCommand(&.{
         "uv",
@@ -475,6 +487,7 @@ pub fn build(b: *std.Build) void {
     test_fast_step.dependOn(validation_o2a.compile_step);
     test_fast_step.dependOn(validation_o2a_vendor_line_list.run_step);
     test_fast_step.dependOn(validation_o2a_yaml.run_step);
+    test_fast_step.dependOn(o2a_optimal_estimation_validation_step);
 
     const test_transport_step = b.step("test-transport", "Run focused O2A exact transport verification");
     test_transport_step.dependOn(validation_o2a.compile_step);
@@ -489,4 +502,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(validation_o2a_vendor_line_list.run_step);
     test_step.dependOn(validation_o2a_yaml.run_step);
     test_step.dependOn(o2a_plot_bundle_test_step);
+    test_step.dependOn(o2a_optimal_estimation_validation_step);
 }

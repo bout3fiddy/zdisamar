@@ -9,15 +9,14 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
-from pathlib import Path
 import sys
 import time
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -25,7 +24,9 @@ PYTHON_ROOT = REPO_ROOT / "python"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Verify that the typed Python O2 A setup matches the default DISAMAR parity entrypoint."
+        description=(
+            "Verify that the typed Python O2 A setup matches the default DISAMAR parity entrypoint."
+        )
     )
     parser.add_argument("--library", help="Path to the zdisamar C-facing shared library.")
     parser.add_argument(
@@ -79,20 +80,52 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
     checks = {
         "typed_sample_count": int(typed_arrays["wavelength_nm"].size),
         "default_sample_count": int(default_arrays["wavelength_nm"].size),
-        "sample_counts_match": bool(typed_arrays["wavelength_nm"].size == default_arrays["wavelength_nm"].size),
+        "sample_counts_match": bool(
+            typed_arrays["wavelength_nm"].size == default_arrays["wavelength_nm"].size
+        ),
         "typed_report_matches_arrays": bool(
             typed_report.sample_count == typed_arrays["wavelength_nm"].size
-            and np.isclose(typed_report.mean_reflectance, np.mean(typed_arrays["reflectance"]), atol=tolerance, rtol=tolerance)
+            and np.isclose(
+                typed_report.mean_reflectance,
+                np.mean(typed_arrays["reflectance"]),
+                atol=tolerance,
+                rtol=tolerance,
+            )
         ),
         "default_report_matches_arrays": bool(
             default_report.sample_count == default_arrays["wavelength_nm"].size
-            and np.isclose(default_report.mean_reflectance, np.mean(default_arrays["reflectance"]), atol=tolerance, rtol=tolerance)
+            and np.isclose(
+                default_report.mean_reflectance,
+                np.mean(default_arrays["reflectance"]),
+                atol=tolerance,
+                rtol=tolerance,
+            )
         ),
         "default_matches_typed_arrays": bool(
-            np.allclose(default_arrays["wavelength_nm"], typed_arrays["wavelength_nm"], atol=tolerance, rtol=tolerance)
-            and np.allclose(default_arrays["radiance"], typed_arrays["radiance"], atol=tolerance, rtol=tolerance)
-            and np.allclose(default_arrays["irradiance"], typed_arrays["irradiance"], atol=tolerance, rtol=tolerance)
-            and np.allclose(default_arrays["reflectance"], typed_arrays["reflectance"], atol=tolerance, rtol=tolerance)
+            np.allclose(
+                default_arrays["wavelength_nm"],
+                typed_arrays["wavelength_nm"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+            and np.allclose(
+                default_arrays["radiance"],
+                typed_arrays["radiance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+            and np.allclose(
+                default_arrays["irradiance"],
+                typed_arrays["irradiance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+            and np.allclose(
+                default_arrays["reflectance"],
+                typed_arrays["reflectance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
         ),
         "parity_route_used": True,
         "tolerance": tolerance,
@@ -127,7 +160,10 @@ def main() -> int:
     output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     checks = summary["checks"]
     print(summary["question"])
-    print(f"answer: matches={summary['answer']['matches']}, sample_count={summary['answer']['sample_count']}")
+    print(
+        f"answer: matches={summary['answer']['matches']}, "
+        f"sample_count={summary['answer']['sample_count']}"
+    )
     print(
         "checks: "
         f"sample_counts_match={checks['sample_counts_match']}, "
@@ -136,7 +172,11 @@ def main() -> int:
         f"default_matches_typed_arrays={checks['default_matches_typed_arrays']}"
     )
     print(f"json: {output_path}")
-    passed = all(value for key, value in checks.items() if key not in {"tolerance", "typed_sample_count", "default_sample_count"})
+    passed = all(
+        value
+        for key, value in checks.items()
+        if key not in {"tolerance", "typed_sample_count", "default_sample_count"}
+    )
     return 0 if passed else 1
 
 

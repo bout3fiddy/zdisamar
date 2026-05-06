@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import csv
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
-
 from o2a_python_case import build_o2a_case
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -45,7 +43,9 @@ STATUS_LABELS = {
 
 def require_library() -> str:
     if not LIBRARY_PATH.exists():
-        raise FileNotFoundError(f"{LIBRARY_PATH} does not exist; build the native shared library first")
+        raise FileNotFoundError(
+            f"{LIBRARY_PATH} does not exist; build the native shared library first"
+        )
     return str(LIBRARY_PATH)
 
 
@@ -177,7 +177,9 @@ def answer_questions(table, wavelengths: np.ndarray) -> list[dict[str, object]]:
             "output": "O2 line contribution table",
         },
         {
-            "question": "Which weak lines are included, excluded, or handled through strong-line data?",
+            "question": (
+                "Which weak lines are included, excluded, or handled through strong-line data?"
+            ),
             "answer": {
                 "status_counts": status_counts(table),
             },
@@ -192,7 +194,10 @@ def answer_questions(table, wavelengths: np.ndarray) -> list[dict[str, object]]:
             "output": "isotope-resolved O2 line contribution table",
         },
         {
-            "question": "How much of the cross section comes from weak lines, strong lines, and line mixing?",
+            "question": (
+                "How much of the cross section comes from weak lines, "
+                "strong lines, and line mixing?"
+            ),
             "answer": cross_section_partition(table),
             "output": "weak, strong, and line-mixing contribution columns",
         },
@@ -223,7 +228,9 @@ def run_o2_line_diagnostics() -> dict[str, object]:
     with zd.prepare(case, library_path=library_path) as prepared:
         prepare_s = time.perf_counter() - prepare_start
         diagnostics_start = time.perf_counter()
-        with prepared.o2_lines.contributions(wavelengths_nm=wavelengths, max_rows=MAX_ROWS) as contributions:
+        with prepared.o2_lines.contributions(
+            wavelengths_nm=wavelengths, max_rows=MAX_ROWS
+        ) as contributions:
             table = contributions.table.copy()
             total_row_count = contributions.total_row_count
             truncated = contributions.truncated
@@ -265,8 +272,10 @@ def main() -> int:
         f"o2_lines={TABLE_OUTPUT} questions={len(summary['questions'])} "
         f"rows={summary['row_count']}/{summary['total_row_count']} "
         f"top_center={top_row['center_wavelength_nm']:.5f}nm "
-        f"top_kind={top_row['row_kind']} dominant_isotope={dominant_isotope['isotope_number']} "
-        f"prepare={timing['prepare_o2a_s']:.2f}s diagnostics={timing['o2_line_diagnostics_s']:.2f}s "
+        f"top_kind={top_row['row_kind']} "
+        f"dominant_isotope={dominant_isotope['isotope_number']} "
+        f"prepare={timing['prepare_o2a_s']:.2f}s "
+        f"diagnostics={timing['o2_line_diagnostics_s']:.2f}s "
         f"total={timing['total_s']:.2f}s"
     )
     return 1 if summary["truncated"] else 0

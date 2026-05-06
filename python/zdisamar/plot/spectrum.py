@@ -88,9 +88,24 @@ def triplet(
     markers_nm: Sequence[float] = (),
 ):
     return alt.vconcat(
-        reflectance(spectrum, window_nm=window_nm, markers_nm=markers_nm, height=COMPACT_PANEL_HEIGHT),
-        radiance(spectrum, window_nm=window_nm, markers_nm=markers_nm, height=COMPACT_PANEL_HEIGHT),
-        irradiance(spectrum, window_nm=window_nm, markers_nm=markers_nm, height=COMPACT_PANEL_HEIGHT),
+        reflectance(
+            spectrum,
+            window_nm=window_nm,
+            markers_nm=markers_nm,
+            height=COMPACT_PANEL_HEIGHT,
+        ),
+        radiance(
+            spectrum,
+            window_nm=window_nm,
+            markers_nm=markers_nm,
+            height=COMPACT_PANEL_HEIGHT,
+        ),
+        irradiance(
+            spectrum,
+            window_nm=window_nm,
+            markers_nm=markers_nm,
+            height=COMPACT_PANEL_HEIGHT,
+        ),
     ).resolve_scale(x="shared")
 
 
@@ -110,10 +125,18 @@ def full_sample_context(
         .mark_line(color=MATPLOTLIB_BLUE, strokeWidth=1.4)
         .encode(
             x=_wavelength_x(),
-            y=alt.Y(f"{y_field}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity), axis=y_axis),
+            y=alt.Y(
+                f"{y_field}:Q",
+                title=fields.QUANTITY_LABELS.get(quantity, quantity),
+                axis=y_axis,
+            ),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip(f"{quantity}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity), format=".8g"),
+                alt.Tooltip(
+                    f"{quantity}:Q",
+                    title=fields.QUANTITY_LABELS.get(quantity, quantity),
+                    format=".8g",
+                ),
             ],
         )
         .properties(width=width, height=height, title=title)
@@ -151,8 +174,13 @@ def marker_strip(
         alt.Chart(frame)
         .mark_tick(color="#111111", thickness=1.2, size=18)
         .encode(
-            x=alt.X(f"{fields.WAVELENGTH_NM}:Q", title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM]),
-            tooltip=[alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".3f")],
+            x=alt.X(
+                f"{fields.WAVELENGTH_NM}:Q",
+                title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
+            ),
+            tooltip=[
+                alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".3f")
+            ],
         )
         .properties(width=width, height=height, title="Selected wavelengths")
     )
@@ -213,10 +241,18 @@ def _quantity_chart(
         .mark_line(color=MATPLOTLIB_BLUE, strokeWidth=1.4)
         .encode(
             x=_wavelength_x(),
-            y=alt.Y(f"{y_field}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity), axis=y_axis),
+            y=alt.Y(
+                f"{y_field}:Q",
+                title=fields.QUANTITY_LABELS.get(quantity, quantity),
+                axis=y_axis,
+            ),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip(f"{quantity}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity), format=".8g"),
+                alt.Tooltip(
+                    f"{quantity}:Q",
+                    title=fields.QUANTITY_LABELS.get(quantity, quantity),
+                    format=".8g",
+                ),
             ],
         )
         .properties(width=width or DEFAULT_WIDTH, height=height or DEFAULT_HEIGHT, title=title)
@@ -233,7 +269,11 @@ def _quantity_chart(
                 x=f"{fields.WAVELENGTH_NM}:Q",
                 y=f"{y_field}:Q",
                 tooltip=[
-                    alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Minimum wavelength (nm)", format=".4f"),
+                    alt.Tooltip(
+                        f"{fields.WAVELENGTH_NM}:Q",
+                        title="Minimum wavelength (nm)",
+                        format=".4f",
+                    ),
                     alt.Tooltip(f"{quantity}:Q", title="Minimum", format=".8g"),
                 ],
             )

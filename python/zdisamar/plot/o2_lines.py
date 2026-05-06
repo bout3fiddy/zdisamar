@@ -7,7 +7,8 @@ from typing import Literal
 
 import altair as alt
 
-from . import fields, spectrum as spectrum_plots
+from . import fields
+from . import spectrum as spectrum_plots
 from .common import frame, label
 from .data import filter_window, to_dataframe
 from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
@@ -25,7 +26,9 @@ def window(
 ):
     line_frame = _with_labels(lines)
     if window_nm is None:
-        center = center_nm if center_nm is not None else float(line_frame[fields.WAVELENGTH_NM].median())
+        center = (
+            center_nm if center_nm is not None else float(line_frame[fields.WAVELENGTH_NM].median())
+        )
         window_nm = (center - 0.5, center + 0.5)
     top = spectrum_plots.reflectance(
         spectrum,
@@ -42,7 +45,9 @@ def window(
     )
     partition = partition_bar(filtered_lines)
     status = status_counts(filtered_lines)
-    return alt.vconcat(top, ranked, alt.hconcat(partition, status)).resolve_scale(x="independent", color="independent")
+    return alt.vconcat(top, ranked, alt.hconcat(partition, status)).resolve_scale(
+        x="independent", color="independent"
+    )
 
 
 def contribution_rank(
@@ -55,14 +60,20 @@ def contribution_rank(
     data = data.sort_values(contribution, ascending=True).reset_index(drop=True)
     data["rank"] = range(len(data), 0, -1)
     data["line_label"] = data["rank"].map(lambda value: f"#{value}")
-    data, scaled_field, scaled_title = _scaled_scientific_frame(data, contribution, label(contribution))
+    data, scaled_field, scaled_title = _scaled_scientific_frame(
+        data, contribution, label(contribution)
+    )
     return (
         alt.Chart(data)
         .mark_bar()
         .encode(
             x=alt.X(f"{scaled_field}:Q", title=scaled_title, axis=alt.Axis(format=".3g")),
             y=alt.Y("line_label:N", title="Top line rank", sort="-x"),
-            color=alt.Color("row_kind_display:N", title="Line kind", legend=alt.Legend(orient="right")),
+            color=alt.Color(
+                "row_kind_display:N",
+                title="Line kind",
+                legend=alt.Legend(orient="right"),
+            ),
             tooltip=[
                 alt.Tooltip("line_label:N", title="Rank"),
                 alt.Tooltip("center_wavelength_nm:Q", title="Line center (nm)", format=".8f"),
@@ -84,11 +95,17 @@ def contribution_stems(
     log_y: bool = True,
 ):
     data = _top_contributions(_with_labels(lines), contribution, top_n)
-    data, scaled_field, scaled_title = _scaled_scientific_frame(data, contribution, label(contribution))
+    data, scaled_field, scaled_title = _scaled_scientific_frame(
+        data, contribution, label(contribution)
+    )
     if log_y:
         positive = data[data[scaled_field] > 0.0][scaled_field]
         stem_base = float(positive.min()) * 0.7 if not positive.empty else 1.0
-        y_scale = alt.Scale(type="log", domain=[stem_base, float(positive.max()) * 1.2]) if not positive.empty else alt.Scale()
+        y_scale = (
+            alt.Scale(type="log", domain=[stem_base, float(positive.max()) * 1.2])
+            if not positive.empty
+            else alt.Scale()
+        )
         y_axis = alt.Axis(format=".2g")
     else:
         stem_base = 0.0
@@ -97,7 +114,11 @@ def contribution_stems(
     data = data.copy()
     data["_stem_base"] = stem_base
     base = alt.Chart(data).encode(
-        x=alt.X("center_wavelength_nm:Q", title="Line center (nm)", scale=alt.Scale(zero=False)),
+        x=alt.X(
+            "center_wavelength_nm:Q",
+            title="Line center (nm)",
+            scale=alt.Scale(zero=False),
+        ),
         color=alt.Color("row_kind_display:N", title="Line kind", legend=alt.Legend(orient="right")),
         tooltip=[
             alt.Tooltip("center_wavelength_nm:Q", title="Line center (nm)", format=".5f"),
@@ -112,12 +133,13 @@ def contribution_stems(
     points = base.mark_point(filled=True, size=42).encode(
         y=alt.Y(f"{scaled_field}:Q", title=scaled_title, scale=y_scale, axis=y_axis)
     )
-    chart = (
-        alt.layer(stems, points)
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="O2 line contribution stems")
+    chart = alt.layer(stems, points).properties(
+        width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="O2 line contribution stems"
     )
     if facet_by_wavelength and data[fields.WAVELENGTH_NM].nunique() > 1:
-        return chart.facet(column=alt.Column(f"{fields.WAVELENGTH_NM}:N", title="Sample wavelength (nm)"))
+        return chart.facet(
+            column=alt.Column(f"{fields.WAVELENGTH_NM}:N", title="Sample wavelength (nm)")
+        )
     return chart
 
 
@@ -156,10 +178,17 @@ def partition_bar(
         alt.Chart(plot_frame)
         .mark_bar()
         .encode(
-            x=alt.X("component_label:N", title="Component", axis=alt.Axis(labelAngle=0, labelLimit=240)),
+            x=alt.X(
+                "component_label:N",
+                title="Component",
+                axis=alt.Axis(labelAngle=0, labelLimit=240),
+            ),
             y=alt.Y(f"{scaled_field}:Q", title=scaled_title, axis=alt.Axis(format=".3g")),
             color=alt.Color("component_label:N", title="Component", legend=None),
-            tooltip=[alt.Tooltip("component_label:N"), alt.Tooltip(f"{fields.VALUE}:Q", format=".3e")],
+            tooltip=[
+                alt.Tooltip("component_label:N"),
+                alt.Tooltip(f"{fields.VALUE}:Q", format=".3e"),
+            ],
         )
         .properties(width=420, height=300, title="O2 line partition")
     )
@@ -171,10 +200,21 @@ def status_counts(lines):
         alt.Chart(data)
         .mark_bar(color=SEMANTIC_COLORS["o2_weak_lines"])
         .encode(
-            x=alt.X("status_display:N", title="Status", axis=alt.Axis(labelAngle=0, labelLimit=180)),
+            x=alt.X(
+                "status_display:N",
+                title="Status",
+                axis=alt.Axis(labelAngle=0, labelLimit=180),
+            ),
             y=alt.Y("count():Q", title="Rows"),
-            color=alt.Color("row_kind_display:N", title="Line kind", legend=alt.Legend(orient="right")),
-            tooltip=[alt.Tooltip("status_display:N", title="Status"), alt.Tooltip("count():Q", title="Rows")],
+            color=alt.Color(
+                "row_kind_display:N",
+                title="Line kind",
+                legend=alt.Legend(orient="right"),
+            ),
+            tooltip=[
+                alt.Tooltip("status_display:N", title="Status"),
+                alt.Tooltip("count():Q", title="Rows"),
+            ],
         )
         .properties(width=420, height=300, title="O2 line status counts")
     )
@@ -194,7 +234,10 @@ def isotope_bar(
         .encode(
             x=alt.X("isotope_number:N", title="Isotope"),
             y=alt.Y(f"{value}:Q", title=f"{aggregate} {label(value)}"),
-            tooltip=[alt.Tooltip("isotope_number:N"), alt.Tooltip(f"{value}:Q", format=".3e")],
+            tooltip=[
+                alt.Tooltip("isotope_number:N"),
+                alt.Tooltip(f"{value}:Q", format=".3e"),
+            ],
         )
         .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="O2 isotope contribution")
     )
@@ -228,21 +271,37 @@ def cross_section_profile(
 def _with_labels(lines):
     data = to_dataframe(lines).copy()
     if "row_kind_label" not in data.columns and "row_kind" in data.columns:
-        data["row_kind_label"] = data["row_kind"].map({0: "weak_line", 1: "strong_line"}).fillna("unknown")
+        data["row_kind_label"] = (
+            data["row_kind"].map({0: "weak_line", 1: "strong_line"}).fillna("unknown")
+        )
     if "status_label" not in data.columns and "status" in data.columns:
-        data["status_label"] = data["status"].map(
-            {
-                0: "weak_included",
-                1: "weak_excluded_by_strong_line",
-                2: "strong_sidecar",
-                3: "weak_zero_after_cutoff",
-            }
-        ).fillna("unknown")
+        data["status_label"] = (
+            data["status"]
+            .map(
+                {
+                    0: "weak_included",
+                    1: "weak_excluded_by_strong_line",
+                    2: "strong_sidecar",
+                    3: "weak_zero_after_cutoff",
+                }
+            )
+            .fillna("unknown")
+        )
     import pandas as pd
 
-    row_kind = data["row_kind_label"].astype(str) if "row_kind_label" in data.columns else pd.Series("unknown", index=data.index)
-    status = data["status_label"].astype(str) if "status_label" in data.columns else pd.Series("unknown", index=data.index)
-    data["row_kind_display"] = row_kind.map(_ROW_KIND_DISPLAY).fillna(row_kind.str.replace("_", " "))
+    row_kind = (
+        data["row_kind_label"].astype(str)
+        if "row_kind_label" in data.columns
+        else pd.Series("unknown", index=data.index)
+    )
+    status = (
+        data["status_label"].astype(str)
+        if "status_label" in data.columns
+        else pd.Series("unknown", index=data.index)
+    )
+    data["row_kind_display"] = row_kind.map(_ROW_KIND_DISPLAY).fillna(
+        row_kind.str.replace("_", " ")
+    )
     data["status_display"] = status.map(_STATUS_DISPLAY).fillna(status.str.replace("_", " "))
     return data
 
@@ -258,12 +317,17 @@ def _top_contributions(data, contribution: str, top_n: int):
 
 def _vertical_y(vertical_axis: str):
     if vertical_axis == "pressure_hpa":
-        return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis), scale=alt.Scale(reverse=True))
+        return alt.Y(
+            f"{vertical_axis}:Q",
+            title=label(vertical_axis),
+            scale=alt.Scale(reverse=True),
+        )
     return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis))
 
 
 def _scaled_scientific_frame(data, value_field: str, title: str):
     import math
+
     import numpy as np
 
     result = data.copy()

@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import csv
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
-
 from o2a_python_case import build_o2a_case
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -31,7 +29,9 @@ TARGET_WAVELENGTHS_NM = np.array([755.0, 760.76, 776.0], dtype=np.float64)
 
 def require_library() -> str:
     if not LIBRARY_PATH.exists():
-        raise FileNotFoundError(f"{LIBRARY_PATH} does not exist; build the native shared library first")
+        raise FileNotFoundError(
+            f"{LIBRARY_PATH} does not exist; build the native shared library first"
+        )
     return str(LIBRARY_PATH)
 
 
@@ -113,7 +113,10 @@ def answer_questions(table) -> list[dict[str, object]]:
     airmass = float(table["pseudo_spherical_airmass_factor"][0]) if table.size else 0.0
     return [
         {
-            "question": "Which layers dominate the final-radiance scattering proxy for selected wavelengths?",
+            "question": (
+                "Which layers dominate the final-radiance scattering "
+                "proxy for selected wavelengths?"
+            ),
             "answer": {
                 "ranked_layers": scattering_layers[:10],
                 "dominant_layer": scattering_layers[0] if scattering_layers else None,
@@ -121,7 +124,10 @@ def answer_questions(table) -> list[dict[str, object]]:
             "output": "bounded radiative-transfer layer diagnostic table",
         },
         {
-            "question": "How much of the proxy signal is direct surface transmission versus atmospheric scattering?",
+            "question": (
+                "How much of the proxy signal is direct surface "
+                "transmission versus atmospheric scattering?"
+            ),
             "answer": source_proxy_totals(table),
             "output": "bounded radiative-transfer source proxy columns",
         },
@@ -137,7 +143,9 @@ def answer_questions(table) -> list[dict[str, object]]:
             "question": "How much does pseudo-spherical geometry stretch the layer path?",
             "answer": {
                 "pseudo_spherical_airmass_factor": airmass,
-                "solar_zenith_viewing_zenith_airmass_definition": "sec(solar_zenith)+sec(viewing_zenith)",
+                "solar_zenith_viewing_zenith_airmass_definition": (
+                    "sec(solar_zenith)+sec(viewing_zenith)"
+                ),
             },
             "output": "pseudo-spherical path proxy column",
         },
@@ -158,7 +166,9 @@ def run_radiative_transfer_diagnostics() -> dict[str, object]:
         with prepared.forward_model() as spectrum:
             forward_s = time.perf_counter() - forward_start
             diagnostics_start = time.perf_counter()
-            table = prepared.radiative_transfer.diagnostics(wavelengths_nm=wavelengths, spectrum=spectrum).table
+            table = prepared.radiative_transfer.diagnostics(
+                wavelengths_nm=wavelengths, spectrum=spectrum
+            ).table
             diagnostics_s = time.perf_counter() - diagnostics_start
 
     questions = answer_questions(table)
@@ -192,7 +202,8 @@ def main() -> int:
     timing = summary["timing"]
     dominant = summary["questions"][0]["answer"]["dominant_layer"]
     print(
-        f"radiative_transfer={TABLE_OUTPUT} questions={len(summary['questions'])} rows={summary['row_count']} "
+        f"radiative_transfer={TABLE_OUTPUT} "
+        f"questions={len(summary['questions'])} rows={summary['row_count']} "
         f"dominant_layer={dominant['global_sublayer_index']} "
         f"prepare={timing['prepare_o2a_s']:.2f}s forward={timing['forward_model_s']:.2f}s "
         f"diagnostics={timing['diagnostics_s']:.2f}s total={timing['total_s']:.2f}s"

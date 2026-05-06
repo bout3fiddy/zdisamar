@@ -47,3 +47,6 @@ validation/release/
 
 # Local editor settings
 .zed/
+
+# Scratch / experiments
+/tmp

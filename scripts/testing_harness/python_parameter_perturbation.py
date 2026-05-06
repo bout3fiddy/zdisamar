@@ -9,16 +9,14 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import asdict
 import json
-from pathlib import Path
 import sys
 import time
+from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
-
 from o2a_python_case import build_o2a_case
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -32,7 +30,9 @@ PERTURBATION_SAMPLE_COUNT = 141
 
 def require_library() -> str:
     if not LIBRARY_PATH.exists():
-        raise FileNotFoundError(f"{LIBRARY_PATH} does not exist; build the native shared library first")
+        raise FileNotFoundError(
+            f"{LIBRARY_PATH} does not exist; build the native shared library first"
+        )
     return str(LIBRARY_PATH)
 
 
@@ -109,10 +109,15 @@ def answer_questions(results) -> list[dict[str, object]]:
             "output": "parameter perturbation reflectance-delta table",
         },
         {
-            "question": "Does CIA change the apparent continuum or specific O2 A-band structures?",
+            "question": (
+                "Does collision-induced absorption change the apparent "
+                "continuum or specific O2 A-band structures?"
+            ),
             "answer": {
-                "summary": asdict(by_label["CIA disabled"].summary),
-                "top_wavelengths": top_wavelengths(by_label["CIA disabled"]),
+                "summary": asdict(by_label["collision-induced absorption disabled"].summary),
+                "top_wavelengths": top_wavelengths(
+                    by_label["collision-induced absorption disabled"]
+                ),
             },
             "output": "parameter perturbation reflectance-delta table",
         },
@@ -125,7 +130,9 @@ def answer_questions(results) -> list[dict[str, object]]:
             "output": "parameter perturbation reflectance-delta table",
         },
         {
-            "question": "Does multiple scattering materially change reflectance in a selected band?",
+            "question": (
+                "Does multiple scattering materially change reflectance in a selected band?"
+            ),
             "answer": {
                 "summary": asdict(by_label["single scattering"].summary),
                 "top_wavelengths": top_wavelengths(by_label["single scattering"]),
@@ -153,8 +160,8 @@ def run_parameter_perturbations() -> dict[str, object]:
             "value": 0.5,
         },
         {
-            "label": "CIA disabled",
-            "parameter_path": "o2_o2_cia.enabled",
+            "label": "collision-induced absorption disabled",
+            "parameter_path": "collision_induced_absorption.enabled",
             "value": False,
         },
         {
@@ -208,7 +215,8 @@ def main() -> int:
     timing = summary["timing"]
     strongest = max(summary["perturbations"], key=lambda item: item["max_abs_delta_reflectance"])
     print(
-        f"perturbations={TABLE_OUTPUT} questions={len(summary['questions'])} rows={summary['row_count']} "
+        f"perturbations={TABLE_OUTPUT} "
+        f"questions={len(summary['questions'])} rows={summary['row_count']} "
         f"strongest={strongest['label']}:{strongest['max_abs_delta_reflectance']:.3e}"
         f"@{strongest['max_abs_delta_wavelength_nm']:.2f}nm "
         f"prepare={timing['prepare_o2a_s']:.2f}s perturb={timing['perturbations_s']:.2f}s "

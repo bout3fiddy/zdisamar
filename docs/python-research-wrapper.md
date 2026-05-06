@@ -57,7 +57,7 @@ Use these terms in Python-facing APIs and docs:
 - `atmospheric_layers`
 - `absorbers`
 - `o2_lines`
-- `o2_o2_cia`
+- `collision_induced_absorption`
 - `aerosol`
 - `cloud`
 - `surface`
@@ -142,12 +142,12 @@ future test command so progress can be tracked as the wrapper grows.
 | --- | --- | --- | --- |
 | [x] | Final spectrum arrays: `wavelength_nm`, `radiance`, `irradiance`, `reflectance` | `ZdsSpectrum` in `src/api/c.zig`; `Spectrum` in `python/zdisamar/spectrum.py` | `zig build python-forward-summary` or `uv run scripts/testing_harness/python_forward_summary.py`; writes `out/ci/python_forward_summary_plot.png` |
 | [x] | Current `DiagnosticReport`: sample count, wavelength range, mean radiance, mean irradiance, mean reflectance | `ZdsDiagnosticReport` and `zds_spectrum_report` in `src/api/c.zig`; `Spectrum.diagnostic_report` in `python/zdisamar/spectrum.py` | Same as above; the script checks report-vs-array agreement, validation sampling, timing, and closed-spectrum failure |
-| [x] | Typed DISAMAR O2 A setup: wavelength grid, atmosphere intervals, geometry, surface, aerosol, O2 line controls, O2-O2 CIA, instrument response, reference assets, radiative-transfer controls | Shared native O2 A setup in `src/input/o2a_reference/`; JSON C boundary in `src/api/c.zig`; Python dataclasses in `python/zdisamar/types.py` | `zig build python-o2a-setup-roundtrip`; verifies typed setup matches `prepare_default_o2a()` |
+| [x] | Typed DISAMAR O2 A setup: wavelength grid, atmosphere intervals, geometry, surface, aerosol, O2 line controls, O2-O2 collision-induced absorption, instrument response, reference assets, radiative-transfer controls | Shared native O2 A setup in `src/input/o2a_reference/`; JSON C boundary in `src/api/c.zig`; Python dataclasses in `python/zdisamar/types.py` | `zig build python-o2a-setup-roundtrip`; verifies typed setup matches `prepare_default_o2a()` |
 | [ ] | Input summary: compact read-only summary of the prepared setup | Pending input-summary table | Pending `zig build python-input-summary` |
-| [ ] | Reference-data summary: atmosphere profile, O2 line list, O2 strong-line sidecars, O2 line-mixing data, O2-O2 CIA table, solar irradiance data, air-mass-factor tables, aerosol/cloud phase data, asset provenance | Pending reference-data diagnostic table | Pending `zig build python-reference-data-summary` |
+| [ ] | Reference-data summary: atmosphere profile, O2 line list, O2 strong-line sidecars, O2 line-mixing data, O2-O2 collision-induced absorption table, solar irradiance data, air-mass-factor tables, aerosol/cloud phase data, asset provenance | Pending reference-data diagnostic table | Pending `zig build python-reference-data-summary` |
 | [x] | Atmospheric layer and optical-property budget: layer/sublayer index, altitude, pressure, temperature, number densities, interval identity, absorber/scatterer optical depths, total optical depths, single-scatter albedo | `AtmosphericBudgetRow` in `src/output/atmospheric_budget.zig`; `zds_atmospheric_budget` in `src/api/c.zig`; `AtmosphericBudget` in `python/zdisamar/native_tables.py` and `PreparedO2A.atmosphere.budget(...)` in `python/zdisamar/prepared.py` | `zig build python-atmosphere-budget`; writes `out/ci/python_atmosphere_budget.csv` and science-question answers in `out/ci/python_atmosphere_budget_questions.json` |
 | [x] | O2 line diagnostics: wavelength, spectroscopy profile node, altitude, pressure, temperature, line center, isotope, strength, pressure shift, lower-state energy, half width, weak/strong/line-mixing contributions, inclusion status, matched strong-line sidecar | `O2LineContributionRow` in `src/output/o2_line_contributions.zig`; `zds_o2_line_contributions` in `src/api/c.zig`; `O2LineContributions` in `python/zdisamar/native_tables.py` and `PreparedO2A.o2_lines.contributions(...)` in `python/zdisamar/prepared.py` | `zig build python-o2-line-diagnostics`; writes `out/ci/python_o2_line_contributions.csv` and science-question answers in `out/ci/python_o2_line_questions.json` |
-| [x] | O2-O2 CIA diagnostics: cross sections, layer optical depths, share of total absorption, largest-contribution wavelengths | `O2O2CIADiagnostics` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.o2_o2_cia.diagnostics(...)` | `zig build python-o2-o2-cia-diagnostics`; writes `out/ci/python_o2_o2_cia_diagnostics.csv` and answers in `out/ci/python_o2_o2_cia_questions.json` |
+| [x] | O2-O2 collision-induced absorption diagnostics: cross sections, layer optical depths, share of total absorption, largest-contribution wavelengths | `OxygenCollisionInducedAbsorptionDiagnostics` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.collision_induced_absorption.diagnostics(...)` | `zig build python-collision-induced-absorption-diagnostics`; writes `out/ci/python_collision_induced_absorption_diagnostics.csv` and answers in `out/ci/python_collision_induced_absorption_questions.json` |
 | [x] | Instrument response and instrument grid: nominal wavelengths, high-resolution wavelengths, response weights, high-resolution support width, adaptive sampling controls | `InstrumentResponseDiagnostics` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.instrument_response.sampling_table(...)` | `zig build python-instrument-response`; writes `out/ci/python_instrument_response.csv` and answers in `out/ci/python_instrument_response_questions.json` |
 | [x] | Radiative-transfer diagnostics: selected wavelengths, layer optical properties, bounded source/attenuation proxy terms, pseudo-spherical path proxy, final radiance/reflectance | `RadiativeTransferDiagnostics` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.radiative_transfer.diagnostics(...)` | `zig build python-radiative-transfer-diagnostics`; writes `out/ci/python_radiative_transfer_diagnostics.csv` and answers in `out/ci/python_radiative_transfer_questions.json` |
 | [x] | Parameter perturbation output: perturbed parameter, delta, baseline spectrum, perturbed spectrum, reflectance delta, sensitivity ranking | `PerturbationDiagnostics` and `PerturbationResult` in `python/zdisamar/diagnostics.py`; exposed as `PreparedO2A.perturbations` | `zig build python-parameter-perturbation`; writes `out/ci/python_parameter_perturbation.csv` and answers in `out/ci/python_parameter_perturbation_questions.json` |
@@ -178,12 +178,12 @@ future test command so progress can be tracked as the wrapper grows.
 - [x] Which wavelengths are most sensitive to the line-mixing factor? Output: parameter perturbation reflectance-delta table for line-mixing factor. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_parameter_perturbation.py`. Test: `zig build python-parameter-perturbation`.
 - [ ] Are residuals concentrated in line cores, line wings, or continuum regions? Output needed: O2 line diagnostics plus DISAMAR reference comparison metrics. Checkpoint: pending O2 line diagnostics and comparison helper.
 
-### O2-O2 CIA
+### O2-O2 collision-induced absorption
 
-- [x] Where does O2-O2 CIA contribute most to total absorption? Output: CIA share of total absorption by wavelength and layer. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_o2_o2_cia_diagnostics.py`. Test: `zig build python-o2-o2-cia-diagnostics`.
-- [x] How does the CIA contribution change with temperature? Output: temperature-resolved CIA cross-section summary. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_o2_o2_cia_diagnostics.py`. Test: `zig build python-o2-o2-cia-diagnostics`.
-- [x] Which layers dominate CIA optical depth? Output: interval/layer-resolved CIA optical-depth ranking. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_o2_o2_cia_diagnostics.py`. Test: `zig build python-o2-o2-cia-diagnostics`.
-- [x] Does CIA change the apparent continuum or specific O2 A-band structures? Output: CIA-enabled/disabled reflectance perturbation table. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_parameter_perturbation.py`. Test: `zig build python-parameter-perturbation`.
+- [x] Where does O2-O2 collision-induced absorption contribute most to total absorption? Output: collision-induced absorption share of total absorption by wavelength and layer. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_collision_induced_absorption_diagnostics.py`. Test: `zig build python-collision-induced-absorption-diagnostics`.
+- [x] How does the collision-induced absorption contribution change with temperature? Output: temperature-resolved collision-induced absorption cross-section summary. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_collision_induced_absorption_diagnostics.py`. Test: `zig build python-collision-induced-absorption-diagnostics`.
+- [x] Which layers dominate collision-induced absorption optical depth? Output: interval/layer-resolved collision-induced absorption optical-depth ranking. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_collision_induced_absorption_diagnostics.py`. Test: `zig build python-collision-induced-absorption-diagnostics`.
+- [x] Does collision-induced absorption change the apparent continuum or specific O2 A-band structures? Output: collision-induced-absorption-enabled/disabled reflectance perturbation table. Created in `python/zdisamar/diagnostics.py` and `scripts/testing_harness/python_parameter_perturbation.py`. Test: `zig build python-parameter-perturbation`.
 
 ### Instrument Response
 
@@ -204,7 +204,7 @@ future test command so progress can be tracked as the wrapper grows.
 ### DISAMAR Reference Comparison
 
 - [ ] At a wavelength where this implementation differs from DISAMAR reference evidence, which scientific stage first diverges? Output needed: staged diagnostic tables plus comparison metrics. Checkpoint: pending comparison helper.
-- [ ] Is a difference caused by line absorption, line mixing, CIA, aerosol placement, instrument response, solar irradiance, or radiative transfer? Output needed: staged diagnostic tables covering those terms. Checkpoint: pending staged diagnostics.
+- [ ] Is a difference caused by line absorption, line mixing, collision-induced absorption, aerosol placement, instrument response, solar irradiance, or radiative transfer? Output needed: staged diagnostic tables covering those terms. Checkpoint: pending staged diagnostics.
 - [ ] Which intermediate diagnostic table should be compared against DISAMAR for a focused validation check? Output needed: versioned diagnostic table schemas and comparison metadata. Checkpoint: pending table-schema registry.
 
 ## Runtime Expectations
@@ -262,14 +262,14 @@ Suggested staged checklist:
 - [x] Expose a typed Python DISAMAR O2 A setup that uses the same native reference route as validation.
 - [x] Expose atmospheric layer and absorption/scattering budget tables.
 - [x] Expose O2 line contribution tables.
-- [x] Expose O2-O2 CIA diagnostics.
+- [x] Expose O2-O2 collision-induced absorption diagnostics.
 - [x] Expose instrument response and high-resolution wavelength sampling tables.
 - [x] Expose selected radiative-transfer diagnostics.
 - [x] Expose parameter perturbation helpers.
 
 The implemented foundation exposes DISAMAR O2 A reference setup controls, final
 spectrum arrays, a `DiagnosticReport` for the same native result, atmospheric
-budget tables, O2 line contribution tables, O2-O2 CIA tables, instrument
+budget tables, O2 line contribution tables, O2-O2 collision-induced absorption tables, instrument
 response tables, bounded radiative-transfer diagnostics, and parameter
 perturbation outputs. The report is reached through `Spectrum.diagnostic_report`,
 so reading it does not run the forward model again. The forward-summary harness
@@ -284,7 +284,7 @@ zig build python-forward-summary
 zig build python-o2a-setup-roundtrip
 zig build python-atmosphere-budget
 zig build python-o2-line-diagnostics
-zig build python-o2-o2-cia-diagnostics
+zig build python-collision-induced-absorption-diagnostics
 zig build python-instrument-response
 zig build python-radiative-transfer-diagnostics
 zig build python-parameter-perturbation

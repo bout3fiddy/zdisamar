@@ -24,7 +24,7 @@ SEMANTIC_COLORS = {
     "total_optical_depth": "#222222",
     "aerosol": "#9C6B1F",
     "cloud": "#6B6B6B",
-    "cia": "#8C3F2D",
+    "collision_induced_absorption": "#8C3F2D",
     "o2_weak_lines": "#4E6E8E",
     "o2_strong_lines": "#111111",
     "o2_line_mixing": "#6A4C7D",
@@ -39,7 +39,7 @@ JOURNAL_PALETTE = [
     SEMANTIC_COLORS["absorption"],
     SEMANTIC_COLORS["scattering"],
     SEMANTIC_COLORS["aerosol"],
-    SEMANTIC_COLORS["cia"],
+    SEMANTIC_COLORS["collision_induced_absorption"],
     SEMANTIC_COLORS["o2_line_mixing"],
 ]
 

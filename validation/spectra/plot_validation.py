@@ -10,17 +10,21 @@
 
 from __future__ import annotations
 
-import copy
-import json
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-from matplotlib.ticker import ScalarFormatter
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from matplotlib.ticker import ScalarFormatter  # noqa: E402
+
+from validation.common.o2a_reference_case import build_o2a_jacobian_case  # noqa: E402
+from validation.common.paths import PYTHON_ROOT, stable_repo_path, write_json  # noqa: E402
+from validation.common.residuals import residual_blowup_regions, residual_metrics  # noqa: E402
 
 plt.rcParams.update(
     {
@@ -28,7 +32,13 @@ plt.rcParams.update(
         "axes.linewidth": 0.8,
         "figure.facecolor": "white",
         "font.family": "monospace",
-        "font.monospace": ["DejaVu Sans Mono", "Menlo", "Monaco", "Courier New", "monospace"],
+        "font.monospace": [
+            "DejaVu Sans Mono",
+            "Menlo",
+            "Monaco",
+            "Courier New",
+            "monospace",
+        ],
         "grid.color": "#b0b0b0",
         "grid.linewidth": 0.65,
         "mathtext.fontset": "dejavusans",
@@ -36,21 +46,23 @@ plt.rcParams.update(
     }
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PYTHON_ROOT = REPO_ROOT / "python"
 LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
 LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
 VALIDATION_DIR = REPO_ROOT / "validation"
-VALIDATION_DATA_DIR = VALIDATION_DIR / "data"
-VALIDATION_PLOTS_DIR = VALIDATION_DIR / "plots"
+SPECTRA_DIR = VALIDATION_DIR / "spectra"
+VALIDATION_DATA_DIR = SPECTRA_DIR / "data"
+REFERENCE_DATA_DIR = VALIDATION_DATA_DIR / "reference"
+OUTPUTS_DIR = VALIDATION_DIR / "outputs" / "spectra"
 
-FORWARD_REFERENCE_PATH = VALIDATION_DATA_DIR / "o2a_jacobian_retrieval_instrument_forward.csv"
-REFLECTANCE_JACOBIAN_REFERENCE_PATH = VALIDATION_DATA_DIR / "o2a_jacobian_simulation_instrument_reflectance.csv"
+FORWARD_REFERENCE_PATH = REFERENCE_DATA_DIR / "o2a_jacobian_retrieval_instrument_forward.csv"
+REFLECTANCE_JACOBIAN_REFERENCE_PATH = (
+    REFERENCE_DATA_DIR / "o2a_jacobian_simulation_instrument_reflectance.csv"
+)
 
-PLOT_PATH = VALIDATION_PLOTS_DIR / "o2a_validation.png"
-DATA_PATH = VALIDATION_DATA_DIR / "o2a_validation_data.csv"
-METRICS_PATH = VALIDATION_DATA_DIR / "comparison_metrics.json"
-MANIFEST_PATH = VALIDATION_DATA_DIR / "bundle_manifest.json"
+PLOT_PATH = OUTPUTS_DIR / "o2a_validation.png"
+DATA_PATH = OUTPUTS_DIR / "o2a_validation_data.csv"
+METRICS_PATH = OUTPUTS_DIR / "comparison_metrics.json"
+MANIFEST_PATH = OUTPUTS_DIR / "bundle_manifest.json"
 
 CANONICAL_COMMAND = "zig build o2a-plot-bundle"
 REFLECTANCE_THRESHOLD = 1.0e-13
@@ -85,180 +97,6 @@ def import_zdisamar():
     return zd
 
 
-def asset(zd, id: str, path: str, format: str):
-    return zd.ReferenceAsset(id=id, path=path, format=format)
-
-
-def build_validation_case(zd):
-    return zd.O2AInput(
-        metadata={
-            "id": "disamar_reference_o2a_jacobian_validation",
-            "storage": "disamar-reference-o2a-jacobian-validation",
-            "description": "Hardcoded DISAMAR O2 A Jacobian validation case.",
-        },
-        plan={
-            "model_family": "disamar_standard",
-            "transport_solver": "dispatcher",
-            "execution_solver_mode": "scalar",
-            "execution_derivative_mode": "none",
-        },
-        reference_assets=zd.ReferenceAssets(
-            atmosphere_profile=asset(
-                zd,
-                "atmosphere_profile",
-                "data/reference_data/climatologies/vendor_config_o2a_profile.csv",
-                "profile_csv",
-            ),
-            vendor_reference_csv=asset(
-                zd,
-                "vendor_reference_csv",
-                "validation/data/o2a_with_cia_disamar_reference.csv",
-                "disamar_o2a_reference_csv",
-            ),
-            raw_solar_reference=asset(
-                zd,
-                "raw_solar_reference",
-                "data/reference_data/solar/o2a_solar_reference_753_778.csv",
-                "solar_reference_csv",
-            ),
-            airmass_factor_lut=asset(
-                zd,
-                "airmass_factor_lut",
-                "data/reference_data/luts/airmass_factor_nadir_demo.csv",
-                "csv",
-            ),
-        ),
-        scene_id="o2a_disamar_reference_jacobian_validation",
-        spectral_grid=zd.SpectralGrid(start_nm=755.0, end_nm=776.0, sample_count=701),
-        atmosphere=zd.Atmosphere(
-            layer_count=3,
-            sublayer_divisions=4,
-            fit_interval_index_1based=2,
-            intervals=[
-                zd.VerticalInterval(
-                    index_1based=1,
-                    top_pressure_hpa=0.3,
-                    bottom_pressure_hpa=875.0,
-                    altitude_divisions=28,
-                ),
-                zd.VerticalInterval(
-                    index_1based=2,
-                    top_pressure_hpa=875.0,
-                    bottom_pressure_hpa=925.0,
-                    altitude_divisions=2,
-                ),
-                zd.VerticalInterval(
-                    index_1based=3,
-                    top_pressure_hpa=925.0,
-                    bottom_pressure_hpa=1013.25,
-                    altitude_divisions=4,
-                ),
-            ],
-        ),
-        surface=zd.Surface(albedo=0.2, pressure_hpa=1013.25),
-        geometry=zd.Geometry(
-            model="pseudo_spherical",
-            solar_zenith_deg=60.0,
-            viewing_zenith_deg=0.0,
-            relative_azimuth_deg=0.0,
-        ),
-        aerosol=zd.Aerosol(
-            optical_depth_550_nm=0.3,
-            single_scatter_albedo=1.0,
-            asymmetry_factor=0.7,
-            angstrom_exponent=0.0,
-            reference_wavelength_nm=550.0,
-            layer_center_km=5.4,
-            layer_width_km=0.4,
-            placement=zd.AerosolPlacement(
-                semantics="explicit_interval_bounds",
-                interval_index_1based=2,
-                top_pressure_hpa=875.0,
-                bottom_pressure_hpa=925.0,
-            ),
-        ),
-        instrument_response=zd.InstrumentResponse(
-            instrument_name="disamar-o2a-jacobian-validation",
-            regime="nadir",
-            sampling="native",
-            noise_model="none",
-            instrument_line_fwhm_nm=0.38,
-            builtin_line_shape="flat_top_n4",
-            high_resolution_step_nm=0.01,
-            high_resolution_half_span_nm=1.14,
-            adaptive_reference_grid={
-                "points_per_fwhm": 12,
-                "strong_line_min_divisions": 8,
-                "strong_line_max_divisions": 30,
-            },
-            solar_reference_asset_id="raw_solar_reference",
-        ),
-        o2_lines=zd.O2LineByLine(
-            line_list_asset=asset(
-                zd,
-                "o2_hitran",
-                "vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par",
-                "hitran_par_o2a",
-            ),
-            line_mixing_asset=asset(
-                zd,
-                "o2_line_mixing",
-                "data/reference_data/cross_sections/o2a_lisa_rmf.dat",
-                "lisa_rmf",
-            ),
-            strong_lines_asset=asset(
-                zd,
-                "o2_strong_lines",
-                "data/reference_data/cross_sections/o2a_lisa_sdf.dat",
-                "lisa_sdf",
-            ),
-            line_mixing_factor=1.0,
-            isotopes_sim=[1, 2, 3],
-            threshold_line_sim=3.0e-5,
-            cutoff_sim_cm1=200.0,
-        ),
-        o2_o2_cia=zd.O2O2CIA(
-            enabled=True,
-            cia_asset=asset(
-                zd,
-                "o2o2_cia",
-                "data/reference_data/cross_sections/o2o2_bira_o2a.dat",
-                "bira_cia",
-            ),
-        ),
-        radiative_transfer=zd.RadiativeTransferControls(
-            scattering="multiple",
-            n_streams=20,
-            use_adding=False,
-            num_orders_max=0,
-            fourier_floor_scalar=2,
-            threshold_conv_first=1.5e-7,
-            threshold_conv_mult=1.5e-9,
-            threshold_doubl=1.0e-6,
-            threshold_mul=1.0e-8,
-            use_spherical_correction=True,
-            integrate_source_function=True,
-            renorm_phase_function=True,
-            phase_function_truncation_threshold=1.0e-6,
-            stokes_dimension=1,
-        ),
-        outputs=[],
-        validation={
-            "strict_unknown_fields": True,
-            "require_resolved_assets": True,
-            "require_resolved_stage_references": True,
-        },
-    )
-
-
-def stable_repo_path(path: Path) -> str:
-    resolved = path.resolve()
-    try:
-        return resolved.relative_to(REPO_ROOT.resolve()).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
 def run_zdisamar_validation(case, library_path: Path) -> dict[str, np.ndarray]:
     zd = import_zdisamar()
     with zd.prepare(case, library_path=str(library_path)) as prepared:
@@ -282,7 +120,9 @@ def run_zdisamar_validation(case, library_path: Path) -> dict[str, np.ndarray]:
     }
 
 
-def build_validation_rows(case, current: dict[str, np.ndarray]) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
+def build_validation_rows(
+    case, current: dict[str, np.ndarray]
+) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     forward_reference = pd.read_csv(FORWARD_REFERENCE_PATH)
     jacobian_reference = pd.read_csv(REFLECTANCE_JACOBIAN_REFERENCE_PATH)
     wavelength_nm = current["wavelength_nm"]
@@ -304,7 +144,10 @@ def build_validation_rows(case, current: dict[str, np.ndarray]) -> tuple[pd.Data
     ]
     jacobian_labels = {
         "surface_albedo": ("dR/d surface albedo", "dR/d surface\nalbedo"),
-        "aerosol_optical_depth": ("dR/d aerosol optical depth", "dR/d aerosol\noptical depth"),
+        "aerosol_optical_depth": (
+            "dR/d aerosol optical depth",
+            "dR/d aerosol\noptical depth",
+        ),
         "aerosol_layer_mid_pressure_hpa": (
             "dR/d aerosol layer mid pressure",
             "dR/d aerosol layer\nmid pressure",
@@ -329,26 +172,28 @@ def build_validation_rows(case, current: dict[str, np.ndarray]) -> tuple[pd.Data
     metrics = []
     for row in rows:
         residual = row["zdisamar"] - row["reference"]
-        max_abs_index = int(np.argmax(np.abs(residual)))
-        metrics.append(
+        metric = residual_metrics(wavelength_nm, residual)
+        metric.update(
             {
                 "series": row["series"],
-                "max_abs_residual": float(np.max(np.abs(residual))),
-                "max_abs_wavelength_nm": float(wavelength_nm[max_abs_index]),
-                "rmse": float(np.sqrt(np.mean(residual * residual))),
-                "mean_signed": float(np.mean(residual)),
                 "marked_residual_blowup_regions_nm": residual_blowup_regions(
                     wavelength_nm,
                     residual,
-                    str(row["series"]),
+                    fraction=BLOWUP_REGION_FRACTION,
+                    padding_nm=BLOWUP_REGION_PADDING_NM,
+                    limit=BLOWUP_REGION_LIMITS[str(row["series"])],
+                    min_wavelength_nm=755.0,
+                    max_wavelength_nm=776.0,
                 ),
             }
         )
+        metrics.append(metric)
         for wavelength, reference, zdisamar, value_residual in zip(
             wavelength_nm,
             row["reference"],
             row["zdisamar"],
             residual,
+            strict=False,
         ):
             records.append(
                 {
@@ -391,44 +236,9 @@ def apply_axis_style(axis) -> None:
         spine.set_linewidth(0.8)
 
 
-def residual_blowup_regions(
-    wavelength_nm: np.ndarray,
-    residual: np.ndarray,
-    series: str,
-) -> list[dict[str, float]]:
-    magnitude = np.abs(residual)
-    if magnitude.size == 0:
-        return []
-
-    threshold = BLOWUP_REGION_FRACTION * float(np.max(magnitude))
-    mask = magnitude >= threshold
-    regions: list[dict[str, float]] = []
-    start_index: int | None = None
-    for index, selected in enumerate(mask):
-        if selected and start_index is None:
-            start_index = index
-        is_last = index == mask.size - 1
-        if start_index is not None and (not selected or is_last):
-            end_index = index if selected and is_last else index - 1
-            region_magnitude = magnitude[start_index : end_index + 1]
-            peak_offset = int(np.argmax(region_magnitude))
-            peak_index = start_index + peak_offset
-            regions.append(
-                {
-                    "start_nm": max(755.0, float(wavelength_nm[start_index]) - BLOWUP_REGION_PADDING_NM),
-                    "end_nm": min(776.0, float(wavelength_nm[end_index]) + BLOWUP_REGION_PADDING_NM),
-                    "peak_nm": float(wavelength_nm[peak_index]),
-                    "peak_abs_residual": float(magnitude[peak_index]),
-                }
-            )
-            start_index = None
-
-    limit = BLOWUP_REGION_LIMITS[series]
-    strongest = sorted(regions, key=lambda region: region["peak_abs_residual"], reverse=True)[:limit]
-    return sorted(strongest, key=lambda region: region["start_nm"])
-
-
-def mark_residual_blowup_regions(value_axis, residual_axis, regions: list[dict[str, float]]) -> None:
+def mark_residual_blowup_regions(
+    value_axis, residual_axis, regions: list[dict[str, float]]
+) -> None:
     for region in regions:
         for axis in (value_axis, residual_axis):
             axis.axvspan(
@@ -504,11 +314,17 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
             linewidth=1.15,
             zorder=3,
         )
-        residual_axis.axhline(0.0, color="black", linewidth=0.75, linestyle="--", alpha=0.55, zorder=1)
+        residual_axis.axhline(
+            0.0, color="black", linewidth=0.75, linestyle="--", alpha=0.55, zorder=1
+        )
         blowup_regions = residual_blowup_regions(
             zdisamar["wavelength_nm"].to_numpy(dtype=np.float64),
             zdisamar["residual"].to_numpy(dtype=np.float64),
-            series,
+            fraction=BLOWUP_REGION_FRACTION,
+            padding_nm=BLOWUP_REGION_PADDING_NM,
+            limit=BLOWUP_REGION_LIMITS[series],
+            min_wavelength_nm=755.0,
+            max_wavelength_nm=776.0,
         )
         mark_residual_blowup_regions(value_axis, residual_axis, blowup_regions)
 
@@ -522,7 +338,9 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
     axes[-1, 0].set_xlabel("Wavelength (nm)")
     axes[-1, 1].set_xlabel("Wavelength (nm)")
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    legend = fig.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.995, 0.995), frameon=True)
+    legend = fig.legend(
+        handles, labels, loc="upper right", bbox_to_anchor=(0.995, 0.995), frameon=True
+    )
     legend.get_frame().set_facecolor("white")
     legend.get_frame().set_edgecolor("#cccccc")
     legend.get_frame().set_linewidth(0.8)
@@ -548,7 +366,7 @@ def write_metrics(metrics: list[dict[str, float | str]], output_path: Path) -> N
             "reflectance_jacobian": stable_repo_path(REFLECTANCE_JACOBIAN_REFERENCE_PATH),
         },
     }
-    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    write_json(output_path, payload)
 
 
 def write_manifest(output_path: Path) -> None:
@@ -561,7 +379,7 @@ def write_manifest(output_path: Path) -> None:
     manifest = {
         "schema_version": 2,
         "canonical_command": CANONICAL_COMMAND,
-        "tracked_output_dir": stable_repo_path(VALIDATION_DIR),
+        "tracked_output_dir": stable_repo_path(SPECTRA_DIR),
         "tracked_outputs": [stable_repo_path(path) for path in tracked_outputs],
         "reference_paths": [
             stable_repo_path(FORWARD_REFERENCE_PATH),
@@ -569,26 +387,30 @@ def write_manifest(output_path: Path) -> None:
         ],
         "policy": {
             "validation_case": "hardcoded_o2a_jacobian_reference",
-            "note": "The tracked O2 A validation plot is generated by the Python API and compares zdisamar reflectance plus reflectance Jacobians against committed DISAMAR reference derivatives.",
+            "note": (
+                "The tracked O2 A validation plot is generated by the "
+                "Python API and compares zdisamar reflectance plus "
+                "reflectance Jacobians against committed DISAMAR reference "
+                "derivatives."
+            ),
         },
     }
-    output_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    write_json(output_path, manifest)
 
 
 def build_bundle(
-    output_dir: Path = VALIDATION_DIR,
+    output_dir: Path = SPECTRA_DIR,
     library_path: Path = LIBRARY_PATH,
 ) -> list[dict[str, float | str]]:
-    if output_dir != VALIDATION_DIR:
-        raise ValueError("plot_validation is intentionally hardwired to validation/")
+    if output_dir != SPECTRA_DIR:
+        raise ValueError("plot_validation is intentionally hardwired to validation/spectra/")
     zd = import_zdisamar()
-    case = build_validation_case(zd)
+    case = build_o2a_jacobian_case(zd)
     current = run_zdisamar_validation(case, library_path)
     data, metrics = build_validation_rows(case, current)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    VALIDATION_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    VALIDATION_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     data.to_csv(DATA_PATH, index=False)
     create_validation_plot(data, PLOT_PATH)
     write_metrics(metrics, METRICS_PATH)
