@@ -22,6 +22,7 @@ disamar.out
 profile_errorCovariance.out
 
 # Local scratch specs and work packages
+tmp/
 specs/
 docs/specs/
 docs/workpackages/*
