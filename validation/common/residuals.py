@@ -67,4 +67,3 @@ def residual_blowup_regions(
         reverse=True,
     )[:limit]
     return sorted(strongest, key=lambda region: region["start_nm"])
-

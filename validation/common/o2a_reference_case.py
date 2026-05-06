@@ -166,9 +166,7 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
             use_spherical_correction=True,
             integrate_source_function=True,
             renorm_phase_function=True,
-            phase_function_truncation_threshold=1.0e-6
-            if jacobian_reference_layer
-            else 1.0e-8,
+            phase_function_truncation_threshold=1.0e-6 if jacobian_reference_layer else 1.0e-8,
             stokes_dimension=1,
         ),
         outputs=[],

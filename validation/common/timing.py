@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from time import perf_counter
-from typing import Iterator
 
 
 class PhaseTimer:
@@ -23,4 +23,3 @@ class PhaseTimer:
     def finish(self) -> dict[str, float]:
         self.phases_s["total_s"] = perf_counter() - self._total_start
         return dict(self.phases_s)
-

@@ -1,11 +1,3 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.14"
-# dependencies = [
-#   "numpy>=2.2",
-# ]
-# ///
-
 from __future__ import annotations
 
 import argparse
@@ -172,11 +164,8 @@ def main() -> int:
         f"default_matches_typed_arrays={checks['default_matches_typed_arrays']}"
     )
     print(f"json: {output_path}")
-    passed = all(
-        value
-        for key, value in checks.items()
-        if key not in {"tolerance", "typed_sample_count", "default_sample_count"}
-    )
+    excluded = {"tolerance", "typed_sample_count", "default_sample_count"}
+    passed = all(value for key, value in checks.items() if key not in excluded)
     return 0 if passed else 1
 
 

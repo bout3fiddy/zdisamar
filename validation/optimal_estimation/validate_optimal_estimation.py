@@ -17,7 +17,6 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
-SCRIPT_ROOT = REPO_ROOT / "scripts" / "testing_harness"
 DATA_DIR = REPO_ROOT / "validation" / "optimal_estimation" / "data"
 REFERENCE_DATA_DIR = DATA_DIR / "reference"
 OUTPUTS_DIR = REPO_ROOT / "validation" / "outputs" / "optimal_estimation"
@@ -25,16 +24,16 @@ REFERENCE_PATH = REFERENCE_DATA_DIR / "disamar_o2a_two_state_reference.json"
 SUMMARY_PATH = OUTPUTS_DIR / "zdisamar_o2a_two_state_summary.json"
 TIMING_PATH = OUTPUTS_DIR / "zdisamar_o2a_two_state_benchmark.json"
 
-sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT), str(SCRIPT_ROOT)]
+sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
 import zdisamar as zd  # noqa: E402
-from o2a_python_case import build_o2a_case  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation.covariance_space import (  # noqa: E402
     build_covariance_space,
 )
 
+from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
 

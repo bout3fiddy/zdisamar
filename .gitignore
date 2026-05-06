@@ -1,5 +1,6 @@
 # OS/editor noise
 .DS_Store
+.ipynb_checkpoints/
 
 # Build outputs and caches
 .zig-cache/
@@ -9,6 +10,8 @@ zig-out/
 out/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+.ropeproject/
 .venv/
 *.py[cod]
 *.bundle
@@ -21,6 +24,7 @@ disamar.out
 profile_errorCovariance.out
 
 # Local scratch specs and work packages
+tmp/
 specs/
 docs/specs/
 docs/workpackages/*
