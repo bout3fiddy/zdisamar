@@ -118,6 +118,46 @@
     "aerosol_optical_depth",
     "aerosol_layer_top_altitude_km"
   ],
+  "timing": {
+    "iterations": [
+      {
+        "forward_model_and_jacobian_s": 1.4588087080046535,
+        "index": 1,
+        "solver_update_s": 0.0029420838691294193,
+        "total_iteration_s": 1.4617521669715643
+      },
+      {
+        "forward_model_and_jacobian_s": 1.5632678749971092,
+        "index": 2,
+        "solver_update_s": 0.0006246669217944145,
+        "total_iteration_s": 1.5638942923396826
+      },
+      {
+        "forward_model_and_jacobian_s": 1.4429174168035388,
+        "index": 3,
+        "solver_update_s": 0.0004934170283377171,
+        "total_iteration_s": 1.4434116249904037
+      },
+      {
+        "forward_model_and_jacobian_s": 1.3948454172350466,
+        "index": 4,
+        "solver_update_s": 0.0007634158246219158,
+        "total_iteration_s": 1.3956097080372274
+      }
+    ],
+    "phases_s": {
+      "boundary_contiguity_check_s": 0.0005082087591290474,
+      "build_case_s": 0.00013479217886924744,
+      "build_measurement_s": 1.2689770828001201,
+      "build_pressure_altitude_profile_s": 0.20332637522369623,
+      "build_state_vector_s": 1.2792181223630905e-05,
+      "build_summary_s": 3.837514668703079e-05,
+      "load_reference_s": 0.0005181250162422657,
+      "retrieval_s": 5.865108166821301,
+      "total_s": 7.3422779575921595,
+      "write_summary_s": 0.003645166754722595
+    }
+  },
   "tolerances": {
     "aerosol_layer_mid_pressure_hpa_abs": 0.005,
     "aerosol_layer_top_altitude_km_abs": 2e-05,

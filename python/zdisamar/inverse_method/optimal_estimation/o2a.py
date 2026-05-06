@@ -12,7 +12,7 @@ from ...types import O2AInput
 from .core import retrieve
 from .forward_evaluation import ForwardEvaluation
 from .retrieval import Measurement, RetrievalControls, Result
-from .state_vector import StateVector
+from .state_vector import PressureAltitudeProfile, StateVector
 
 
 class O2AInverseForwardModel:
@@ -112,4 +112,76 @@ def measurement_from_prepared(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
         variance=np.full(wavelength_nm.shape, reflectance_variance, dtype=np.float64),
+    )
+
+
+def pressure_altitude_profile_from_prepared_grid(
+    case: O2AInput,
+    *,
+    library_path: str | None = None,
+) -> PressureAltitudeProfile:
+    """Use the prepared grid as the state-vector pressure/altitude contract."""
+
+    with prepare(case, library_path=library_path) as prepared:
+        budget = prepared.atmospheric_budget(
+            np.array([case.spectral_grid.start_nm], dtype=np.float64)
+        )
+        table = budget.table
+
+    levels_by_pressure: dict[float, float] = {}
+    for row in table:
+        levels_by_pressure[round(float(row["top_pressure_hpa"]), 12)] = float(
+            row["top_altitude_km"]
+        )
+        levels_by_pressure[round(float(row["bottom_pressure_hpa"]), 12)] = float(
+            row["bottom_altitude_km"]
+        )
+    levels = sorted(
+        (altitude, pressure) for pressure, altitude in levels_by_pressure.items()
+    )
+    return PressureAltitudeProfile(
+        altitude_km=np.array([altitude for altitude, _pressure in levels]),
+        pressure_hpa=np.array([pressure for _altitude, pressure in levels]),
+    )
+
+
+def measurement_from_sun_normalized_radiance_noise(
+    prepared: PreparedO2ABase,
+    *,
+    wavelength_nm: np.ndarray,
+    sun_normalized_radiance_noise: np.ndarray,
+) -> Measurement:
+    """Put measurement noise in the same reflectance space as the retrieval."""
+
+    source_wavelength = np.asarray(wavelength_nm, dtype=np.float64)
+    source_noise = np.asarray(sun_normalized_radiance_noise, dtype=np.float64)
+    if source_wavelength.ndim != 1 or source_noise.ndim != 1:
+        raise ValueError("noise wavelength and values must be one-dimensional")
+    if source_wavelength.size != source_noise.size:
+        raise ValueError("noise wavelength and values must have the same length")
+    if source_wavelength.size == 0:
+        raise ValueError("noise reference must contain at least one sample")
+    if not np.all(np.isfinite(source_wavelength)) or not np.all(
+        np.isfinite(source_noise)
+    ):
+        raise ValueError("noise wavelength and values must be finite")
+    if np.any(source_noise <= 0.0):
+        raise ValueError("sun-normalized radiance noise must be positive")
+
+    with prepared.forward_model() as spectrum:
+        measurement_wavelength = spectrum.wavelength_nm.copy()
+        reflectance = spectrum.reflectance.copy()
+
+    # The retrieval vector is reflectance, so the measurement covariance must
+    # live in the same units before it enters the inverse problem.
+    mu0 = math.cos(math.radians(prepared.input.geometry.solar_zenith_deg))
+    reflectance_noise = np.interp(
+        measurement_wavelength,
+        source_wavelength,
+        source_noise,
+    ) * (math.pi / mu0)
+    return Measurement(
+        wavelength_nm=measurement_wavelength,
+        reflectance=reflectance,
+        variance=reflectance_noise**2,
     )

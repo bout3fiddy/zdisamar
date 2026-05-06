@@ -9,9 +9,9 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -28,40 +28,10 @@ sys.path[:0] = [str(PYTHON_ROOT), str(SCRIPT_ROOT)]
 
 import zdisamar as zd
 from zdisamar.inverse_method import optimal_estimation
+from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estimation
 from o2a_python_case import build_o2a_case
 
 JsonObject = dict[str, Any]
-
-
-def pressure_altitude_profile_from_case(
-    case: zd.O2AInput,
-) -> optimal_estimation.PressureAltitudeProfile:
-    # The fitted interval state is an altitude, but the forward-model settings
-    # are pressure boundaries.  The prepared grid is the only pressure-altitude
-    # relation that has the same interval subdivision as the spectrum/Jacobian
-    # calculation, so using the sparse climatology table here would validate a
-    # different inverse problem.
-    with zd.prepare(case) as prepared:
-        budget = prepared.atmospheric_budget(
-            np.array([case.spectral_grid.start_nm], dtype=np.float64)
-        )
-        table = budget.table
-
-    levels_by_pressure: dict[float, float] = {}
-    for row in table:
-        levels_by_pressure[round(float(row["top_pressure_hpa"]), 12)] = float(
-            row["top_altitude_km"]
-        )
-        levels_by_pressure[round(float(row["bottom_pressure_hpa"]), 12)] = float(
-            row["bottom_altitude_km"]
-        )
-    levels = sorted(
-        (altitude, pressure) for pressure, altitude in levels_by_pressure.items()
-    )
-    return optimal_estimation.PressureAltitudeProfile(
-        altitude_km=np.array([altitude for altitude, _pressure in levels]),
-        pressure_hpa=np.array([pressure for _altitude, pressure in levels]),
-    )
 
 
 def build_state_vector(
@@ -122,55 +92,39 @@ def assert_layer_boundaries_are_contiguous(
     )
 
 
-def run_retrieval(case: zd.O2AInput, state_vector, reference: JsonObject):
-    inverse_model = optimal_estimation.O2AInverseForwardModel(case)
-
+def build_measurement(
+    case: zd.O2AInput,
+    reference: JsonObject,
+) -> optimal_estimation.Measurement:
     # The measurement is simulated once from the truth scene. The inverse pass
     # only sees this spectrum plus covariance, so a wrong retrieval trajectory
     # cannot be excused by regenerating the target at each state.
+    noise_reference = reference["measurement_noise"]
     with zd.prepare(case) as prepared:
-        measurement = optimal_estimation.measurement_from_prepared(
+        return o2a_optimal_estimation.measurement_from_sun_normalized_radiance_noise(
             prepared,
-            reflectance_variance=1.0e-8,
-        )
-    if "measurement_noise" in reference:
-        measurement = measurement_with_reference_noise(
-            measurement,
-            reference["measurement_noise"],
-            case,
+            wavelength_nm=np.asarray(
+                noise_reference["wavelength_nm"],
+                dtype=np.float64,
+            ),
+            sun_normalized_radiance_noise=np.asarray(
+                noise_reference["assumed_noise_sun_normalized_radiance"],
+                dtype=np.float64,
+            ),
         )
 
+
+def run_retrieval(
+    case: zd.O2AInput,
+    state_vector,
+    measurement: optimal_estimation.Measurement,
+) -> optimal_estimation.Result:
+    inverse_model = optimal_estimation.O2AInverseForwardModel(case)
     return optimal_estimation.disamar_oe(
         inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
         controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
-    )
-
-
-def measurement_with_reference_noise(
-    measurement: optimal_estimation.Measurement,
-    noise_reference: JsonObject,
-    case: zd.O2AInput,
-) -> optimal_estimation.Measurement:
-    source_wavelength = np.asarray(noise_reference["wavelength_nm"], dtype=np.float64)
-    source_noise = np.asarray(
-        noise_reference["assumed_noise_sun_normalized_radiance"],
-        dtype=np.float64,
-    )
-    # The reference precision is attached to sun-normalized radiance.  The
-    # retrieval vector here is reflectance R = pi * I / (mu0 * E0), so the
-    # covariance has to be converted by the same scale as the measurement.
-    mu0 = math.cos(math.radians(case.geometry.solar_zenith_deg))
-    reflectance_noise = np.interp(
-        measurement.wavelength_nm,
-        source_wavelength,
-        source_noise,
-    ) * (math.pi / mu0)
-    return optimal_estimation.Measurement(
-        wavelength_nm=measurement.wavelength_nm,
-        reflectance=measurement.reflectance,
-        variance=reflectance_noise**2,
     )
 
 
@@ -279,11 +233,30 @@ def diagnostics_match(
     )
 
 
+def timing_report(
+    phase_timings: dict[str, float],
+    result: optimal_estimation.Result,
+) -> JsonObject:
+    return {
+        "phases_s": phase_timings,
+        "iterations": [
+            {
+                "index": timing.index,
+                "forward_model_and_jacobian_s": timing.forward_model_and_jacobian_s,
+                "solver_update_s": timing.solver_update_s,
+                "total_iteration_s": timing.total_iteration_s,
+            }
+            for timing in result.timing
+        ],
+    }
+
+
 def build_summary(
     reference: JsonObject,
     result: optimal_estimation.Result,
     profile,
     layer_thickness: float,
+    phase_timings: dict[str, float],
 ) -> JsonObject:
     retrieved = reference["retrieved"]
     tolerances = reference["tolerances"]
@@ -361,23 +334,67 @@ def build_summary(
         "tolerances": tolerances,
         "posterior_covariance": np.asarray(result.posterior_covariance).tolist(),
         "averaging_kernel": np.asarray(result.averaging_kernel).tolist(),
+        "timing": timing_report(phase_timings, result),
         "passes_disamar_two_state_fixture": passed,
     }
 
 
 def main() -> int:
-    reference = json.loads(REFERENCE_PATH.read_text())
-    case = build_o2a_case(zd, jacobian_reference_layer=True)
-    profile = pressure_altitude_profile_from_case(case)
-    state_vector = build_state_vector(case, reference, profile)
-    assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
+    total_start = time.perf_counter()
+    phase_timings: dict[str, float] = {}
 
-    result = run_retrieval(case, state_vector, reference)
+    phase_start = time.perf_counter()
+    reference = json.loads(REFERENCE_PATH.read_text())
+    phase_timings["load_reference_s"] = time.perf_counter() - phase_start
+
+    phase_start = time.perf_counter()
+    case = build_o2a_case(zd, jacobian_reference_layer=True)
+    phase_timings["build_case_s"] = time.perf_counter() - phase_start
+
+    phase_start = time.perf_counter()
+    profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(
+        case
+    )
+    phase_timings["build_pressure_altitude_profile_s"] = (
+        time.perf_counter() - phase_start
+    )
+
+    phase_start = time.perf_counter()
+    state_vector = build_state_vector(case, reference, profile)
+    phase_timings["build_state_vector_s"] = time.perf_counter() - phase_start
+
+    phase_start = time.perf_counter()
+    assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
+    phase_timings["boundary_contiguity_check_s"] = time.perf_counter() - phase_start
+
+    phase_start = time.perf_counter()
+    measurement = build_measurement(case, reference)
+    phase_timings["build_measurement_s"] = time.perf_counter() - phase_start
+
+    phase_start = time.perf_counter()
+    result = run_retrieval(case, state_vector, measurement)
+    phase_timings["retrieval_s"] = time.perf_counter() - phase_start
     layer_thickness = (
         case.aerosol.placement.bottom_pressure_hpa
         - case.aerosol.placement.top_pressure_hpa
     )
-    summary = build_summary(reference, result, profile, layer_thickness)
+    phase_start = time.perf_counter()
+    summary = build_summary(
+        reference,
+        result,
+        profile,
+        layer_thickness,
+        phase_timings,
+    )
+    phase_timings["build_summary_s"] = time.perf_counter() - phase_start
+
+    phase_timings["total_s"] = time.perf_counter() - total_start
+    summary["timing"] = timing_report(phase_timings, result)
+    write_start = time.perf_counter()
+    SUMMARY_PATH.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    phase_timings["write_summary_s"] = time.perf_counter() - write_start
+    phase_timings["total_s"] = time.perf_counter() - total_start
+    summary["timing"] = timing_report(phase_timings, result)
     SUMMARY_PATH.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     assert summary["passes_disamar_two_state_fixture"], json.dumps(
         summary, indent=2, sort_keys=True

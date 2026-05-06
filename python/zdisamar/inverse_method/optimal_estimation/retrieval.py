@@ -63,6 +63,16 @@ class Iteration:
 
 
 @dataclass(frozen=True)
+class IterationTiming:
+    """Wall-clock timing for the two expensive phases of one retrieval update."""
+
+    index: int
+    forward_model_and_jacobian_s: float
+    solver_update_s: float
+    total_iteration_s: float
+
+
+@dataclass(frozen=True)
 class Result:
     """Final optimal estimation state plus diagnostics needed for retrieval experiments."""
 
@@ -73,6 +83,7 @@ class Result:
     history: tuple[Iteration, ...]
     posterior_covariance: np.ndarray
     averaging_kernel: np.ndarray
+    timing: tuple[IterationTiming, ...] = ()
 
     def value(self, name: StateName) -> float:
         return float(self.state[self.state_names.index(name)])

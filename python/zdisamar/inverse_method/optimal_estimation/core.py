@@ -12,6 +12,7 @@ write logic into the numerical solver.
 
 from __future__ import annotations
 
+import time
 from typing import Callable, Iterable
 
 import numpy as np
@@ -21,6 +22,7 @@ from .covariance_space import build_covariance_space
 from .gauss_newton import gauss_newton_step
 from .retrieval import (
     Iteration,
+    IterationTiming,
     Measurement,
     RetrievalControls,
     Result,
@@ -63,14 +65,20 @@ def retrieve(
     state_count = len(state_names)
     averaging_kernel = np.eye(state_count, dtype=np.float64)
     converged = False
+    timing: list[IterationTiming] = []
 
     for iteration_index in range(1, controls.max_iterations + 1):
+        iteration_start = time.perf_counter()
         previous = np.array(x, copy=True)
         # The expensive part of optimal estimation is here: every iteration
         # asks the forward model for both F(x_i) and K_i.  `prior` is not used
         # to generate this spectrum unless the caller deliberately chose
         # `initial == prior`.
+        forward_start = time.perf_counter()
         evaluation = forward_model(previous)
+        forward_seconds = time.perf_counter() - forward_start
+
+        solver_start = time.perf_counter()
         reflectance = _interpolate(
             measurement.wavelength_nm, evaluation.wavelength_nm, evaluation.reflectance
         )
@@ -120,6 +128,15 @@ def retrieve(
                 snr_normal=step.snr_normal,
             )
         )
+        solver_seconds = time.perf_counter() - solver_start
+        timing.append(
+            IterationTiming(
+                index=iteration_index,
+                forward_model_and_jacobian_s=forward_seconds,
+                solver_update_s=solver_seconds,
+                total_iteration_s=time.perf_counter() - iteration_start,
+            )
+        )
         posterior = step.posterior_covariance
         averaging_kernel = step.averaging_kernel
         # Convergence requires both a small accepted state movement and a normal
@@ -139,6 +156,7 @@ def retrieve(
         history=tuple(history),
         posterior_covariance=posterior,
         averaging_kernel=averaging_kernel,
+        timing=tuple(timing),
     )
 
 
