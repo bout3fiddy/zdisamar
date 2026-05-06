@@ -74,27 +74,20 @@ chart engine. Plotting dependencies are regular project dependencies rather than
 an optional extra, so generated plots can be produced from the same `uv run ...`
 environment as the other Python helpers.
 
-Generated preview plots should go under `out/demo/`, which is gitignored. The
-real O2 A Python plotting bundle demo writes inspectable CSV, JSON, and PNG files to:
+Demo notebooks display plots inline in JupyterLab. The O2 A plotting bundle
+notebook keeps the tracked validation bundle untouched and does not write PNG
+artifacts.
+
+Run the Python setup contract check:
 
 ```bash
-out/demo/o2a_plot_bundle/
-```
-
-Each plot artifact includes the full sampled spectrum for orientation, either
-as the plot itself or as a context panel above the derived diagnostic panel.
-
-Run the first feedback-loop demo notebooks:
-
-```bash
-zig build python-forward-summary
 zig build python-o2a-setup-roundtrip
-zig build python-atmosphere-budget
-zig build python-o2-line-diagnostics
-zig build python-collision-induced-absorption-diagnostics
-zig build python-instrument-response
-zig build python-radiative-transfer-diagnostics
-zig build python-parameter-perturbation
-zig build python-o2a-plot-bundle
-zig build python-optimal-estimation-demo
 ```
+
+Open the explanatory demo notebooks from the repository root:
+
+```bash
+uvx --from jupyterlab jupyter lab scripts/demo
+```
+
+See [`scripts/demo/README.md`](../scripts/demo/README.md) for the notebook inventory.

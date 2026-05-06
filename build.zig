@@ -44,28 +44,6 @@ fn addTestStep(
     };
 }
 
-fn addNotebookDemoStep(
-    b: *std.Build,
-    c_api_install_step: *std.Build.Step,
-    step_name: []const u8,
-    step_description: []const u8,
-    notebook_path: []const u8,
-) *std.Build.Step {
-    const notebook_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "--group",
-        "demo",
-        "python",
-        "scripts/demo/run_notebook.py",
-        notebook_path,
-    });
-    notebook_cmd.step.dependOn(c_api_install_step);
-    const notebook_step = b.step(step_name, step_description);
-    notebook_step.dependOn(&notebook_cmd.step);
-    return notebook_step;
-}
-
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -327,14 +305,6 @@ pub fn build(b: *std.Build) void {
     );
     o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
 
-    _ = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-forward-summary",
-        "Run the Python-defined DISAMAR O2A forward-summary demo notebook",
-        "scripts/demo/forward_summary.ipynb",
-    );
-
     const python_o2a_setup_roundtrip_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
@@ -351,75 +321,6 @@ pub fn build(b: *std.Build) void {
         "Verify typed Python O2A setup against the default parity entrypoint",
     );
     python_o2a_setup_roundtrip_step.dependOn(&python_o2a_setup_roundtrip_cmd.step);
-
-    _ = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-atmosphere-budget",
-        "Run the atmospheric-budget demo notebook through the Python wrapper",
-        "scripts/demo/atmosphere_budget.ipynb",
-    );
-
-    _ = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-o2-line-diagnostics",
-        "Run the O2 line diagnostics demo notebook through the Python wrapper",
-        "scripts/demo/o2_line_diagnostics.ipynb",
-    );
-
-    _ = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-collision-induced-absorption-diagnostics",
-        "Run the O2-O2 collision-induced absorption diagnostics demo notebook",
-        "scripts/demo/collision_induced_absorption_diagnostics.ipynb",
-    );
-
-    _ = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-instrument-response",
-        "Run the instrument-response diagnostics demo notebook",
-        "scripts/demo/instrument_response.ipynb",
-    );
-
-    _ = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-radiative-transfer-diagnostics",
-        "Run the radiative-transfer diagnostics demo notebook",
-        "scripts/demo/radiative_transfer_diagnostics.ipynb",
-    );
-
-    _ = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-parameter-perturbation",
-        "Run the parameter-perturbation diagnostics demo notebook",
-        "scripts/demo/parameter_perturbation.ipynb",
-    );
-
-    _ = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-o2a-plot-bundle",
-        "Run the core-backed O2A plotting bundle demo notebook",
-        "scripts/demo/o2a_plot_bundle.ipynb",
-    );
-
-    const python_optimal_estimation_demo_step = addNotebookDemoStep(
-        b,
-        &c_api_install.step,
-        "python-optimal-estimation-demo",
-        "Run the two-state O2A optimal-estimation demo notebook",
-        "scripts/demo/optimal_estimation_demo.ipynb",
-    );
-    const validation_o2a_optimal_estimation_step = b.step(
-        "test-validation-o2a-optimal-estimation",
-        "Run the O2A optimal-estimation executable demo smoke test",
-    );
-    validation_o2a_optimal_estimation_step.dependOn(python_optimal_estimation_demo_step);
 
     const no_inline_src_tests_cmd = b.addSystemCommand(&.{
         "scripts/check-no-inline-src-tests.sh",
