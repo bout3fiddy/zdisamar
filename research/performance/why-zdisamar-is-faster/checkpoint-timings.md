@@ -25,6 +25,10 @@ The script writes this shape:
 checkpoint  prepare_s  forward_s  total_s
 ```
 
+The earliest split-timing rows came from historical branch commits. The script
+reruns those rows only when the commit objects are present in the local checkout;
+otherwise it prints a skip message and continues with the reachable checkpoints.
+
 ## Timings
 
 ```text

@@ -61,6 +61,11 @@ want_section() {
   esac
 }
 
+commit_available() {
+  local commit="$1"
+  git -C "$CHECKOUT" cat-file -e "$commit^{commit}" 2>/dev/null
+}
+
 prepare_checkout() {
   local commit="$1"
 
@@ -87,6 +92,12 @@ printf 'checkpoint\tprepare_s\tforward_s\ttotal_s\n' > "$OUT"
 if want_section "early"; then
   for entry in "${EARLY_SPLIT_COMMITS[@]}"; do
     read -r commit label build_mode <<< "$entry"
+
+    if ! commit_available "$commit"; then
+      printf 'skipping early checkpoint %s %s; commit object is not available in this checkout\n' \
+        "$commit" "$label" >&2
+      continue
+    fi
 
     prepare_checkout "$commit"
     output_dir="$CHECKOUT/out/perf_timeline/$label"
