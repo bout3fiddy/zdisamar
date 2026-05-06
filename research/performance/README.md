@@ -1,34 +1,46 @@
 # Performance Research
 
-This folder tracks durable performance findings for zdisamar. The current scope is per-spectrum O2 A forward-model runtime only. Retrieval-loop reuse and `prepare_o2a` are separate topics.
+This folder tracks durable performance findings for zdisamar. The current scope is one O2 A forward spectrum. Retrieval-loop reuse and `prepare_o2a` are separate topics.
 
 ## Documents
 
 - [O2 A per-spectrum wall](o2a-per-spectrum-wall.md): measured wall, code path, and timing decomposition.
-- [LABOS core primitives](labos-core-primitives.md): the math kernels and low-level CPU pressure behind the wall.
-- [O2 A core primitive demo](o2a-core-primitive-demo.ipynb): Jupyter notebook that runs the Zig LABOS kernel benchmark and reconstructs the doubling primitive cost.
+- [Why zdisamar is faster than DISAMAR](why-zdisamar-is-faster/): plain explanation of why the current O2 A run is faster, split by mechanism with code excerpts and source links.
+- [LABOS matrix calculations](labos-matrix-calculations.md): why the LABOS math remains expensive even after each small calculation is fast.
+- [O2 A calculation demo](o2a-calculation-demo.ipynb): Jupyter notebook that isolates the measured O2 A counts and the small LABOS matrix calculations behind the wall.
 
 ## Run the notebook
 
 From the repo root:
 
 ```sh
-uvx --from jupyterlab jupyter lab research/performance/o2a-core-primitive-demo.ipynb
+uvx --from jupyterlab jupyter lab research/performance/o2a-calculation-demo.ipynb
 ```
 
 `uvx` runs JupyterLab in a temporary tool environment, so contributors do not need to install Jupyter into the repo environment first.
 
 ## Current finding
 
-The per-spectrum wall is exact high-resolution support fan-out. A 701-sample O2 A spectrum expands to 3,874 unique radiance wavelengths. Runtime is spent precomputing exact-wavelength forward solves. Within each solve, LABOS transport dominates, especially Fourier RT-layer construction and layer doubling.
+The forward run is dominated by the high-resolution radiance calculations needed before the 701 output wavelengths can be produced. The current O2 A summary is in the expected band: `prepare_o2a` is about 200 ms, and the forward model is about 1.9-2.0 s.
+
+The important count is not 701. Each output wavelength represents an instrument-weighted measurement, so the model first calculates radiance at 3,874 high-resolution wavelengths and then averages those values back to the 701 output wavelengths.
 
 The concise model is:
 
 ```text
-T_spectrum ~= T_wavelength_sampling
-           + max_worker sum(lambda in unique_radiance_support)
-               [T_configured_input(lambda) + T_LABOS(lambda)]
-           + O(n_nominal)
+one spectrum
+  = choose high-resolution wavelengths for the instrument response
+  + calculate radiance at those 3,874 wavelengths
+  + average the radiance and irradiance back to 701 output wavelengths
 ```
 
-The product of exact support wavelengths, Fourier terms, RT layers, and doubling steps is the wall.
+The expensive product is:
+
+```text
+3,874 high-resolution wavelengths
+* about 31 Fourier terms per wavelength
+* active atmospheric layers
+* repeated layer-doubling and scattering-order calculations
+```
+
+That product is the current per-spectrum wall.
