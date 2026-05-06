@@ -6,9 +6,9 @@ const meanVectorInRange = disamar_reference.meanVectorInRange;
 const minVectorInRange = disamar_reference.minVectorInRange;
 
 test "tracked O2A DISAMAR jacobian fixtures expose the requested state columns" {
-    const retrieval_radiance = try readFixture("validation/data/o2a_jacobian_retrieval_instrument_radiance.csv");
+    const retrieval_radiance = try readFixture("validation/spectra/data/o2a_jacobian_retrieval_instrument_radiance.csv");
     defer std.testing.allocator.free(retrieval_radiance);
-    const simulation_reflectance = try readFixture("validation/data/o2a_jacobian_simulation_instrument_reflectance.csv");
+    const simulation_reflectance = try readFixture("validation/spectra/data/o2a_jacobian_simulation_instrument_reflectance.csv");
     defer std.testing.allocator.free(simulation_reflectance);
 
     try expectJacobianFixtureShape(retrieval_radiance, 701);

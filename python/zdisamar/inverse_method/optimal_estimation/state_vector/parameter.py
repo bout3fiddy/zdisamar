@@ -43,6 +43,13 @@ class StateVector:
     def names(self) -> tuple[StateName, ...]:
         return tuple(parameter.name for parameter in self._parameters)
 
+    @property
+    def jacobian_names(self) -> tuple[StateName, ...]:
+        return tuple(
+            getattr(parameter, "jacobian_name", parameter.name)
+            for parameter in self._parameters
+        )
+
     def initial_state(self) -> np.ndarray:
         return np.array([parameter.initial for parameter in self._parameters], dtype=np.float64)
 

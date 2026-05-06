@@ -36,13 +36,14 @@ plt.rcParams.update(
     }
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
 LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
 VALIDATION_DIR = REPO_ROOT / "validation"
-VALIDATION_DATA_DIR = VALIDATION_DIR / "data"
-VALIDATION_PLOTS_DIR = VALIDATION_DIR / "plots"
+SPECTRA_DIR = VALIDATION_DIR / "spectra"
+VALIDATION_DATA_DIR = SPECTRA_DIR / "data"
+VALIDATION_PLOTS_DIR = SPECTRA_DIR / "plots"
 
 FORWARD_REFERENCE_PATH = VALIDATION_DATA_DIR / "o2a_jacobian_retrieval_instrument_forward.csv"
 REFLECTANCE_JACOBIAN_REFERENCE_PATH = VALIDATION_DATA_DIR / "o2a_jacobian_simulation_instrument_reflectance.csv"
@@ -112,7 +113,7 @@ def build_validation_case(zd):
             vendor_reference_csv=asset(
                 zd,
                 "vendor_reference_csv",
-                "validation/data/o2a_with_cia_disamar_reference.csv",
+                "validation/spectra/data/o2a_with_cia_disamar_reference.csv",
                 "disamar_o2a_reference_csv",
             ),
             raw_solar_reference=asset(
@@ -561,7 +562,7 @@ def write_manifest(output_path: Path) -> None:
     manifest = {
         "schema_version": 2,
         "canonical_command": CANONICAL_COMMAND,
-        "tracked_output_dir": stable_repo_path(VALIDATION_DIR),
+        "tracked_output_dir": stable_repo_path(SPECTRA_DIR),
         "tracked_outputs": [stable_repo_path(path) for path in tracked_outputs],
         "reference_paths": [
             stable_repo_path(FORWARD_REFERENCE_PATH),
@@ -576,11 +577,11 @@ def write_manifest(output_path: Path) -> None:
 
 
 def build_bundle(
-    output_dir: Path = VALIDATION_DIR,
+    output_dir: Path = SPECTRA_DIR,
     library_path: Path = LIBRARY_PATH,
 ) -> list[dict[str, float | str]]:
-    if output_dir != VALIDATION_DIR:
-        raise ValueError("plot_validation is intentionally hardwired to validation/")
+    if output_dir != SPECTRA_DIR:
+        raise ValueError("plot_validation is intentionally hardwired to validation/spectra/")
     zd = import_zdisamar()
     case = build_validation_case(zd)
     current = run_zdisamar_validation(case, library_path)

@@ -4,21 +4,28 @@ This directory stores the tracked O2 A parity evidence that is intentionally
 kept in git. Disposable validation traces, scratch runs, and exploratory
 analysis belong under `out/`, not under this directory.
 
-## Tracked O2 A Bundle
+## Layout
 
-- `data/o2a_jacobian_retrieval_instrument_forward.csv`: DISAMAR 701-sample forward
+The validation tree is split by target:
+
+- `spectra/`: forward reflectance and reflectance-Jacobian parity evidence.
+- `optimal_estimation/`: inverse-method retrieval evidence.
+
+## Tracked Spectra Bundle
+
+- `spectra/data/o2a_jacobian_retrieval_instrument_forward.csv`: DISAMAR 701-sample forward
   reference used for the reflectance row.
-- `data/o2a_jacobian_simulation_instrument_reflectance.csv`: DISAMAR 701-sample
+- `spectra/data/o2a_jacobian_simulation_instrument_reflectance.csv`: DISAMAR 701-sample
   reflectance-Jacobian reference used for the derivative rows.
-- `plots/o2a_validation.png`: committed 4x2 validation plot for forward
+- `spectra/plots/o2a_validation.png`: committed 4x2 validation plot for forward
   reflectance and the three retained reflectance Jacobian columns.
-- `data/o2a_validation_data.csv`: current zdisamar/reference values and
+- `spectra/data/o2a_validation_data.csv`: current zdisamar/reference values and
   residuals used by the plot.
-- `data/comparison_metrics.json` and `data/bundle_manifest.json`:
+- `spectra/data/comparison_metrics.json` and `spectra/data/bundle_manifest.json`:
   metadata for the tracked plot refresh.
-- `data/o2a_with_cia_disamar_reference.csv`: retained DISAMAR reference spectrum
+- `spectra/data/o2a_with_cia_disamar_reference.csv`: retained DISAMAR reference spectrum
   still consumed by older forward validation tests.
-- `data/o2a_vendor_forward_reflectance_baseline.json`: retained focused validation
+- `spectra/data/o2a_vendor_forward_reflectance_baseline.json`: retained focused validation
   baseline consumed by validation tests.
 - `optimal_estimation/data/disamar_o2a_two_state_reference.json`: DISAMAR optimal-estimation two-state aerosol
   retrieval fixture for aerosol optical depth and fixed-thickness layer pressure.
@@ -34,8 +41,8 @@ analysis belong under `out/`, not under this directory.
 - `zig build o2a-plot-bundle`
 
 `zig build o2a-plot-bundle` regenerates the tracked plot files under
-`validation/plots/` and `validation/data/` by running
-`validation/plot_validation.py`.
+`validation/spectra/plots/` and `validation/spectra/data/` by running
+`validation/spectra/plot_validation.py`.
 
 ## Residual Note
 

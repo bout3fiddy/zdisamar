@@ -68,7 +68,7 @@ pub fn defaultInput() O2AInput {
             ),
             .vendor_reference_csv = asset(
                 "vendor_reference_csv",
-                "validation/data/o2a_with_cia_disamar_reference.csv",
+                "validation/spectra/data/o2a_with_cia_disamar_reference.csv",
                 "disamar_o2a_reference_csv",
             ),
             .raw_solar_reference = asset(

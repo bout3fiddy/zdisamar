@@ -11,10 +11,13 @@ from .retrieval import (
 )
 from .state_vector import (
     AEROSOL_LAYER_MID_PRESSURE_HPA,
+    AEROSOL_LAYER_TOP_ALTITUDE_KM,
     AEROSOL_OPTICAL_DEPTH,
     SURFACE_ALBEDO,
     AerosolLayerMidPressure,
+    AerosolLayerTopAltitude,
     AerosolOpticalDepth,
+    PressureAltitudeProfile,
     StateVector,
     StateVectorParameter,
     SurfaceAlbedo,
@@ -28,14 +31,17 @@ from .o2a import (
 
 __all__ = [
     "AEROSOL_LAYER_MID_PRESSURE_HPA",
+    "AEROSOL_LAYER_TOP_ALTITUDE_KM",
     "AEROSOL_OPTICAL_DEPTH",
     "SURFACE_ALBEDO",
     "AerosolLayerMidPressure",
+    "AerosolLayerTopAltitude",
     "AerosolOpticalDepth",
     "ForwardEvaluation",
     "Iteration",
     "Measurement",
     "O2AInverseForwardModel",
+    "PressureAltitudeProfile",
     "RetrievalControls",
     "Result",
     "StateVector",

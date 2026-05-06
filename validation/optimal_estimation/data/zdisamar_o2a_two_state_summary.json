@@ -1,50 +1,118 @@
 {
   "absolute_differences": {
-    "aerosol_layer_mid_pressure_hpa": 0.0008116901248058639,
-    "aerosol_optical_depth": 0.0
+    "aerosol_layer_mid_pressure_hpa": 0.012964030204102528,
+    "aerosol_layer_top_altitude_km": 0.005157389214837105,
+    "aerosol_layer_top_pressure_hpa": 0.012964030204102528,
+    "aerosol_optical_depth": 1.6675853092840143e-07
   },
   "averaging_kernel": [
     [
-      0.9999999916373913,
-      1.2510191560776328e-12
+      0.9999999916385267,
+      1.2749998314778769e-08
     ],
     [
-      3.127556762839993e-07,
-      0.9999999997539256
+      3.1248494571157485e-07,
+      0.9999974932298311
     ]
   ],
   "converged": true,
-  "expected_iterations": 1,
+  "expected_iterations": 4,
+  "history": [
+    {
+      "aerosol_layer_top_altitude_km": 1.480166302557526,
+      "aerosol_optical_depth": 0.35224494264050676,
+      "chi2_reflectance": 3376288.0257276497,
+      "chi2_state_vector": 0.05394960374122763,
+      "index": 1,
+      "snr_normal": true,
+      "state_vector_convergence": 1688057.29838326
+    },
+    {
+      "aerosol_layer_top_altitude_km": 1.2974610153127486,
+      "aerosol_optical_depth": 0.3013608101556831,
+      "chi2_reflectance": 467816.6252853685,
+      "chi2_state_vector": 0.00395121416320584,
+      "index": 2,
+      "snr_normal": true,
+      "state_vector_convergence": 233908.28048634483
+    },
+    {
+      "aerosol_layer_top_altitude_km": 1.2495556820414837,
+      "aerosol_optical_depth": 0.2999923112443472,
+      "chi2_reflectance": 427.12511716983374,
+      "chi2_state_vector": 9.551005820212485e-05,
+      "index": 3,
+      "snr_normal": true,
+      "state_vector_convergence": 213.56198034048927
+    },
+    {
+      "aerosol_layer_top_altitude_km": 1.2475623108170668,
+      "aerosol_optical_depth": 0.30000004248609113,
+      "chi2_reflectance": 0.06557570535025875,
+      "chi2_state_vector": 1.6218752970114543e-07,
+      "index": 4,
+      "snr_normal": true,
+      "state_vector_convergence": 0.03276591203582376
+    }
+  ],
   "iteration_match": true,
-  "iterations": 1,
+  "iterations": 4,
   "passes_disamar_two_state_fixture": true,
   "posterior_covariance": [
     [
-      8.362609311508865e-09,
-      -3.127556792791812e-07
+      8.361472827317684e-09,
+      -3.1248496083611966e-07
     ],
     [
-      -3.1275567927918116e-07,
-      6.151909875862375e-05
+      -3.1248496083611966e-07,
+      6.143749660949447e-05
     ]
   ],
   "reference": {
-    "aerosol_layer_bottom_pressure_hpa": 924.9991883098752,
-    "aerosol_layer_mid_pressure_hpa": 899.9991883098752,
-    "aerosol_layer_top_pressure_hpa": 874.9991883098752,
-    "aerosol_optical_depth": 0.3
+    "aerosol_layer_bottom_pressure_hpa": 925.0052136836534,
+    "aerosol_layer_mid_pressure_hpa": 900.0052136836534,
+    "aerosol_layer_top_altitude_km": 1.252719700031904,
+    "aerosol_layer_top_pressure_hpa": 875.0052136836534,
+    "aerosol_optical_depth": 0.2999998757275602
   },
+  "reference_history": [
+    {
+      "aerosol_optical_depth": 0.3557778291012031,
+      "index": 1,
+      "intervalDP_top_altitude_km": 1.163591890881295
+    },
+    {
+      "aerosol_optical_depth": 0.3015541900060049,
+      "index": 2,
+      "intervalDP_top_altitude_km": 1.22347682363119
+    },
+    {
+      "aerosol_optical_depth": 0.2999896093604499,
+      "index": 3,
+      "intervalDP_top_altitude_km": 1.251246711137171
+    },
+    {
+      "aerosol_optical_depth": 0.2999998757275602,
+      "index": 4,
+      "intervalDP_top_altitude_km": 1.252719700031904
+    }
+  ],
   "retrieved": {
-    "aerosol_layer_mid_pressure_hpa": 900.0,
-    "aerosol_optical_depth": 0.3
+    "aerosol_layer_bottom_pressure_hpa": 924.9922496534493,
+    "aerosol_layer_mid_pressure_hpa": 899.9922496534493,
+    "aerosol_layer_top_altitude_km": 1.2475623108170668,
+    "aerosol_layer_top_pressure_hpa": 874.9922496534493,
+    "aerosol_optical_depth": 0.30000004248609113
   },
   "state_names": [
     "aerosol_optical_depth",
-    "aerosol_layer_mid_pressure_hpa"
+    "aerosol_layer_top_altitude_km"
   ],
   "tolerances": {
-    "aerosol_layer_mid_pressure_hpa_abs": 0.001,
-    "aerosol_optical_depth_abs": 1e-12
+    "aerosol_layer_mid_pressure_hpa_abs": 0.05,
+    "aerosol_layer_top_altitude_km_abs": 0.01,
+    "aerosol_layer_top_pressure_hpa_abs": 0.05,
+    "aerosol_optical_depth_abs": 1e-05
   },
   "validation_case": "disamar_o2a_two_state_optimal_estimation"
 }

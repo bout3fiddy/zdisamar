@@ -47,7 +47,7 @@ class O2AInverseForwardModel:
             self.settings_for_state(state, state_vector),
             library_path=self._library_path,
         ) as prepared:
-            return evaluate_prepared_reflectance(prepared, state_vector.names)
+            return evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
 
 
 def disamar_oe(

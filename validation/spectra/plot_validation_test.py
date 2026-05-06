@@ -40,10 +40,10 @@ def main() -> int:
     manifest = json.loads(plot_validation.MANIFEST_PATH.read_text())
     assert manifest["canonical_command"] == plot_validation.CANONICAL_COMMAND
     assert manifest["tracked_outputs"] == [
-        "validation/plots/o2a_validation.png",
-        "validation/data/o2a_validation_data.csv",
-        "validation/data/comparison_metrics.json",
-        "validation/data/bundle_manifest.json",
+        "validation/spectra/plots/o2a_validation.png",
+        "validation/spectra/data/o2a_validation_data.csv",
+        "validation/spectra/data/comparison_metrics.json",
+        "validation/spectra/data/bundle_manifest.json",
     ]
     assert "/Users/" not in plot_validation.MANIFEST_PATH.read_text()
     assert "/Users/" not in plot_validation.METRICS_PATH.read_text()

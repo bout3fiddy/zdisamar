@@ -19,6 +19,6 @@ Tracked plot bundle refreshes should use:
 zig build o2a-plot-bundle
 ```
 
-The tracked plot bundle uses `validation/plot_validation.py` to run the
+The tracked plot bundle uses `validation/spectra/plot_validation.py` to run the
 hardcoded O2A forward/Jacobian Python API case against the committed DISAMAR
-reference fixtures in `validation/data/`.
+reference fixtures in `validation/spectra/data/`.

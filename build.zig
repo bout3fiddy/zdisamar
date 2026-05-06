@@ -279,7 +279,7 @@ pub fn build(b: *std.Build) void {
     const o2a_plot_bundle_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "validation/plot_validation.py",
+        "validation/spectra/plot_validation.py",
     });
     o2a_plot_bundle_cmd.step.dependOn(&c_api_install.step);
     const o2a_plot_bundle_step = b.step(
@@ -296,7 +296,7 @@ pub fn build(b: *std.Build) void {
     const o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
-        "validation/plot_validation_test.py",
+        "validation/spectra/plot_validation_test.py",
     });
     o2a_plot_bundle_test_cmd.step.dependOn(&c_api_install.step);
     const o2a_plot_bundle_test_step = b.step(
