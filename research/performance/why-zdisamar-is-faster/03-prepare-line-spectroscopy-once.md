@@ -12,7 +12,7 @@ That means a large part of the line calculation can be prepared once per atmosph
 
 DISAMAR builds absorption cross sections over pressure levels and high-resolution wavelengths. The code loops over pressure, calls the absorption routines over the wavelength grid, and then adds weak-line, strong-line, and line-mixing terms into the cross-section table.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/HITRANModule.f90#L161-L212)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/HITRANModule.f90#L161-L212)
 
 Excerpt:
 
@@ -42,8 +42,8 @@ do iP = 0, traceGasS%nalt
       do iwave = 1, wavelHRS%nwavel
         XsecS%Xsec(iwave, iP) = XsecS%Xsec(iwave, iP) + Xsec(wavelHRS%nwavel + 1 - iwave)
       end do
-    end if
-  end if
+    end if ! useLM
+  end if ! filterStrongLinesO2A
 
 end do ! loop over pressures
 ```
@@ -54,7 +54,7 @@ This is a table-building design. It is useful for DISAMAR's full executable, but
 
 zdisamar prepares weak-line and strong-line state for each profile pressure and temperature. It stores that prepared spectroscopy state with the prepared optical scene.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/optical_properties/state_build/absorbers.zig#L154-L170)
+Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/optical_properties/state_build/absorbers.zig#L154-L171)
 
 Excerpt:
 

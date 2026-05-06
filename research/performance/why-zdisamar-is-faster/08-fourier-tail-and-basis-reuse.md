@@ -6,7 +6,7 @@ Measured forward-time saving: `f42445d -> c423f4a`, 2.266849 s to 2.025331 s, sa
 
 DISAMAR loops over Fourier terms up to `FourierMax`. Inside that loop it rebuilds the generalized spherical functions used by the layer calculation.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L268-L303)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L268-L304)
 
 Excerpt:
 
@@ -14,7 +14,7 @@ Excerpt:
 ! SLOW: the loop runs all FourierMax+1 terms unconditionally. There is no
 !       "stop once the tail is too small to matter" check, so even
 !       negligible terms still pay for fillPlmVector + CalcRTlayers.
-do iFourier = 0, FourierMax
+do iFourier = 0, FourierMax  ! start Fourier loop
 
   if ( .not. controlS%aerosolLayerHeight ) then
     if ( iFourier > controlS%fourierFloorScalar ) then
@@ -22,7 +22,7 @@ do iFourier = 0, FourierMax
     else
       dimSV_fc = dimSV
     end if
-  end if
+  end if ! .not. controlS%aerosolLayerHeight
 
   ! SLOW: fillPlmVector rebuilds the generalized spherical (Plm) basis
   !       values for this Fourier term every call, even though those
@@ -69,7 +69,7 @@ pub fn fourierPlmBasisWithStatus(
 
 zdisamar also stops once later Fourier terms are too small to matter after the configured floor.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/execute.zig#L408-L414)
+Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/execute.zig#L406-L414)
 
 ```zig
 const weighted_pressure_tangent_refl_fc = if (i_fourier == 0) blk: {
@@ -80,8 +80,8 @@ const weighted_pressure_tangent_refl_fc = if (i_fourier == 0) blk: {
 };
 aerosol_layer_mid_pressure_tangent += weighted_pressure_tangent_refl_fc;
 // FAST: tail break — once we are past the configured floor and the
-//       contribution from this Fourier term is below epsilon, all later
-//       terms are guaranteed to be too small to move the result. Stop.
+//       current Fourier contribution is below epsilon, zdisamar stops at
+//       the retained accuracy scale instead of paying for more tiny terms.
 if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) break;
 ```
 
@@ -90,7 +90,7 @@ if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail
 Two ideas are at play, and both are familiar from any "speed up a series sum" exercise:
 
 1. The Fourier basis values for a given Fourier index are the same across wavelengths — cache them instead of rebuilding.
-2. Once each new term in the sum is below the floor that can move the result, keep going only adds noise.
+2. Once each new term in the sum is below the retained scale after the configured floor, zdisamar stops.
 
 ```python
 # Slow: rebuild basis on every call, and always sum the full N terms
@@ -106,11 +106,14 @@ basis_cache = {}
 def reflectance(wavelength):
     total = 0.0
     for k in range(N):
-        basis = basis_cache.setdefault(k, build_basis(k))
+        basis = basis_cache.get(k)
+        if basis is None:
+            basis = build_basis(k)
+            basis_cache[k] = basis
         term  = basis_term(basis, wavelength)
         total += term
         if k >= floor and abs(term) < epsilon:
-            break                            # later terms cannot change result
+            break                            # stop at the retained scale
     return total
 ```
 

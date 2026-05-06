@@ -10,15 +10,15 @@ The O2 A route uses 20 streams. LABOS represents that as 10 Gauss directions, pl
 
 DISAMAR keeps the matrix dimensions general. That is good for a configurable model, because other runs may use different stream counts and polarization dimensions. For the fixed O2 A 20-stream route, that generality costs time.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L1799-L1803)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L1799-L1803)
 
 Excerpt:
 
 ```fortran
 ! SLOW: matrix dimensions come from runtime values (dimSV_fc, nmutot), so
-!       the compiler must keep loop counters and indexing math in the
-!       generated code. It cannot unroll, hold rows in registers, or use
-!       SIMD as aggressively as for a known shape.
+!       the compiler has less fixed-shape information for unrolling,
+!       register use, and SIMD than it has for zdisamar's fixed O2 A
+!       12x10 / 12x12 path.
 real(8) :: E(dimSV_fc*nmutot)
 real(8) :: DmuPlus(nmutot,nmutot),DmuMin(nmutot,nmutot)
 real(8) :: Zplus(dimSV_fc*nmutot,dimSV_fc*nmutot),Zmin(dimSV_fc*nmutot,dimSV_fc*nmutot)
@@ -34,11 +34,10 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
-// FAST: `inline fn` + `inline for (0..12)` tells the compiler the matrix
-//       dimensions are 12x10 at compile time. The outer loop is unrolled
-//       12 times, the inner loop is unrolled 12 times, and the row of `a`
-//       is held in 10 registers (a0..a9) for the duration of one i.
-//       No counters, no bounds math — just straight-line FMAs.
+// FAST: `inline fn` + `inline for (0..12)` gives the compiler the O2 A
+//       matrix dimensions at compile time. That lets it unroll the fixed
+//       loops and keep the current row values (`a0..a9`) close to the
+//       multiply-add sequence.
 inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
@@ -83,7 +82,7 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
 
 ## Why It Matters
 
-When the matrix size is decided at runtime, the compiler has to keep the loop bookkeeping (counters, bounds checks, indexing math) in the generated code. When the size is fixed and known up front, the compiler can fully unroll the loops and use registers and SIMD directly.
+When the matrix size is decided at runtime, the generated code has to carry the general loop and indexing path. When the size is fixed and known up front, the compiler can fully unroll the loops and use registers and SIMD directly.
 
 ```python
 # Slow: shape n is decided at runtime, so the loop overhead stays
@@ -95,12 +94,11 @@ def matmul(a, b, n):
                 out[i][j] += a[i][k] * b[k][j]
     return out
 
-# Fast: shape is fixed (12 x 12), so the compiler can fully unroll.
+# Fast: shape is fixed (12 x 12), so the compiler can unroll.
 # In Zig, "inline for" tells the compiler "this loop bound is known —
 # please rewrite it as straight-line code". The result behaves like:
 def matmul_12x12(a, b):
-    # 144 multiply-adds laid out flat, no per-iteration counters,
-    # values held in registers, SIMD lanes used where available.
+    # fixed multiply-add pattern with far less loop/index work
     ...
 ```
 

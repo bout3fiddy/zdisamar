@@ -12,14 +12,14 @@ If the geometry is rebuilt for each high-resolution wavelength, we pay for the s
 
 DISAMAR carries a general wavelength, pressure, and geometry table flow. It copies the geometry table inside the same broad loop that handles bands and Fourier terms. That keeps the executable general, but it is heavier than the O2 A case needs.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/DISAMARModule.f90#L2734-L2744)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/DISAMARModule.f90#L2734-L2744)
 
 Excerpt:
 
 ```fortran
-! SLOW: this geometry copy lives inside the band x Fourier loop, so the
-!       same vertical layout is re-copied for every Fourier term — even
-!       though geometry never changes with wavelength or Fourier index.
+! SLOW: this angular-geometry copy lives inside the band x Fourier LUT
+!       setup. It is part of DISAMAR's general geometry-table flow, not a
+!       one-time O2 A layer-geometry cache.
 ! geometry (mu = cos(theta) with theta the polar angle
 do imu = 1, globalS%createLUTSimS(iFourier,iband)%nmu
   globalS%createLUTSimS(iFourier,iband)%mu(imu) = &
@@ -33,12 +33,14 @@ end do ! imu
 
 DISAMAR then passes wavelength-specific layer arrays into LABOS. LABOS is designed to accept those arrays for a broad set of configurations.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L472-L483)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L472-L483)
 
 ```fortran
-! SLOW: geometryS is passed in per call, so each high-resolution wavelength
-!       hands LABOS a full geometry record instead of reusing a cached one.
-! INPUT
+! SLOW: LABOS receives geometryS through the general per-call interface,
+!       together with the wavelength-specific optical grid. zdisamar keeps
+!       the fixed layer geometry in prepared state and changes only optical
+!       values per wavelength.
+!INPUT
 type(errorType), intent(inout) :: errS
 integer,                     intent(in)   :: iFourier, maxFourierTermLUT, dimSV, dimSV_fc
 type(optPropRTMGridType),    intent(in)   :: optPropRTMGridS
@@ -53,7 +55,7 @@ type(wavelHRType),           intent(in)   :: wavelMRS   ! instr - high resolutio
 
 Inside LABOS, the Fourier work then uses both `geometryS` and `optPropRTMGridS`.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L245-L255)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L245-L255)
 
 ```fortran
 bsca = sum(optPropRTMGridS%opticalThicknLay(:) * optPropRTMGridS%ssaLay(:) )
@@ -125,8 +127,8 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 
 ```zig
 // FAST: only the wavelength-dependent optical values are filled per call.
-//       The shared layer geometry is read straight out of `prepared` —
-//       no rebuild, no copy.
+//       The shared layer geometry is read from `prepared`, so there is no
+//       layer-geometry rebuild in the wavelength loop.
 var wavelength_cache = CarrierEval.WavelengthCarrierCache.init(
     prepared,
     wavelength_nm,

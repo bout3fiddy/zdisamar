@@ -6,7 +6,7 @@ Measured forward-time saving: `b0a9e0f -> 97088cf`, 7.020602 s to 5.911137 s, sa
 
 DISAMAR uses doubling when a layer is too optically thick for the starting single-scattering layer. This is physically necessary: the layer is split into thinner pieces, and those pieces are repeatedly doubled until they represent the original layer.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L1857-L1895)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L1857-L1895)
 
 Excerpt:
 
@@ -20,7 +20,7 @@ if (aeff*b > controlS%thresholdDoubl) then
     ndouble = ndouble + 1
     if (aeff*bstart < controlS%thresholdDoubl) exit
   end do
-end if
+end if ! aeff*b > controlS%thresholdDoubl
 
 call fillZplusZmin(errS, fcCoef, iFourier, optPropRTMGridS%maxExpCoefLay(ilayer), dimSV, dimSV_fc, nmutot, &
                    optPropRTMGridS%phasefCoefLay(:,:,:,ilayer), geometryS, Zplus, Zmin, string)
@@ -40,7 +40,6 @@ if (doubling) then
 
   call double(errS, ndouble, dimSV_fc, nmutot, nGauss, controlS%thresholdMul, geometryS, &
               bstart, E, R, T)
-end if
 ```
 
 ## What zdisamar Does
@@ -110,4 +109,4 @@ out  = [tmp2[i] * e[i] for i in range(n)] # pass 3
 out = [(a[i] * b[i] + d[i]) * e[i] for i in range(n)]
 ```
 
-RT-layer construction is the largest measured LABOS block (10.76 s, with 8.35 s in doubling), so removing intermediate passes there saved about 1.11 s in the checkpoint table.
+Layer construction and doubling sit inside the repeated LABOS transport calculation, so removing intermediate passes there saved about 1.11 s in the checkpoint table.

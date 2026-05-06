@@ -10,18 +10,18 @@ The speedup is to test that cheaply before building the q-series.
 
 ## What DISAMAR Does
 
-DISAMAR enters `Qseries`, multiplies the two matrices, then checks whether the product is small enough to return immediately. That avoids the later inverse calculation, but the matrix product has already been paid for.
+DISAMAR enters `Qseries` and calls `smul` on the two matrices. `smul` has its own trace guard, so it can return a zero product without doing the full multiply. The remaining cost is that the q-series path has still been entered, and the product/result path is used before `Qseries` checks whether the later inverse work is needed.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L3616-L3711)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L3616-L3711)
 
 Excerpt:
 
 ```fortran
 function Qseries(errS, nmutot, nGauss, thresholdMul, a, b)
 
-  ! SLOW: the full matrix product runs first, *then* its trace is checked.
-  !       When abs(Trab) < ThresholdQ, the entire smul above was wasted —
-  !       we paid for ~144 multiply-adds just to throw the result away.
+  ! SLOW: Qseries enters the general product path first. smul has its own
+  !       trace guard, but Qseries only checks after that call whether the
+  !       repeated-reflection correction needs the later inverse work.
   ab =  smul(nmutot, nGauss, thresholdMul, a, b)
 
   Trab = 0.0d0
@@ -35,7 +35,7 @@ function Qseries(errS, nmutot, nGauss, thresholdMul, a, b)
   end if
 
   one_minus_ab_gg = one - ab_gg
-  call LU_decomposition(errS, one_minus_ab_gg, indx, d, status_LUdecomp)
+  call LU_decomposition(errS,  one_minus_ab_gg, indx, d, status_LUdecomp)
   do k = 1, nGauss
     col(1:nGauss) = one(1:nGauss, k)
     call solve_lin_system_LU_based(errS, one_minus_ab_gg, indx, col)
@@ -52,9 +52,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
-// FAST: pre-check using only the diagonal — gaussTrace reads ~10 numbers
-//       and one multiply tells us whether R*R can produce anything above
-//       threshold. If not, we never enter the q-series at all.
+// FAST: pre-check the same trace condition that smul would use for R*R.
+//       If R*R is below the multiply threshold, skip q-series entirely
+//       and use D = T.
 const trace_r = gaussTrace(n, n_gauss, R);
 const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
 
@@ -62,8 +62,9 @@ const D = if (q_is_zero) blk: {
     // FAST: short-circuit — D = T directly, no matmul, no inverse.
     break :blk T.*;
 } else blk: {
-    // FAST: trace already proved Q*Q is nonzero, so the dedicated
-    //       "knownNonzeroProduct" path skips the redundant smallness test.
+    // FAST: trace already proved R*R is above the multiply threshold, so
+    //       the dedicated product path skips the redundant input-trace
+    //       guard and goes straight to the product.
     const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
     break :blk basis.smulAddSemul3(n, n_gauss, threshold_mul, &Q, E, T);
 };
@@ -104,24 +105,20 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
 
 ## Why It Matters
 
-Computing `a*b` and then deciding "actually that was zero" wastes the whole multiply. A trace-only check uses about 12 numbers instead of 144 and tells us the same answer in the common case where the product is below the threshold.
+Calling q-series just to let `smul` apply the `R*R` threshold still enters the q-series result path. zdisamar checks the same trace condition before entering q-series. When it is below threshold, the doubling update can use `D = T` directly.
 
 ```python
-# Slow: do the full matrix multiply, then test the trace of the result
-def qseries(a, b):
-    ab = matmul(a, b)            # 144 multiply-adds for a 12x12 matrix
-    if abs(trace(ab)) < eps:
-        return ab                # we paid for matmul, only to throw it away
-    return inverse_step(ab)
+# Slow: enter q-series and let smul apply the R*R threshold
+def doubling_step(R, T):
+    Q = qseries(R, R)            # qseries calls smul first
+    return T + Q_times_terms(Q)
 
-# Fast: cheap pre-check using only the diagonals
-def qseries(a, b):
-    if abs(trace(a) * trace(b)) < eps:
-        return zeros_like(a)     # 24 reads and a multiply, no matmul
-    ab = matmul(a, b)
-    if abs(trace(ab)) < eps:
-        return ab
-    return inverse_step(ab)
+# Fast: check smul's zero rule before q-series
+def doubling_step(R, T):
+    if abs(trace(R) * trace(R)) <= mul_eps:
+        return T                 # no q-series call at all
+    Q = qseries_known_nonzero_product(R, R)
+    return T + Q_times_terms(Q)
 ```
 
-The q-series sits inside the layer-doubling loop and is called across many doubled layers and many Fourier terms, so a cheap trace check that often skips both the multiply and the later inverse adds up.
+The q-series sits inside the layer-doubling loop and is called across many doubled layers and many Fourier terms, so a cheap trace check that often skips the q-series path adds up.

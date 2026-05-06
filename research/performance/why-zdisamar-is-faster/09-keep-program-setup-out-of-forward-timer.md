@@ -1,19 +1,20 @@
 # 09. Keep Full-Program Setup Out Of The Forward Timer
 
-Forward-time saving: this mechanism mainly affects preparation and repeated setup, not the measured forward-pass wall. In the checkpoint table, preparation falls from 2.475131 s at `5ef6c71` to 0.509849 s at `862511b`, saving 1.965282 s before the forward run starts.
+Forward-time saving: this mechanism mainly affects preparation and repeated setup, not the measured forward-pass wall. Across later checkpoints, preparation falls from 2.475131 s at `5ef6c71` to 0.509849 s at `862511b`, saving 1.965282 s before the forward run starts. The checkpoint table does not isolate that drop to this mechanism alone.
 
 ## What DISAMAR Does
 
 DISAMAR is designed as a flexible executable. Its top-level program reads `Config.in`, sets static input, allocates dynamic workspace, and calls the retrieval program entrypoint.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/main_DISAMAR.f90#L101-L119)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/main_DISAMAR.f90#L101-L119)
 
 Excerpt:
 
 ```fortran
 ! SLOW: the executable's top level couples config parsing, static input
 !       loading, and workspace allocation directly to a retrieval call.
-!       Repeating one O2 A spectrum means rerunning all of this.
+!       Repeating one O2 A spectrum by rerunning the executable means
+!       rerunning this setup too.
 status = disamar_load_file('Config.in', buffer)
 if (status .ne. 0) then
     call disamar_logger('Failed to read Config.in', LOG_ERROR)
@@ -37,7 +38,7 @@ status = disamar_retrieval(dynamic_workspace)
 
 The executable also builds cross-section tables as part of the broader simulation setup.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/DISAMARModule.f90#L2100-L2115)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/DISAMARModule.f90#L2100-L2115)
 
 Excerpt:
 
@@ -45,8 +46,8 @@ Excerpt:
 do iband = 1, globalS%numSpectrBands
   do iTrace = 1, globalS%nTrace
     ! SLOW: cross-section LUTs are built inside this band x trace loop
-    !       during simulation setup. For repeat calls on the same scene
-    !       the same LUT is rebuilt instead of being reused.
+    !       during simulation setup. zdisamar keeps this kind of fixed
+    !       line/profile preparation outside the forward timer.
     if (  globalS%XsecHRLUTSimS(iband,iTrace)%createXsecPolyLUT  ) then
       prev_time = current_time(current_time_values)
       call createXsecLUT (errS, staticS, globalS%controlSimS, globalS%wavelHRSimS(iband),               &
@@ -55,7 +56,7 @@ do iband = 1, globalS%numSpectrBands
       time = current_time(current_time_values)
       write(errS%temp,'(A,F14.3)') 'time for expansion coefficients simulation (sec) = ', time - prev_time
       call logDebug(errS%temp)
-    end if
+    end if ! createXsecPolyLUT
 ```
 
 ## What zdisamar Does
@@ -141,4 +142,4 @@ def run_spectrum():
     return forward(config, lines)              # only the actual physics
 ```
 
-This does not explain the whole forward-time speedup, but it is why setup can be discussed separately from the ~1.9 s forward wall. Preparation fell from 2.48 s to 0.51 s, saving 1.97 s before the forward run starts.
+This does not explain the whole forward-time speedup, but it is why setup can be discussed separately from the ~1.9 s forward time. Across the later checkpoints, preparation fell from 2.48 s to 0.51 s, saving 1.97 s before the forward run starts.

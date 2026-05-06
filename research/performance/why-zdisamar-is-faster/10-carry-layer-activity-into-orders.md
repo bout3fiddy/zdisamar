@@ -12,7 +12,7 @@ The speedup is simple: remember which layer matrices are zero, then skip their l
 
 DISAMAR computes local up/down fields for every layer in the scattering-order loop. If a layer's reflection/transmission matrix is zero, the dot products still run and produce zero.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L2360-L2396)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L2360-L2396)
 
 Excerpt:
 
@@ -28,9 +28,9 @@ do ilevel = startLevel, endLevel - 1
                   UDorde_fc(ilevel  )%U(1:dimSV_fc*nGauss,imu0) ) +  &
       dot_product(RT_fc(ilevel+1)%T  (imu,1:dimSV_fc*nGauss),        &
                   UDorde_fc(ilevel+1)%D(1:dimSV_fc*nGauss,imu0) )
-    end do
-  end do
-end do
+    end do ! imu
+  end do ! imu0
+end do ! ilevel
 
 do ilevel = startLevel + 1, endLevel
   do imu0 = 1, 2
@@ -40,16 +40,16 @@ do ilevel = startLevel + 1, endLevel
                   UDorde_fc(ilevel)%D(1:dimSV_fc * nGauss,imu0) ) +  &
       dot_product(RT_fc(ilevel)%Tst(imu,1:dimSV_fc *nGauss),         &
                   UDorde_fc(ilevel-1)%U(1:dimSV_fc * nGauss,imu0) )
-    end do
-  end do
-end do
+    end do ! imu
+  end do ! imu0
+end do ! ilevel
 ```
 
 ## What zdisamar Does
 
 zdisamar records whether each layer can contribute while it builds the layer reflection/transmission matrices.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/layers.zig#L321-L344)
+Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/layers.zig#L335-L344)
 
 Excerpt:
 
@@ -64,10 +64,7 @@ if (i_fourier > max_phase_index) {
     continue;
 }
 
-if (layer.optical_depth < 1.0e-20 or
-    layer.scattering_optical_depth <= 0.0 or
-    layer.single_scatter_albedo <= 0.0)
-{
+if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
     // FAST: same idea — the layer is provably inactive for this Fourier
     //       term. Record it and skip the heavy build entirely.
     rt[rt_idx] = zeroLayerRt(geo.nmutot);

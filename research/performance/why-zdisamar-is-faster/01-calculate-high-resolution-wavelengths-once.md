@@ -12,29 +12,32 @@ The expensive question is therefore not "how do we produce 701 output points?" I
 
 DISAMAR fills broad wavelength, pressure, and geometry tables for each spectral band and Fourier term. That is a general design: the executable can run many products, many bands, and many retrieval paths. For the single O2 A forward spectrum we care about here, that general table flow does not first make the smallest possible list of high-resolution radiance wavelengths and calculate each one only once.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/DISAMARModule.f90#L2716-L2732)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/DISAMARModule.f90#L2716-L2732)
 
 Excerpt:
 
 ```fortran
-! SLOW: nested band x Fourier loops fill broad wavelength/pressure LUTs
-!       independently. Nothing here builds a *unique* list of high-resolution
-!       radiance wavelengths, so downstream code ends up recomputing the
-!       same high-resolution radiance many times.
+! SLOW: DISAMAR is setting up a broad wavelength/pressure table indexed by
+!       band and Fourier term. That is flexible, but it is not the speed
+!       trick used by zdisamar: first ask exactly which high-resolution
+!       radiance wavelengths the instrument integration will read.
 do iband = 1, globalS%numSpectrBands
   do iFourier = 0, globalS%maxFourierTermLUT
     do iwave = 1, globalS%createLUTSimS(iFourier,iband)%nwavel
-      ! SLOW: copying the same wavelength values for each Fourier term
+      ! SLOW: the wavelength table is repeated for each Fourier term because
+      !       this LUT is organized around the general DISAMAR dimensions.
       globalS%createLUTSimS(iFourier,iband)%wavel(iwave) = globalS%wavelInstrRadSimS(iband)%wavel(iwave)
-    end do
+    end do ! iwave
     do iwave = 1, globalS%createLUTRetrS(iFourier,iband)%nwavel
       globalS%createLUTRetrS(iFourier,iband)%wavel(iwave) = globalS%wavelInstrRadRetrS(iband)%wavel(iwave)
-    end do
+    end do ! iwave
     do ipressure = 0, globalS%createLUTSimS(iFourier,iband)%npressure
       globalS%createLUTSimS(iFourier,iband)%pressure(ipressure) = &
       globalS%cloudAerosolRTMgridSimS%intervalBounds_P(ipressure)
-    end do
+    end do ! ipressure
 ```
+
+This excerpt does not by itself prove duplicate radiance recomputation inside DISAMAR. What it shows is the shape of the reference executable: it prepares general band/Fourier/wavelength tables. The zdisamar change is narrower: before radiance transport runs, it starts from the actual 701 output wavelengths, expands them to the high-resolution samples the instrument integration needs, removes duplicate wavelengths, and calculates that unique list once.
 
 ## What zdisamar Does
 
@@ -58,8 +61,8 @@ const wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
 );
 defer allocator.free(wavelength_sampling);
 // FAST: dedupe — collapse duplicate high-resolution wavelengths to a
-//       single unique list. This is the key decision that turns "thousands
-//       of recomputations" into "calculate each one once".
+//       single unique list. The transport step receives each needed
+//       high-resolution wavelength once.
 const forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
     allocator,
     wavelength_sampling,
@@ -211,7 +214,7 @@ for (wavelength_sampling, 0..) |plan, index| {
 
 ## Why It Matters
 
-Each of the 701 output wavelengths is built from a few nearby high-resolution samples, and many output points ask for the same high-resolution wavelength. If we recompute every time it is asked for, most of the run is spent on duplicate work.
+Each of the 701 output wavelengths is built from a few nearby high-resolution samples, and many output points can ask for the same high-resolution wavelength. Without a unique-list cache, repeated requests can turn into repeated transport work.
 
 The fix is the same trick you would use to speed up any slow function: compute each unique input once, then look it up.
 
@@ -229,4 +232,4 @@ cache  = {hr: expensive_radiance(hr) for hr in unique}
 results = [cache[hr] for o in outputs for hr in samples_needed_for(o)]
 ```
 
-Each entry in `unique` is independent, so zdisamar also splits the work across CPU cores. The checkpoint that includes this change and the shared layer-geometry change saved about 67.88 s.
+Each entry in `unique` is independent, so zdisamar also splits the work across CPU cores. The checkpoint that includes this change and the shared layer-geometry change saved about 67.88 s; the timing table does not split the two changes.

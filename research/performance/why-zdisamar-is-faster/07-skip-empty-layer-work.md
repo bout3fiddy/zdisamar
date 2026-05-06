@@ -6,7 +6,7 @@ Measured forward-time saving: `0ae1cad -> f42445d`, 2.460360 s to 2.266849 s, sa
 
 DISAMAR checks whether the current Fourier term is within the layer's phase-function range, then builds the layer matrices if it is.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L1832-L1870)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L1832-L1870)
 
 Excerpt:
 
@@ -65,8 +65,8 @@ for (0..nlayer) |layer_idx| {
         if (rt_active) |active| active[rt_idx] = false;
         continue;
     }
-    // FAST: skip #3 — layer cannot scatter at all (no optical depth, or
-    //       zero single-scatter albedo). Result is provably zero, so we
+    // FAST: skip #3 — layer cannot contribute at the retained scale
+    //       (vanishing optical depth, or zero single-scatter albedo), so
     //       record the zero and skip the heavy work.
     if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
         rt[rt_idx] = zeroLayerRt(geo.nmutot);
@@ -97,7 +97,7 @@ for (start_level..end_level) |ilevel| {
 
 ## Why It Matters
 
-If a layer cannot scatter (its optical depth is essentially zero, or this Fourier term is past the layer's phase-function range), the result of the heavy matrix work is guaranteed to be zero. Doing the work anyway just produces a zero through the long path.
+If a layer cannot scatter at the retained scale, or this Fourier term is past the layer's phase-function range, the heavy matrix work is treated as zero. Doing the work anyway just produces that zero through the long path.
 
 The fix is the cheapest optimization in the book: check first, then skip.
 

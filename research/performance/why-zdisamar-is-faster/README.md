@@ -39,7 +39,7 @@ Those timers are not the same kind of measurement. zdisamar reports a prepare/fo
 - [12. Write matrix results into separate outputs](12-write-matrix-results-into-separate-outputs.md): writes repeated matrix products directly into their final destination.
 - [13. Combine the D update in doubling](13-combine-d-update-in-doubling.md): combines `T + Q*E + Q*T` for the common O2 A matrix shape.
 
-Source links point at code commit `36598b67287c918b410ae25ca54319cbe63ade4b`, which is the source tree inspected for these excerpts. The code blocks below each link copy the relevant lines so the mechanism is readable without opening another file.
+zdisamar source links point at code commit `36598b67287c918b410ae25ca54319cbe63ade4b`, which is the zdisamar source tree inspected for these excerpts. DISAMAR source links point at upstream GitLab commit `d17c52884a875cb87b98e4c4ea7f722659e685ac`, which is the vendor checkout inspected for the Fortran excerpts. The `SLOW` and `FAST` comments inside code blocks are explanatory annotations added by this research note; they are not copied source comments.
 
 ## Remaining Wall
 

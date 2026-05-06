@@ -16,7 +16,7 @@ That calculation runs inside the doubling loop, so even one extra pass over the 
 
 DISAMAR writes the `D` update as a whole-array expression. That is clear and general, but it evaluates `semul(Q,E)` and `smul(Q,T)` as separate pieces before the final sum.
 
-Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L2196-L2204)
+Source link: [DISAMAR GitLab source](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L2196-L2202)
 
 Excerpt:
 
@@ -29,12 +29,10 @@ do idouble = 1, ndouble
   ! SLOW: D = T + semul(Q, E) + smul(Q, T) is three matrix operations on
   !       the right-hand side. Each one materializes a temporary, then the
   !       additions walk the matrix again. Three passes for one update.
-  D    = T + semul(dimSV_fc*nmutot, Q, E) + &
-              smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, Q, T)
+  D    = T + semul(dimSV_fc*nmutot, Q, E) + smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, Q, T)
 
   U    = semul(dimSV_fc*nmutot, R, E) + smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, R, D)
   R    = R + esmul(dimSV_fc*nmutot, E, U) + smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, Tst, U)
-end do
 ```
 
 ## What zdisamar Does
