@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ctypes
 import os
-from typing import Optional
 
 from .c_abi import (
     CAtmosphericBudget,
@@ -27,7 +26,7 @@ from .native_tables import (
 from .spectrum import DiagnosticReport, Spectrum
 from .types import O2AInput
 
-LibraryPath = Optional[str | os.PathLike[str]]
+LibraryPath = str | os.PathLike[str] | None
 
 
 def contiguous_wavelengths(wavelengths_nm):
@@ -68,7 +67,7 @@ class Context:
             self._lib.zds_context_destroy(self._ctx)
             self._ctx = None
 
-    def prepare_default_o2a(self) -> "Context":
+    def prepare_default_o2a(self) -> Context:
         self._check(self._lib.zds_prepare_default_o2a(self._ctx))
         return self
 
@@ -86,7 +85,7 @@ class Context:
         )
         return O2AInput.from_json(buffer.value[: size.value])
 
-    def prepare_o2a(self, input: O2AInput) -> "Context":
+    def prepare_o2a(self, input: O2AInput) -> Context:
         payload = input.to_json_bytes()
         self._check(
             self._lib.zds_prepare_o2a_json(
@@ -108,7 +107,9 @@ class Context:
 
     def _spectrum_report(self, raw: CSpectrum) -> DiagnosticReport:
         report = CDiagnosticReport()
-        self._check(self._lib.zds_spectrum_report(self._ctx, ctypes.byref(raw), ctypes.byref(report)))
+        self._check(
+            self._lib.zds_spectrum_report(self._ctx, ctypes.byref(raw), ctypes.byref(report))
+        )
         return DiagnosticReport(
             sample_count=report.sample_count,
             wavelength_start_nm=report.wavelength_start_nm,
@@ -165,7 +166,9 @@ class Context:
         )
         return InstrumentResponseTable(self, raw)
 
-    def collision_induced_absorption_diagnostics(self, wavelengths_nm) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
+    def collision_induced_absorption_diagnostics(
+        self, wavelengths_nm
+    ) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
         wavelengths = contiguous_wavelengths(wavelengths_nm)
         raw = OxygenCollisionInducedAbsorptionDiagnosticsRaw()
         self._check(
@@ -212,7 +215,9 @@ class Context:
     def _free_instrument_response(self, raw: CInstrumentResponse) -> None:
         self._lib.zds_instrument_response_free(self._ctx, ctypes.byref(raw))
 
-    def _free_collision_induced_absorption_diagnostics(self, raw: OxygenCollisionInducedAbsorptionDiagnosticsRaw) -> None:
+    def _free_collision_induced_absorption_diagnostics(
+        self, raw: OxygenCollisionInducedAbsorptionDiagnosticsRaw
+    ) -> None:
         self._lib.zds_o2_o2_cia_diagnostics_free(self._ctx, ctypes.byref(raw))
 
     def _free_radiative_transfer_diagnostics(self, raw: CRadiativeTransferDiagnostics) -> None:
@@ -224,7 +229,7 @@ class Context:
         message = self._lib.zds_last_error(self._ctx)
         raise RuntimeError((message or b"zdisamar error").decode("utf-8", errors="replace"))
 
-    def __enter__(self) -> "Context":
+    def __enter__(self) -> Context:
         return self
 
     def __exit__(self, *_exc: object) -> None:

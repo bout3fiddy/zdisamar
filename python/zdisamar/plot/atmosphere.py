@@ -8,7 +8,14 @@ from typing import Literal
 import altair as alt
 
 from . import fields
-from .common import component_sums, frame, interval_profile_rows, label, nearest_wavelength_value, numeric_cell_bounds
+from .common import (
+    component_sums,
+    frame,
+    interval_profile_rows,
+    label,
+    nearest_wavelength_value,
+    numeric_cell_bounds,
+)
 from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
 from .theme import SEMANTIC_COLORS
 
@@ -106,8 +113,12 @@ def component_stack(
     components: Sequence[str] = DEFAULT_COMPONENTS,
     aggregate_layers: bool = True,
 ):
-    data = component_sums(budget, components) if aggregate_layers else component_sums(
-        budget, components, group_by=(fields.WAVELENGTH_NM, "global_sublayer_index")
+    data = (
+        component_sums(budget, components)
+        if aggregate_layers
+        else component_sums(
+            budget, components, group_by=(fields.WAVELENGTH_NM, "global_sublayer_index")
+        )
     )
     return (
         alt.Chart(data)
@@ -115,14 +126,22 @@ def component_stack(
         .encode(
             x=alt.X(f"{fields.WAVELENGTH_NM}:Q", title=label(fields.WAVELENGTH_NM)),
             y=alt.Y(f"{fields.VALUE}:Q", title="Optical depth"),
-            color=alt.Color("component_label:N", title="Component", legend=alt.Legend(orient="right")),
+            color=alt.Color(
+                "component_label:N",
+                title="Component",
+                legend=alt.Legend(orient="right"),
+            ),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
                 alt.Tooltip("component_label:N", title="Component"),
                 alt.Tooltip(f"{fields.VALUE}:Q", title="Optical depth", format=".4g"),
             ],
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Optical-depth component stack")
+        .properties(
+            width=DEFAULT_WIDTH,
+            height=DEFAULT_HEIGHT,
+            title="Optical-depth component stack",
+        )
     )
 
 
@@ -143,12 +162,18 @@ def single_scatter_albedo_profile(
     )
     title = "Single-scatter albedo profile"
     if wavelength_nm is not None and not data.empty:
-        title = f"Single-scatter albedo profile, {nearest_wavelength_value(data, wavelength_nm):.2f} nm"
+        title = (
+            f"Single-scatter albedo profile, {nearest_wavelength_value(data, wavelength_nm):.2f} nm"
+        )
     return (
         alt.Chart(data)
         .mark_point(filled=True, color=SEMANTIC_COLORS["scattering"], size=26, opacity=0.9)
         .encode(
-            x=alt.X("single_scatter_albedo:Q", title="Single-scatter albedo", scale=alt.Scale(zero=False)),
+            x=alt.X(
+                "single_scatter_albedo:Q",
+                title="Single-scatter albedo",
+                scale=alt.Scale(zero=False),
+            ),
             y=_vertical_y(vertical_axis),
             tooltip=_tooltip([fields.WAVELENGTH_NM, vertical_axis, "single_scatter_albedo"]),
         )
@@ -158,9 +183,19 @@ def single_scatter_albedo_profile(
 
 def _vertical_y(vertical_axis: str):
     if vertical_axis == "pressure_hpa":
-        return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis), scale=alt.Scale(reverse=True))
+        return alt.Y(
+            f"{vertical_axis}:Q",
+            title=label(vertical_axis),
+            scale=alt.Scale(reverse=True),
+        )
     return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis))
 
 
 def _tooltip(columns: Sequence[str]):
-    return [alt.Tooltip(f"{column}:Q" if column != "component" else f"{column}:N", title=label(column)) for column in columns]
+    return [
+        alt.Tooltip(
+            f"{column}:Q" if column != "component" else f"{column}:N",
+            title=label(column),
+        )
+        for column in columns
+    ]

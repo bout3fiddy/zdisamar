@@ -98,7 +98,7 @@ class Spectrum:
             self._raw = CSpectrum()
             self._close_owner = False
 
-    def __enter__(self) -> "Spectrum":
+    def __enter__(self) -> Spectrum:
         return self
 
     def __exit__(self, *_exc: object) -> None:

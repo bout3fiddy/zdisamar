@@ -35,7 +35,10 @@ def main() -> int:
         "dR/d aerosol optical depth",
         "dR/d aerosol layer mid pressure",
     ]
-    assert all(float(metric["max_abs_residual"]) <= plot_validation.REFLECTANCE_THRESHOLD for metric in metrics)
+    assert all(
+        float(metric["max_abs_residual"]) <= plot_validation.REFLECTANCE_THRESHOLD
+        for metric in metrics
+    )
 
     manifest = json.loads(plot_validation.MANIFEST_PATH.read_text())
     assert manifest["canonical_command"] == plot_validation.CANONICAL_COMMAND

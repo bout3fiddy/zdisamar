@@ -10,17 +10,15 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.ticker import ScalarFormatter
-
 
 plt.rcParams.update(
     {
@@ -28,7 +26,13 @@ plt.rcParams.update(
         "axes.linewidth": 0.8,
         "figure.facecolor": "white",
         "font.family": "monospace",
-        "font.monospace": ["DejaVu Sans Mono", "Menlo", "Monaco", "Courier New", "monospace"],
+        "font.monospace": [
+            "DejaVu Sans Mono",
+            "Menlo",
+            "Monaco",
+            "Courier New",
+            "monospace",
+        ],
         "grid.color": "#b0b0b0",
         "grid.linewidth": 0.65,
         "mathtext.fontset": "dejavusans",
@@ -46,7 +50,9 @@ VALIDATION_DATA_DIR = SPECTRA_DIR / "data"
 VALIDATION_PLOTS_DIR = SPECTRA_DIR / "plots"
 
 FORWARD_REFERENCE_PATH = VALIDATION_DATA_DIR / "o2a_jacobian_retrieval_instrument_forward.csv"
-REFLECTANCE_JACOBIAN_REFERENCE_PATH = VALIDATION_DATA_DIR / "o2a_jacobian_simulation_instrument_reflectance.csv"
+REFLECTANCE_JACOBIAN_REFERENCE_PATH = (
+    VALIDATION_DATA_DIR / "o2a_jacobian_simulation_instrument_reflectance.csv"
+)
 
 PLOT_PATH = VALIDATION_PLOTS_DIR / "o2a_validation.png"
 DATA_PATH = VALIDATION_DATA_DIR / "o2a_validation_data.csv"
@@ -283,7 +289,9 @@ def run_zdisamar_validation(case, library_path: Path) -> dict[str, np.ndarray]:
     }
 
 
-def build_validation_rows(case, current: dict[str, np.ndarray]) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
+def build_validation_rows(
+    case, current: dict[str, np.ndarray]
+) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     forward_reference = pd.read_csv(FORWARD_REFERENCE_PATH)
     jacobian_reference = pd.read_csv(REFLECTANCE_JACOBIAN_REFERENCE_PATH)
     wavelength_nm = current["wavelength_nm"]
@@ -305,7 +313,10 @@ def build_validation_rows(case, current: dict[str, np.ndarray]) -> tuple[pd.Data
     ]
     jacobian_labels = {
         "surface_albedo": ("dR/d surface albedo", "dR/d surface\nalbedo"),
-        "aerosol_optical_depth": ("dR/d aerosol optical depth", "dR/d aerosol\noptical depth"),
+        "aerosol_optical_depth": (
+            "dR/d aerosol optical depth",
+            "dR/d aerosol\noptical depth",
+        ),
         "aerosol_layer_mid_pressure_hpa": (
             "dR/d aerosol layer mid pressure",
             "dR/d aerosol layer\nmid pressure",
@@ -350,6 +361,7 @@ def build_validation_rows(case, current: dict[str, np.ndarray]) -> tuple[pd.Data
             row["reference"],
             row["zdisamar"],
             residual,
+            strict=False,
         ):
             records.append(
                 {
@@ -416,8 +428,14 @@ def residual_blowup_regions(
             peak_index = start_index + peak_offset
             regions.append(
                 {
-                    "start_nm": max(755.0, float(wavelength_nm[start_index]) - BLOWUP_REGION_PADDING_NM),
-                    "end_nm": min(776.0, float(wavelength_nm[end_index]) + BLOWUP_REGION_PADDING_NM),
+                    "start_nm": max(
+                        755.0,
+                        float(wavelength_nm[start_index]) - BLOWUP_REGION_PADDING_NM,
+                    ),
+                    "end_nm": min(
+                        776.0,
+                        float(wavelength_nm[end_index]) + BLOWUP_REGION_PADDING_NM,
+                    ),
                     "peak_nm": float(wavelength_nm[peak_index]),
                     "peak_abs_residual": float(magnitude[peak_index]),
                 }
@@ -425,11 +443,15 @@ def residual_blowup_regions(
             start_index = None
 
     limit = BLOWUP_REGION_LIMITS[series]
-    strongest = sorted(regions, key=lambda region: region["peak_abs_residual"], reverse=True)[:limit]
+    strongest = sorted(regions, key=lambda region: region["peak_abs_residual"], reverse=True)[
+        :limit
+    ]
     return sorted(strongest, key=lambda region: region["start_nm"])
 
 
-def mark_residual_blowup_regions(value_axis, residual_axis, regions: list[dict[str, float]]) -> None:
+def mark_residual_blowup_regions(
+    value_axis, residual_axis, regions: list[dict[str, float]]
+) -> None:
     for region in regions:
         for axis in (value_axis, residual_axis):
             axis.axvspan(
@@ -505,7 +527,9 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
             linewidth=1.15,
             zorder=3,
         )
-        residual_axis.axhline(0.0, color="black", linewidth=0.75, linestyle="--", alpha=0.55, zorder=1)
+        residual_axis.axhline(
+            0.0, color="black", linewidth=0.75, linestyle="--", alpha=0.55, zorder=1
+        )
         blowup_regions = residual_blowup_regions(
             zdisamar["wavelength_nm"].to_numpy(dtype=np.float64),
             zdisamar["residual"].to_numpy(dtype=np.float64),
@@ -523,7 +547,9 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
     axes[-1, 0].set_xlabel("Wavelength (nm)")
     axes[-1, 1].set_xlabel("Wavelength (nm)")
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    legend = fig.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.995, 0.995), frameon=True)
+    legend = fig.legend(
+        handles, labels, loc="upper right", bbox_to_anchor=(0.995, 0.995), frameon=True
+    )
     legend.get_frame().set_facecolor("white")
     legend.get_frame().set_edgecolor("#cccccc")
     legend.get_frame().set_linewidth(0.8)
@@ -570,7 +596,12 @@ def write_manifest(output_path: Path) -> None:
         ],
         "policy": {
             "validation_case": "hardcoded_o2a_jacobian_reference",
-            "note": "The tracked O2 A validation plot is generated by the Python API and compares zdisamar reflectance plus reflectance Jacobians against committed DISAMAR reference derivatives.",
+            "note": (
+                "The tracked O2 A validation plot is generated by the "
+                "Python API and compares zdisamar reflectance plus "
+                "reflectance Jacobians against committed DISAMAR reference "
+                "derivatives."
+            ),
         },
     }
     output_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

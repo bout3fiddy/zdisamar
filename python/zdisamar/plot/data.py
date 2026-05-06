@@ -54,7 +54,9 @@ def filter_window(frame, window_nm: tuple[float, float] | None):
     start_nm, end_nm = window_nm
     if end_nm < start_nm:
         raise ValueError("window_nm end must be greater than or equal to start")
-    return frame[(frame[fields.WAVELENGTH_NM] >= start_nm) & (frame[fields.WAVELENGTH_NM] <= end_nm)]
+    return frame[
+        (frame[fields.WAVELENGTH_NM] >= start_nm) & (frame[fields.WAVELENGTH_NM] <= end_nm)
+    ]
 
 
 def marker_frame(markers_nm: Sequence[float]):
@@ -82,7 +84,9 @@ def comparison_frame(
     import numpy as np
     import pandas as pd
 
-    current_frame = filter_window(to_dataframe(current), window_nm).sort_values(fields.WAVELENGTH_NM)
+    current_frame = filter_window(to_dataframe(current), window_nm).sort_values(
+        fields.WAVELENGTH_NM
+    )
     reference_frame = to_dataframe(reference).sort_values(fields.WAVELENGTH_NM)
     require_columns(current_frame, [fields.WAVELENGTH_NM, quantity])
     require_columns(reference_frame, [fields.WAVELENGTH_NM, quantity])

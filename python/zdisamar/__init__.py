@@ -1,5 +1,6 @@
 """Python wrapper for the native zdisamar O2A C ABI."""
 
+from . import inverse_method
 from .api import (
     AtmosphereDiagnostics,
     AtmosphericBudget,
@@ -7,10 +8,10 @@ from .api import (
     DiagnosticReport,
     InstrumentResponseTable,
     O2LineContributions,
-    OxygenCollisionInducedAbsorptionDiagnosticTable,
     O2LineDiagnostics,
-    PreparedO2A,
+    OxygenCollisionInducedAbsorptionDiagnosticTable,
     PreparedDefaultO2A,
+    PreparedO2A,
     RadiativeTransferDiagnosticTable,
     Spectrum,
     forward,
@@ -43,7 +44,6 @@ from .types import (
     Surface,
     VerticalInterval,
 )
-from . import inverse_method
 
 __all__ = [
     "Aerosol",

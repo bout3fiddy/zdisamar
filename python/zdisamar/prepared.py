@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import ctypes
-from typing import Any, Optional
+from typing import Any
 
 from .c_abi import CSpectrum
 from .native_tables import (
@@ -43,7 +43,7 @@ class PreparedO2ABase:
     """Shared prepared O2A wrapper behavior."""
 
     def __init__(self, ctx: Context, input: O2AInput, library_path: LibraryPath):
-        self._ctx: Optional[Context] = ctx
+        self._ctx: Context | None = ctx
         self._input = copy.deepcopy(input)
         self._library_path = library_path
 
@@ -112,9 +112,13 @@ class PreparedO2ABase:
         wavelengths_nm,
         channels: tuple[str, ...] = ("radiance", "irradiance"),
     ) -> InstrumentResponseTable:
-        return self._require_context().instrument_response_sampling(wavelengths_nm, channels=channels)
+        return self._require_context().instrument_response_sampling(
+            wavelengths_nm, channels=channels
+        )
 
-    def collision_induced_absorption_diagnostics(self, wavelengths_nm) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
+    def collision_induced_absorption_diagnostics(
+        self, wavelengths_nm
+    ) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
         return self._require_context().collision_induced_absorption_diagnostics(wavelengths_nm)
 
     def radiative_transfer_diagnostics(
@@ -122,7 +126,9 @@ class PreparedO2ABase:
         wavelengths_nm,
         spectrum: Spectrum | None = None,
     ) -> RadiativeTransferDiagnosticTable:
-        return self._require_context().radiative_transfer_diagnostics(wavelengths_nm, spectrum=spectrum)
+        return self._require_context().radiative_transfer_diagnostics(
+            wavelengths_nm, spectrum=spectrum
+        )
 
     def close(self) -> None:
         if self._ctx is not None:

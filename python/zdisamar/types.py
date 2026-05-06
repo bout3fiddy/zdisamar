@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import math
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -48,7 +48,7 @@ class ReferenceAsset:
     format: str
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ReferenceAsset":
+    def from_dict(cls, data: dict[str, Any]) -> ReferenceAsset:
         return cls(
             id=str(data["id"]),
             path=str(data["path"]),
@@ -67,7 +67,7 @@ class ReferenceAssets:
     airmass_factor_lut: ReferenceAsset
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ReferenceAssets":
+    def from_dict(cls, data: dict[str, Any]) -> ReferenceAssets:
         return cls(
             atmosphere_profile=ReferenceAsset.from_dict(data["atmosphere_profile"]),
             vendor_reference_csv=ReferenceAsset.from_dict(data["vendor_reference_csv"]),
@@ -91,7 +91,7 @@ class SpectralGrid:
     sample_count: int
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SpectralGrid":
+    def from_dict(cls, data: dict[str, Any]) -> SpectralGrid:
         return cls(
             start_nm=_float(data["start_nm"]),
             end_nm=_float(data["end_nm"]),
@@ -118,7 +118,7 @@ class VerticalInterval:
     bottom_pressure_variance_hpa2: float = 0.0
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "VerticalInterval":
+    def from_dict(cls, data: dict[str, Any]) -> VerticalInterval:
         return cls(
             index_1based=int(data["index_1based"]),
             top_pressure_hpa=_float(data["top_pressure_hpa"]),
@@ -151,7 +151,7 @@ class Atmosphere:
     intervals: list[VerticalInterval]
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Atmosphere":
+    def from_dict(cls, data: dict[str, Any]) -> Atmosphere:
         return cls(
             layer_count=int(data["layer_count"]),
             sublayer_divisions=int(data["sublayer_divisions"]),
@@ -168,7 +168,7 @@ class Geometry:
     relative_azimuth_deg: float
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Geometry":
+    def from_dict(cls, data: dict[str, Any]) -> Geometry:
         return cls(
             model=str(data["model"]),
             solar_zenith_deg=_float(data["solar_zenith_deg"]),
@@ -201,7 +201,7 @@ class AerosolPlacement:
     bottom_altitude_km: float = math.nan
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AerosolPlacement":
+    def from_dict(cls, data: dict[str, Any]) -> AerosolPlacement:
         return cls(
             semantics=str(data["semantics"]),
             interval_index_1based=int(data["interval_index_1based"]),
@@ -234,7 +234,7 @@ class Aerosol:
     placement: AerosolPlacement
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Aerosol":
+    def from_dict(cls, data: dict[str, Any]) -> Aerosol:
         return cls(
             optical_depth_550_nm=_float(data["optical_depth"]),
             single_scatter_albedo=_float(data["single_scatter_albedo"]),
@@ -270,7 +270,7 @@ class O2LineByLine:
     cutoff_sim_cm1: float | None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "O2LineByLine":
+    def from_dict(cls, data: dict[str, Any]) -> O2LineByLine:
         return cls(
             line_list_asset=ReferenceAsset.from_dict(data["line_list_asset"]),
             line_mixing_asset=ReferenceAsset.from_dict(data["line_mixing_asset"]),
@@ -299,7 +299,7 @@ class OxygenCollisionInducedAbsorption:
     cross_section_asset: ReferenceAsset | None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "OxygenCollisionInducedAbsorption":
+    def from_dict(cls, data: dict[str, Any]) -> OxygenCollisionInducedAbsorption:
         cross_section_asset = data.get("cia_asset")
         return cls(
             enabled=bool(data["enabled"]),
@@ -331,7 +331,7 @@ class InstrumentResponse:
     solar_reference_asset_id: str
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "InstrumentResponse":
+    def from_dict(cls, data: dict[str, Any]) -> InstrumentResponse:
         return cls(
             instrument_name=str(data["instrument_name"]),
             regime=str(data["regime"]),
@@ -341,7 +341,9 @@ class InstrumentResponse:
             builtin_line_shape=str(data["builtin_line_shape"]),
             high_resolution_step_nm=_float(data["high_resolution_step_nm"]),
             high_resolution_half_span_nm=_float(data["high_resolution_half_span_nm"]),
-            adaptive_reference_grid={key: int(value) for key, value in data["adaptive_reference_grid"].items()},
+            adaptive_reference_grid={
+                key: int(value) for key, value in data["adaptive_reference_grid"].items()
+            },
             solar_reference_asset_id=str(data["solar_reference_asset_id"]),
         )
 
@@ -378,7 +380,7 @@ class RadiativeTransferControls:
     phase_function_truncation_threshold: float = 1.0e-8
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RadiativeTransferControls":
+    def from_dict(cls, data: dict[str, Any]) -> RadiativeTransferControls:
         return cls(
             scattering=str(data["scattering"]),
             n_streams=int(data["n_streams"]),
@@ -392,7 +394,9 @@ class RadiativeTransferControls:
             use_spherical_correction=bool(data["use_spherical_correction"]),
             integrate_source_function=bool(data["integrate_source_function"]),
             renorm_phase_function=bool(data["renorm_phase_function"]),
-            phase_function_truncation_threshold=_float(data.get("phase_function_truncation_threshold", 1.0e-8)),
+            phase_function_truncation_threshold=_float(
+                data.get("phase_function_truncation_threshold", 1.0e-8)
+            ),
             stokes_dimension=int(data["stokes_dimension"]),
         )
 
@@ -434,7 +438,7 @@ class O2AInput:
     validation: dict[str, Any]
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "O2AInput":
+    def from_dict(cls, data: dict[str, Any]) -> O2AInput:
         return cls(
             metadata=_object_dict(data, "metadata"),
             plan=_object_dict(data, "plan"),
@@ -457,7 +461,7 @@ class O2AInput:
         )
 
     @classmethod
-    def from_json(cls, raw: str | bytes) -> "O2AInput":
+    def from_json(cls, raw: str | bytes) -> O2AInput:
         return cls.from_dict(json.loads(raw))
 
     def to_dict(self) -> dict[str, Any]:
@@ -484,4 +488,6 @@ class O2AInput:
         }
 
     def to_json_bytes(self) -> bytes:
-        return json.dumps(_json_value(self.to_dict()), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return json.dumps(
+            _json_value(self.to_dict()), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")

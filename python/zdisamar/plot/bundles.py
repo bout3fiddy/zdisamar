@@ -6,11 +6,17 @@ from collections.abc import Sequence
 
 import altair as alt
 
-from . import atmosphere, collision_induced_absorption, fields, o2_lines, perturbation
+from . import (
+    atmosphere,
+    collision_induced_absorption,
+    fields,
+    o2_lines,
+    perturbation,
+    validation,
+)
 from . import instrument_response as instrument_response_plots
 from . import radiative_transfer as radiative_transfer_plots
 from . import spectrum as spectrum_plots
-from . import validation
 from .common import nearest_wavelength_rows
 
 
@@ -51,13 +57,21 @@ def validation_against_reference(
     current,
     reference,
     *,
-    quantities: Sequence[str] = (fields.REFLECTANCE, fields.RADIANCE, fields.IRRADIANCE),
+    quantities: Sequence[str] = (
+        fields.REFLECTANCE,
+        fields.RADIANCE,
+        fields.IRRADIANCE,
+    ),
     window_nm: tuple[float, float] | None = None,
 ):
     panels = []
     for quantity in quantities:
-        panels.append(validation.overlay(current, reference, quantity=quantity, window_nm=window_nm))
-        panels.append(validation.residual(current, reference, quantity=quantity, window_nm=window_nm))
+        panels.append(
+            validation.overlay(current, reference, quantity=quantity, window_nm=window_nm)
+        )
+        panels.append(
+            validation.residual(current, reference, quantity=quantity, window_nm=window_nm)
+        )
     if quantities:
         panels.append(validation.residual_histogram(current, reference, quantity=quantities[0]))
     panels.append(validation.metrics_bar(current, reference, quantities=quantities))
@@ -99,7 +113,11 @@ def collision_induced_absorption_budget(
             collision_induced_absorption.share_profile(selected),
         ),
         alt.hconcat(
-            atmosphere.optical_depth_profile(selected, quantity=fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH, wavelengths_nm=wavelengths_nm),
+            atmosphere.optical_depth_profile(
+                selected,
+                quantity=fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH,
+                wavelengths_nm=wavelengths_nm,
+            ),
             collision_induced_absorption.cross_section_temperature(selected),
         ),
     ).resolve_scale(color="independent")

@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import csv
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
-
 from o2a_python_case import build_o2a_case
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -31,7 +29,9 @@ VALIDATION_GRID_STRIDE = 5
 
 def require_library() -> str:
     if not LIBRARY_PATH.exists():
-        raise FileNotFoundError(f"{LIBRARY_PATH} does not exist; build the native shared library first")
+        raise FileNotFoundError(
+            f"{LIBRARY_PATH} does not exist; build the native shared library first"
+        )
     return str(LIBRARY_PATH)
 
 
@@ -143,17 +143,24 @@ def answer_questions(table, wavelengths: np.ndarray) -> list[dict[str, object]]:
     intervals = interval_totals(table)
     return [
         {
-            "question": "Where does O2-O2 collision-induced absorption contribute most to total absorption?",
+            "question": (
+                "Where does O2-O2 collision-induced absorption contribute most to total absorption?"
+            ),
             "answer": {
                 "wavelength_nm": float(wavelengths[best_abs]),
                 "cia_share_of_total_absorption": float(cia_abs_share[best_abs]),
                 "cia_optical_depth": float(sums["cia_optical_depth"][best_abs]),
-                "total_absorption_optical_depth": float(sums["total_absorption_optical_depth"][best_abs]),
+                "total_absorption_optical_depth": float(
+                    sums["total_absorption_optical_depth"][best_abs]
+                ),
             },
             "output": "O2-O2 collision-induced absorption diagnostic table",
         },
         {
-            "question": "Where does O2-O2 collision-induced absorption contribute most to total optical depth?",
+            "question": (
+                "Where does O2-O2 collision-induced absorption contribute "
+                "most to total optical depth?"
+            ),
             "answer": {
                 "wavelength_nm": float(wavelengths[best_total]),
                 "cia_share_of_total_optical_depth": float(cia_total_share[best_total]),
@@ -163,7 +170,9 @@ def answer_questions(table, wavelengths: np.ndarray) -> list[dict[str, object]]:
             "output": "O2-O2 collision-induced absorption diagnostic table",
         },
         {
-            "question": "Which atmospheric intervals dominate collision-induced absorption optical depth?",
+            "question": (
+                "Which atmospheric intervals dominate collision-induced absorption optical depth?"
+            ),
             "answer": {
                 "ranked_intervals": intervals,
                 "dominant_interval": intervals[0] if intervals else None,
@@ -171,7 +180,10 @@ def answer_questions(table, wavelengths: np.ndarray) -> list[dict[str, object]]:
             "output": "interval-resolved O2-O2 collision-induced absorption diagnostic table",
         },
         {
-            "question": "How does the collision-induced absorption cross section change with temperature in this case?",
+            "question": (
+                "How does the collision-induced absorption cross section "
+                "change with temperature in this case?"
+            ),
             "answer": temperature_split(table),
             "output": "temperature-resolved O2-O2 collision-induced absorption diagnostic table",
         },
@@ -223,8 +235,10 @@ def main() -> int:
     answer = summary["questions"][0]["answer"]
     interval = summary["questions"][2]["answer"]["dominant_interval"]
     print(
-        f"collision_induced_absorption={TABLE_OUTPUT} questions={len(summary['questions'])} rows={summary['row_count']} "
-        f"max_abs_share={answer['cia_share_of_total_absorption']:.6g}@{answer['wavelength_nm']:.2f}nm "
+        f"collision_induced_absorption={TABLE_OUTPUT} "
+        f"questions={len(summary['questions'])} rows={summary['row_count']} "
+        f"max_abs_share={answer['cia_share_of_total_absorption']:.6g}"
+        f"@{answer['wavelength_nm']:.2f}nm "
         f"dominant_interval={interval['interval_index_1based']} "
         f"prepare={timing['prepare_o2a_s']:.2f}s diagnostics={timing['diagnostics_s']:.2f}s "
         f"total={timing['total_s']:.2f}s"

@@ -11,23 +11,27 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
-
 from o2a_python_case import build_o2a_case
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 OUT_DIR = REPO_ROOT / "out" / "ci"
 LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
 LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
-REFERENCE_PATH = REPO_ROOT / "validation" / "data" / "o2a_jacobian_retrieval_instrument_radiance.csv"
-REFLECTANCE_REFERENCE_PATH = REPO_ROOT / "validation" / "data" / "o2a_jacobian_simulation_instrument_reflectance.csv"
-FORWARD_REFERENCE_PATH = REPO_ROOT / "validation" / "data" / "o2a_jacobian_retrieval_instrument_forward.csv"
+REFERENCE_PATH = (
+    REPO_ROOT / "validation" / "data" / "o2a_jacobian_retrieval_instrument_radiance.csv"
+)
+REFLECTANCE_REFERENCE_PATH = (
+    REPO_ROOT / "validation" / "data" / "o2a_jacobian_simulation_instrument_reflectance.csv"
+)
+FORWARD_REFERENCE_PATH = (
+    REPO_ROOT / "validation" / "data" / "o2a_jacobian_retrieval_instrument_forward.csv"
+)
 SUMMARY_OUTPUT = OUT_DIR / "python_o2a_jacobian_summary.json"
 STATE_NAMES = (
     "surface_albedo",
@@ -60,7 +64,7 @@ def load_reference(path: Path) -> np.ndarray:
 
 def max_abs_residual(current: np.ndarray, reference: np.ndarray) -> dict[str, float]:
     residuals: dict[str, float] = {}
-    for state_index, state_name in enumerate(STATE_NAMES):
+    for _state_index, state_name in enumerate(STATE_NAMES):
         reference_column = REFERENCE_COLUMNS[state_name]
         interpolated = np.interp(
             current["wavelength_nm"],
@@ -173,7 +177,9 @@ def run_summary(
         "forward_max_abs_residual": forward_residuals,
         "passes_forward_threshold": bool(max_forward_residual <= threshold),
         "passes_jacobian_threshold": bool(max_residual <= threshold),
-        "passes_reflectance_jacobian_threshold": bool(max_reflectance_residual <= reflectance_threshold),
+        "passes_reflectance_jacobian_threshold": bool(
+            max_reflectance_residual <= reflectance_threshold
+        ),
         "passes_threshold": bool(
             max_residual <= threshold
             and max_forward_residual <= threshold

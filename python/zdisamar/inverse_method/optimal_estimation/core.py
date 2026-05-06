@@ -13,19 +13,19 @@ write logic into the numerical solver.
 from __future__ import annotations
 
 import time
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 import numpy as np
 
-from .forward_evaluation import ForwardEvaluation
 from .covariance_space import build_covariance_space
+from .forward_evaluation import ForwardEvaluation
 from .gauss_newton import gauss_newton_step
 from .retrieval import (
     Iteration,
     IterationTiming,
     Measurement,
-    RetrievalControls,
     Result,
+    RetrievalControls,
     StateName,
 )
 from .state_vector import StateVector
@@ -114,9 +114,7 @@ def retrieve(
         dx_iter = x - previous
         chi2_reflectance = float(residual @ inv_se @ residual)
         chi2_state = float(dx_iter @ np.linalg.inv(sa) @ dx_iter)
-        state_conv = float(
-            dx_iter @ step.posterior_precision @ dx_iter / state_count
-        )
+        state_conv = float(dx_iter @ step.posterior_precision @ dx_iter / state_count)
         history.append(
             Iteration(
                 index=iteration_index,
@@ -160,9 +158,7 @@ def retrieve(
     )
 
 
-def _interpolate(
-    target: np.ndarray, source: np.ndarray, values: np.ndarray
-) -> np.ndarray:
+def _interpolate(target: np.ndarray, source: np.ndarray, values: np.ndarray) -> np.ndarray:
     if np.array_equal(target, source):
         return np.asarray(values, dtype=np.float64)
     return np.interp(target, source, values)
@@ -179,7 +175,5 @@ def _interpolate_columns(
         return np.asarray(values, dtype=np.float64)
     interpolated = np.empty((target.size, len(columns)), dtype=np.float64)
     for column_index in range(len(columns)):
-        interpolated[:, column_index] = np.interp(
-            target, source, values[:, column_index]
-        )
+        interpolated[:, column_index] = np.interp(target, source, values[:, column_index])
     return interpolated

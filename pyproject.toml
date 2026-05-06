@@ -9,5 +9,40 @@ dependencies = [
     "vl-convert-python>=1.7",
 ]
 
+[dependency-groups]
+dev = [
+    "basedpyright>=1.22",
+    "ruff>=0.15",
+    "ty>=0.0.1a1",
+]
+
 [tool.uv]
 package = false
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = [
+    "vendor",
+    "out",
+    "zig-out",
+    ".zig-cache",
+    "docs/workpackages",
+    "validation/.cache",
+    "validation/function_diff",
+    "validation/latest",
+    "validation/runs",
+    "validation/scratch",
+    "validation/tmp",
+    "validation/work",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # flake8-simplify
+]

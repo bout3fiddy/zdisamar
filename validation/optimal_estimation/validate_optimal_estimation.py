@@ -9,13 +9,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -26,10 +25,10 @@ SUMMARY_PATH = DATA_DIR / "zdisamar_o2a_two_state_summary.json"
 
 sys.path[:0] = [str(PYTHON_ROOT), str(SCRIPT_ROOT)]
 
-import zdisamar as zd
-from zdisamar.inverse_method import optimal_estimation
-from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estimation
-from o2a_python_case import build_o2a_case
+import zdisamar as zd  # noqa: E402
+from o2a_python_case import build_o2a_case  # noqa: E402
+from zdisamar.inverse_method import optimal_estimation  # noqa: E402
+from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estimation  # noqa: E402
 
 JsonObject = dict[str, Any]
 
@@ -41,8 +40,7 @@ def build_state_vector(
 ):
     prior = reference["a_priori"]
     layer_thickness = (
-        case.aerosol.placement.bottom_pressure_hpa
-        - case.aerosol.placement.top_pressure_hpa
+        case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
     )
     return optimal_estimation.StateVector(
         [
@@ -196,9 +194,7 @@ def iteration_matches(
             float(diagnostic_tolerances["state_vector_convergence"]),
         ):
             return False
-        if "snr_normal" in expected and bool(actual["snr_normal"]) != bool(
-            expected["snr_normal"]
-        ):
+        if "snr_normal" in expected and bool(actual["snr_normal"]) != bool(expected["snr_normal"]):
             return False
     return True
 
@@ -262,8 +258,7 @@ def build_summary(
     tolerances = reference["tolerances"]
     retrieved_state = build_retrieved_state(result, profile, layer_thickness)
     aod_abs_diff = abs(
-        retrieved_state["aerosol_optical_depth"]
-        - float(retrieved["aerosol_optical_depth"])
+        retrieved_state["aerosol_optical_depth"] - float(retrieved["aerosol_optical_depth"])
     )
     top_altitude_abs_diff = abs(
         retrieved_state["aerosol_layer_top_altitude_km"]
@@ -352,12 +347,8 @@ def main() -> int:
     phase_timings["build_case_s"] = time.perf_counter() - phase_start
 
     phase_start = time.perf_counter()
-    profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(
-        case
-    )
-    phase_timings["build_pressure_altitude_profile_s"] = (
-        time.perf_counter() - phase_start
-    )
+    profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(case)
+    phase_timings["build_pressure_altitude_profile_s"] = time.perf_counter() - phase_start
 
     phase_start = time.perf_counter()
     state_vector = build_state_vector(case, reference, profile)
@@ -375,8 +366,7 @@ def main() -> int:
     result = run_retrieval(case, state_vector, measurement)
     phase_timings["retrieval_s"] = time.perf_counter() - phase_start
     layer_thickness = (
-        case.aerosol.placement.bottom_pressure_hpa
-        - case.aerosol.placement.top_pressure_hpa
+        case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
     )
     phase_start = time.perf_counter()
     summary = build_summary(

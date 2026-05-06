@@ -38,7 +38,9 @@ def _endpoint_slope_spline_second_derivatives(x: np.ndarray, y: np.ndarray) -> n
     return np.linalg.solve(matrix, rhs)
 
 
-def _cubic_spline_interpolate(x: np.ndarray, y: np.ndarray, second: np.ndarray, value: float) -> float:
+def _cubic_spline_interpolate(
+    x: np.ndarray, y: np.ndarray, second: np.ndarray, value: float
+) -> float:
     lower_index = int(np.searchsorted(x, value, side="right") - 1)
     lower_index = max(0, min(lower_index, len(x) - 2))
     upper_index = lower_index + 1
@@ -88,7 +90,7 @@ class PressureAltitudeProfile:
         )
 
     @classmethod
-    def from_csv(cls, path: Path) -> "PressureAltitudeProfile":
+    def from_csv(cls, path: Path) -> PressureAltitudeProfile:
         altitudes: list[float] = []
         pressures: list[float] = []
         with path.open(newline="") as handle:

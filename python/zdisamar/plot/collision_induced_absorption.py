@@ -15,7 +15,9 @@ from .theme import SEMANTIC_COLORS
 def share_profile(
     table,
     *,
-    share: Literal["cia_share_of_total_absorption", "cia_share_of_total_optical_depth"] = "cia_share_of_total_absorption",
+    share: Literal[
+        "cia_share_of_total_absorption", "cia_share_of_total_optical_depth"
+    ] = "cia_share_of_total_absorption",
     vertical_axis: str = "altitude_km",
     wavelength_nm: float | None = None,
 ):
@@ -34,12 +36,23 @@ def share_profile(
     )
     title = "Collision-induced absorption share profile"
     if wavelength_nm is not None and not data.empty:
-        title = f"Collision-induced absorption share profile, {nearest_wavelength_value(data, wavelength_nm):.2f} nm"
+        nearest_nm = nearest_wavelength_value(data, wavelength_nm)
+        title = f"Collision-induced absorption share profile, {nearest_nm:.2f} nm"
     return (
         alt.Chart(data)
-        .mark_point(filled=True, color=SEMANTIC_COLORS["collision_induced_absorption"], size=26, opacity=0.9)
+        .mark_point(
+            filled=True,
+            color=SEMANTIC_COLORS["collision_induced_absorption"],
+            size=26,
+            opacity=0.9,
+        )
         .encode(
-            x=alt.X(f"{share}:Q", title=label(share), scale=alt.Scale(zero=False), axis=alt.Axis(format=".2e")),
+            x=alt.X(
+                f"{share}:Q",
+                title=label(share),
+                scale=alt.Scale(zero=False),
+                axis=alt.Axis(format=".2e"),
+            ),
             y=_vertical_y(vertical_axis),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
@@ -65,10 +78,16 @@ def optical_depth_profile(
     )
     title = "O2-O2 collision-induced absorption optical depth profile"
     if wavelength_nm is not None and not data.empty:
-        title = f"O2-O2 collision-induced absorption optical depth profile, {nearest_wavelength_value(data, wavelength_nm):.2f} nm"
+        nearest_nm = nearest_wavelength_value(data, wavelength_nm)
+        title = f"O2-O2 collision-induced absorption optical depth profile, {nearest_nm:.2f} nm"
     return (
         alt.Chart(data)
-        .mark_point(filled=True, color=SEMANTIC_COLORS["collision_induced_absorption"], size=26, opacity=0.9)
+        .mark_point(
+            filled=True,
+            color=SEMANTIC_COLORS["collision_induced_absorption"],
+            size=26,
+            opacity=0.9,
+        )
         .encode(
             x=alt.X(
                 f"{fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH}:Q",
@@ -80,7 +99,11 @@ def optical_depth_profile(
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
                 alt.Tooltip(f"{vertical_axis}:Q", title=label(vertical_axis), format=".4g"),
-                alt.Tooltip(f"{fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH}:Q", title=label(fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH), format=".4e"),
+                alt.Tooltip(
+                    f"{fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH}:Q",
+                    title=label(fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH),
+                    format=".4e",
+                ),
             ],
         )
         .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title=title)
@@ -98,8 +121,17 @@ def share_spectrum(
         "absorption": fields.TOTAL_ABSORPTION_OPTICAL_DEPTH,
         "total": fields.TOTAL_OPTICAL_DEPTH,
     }[denominator]
-    data = frame(table, [fields.WAVELENGTH_NM, fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH, denominator_field])
-    grouped = data.groupby(fields.WAVELENGTH_NM, as_index=False)[[fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH, denominator_field]].sum()
+    data = frame(
+        table,
+        [
+            fields.WAVELENGTH_NM,
+            fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH,
+            denominator_field,
+        ],
+    )
+    grouped = data.groupby(fields.WAVELENGTH_NM, as_index=False)[
+        [fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH, denominator_field]
+    ].sum()
     grouped["collision_induced_absorption_share"] = np.divide(
         grouped[fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH],
         grouped[denominator_field],
@@ -120,7 +152,11 @@ def share_spectrum(
                 alt.Tooltip("collision_induced_absorption_share:Q", title="Share", format=".3g"),
             ],
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Collision-induced absorption share spectrum")
+        .properties(
+            width=DEFAULT_WIDTH,
+            height=DEFAULT_HEIGHT,
+            title="Collision-induced absorption share spectrum",
+        )
     )
 
 
@@ -132,16 +168,29 @@ def cross_section_temperature(
     log_y: bool = True,
     wavelength_nm: float | None = None,
 ):
-    data = _active_rows(table, ["temperature_k", y, color, fields.WAVELENGTH_NM], wavelength_nm=wavelength_nm)
+    data = _active_rows(
+        table,
+        ["temperature_k", y, color, fields.WAVELENGTH_NM],
+        wavelength_nm=wavelength_nm,
+    )
     if log_y:
         data = data[data[y] > 0.0].copy()
-    y_encoding = alt.Y(f"{y}:Q", title=label(y), scale=alt.Scale(type="log")) if log_y else alt.Y(f"{y}:Q", title=label(y))
+    y_encoding = (
+        alt.Y(f"{y}:Q", title=label(y), scale=alt.Scale(type="log"))
+        if log_y
+        else alt.Y(f"{y}:Q", title=label(y))
+    )
     title = "Collision-induced absorption cross section by temperature"
     if wavelength_nm is not None and not data.empty:
-        title = f"Collision-induced absorption cross section by temperature, {nearest_wavelength_value(data, wavelength_nm):.2f} nm"
+        nearest_nm = nearest_wavelength_value(data, wavelength_nm)
+        title = f"Collision-induced absorption cross section by temperature, {nearest_nm:.2f} nm"
     return (
         alt.Chart(data)
-        .mark_point(filled=True, color=SEMANTIC_COLORS["collision_induced_absorption"], opacity=0.75)
+        .mark_point(
+            filled=True,
+            color=SEMANTIC_COLORS["collision_induced_absorption"],
+            opacity=0.75,
+        )
         .encode(
             x=alt.X("temperature_k:Q", title="Temperature (K)", scale=alt.Scale(zero=False)),
             y=y_encoding,
@@ -177,5 +226,9 @@ def _active_rows(table, required: list[str], *, wavelength_nm: float | None):
 
 def _vertical_y(vertical_axis: str):
     if vertical_axis == "pressure_hpa":
-        return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis), scale=alt.Scale(reverse=True))
+        return alt.Y(
+            f"{vertical_axis}:Q",
+            title=label(vertical_axis),
+            scale=alt.Scale(reverse=True),
+        )
     return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis))

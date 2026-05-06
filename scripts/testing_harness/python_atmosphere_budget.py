@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import csv
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
-
 from o2a_python_case import build_o2a_case
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -30,7 +28,9 @@ SUMMARY_OUTPUT = OUT_DIR / "python_atmosphere_budget_questions.json"
 
 def require_library() -> str:
     if not LIBRARY_PATH.exists():
-        raise FileNotFoundError(f"{LIBRARY_PATH} does not exist; build the native shared library first")
+        raise FileNotFoundError(
+            f"{LIBRARY_PATH} does not exist; build the native shared library first"
+        )
     return str(LIBRARY_PATH)
 
 
@@ -109,7 +109,9 @@ def answer_questions(table, wavelengths: np.ndarray) -> list[dict[str, object]]:
     scattering_index = int(np.argmax(aerosol_scattering_share))
     return [
         {
-            "question": "Which sampled wavelength has the largest aerosol share of total optical depth?",
+            "question": (
+                "Which sampled wavelength has the largest aerosol share of total optical depth?"
+            ),
             "answer": {
                 "wavelength_nm": float(wavelengths[total_index]),
                 "aerosol_share_of_total_optical_depth": float(aerosol_total_share[total_index]),
@@ -119,10 +121,15 @@ def answer_questions(table, wavelengths: np.ndarray) -> list[dict[str, object]]:
             "output": "atmospheric layer and optical-property budget table",
         },
         {
-            "question": "Which sampled wavelength has the largest aerosol share of scattering optical depth?",
+            "question": (
+                "Which sampled wavelength has the largest aerosol share "
+                "of scattering optical depth?"
+            ),
             "answer": {
                 "wavelength_nm": float(wavelengths[scattering_index]),
-                "aerosol_share_of_scattering_optical_depth": float(aerosol_scattering_share[scattering_index]),
+                "aerosol_share_of_scattering_optical_depth": float(
+                    aerosol_scattering_share[scattering_index]
+                ),
                 "aerosol_scattering_optical_depth": float(
                     sums["aerosol_scattering_optical_depth"][scattering_index]
                 ),

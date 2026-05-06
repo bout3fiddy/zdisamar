@@ -61,8 +61,16 @@ def isrf(
                 axis=alt.Axis(format=".2f"),
             ),
             tooltip=[
-                alt.Tooltip("nominal_wavelength_nm:Q", title="Nominal wavelength (nm)", format=".5f"),
-                alt.Tooltip("support_wavelength_nm:Q", title="Support wavelength (nm)", format=".5f"),
+                alt.Tooltip(
+                    "nominal_wavelength_nm:Q",
+                    title="Nominal wavelength (nm)",
+                    format=".5f",
+                ),
+                alt.Tooltip(
+                    "support_wavelength_nm:Q",
+                    title="Support wavelength (nm)",
+                    format=".5f",
+                ),
                 alt.Tooltip("offset_nm:Q", title="Offset (nm)", format=".6f"),
                 alt.Tooltip("normalized_response:Q", title="Normalized ISRF", format=".5f"),
                 alt.Tooltip("weight:Q", title="Native weight", format=".5g"),
@@ -105,12 +113,24 @@ def matrix(
             y2="_y_end:Q",
             color=alt.Color("weight:Q", title="Weight", scale=alt.Scale(scheme="greys")),
             tooltip=[
-                alt.Tooltip("support_wavelength_nm:Q", title="Support wavelength (nm)", format=".5f"),
-                alt.Tooltip("nominal_wavelength_nm:Q", title="Nominal wavelength (nm)", format=".5f"),
+                alt.Tooltip(
+                    "support_wavelength_nm:Q",
+                    title="Support wavelength (nm)",
+                    format=".5f",
+                ),
+                alt.Tooltip(
+                    "nominal_wavelength_nm:Q",
+                    title="Nominal wavelength (nm)",
+                    format=".5f",
+                ),
                 alt.Tooltip("weight:Q", title="Weight", format=".5g"),
             ],
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Instrument response matrix")
+        .properties(
+            width=DEFAULT_WIDTH,
+            height=DEFAULT_HEIGHT,
+            title="Instrument response matrix",
+        )
     )
 
 
@@ -131,7 +151,11 @@ def support_width(
             y=alt.Y(f"{y}:Q", title=label(y)),
             color=alt.Color("channel_label:N", title="Channel"),
             tooltip=[
-                alt.Tooltip("nominal_wavelength_nm:Q", title="Nominal wavelength (nm)", format=".4f"),
+                alt.Tooltip(
+                    "nominal_wavelength_nm:Q",
+                    title="Nominal wavelength (nm)",
+                    format=".4f",
+                ),
                 alt.Tooltip(f"{y}:Q", title=label(y), format=".4g"),
             ],
         )

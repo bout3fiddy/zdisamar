@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import csv
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
-
 from o2a_python_case import build_o2a_case
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -32,7 +30,9 @@ CHANNEL_LABELS = {0: "radiance", 1: "irradiance"}
 
 def require_library() -> str:
     if not LIBRARY_PATH.exists():
-        raise FileNotFoundError(f"{LIBRARY_PATH} does not exist; build the native shared library first")
+        raise FileNotFoundError(
+            f"{LIBRARY_PATH} does not exist; build the native shared library first"
+        )
     return str(LIBRARY_PATH)
 
 
@@ -85,7 +85,9 @@ def answer_questions(table) -> list[dict[str, object]]:
     widest_index = int(np.argmax(support_widths))
 
     target = 760.76
-    target_wavelength = float(nominal_wavelengths[int(np.argmin(np.abs(nominal_wavelengths - target)))])
+    target_wavelength = float(
+        nominal_wavelengths[int(np.argmin(np.abs(nominal_wavelengths - target)))]
+    )
     target_mask = (table["nominal_wavelength_nm"] == target_wavelength) & (table["channel"] == 0)
     target_rows = table[target_mask]
     top_indexes = np.argsort(target_rows["weight"])[::-1][:10]
@@ -101,7 +103,9 @@ def answer_questions(table) -> list[dict[str, object]]:
     positive = target_rows[target_rows["weight"] > 0.0]
     weighted_mean_offset = float(np.sum(positive["offset_nm"] * positive["weight"]))
     weighted_std_offset = float(
-        np.sqrt(np.sum(np.square(positive["offset_nm"] - weighted_mean_offset) * positive["weight"]))
+        np.sqrt(
+            np.sum(np.square(positive["offset_nm"] - weighted_mean_offset) * positive["weight"])
+        )
     )
     return [
         {
@@ -177,8 +181,10 @@ def main() -> int:
     timing = summary["timing"]
     widest = summary["questions"][0]["answer"]
     print(
-        f"instrument_response={TABLE_OUTPUT} questions={len(summary['questions'])} rows={summary['row_count']} "
-        f"widest_support={widest['support_width_nm']:.3f}nm@{widest['wavelength_nm']:.2f}nm "
+        f"instrument_response={TABLE_OUTPUT} "
+        f"questions={len(summary['questions'])} rows={summary['row_count']} "
+        f"widest_support={widest['support_width_nm']:.3f}nm"
+        f"@{widest['wavelength_nm']:.2f}nm "
         f"prepare={timing['prepare_o2a_s']:.2f}s diagnostics={timing['diagnostics_s']:.2f}s "
         f"total={timing['total_s']:.2f}s"
     )

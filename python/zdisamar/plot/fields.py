@@ -47,7 +47,9 @@ QUANTITY_LABELS = {
     "single_scatter_albedo": "Single-scatter albedo",
     "cia_share_of_total_absorption": "Collision-induced absorption share of absorption",
     "cia_share_of_total_optical_depth": "Collision-induced absorption share of total optical depth",
-    "cia_cross_section_cm5_per_molecule2": "Collision-induced absorption cross section cm5 per molecule2",
+    "cia_cross_section_cm5_per_molecule2": (
+        "Collision-induced absorption cross section cm5 per molecule2"
+    ),
     "weak_line_sigma_cm2_per_molecule": "Weak-line sigma",
     "strong_line_sigma_cm2_per_molecule": "Strong-line sigma",
     "line_mixing_sigma_cm2_per_molecule": "Line-mixing sigma",

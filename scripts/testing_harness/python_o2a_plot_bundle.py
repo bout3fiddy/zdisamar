@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -21,10 +20,22 @@ RESIDUAL_THRESHOLD = 1.0e-14
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate real core-backed O2 A plotting data and PNG plots.")
-    parser.add_argument("--library", required=True, help="Path to the native zdisamar C shared library.")
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Output directory for data and PNGs.")
-    parser.add_argument("--reference", default=str(DEFAULT_REFERENCE), help="Reference implementation spectrum CSV.")
+    parser = argparse.ArgumentParser(
+        description="Generate real core-backed O2 A plotting data and PNG plots."
+    )
+    parser.add_argument(
+        "--library", required=True, help="Path to the native zdisamar C shared library."
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(DEFAULT_OUTPUT_DIR),
+        help="Output directory for data and PNGs.",
+    )
+    parser.add_argument(
+        "--reference",
+        default=str(DEFAULT_REFERENCE),
+        help="Reference implementation spectrum CSV.",
+    )
     return parser.parse_args()
 
 
@@ -77,7 +88,9 @@ def resample_reference(reference: pd.DataFrame, spectrum: pd.DataFrame) -> pd.Da
 
 
 def reflectance_residuals(spectrum: pd.DataFrame, reference: pd.DataFrame) -> pd.DataFrame:
-    residual = spectrum["reflectance"].to_numpy(dtype=float) - reference["reflectance"].to_numpy(dtype=float)
+    residual = spectrum["reflectance"].to_numpy(dtype=float) - reference["reflectance"].to_numpy(
+        dtype=float
+    )
     return pd.DataFrame(
         {
             "wavelength_nm": spectrum["wavelength_nm"],
@@ -97,13 +110,17 @@ def validation_metrics(spectrum: pd.DataFrame, reference: pd.DataFrame) -> dict[
         "wavelength_max_nm": float(spectrum["wavelength_nm"].max()),
     }
     for quantity in ("reflectance", "radiance", "irradiance"):
-        residual = spectrum[quantity].to_numpy(dtype=float) - reference[quantity].to_numpy(dtype=float)
+        residual = spectrum[quantity].to_numpy(dtype=float) - reference[quantity].to_numpy(
+            dtype=float
+        )
         metrics[quantity] = {
             "mae": float(np.mean(np.abs(residual))),
             "rmse": float(np.sqrt(np.mean(np.square(residual)))),
             "max_abs": float(np.max(np.abs(residual))),
             "mean_signed": float(np.mean(residual)),
-            "max_abs_wavelength_nm": float(spectrum["wavelength_nm"].iloc[int(np.argmax(np.abs(residual)))]),
+            "max_abs_wavelength_nm": float(
+                spectrum["wavelength_nm"].iloc[int(np.argmax(np.abs(residual)))]
+            ),
         }
     return metrics
 
@@ -139,13 +156,19 @@ def collect_core_outputs(zd, zp, library_path: str, reference_path: Path):
             with prepared.atmosphere.budget(wavelengths_nm=grid) as budget:
                 budget_frame = budget.to_pandas()
             progress("collecting O2-O2 collision-induced absorption diagnostics")
-            with prepared.collision_induced_absorption.diagnostics(wavelengths_nm=grid) as collision_induced_absorption:
+            with prepared.collision_induced_absorption.diagnostics(
+                wavelengths_nm=grid
+            ) as collision_induced_absorption:
                 collision_induced_absorption_frame = collision_induced_absorption.to_pandas()
             progress("collecting instrument-response diagnostics")
-            with prepared.instrument_response.sampling_table(wavelengths_nm=response_wavelengths) as response:
+            with prepared.instrument_response.sampling_table(
+                wavelengths_nm=response_wavelengths
+            ) as response:
                 response_frame = response.to_pandas()
             progress("collecting radiative-transfer diagnostics")
-            with prepared.radiative_transfer.diagnostics(wavelengths_nm=grid, spectrum=spectrum) as rt:
+            with prepared.radiative_transfer.diagnostics(
+                wavelengths_nm=grid, spectrum=spectrum
+            ) as rt:
                 rt_frame = rt.to_pandas()
 
     return {
@@ -171,7 +194,10 @@ def write_data_bundle(output_dir: Path, bundle: dict[str, object]) -> None:
     write_csv(data_dir / "reflectance_residuals.csv", bundle["residuals"])
     write_json(data_dir / "validation_metrics.json", bundle["metrics"])
     write_csv(data_dir / "atmospheric_budget.csv", bundle["budget"])
-    write_csv(data_dir / "collision_induced_absorption_diagnostics.csv", bundle["collision_induced_absorption"])
+    write_csv(
+        data_dir / "collision_induced_absorption_diagnostics.csv",
+        bundle["collision_induced_absorption"],
+    )
     write_csv(data_dir / "instrument_response.csv", bundle["response"])
     write_csv(data_dir / "radiative_transfer_diagnostics.csv", bundle["rt"])
 
@@ -217,7 +243,9 @@ def build_plots(zp, bundle: dict[str, object]) -> dict[str, object]:
             markers_nm=MARKERS_NM,
         ),
         "atmosphere/optical_depth_component_stack": zp.atmosphere.component_stack(bundle["budget"]),
-        "collision_induced_absorption/share_spectrum": zp.collision_induced_absorption.share_spectrum(bundle["collision_induced_absorption"]),
+        "collision_induced_absorption/share_spectrum": (
+            zp.collision_induced_absorption.share_spectrum(bundle["collision_induced_absorption"])
+        ),
         "instrument_response/isrf_" + wavelength_slug(760.76): zp.instrument_response.isrf(
             bundle["response"],
             nominal_wavelength_nm=760.76,
@@ -225,26 +253,36 @@ def build_plots(zp, bundle: dict[str, object]) -> dict[str, object]:
     }
     for wavelength_nm in selected_wavelengths:
         suffix = wavelength_slug(wavelength_nm)
-        charts[f"atmosphere/total_optical_depth_profile_{suffix}"] = zp.atmosphere.optical_depth_profile(
-            bundle["budget"],
-            quantity=zp.fields.TOTAL_OPTICAL_DEPTH,
-            wavelengths_nm=(wavelength_nm,),
+        charts[f"atmosphere/total_optical_depth_profile_{suffix}"] = (
+            zp.atmosphere.optical_depth_profile(
+                bundle["budget"],
+                quantity=zp.fields.TOTAL_OPTICAL_DEPTH,
+                wavelengths_nm=(wavelength_nm,),
+            )
         )
-        charts[f"atmosphere/single_scatter_albedo_profile_{suffix}"] = zp.atmosphere.single_scatter_albedo_profile(
-            bundle["budget"],
-            wavelengths_nm=(wavelength_nm,),
+        charts[f"atmosphere/single_scatter_albedo_profile_{suffix}"] = (
+            zp.atmosphere.single_scatter_albedo_profile(
+                bundle["budget"],
+                wavelengths_nm=(wavelength_nm,),
+            )
         )
-        charts[f"collision_induced_absorption/share_profile_{suffix}"] = zp.collision_induced_absorption.share_profile(
-            bundle["collision_induced_absorption"],
-            wavelength_nm=wavelength_nm,
+        charts[f"collision_induced_absorption/share_profile_{suffix}"] = (
+            zp.collision_induced_absorption.share_profile(
+                bundle["collision_induced_absorption"],
+                wavelength_nm=wavelength_nm,
+            )
         )
-        charts[f"collision_induced_absorption/optical_depth_profile_{suffix}"] = zp.collision_induced_absorption.optical_depth_profile(
-            bundle["collision_induced_absorption"],
-            wavelength_nm=wavelength_nm,
+        charts[f"collision_induced_absorption/optical_depth_profile_{suffix}"] = (
+            zp.collision_induced_absorption.optical_depth_profile(
+                bundle["collision_induced_absorption"],
+                wavelength_nm=wavelength_nm,
+            )
         )
-        charts[f"collision_induced_absorption/cross_section_temperature_{suffix}"] = zp.collision_induced_absorption.cross_section_temperature(
-            bundle["collision_induced_absorption"],
-            wavelength_nm=wavelength_nm,
+        charts[f"collision_induced_absorption/cross_section_temperature_{suffix}"] = (
+            zp.collision_induced_absorption.cross_section_temperature(
+                bundle["collision_induced_absorption"],
+                wavelength_nm=wavelength_nm,
+            )
         )
     return charts
 

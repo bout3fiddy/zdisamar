@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from typing import TypedDict, cast
 
 import altair as alt
@@ -14,12 +14,10 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
-import python.zdisamar as zd
-import python.zdisamar.plot as zp
-
+import python.zdisamar as zd  # noqa: E402
+import python.zdisamar.plot as zp  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "out" / "ci" / "o2a_validation_spectrum"
 DEFAULT_REFERENCE = REPO_ROOT / "validation" / "data" / "o2a_with_cia_disamar_reference.csv"
@@ -233,15 +231,30 @@ def build_o2a_validation_scene() -> zd.O2AInput:
 def resample_reference(reference: pd.DataFrame, spectrum: pd.DataFrame) -> pd.DataFrame:
     wavelength_nm = column_array(spectrum, "wavelength_nm")
     reference_wavelength_nm = column_array(reference, "wavelength_nm")
-    if wavelength_nm[0] < reference_wavelength_nm[0] or wavelength_nm[-1] > reference_wavelength_nm[-1]:
+    if (
+        wavelength_nm[0] < reference_wavelength_nm[0]
+        or wavelength_nm[-1] > reference_wavelength_nm[-1]
+    ):
         raise ValueError("Generated spectrum grid extends outside the reference spectrum grid")
 
     return pd.DataFrame(
         {
             "wavelength_nm": wavelength_nm,
-            "reflectance": np.interp(wavelength_nm, reference_wavelength_nm, column_array(reference, "reflectance")),
-            "radiance": np.interp(wavelength_nm, reference_wavelength_nm, column_array(reference, "radiance")),
-            "irradiance": np.interp(wavelength_nm, reference_wavelength_nm, column_array(reference, "irradiance")),
+            "reflectance": np.interp(
+                wavelength_nm,
+                reference_wavelength_nm,
+                column_array(reference, "reflectance"),
+            ),
+            "radiance": np.interp(
+                wavelength_nm,
+                reference_wavelength_nm,
+                column_array(reference, "radiance"),
+            ),
+            "irradiance": np.interp(
+                wavelength_nm,
+                reference_wavelength_nm,
+                column_array(reference, "irradiance"),
+            ),
         }
     )
 
@@ -250,7 +263,9 @@ def column_array(frame: pd.DataFrame, column: str) -> npt.NDArray[np.float64]:
     return np.asarray(frame.loc[:, column], dtype=np.float64)
 
 
-def quantity_metrics(current: npt.NDArray[np.float64], expected: npt.NDArray[np.float64]) -> QuantityMetrics:
+def quantity_metrics(
+    current: npt.NDArray[np.float64], expected: npt.NDArray[np.float64]
+) -> QuantityMetrics:
     residual = current - expected
     return {
         "mae": float(np.mean(np.abs(residual))),
@@ -266,9 +281,16 @@ def validation_metrics(spectrum: pd.DataFrame, reference: pd.DataFrame) -> Valid
         "sample_count": int(len(spectrum)),
         "wavelength_min_nm": float(np.min(wavelength_nm)),
         "wavelength_max_nm": float(np.max(wavelength_nm)),
-        "reflectance": quantity_metrics(column_array(spectrum, "reflectance"), column_array(reference, "reflectance")),
-        "radiance": quantity_metrics(column_array(spectrum, "radiance"), column_array(reference, "radiance")),
-        "irradiance": quantity_metrics(column_array(spectrum, "irradiance"), column_array(reference, "irradiance")),
+        "reflectance": quantity_metrics(
+            column_array(spectrum, "reflectance"),
+            column_array(reference, "reflectance"),
+        ),
+        "radiance": quantity_metrics(
+            column_array(spectrum, "radiance"), column_array(reference, "radiance")
+        ),
+        "irradiance": quantity_metrics(
+            column_array(spectrum, "irradiance"), column_array(reference, "irradiance")
+        ),
     }
 
 

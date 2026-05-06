@@ -33,7 +33,7 @@ class RetrievalControls:
     max_change_transformed_state: float = 1.0
 
     @classmethod
-    def from_disamar_retrieval_specs(cls) -> "RetrievalControls":
+    def from_disamar_retrieval_specs(cls) -> RetrievalControls:
         """Return controls from the current DISAMAR `retrieval_specs` fixture."""
 
         return cls(

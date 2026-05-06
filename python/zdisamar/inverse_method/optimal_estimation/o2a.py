@@ -11,7 +11,7 @@ from ...prepared import PreparedO2ABase, prepare
 from ...types import O2AInput
 from .core import retrieve
 from .forward_evaluation import ForwardEvaluation
-from .retrieval import Measurement, RetrievalControls, Result
+from .retrieval import Measurement, Result, RetrievalControls
 from .state_vector import PressureAltitudeProfile, StateVector
 
 
@@ -87,9 +87,7 @@ def evaluate_prepared_reflectance(
     #     R = pi * I / (mu0 * E0)
     #     dR/dx = dI/dx / (mu0 * E0 / pi).
     mu0 = math.cos(math.radians(prepared.input.geometry.solar_zenith_deg))
-    reflectance_jacobian_all = (
-        radiance_jacobian / ((mu0 * irradiance / math.pi)[:, None])
-    )
+    reflectance_jacobian_all = radiance_jacobian / ((mu0 * irradiance / math.pi)[:, None])
     columns = [available_state_names.index(name) for name in state_names]
     return ForwardEvaluation(
         wavelength_nm=wavelength_nm,
@@ -136,9 +134,7 @@ def pressure_altitude_profile_from_prepared_grid(
         levels_by_pressure[round(float(row["bottom_pressure_hpa"]), 12)] = float(
             row["bottom_altitude_km"]
         )
-    levels = sorted(
-        (altitude, pressure) for pressure, altitude in levels_by_pressure.items()
-    )
+    levels = sorted((altitude, pressure) for pressure, altitude in levels_by_pressure.items())
     return PressureAltitudeProfile(
         altitude_km=np.array([altitude for altitude, _pressure in levels]),
         pressure_hpa=np.array([pressure for _altitude, pressure in levels]),
@@ -161,9 +157,7 @@ def measurement_from_sun_normalized_radiance_noise(
         raise ValueError("noise wavelength and values must have the same length")
     if source_wavelength.size == 0:
         raise ValueError("noise reference must contain at least one sample")
-    if not np.all(np.isfinite(source_wavelength)) or not np.all(
-        np.isfinite(source_noise)
-    ):
+    if not np.all(np.isfinite(source_wavelength)) or not np.all(np.isfinite(source_noise)):
         raise ValueError("noise wavelength and values must be finite")
     if np.any(source_noise <= 0.0):
         raise ValueError("sun-normalized radiance noise must be positive")

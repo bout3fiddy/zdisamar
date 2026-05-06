@@ -49,4 +49,3 @@ class AerosolLayerTopAltitude:
 
         if not updated_fit_interval:
             raise ValueError("aerosol fit interval is not present in the atmosphere")
-

@@ -82,19 +82,14 @@ def gauss_newton_step(
     dx_new = problem.sqrt_sa @ v @ dx_trans_new
     state = prior + dx_new
     posterior_precision_white = v @ np.diag(1.0 + singular_values**2) @ vt
-    posterior_precision = (
-        problem.sqrt_inv_sa.T @ posterior_precision_white @ problem.sqrt_inv_sa
-    )
+    posterior_precision = problem.sqrt_inv_sa.T @ posterior_precision_white @ problem.sqrt_inv_sa
     posterior_covariance = np.linalg.inv(posterior_precision)
 
     # The averaging kernel is not required to choose the next x, but it is part
     # of optimal estimation's scientific output: it tells later experiments how much of the
     # retrieved state came from the measurement rather than the prior.
     averaging_kernel = (
-        posterior_covariance
-        @ jacobian.T
-        @ np.diag(1.0 / measurement_variance)
-        @ jacobian
+        posterior_covariance @ jacobian.T @ np.diag(1.0 / measurement_variance) @ jacobian
     )
     return Step(
         state=state,
@@ -112,6 +107,4 @@ def _transformed_state(
 ) -> np.ndarray:
     """Apply the scalar optimal estimation update in SVD-transformed coordinates."""
 
-    return (
-        singular_values * (residual + singular_values * dx) / (singular_values**2 + 1.0)
-    )
+    return singular_values * (residual + singular_values * dx) / (singular_values**2 + 1.0)

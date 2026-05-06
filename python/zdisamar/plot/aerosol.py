@@ -26,7 +26,9 @@ def share_spectrum(
         "absorption": "aerosol_absorption_optical_depth",
     }[share]
     data = frame(budget, [fields.WAVELENGTH_NM, numerator, fields.TOTAL_OPTICAL_DEPTH])
-    grouped = data.groupby(fields.WAVELENGTH_NM, as_index=False)[[numerator, fields.TOTAL_OPTICAL_DEPTH]].sum()
+    grouped = data.groupby(fields.WAVELENGTH_NM, as_index=False)[
+        [numerator, fields.TOTAL_OPTICAL_DEPTH]
+    ].sum()
     grouped["aerosol_share"] = np.divide(
         grouped[numerator],
         grouped[fields.TOTAL_OPTICAL_DEPTH],
@@ -44,7 +46,11 @@ def share_spectrum(
                 alt.Tooltip("aerosol_share:Q", title="Share", format=".3g"),
             ],
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title=f"Aerosol {share} share spectrum")
+        .properties(
+            width=DEFAULT_WIDTH,
+            height=DEFAULT_HEIGHT,
+            title=f"Aerosol {share} share spectrum",
+        )
     )
 
 
@@ -54,27 +60,44 @@ def optical_depth_profile(
     vertical_axis: str = "altitude_km",
     wavelengths_nm: Sequence[float] | None = None,
 ):
-    data = nearest_wavelength_rows(budget, wavelengths_nm) if wavelengths_nm else frame(
-        budget, [fields.WAVELENGTH_NM, vertical_axis, fields.AEROSOL_OPTICAL_DEPTH]
+    data = (
+        nearest_wavelength_rows(budget, wavelengths_nm)
+        if wavelengths_nm
+        else frame(budget, [fields.WAVELENGTH_NM, vertical_axis, fields.AEROSOL_OPTICAL_DEPTH])
     )
     return (
         alt.Chart(data)
         .mark_line(point=True, color=SEMANTIC_COLORS["aerosol"])
         .encode(
-            x=alt.X(f"{fields.AEROSOL_OPTICAL_DEPTH}:Q", title=label(fields.AEROSOL_OPTICAL_DEPTH)),
+            x=alt.X(
+                f"{fields.AEROSOL_OPTICAL_DEPTH}:Q",
+                title=label(fields.AEROSOL_OPTICAL_DEPTH),
+            ),
             y=_vertical_y(vertical_axis),
             color=alt.Color(f"{fields.WAVELENGTH_NM}:N", title="Wavelength (nm)"),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
                 alt.Tooltip(f"{vertical_axis}:Q", title=label(vertical_axis), format=".4g"),
-                alt.Tooltip(f"{fields.AEROSOL_OPTICAL_DEPTH}:Q", title=label(fields.AEROSOL_OPTICAL_DEPTH), format=".3g"),
+                alt.Tooltip(
+                    f"{fields.AEROSOL_OPTICAL_DEPTH}:Q",
+                    title=label(fields.AEROSOL_OPTICAL_DEPTH),
+                    format=".3g",
+                ),
             ],
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Aerosol optical-depth profile")
+        .properties(
+            width=DEFAULT_WIDTH,
+            height=DEFAULT_HEIGHT,
+            title="Aerosol optical-depth profile",
+        )
     )
 
 
 def _vertical_y(vertical_axis: str):
     if vertical_axis == "pressure_hpa":
-        return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis), scale=alt.Scale(reverse=True))
+        return alt.Y(
+            f"{vertical_axis}:Q",
+            title=label(vertical_axis),
+            scale=alt.Scale(reverse=True),
+        )
     return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis))

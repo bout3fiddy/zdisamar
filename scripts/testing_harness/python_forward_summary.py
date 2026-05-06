@@ -9,17 +9,19 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
-from pathlib import Path
 import sys
 import time
+from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
-
 from o2a_python_case import build_o2a_case
-from o2a_spectrum_plot import interpolate_to_grid, load_spectrum_csv, write_spectrum_plot
-
+from o2a_spectrum_plot import (
+    interpolate_to_grid,
+    load_spectrum_csv,
+    write_spectrum_plot,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -34,7 +36,9 @@ TOLERANCE = 1.0e-12
 
 def require_library() -> str:
     if not LIBRARY_PATH.exists():
-        raise FileNotFoundError(f"{LIBRARY_PATH} does not exist; build the native shared library first")
+        raise FileNotFoundError(
+            f"{LIBRARY_PATH} does not exist; build the native shared library first"
+        )
     return str(LIBRARY_PATH)
 
 

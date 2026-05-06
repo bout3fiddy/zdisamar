@@ -11,10 +11,7 @@ def load_spectrum_csv(path: Path) -> dict[str, np.ndarray]:
         rows = list(csv.DictReader(handle))
     if not rows:
         raise ValueError(f"{path} is empty")
-    return {
-        key: np.array([float(row[key]) for row in rows], dtype=float)
-        for key in rows[0].keys()
-    }
+    return {key: np.array([float(row[key]) for row in rows], dtype=float) for key in rows[0]}
 
 
 def interpolate_to_grid(
@@ -26,9 +23,13 @@ def interpolate_to_grid(
         wavelength_nm[0] < reference_wavelength_nm[0]
         or wavelength_nm[-1] > reference_wavelength_nm[-1]
     ):
-        raise ValueError("current spectrum grid extends outside the vendored DISAMAR reference grid")
+        raise ValueError(
+            "current spectrum grid extends outside the vendored DISAMAR reference grid"
+        )
     return {
-        key: wavelength_nm if key == "wavelength_nm" else np.interp(wavelength_nm, reference_wavelength_nm, values)
+        key: wavelength_nm
+        if key == "wavelength_nm"
+        else np.interp(wavelength_nm, reference_wavelength_nm, values)
         for key, values in reference.items()
     }
 
@@ -51,7 +52,12 @@ def write_spectrum_plot(
     fig, axes = plt.subplots(4, 1, figsize=(12, 11), sharex=True, constrained_layout=True)
     fig.suptitle("DISAMAR O2 A parity route spectrum")
 
-    axes[0].plot(wavelength_nm, vendor["reflectance"], label="Vendored DISAMAR reference", linewidth=1.8)
+    axes[0].plot(
+        wavelength_nm,
+        vendor["reflectance"],
+        label="Vendored DISAMAR reference",
+        linewidth=1.8,
+    )
     axes[0].plot(wavelength_nm, reflectance, label="Python parity route", linewidth=1.4)
     axes[0].scatter(
         [wavelength_nm[min_reflectance_index]],
@@ -64,12 +70,22 @@ def write_spectrum_plot(
     axes[0].set_ylabel("reflectance")
     axes[0].legend(loc="best")
 
-    axes[1].plot(wavelength_nm, vendor["radiance"], label="Vendored DISAMAR reference", linewidth=1.8)
+    axes[1].plot(
+        wavelength_nm,
+        vendor["radiance"],
+        label="Vendored DISAMAR reference",
+        linewidth=1.8,
+    )
     axes[1].plot(wavelength_nm, radiance, label="Python parity route", linewidth=1.4)
     axes[1].set_ylabel("radiance")
     axes[1].legend(loc="best")
 
-    axes[2].plot(wavelength_nm, vendor["irradiance"], label="Vendored DISAMAR reference", linewidth=1.8)
+    axes[2].plot(
+        wavelength_nm,
+        vendor["irradiance"],
+        label="Vendored DISAMAR reference",
+        linewidth=1.8,
+    )
     axes[2].plot(wavelength_nm, irradiance, label="Python parity route", linewidth=1.4)
     axes[2].set_ylabel("irradiance")
     axes[2].legend(loc="best")

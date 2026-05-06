@@ -45,7 +45,11 @@ def delta_reflectance(
     points = (
         alt.Chart(max_rows)
         .mark_point(filled=True, color=MATPLOTLIB_RED, size=45)
-        .encode(x=f"{fields.WAVELENGTH_NM}:Q", y=f"{field}:Q", tooltip=[alt.Tooltip("label:N")])
+        .encode(
+            x=f"{fields.WAVELENGTH_NM}:Q",
+            y=f"{field}:Q",
+            tooltip=[alt.Tooltip("label:N")],
+        )
     )
     return alt.layer(line, points)
 
@@ -89,14 +93,20 @@ def delta_heatmap(
                 alt.Tooltip(f"{field}:Q", title=label(field), format=".3e"),
             ],
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Perturbation delta heatmap")
+        .properties(
+            width=DEFAULT_WIDTH,
+            height=DEFAULT_HEIGHT,
+            title="Perturbation delta heatmap",
+        )
     )
 
 
 def summary_bar(
     results,
     *,
-    metric: Literal["max_abs_delta_reflectance", "mean_abs_delta_reflectance"] = "max_abs_delta_reflectance",
+    metric: Literal[
+        "max_abs_delta_reflectance", "mean_abs_delta_reflectance"
+    ] = "max_abs_delta_reflectance",
 ):
     data = _summary_frame(results)
     require_columns(data, ["label", metric])
@@ -104,7 +114,11 @@ def summary_bar(
         alt.Chart(data)
         .mark_bar(color=MATPLOTLIB_RED)
         .encode(
-            x=alt.X("label:N", title="Perturbation", axis=alt.Axis(labelAngle=0, labelLimit=360)),
+            x=alt.X(
+                "label:N",
+                title="Perturbation",
+                axis=alt.Axis(labelAngle=0, labelLimit=360),
+            ),
             y=alt.Y(f"{metric}:Q", title=label(metric)),
             tooltip=[alt.Tooltip("label:N"), alt.Tooltip(f"{metric}:Q", format=".3e")],
         )
@@ -115,7 +129,9 @@ def summary_bar(
 def _results_frame(result_or_results):
     import pandas as pd
 
-    results = result_or_results if isinstance(result_or_results, list | tuple) else [result_or_results]
+    results = (
+        result_or_results if isinstance(result_or_results, list | tuple) else [result_or_results]
+    )
     frames = []
     for index, result in enumerate(results):
         frame = to_dataframe(result)
@@ -134,7 +150,12 @@ def _summary_frame(results):
     for index, result in enumerate(items):
         summary = getattr(result, "summary", None)
         if summary is None:
-            rows.append({"label": f"perturbation {index + 1}", **to_dataframe(result).iloc[0].to_dict()})
+            rows.append(
+                {
+                    "label": f"perturbation {index + 1}",
+                    **to_dataframe(result).iloc[0].to_dict(),
+                }
+            )
         else:
             rows.append(
                 {

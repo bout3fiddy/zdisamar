@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pandas as pd
 
-
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "out" / "plots" / "python_plotting"
 
 REQUIRED_DATA = {
@@ -51,7 +50,9 @@ REQUIRED_PLOTS = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Verify the real O2 A Python plotting bundle outputs.")
+    parser = argparse.ArgumentParser(
+        description="Verify the real O2 A Python plotting bundle outputs."
+    )
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     return parser.parse_args()
 
