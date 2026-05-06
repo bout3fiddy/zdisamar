@@ -20,8 +20,9 @@ Excerpt:
 do ilevel = startLevel, endLevel - 1
   do imu0 = 1, 2
     do imu = 1, dimSV_fc * nmutot
-      ! DISAMAR reaches this dot product for each layer in each order.
-      ! A zero RT_fc layer still pays for the multiply-and-sum work.
+      ! SLOW: the dot products run for every layer at every order. If
+      !       RT_fc(ilevel+1) is the zero matrix, we still pay for two
+      !       full dot products per (imu, imu0) just to get zero back.
       UDLocal_fc(ilevel)%D(imu,imu0) = &
       dot_product(RT_fc(ilevel+1)%Rst(imu,1:dimSV_fc*nGauss),        &
                   UDorde_fc(ilevel  )%U(1:dimSV_fc*nGauss,imu0) ) +  &
@@ -53,6 +54,10 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
+// FAST: while building layer matrices, also write down whether the
+//       layer can contribute. `rt_active[rt_idx] = false` is the flag
+//       the scattering-order loop will check later instead of
+//       re-discovering the zero through expensive dot products.
 if (i_fourier > max_phase_index) {
     rt[rt_idx] = zeroLayerRt(geo.nmutot);
     if (rt_active) |active| active[rt_idx] = false;
@@ -63,8 +68,8 @@ if (layer.optical_depth < 1.0e-20 or
     layer.scattering_optical_depth <= 0.0 or
     layer.single_scatter_albedo <= 0.0)
 {
-    // This layer cannot scatter for this Fourier term. Mark it now so
-    // the later scattering-order loop does not multiply by a zero matrix.
+    // FAST: same idea — the layer is provably inactive for this Fourier
+    //       term. Record it and skip the heavy build entirely.
     rt[rt_idx] = zeroLayerRt(geo.nmutot);
     if (rt_active) |active| active[rt_idx] = false;
     continue;
@@ -79,6 +84,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 for (start_level..end_level) |ilevel| {
     const local_d0 = &ud_local_view[ilevel].D.col[0].data;
     const local_d1 = &ud_local_view[ilevel].D.col[1].data;
+    // FAST: this is the payoff. Reading the precomputed rt_active flag
+    //       is one bool. If the layer was zero, write zeros into D and
+    //       move on — no dot products at all.
     if (!rt_active_view[ilevel + 1]) {
         for (0..nmutot) |imu| {
             local_d0[imu] = 0.0;
@@ -87,7 +95,7 @@ for (start_level..end_level) |ilevel| {
         continue;
     }
 
-    // Only active layers reach the dot products.
+    // FAST: only active layers reach the dot products below.
     for (0..nmutot) |imu| {
         const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
         const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);

@@ -15,6 +15,10 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```fortran
+! SLOW: matrix dimensions come from runtime values (dimSV_fc, nmutot), so
+!       the compiler must keep loop counters and indexing math in the
+!       generated code. It cannot unroll, hold rows in registers, or use
+!       SIMD as aggressively as for a known shape.
 real(8) :: E(dimSV_fc*nmutot)
 real(8) :: DmuPlus(nmutot,nmutot),DmuMin(nmutot,nmutot)
 real(8) :: Zplus(dimSV_fc*nmutot,dimSV_fc*nmutot),Zmin(dimSV_fc*nmutot,dimSV_fc*nmutot)
@@ -30,10 +34,16 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
+// FAST: `inline fn` + `inline for (0..12)` tells the compiler the matrix
+//       dimensions are 12x10 at compile time. The outer loop is unrolled
+//       12 times, the inner loop is unrolled 12 times, and the row of `a`
+//       is held in 10 registers (a0..a9) for the duration of one i.
+//       No counters, no bounds math — just straight-line FMAs.
 inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
     result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
+        // FAST: load row i of `a` into registers once.
         const a0 = a.data[row];
         const a1 = a.data[row + 1];
         const a2 = a.data[row + 2];

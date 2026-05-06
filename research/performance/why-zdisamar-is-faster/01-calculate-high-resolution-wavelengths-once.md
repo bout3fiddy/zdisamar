@@ -17,9 +17,14 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```fortran
+! SLOW: nested band x Fourier loops fill broad wavelength/pressure LUTs
+!       independently. Nothing here builds a *unique* list of high-resolution
+!       radiance wavelengths, so downstream code ends up recomputing the
+!       same high-resolution radiance many times.
 do iband = 1, globalS%numSpectrBands
   do iFourier = 0, globalS%maxFourierTermLUT
     do iwave = 1, globalS%createLUTSimS(iFourier,iband)%nwavel
+      ! SLOW: copying the same wavelength values for each Fourier term
       globalS%createLUTSimS(iFourier,iband)%wavel(iwave) = globalS%wavelInstrRadSimS(iband)%wavel(iwave)
     end do
     do iwave = 1, globalS%createLUTRetrS(iFourier,iband)%nwavel
@@ -40,6 +45,8 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
+// FAST: build the integration plan first so we know exactly which
+//       high-resolution wavelengths the 701 outputs will need.
 const wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
     allocator,
     scene,
@@ -50,11 +57,16 @@ const wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
     implementations,
 );
 defer allocator.free(wavelength_sampling);
+// FAST: dedupe — collapse duplicate high-resolution wavelengths to a
+//       single unique list. This is the key decision that turns "thousands
+//       of recomputations" into "calculate each one once".
 const forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
     allocator,
     wavelength_sampling,
 );
 defer allocator.free(forward_misses);
+// FAST: calculate radiance for the unique list once, store the results
+//       in the evaluation_cache so the integration loop just looks them up.
 try SpectralEval.prefetchForwardSamples(
     allocator,
     scene,
@@ -76,6 +88,7 @@ pub fn collectUniqueForwardMisses(
     allocator: Allocator,
     plans: []const WavelengthSampling,
 ) ![]SpectralEval.ForwardCacheMiss {
+    // FAST: a hash set keeps each high-resolution wavelength only once.
     var seen = std.AutoHashMap(u64, void).init(allocator);
     defer seen.deinit();
     var misses = std.ArrayList(SpectralEval.ForwardCacheMiss).empty;
@@ -90,6 +103,8 @@ pub fn collectUniqueForwardMisses(
                 plan.radiance_wavelength_nm;
             const key = SpectralEval.SpectralEvaluationCache.keyFor(wavelength_nm);
             const entry = try seen.getOrPut(key);
+            // FAST: this is the dedup decision — a duplicate is dropped here,
+            //       so the unique list grows by at most one entry per wavelength.
             if (entry.found_existing) continue;
             try misses.append(allocator, .{
                 .key = key,
@@ -104,6 +119,9 @@ Those high-resolution radiance calculations are independent of one another, so z
 Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig#L339-L386)
 
 ```zig
+// FAST: the unique list is independent across entries (no entry depends on
+//       another's result), so split it across worker threads. Each worker
+//       owns a slice of the work and a slice of the result buffer.
 var error_state = ForwardPrefetchErrorState{};
 const workers = try allocator.alloc(ForwardPrefetchWorker, worker_count);
 defer allocator.free(workers);
@@ -164,6 +182,9 @@ After that, the output loop reads the stored high-resolution radiance values dur
 Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/instrument_grid/grid_calculation/simulate.zig#L91-L114)
 
 ```zig
+// FAST: at this point every unique high-resolution wavelength is in the
+//       evaluation_cache. The output loop only *integrates* over cached
+//       values — no new radiance work happens here.
 for (wavelength_sampling, 0..) |plan, index| {
     const nominal_wavelength_nm = plan.nominal_wavelength_nm;
     buffers.wavelengths[index] = nominal_wavelength_nm;

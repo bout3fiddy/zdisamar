@@ -22,10 +22,15 @@ do iP = 0, traceGasS%nalt
   T = traceGasS%temperature(iP)              ! T in K
   P = traceGasS%pressure(iP) / 1013.25d0     ! P  in atm
 
+  ! SLOW: CalculatAbsXsec re-broadens every line at (T, P) and walks the
+  !       full high-resolution wavelength grid in one call. The (T, P)
+  !       work is repeated whenever this routine is re-entered.
   call CalculatAbsXsec(errS,  T, P, XsecS%cutoff, wavelHRS%wavel(:), XsecS%Xsec(:, iP), hitranS)
   if (errorCheck(errS)) return
 
   if ( filterStrongLinesO2A ) then
+    ! SLOW: line-mixing terms are also recomputed at (T, P) here, then added
+    !       into the table inside the same per-pressure loop.
     call CalculateLineMixingXsec(errS, T, P, waveNumbers, hitranS, SDFS, RMFS, Xsec, Xsec_LM)
     if (errorCheck(errS)) return
     if ( useLM ) then
@@ -54,6 +59,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
+// FAST: prepare the (T, P)-dependent line state once per profile node,
+//       in setup. Anything that does not depend on wavelength is folded
+//       into `prepareWeakLineState` / `prepareStrongLineState` here.
 if (!loaded_profile_states) {
     if (state.profile_weak_line_states) |states| {
         const line_list = state.owned_lines.?;
@@ -79,12 +87,16 @@ For each high-resolution wavelength, zdisamar then selects the nearby strong lin
 Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/optical_properties/state_build/state_spectroscopy.zig#L60-L87)
 
 ```zig
+// FAST: per-wavelength path uses the prepared per-node state and a
+//       narrow wavelength window. Only wavelength-dependent lookup +
+//       summation runs in the inner loop.
 const wavelength_window = if (prepared_states != null)
     LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
 else
     null;
 for (0..node_count) |index| {
     const evaluation = if (prepared_states) |states|
+        // FAST: cached (T, P) state — no broadening work here.
         LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
             line_list,
             wavelength_nm,

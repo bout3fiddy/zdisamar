@@ -11,6 +11,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```fortran
+! SLOW: the loop runs all FourierMax+1 terms unconditionally. There is no
+!       "stop once the tail is too small to matter" check, so even
+!       negligible terms still pay for fillPlmVector + CalcRTlayers.
 do iFourier = 0, FourierMax
 
   if ( .not. controlS%aerosolLayerHeight ) then
@@ -21,8 +24,9 @@ do iFourier = 0, FourierMax
     end if
   end if
 
-  ! These values are rebuilt here before the RT-layer calculation.
-  ! zdisamar keeps the same kind of values in reusable LABOS storage.
+  ! SLOW: fillPlmVector rebuilds the generalized spherical (Plm) basis
+  !       values for this Fourier term every call, even though those
+  !       values do not change between high-resolution wavelengths.
   call fillPlmVector(errS, fcCoef, iFourier, dimSV_fc, nmutot, maxExpCoef, geometryS)
   call CalcRTlayers(errS, fcCoef, iFourier, maxExpCoef, RTMnlevelCloud, RTMnlayer, dimSV, dimSV_fc, nmutot, &
                     nGauss, controlS, geometryS, optPropRTMGridS, RT_fc)
@@ -51,6 +55,10 @@ pub fn fourierPlmBasisWithStatus(
     if (previous_cache_len < basis.max_phase_coef or previous_valid_len < basis.max_phase_coef) {
         @memset(self.plm_basis_cache_valid, false);
     }
+    // FAST: per-Fourier-term cache. If the basis for this Fourier index is
+    //       already valid (and wide enough), the rebuild is skipped entirely.
+    //       Across thousands of high-resolution wavelengths, each Fourier
+    //       basis ends up being built once.
     const was_valid = self.plm_basis_cache_valid[i_fourier];
     const needs_extend = was_valid and self.plm_basis_cache[i_fourier].max_phase_index < max_phase_index;
     if (!was_valid or needs_extend) {
@@ -71,6 +79,9 @@ const weighted_pressure_tangent_refl_fc = if (i_fourier == 0) blk: {
     break :blk (2.0 * pressure_tangent_refl_fc) * cos_m_dphi;
 };
 aerosol_layer_mid_pressure_tangent += weighted_pressure_tangent_refl_fc;
+// FAST: tail break — once we are past the configured floor and the
+//       contribution from this Fourier term is below epsilon, all later
+//       terms are guaranteed to be too small to move the result. Stop.
 if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) break;
 ```
 

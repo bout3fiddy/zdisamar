@@ -11,6 +11,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```fortran
+! SLOW: the executable's top level couples config parsing, static input
+!       loading, and workspace allocation directly to a retrieval call.
+!       Repeating one O2 A spectrum means rerunning all of this.
 status = disamar_load_file('Config.in', buffer)
 if (status .ne. 0) then
     call disamar_logger('Failed to read Config.in', LOG_ERROR)
@@ -41,8 +44,9 @@ Excerpt:
 ```fortran
 do iband = 1, globalS%numSpectrBands
   do iTrace = 1, globalS%nTrace
-    ! DISAMAR prepares cross-section expansion coefficients during broad setup.
-    ! zdisamar keeps fixed O2 A line/profile state outside repeated forward runs.
+    ! SLOW: cross-section LUTs are built inside this band x trace loop
+    !       during simulation setup. For repeat calls on the same scene
+    !       the same LUT is rebuilt instead of being reused.
     if (  globalS%XsecHRLUTSimS(iband,iTrace)%createXsecPolyLUT  ) then
       prev_time = current_time(current_time_values)
       call createXsecLUT (errS, staticS, globalS%controlSimS, globalS%wavelHRSimS(iband),               &
@@ -63,6 +67,10 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
+// FAST: a process-wide cache keyed by the line-list spec. The first call
+//       loads from disk; later calls with the same spec just clone the
+//       cached value, so config parsing and file IO stay out of the
+//       forward timer.
 pub fn loadLineList(allocator: Allocator, spec: LineGasSpec) !?ReferenceData.SpectroscopyLineList {
     const key = lineListKey(spec);
     mutex.lock();
@@ -103,6 +111,9 @@ pub fn load(
 ) !bool {
     if (!compatibleShape(temperatures_k, pressures_hpa, weak_out, strong_out)) return false;
 
+    // FAST: cache key combines line list identity with the profile (T, P)
+    //       arrays. Same scene -> same key -> prepared per-node state is
+    //       reused without redoing weak/strong line broadening.
     const key = computeKey(line_list, temperatures_k, pressures_hpa);
     mutex.lock();
     defer mutex.unlock();

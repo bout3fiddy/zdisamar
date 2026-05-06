@@ -20,6 +20,9 @@ Excerpt:
 function smul(nmutot, nGauss, thresholdMul, a, b)
 
   real(8), dimension(nmutot,nmutot), intent(in)  :: a, b
+  ! SLOW: returning a matrix value means the function builds a fresh result
+  !       array, the caller receives it as a temporary, and the temporary
+  !       is then copied or passed into the surrounding expression.
   real(8), dimension(nmutot,nmutot)              :: smul
 
   smul = 0.0d0
@@ -52,6 +55,10 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 
 ```fortran
 Q = Qseries(errS, dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, Rst, R)
+! SLOW: each smul/semul/esmul on the right-hand side produces a temporary
+!       matrix. D, U, R are then assembled by adding those temporaries —
+!       so each line walks the matrix several times and allocates several
+!       intermediate arrays.
 D = T + semul(dimSV_fc*nmutot, Q, E) + smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, Q, T)
 U = semul(dimSV_fc*nmutot, R, E) + smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, R, D)
 R = R + esmul(dimSV_fc*nmutot, E, U) + smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, Tst, U)
@@ -66,6 +73,10 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
+// FAST: caller provides the destination buffer as `noalias out`. There is
+//       no fresh allocation per call, no return-by-value temporary, and
+//       `noalias` lets the compiler keep `a` and `b` rows in registers
+//       because it knows `out` cannot alias them.
 pub inline fn smulInto(
     noalias out: *Mat,
     n: usize,
@@ -113,6 +124,10 @@ The doubling code passes a fresh destination for each product.
 Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/layers.zig#L252-L265)
 
 ```zig
+// FAST: each step declares a stack-local destination (`rd`, `tu`, `td`)
+//       and tells smulInto to write straight into it. The follow-up
+//       routines (semulAdd, matAddEsmul3, esmulSemulAdd) then fuse the
+//       add into a single pass over the result.
 var rd: basis.Mat = undefined;
 basis.smulInto(&rd, n, n_gauss, threshold_mul, R, &D);
 const U = basis.semulAdd(n, R, E, &rd);

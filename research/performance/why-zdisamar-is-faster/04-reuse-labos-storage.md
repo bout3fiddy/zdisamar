@@ -20,7 +20,9 @@ do iFourier = 0, FourierMax
       dimSV_fc = dimSV
     end if
 
-    ! These objects are allocated inside the repeated Fourier work.
+    ! SLOW: fresh allocations every Fourier iteration. The shapes are stable
+    !       across iterations, so the allocator is paying for the same
+    !       arrays over and over.
     call allocCoef(errS, fcCoef, nmutot, dimSV_fc, maxExpCoef)
     call allocateReflTransInternalField(errS, RTMnlayer, dimSV_fc, nmutot, nmuextra, RT_fc,  &
                                         UDorde_fc, UDLocal_fc, UDsumLocal_fc, UD_fc)
@@ -37,6 +39,8 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 
 ```fortran
 if ( .not. controlS%aerosolLayerHeight ) then
+  ! SLOW: matching deallocation every iteration — pairs with the alloc above
+  !       so the storage round-trip happens on every Fourier term.
   call deallocCoef(errS, fcCoef, maxExpCoef)
   call deallocateReflTransIntField(errS, RTMnlayer, RT_fc, UDorde_fc, UDLocal_fc, UDsumLocal_fc, UD_fc)
 end if
@@ -60,6 +64,9 @@ pub fn attenuation(
 ) !attenuation_mod.DynamicAttenArray {
     const nlevel = layers.len + 1;
     const required_len = geo.nmutot * nlevel * nlevel;
+    // FAST: ensureCapacity grows the buffer only when the existing one is
+    //       too small. After the first call the buffer is reused as-is
+    //       across all subsequent wavelengths.
     try ensureCapacity(f64, self.allocator, &self.attenuation_data, required_len);
     try ensureCapacity(f64, self.allocator, &self.attenuation_layer_transmittance, geo.nmutot * layers.len);
     return attenuation_mod.fillAttenuationDynamicWithGridInBufferAndLayerCache(

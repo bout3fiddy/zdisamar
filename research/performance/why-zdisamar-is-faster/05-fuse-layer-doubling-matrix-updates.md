@@ -32,6 +32,9 @@ if (doubling) then
     end do
   end do
 
+  ! SLOW: each step writes its result to a fresh whole-matrix variable, so
+  !       the doubling update walks the same data multiple times: build R,
+  !       build T, then `double` re-reads them inside its own loop.
   R = Rsingle(dimSV_fc, nmutot, a, E, Zmin, DmuPlus)
   T = Tsingle(dimSV_fc, nmutot, a, bstart, E, Zplus, DmuMin, geometryS)
 
@@ -62,16 +65,26 @@ fn doDouble(
 ) void {
     var b = b_start;
     for (0..ndouble) |_| {
+        // FAST: a 12-number trace check decides whether the q-series
+        //       contributes anything. If not, D = T directly — the entire
+        //       Q*E + Q*T branch is skipped.
         const trace_r = gaussTrace(n, n_gauss, R);
         const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
 
         const D = if (q_is_zero) blk: {
             break :blk T.*;
         } else blk: {
+            // FAST: smulAddSemul3 fuses (T + Q*E + Q*T) into one pass over
+            //       the 12x12 result, so D is built without intermediate
+            //       temporary matrices.
             const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
             break :blk basis.smulAddSemul3(n, n_gauss, threshold_mul, &Q, E, T);
         };
 
+        // FAST: smulInto writes directly into a caller-supplied buffer,
+        //       and matAddEsmul3 / esmulSemulAdd fuse the next combine
+        //       steps. Together this collapses what was several separate
+        //       matrix passes into one.
         var rd: basis.Mat = undefined;
         basis.smulInto(&rd, n, n_gauss, threshold_mul, R, &D);
         const U = basis.semulAdd(n, R, E, &rd);

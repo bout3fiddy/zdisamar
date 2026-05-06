@@ -19,7 +19,9 @@ Excerpt:
 ```fortran
 function Qseries(errS, nmutot, nGauss, thresholdMul, a, b)
 
-  ! DISAMAR computes a*b before it knows whether the q-series matters.
+  ! SLOW: the full matrix product runs first, *then* its trace is checked.
+  !       When abs(Trab) < ThresholdQ, the entire smul above was wasted —
+  !       we paid for ~144 multiply-adds just to throw the result away.
   ab =  smul(nmutot, nGauss, thresholdMul, a, b)
 
   Trab = 0.0d0
@@ -50,13 +52,18 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
+// FAST: pre-check using only the diagonal — gaussTrace reads ~10 numbers
+//       and one multiply tells us whether R*R can produce anything above
+//       threshold. If not, we never enter the q-series at all.
 const trace_r = gaussTrace(n, n_gauss, R);
 const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
 
 const D = if (q_is_zero) blk: {
-    // R*R is below the multiply threshold, so Q contributes nothing.
+    // FAST: short-circuit — D = T directly, no matmul, no inverse.
     break :blk T.*;
 } else blk: {
+    // FAST: trace already proved Q*Q is nonzero, so the dedicated
+    //       "knownNonzeroProduct" path skips the redundant smallness test.
     const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
     break :blk basis.smulAddSemul3(n, n_gauss, threshold_mul, &Q, E, T);
 };
@@ -67,6 +74,8 @@ The q-series function also reuses that decision by calling the product route tha
 Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/matrix.zig#L397-L420)
 
 ```zig
+// FAST: caller has already proved a*b is above threshold, so this routine
+//       skips the diagonal pre-check and goes straight to the multiply.
 pub inline fn qseriesKnownNonzeroProduct(n: usize, n_gauss: usize, a: *const Mat, b: *const Mat) Mat {
     const ab = smulNonzeroProduct(n, n_gauss, a, b);
     return qseriesFromProduct(n, n_gauss, &ab);

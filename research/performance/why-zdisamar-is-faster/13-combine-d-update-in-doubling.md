@@ -26,7 +26,9 @@ do idouble = 1, ndouble
   Tst  = transform_top_bottom(dimSV_fc, nmutot, T)
   Q    = Qseries(errS, dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, Rst, R)
 
-  ! D is clear to read, but it is built from separate matrix operations.
+  ! SLOW: D = T + semul(Q, E) + smul(Q, T) is three matrix operations on
+  !       the right-hand side. Each one materializes a temporary, then the
+  !       additions walk the matrix again. Three passes for one update.
   D    = T + semul(dimSV_fc*nmutot, Q, E) + &
               smul(dimSV_fc*nmutot, dimSV_fc*nGauss, thresholdMul, Q, T)
 
@@ -44,6 +46,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```zig
+// FAST: when Q is zero, D = T directly — no work. Otherwise, the entire
+//       (T + Q*E + Q*T) update becomes a single call to smulAddSemul3,
+//       which builds D in one pass over the 12x12 result.
 const D = if (q_is_zero) blk: {
     break :blk T.*;
 } else blk: {
@@ -58,6 +63,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 
 ```zig
 fn smulAddSemul3_12(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat) Mat {
+    // FAST: traces of `a` (= Q) and `c` (= T) are computed inline from the
+    //       fixed 12x12 layout (indices 0, 13, 26, ... are the diagonal).
+    //       Cheap pre-check before the multiply.
     var tra = a.data[0];
     tra += a.data[13];
     tra += a.data[26];
@@ -82,11 +90,12 @@ fn smulAddSemul3_12(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const 
 
     var result = Mat{ .data = undefined, .n = 12 };
     if (@abs(tra * trc) <= threshold_mul) {
+        // FAST: Q*T is below threshold — write D = T + Q*E in one pass,
+        //       skipping the matmul entirely.
         inline for (0..12) |j| {
             const ej = e.data[j];
             var idx = j;
             inline for (0..12) |_| {
-                // Q*T is zero, so D is just T + Q*E.
                 result.data[idx] = c.data[idx] + a.data[idx] * ej;
                 idx += 12;
             }
@@ -117,6 +126,9 @@ fn smulAddSemul3_12(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const 
         const c8 = c.data[96..108];
         const c9 = c.data[108..120];
         inline for (0..12) |j| {
+            // FAST: this is the fused step. `s` is row i of Q*T; we add
+            //       T[i,j] (= c.data[idx]) and Q[i,j] * E[j] in the SAME
+            //       store. One pass, three operations folded together.
             var s = a0 * c0[j];
             s += a1 * c1[j];
             s += a2 * c2[j];

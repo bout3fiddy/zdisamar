@@ -17,6 +17,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```fortran
+! SLOW: this geometry copy lives inside the band x Fourier loop, so the
+!       same vertical layout is re-copied for every Fourier term — even
+!       though geometry never changes with wavelength or Fourier index.
 ! geometry (mu = cos(theta) with theta the polar angle
 do imu = 1, globalS%createLUTSimS(iFourier,iband)%nmu
   globalS%createLUTSimS(iFourier,iband)%mu(imu) = &
@@ -33,6 +36,8 @@ DISAMAR then passes wavelength-specific layer arrays into LABOS. LABOS is design
 Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L472-L483)
 
 ```fortran
+! SLOW: geometryS is passed in per call, so each high-resolution wavelength
+!       hands LABOS a full geometry record instead of reusing a cached one.
 ! INPUT
 type(errorType), intent(inout) :: errS
 integer,                     intent(in)   :: iFourier, maxFourierTermLUT, dimSV, dimSV_fc
@@ -76,6 +81,9 @@ pub fn ensureSharedRtmGeometryCache(
     self: *PreparedOpticalState,
     allocator: Allocator,
 ) !void {
+    // FAST: build the shared layer geometry exactly once during preparation,
+    //       then reuse it across every wavelength. The early-return below is
+    //       what makes repeated calls free.
     if (self.shared_rtm_geometry.isValidFor(self.transportLayerCount())) return;
     self.shared_rtm_geometry.deinit(allocator);
     self.shared_rtm_geometry = try @import("transport.zig").buildSharedRtmGeometry(allocator, self);
@@ -116,6 +124,9 @@ During the forward calculation, zdisamar creates one per-wavelength cache and us
 Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/instrument_grid/grid_calculation/forward_input.zig#L21-L53)
 
 ```zig
+// FAST: only the wavelength-dependent optical values are filled per call.
+//       The shared layer geometry is read straight out of `prepared` —
+//       no rebuild, no copy.
 var wavelength_cache = CarrierEval.WavelengthCarrierCache.init(
     prepared,
     wavelength_nm,

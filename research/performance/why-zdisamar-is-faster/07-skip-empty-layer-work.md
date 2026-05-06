@@ -13,6 +13,10 @@ Excerpt:
 ```fortran
 do ilayer = RTMnlevelCloud + 1, RTMnlayer
 
+  ! SLOW: only one no-contribution check (Fourier index vs phase coefs).
+  !       Layers with effectively zero optical depth or zero scattering
+  !       albedo still go through the heavy phase-matrix and doubling
+  !       work below — the result is zero, but the cost is paid.
   if ( iFourier <= optPropRTMGridS%maxExpCoefLay(ilayer) ) then
 
     b = optPropRTMGridS%opticalThicknLay(ilayer)
@@ -43,6 +47,7 @@ Excerpt:
 for (0..nlayer) |layer_idx| {
     const rt_idx = layer_idx + 1;
     const layer = layers[layer_idx];
+    // FAST: skip #1 — Fourier term is past the global cap.
     if (i_fourier >= basis.max_phase_coef) {
         rt[rt_idx] = zeroLayerRt(geo.nmutot);
         if (rt_active) |active| active[rt_idx] = false;
@@ -54,11 +59,15 @@ for (0..nlayer) |layer_idx| {
         indices[layer_idx]
     else
         phase_functions.maxPhaseCoefficientIndex(phase_coefs);
+    // FAST: skip #2 — Fourier term is past *this layer's* phase coefs.
     if (i_fourier > max_phase_index) {
         rt[rt_idx] = zeroLayerRt(geo.nmutot);
         if (rt_active) |active| active[rt_idx] = false;
         continue;
     }
+    // FAST: skip #3 — layer cannot scatter at all (no optical depth, or
+    //       zero single-scatter albedo). Result is provably zero, so we
+    //       record the zero and skip the heavy work.
     if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
         rt[rt_idx] = zeroLayerRt(geo.nmutot);
         if (rt_active) |active| active[rt_idx] = false;
@@ -74,6 +83,9 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 for (start_level..end_level) |ilevel| {
     const local_d0 = &ud_local_view[ilevel].D.col[0].data;
     const local_d1 = &ud_local_view[ilevel].D.col[1].data;
+    // FAST: rt_active was decided once during layer construction. If the
+    //       layer was marked inactive, write zeros and skip the dot
+    //       products entirely instead of computing zero through them.
     if (!rt_active_view[ilevel + 1]) {
         for (0..nmutot) |imu| {
             local_d0[imu] = 0.0;
