@@ -35,15 +35,18 @@ def main() -> int:
         "dR/d aerosol optical depth",
         "dR/d aerosol layer mid pressure",
     ]
-    assert all(float(metric["max_abs_residual"]) <= plot_validation.REFLECTANCE_THRESHOLD for metric in metrics)
+    assert all(
+        float(metric["max_abs_residual"]) <= plot_validation.REFLECTANCE_THRESHOLD
+        for metric in metrics
+    )
 
     manifest = json.loads(plot_validation.MANIFEST_PATH.read_text())
     assert manifest["canonical_command"] == plot_validation.CANONICAL_COMMAND
     assert manifest["tracked_outputs"] == [
-        "validation/plots/o2a_validation.png",
-        "validation/data/o2a_validation_data.csv",
-        "validation/data/comparison_metrics.json",
-        "validation/data/bundle_manifest.json",
+        "validation/outputs/spectra/o2a_validation.png",
+        "validation/outputs/spectra/o2a_validation_data.csv",
+        "validation/outputs/spectra/comparison_metrics.json",
+        "validation/outputs/spectra/bundle_manifest.json",
     ]
     assert "/Users/" not in plot_validation.MANIFEST_PATH.read_text()
     assert "/Users/" not in plot_validation.METRICS_PATH.read_text()

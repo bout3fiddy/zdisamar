@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 
 class DiagnosticTable:
@@ -42,7 +43,7 @@ class DiagnosticTable:
     def close(self) -> None:
         return None
 
-    def __enter__(self) -> "DiagnosticTable":
+    def __enter__(self) -> DiagnosticTable:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -71,18 +72,18 @@ class PerturbationResult(DiagnosticTable):
         self.summary = summary
 
 
-class O2O2CIADiagnostics:
+class OxygenCollisionInducedAbsorptionDiagnostics:
     """O2-O2 collision-induced absorption diagnostics from the native core."""
 
     def __init__(self, prepared: Any):
         self._prepared = prepared
 
     def diagnostics(self, wavelengths_nm):
-        return self._prepared.o2_o2_cia_diagnostics(wavelengths_nm)
+        return self._prepared.collision_induced_absorption_diagnostics(wavelengths_nm)
 
 
 class InstrumentResponseDiagnostics:
-    """Instrument response and high-resolution wavelength sampling diagnostics from the native core."""
+    """Instrument response and high-resolution wavelength sampling diagnostics from native core."""
 
     def __init__(self, prepared: Any):
         self._prepared = prepared
@@ -95,7 +96,11 @@ class InstrumentResponseDiagnostics:
         import numpy as np
 
         case = self._prepared.input
-        nominal = _nominal_wavelengths(case) if wavelengths_nm is None else np.asarray(wavelengths_nm, dtype=np.float64)
+        nominal = (
+            _nominal_wavelengths(case)
+            if wavelengths_nm is None
+            else np.asarray(wavelengths_nm, dtype=np.float64)
+        )
         return self._prepared.instrument_response_sampling(nominal, channels=channels)
 
 
@@ -294,15 +299,17 @@ def _spectrum_delta_from_arrays(
 
 
 def _run_spectrum(case, library_path) -> dict[str, object]:
-    from .ffi import prepare
+    from .api import prepare
 
-    with prepare(case, library_path=library_path) as prepared:
-        with prepared.forward_model() as spectrum:
-            return {
-                "wavelength_nm": spectrum.wavelength_nm.copy(),
-                "radiance": spectrum.radiance.copy(),
-                "reflectance": spectrum.reflectance.copy(),
-            }
+    with (
+        prepare(case, library_path=library_path) as prepared,
+        prepared.forward_model() as spectrum,
+    ):
+        return {
+            "wavelength_nm": spectrum.wavelength_nm.copy(),
+            "radiance": spectrum.radiance.copy(),
+            "reflectance": spectrum.reflectance.copy(),
+        }
 
 
 def _nominal_wavelengths(case):

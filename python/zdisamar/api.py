@@ -1,4 +1,4 @@
-"""Public compatibility exports for the Python O2A native wrapper."""
+"""Public exports for the Python O2A native wrapper."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from .native_tables import (
     AtmosphericBudget,
     InstrumentResponseTable,
     O2LineContributions,
-    O2O2CIADiagnosticTable,
+    OxygenCollisionInducedAbsorptionDiagnosticTable,
     RadiativeTransferDiagnosticTable,
 )
 from .prepared import (
@@ -31,7 +31,7 @@ __all__ = [
     "InstrumentResponseTable",
     "O2LineContributions",
     "O2LineDiagnostics",
-    "O2O2CIADiagnosticTable",
+    "OxygenCollisionInducedAbsorptionDiagnosticTable",
     "O2AInput",
     "PreparedDefaultO2A",
     "PreparedO2A",

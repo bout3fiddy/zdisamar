@@ -1,4 +1,8 @@
+"""Canonical O2 A validation scene construction."""
+
 from __future__ import annotations
+
+O2A_REFERENCE_CSV = "validation/spectra/data/reference/o2a_with_cia_disamar_reference.csv"
 
 
 def asset(zd, id: str, path: str, format: str):
@@ -10,12 +14,8 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
     aerosol_bottom_pressure_hpa = 925.0 if jacobian_reference_layer else 520.0
     viewing_zenith_deg = 0.0 if jacobian_reference_layer else 30.0
     relative_azimuth_deg = 0.0 if jacobian_reference_layer else 120.0
-    upper_interval_divisions = 28
     aerosol_interval_divisions = 2 if jacobian_reference_layer else 6
     lower_interval_divisions = 4 if jacobian_reference_layer else 8
-    spectral_start_nm = 755.0
-    spectral_end_nm = 776.0
-    spectral_sample_count = 701
 
     return zd.O2AInput(
         metadata={
@@ -39,7 +39,7 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
             vendor_reference_csv=asset(
                 zd,
                 "vendor_reference_csv",
-                "validation/data/o2a_with_cia_disamar_reference.csv",
+                O2A_REFERENCE_CSV,
                 "disamar_o2a_reference_csv",
             ),
             raw_solar_reference=asset(
@@ -56,11 +56,7 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
             ),
         ),
         scene_id="o2a_disamar_reference_python",
-        spectral_grid=zd.SpectralGrid(
-            start_nm=spectral_start_nm,
-            end_nm=spectral_end_nm,
-            sample_count=spectral_sample_count,
-        ),
+        spectral_grid=zd.SpectralGrid(start_nm=755.0, end_nm=776.0, sample_count=701),
         atmosphere=zd.Atmosphere(
             layer_count=3,
             sublayer_divisions=4,
@@ -70,7 +66,7 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
                     index_1based=1,
                     top_pressure_hpa=0.3,
                     bottom_pressure_hpa=aerosol_top_pressure_hpa,
-                    altitude_divisions=upper_interval_divisions,
+                    altitude_divisions=28,
                 ),
                 zd.VerticalInterval(
                     index_1based=2,
@@ -148,9 +144,9 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
             threshold_line_sim=3.0e-5,
             cutoff_sim_cm1=200.0,
         ),
-        o2_o2_cia=zd.O2O2CIA(
+        collision_induced_absorption=zd.OxygenCollisionInducedAbsorption(
             enabled=True,
-            cia_asset=asset(
+            cross_section_asset=asset(
                 zd,
                 "o2o2_cia",
                 "data/reference_data/cross_sections/o2o2_bira_o2a.dat",
@@ -180,3 +176,13 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
             "require_resolved_stage_references": True,
         },
     )
+
+
+def build_o2a_jacobian_case(zd):
+    case = build_o2a_case(zd, jacobian_reference_layer=True)
+    case.metadata["id"] = "disamar_reference_o2a_jacobian_validation"
+    case.metadata["storage"] = "disamar-reference-o2a-jacobian-validation"
+    case.metadata["description"] = "Hardcoded DISAMAR O2 A Jacobian validation case."
+    case.scene_id = "o2a_disamar_reference_jacobian_validation"
+    case.instrument_response.instrument_name = "disamar-o2a-jacobian-validation"
+    return case

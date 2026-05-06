@@ -58,7 +58,7 @@ In the current Zig tree, the LABOS-labeled path identifies the layer-based order
 
 Optimal estimation, usually in the Rodgers sense, combines a forward model, a prior state, and error statistics to solve an inverse problem. In DISAMAR-class retrievals this means the code must provide Jacobians, state-vector handling, consistent measurement-error treatment, posterior covariance, and averaging-kernel diagnostics.
 
-The O2 A forward-model surface does not expose retrieval execution yet. OE remains important terminology for future retrieval-facing work.
+The O2 A forward-model surface does not expose retrieval execution yet. Optimal estimation remains important terminology for future retrieval-facing work.
 
 ### DOAS
 

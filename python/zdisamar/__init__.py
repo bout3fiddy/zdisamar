@@ -1,16 +1,17 @@
 """Python wrapper for the native zdisamar O2A C ABI."""
 
-from .ffi import (
+from . import inverse_method
+from .api import (
     AtmosphereDiagnostics,
     AtmosphericBudget,
     Context,
     DiagnosticReport,
     InstrumentResponseTable,
     O2LineContributions,
-    O2O2CIADiagnosticTable,
     O2LineDiagnostics,
-    PreparedO2A,
+    OxygenCollisionInducedAbsorptionDiagnosticTable,
     PreparedDefaultO2A,
+    PreparedO2A,
     RadiativeTransferDiagnosticTable,
     Spectrum,
     forward,
@@ -21,7 +22,7 @@ from .ffi import (
 from .diagnostics import (
     DiagnosticTable,
     InstrumentResponseDiagnostics,
-    O2O2CIADiagnostics,
+    OxygenCollisionInducedAbsorptionDiagnostics,
     PerturbationDiagnostics,
     PerturbationResult,
     PerturbationSummary,
@@ -35,7 +36,7 @@ from .types import (
     InstrumentResponse,
     O2AInput,
     O2LineByLine,
-    O2O2CIA,
+    OxygenCollisionInducedAbsorption,
     RadiativeTransferControls,
     ReferenceAsset,
     ReferenceAssets,
@@ -61,9 +62,9 @@ __all__ = [
     "O2LineByLine",
     "O2LineContributions",
     "O2LineDiagnostics",
-    "O2O2CIADiagnostics",
-    "O2O2CIADiagnosticTable",
-    "O2O2CIA",
+    "OxygenCollisionInducedAbsorptionDiagnostics",
+    "OxygenCollisionInducedAbsorptionDiagnosticTable",
+    "OxygenCollisionInducedAbsorption",
     "PerturbationDiagnostics",
     "PerturbationResult",
     "PerturbationSummary",
@@ -80,6 +81,7 @@ __all__ = [
     "VerticalInterval",
     "forward",
     "o2a_disamar_reference_input",
+    "inverse_method",
     "prepare",
     "prepare_default_o2a",
 ]

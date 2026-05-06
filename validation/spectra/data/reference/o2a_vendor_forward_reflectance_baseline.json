@@ -2,7 +2,7 @@
   "version": 1,
   "scenario": "o2a_vendor_forward_reflectance",
   "upstream_config": "vendor/disamar-fortran/InputFiles/Config_O2_with_CIA.in",
-  "reference_path": "validation/data/o2a_with_cia_disamar_reference.csv",
+  "reference_path": "validation/spectra/data/reference/o2a_with_cia_disamar_reference.csv",
   "zero_tolerance_abs": 1.0e-12,
   "trend_tolerances": {
     "mean_abs_difference_abs": 1.0e-6,
@@ -25,7 +25,7 @@
       "src/input/reference_data",
       "src/input/reference",
       "data/reference_data/cross_sections",
-      "validation/data/o2a_with_cia_disamar_reference.csv"
+      "validation/spectra/data/reference/o2a_with_cia_disamar_reference.csv"
     ]
   },
   "baseline": {

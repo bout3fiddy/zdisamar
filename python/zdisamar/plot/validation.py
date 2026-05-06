@@ -42,7 +42,11 @@ def overlay(
         .mark_line(strokeWidth=1.4)
         .encode(
             x=_wavelength_x(),
-            y=alt.Y(f"{y_field}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity), axis=y_axis),
+            y=alt.Y(
+                f"{y_field}:Q",
+                title=fields.QUANTITY_LABELS.get(quantity, quantity),
+                axis=y_axis,
+            ),
             color=color,
             tooltip=_overlay_tooltip(quantity),
         )
@@ -52,7 +56,11 @@ def overlay(
         .mark_line(strokeDash=[7, 4], strokeWidth=2.0)
         .encode(
             x=_wavelength_x(),
-            y=alt.Y(f"{y_field}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity), axis=y_axis),
+            y=alt.Y(
+                f"{y_field}:Q",
+                title=fields.QUANTITY_LABELS.get(quantity, quantity),
+                axis=y_axis,
+            ),
             color=color,
             tooltip=_overlay_tooltip(quantity),
         )
@@ -65,10 +73,14 @@ def overlay(
 
 
 def _overlay_frames(comparison, quantity: str, *, reference_label: str, current_label: str):
-    reference = comparison[[fields.WAVELENGTH_NM, "reference"]].rename(columns={"reference": fields.VALUE})
+    reference = comparison[[fields.WAVELENGTH_NM, "reference"]].rename(
+        columns={"reference": fields.VALUE}
+    )
     reference[fields.SOURCE] = reference_label
     reference[quantity] = comparison["reference"]
-    current = comparison[[fields.WAVELENGTH_NM, "current"]].rename(columns={"current": fields.VALUE})
+    current = comparison[[fields.WAVELENGTH_NM, "current"]].rename(
+        columns={"current": fields.VALUE}
+    )
     current[fields.SOURCE] = current_label
     current[quantity] = comparison["current"]
     if quantity == fields.RADIANCE:
@@ -92,6 +104,7 @@ def _residual_title(quantity: str, relative: bool) -> str:
 
 def _scaled_residual_frame(frame, value_field: str, title: str):
     import math
+
     import numpy as np
 
     values = frame[value_field].to_numpy(dtype=float)
@@ -109,6 +122,7 @@ def _scaled_residual_frame(frame, value_field: str, title: str):
 
 def _scaled_residual_axis(frame, value_field: str):
     import math
+
     import numpy as np
 
     values = frame[value_field].to_numpy(dtype=float)
@@ -139,17 +153,25 @@ def residual(
 ):
     import pandas as pd
 
-    comparison = comparison_frame(current, reference, quantity, relative=relative, window_nm=window_nm)
+    comparison = comparison_frame(
+        current, reference, quantity, relative=relative, window_nm=window_nm
+    )
     y_field = "plotted_residual"
     y_title = _residual_title(quantity, relative)
-    comparison, scaled_y_field, scaled_y_title, residual_scale = _scaled_residual_frame(comparison, y_field, y_title)
+    comparison, scaled_y_field, scaled_y_title, residual_scale = _scaled_residual_frame(
+        comparison, y_field, y_title
+    )
     axis_values, axis_format = _scaled_residual_axis(comparison, scaled_y_field)
     line = (
         alt.Chart(comparison)
         .mark_line(color=MATPLOTLIB_RED, strokeWidth=1.3)
         .encode(
             x=_wavelength_x(),
-            y=alt.Y(f"{scaled_y_field}:Q", title=scaled_y_title, axis=alt.Axis(format=axis_format, values=axis_values)),
+            y=alt.Y(
+                f"{scaled_y_field}:Q",
+                title=scaled_y_title,
+                axis=alt.Axis(format=axis_format, values=axis_values),
+            ),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
                 alt.Tooltip(f"{y_field}:Q", title=y_title, format=".8g"),
@@ -175,7 +197,12 @@ def residual(
         layers.append(
             alt.Chart(band)
             .mark_area(color="#D9D9D9", opacity=0.35)
-            .encode(x=f"{fields.WAVELENGTH_NM}:Q", x2="wavelength_end_nm:Q", y="lo:Q", y2="hi:Q")
+            .encode(
+                x=f"{fields.WAVELENGTH_NM}:Q",
+                x2="wavelength_end_nm:Q",
+                y="lo:Q",
+                y2="hi:Q",
+            )
         )
     layers.extend([line, zero])
     return alt.layer(*layers)
@@ -210,7 +237,11 @@ def residual_histogram(
                 alt.Tooltip(f"{y_field}:Q", title=title, format=".2e"),
             ],
         )
-        .properties(width=DEFAULT_WIDTH, height=RESIDUAL_HEIGHT, title="Residual against reference implementation")
+        .properties(
+            width=DEFAULT_WIDTH,
+            height=RESIDUAL_HEIGHT,
+            title="Residual against reference implementation",
+        )
     )
     mean = base.mark_rule(color="#111111", strokeWidth=1.0).encode(x=f"mean({scaled_x_field}):Q")
     return alt.layer(histogram, mean)
@@ -227,9 +258,15 @@ def residual_histogram_report(
 ):
     comparison = comparison_frame(current, reference, quantity, relative=relative)
     spectrum_panel = _residual_highlight_spectrum(comparison, quantity, residual_threshold)
-    histogram_panel = residual_histogram(current, reference, quantity=quantity, relative=relative, bins=bins)
-    residual_panel = _residual_line_panel(comparison, quantity, residual_threshold, relative=relative)
-    return alt.vconcat(spectrum_panel, histogram_panel, residual_panel).resolve_scale(x="independent")
+    histogram_panel = residual_histogram(
+        current, reference, quantity=quantity, relative=relative, bins=bins
+    )
+    residual_panel = _residual_line_panel(
+        comparison, quantity, residual_threshold, relative=relative
+    )
+    return alt.vconcat(spectrum_panel, histogram_panel, residual_panel).resolve_scale(
+        x="independent"
+    )
 
 
 def residual_highlight_spectrum(
@@ -260,7 +297,11 @@ def metrics_bar(
     current,
     reference,
     *,
-    quantities: Sequence[str] = (fields.REFLECTANCE, fields.RADIANCE, fields.IRRADIANCE),
+    quantities: Sequence[str] = (
+        fields.REFLECTANCE,
+        fields.RADIANCE,
+        fields.IRRADIANCE,
+    ),
     metrics: Sequence[str] = ("mae", "rmse", "max_abs", "mean_signed"),
 ):
     frame = metric_frame(current, reference, quantities, metrics)
@@ -276,7 +317,11 @@ def metrics_bar(
                 sort=None,
                 axis=alt.Axis(labelAngle=-32, labelLimit=220),
             ),
-            y=alt.Y(f"{fields.VALUE}:Q", title="Value", axis=alt.Axis(format=".2e", tickCount=6)),
+            y=alt.Y(
+                f"{fields.VALUE}:Q",
+                title="Value",
+                axis=alt.Axis(format=".2e", tickCount=6),
+            ),
             color=alt.Color(f"{fields.METRIC}:N", title="Metric", legend=None),
             tooltip=[
                 alt.Tooltip(f"{fields.QUANTITY}:N", title="Quantity"),
@@ -296,7 +341,7 @@ def one_to_one(
     group: str | None = None,
     fit_line: bool = True,
 ):
-    from .data import to_dataframe, require_columns
+    from .data import require_columns, to_dataframe
 
     frame = to_dataframe(table)
     require_columns(frame, [reference, current])
@@ -311,7 +356,11 @@ def one_to_one(
         )
         .properties(width=320, height=320, title="Current vs reference")
     )
-    rule = alt.Chart(frame).mark_line(color="#111111", strokeDash=[4, 3]).encode(x=f"{reference}:Q", y=f"{reference}:Q")
+    rule = (
+        alt.Chart(frame)
+        .mark_line(color="#111111", strokeDash=[4, 3])
+        .encode(x=f"{reference}:Q", y=f"{reference}:Q")
+    )
     layers = [points, rule]
     if fit_line:
         layers.append(points.transform_regression(reference, current).mark_line(color="#7F1D1D"))
@@ -322,7 +371,9 @@ def _residual_highlight_spectrum(comparison, quantity: str, residual_threshold: 
     import numpy as np
     import pandas as pd
 
-    frame = comparison[[fields.WAVELENGTH_NM, "current", fields.RESIDUAL]].rename(columns={"current": quantity})
+    frame = comparison[[fields.WAVELENGTH_NM, "current", fields.RESIDUAL]].rename(
+        columns={"current": quantity}
+    )
     frame["abs_residual"] = np.abs(frame[fields.RESIDUAL].to_numpy(dtype=float))
     frame["above_threshold"] = frame["abs_residual"] > abs(residual_threshold)
 
@@ -353,11 +404,19 @@ def _residual_highlight_spectrum(comparison, quantity: str, residual_threshold: 
             y=alt.Y(f"{quantity}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity)),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip(f"{quantity}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity), format=".8g"),
+                alt.Tooltip(
+                    f"{quantity}:Q",
+                    title=fields.QUANTITY_LABELS.get(quantity, quantity),
+                    format=".8g",
+                ),
                 alt.Tooltip("abs_residual:Q", title="Absolute residual", format=".2e"),
             ],
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Full sampled reflectance spectrum")
+        .properties(
+            width=DEFAULT_WIDTH,
+            height=DEFAULT_HEIGHT,
+            title="Full sampled reflectance spectrum",
+        )
     )
     layers = [base]
     if not highlight_frame.empty:
@@ -369,8 +428,16 @@ def _residual_highlight_spectrum(comparison, quantity: str, residual_threshold: 
                 y=f"{quantity}:Q",
                 detail="highlight_group:N",
                 tooltip=[
-                    alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                    alt.Tooltip(f"{quantity}:Q", title=fields.QUANTITY_LABELS.get(quantity, quantity), format=".8g"),
+                    alt.Tooltip(
+                        f"{fields.WAVELENGTH_NM}:Q",
+                        title="Wavelength (nm)",
+                        format=".4f",
+                    ),
+                    alt.Tooltip(
+                        f"{quantity}:Q",
+                        title=fields.QUANTITY_LABELS.get(quantity, quantity),
+                        format=".8g",
+                    ),
                     alt.Tooltip("abs_residual:Q", title="Absolute residual", format=".2e"),
                 ],
             )
@@ -378,7 +445,11 @@ def _residual_highlight_spectrum(comparison, quantity: str, residual_threshold: 
         layers.append(
             alt.Chart(highlight_frame)
             .mark_point(color=MATPLOTLIB_RED, filled=True, size=22)
-            .encode(x=_wavelength_x(), y=f"{quantity}:Q", tooltip=[alt.Tooltip("abs_residual:Q", format=".2e")])
+            .encode(
+                x=_wavelength_x(),
+                y=f"{quantity}:Q",
+                tooltip=[alt.Tooltip("abs_residual:Q", format=".2e")],
+            )
         )
     return alt.layer(*layers)
 
@@ -388,14 +459,20 @@ def _residual_line_panel(comparison, quantity: str, residual_threshold: float, *
 
     y_field = "plotted_residual"
     y_title = _residual_title(quantity, relative)
-    frame, scaled_y_field, scaled_y_title, residual_scale = _scaled_residual_frame(comparison, y_field, y_title)
+    frame, scaled_y_field, scaled_y_title, residual_scale = _scaled_residual_frame(
+        comparison, y_field, y_title
+    )
     axis_values, axis_format = _scaled_residual_axis(frame, scaled_y_field)
     line = (
         alt.Chart(frame)
         .mark_line(color=MATPLOTLIB_RED, strokeWidth=1.3)
         .encode(
             x=_wavelength_x(),
-            y=alt.Y(f"{scaled_y_field}:Q", title=scaled_y_title, axis=alt.Axis(format=axis_format, values=axis_values)),
+            y=alt.Y(
+                f"{scaled_y_field}:Q",
+                title=scaled_y_title,
+                axis=alt.Axis(format=axis_format, values=axis_values),
+            ),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
                 alt.Tooltip(f"{y_field}:Q", title=y_title, format=".2e"),
@@ -408,7 +485,12 @@ def _residual_line_panel(comparison, quantity: str, residual_threshold: float, *
         .encode(y=f"{scaled_y_field}:Q")
     )
     threshold = pd.DataFrame(
-        {scaled_y_field: [-abs(residual_threshold) / residual_scale, abs(residual_threshold) / residual_scale]}
+        {
+            scaled_y_field: [
+                -abs(residual_threshold) / residual_scale,
+                abs(residual_threshold) / residual_scale,
+            ]
+        }
     )
     threshold_rules = (
         alt.Chart(threshold)
