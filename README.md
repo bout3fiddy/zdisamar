@@ -48,7 +48,7 @@ numeric routines stay under `src/forward_model/` and `src/common/`.
 | `data/` | tracked O2 A bundles and reference assets |
 | `tests/` | retained O2 A executable checks |
 | `validation/` | O2 A compatibility and reference evidence |
-| `docs/` | O2 A architecture, validation, and operational narrative |
+| `docs/` | DISAMAR context, O2 A runtime, and reference-data boundary |
 
 ## Prerequisites
 
@@ -212,11 +212,7 @@ build artifact.
 
 - [`docs/disamar-overview.md`](./docs/disamar-overview.md)
 - [`docs/o2a-forward.md`](./docs/o2a-forward.md)
-- [`docs/parity-harness.md`](./docs/parity-harness.md)
-- [`docs/python-bindings.md`](./docs/python-bindings.md)
-- [`docs/o2a-vendor-stage-map.md`](./docs/o2a-vendor-stage-map.md)
 - [`docs/reference-data-and-bundles.md`](./docs/reference-data-and-bundles.md)
-- [`docs/validation-and-parity.md`](./docs/validation-and-parity.md)
 
 ## Short Version
 

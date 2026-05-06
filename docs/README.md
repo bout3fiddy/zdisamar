@@ -1,15 +1,10 @@
 # zdisamar Docs
 
-The retained docs describe the current O2A forward-model package and its parity
-harness. Historical extension, retrieval, and workpackage notes were removed from
-the tracked docs because they no longer describe the shipped public surface.
+The retained docs describe the DISAMAR scientific context, the current O2 A
+forward-model package, and the reference-data boundary.
 
 ## Current Docs
 
-1. [O2A Forward](./o2a-forward.md)
-2. [Parity Harness](./parity-harness.md)
-3. [Python Bindings](./python-bindings.md)
-4. [Python Plotting Library](./python-plotting-library.md)
-5. [Validation And Parity](./validation-and-parity.md)
-6. [Reference Data And Bundles](./reference-data-and-bundles.md)
-7. [O2A Vendor Stage Map](./o2a-vendor-stage-map.md)
+1. [DISAMAR Overview](./disamar-overview.md)
+2. [O2A Forward](./o2a-forward.md)
+3. [Reference Data And Bundles](./reference-data-and-bundles.md)

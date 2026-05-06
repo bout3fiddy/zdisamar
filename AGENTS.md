@@ -14,7 +14,6 @@
 - Tests and validation: [tests/AGENTS.md](tests/AGENTS.md), [validation/AGENTS.md](validation/AGENTS.md).
 - Data assets: [data/AGENTS.md](data/AGENTS.md).
 - Scripts: [scripts/AGENTS.md](scripts/AGENTS.md).
-- Docs: [docs/AGENTS.md](docs/AGENTS.md).
 - Deep context index: [.agents/repo-context/index.md](.agents/repo-context/index.md).
 
 ## Commands

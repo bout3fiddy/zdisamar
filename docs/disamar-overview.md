@@ -98,6 +98,4 @@ For the present codebase, that means the implementation has to satisfy three con
 After this overview:
 
 1. Read [O2A Forward](./o2a-forward.md) for the retained public runtime path.
-2. Read [Parity Harness](./parity-harness.md) for the bounded DISAMAR comparison workflow.
-3. Read [Reference Data And Bundles](./reference-data-and-bundles.md) for the data-loading boundary.
-4. Read [Validation and Scientific Scope](./validation-and-parity.md) for the current tested and validated contract envelope.
+2. Read [Reference Data And Bundles](./reference-data-and-bundles.md) for the data-loading boundary.
