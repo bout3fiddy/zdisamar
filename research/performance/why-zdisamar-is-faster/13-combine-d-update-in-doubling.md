@@ -137,4 +137,16 @@ fn smulAddSemul3_12(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const 
 
 ## Why It Matters
 
-This is a smaller win because earlier matrix work already removed the largest overhead. It still saves about 0.026 s for one spectrum because it sits inside the repeated layer-doubling loop.
+The math is `D = T + Q*E + Q*T`. Written naturally, that is three operations and two temporary arrays — three passes over the matrix. Done as a single fused loop, the compiler reads `T`, `Q`, `E` once per element and writes `D` once.
+
+```python
+# Slow: three separate passes, two temporaries
+QE = semul(Q, E)                                    # pass 1
+QT = smul(Q, T)                                     # pass 2
+D  = [T[i] + QE[i] + QT[i] for i in range(n)]       # pass 3
+
+# Fast: one fused pass, no temporaries
+D = [T[i] + Q[i] * E[i] + dot(Q[i], T[i]) for i in range(n)]
+```
+
+This is a smaller win because earlier matrix work already removed the largest overhead. It still saves about 0.026 s for one spectrum because it sits inside the repeated layer-doubling loop, and every layer in every Fourier term hits it.

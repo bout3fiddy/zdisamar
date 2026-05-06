@@ -140,4 +140,24 @@ pub fn prepareWeakLineState(
 
 ## Why It Matters
 
-Before this change, the forward calculation paid too much of the spectroscopy cost while walking the high-resolution wavelength grid. After this change, pressure/temperature-dependent line work lives in preparation, and the forward pass mostly pays for the wavelength-dependent lookup and summation. That saved about 26.93 s in the checkpoint table.
+A line's contribution depends on line data, pressure, temperature, and wavelength. Pressure and temperature come from the atmospheric profile and stay fixed across the whole spectrum. Only the wavelength changes inside the inner loop.
+
+So the pressure/temperature math should happen once per profile node, not once per wavelength:
+
+```python
+# Slow: re-do the pressure/temperature math for every wavelength
+for wavelength in wavelengths:
+    sigma = 0.0
+    for line in lines:
+        broadened = line.broaden(T, P)        # same T, P every time
+        sigma += broadened.value_at(wavelength)
+
+# Fast: prepare each line's T/P-dependent state once, then evaluate
+prepared = [line.broaden(T, P) for line in lines]   # done in setup
+for wavelength in wavelengths:
+    sigma = 0.0
+    for line in prepared:
+        sigma += line.value_at(wavelength)
+```
+
+The forward pass then mostly pays for the wavelength-dependent lookup and summation. That saved about 26.93 s in the checkpoint table.

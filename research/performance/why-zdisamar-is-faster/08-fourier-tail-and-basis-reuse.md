@@ -76,4 +76,31 @@ if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail
 
 ## Why It Matters
 
-The O2 A run averages about 31 Fourier terms per high-resolution wavelength. Reusing the Fourier basis avoids repeated setup. Stopping tiny tails keeps the loop from spending time on terms that cannot move the result at the required scale.
+Two ideas are at play, and both are familiar from any "speed up a series sum" exercise:
+
+1. The Fourier basis values for a given Fourier index are the same across wavelengths — cache them instead of rebuilding.
+2. Once each new term in the sum is below the floor that can move the result, keep going only adds noise.
+
+```python
+# Slow: rebuild basis on every call, and always sum the full N terms
+def reflectance(wavelength):
+    total = 0.0
+    for k in range(N):                       # N can be ~31 here
+        basis = build_basis(k)               # rebuilt every call
+        total += basis_term(basis, wavelength)
+    return total
+
+# Fast: cache the basis and stop when the tail is too small to matter
+basis_cache = {}
+def reflectance(wavelength):
+    total = 0.0
+    for k in range(N):
+        basis = basis_cache.setdefault(k, build_basis(k))
+        term  = basis_term(basis, wavelength)
+        total += term
+        if k >= floor and abs(term) < epsilon:
+            break                            # later terms cannot change result
+    return total
+```
+
+The O2 A run averages about 31 Fourier terms per high-resolution wavelength, so removing repeated basis setup and skipping tiny tails compounds across the whole spectrum.

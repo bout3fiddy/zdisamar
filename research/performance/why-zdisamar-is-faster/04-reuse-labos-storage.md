@@ -91,4 +91,23 @@ pub fn ordersWorkspace(self: *Workspace, nlevel: usize) !*orders_mod.OrdersWorks
 
 ## Why It Matters
 
-The scientific calculation is the same kind of LABOS calculation. The difference is that zdisamar stops rebuilding storage that can be kept around for the next high-resolution wavelength. That saved about 1.41 s in the checkpoint table.
+LABOS needs scratch arrays to hold attenuation, layer reflection/transmission, scattering orders, and Fourier basis values. Each high-resolution wavelength uses arrays of the same shape. Allocating fresh arrays inside the inner loop, then freeing them, is paying for memory bookkeeping over and over.
+
+The fix is to allocate once outside the loop and pass the same buffer in:
+
+```python
+# Slow: allocate (and free) inside the hot loop
+for wavelength in wavelengths:
+    buf = [0.0] * 12000      # fresh allocation every iteration
+    fill_with_results(buf, wavelength)
+    use(buf)
+    # buf goes away here, only to be re-created next iteration
+
+# Fast: allocate once, reuse the same buffer
+buf = [0.0] * 12000
+for wavelength in wavelengths:
+    fill_with_results(buf, wavelength)
+    use(buf)
+```
+
+The science is identical; only the storage handling changes. That saved about 1.41 s in the checkpoint table.

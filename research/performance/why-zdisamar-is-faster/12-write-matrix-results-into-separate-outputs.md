@@ -128,4 +128,30 @@ const T_new = basis.esmulSemulAdd(n, E, &D, T, &td);
 
 ## Why It Matters
 
-The matrix is small, but the call count is high. Writing directly into a separate output keeps the frequent 12x10 product as a simple "read inputs, write result" operation. That is why this small-looking change moves wall time by about 0.22 s in the checkpoint table.
+The matrix is small, but the call count is high. Writing directly into a separate output keeps the frequent 12x10 product as a simple "read inputs, write result" operation.
+
+There are two related ideas here. The first is avoiding allocation in the hot loop:
+
+```python
+# Slow: function returns a fresh array, caller assigns it
+def smul(a, b):
+    out = [0.0] * n
+    for i in range(n):
+        out[i] = a[i] * b[i]
+    return out
+
+x = smul(a, b)        # allocate a new list every call
+y = smul(a, b)        # again
+
+# Fast: caller passes the destination; no fresh allocation
+def smul_into(out, a, b):
+    for i in range(n):
+        out[i] = a[i] * b[i]
+
+smul_into(x, a, b)    # writes into existing buffer
+smul_into(y, a, b)
+```
+
+The second is telling the compiler the destination is separate from the inputs. Zig's `noalias` says "the output buffer does not overlap the input buffers", which lets the compiler keep values in registers instead of reloading them in case some other pointer changed them. That is what unlocks the tightest 12x10 inner loop.
+
+That is why this small-looking change moves wall time by about 0.22 s in the checkpoint table.

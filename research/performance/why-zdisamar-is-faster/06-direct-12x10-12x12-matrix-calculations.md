@@ -73,4 +73,25 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
 
 ## Why It Matters
 
-This replaces a general matrix path with direct code for the actual O2 A shape. The single call is already sub-microsecond, but the call count is in the millions. That is why this mechanism has a large wall-clock effect.
+When the matrix size is decided at runtime, the compiler has to keep the loop bookkeeping (counters, bounds checks, indexing math) in the generated code. When the size is fixed and known up front, the compiler can fully unroll the loops and use registers and SIMD directly.
+
+```python
+# Slow: shape n is decided at runtime, so the loop overhead stays
+def matmul(a, b, n):
+    out = [[0.0]*n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            for k in range(n):
+                out[i][j] += a[i][k] * b[k][j]
+    return out
+
+# Fast: shape is fixed (12 x 12), so the compiler can fully unroll.
+# In Zig, "inline for" tells the compiler "this loop bound is known —
+# please rewrite it as straight-line code". The result behaves like:
+def matmul_12x12(a, b):
+    # 144 multiply-adds laid out flat, no per-iteration counters,
+    # values held in registers, SIMD lanes used where available.
+    ...
+```
+
+A single 12x10 multiply is already sub-microsecond, but it is called millions of times per spectrum, so the per-call savings add up to a 3.45 s checkpoint win.

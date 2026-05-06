@@ -113,4 +113,21 @@ pub fn load(
 
 ## Why It Matters
 
-This is why setup can be discussed separately from the 1.9 s forward wall. It does not explain the whole forward-time speedup, but it explains how zdisamar avoids repeatedly paying broad executable setup costs for the O2 A case.
+If parsing a config file and loading reference line lists happens inside every forward call, those one-time costs masquerade as forward-pass time. The simple fix is to do them once, outside the timed function, and pass the prepared state in.
+
+```python
+# Slow: every call re-parses config and re-loads the line list
+def run_spectrum():
+    config = parse_config_file("Config.in")    # disk + parsing
+    lines  = load_line_list(config)            # large file load
+    return forward(config, lines)
+
+# Fast: prepare once, reuse across calls
+config = parse_config_file("Config.in")
+lines  = load_line_list(config)
+
+def run_spectrum():
+    return forward(config, lines)              # only the actual physics
+```
+
+This does not explain the whole forward-time speedup, but it is why setup can be discussed separately from the ~1.9 s forward wall. Preparation fell from 2.48 s to 0.51 s, saving 1.97 s before the forward run starts.

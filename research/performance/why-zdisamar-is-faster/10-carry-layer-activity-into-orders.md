@@ -99,6 +99,23 @@ for (start_level..end_level) |ilevel| {
 
 ## Why It Matters
 
-The O2 A run has millions of layer/Fourier visits. A zero layer is cheap when it is recognized once. It is expensive when the scattering-order loop rediscovers that zero through dot products.
+The layer-build pass already discovered which layers cannot contribute (zero optical depth, Fourier term out of range). Without remembering that, the scattering-order pass walks every layer and rediscovers the same zeros — by paying for the dot products and getting zero back.
 
-This change is smaller than the fixed matrix-shape work, but it removes repeated work in the part of LABOS that runs after every layer matrix has been built.
+The fix is to write down the answer once and check the flag later:
+
+```python
+# Slow: scattering-order loop does dot products for every layer
+for layer in layers:
+    for order in orders:
+        result = dot(layer.R, prev) + dot(layer.T, prev_d)   # zero if R, T are zero
+
+# Fast: remember which layers were zero, then skip those dot products
+active = [l.contributes() for l in layers]                   # decided once
+for layer, ok in zip(layers, active):
+    for order in orders:
+        if not ok:
+            continue                                          # no math, no zero result
+        result = dot(layer.R, prev) + dot(layer.T, prev_d)
+```
+
+A zero layer is cheap when it is recognized once. It is expensive when the scattering-order loop rediscovers that zero through dot products. The O2 A run has millions of layer/Fourier visits, so the saving compounds even though each individual skip is small.

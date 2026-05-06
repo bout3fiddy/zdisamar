@@ -83,4 +83,18 @@ fn doDouble(
 
 ## Why It Matters
 
-RT-layer construction is the largest measured LABOS block. The instrumented run measured 10.760022 s accumulated in RT-layer construction, with 8.347130 s in the doubling calculation. Reducing repeated matrix work in this block saved about 1.11 s in the checkpoint table.
+Doubling builds the new layer from several intermediate matrices: a `Q*E` term, a `Q*T` term, the existing `T`, and so on. Writing each piece to its own temporary array means walking the matrix many times when one walk would do.
+
+The classic novice example is a multi-step array recipe:
+
+```python
+# Slow: each step writes to a fresh array, three passes total
+tmp1 = [a[i] * b[i] for i in range(n)]    # pass 1
+tmp2 = [tmp1[i] + d[i] for i in range(n)] # pass 2
+out  = [tmp2[i] * e[i] for i in range(n)] # pass 3
+
+# Fast: one pass, no temporaries
+out = [(a[i] * b[i] + d[i]) * e[i] for i in range(n)]
+```
+
+RT-layer construction is the largest measured LABOS block (10.76 s, with 8.35 s in doubling), so removing intermediate passes there saved about 1.11 s in the checkpoint table.

@@ -150,4 +150,22 @@ if (route.rtm_controls.integrate_source_function) {
 
 ## Why It Matters
 
-The high-resolution radiance calculation repeats thousands of times. The vertical layout is fixed across those repeats. zdisamar pays for that layout once and then changes only the wavelength-dependent optical values. The timing table does not isolate this from the unique-wavelength change, so the honest measured statement is that both changes together produced the 67.88 s early checkpoint saving.
+The vertical layout of the atmosphere (layer heights, thicknesses, midpoints) does not change with wavelength. Only the absorption and scattering numbers do. So rebuilding the layout for every wavelength is paying for the same answer thousands of times.
+
+The classic fix is to hoist work that does not depend on the loop variable out of the loop:
+
+```python
+# Slow: rebuild the part that never changes
+for wavelength in wavelengths:
+    layers = build_layer_geometry(profile)   # same answer every time
+    optics = build_optics(profile, wavelength)
+    run(layers, optics)
+
+# Fast: build once, reuse on every iteration
+layers = build_layer_geometry(profile)
+for wavelength in wavelengths:
+    optics = build_optics(profile, wavelength)
+    run(layers, optics)
+```
+
+The timing table does not isolate this from the unique-wavelength change, so the honest measured statement is that both changes together produced the 67.88 s early checkpoint saving.

@@ -190,4 +190,22 @@ for (wavelength_sampling, 0..) |plan, index| {
 
 ## Why It Matters
 
-This is the large early speedup. zdisamar stopped treating the 701 output wavelengths as 701 separate places to rediscover high-resolution radiance work. It made the high-resolution radiance list once, calculated that list once, used the available CPU cores, and reused the results during integration. The checkpoint that includes this change and the shared layer-geometry change saved about 67.88 s.
+Each of the 701 output wavelengths is built from a few nearby high-resolution samples, and many output points ask for the same high-resolution wavelength. If we recompute every time it is asked for, most of the run is spent on duplicate work.
+
+The fix is the same trick you would use to speed up any slow function: compute each unique input once, then look it up.
+
+```python
+# Slow: every output recomputes its high-resolution samples,
+# so the same wavelength gets calculated many times.
+results = []
+for output_wavelength in outputs:
+    for hr in samples_needed_for(output_wavelength):
+        results.append(expensive_radiance(hr))
+
+# Fast: collect the unique list, calculate once, then look up.
+unique = {hr for o in outputs for hr in samples_needed_for(o)}
+cache  = {hr: expensive_radiance(hr) for hr in unique}
+results = [cache[hr] for o in outputs for hr in samples_needed_for(o)]
+```
+
+Each entry in `unique` is independent, so zdisamar also splits the work across CPU cores. The checkpoint that includes this change and the shared layer-geometry change saved about 67.88 s.

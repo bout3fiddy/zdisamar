@@ -95,4 +95,24 @@ inline fn qseriesFromProduct(n: usize, n_gauss: usize, noalias ab: *const Mat) M
 
 ## Why It Matters
 
-The q-series sits inside the layer-doubling loop. It is not called once per spectrum; it is called across many doubled layers and many Fourier terms. A cheap trace check saves time because it prevents a full matrix product, and sometimes prevents the later inverse-based q-series work too.
+Computing `a*b` and then deciding "actually that was zero" wastes the whole multiply. A trace-only check uses about 12 numbers instead of 144 and tells us the same answer in the common case where the product is below the threshold.
+
+```python
+# Slow: do the full matrix multiply, then test the trace of the result
+def qseries(a, b):
+    ab = matmul(a, b)            # 144 multiply-adds for a 12x12 matrix
+    if abs(trace(ab)) < eps:
+        return ab                # we paid for matmul, only to throw it away
+    return inverse_step(ab)
+
+# Fast: cheap pre-check using only the diagonals
+def qseries(a, b):
+    if abs(trace(a) * trace(b)) < eps:
+        return zeros_like(a)     # 24 reads and a multiply, no matmul
+    ab = matmul(a, b)
+    if abs(trace(ab)) < eps:
+        return ab
+    return inverse_step(ab)
+```
+
+The q-series sits inside the layer-doubling loop and is called across many doubled layers and many Fourier terms, so a cheap trace check that often skips both the multiply and the later inverse adds up.

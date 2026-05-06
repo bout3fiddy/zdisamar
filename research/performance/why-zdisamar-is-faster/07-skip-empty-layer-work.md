@@ -85,4 +85,24 @@ for (start_level..end_level) |ilevel| {
 
 ## Why It Matters
 
-The O2 A run visits millions of layer/Fourier combinations. A small skip is valuable when it prevents phase-matrix work, layer-doubling work, or scattering-order dot products inside that repeated structure.
+If a layer cannot scatter (its optical depth is essentially zero, or this Fourier term is past the layer's phase-function range), the result of the heavy matrix work is guaranteed to be zero. Doing the work anyway just produces a zero through the long path.
+
+The fix is the cheapest optimization in the book: check first, then skip.
+
+```python
+# Slow: do the expensive work even when the answer is going to be zero
+for layer in layers:
+    R = build_phase_matrix(layer)        # a lot of work
+    R = layer_doubling(R)                # more work
+    accumulate(R)                        # might just add zero
+
+# Fast: cheap "can this contribute?" test, then skip
+for layer in layers:
+    if layer.optical_depth < 1e-20 or layer.albedo <= 0.0:
+        continue                         # provably zero — stop here
+    R = build_phase_matrix(layer)
+    R = layer_doubling(R)
+    accumulate(R)
+```
+
+The O2 A run visits millions of layer/Fourier combinations, so even a small skip ratio prevents phase-matrix work, layer-doubling work, and scattering-order dot products inside that repeated structure.
