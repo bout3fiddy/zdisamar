@@ -1,6 +1,6 @@
 # 02. Fuse Layer-Doubling Matrix Updates
 
-Measured forward-time saving: `b0a9e0f -> 97088cf`, 7.057182 s to 6.006493 s, saving 1.050689 s for one spectrum.
+Measured forward-time saving: `b0a9e0f -> 97088cf`, 7.020602 s to 5.911137 s, saving 1.109465 s for one spectrum.
 
 ## What DISAMAR Does
 
@@ -83,4 +83,4 @@ fn doDouble(
 
 ## Why It Matters
 
-RT-layer construction is the largest measured LABOS block. The instrumented run measured 10.760022 s accumulated in RT-layer construction, with 8.347130 s in the doubling calculation. Reducing repeated matrix work in this block saved about 1.05 s in the checkpoint table.
+RT-layer construction is the largest measured LABOS block. The instrumented run measured 10.760022 s accumulated in RT-layer construction, with 8.347130 s in the doubling calculation. Reducing repeated matrix work in this block saved about 1.11 s in the checkpoint table.

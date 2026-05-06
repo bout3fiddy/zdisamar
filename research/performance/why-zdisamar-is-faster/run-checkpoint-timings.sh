@@ -16,6 +16,13 @@ SPEEDUP_COMMITS=(
   "0ae1cad direct_matrix_math"
   "f42445d skip_empty_layers"
   "c423f4a fourier_tail"
+  "f295ace layer_activity_orders"
+  "07b19f3 zero_scatter_layers"
+  "9138e6a pre_qseries_skips"
+  "286c5b8 skip_zero_qseries"
+  "63df87e qseries_precheck_reuse"
+  "4791c22 separate_matrix_outputs"
+  "baf0b4f fused_d_update"
   "862511b final_checkpoint"
 )
 

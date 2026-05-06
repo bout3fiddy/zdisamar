@@ -1,6 +1,6 @@
 # 01. Reuse LABOS Storage
 
-Measured forward-time saving: `5ef6c71 -> b0a9e0f`, 8.357542 s to 7.057182 s, saving 1.300360 s for one spectrum.
+Measured forward-time saving: `5ef6c71 -> b0a9e0f`, 8.432518 s to 7.020602 s, saving 1.411916 s for one spectrum.
 
 ## What DISAMAR Does
 
@@ -11,7 +11,7 @@ Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b6
 Excerpt:
 
 ```fortran
-do iFourier = 0, FourierMax  ! start Fourier loop
+do iFourier = 0, FourierMax
 
   if ( .not. controlS%aerosolLayerHeight ) then
     if ( iFourier > controlS%fourierFloorScalar ) then
@@ -20,6 +20,7 @@ do iFourier = 0, FourierMax  ! start Fourier loop
       dimSV_fc = dimSV
     end if
 
+    ! These objects are allocated inside the repeated Fourier work.
     call allocCoef(errS, fcCoef, nmutot, dimSV_fc, maxExpCoef)
     call allocateReflTransInternalField(errS, RTMnlayer, dimSV_fc, nmutot, nmuextra, RT_fc,  &
                                         UDorde_fc, UDLocal_fc, UDsumLocal_fc, UD_fc)
@@ -90,4 +91,4 @@ pub fn ordersWorkspace(self: *Workspace, nlevel: usize) !*orders_mod.OrdersWorks
 
 ## Why It Matters
 
-The scientific calculation is the same kind of LABOS calculation. The difference is that zdisamar stops rebuilding storage that can be kept around for the next high-resolution wavelength. That saved about 1.30 s in the checkpoint table.
+The scientific calculation is the same kind of LABOS calculation. The difference is that zdisamar stops rebuilding storage that can be kept around for the next high-resolution wavelength. That saved about 1.41 s in the checkpoint table.

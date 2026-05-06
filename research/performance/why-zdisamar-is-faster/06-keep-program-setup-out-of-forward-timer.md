@@ -1,6 +1,6 @@
 # 06. Keep Full-Program Setup Out Of The Forward Timer
 
-Forward-time saving: this mechanism mainly affects preparation and repeated setup, not the measured forward-pass wall. In the checkpoint table, preparation falls from 2.609367 s at `5ef6c71` to 0.440775 s at `862511b`, saving 2.168592 s before the forward run starts.
+Forward-time saving: this mechanism mainly affects preparation and repeated setup, not the measured forward-pass wall. In the checkpoint table, preparation falls from 2.475131 s at `5ef6c71` to 0.509849 s at `862511b`, saving 1.965282 s before the forward run starts.
 
 ## What DISAMAR Does
 
@@ -41,8 +41,8 @@ Excerpt:
 ```fortran
 do iband = 1, globalS%numSpectrBands
   do iTrace = 1, globalS%nTrace
-    ! first calculate expansion coefficients for the absorption cross section for
-    ! each individual absorbing gas to be used in the simulation
+    ! DISAMAR prepares cross-section expansion coefficients during broad setup.
+    ! zdisamar keeps fixed O2 A line/profile state outside repeated forward runs.
     if (  globalS%XsecHRLUTSimS(iband,iTrace)%createXsecPolyLUT  ) then
       prev_time = current_time(current_time_values)
       call createXsecLUT (errS, staticS, globalS%controlSimS, globalS%wavelHRSimS(iband),               &
@@ -113,4 +113,4 @@ pub fn load(
 
 ## Why It Matters
 
-This is why current preparation is about 0.16 s and the forward run can be discussed as its own 2.03 s wall. It does not explain the whole forward-time speedup, but it explains how zdisamar avoids repeatedly paying broad executable setup costs for the O2 A case.
+This is why setup can be discussed separately from the 1.9 s forward wall. It does not explain the whole forward-time speedup, but it explains how zdisamar avoids repeatedly paying broad executable setup costs for the O2 A case.

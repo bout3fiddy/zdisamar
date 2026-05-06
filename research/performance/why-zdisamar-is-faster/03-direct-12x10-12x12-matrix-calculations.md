@@ -1,6 +1,6 @@
 # 03. Use Direct 12x10 And 12x12 Matrix Calculations
 
-Measured forward-time saving: `97088cf -> 0ae1cad`, 6.006493 s to 2.503199 s, saving 3.503294 s for one spectrum. This is the largest measured checkpoint win in the table.
+Measured forward-time saving: `97088cf -> 0ae1cad`, 5.911137 s to 2.460360 s, saving 3.450778 s for one spectrum. This is the largest measured checkpoint win in the table.
 
 ## Why This Shape Exists
 

@@ -1,6 +1,6 @@
 # 04. Skip Layers And Terms That Cannot Contribute
 
-Measured forward-time saving: `0ae1cad -> f42445d`, 2.503199 s to 2.261732 s, saving 0.241467 s for one spectrum.
+Measured forward-time saving: `0ae1cad -> f42445d`, 2.460360 s to 2.266849 s, saving 0.193511 s for one spectrum.
 
 ## What DISAMAR Does
 

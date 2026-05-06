@@ -1,17 +1,17 @@
 # 05. Stop Tiny Fourier Tails
 
-Measured forward-time saving: `f42445d -> c423f4a`, 2.261732 s to 2.058945 s, saving 0.202787 s for one spectrum. The later `862511b` checkpoint moved the forward run from 2.058945 s to 1.936090 s, saving another 0.122855 s for one spectrum.
+Measured forward-time saving: `f42445d -> c423f4a`, 2.266849 s to 2.025331 s, saving 0.241518 s for one spectrum.
 
 ## What DISAMAR Does
 
-DISAMAR loops over Fourier terms up to `FourierMax`. It also contains a source comment saying the generalized spherical functions might be moved outside the wavelength loop if profiling showed that it helped.
+DISAMAR loops over Fourier terms up to `FourierMax`. Inside that loop it rebuilds the generalized spherical functions used by the layer calculation.
 
 Source link: [GitHub source](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/vendor/disamar-fortran/src/LabosModule.f90#L268-L303)
 
 Excerpt:
 
 ```fortran
-do iFourier = 0, FourierMax  ! start Fourier loop
+do iFourier = 0, FourierMax
 
   if ( .not. controlS%aerosolLayerHeight ) then
     if ( iFourier > controlS%fourierFloorScalar ) then
@@ -21,12 +21,8 @@ do iFourier = 0, FourierMax  ! start Fourier loop
     end if
   end if
 
-  ! pre-calculate generalized spherical functions (for polarized light)
-  ! NOTE that the calculation of these functions could be taken outside the wavelength loop
-  ! and moved to the reading of the configuration file where the grid for the
-  ! direction cosines is defined and the maximum number of expansion coefficients are calculated.
-  ! Do this only if it saves a significant amount of time (use profiling).
-
+  ! These values are rebuilt here before the RT-layer calculation.
+  ! zdisamar keeps the same kind of values in reusable LABOS storage.
   call fillPlmVector(errS, fcCoef, iFourier, dimSV_fc, nmutot, maxExpCoef, geometryS)
   call CalcRTlayers(errS, fcCoef, iFourier, maxExpCoef, RTMnlevelCloud, RTMnlayer, dimSV, dimSV_fc, nmutot, &
                     nGauss, controlS, geometryS, optPropRTMGridS, RT_fc)
