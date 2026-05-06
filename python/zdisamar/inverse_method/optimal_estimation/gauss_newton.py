@@ -81,7 +81,9 @@ def gauss_newton_step(
     # "this many prior standard deviations" before returning to AOD and hPa.
     dx_new = problem.sqrt_sa @ v @ dx_trans_new
     state = prior + dx_new
-    posterior_precision_white = v @ np.diag(1.0 + singular_values**2) @ vt
+    state_count = problem.k_white.shape[1]
+    posterior_precision_white = np.eye(state_count, dtype=np.float64)
+    posterior_precision_white += v @ np.diag(singular_values**2) @ vt
     posterior_precision = problem.sqrt_inv_sa.T @ posterior_precision_white @ problem.sqrt_inv_sa
     posterior_covariance = np.linalg.inv(posterior_precision)
 

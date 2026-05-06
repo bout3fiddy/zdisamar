@@ -31,6 +31,9 @@ import zdisamar as zd  # noqa: E402
 from o2a_python_case import build_o2a_case  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estimation  # noqa: E402
+from zdisamar.inverse_method.optimal_estimation.covariance_space import (  # noqa: E402
+    build_covariance_space,
+)
 
 from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
@@ -93,6 +96,62 @@ def assert_layer_boundaries_are_contiguous(
         moved_case.atmosphere.intervals[1].bottom_pressure_hpa
         == moved_case.atmosphere.intervals[2].top_pressure_hpa
     )
+
+
+def assert_altitude_jacobian_matches_finite_difference(
+    case: zd.O2AInput,
+    state_vector,
+) -> None:
+    inverse_model = optimal_estimation.O2AInverseForwardModel(case)
+    state = state_vector.prior_state()
+    with zd.prepare(inverse_model.settings_for_state(state, state_vector)) as prepared:
+        evaluation = o2a_optimal_estimation.evaluate_prepared_reflectance(
+            prepared,
+            state_vector.jacobian_names,
+        )
+
+    eps_km = 1.0e-2
+    plus_state = np.array(state, copy=True)
+    plus_state[1] += eps_km
+    minus_state = np.array(state, copy=True)
+    minus_state[1] -= eps_km
+    with zd.prepare(inverse_model.settings_for_state(plus_state, state_vector)) as prepared:
+        plus = o2a_optimal_estimation.evaluate_prepared_reflectance(
+            prepared,
+            state_vector.jacobian_names,
+        )
+    with zd.prepare(inverse_model.settings_for_state(minus_state, state_vector)) as prepared:
+        minus = o2a_optimal_estimation.evaluate_prepared_reflectance(
+            prepared,
+            state_vector.jacobian_names,
+        )
+
+    finite_difference = (plus.reflectance - minus.reflectance) / (2.0 * eps_km)
+    altitude_index = state_vector.names.index("aerosol_layer_top_altitude_km")
+    max_abs_residual = np.max(
+        np.abs(evaluation.reflectance_jacobian[:, altitude_index] - finite_difference)
+    )
+    assert max_abs_residual <= 5.0e-5
+
+
+def assert_gauss_newton_retains_prior_precision_nullspace() -> None:
+    problem = build_covariance_space(
+        previous=np.zeros(2, dtype=np.float64),
+        prior=np.zeros(2, dtype=np.float64),
+        residual=np.array([1.0], dtype=np.float64),
+        jacobian=np.array([[2.0, 0.0]], dtype=np.float64),
+        prior_covariance=np.eye(2, dtype=np.float64),
+        measurement_variance=np.array([1.0], dtype=np.float64),
+    )
+    step = optimal_estimation.gauss_newton_step(
+        problem,
+        prior=np.zeros(2, dtype=np.float64),
+        jacobian=np.array([[2.0, 0.0]], dtype=np.float64),
+        measurement_variance=np.array([1.0], dtype=np.float64),
+        max_change_transformed_state=100.0,
+    )
+    assert np.allclose(step.posterior_precision, np.array([[5.0, 0.0], [0.0, 1.0]]))
+    assert np.allclose(step.posterior_covariance, np.array([[0.2, 0.0], [0.0, 1.0]]))
 
 
 def build_measurement(
@@ -351,6 +410,8 @@ def main() -> int:
 
     with timer.phase("build_state_vector_s"):
         state_vector = build_state_vector(case, reference, profile)
+        assert_altitude_jacobian_matches_finite_difference(case, state_vector)
+        assert_gauss_newton_retains_prior_precision_nullspace()
 
     with timer.phase("boundary_contiguity_check_s"):
         assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
