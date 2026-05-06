@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 import numpy as np
 
@@ -23,15 +24,16 @@ PROFILE_PATH = REPO_ROOT / "data" / "reference_data" / "climatologies" / "vendor
 REFERENCE_PATH = DATA_DIR / "disamar_o2a_two_state_reference.json"
 SUMMARY_PATH = DATA_DIR / "zdisamar_o2a_two_state_summary.json"
 
-sys.path.insert(0, str(PYTHON_ROOT))
-sys.path.insert(0, str(SCRIPT_ROOT))
+sys.path[:0] = [str(PYTHON_ROOT), str(SCRIPT_ROOT)]
 
 import zdisamar as zd
+from zdisamar.inverse_method import optimal_estimation
 from o2a_python_case import build_o2a_case
 
+JsonObject = dict[str, Any]
 
-def build_state_vector(case, reference, profile):
-    optimal_estimation = zd.inverse_method.optimal_estimation
+
+def build_state_vector(case: zd.O2AInput, reference: JsonObject, profile):
     prior = reference["a_priori"]
     layer_thickness = (
         case.aerosol.placement.bottom_pressure_hpa
@@ -57,8 +59,11 @@ def build_state_vector(case, reference, profile):
     )
 
 
-def assert_layer_boundaries_are_contiguous(case, state_vector, prior) -> None:
-    optimal_estimation = zd.inverse_method.optimal_estimation
+def assert_layer_boundaries_are_contiguous(
+    case: zd.O2AInput,
+    state_vector,
+    prior: JsonObject,
+) -> None:
     inverse_model = optimal_estimation.O2AInverseForwardModel(case)
     moved_case = inverse_model.settings_for_state(
         np.array(
@@ -82,8 +87,7 @@ def assert_layer_boundaries_are_contiguous(case, state_vector, prior) -> None:
     )
 
 
-def run_retrieval(case, state_vector):
-    optimal_estimation = zd.inverse_method.optimal_estimation
+def run_retrieval(case: zd.O2AInput, state_vector):
     inverse_model = optimal_estimation.O2AInverseForwardModel(case)
 
     # The measurement is simulated once from the truth scene. The inverse pass
@@ -103,7 +107,9 @@ def run_retrieval(case, state_vector):
     )
 
 
-def iteration_records(result) -> list[dict[str, float | int | bool]]:
+def iteration_records(
+    result: optimal_estimation.Result,
+) -> list[dict[str, float | int | bool | None]]:
     return [
         {
             "index": iteration.index,
@@ -118,23 +124,73 @@ def iteration_records(result) -> list[dict[str, float | int | bool]]:
     ]
 
 
-def build_summary(reference, result, profile, layer_thickness: float) -> dict[str, object]:
-    retrieved = reference["retrieved"]
-    tolerances = reference["tolerances"]
-    aod = result.value("aerosol_optical_depth")
+def build_retrieved_state(
+    result: optimal_estimation.Result,
+    profile,
+    layer_thickness: float,
+) -> dict[str, float]:
     top_altitude = result.value("aerosol_layer_top_altitude_km")
     top_pressure = profile.pressure_at_altitude(top_altitude)
     bottom_pressure = top_pressure + layer_thickness
-    mid_pressure = 0.5 * (top_pressure + bottom_pressure)
-    aod_abs_diff = abs(aod - float(retrieved["aerosol_optical_depth"]))
-    top_altitude_abs_diff = abs(top_altitude - float(retrieved["aerosol_layer_top_altitude_km"]))
-    top_pressure_abs_diff = abs(top_pressure - float(retrieved["aerosol_layer_top_pressure_hpa"]))
-    pressure_abs_diff = abs(mid_pressure - float(retrieved["aerosol_layer_mid_pressure_hpa"]))
+    return {
+        "aerosol_optical_depth": result.value("aerosol_optical_depth"),
+        "aerosol_layer_top_altitude_km": top_altitude,
+        "aerosol_layer_top_pressure_hpa": top_pressure,
+        "aerosol_layer_bottom_pressure_hpa": bottom_pressure,
+        "aerosol_layer_mid_pressure_hpa": 0.5 * (top_pressure + bottom_pressure),
+    }
+
+
+def within_tolerance(value: float, expected: float, tolerance: float) -> bool:
+    return abs(value - expected) <= tolerance
+
+
+def build_summary(
+    reference: JsonObject,
+    result: optimal_estimation.Result,
+    profile,
+    layer_thickness: float,
+) -> JsonObject:
+    retrieved = reference["retrieved"]
+    tolerances = reference["tolerances"]
+    retrieved_state = build_retrieved_state(result, profile, layer_thickness)
+    aod_abs_diff = abs(
+        retrieved_state["aerosol_optical_depth"]
+        - float(retrieved["aerosol_optical_depth"])
+    )
+    top_altitude_abs_diff = abs(
+        retrieved_state["aerosol_layer_top_altitude_km"]
+        - float(retrieved["aerosol_layer_top_altitude_km"])
+    )
+    top_pressure_abs_diff = abs(
+        retrieved_state["aerosol_layer_top_pressure_hpa"]
+        - float(retrieved["aerosol_layer_top_pressure_hpa"])
+    )
+    pressure_abs_diff = abs(
+        retrieved_state["aerosol_layer_mid_pressure_hpa"]
+        - float(retrieved["aerosol_layer_mid_pressure_hpa"])
+    )
     iteration_match = result.iterations == int(reference["expected_iterations"])
-    aod_match = aod_abs_diff <= float(tolerances["aerosol_optical_depth_abs"])
-    top_altitude_match = top_altitude_abs_diff <= float(tolerances["aerosol_layer_top_altitude_km_abs"])
-    top_pressure_match = top_pressure_abs_diff <= float(tolerances["aerosol_layer_top_pressure_hpa_abs"])
-    pressure_match = pressure_abs_diff <= float(tolerances["aerosol_layer_mid_pressure_hpa_abs"])
+    aod_match = within_tolerance(
+        retrieved_state["aerosol_optical_depth"],
+        float(retrieved["aerosol_optical_depth"]),
+        float(tolerances["aerosol_optical_depth_abs"]),
+    )
+    top_altitude_match = within_tolerance(
+        retrieved_state["aerosol_layer_top_altitude_km"],
+        float(retrieved["aerosol_layer_top_altitude_km"]),
+        float(tolerances["aerosol_layer_top_altitude_km_abs"]),
+    )
+    top_pressure_match = within_tolerance(
+        retrieved_state["aerosol_layer_top_pressure_hpa"],
+        float(retrieved["aerosol_layer_top_pressure_hpa"]),
+        float(tolerances["aerosol_layer_top_pressure_hpa_abs"]),
+    )
+    pressure_match = within_tolerance(
+        retrieved_state["aerosol_layer_mid_pressure_hpa"],
+        float(retrieved["aerosol_layer_mid_pressure_hpa"]),
+        float(tolerances["aerosol_layer_mid_pressure_hpa_abs"]),
+    )
     passed = bool(
         iteration_match
         and aod_match
@@ -151,13 +207,7 @@ def build_summary(reference, result, profile, layer_thickness: float) -> dict[st
         "converged": result.converged,
         "expected_iterations": reference["expected_iterations"],
         "iteration_match": iteration_match,
-        "retrieved": {
-            "aerosol_optical_depth": aod,
-            "aerosol_layer_top_altitude_km": top_altitude,
-            "aerosol_layer_top_pressure_hpa": top_pressure,
-            "aerosol_layer_bottom_pressure_hpa": bottom_pressure,
-            "aerosol_layer_mid_pressure_hpa": mid_pressure,
-        },
+        "retrieved": retrieved_state,
         "reference": retrieved,
         "history": iteration_records(result),
         "reference_history": reference["iterations"],
@@ -177,7 +227,6 @@ def build_summary(reference, result, profile, layer_thickness: float) -> dict[st
 def main() -> int:
     reference = json.loads(REFERENCE_PATH.read_text())
     case = build_o2a_case(zd, jacobian_reference_layer=True)
-    optimal_estimation = zd.inverse_method.optimal_estimation
     profile = optimal_estimation.PressureAltitudeProfile.from_csv(PROFILE_PATH)
     state_vector = build_state_vector(case, reference, profile)
     assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
