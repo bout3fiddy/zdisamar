@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import sys
 from typing import Any
@@ -20,7 +21,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 SCRIPT_ROOT = REPO_ROOT / "scripts" / "testing_harness"
 DATA_DIR = REPO_ROOT / "validation" / "optimal_estimation" / "data"
-PROFILE_PATH = REPO_ROOT / "data" / "reference_data" / "climatologies" / "vendor_config_o2a_profile.csv"
 REFERENCE_PATH = DATA_DIR / "disamar_o2a_two_state_reference.json"
 SUMMARY_PATH = DATA_DIR / "zdisamar_o2a_two_state_summary.json"
 
@@ -33,7 +33,42 @@ from o2a_python_case import build_o2a_case
 JsonObject = dict[str, Any]
 
 
-def build_state_vector(case: zd.O2AInput, reference: JsonObject, profile):
+def pressure_altitude_profile_from_case(
+    case: zd.O2AInput,
+) -> optimal_estimation.PressureAltitudeProfile:
+    # The fitted interval state is an altitude, but the forward-model settings
+    # are pressure boundaries.  The prepared grid is the only pressure-altitude
+    # relation that has the same interval subdivision as the spectrum/Jacobian
+    # calculation, so using the sparse climatology table here would validate a
+    # different inverse problem.
+    with zd.prepare(case) as prepared:
+        budget = prepared.atmospheric_budget(
+            np.array([case.spectral_grid.start_nm], dtype=np.float64)
+        )
+        table = budget.table
+
+    levels_by_pressure: dict[float, float] = {}
+    for row in table:
+        levels_by_pressure[round(float(row["top_pressure_hpa"]), 12)] = float(
+            row["top_altitude_km"]
+        )
+        levels_by_pressure[round(float(row["bottom_pressure_hpa"]), 12)] = float(
+            row["bottom_altitude_km"]
+        )
+    levels = sorted(
+        (altitude, pressure) for pressure, altitude in levels_by_pressure.items()
+    )
+    return optimal_estimation.PressureAltitudeProfile(
+        altitude_km=np.array([altitude for altitude, _pressure in levels]),
+        pressure_hpa=np.array([pressure for _altitude, pressure in levels]),
+    )
+
+
+def build_state_vector(
+    case: zd.O2AInput,
+    reference: JsonObject,
+    profile: optimal_estimation.PressureAltitudeProfile,
+):
     prior = reference["a_priori"]
     layer_thickness = (
         case.aerosol.placement.bottom_pressure_hpa
@@ -87,7 +122,7 @@ def assert_layer_boundaries_are_contiguous(
     )
 
 
-def run_retrieval(case: zd.O2AInput, state_vector):
+def run_retrieval(case: zd.O2AInput, state_vector, reference: JsonObject):
     inverse_model = optimal_estimation.O2AInverseForwardModel(case)
 
     # The measurement is simulated once from the truth scene. The inverse pass
@@ -98,12 +133,44 @@ def run_retrieval(case: zd.O2AInput, state_vector):
             prepared,
             reflectance_variance=1.0e-8,
         )
+    if "measurement_noise" in reference:
+        measurement = measurement_with_reference_noise(
+            measurement,
+            reference["measurement_noise"],
+            case,
+        )
 
     return optimal_estimation.disamar_oe(
         inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
         controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
+    )
+
+
+def measurement_with_reference_noise(
+    measurement: optimal_estimation.Measurement,
+    noise_reference: JsonObject,
+    case: zd.O2AInput,
+) -> optimal_estimation.Measurement:
+    source_wavelength = np.asarray(noise_reference["wavelength_nm"], dtype=np.float64)
+    source_noise = np.asarray(
+        noise_reference["assumed_noise_sun_normalized_radiance"],
+        dtype=np.float64,
+    )
+    # The reference precision is attached to sun-normalized radiance.  The
+    # retrieval vector here is reflectance R = pi * I / (mu0 * E0), so the
+    # covariance has to be converted by the same scale as the measurement.
+    mu0 = math.cos(math.radians(case.geometry.solar_zenith_deg))
+    reflectance_noise = np.interp(
+        measurement.wavelength_nm,
+        source_wavelength,
+        source_noise,
+    ) * (math.pi / mu0)
+    return optimal_estimation.Measurement(
+        wavelength_nm=measurement.wavelength_nm,
+        reflectance=measurement.reflectance,
+        variance=reflectance_noise**2,
     )
 
 
@@ -143,6 +210,73 @@ def build_retrieved_state(
 
 def within_tolerance(value: float, expected: float, tolerance: float) -> bool:
     return abs(value - expected) <= tolerance
+
+
+def iteration_matches(
+    reference_iterations: list[JsonObject],
+    result_iterations: list[dict[str, float | int | bool | None]],
+    tolerances: JsonObject,
+) -> bool:
+    if len(reference_iterations) != len(result_iterations):
+        return False
+    state_tolerances = tolerances["iteration_state_abs"]
+    diagnostic_tolerances = tolerances.get("iteration_diagnostic_abs", {})
+    for expected, actual in zip(reference_iterations, result_iterations, strict=True):
+        if int(expected["index"]) != int(actual["index"]):
+            return False
+        if not within_tolerance(
+            float(actual["aerosol_optical_depth"]),
+            float(expected["aerosol_optical_depth"]),
+            float(state_tolerances["aerosol_optical_depth"]),
+        ):
+            return False
+        if not within_tolerance(
+            float(actual["aerosol_layer_top_altitude_km"]),
+            float(expected["intervalDP_top_altitude_km"]),
+            float(state_tolerances["aerosol_layer_top_altitude_km"]),
+        ):
+            return False
+        if "state_vector_convergence" in expected and not within_tolerance(
+            float(actual["state_vector_convergence"]),
+            float(expected["state_vector_convergence"]),
+            float(diagnostic_tolerances["state_vector_convergence"]),
+        ):
+            return False
+        if "snr_normal" in expected and bool(actual["snr_normal"]) != bool(
+            expected["snr_normal"]
+        ):
+            return False
+    return True
+
+
+def diagnostics_match(
+    reference: JsonObject,
+    result: optimal_estimation.Result,
+    tolerances: JsonObject,
+) -> bool:
+    if "disamar" not in reference or not result.history:
+        return True
+    expected = reference["disamar"]
+    actual = result.history[-1]
+    diagnostic_tolerances = tolerances["final_diagnostic_abs"]
+    return (
+        within_tolerance(
+            float(actual.state_vector_convergence),
+            float(expected["state_vector_convergence"]),
+            float(diagnostic_tolerances["state_vector_convergence"]),
+        )
+        and within_tolerance(
+            float(actual.chi2_reflectance),
+            float(expected["chi2_reflectance"]),
+            float(diagnostic_tolerances["chi2_reflectance"]),
+        )
+        and within_tolerance(
+            float(actual.chi2_state_vector),
+            float(expected["chi2_state_vector"]),
+            float(diagnostic_tolerances["chi2_state_vector"]),
+        )
+        and bool(result.converged) == bool(expected["solution_has_converged"])
+    )
 
 
 def build_summary(
@@ -191,12 +325,17 @@ def build_summary(
         float(retrieved["aerosol_layer_mid_pressure_hpa"]),
         float(tolerances["aerosol_layer_mid_pressure_hpa_abs"]),
     )
+    history = iteration_records(result)
+    history_match = iteration_matches(reference["iterations"], history, tolerances)
+    final_diagnostics_match = diagnostics_match(reference, result, tolerances)
     passed = bool(
         iteration_match
         and aod_match
         and top_altitude_match
         and top_pressure_match
         and pressure_match
+        and history_match
+        and final_diagnostics_match
         and result.converged
     )
 
@@ -207,9 +346,11 @@ def build_summary(
         "converged": result.converged,
         "expected_iterations": reference["expected_iterations"],
         "iteration_match": iteration_match,
+        "history_match": history_match,
+        "final_diagnostics_match": final_diagnostics_match,
         "retrieved": retrieved_state,
         "reference": retrieved,
-        "history": iteration_records(result),
+        "history": history,
         "reference_history": reference["iterations"],
         "absolute_differences": {
             "aerosol_optical_depth": aod_abs_diff,
@@ -227,11 +368,11 @@ def build_summary(
 def main() -> int:
     reference = json.loads(REFERENCE_PATH.read_text())
     case = build_o2a_case(zd, jacobian_reference_layer=True)
-    profile = optimal_estimation.PressureAltitudeProfile.from_csv(PROFILE_PATH)
+    profile = pressure_altitude_profile_from_case(case)
     state_vector = build_state_vector(case, reference, profile)
     assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
 
-    result = run_retrieval(case, state_vector)
+    result = run_retrieval(case, state_vector, reference)
     layer_thickness = (
         case.aerosol.placement.bottom_pressure_hpa
         - case.aerosol.placement.top_pressure_hpa
