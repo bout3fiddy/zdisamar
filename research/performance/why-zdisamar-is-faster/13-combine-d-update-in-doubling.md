@@ -1,4 +1,4 @@
-# 10. Combine The D Update In Doubling
+# 13. Combine The D Update In Doubling
 
 Measured forward-time saving: `4791c22 -> baf0b4f`, 1.915826 s to 1.889351 s, saving 0.026476 s for one spectrum.
 

@@ -1,4 +1,4 @@
-# 02. Fuse Layer-Doubling Matrix Updates
+# 05. Fuse Layer-Doubling Matrix Updates
 
 Measured forward-time saving: `b0a9e0f -> 97088cf`, 7.020602 s to 5.911137 s, saving 1.109465 s for one spectrum.
 

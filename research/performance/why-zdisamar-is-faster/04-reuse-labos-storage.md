@@ -1,4 +1,4 @@
-# 01. Reuse LABOS Storage
+# 04. Reuse LABOS Storage
 
 Measured forward-time saving: `5ef6c71 -> b0a9e0f`, 8.432518 s to 7.020602 s, saving 1.411916 s for one spectrum.
 

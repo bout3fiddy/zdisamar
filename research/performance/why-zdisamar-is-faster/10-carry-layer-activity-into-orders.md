@@ -1,4 +1,4 @@
-# 07. Carry Layer Activity Into Scattering Orders
+# 10. Carry Layer Activity Into Scattering Orders
 
 Measured forward-time saving: `c423f4a -> f295ace`, 2.025331 s to 1.980342 s, saving 0.044989 s for one spectrum.
 

@@ -1,4 +1,4 @@
-# 06. Keep Full-Program Setup Out Of The Forward Timer
+# 09. Keep Full-Program Setup Out Of The Forward Timer
 
 Forward-time saving: this mechanism mainly affects preparation and repeated setup, not the measured forward-pass wall. In the checkpoint table, preparation falls from 2.475131 s at `5ef6c71` to 0.509849 s at `862511b`, saving 1.965282 s before the forward run starts.
 

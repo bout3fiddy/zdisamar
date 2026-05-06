@@ -1,4 +1,4 @@
-# 04. Skip Layers And Terms That Cannot Contribute
+# 07. Skip Layers And Terms That Cannot Contribute
 
 Measured forward-time saving: `0ae1cad -> f42445d`, 2.460360 s to 2.266849 s, saving 0.193511 s for one spectrum.
 

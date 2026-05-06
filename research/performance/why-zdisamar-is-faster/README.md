@@ -20,21 +20,24 @@ O2-O2 table setup            1.755 s
 high-resolution wavelengths  3,874
 ```
 
-Those timers are not the same kind of measurement. zdisamar reports a prepare/forward split. DISAMAR reports a full executable simulation. The useful comparison is the mechanism: DISAMAR runs a broad configurable program, while zdisamar runs the O2 A forward spectrum through a narrower reusable calculation.
+Those timers are not the same kind of measurement. zdisamar reports a prepare/forward split. DISAMAR reports a full executable simulation. The useful comparison is the mechanism: DISAMAR runs a broad configurable program, while zdisamar runs the O2 A forward spectrum we need with reusable prepared data.
 
 ## Documents
 
 - [Checkpoint timings](checkpoint-timings.md): exact script, commits, commands, and the measured 79-second, 35-second, 8-second, and 1.9-second rows.
-- [01. Reuse LABOS storage](01-reuse-labos-storage.md): avoids repeated allocation in the frequently repeated Fourier and wavelength work.
-- [02. Fuse layer-doubling matrix updates](02-fuse-layer-doubling-matrix-updates.md): reduces repeated matrix traffic in the most expensive LABOS block.
-- [03. Use direct 12x10 and 12x12 matrix calculations](03-direct-12x10-12x12-matrix-calculations.md): uses the fixed O2 A 20-stream shape instead of a fully general matrix route.
-- [04. Skip layers and terms that cannot contribute](04-skip-empty-layer-work.md): avoids scattering work for layers and terms that are mathematically zero or negligible.
-- [05. Stop tiny Fourier tails](05-fourier-tail-and-basis-reuse.md): reuses Fourier basis values and stops once later Fourier terms are below the required scale.
-- [06. Keep full-program setup out of the forward timer](06-keep-program-setup-out-of-forward-timer.md): separates fixed input and line/profile preparation from the two-second forward wall.
-- [07. Carry layer activity into scattering orders](07-carry-layer-activity-into-orders.md): remembers which layers are zero so later scattering-order dot products can skip them.
-- [08. Skip empty q-series work](08-skip-empty-qseries-work.md): avoids q-series matrix work when repeated reflection is below the configured threshold.
-- [09. Write matrix results into separate outputs](09-write-matrix-results-into-separate-outputs.md): writes repeated matrix products directly into their final destination.
-- [10. Combine the D update in doubling](10-combine-d-update-in-doubling.md): combines `T + Q*E + Q*T` for the common O2 A matrix shape.
+- [01. Calculate high-resolution wavelengths once](01-calculate-high-resolution-wavelengths-once.md): calculates each needed high-resolution radiance wavelength once, splits those calculations across CPU cores, and lets the 701 output wavelengths integrate those values.
+- [02. Reuse shared layer geometry](02-reuse-shared-layer-geometry.md): builds the fixed vertical layer geometry once and changes only wavelength-dependent optical values during the forward pass.
+- [03. Prepare line spectroscopy once](03-prepare-line-spectroscopy-once.md): moves pressure/temperature-dependent spectroscopy work into preparation so the forward pass mainly pays for wavelength-dependent line evaluation.
+- [04. Reuse LABOS storage](04-reuse-labos-storage.md): avoids repeated allocation in the frequently repeated Fourier and wavelength work.
+- [05. Fuse layer-doubling matrix updates](05-fuse-layer-doubling-matrix-updates.md): reduces repeated matrix traffic in the most expensive LABOS block.
+- [06. Use direct 12x10 and 12x12 matrix calculations](06-direct-12x10-12x12-matrix-calculations.md): uses the fixed O2 A 20-stream shape instead of a fully general matrix route.
+- [07. Skip layers and terms that cannot contribute](07-skip-empty-layer-work.md): avoids scattering work for layers and terms that are mathematically zero or negligible.
+- [08. Stop tiny Fourier tails](08-fourier-tail-and-basis-reuse.md): reuses Fourier basis values and stops once later Fourier terms are below the required scale.
+- [09. Keep full-program setup out of the forward timer](09-keep-program-setup-out-of-forward-timer.md): separates fixed input and line/profile preparation from the two-second forward wall.
+- [10. Carry layer activity into scattering orders](10-carry-layer-activity-into-orders.md): remembers which layers are zero so later scattering-order dot products can skip them.
+- [11. Skip empty q-series work](11-skip-empty-qseries-work.md): avoids q-series matrix work when repeated reflection is below the configured threshold.
+- [12. Write matrix results into separate outputs](12-write-matrix-results-into-separate-outputs.md): writes repeated matrix products directly into their final destination.
+- [13. Combine the D update in doubling](13-combine-d-update-in-doubling.md): combines `T + Q*E + Q*T` for the common O2 A matrix shape.
 
 Source links point at code commit `36598b67287c918b410ae25ca54319cbe63ade4b`, which is the source tree inspected for these excerpts. The code blocks below each link copy the relevant lines so the mechanism is readable without opening another file.
 

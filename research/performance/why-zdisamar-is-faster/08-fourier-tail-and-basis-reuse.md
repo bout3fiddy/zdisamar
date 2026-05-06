@@ -1,4 +1,4 @@
-# 05. Stop Tiny Fourier Tails
+# 08. Stop Tiny Fourier Tails
 
 Measured forward-time saving: `f42445d -> c423f4a`, 2.266849 s to 2.025331 s, saving 0.241518 s for one spectrum.
 
