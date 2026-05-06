@@ -1,8 +1,8 @@
 {
   "passes_reflectance_threshold": true,
   "reference_paths": {
-    "forward": "validation/spectra/data/o2a_jacobian_retrieval_instrument_forward.csv",
-    "reflectance_jacobian": "validation/spectra/data/o2a_jacobian_simulation_instrument_reflectance.csv"
+    "forward": "validation/spectra/data/reference/o2a_jacobian_retrieval_instrument_forward.csv",
+    "reflectance_jacobian": "validation/spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv"
   },
   "reflectance_threshold": 1e-13,
   "sample_count": 701,

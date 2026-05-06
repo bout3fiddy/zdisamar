@@ -5,15 +5,15 @@
     "validation_case": "hardcoded_o2a_jacobian_reference"
   },
   "reference_paths": [
-    "validation/spectra/data/o2a_jacobian_retrieval_instrument_forward.csv",
-    "validation/spectra/data/o2a_jacobian_simulation_instrument_reflectance.csv"
+    "validation/spectra/data/reference/o2a_jacobian_retrieval_instrument_forward.csv",
+    "validation/spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv"
   ],
   "schema_version": 2,
   "tracked_output_dir": "validation/spectra",
   "tracked_outputs": [
-    "validation/spectra/plots/o2a_validation.png",
-    "validation/spectra/data/o2a_validation_data.csv",
-    "validation/spectra/data/comparison_metrics.json",
-    "validation/spectra/data/bundle_manifest.json"
+    "validation/outputs/spectra/o2a_validation.png",
+    "validation/outputs/spectra/o2a_validation_data.csv",
+    "validation/outputs/spectra/comparison_metrics.json",
+    "validation/outputs/spectra/bundle_manifest.json"
   ]
 }

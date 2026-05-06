@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -20,15 +19,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 SCRIPT_ROOT = REPO_ROOT / "scripts" / "testing_harness"
 DATA_DIR = REPO_ROOT / "validation" / "optimal_estimation" / "data"
-REFERENCE_PATH = DATA_DIR / "disamar_o2a_two_state_reference.json"
-SUMMARY_PATH = DATA_DIR / "zdisamar_o2a_two_state_summary.json"
+REFERENCE_DATA_DIR = DATA_DIR / "reference"
+OUTPUTS_DIR = REPO_ROOT / "validation" / "outputs" / "optimal_estimation"
+REFERENCE_PATH = REFERENCE_DATA_DIR / "disamar_o2a_two_state_reference.json"
+SUMMARY_PATH = OUTPUTS_DIR / "zdisamar_o2a_two_state_summary.json"
+TIMING_PATH = OUTPUTS_DIR / "zdisamar_o2a_two_state_benchmark.json"
 
-sys.path[:0] = [str(PYTHON_ROOT), str(SCRIPT_ROOT)]
+sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT), str(SCRIPT_ROOT)]
 
 import zdisamar as zd  # noqa: E402
 from o2a_python_case import build_o2a_case  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estimation  # noqa: E402
+
+from validation.common.paths import write_json  # noqa: E402
+from validation.common.timing import PhaseTimer  # noqa: E402
 
 JsonObject = dict[str, Any]
 
@@ -252,7 +257,6 @@ def build_summary(
     result: optimal_estimation.Result,
     profile,
     layer_thickness: float,
-    phase_timings: dict[str, float],
 ) -> JsonObject:
     retrieved = reference["retrieved"]
     tolerances = reference["tolerances"]
@@ -329,63 +333,43 @@ def build_summary(
         "tolerances": tolerances,
         "posterior_covariance": np.asarray(result.posterior_covariance).tolist(),
         "averaging_kernel": np.asarray(result.averaging_kernel).tolist(),
-        "timing": timing_report(phase_timings, result),
         "passes_disamar_two_state_fixture": passed,
     }
 
 
 def main() -> int:
-    total_start = time.perf_counter()
-    phase_timings: dict[str, float] = {}
+    timer = PhaseTimer()
 
-    phase_start = time.perf_counter()
-    reference = json.loads(REFERENCE_PATH.read_text())
-    phase_timings["load_reference_s"] = time.perf_counter() - phase_start
+    with timer.phase("load_reference_s"):
+        reference = json.loads(REFERENCE_PATH.read_text())
 
-    phase_start = time.perf_counter()
-    case = build_o2a_case(zd, jacobian_reference_layer=True)
-    phase_timings["build_case_s"] = time.perf_counter() - phase_start
+    with timer.phase("build_case_s"):
+        case = build_o2a_case(zd, jacobian_reference_layer=True)
 
-    phase_start = time.perf_counter()
-    profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(case)
-    phase_timings["build_pressure_altitude_profile_s"] = time.perf_counter() - phase_start
+    with timer.phase("build_pressure_altitude_profile_s"):
+        profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(case)
 
-    phase_start = time.perf_counter()
-    state_vector = build_state_vector(case, reference, profile)
-    phase_timings["build_state_vector_s"] = time.perf_counter() - phase_start
+    with timer.phase("build_state_vector_s"):
+        state_vector = build_state_vector(case, reference, profile)
 
-    phase_start = time.perf_counter()
-    assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
-    phase_timings["boundary_contiguity_check_s"] = time.perf_counter() - phase_start
+    with timer.phase("boundary_contiguity_check_s"):
+        assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
 
-    phase_start = time.perf_counter()
-    measurement = build_measurement(case, reference)
-    phase_timings["build_measurement_s"] = time.perf_counter() - phase_start
+    with timer.phase("build_measurement_s"):
+        measurement = build_measurement(case, reference)
 
-    phase_start = time.perf_counter()
-    result = run_retrieval(case, state_vector, measurement)
-    phase_timings["retrieval_s"] = time.perf_counter() - phase_start
+    with timer.phase("retrieval_s"):
+        result = run_retrieval(case, state_vector, measurement)
     layer_thickness = (
         case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
     )
-    phase_start = time.perf_counter()
-    summary = build_summary(
-        reference,
-        result,
-        profile,
-        layer_thickness,
-        phase_timings,
-    )
-    phase_timings["build_summary_s"] = time.perf_counter() - phase_start
+    with timer.phase("build_summary_s"):
+        summary = build_summary(reference, result, profile, layer_thickness)
 
-    phase_timings["total_s"] = time.perf_counter() - total_start
-    summary["timing"] = timing_report(phase_timings, result)
-    write_start = time.perf_counter()
-    SUMMARY_PATH.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    phase_timings["write_summary_s"] = time.perf_counter() - write_start
-    phase_timings["total_s"] = time.perf_counter() - total_start
-    summary["timing"] = timing_report(phase_timings, result)
-    SUMMARY_PATH.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    with timer.phase("write_summary_s"):
+        write_json(SUMMARY_PATH, summary)
+    timing = timing_report(timer.finish(), result)
+    write_json(TIMING_PATH, timing)
     assert summary["passes_disamar_two_state_fixture"], json.dumps(
         summary, indent=2, sort_keys=True
     )

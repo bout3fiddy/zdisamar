@@ -22,6 +22,7 @@
 - Fast baseline: `zig build check`.
 - Broader fast presubmit: `zig build test-fast`.
 - Full retained verification: `zig build test`.
+- Before committing: `prek run --all-files`.
 - Regenerate tracked O2 A plots: `zig build o2a-plot-bundle`.
 - Plot-bundle harness smoke test: `zig build test-validation-o2a-plot-bundle`.
 - Python helper scripts are invoked with `uv run ...`.

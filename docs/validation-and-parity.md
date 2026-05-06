@@ -93,9 +93,9 @@ Representative files include:
 - `tests/unit/forward_model/instrument_grid/grid_calculation/root_test.zig`
 - `tests/validation/o2a_forward_shape_test.zig`
 - `tests/validation/o2a_vendor_reflectance_assessment_test.zig`
-- `validation/spectra/plots/o2a_validation.png`
-- `validation/spectra/data/o2a_jacobian_simulation_instrument_reflectance.csv`
-- `validation/spectra/data/comparison_metrics.json`
+- `validation/outputs/spectra/o2a_validation.png`
+- `validation/spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv`
+- `validation/outputs/spectra/comparison_metrics.json`
 
 ## Reading Order
 
