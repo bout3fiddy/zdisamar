@@ -43,6 +43,18 @@ This is why doubling is the final frontier. The code has already [specialized th
 
 A small assembly improvement can reduce a primitive. It does not remove the outer product: `3,874` wavelengths times active Fourier terms times active layers times repeated doubling steps. The next large speedup would need to reduce one of those counts or introduce a new scientifically valid reuse boundary.
 
+## Assembly-Level Reading
+
+The research-only codegen harness in [primitive-codegen/bench_primitives.zig](primitive-codegen/bench_primitives.zig) isolates the same fixed 12x10 operation shapes with deterministic mock matrices. Its retained summary is [codegen-summary.md](primitive-codegen/outputs/codegen-summary.md), and the extracted disassembly files sit beside it.
+
+For layer doubling, the important retained numbers are:
+
+- `smul_12x10` takes about `181.303 ns` per isolated call. The extracted `codegen_smul12x10` disassembly has `2,196` instructions, including `1,368` floating-point arithmetic instructions and no floating-point divides.
+- `smul_add_semul3_12` takes about `179.818 ns` per isolated call. Its extracted wrapper plus callee have `2,976` instructions, including `1,731` floating-point arithmetic instructions and no floating-point divides.
+- `qseries_nonzero_12x10` takes about `486.883 ns` per isolated call. Its extracted disassembly has `4,022` instructions, including `2,062` floating-point arithmetic instructions and `11` floating-point divides.
+
+That makes the assembly-level story more specific. The ordinary 12x10 products are not spending time in file I/O, allocation, dynamic dispatch, or text parsing; the retained disassembly is dominated by floating-point multiply/add work over the fixed matrix shape. The q-series path is different: it contains the product plus the 10x10 pivoted solve, and the divides in that solve are why one q-series call is several times heavier than a plain product.
+
 ## Simple Python Shape
 
 One doubled layer runs the same recurrence several times:

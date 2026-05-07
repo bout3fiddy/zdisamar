@@ -78,6 +78,12 @@ fn dotGaussPair(
 
 The trace counted `295,581,240` `dotGaussPair` calls, representing `2,955,812,400` multiply-add terms. The [inactive-layer skip is already doing useful work](../why-zdisamar-is-faster/10-carry-layer-activity-into-orders.md): it skipped `5,499,208` down-layer cases and `5,499,208` up-layer cases. The remaining orders cost is the active multiple-scattering propagation that LABOS still has to perform until the order contribution falls below the convergence threshold.
 
+## Assembly-Level Reading
+
+The paired dot product is also isolated in the research-only [primitive codegen harness](primitive-codegen/bench_primitives.zig). The retained run reports `dot_gauss_pair` at about `4.387 ns` per isolated call through the harness. The extracted [codegen_dot_gauss_pair.asm](primitive-codegen/outputs/codegen_dot_gauss_pair.asm) file contains `135` instructions, including `20` floating-point arithmetic instructions and no floating-point divides.
+
+That is not a slow primitive by itself. The reason it matters is volume. Multiplying the retained trace count by the isolated harness timing gives about `1.30 s` of CPU-equivalent dot-pair work, which is the same order as the directly measured local up/down propagation time. The exact number should not be read as a replacement for the full trace because the real optimizer can inline the dot product into surrounding loops, but it confirms the bottleneck shape: this section is many cheap Gauss-row dot products, not a hidden heavyweight operation.
+
 ## Simple Python Shape
 
 Scattering orders repeat until the next order is small enough:

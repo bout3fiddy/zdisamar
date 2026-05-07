@@ -74,6 +74,29 @@ Those estimates sum to `8.359756 s` of primitive CPU. That is larger than the di
 
 The primitive conclusion matches the higher-level trace: there is no single slow call. The final wall is millions of operations that are already small after the [direct fixed-shape matrix work](../why-zdisamar-is-faster/06-direct-12x10-12x12-matrix-calculations.md), [separate output writes](../why-zdisamar-is-faster/12-write-matrix-results-into-separate-outputs.md), and [fused doubling updates](../why-zdisamar-is-faster/05-fuse-layer-doubling-matrix-updates.md).
 
+## Assembly-Level Reading
+
+The assembly-level evidence is generated inside this research folder, not through the forward model or validation build. The command is:
+
+```sh
+research/performance/where-is-the-bottleneck/run-primitive-codegen.sh
+```
+
+That command builds [primitive-codegen/bench_primitives.zig](primitive-codegen/bench_primitives.zig), runs it with deterministic mock matrices, disassembles the resulting binary, and writes retained artifacts under [primitive-codegen/outputs/](primitive-codegen/outputs/). The summary file is [codegen-summary.md](primitive-codegen/outputs/codegen-summary.md).
+
+The retained `aarch64` run says:
+
+- `smul_12x10` costs about `181.303 ns` per isolated call.
+- `smul_add_semul3_12` costs about `179.818 ns` per isolated call.
+- `qseries_nonzero_12x10` costs about `486.883 ns` per isolated call.
+- `dot_gauss_pair` costs about `4.387 ns` per isolated call through the harness.
+
+These codegen timings are not replacements for the retained `zig build bench` numbers used in the primitive estimate above. They use a different standalone harness so the generated assembly can be retained and read directly.
+
+The disassembly explains the ranking. The plain 12x10 product and fused D update are mostly straight-line floating-point arithmetic with no divides. The q-series path has more instructions and includes `11` floating-point divides because it performs the small pivoted solve. The dot pair is only a short arithmetic chain, so it is cheap per call; it becomes visible only because the scattering-order loop calls it `295,581,240` times in the retained spectrum.
+
+This is the useful role for assembly here. It identifies what the expensive primitive classes really are at the machine-code level: repeated floating-point multiply/add chains, plus a heavier small solve in nonzero q-series calls. It does not change the higher-level conclusion that the remaining wall is dominated by repetition counts.
+
 ## Simple Python Shape
 
 The primitive estimate is count times cost:

@@ -27,6 +27,10 @@ const product = try InstrumentGrid.simulateProductWithWorkspace(
 
 That is the only path that installs a live trace sink. Normal forward calls keep the trace reference zero-sized.
 
+The assembly-level work in this folder is separate from that trace path. It lives under [primitive-codegen/](primitive-codegen/) and compiles a standalone mock-data Zig harness from the research folder only.
+
+That harness is for reading the generated primitive code and retained timing evidence; it is not linked into normal forward modeling, validation, or the trace-enabled binary.
+
 ## Simple Python Shape
 
 The whole folder is explaining this multiplication of work:
@@ -55,7 +59,6 @@ The bottleneck is not one big operation. It is many small exact operations repea
 - [05. Phase-matrix construction](05-phase-matrix-construction.md): the remaining phase-kernel cost after PLM basis reuse.
 - [06. Scattering orders](06-scattering-orders.md): the multiple-scattering order loop and dot-pair volume.
 - [07. Small matrix primitives](07-small-matrix-primitives.md): call counts, microbench timings, and estimated primitive CPU cost.
-- [08. Assembly notes](08-assembly-notes.md): when assembly-level inspection is useful and what the current trace implies.
 
 ## Evidence
 
@@ -75,8 +78,30 @@ The main files are:
 - `primitive_estimates.csv`
 - `rollup.json`
 
-Regenerate them with:
+The research-only primitive codegen artifacts live under:
+
+```text
+research/performance/where-is-the-bottleneck/primitive-codegen/outputs/
+```
+
+The main files there are:
+
+- `timings.csv`
+- `codegen-summary.md`
+- `bench-primitives.asm`
+- `codegen_smul12x10.asm`
+- `codegen_smul_add_semul3_12.asm`
+- `codegen_qseries_nonzero_12x10.asm`
+- `codegen_dot_gauss_pair.asm`
+
+Regenerate the trace artifacts with:
 
 ```sh
 research/performance/where-is-the-bottleneck/run-labos-bottleneck-trace.sh
+```
+
+Regenerate the assembly/codegen artifacts with:
+
+```sh
+research/performance/where-is-the-bottleneck/run-primitive-codegen.sh
 ```
