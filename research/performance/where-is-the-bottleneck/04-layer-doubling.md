@@ -57,9 +57,9 @@ The research-only codegen harness in [primitive-codegen/bench_primitives.zig](pr
 
 For layer doubling, the important retained numbers are:
 
-- `smul_12x10` takes about `169.672 ns` per isolated call after the retained two-lane vector shape. The extracted `codegen_smul12x10` disassembly has `2,195` instructions, including `1,368` floating-point arithmetic instructions and no floating-point divides.
+- `smul_12x10` takes about `169.672 ns` per isolated call after the retained two-lane vector shape. The regenerated `codegen_smul12x10` disassembly has `2,195` instructions, including `1,368` floating-point arithmetic instructions and no floating-point divides.
 - `smul_add_semul3_known_right_trace_12` takes about `188.876 ns` per isolated call. Its extracted wrapper plus callee have `2,842` instructions, including `1,729` floating-point arithmetic instructions and no floating-point divides.
-- `qseries_nonzero_12x10` takes about `519.070 ns` per isolated call after reciprocal reuse in the 10x10 solve and the two-lane product shape. Its extracted disassembly has `4,450` instructions, including `2,054` floating-point arithmetic instructions and `1` floating-point divide.
+- `qseries_nonzero_12x10` takes about `519.070 ns` per isolated call after reciprocal reuse in the 10x10 solve and the two-lane product shape. Its regenerated disassembly has `4,450` instructions, including `2,054` floating-point arithmetic instructions and `1` floating-point divide.
 
 That makes the assembly-level story more specific. The ordinary 12x10 products are not spending time in file I/O, allocation, dynamic dispatch, or text parsing; the retained disassembly is dominated by floating-point multiply/add work over the fixed matrix shape. The q-series path is different: it contains the product plus the 10x10 pivoted solve. The solve now computes one reciprocal per pivot and reuses it, which removes the repeated divide instructions from elimination and back-substitution while preserving the same pivoted factorization.
 

@@ -16,6 +16,9 @@ __pycache__/
 *.py[cod]
 *.bundle
 
+# Regenerable primitive-codegen disassembly blobs
+research/performance/where-is-the-bottleneck/primitive-codegen/outputs/*.asm
+
 # Local DISAMAR reference clone and generated vendor outputs
 vendor
 vendor/

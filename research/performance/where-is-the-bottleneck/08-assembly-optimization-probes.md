@@ -18,7 +18,7 @@ The currently regenerated retained artifact moves the main LABOS bottlenecks by:
 
 A faster layer-doubling sample also occurred during the pass at `labos.rt_layer.doubling=4.517765 s`. The table above is the current regenerated artifact evidence.
 
-Accuracy guardrail: the retained state passes `zig build check`, and `zig build test-validation-o2a-vendor` reports no significant residual movement versus the prior retained run. That lane still has its known allowed `fail_regression` status against the committed vendor baseline, but the residual snapshot did not materially change, so the speedups above are not being bought by accuracy loss. Probes that move checked residual or tangent tolerances are rejected rather than retained.
+Accuracy guardrail: the retained state passes `zig build check`, and the refreshed validation artifacts keep the spectra comparison residuals near floating-point noise, but not below every retained threshold. `zig build o2a-plot-bundle` regenerated `validation/outputs/spectra/o2a_validation.png` with forward-reflectance max residual `1.363e-13`, surface-albedo Jacobian max residual `7.898e-13`, aerosol-optical-depth Jacobian max residual `1.121e-13`, and aerosol-layer-mid-pressure Jacobian max residual `2.165e-13`; the plot-bundle smoke test currently reports `passes_reflectance_threshold=false` because the threshold is `1e-13`. The focused vendor lane still exits successfully with its known allowed `fail_regression` status against the older committed vendor baseline (`mean_abs=0.009099922227437973`, `rms=0.01833690112331791`, `max_abs=0.09712867446722206`). Probes that move checked residual or tangent tolerances beyond the retained guardrails are rejected rather than retained.
 
 Accepted instruction-level wins:
 

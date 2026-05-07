@@ -89,12 +89,8 @@ The main files there are:
 
 - `timings.csv`
 - `codegen-summary.md`
-- `bench-primitives.asm`
-- `codegen_smul12x10.asm`
-- `codegen_smul_add_semul3_12.asm`
-- `codegen_smul_add_semul3_known_right_trace_12.asm`
-- `codegen_qseries_nonzero_12x10.asm`
-- `codegen_dot_gauss_pair.asm`
+
+The script also regenerates `bench-primitives.asm` and extracted `codegen_*.asm` files for local inspection. They are ignored by git because the compact summary and timings are enough to preserve the benchmark evidence without committing large disassembly blobs.
 
 Regenerate the trace artifacts with:
 
