@@ -8,6 +8,7 @@ const orders_mod = @import("orders.zig");
 const reflectance_mod = @import("reflectance.zig");
 const phase_functions = @import("../../optical_properties/shared/phase_functions.zig");
 const workspace_mod = @import("workspace.zig");
+const Trace = @import("../../performance_trace.zig");
 
 const math = std.math;
 const Geometry = basis.Geometry;
@@ -241,15 +242,24 @@ fn layerResolvedLabosWithWorkspace(
         }
         break :blk null;
     } else null;
+    const trace: Trace.WorkerRef = if (Trace.enabled) blk: {
+        if (workspace) |scratch| break :blk scratch.trace;
+        break :blk Trace.noWorker();
+    } else {};
 
     for (0..fourier_max + 1) |i_fourier| {
+        const fourier_start = Trace.begin();
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.fourier_terms, 1);
         var owned_plm_basis: basis.FourierPlmBasis = undefined;
+        const plm_start = Trace.begin();
         const plm_basis = if (workspace) |scratch| blk: {
             break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, geo);
         } else blk: {
             owned_plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
             break :blk &owned_plm_basis;
         };
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.plm_basis, Trace.elapsed(plm_start));
+        const rt_start = Trace.begin();
         calcRTlayersIntoWithBasis(
             rt,
             input.layers,
@@ -261,9 +271,13 @@ fn layerResolvedLabosWithWorkspace(
             layer_phase_kernels,
             layer_phase_kernel_valid,
             if (workspace != null) orders_workspace.rt_active else null,
+            trace,
         );
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.rt_layer_build, Trace.elapsed(rt_start));
         rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
         if (workspace != null) orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
+        if (Trace.enabled) orders_workspace.trace = trace;
+        const orders_start = Trace.begin();
         const orders_result = if (use_integrated_source)
             if (compute_jacobian)
                 if (workspace != null) orders_mod.ordersScatIntoWithActiveLocalSum(
@@ -315,6 +329,8 @@ fn layerResolvedLabosWithWorkspace(
                 controls,
                 num_orders_max,
             );
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_total, Trace.elapsed(orders_start));
+        const reflectance_start = Trace.begin();
         const refl_fc = if (use_integrated_source)
             calcIntegratedReflectanceWithBasis(
                 input.layers,
@@ -331,6 +347,7 @@ fn layerResolvedLabosWithWorkspace(
             )
         else
             calcReflectance(orders_result.ud, nlayer, geo);
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_integral, Trace.elapsed(reflectance_start));
         const weighted_refl_fc = if (i_fourier == 0) blk: {
             break :blk refl_fc;
         } else blk: {
@@ -411,7 +428,11 @@ fn layerResolvedLabosWithWorkspace(
             };
             aerosol_layer_mid_pressure_tangent += weighted_pressure_tangent_refl_fc;
         }
-        if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) break;
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.labos_fourier_total, Trace.elapsed(fourier_start));
+        if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.fourier_tail_breaks, 1);
+            break;
+        }
     }
 
     var result_jacobian = jacobian.zero();

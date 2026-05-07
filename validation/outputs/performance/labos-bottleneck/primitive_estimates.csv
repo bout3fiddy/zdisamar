@@ -1,0 +1,8 @@
+operation,counter,bench_name,calls,ns_per_call,estimated_cpu_s,estimated_forward_wall_percent,estimated_labos_cpu_percent,note
+qseries package,matrix_qseries,qseries_nonzero_12x10,3408299,519.493,1.770587472407,90.38625953608842,15.417725462815861,qseriesKnownNonzeroProduct; includes the R*R product and q-series solve path for the benchmark seed
+"R*D, T*U, T*D products",matrix_smul_rd+matrix_smul_tu+matrix_smul_td,smul_12x10,25168998,155.266,3.9078896434679997,199.49284237999908,34.028688557286536,three 12x10 matrix products inside every doubling step
+D update,matrix_smul_add_semul3,smulAddSemul3_12,3408299,168.916,0.575716233884,29.38958834055109,5.013158048861108,T + Q*diag(E) + Q*T fused update
+U update,matrix_semul_add,semulAdd_12,8389666,66.846,0.560815613436,28.628930441378923,4.883408076677822,R*diag(E) + R*D product result
+R_next update,matrix_mat_add_esmul3,matAddEsmul3_12,8389666,90.744,0.7613118515039999,38.86401077061438,6.629267009395509,R + diag(E)*U + T*U product result
+T_next update,matrix_esmul_semul_add,esmulSemulAdd_12,8389666,93.381,0.783435400746,39.993390083870466,6.821912000841512,diag(E)*D + T*diag(E) + T*D product result
+scattering-order dot pairs,dot_gauss_pair_calls,not_benchmarked,295581240,,,,,2955812400 multiply-add terms counted; kept as an operation count because it is embedded in orders.zig rather than bench-isolated

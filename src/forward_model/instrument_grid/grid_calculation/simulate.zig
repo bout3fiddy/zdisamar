@@ -12,6 +12,7 @@ const WavelengthSampling = @import("wavelength_sampling.zig");
 const SpectralEval = @import("spectral_eval.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
+const Trace = @import("../../performance_trace.zig");
 
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
@@ -48,6 +49,9 @@ pub fn simulateInternal(
     const uses_integrated_irradiance_sampling = implementations.instrument.usesIntegratedSampling(scene, .irradiance);
     const span_nm = scene.spectral_grid.end_nm - scene.spectral_grid.start_nm;
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
+    const trace = Trace.asRun(implementations.trace);
+    if (Trace.enabled) if (trace) |run| run.addCounter(.output_wavelengths, @intCast(sample_count));
+    const wavelength_sampling_start = Trace.begin();
     const wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
         allocator,
         scene,
@@ -57,12 +61,16 @@ pub fn simulateInternal(
         irradiance_calibration,
         implementations,
     );
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_wavelength_sampling, Trace.elapsed(wavelength_sampling_start));
     defer allocator.free(wavelength_sampling);
+    const miss_collection_start = Trace.begin();
     const forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
         allocator,
         wavelength_sampling,
     );
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_forward_miss_collection, Trace.elapsed(miss_collection_start));
     defer allocator.free(forward_misses);
+    const forward_prefetch_start = Trace.begin();
     try SpectralEval.prefetchForwardSamples(
         allocator,
         scene,
@@ -73,6 +81,7 @@ pub fn simulateInternal(
         forward_misses,
         evaluation_cache,
     );
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_forward_prefetch_wall, Trace.elapsed(forward_prefetch_start));
 
     var radiance_sum: f64 = 0.0;
     var irradiance_sum: f64 = 0.0;
@@ -88,6 +97,7 @@ pub fn simulateInternal(
         return error.ShapeMismatch;
     }
 
+    const radiance_integration_start = Trace.begin();
     for (wavelength_sampling, 0..) |plan, index| {
         const nominal_wavelength_nm = plan.nominal_wavelength_nm;
         buffers.wavelengths[index] = nominal_wavelength_nm;
@@ -113,14 +123,18 @@ pub fn simulateInternal(
         buffers.scratch[index] = integrated.radiance;
         if (buffers.jacobian) |jacobian_buffer| writeJacobianRow(jacobian_buffer, index, integrated.jacobian);
     }
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_radiance_cache_integration, Trace.elapsed(radiance_integration_start));
     if (uses_integrated_radiance_sampling) {
         // DECISION:
         //   Integrated sampling bypasses slit convolution because the
         //   instrument already performed the spectral integration.
         @memcpy(buffers.radiance, buffers.scratch);
     } else {
+        const radiance_convolution_start = Trace.begin();
         try convolution.apply(buffers.scratch, radiance_slit_kernel[0..], buffers.radiance);
+        if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_radiance_convolution, Trace.elapsed(radiance_convolution_start));
     }
+    const radiance_postprocess_start = Trace.begin();
     try Postprocess.applyChannelCorrections(
         scene,
         .radiance,
@@ -130,6 +144,8 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_radiance_postprocess, Trace.elapsed(radiance_postprocess_start));
+    const irradiance_sampling_start = Trace.begin();
     for (wavelength_sampling, 0..) |plan, index| {
         buffers.scratch[index] = try SpectralEval.integrateIrradianceAtNominal(
             scene,
@@ -140,11 +156,15 @@ pub fn simulateInternal(
             &plan.irradiance_integration,
         );
     }
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_irradiance_sampling, Trace.elapsed(irradiance_sampling_start));
     if (uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
+        const irradiance_convolution_start = Trace.begin();
         try convolution.apply(buffers.scratch, irradiance_slit_kernel[0..], buffers.irradiance);
+        if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_irradiance_convolution, Trace.elapsed(irradiance_convolution_start));
     }
+    const irradiance_postprocess_start = Trace.begin();
     try Postprocess.applyChannelCorrections(
         scene,
         .irradiance,
@@ -154,6 +174,8 @@ pub fn simulateInternal(
         buffers.irradiance,
         buffers.scratch_aux,
     );
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_irradiance_postprocess, Trace.elapsed(irradiance_postprocess_start));
+    const ring_start = Trace.begin();
     try calibration.applyRingSpectrum(
         scene.observation_model.resolvedRingControls(),
         buffers.wavelengths,
@@ -161,6 +183,8 @@ pub fn simulateInternal(
         buffers.radiance,
         buffers.scratch_aux,
     );
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_ring_correction, Trace.elapsed(ring_start));
+    const reflectance_start = Trace.begin();
     const solar_cosine = scene.geometry.solarCosineAtAltitude(0.0);
     for (0..sample_count) |index| {
         buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
@@ -169,7 +193,9 @@ pub fn simulateInternal(
         irradiance_sum += buffers.irradiance[index];
         reflectance_sum += buffers.reflectance[index];
     }
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_reflectance_assembly, Trace.elapsed(reflectance_start));
 
+    const noise_start = Trace.begin();
     const radiance_noise_sigma = if (buffers.radiance_noise_sigma) |sigma|
         sigma
     else if (buffers.noise_sigma) |sigma|
@@ -224,9 +250,11 @@ pub fn simulateInternal(
     if (radiance_noise_sigma) |sigma| {
         for (sigma) |value| noise_sum += value;
     }
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_noise_sigma, Trace.elapsed(noise_start));
 
     var mean_jacobian: ?jacobian.Vector = null;
     if (buffers.jacobian) |jacobian_buffer| {
+        const jacobian_start = Trace.begin();
         if (!uses_integrated_radiance_sampling) {
             for (0..jacobian.state_count) |state_index| {
                 copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
@@ -254,6 +282,7 @@ pub fn simulateInternal(
             jacobian.addScaled(&jacobian_sum, readJacobianRow(jacobian_buffer, index), 1.0);
         }
         mean_jacobian = jacobian.scale(jacobian_sum, 1.0 / @as(f64, @floatFromInt(sample_count)));
+        if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_jacobian_processing, Trace.elapsed(jacobian_start));
     }
     return .{
         .sample_count = @intCast(sample_count),

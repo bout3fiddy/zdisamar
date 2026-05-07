@@ -4,6 +4,7 @@ const InstrumentProviders = @import("../../implementations/instrument.zig");
 const NoiseProviders = @import("../../implementations/noise.zig");
 const SurfaceProviders = @import("../../implementations/surface.zig");
 const TransportProviders = @import("../../implementations/transport.zig");
+const Trace = @import("../../performance_trace.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -16,6 +17,7 @@ pub const Implementations = struct {
     surface: SurfaceProviders.Implementation,
     instrument: InstrumentProviders.Implementation,
     noise: NoiseProviders.Implementation,
+    trace: Trace.RunRef = Trace.noRun(),
 };
 
 // Measurement-space summary statistics for one spectral sweep.
