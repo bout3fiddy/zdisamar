@@ -235,6 +235,8 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.c_size_t,
     ]
     lib.zds_prepare_o2a_json.restype = ctypes.c_int
+    lib.zds_warm_o2a_session.argtypes = [ctypes.c_void_p]
+    lib.zds_warm_o2a_session.restype = ctypes.c_int
     lib.zds_default_o2a_input_json.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -249,6 +251,13 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         ctypes.POINTER(CSpectrum),
     ]
     lib.zds_run_spectrum_jacobian.restype = ctypes.c_int
+    lib.zds_run_spectrum_jacobian_for_states.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(CSpectrum),
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+    ]
+    lib.zds_run_spectrum_jacobian_for_states.restype = ctypes.c_int
     lib.zds_spectrum_report.argtypes = [
         ctypes.c_void_p,
         ctypes.POINTER(CSpectrum),

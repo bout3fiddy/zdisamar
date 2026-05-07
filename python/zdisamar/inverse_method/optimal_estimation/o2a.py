@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import copy
 import math
+from typing import cast
 
 import numpy as np
 
-from ...prepared import PreparedO2ABase, prepare
+from ...prepared import O2AForwardSession, PreparedO2ABase, prepare
 from ...types import O2AInput
 from .core import retrieve
 from .forward_evaluation import ForwardEvaluation
@@ -25,9 +26,15 @@ class O2AInverseForwardModel:
     that implementation without changing the optimal-estimation loop.
     """
 
-    def __init__(self, template: O2AInput, library_path: str | None = None):
+    def __init__(
+        self,
+        template: O2AInput,
+        library_path: str | None = None,
+        forward_session: O2AForwardSession | None = None,
+    ):
         self._template = copy.deepcopy(template)
         self._library_path = library_path
+        self._forward_session = forward_session
 
     def settings_for_state(
         self,
@@ -43,6 +50,12 @@ class O2AInverseForwardModel:
         state: np.ndarray,
         state_vector: StateVector,
     ) -> ForwardEvaluation:
+        if self._forward_session is not None:
+            prepared = cast(
+                PreparedO2ABase,
+                self._forward_session.prepare(self.settings_for_state(state, state_vector)),
+            )
+            return evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
         with prepare(
             self.settings_for_state(state, state_vector),
             library_path=self._library_path,
@@ -73,7 +86,7 @@ def evaluate_prepared_reflectance(
 ) -> ForwardEvaluation:
     """Evaluate reflectance and selected reflectance Jacobian columns."""
 
-    with prepared.forward_model(jacobian=True) as spectrum:
+    with prepared.forward_model(jacobian=True, jacobian_state_names=state_names) as spectrum:
         wavelength_nm = spectrum.wavelength_nm.copy()
         reflectance = spectrum.reflectance.copy()
         radiance_jacobian = spectrum.radiance_jacobian.copy()

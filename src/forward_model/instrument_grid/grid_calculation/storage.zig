@@ -7,6 +7,8 @@ const OpticsPreparation = @import("../../optical_properties/root.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const jacobian = @import("../../jacobian/root.zig");
 const Cache = @import("cache.zig");
+const Plan = @import("wavelength_plan.zig");
+const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const grid = @import("../spectral_math/grid.zig");
 const convolution = @import("../spectral_math/convolution.zig");
 const Types = @import("types.zig");
@@ -67,6 +69,11 @@ pub const SummaryStorage = struct {
     irradiance_noise_sigma: []f64 = &.{},
     reflectance_noise_sigma: []f64 = &.{},
     evaluation_cache: ?Cache.SpectralEvaluationCache = null,
+    wavelength_sampling: []Plan.WavelengthSampling = &.{},
+    forward_misses: []Plan.ForwardCacheMiss = &.{},
+    profile_spectroscopy_caches: []SpectroscopyState.ProfileNodeSpectroscopyCache = &.{},
+    wavelength_plan_key: u64 = 0,
+    wavelength_plan_valid: bool = false,
 
     pub fn deinit(self: *SummaryStorage, allocator: Allocator) void {
         freeBuffer(allocator, self.wavelengths);
@@ -88,7 +95,21 @@ pub const SummaryStorage = struct {
         freeBuffer(allocator, self.irradiance_noise_sigma);
         freeBuffer(allocator, self.reflectance_noise_sigma);
         if (self.evaluation_cache) |*cache| cache.deinit();
+        allocator.free(self.wavelength_sampling);
+        allocator.free(self.forward_misses);
+        allocator.free(self.profile_spectroscopy_caches);
         self.* = .{};
+    }
+
+    pub fn invalidateWavelengthPlan(self: *SummaryStorage, allocator: Allocator) void {
+        allocator.free(self.wavelength_sampling);
+        allocator.free(self.forward_misses);
+        allocator.free(self.profile_spectroscopy_caches);
+        self.wavelength_sampling = &.{};
+        self.forward_misses = &.{};
+        self.profile_spectroscopy_caches = &.{};
+        self.wavelength_plan_key = 0;
+        self.wavelength_plan_valid = false;
     }
 
     pub fn spectralCache(self: *SummaryStorage, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {

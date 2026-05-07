@@ -72,3 +72,21 @@ pub fn simulateProductWithWorkspace(
         implementations,
     );
 }
+
+pub fn warmProductWorkspace(
+    allocator: @import("std").mem.Allocator,
+    product_workspace: *ProductStorage,
+    scene: *const @import("../../input/Scene.zig").Scene,
+    route: @import("../radiative_transfer/root.zig").Route,
+    prepared: *const @import("../optical_properties/root.zig").PreparedOpticalState,
+    implementations: Implementations,
+) !void {
+    return product.warmProductWorkspace(
+        allocator,
+        product_workspace,
+        scene,
+        route,
+        prepared,
+        implementations,
+    );
+}

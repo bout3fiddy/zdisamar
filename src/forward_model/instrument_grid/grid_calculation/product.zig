@@ -28,6 +28,24 @@ pub fn simulateProduct(
     return view.toOwned(allocator);
 }
 
+pub fn warmProductWorkspace(
+    allocator: Allocator,
+    storage: *Storage.ProductStorage,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+) Storage.Error!void {
+    _ = try storage.buffers(allocator, scene, route, implementations);
+    return simulate_core.warmWavelengthPlan(
+        allocator,
+        storage,
+        scene,
+        prepared,
+        implementations,
+    );
+}
+
 pub fn simulateProductWithWorkspace(
     allocator: Allocator,
     storage: *Storage.ProductStorage,
@@ -45,6 +63,7 @@ pub fn simulateProductWithWorkspace(
         implementations,
         buffers,
         try storage.spectralCache(allocator),
+        storage,
     );
     return .{
         .summary = summary,

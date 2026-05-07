@@ -231,9 +231,12 @@ test "public root exposes the O2A forward lab surface" {
     try std.testing.expect(@hasDecl(zdisamar, "PreparedInput"));
     try std.testing.expect(@hasDecl(zdisamar, "O2AInput"));
     try std.testing.expect(@hasDecl(zdisamar, "PreparedO2A"));
+    try std.testing.expect(@hasDecl(zdisamar, "O2ASessionStorage"));
     try std.testing.expect(@hasDecl(zdisamar, "defaultO2AInput"));
     try std.testing.expect(@hasDecl(zdisamar, "prepareO2A"));
     try std.testing.expect(@hasDecl(zdisamar, "runO2A"));
+    try std.testing.expect(@hasDecl(zdisamar, "runO2AWithSessionStorage"));
+    try std.testing.expect(@hasDecl(zdisamar, "warmO2ASessionStorage"));
     try std.testing.expect(@hasDecl(zdisamar, "buildAtmosphericBudget"));
     try std.testing.expect(@hasDecl(zdisamar, "buildO2LineContributions"));
     try std.testing.expect(@hasDecl(zdisamar, "disamar_reference"));

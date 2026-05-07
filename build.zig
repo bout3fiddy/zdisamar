@@ -380,6 +380,18 @@ pub fn build(b: *std.Build) void {
     );
     o2a_optimal_estimation_validation_step.dependOn(&o2a_optimal_estimation_validation_cmd.step);
 
+    const o2a_optimal_estimation_sweep_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "validation/optimal_estimation/sweep_optimal_estimation.py",
+    });
+    o2a_optimal_estimation_sweep_cmd.step.dependOn(&c_api_install.step);
+    const o2a_optimal_estimation_sweep_step = b.step(
+        "validation-o2a-optimal-estimation-sweep",
+        "Run the aerosol-only O2A optimal-estimation scene sweep",
+    );
+    o2a_optimal_estimation_sweep_step.dependOn(&o2a_optimal_estimation_sweep_cmd.step);
+
     const python_o2a_setup_roundtrip_cmd = b.addSystemCommand(&.{
         "uv",
         "run",

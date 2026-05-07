@@ -179,8 +179,12 @@ def run_retrieval(
     case: zd.O2AInput,
     state_vector,
     measurement: optimal_estimation.Measurement,
+    forward_session: zd.O2AForwardSession | None = None,
 ) -> optimal_estimation.Result:
-    inverse_model = optimal_estimation.O2AInverseForwardModel(case)
+    inverse_model = optimal_estimation.O2AInverseForwardModel(
+        case,
+        forward_session=forward_session,
+    )
     return optimal_estimation.disamar_oe(
         inverse_model=inverse_model,
         measurement=measurement,
@@ -229,7 +233,7 @@ def within_tolerance(value: float, expected: float, tolerance: float) -> bool:
 
 def iteration_matches(
     reference_iterations: list[JsonObject],
-    result_iterations: list[dict[str, float | int | bool | None]],
+    result_iterations: list[JsonObject],
     tolerances: JsonObject,
 ) -> bool:
     if len(reference_iterations) != len(result_iterations):
@@ -295,8 +299,9 @@ def diagnostics_match(
 def timing_report(
     phase_timings: dict[str, float],
     result: optimal_estimation.Result,
+    session_result: optimal_estimation.Result | None = None,
 ) -> JsonObject:
-    return {
+    report: JsonObject = {
         "phases_s": phase_timings,
         "iterations": [
             {
@@ -308,6 +313,120 @@ def timing_report(
             for timing in result.timing
         ],
     }
+    if session_result is not None:
+        baseline_forward_s = sum(timing.forward_model_and_jacobian_s for timing in result.timing)
+        session_forward_s = sum(
+            timing.forward_model_and_jacobian_s for timing in session_result.timing
+        )
+        report["session_reuse"] = {
+            "forward_model_and_jacobian_s": session_forward_s,
+            "baseline_forward_model_and_jacobian_s": baseline_forward_s,
+            "forward_model_and_jacobian_speedup_pct": (
+                100.0 * (baseline_forward_s - session_forward_s) / baseline_forward_s
+                if baseline_forward_s
+                else 0.0
+            ),
+            "iterations": [
+                {
+                    "index": timing.index,
+                    "forward_model_and_jacobian_s": timing.forward_model_and_jacobian_s,
+                    "solver_update_s": timing.solver_update_s,
+                    "total_iteration_s": timing.total_iteration_s,
+                }
+                for timing in session_result.timing
+            ],
+        }
+    return report
+
+
+def retrieval_mode_timing(
+    phase_timings: dict[str, float],
+    result: optimal_estimation.Result,
+    session_result: optimal_estimation.Result,
+) -> JsonObject:
+    non_session_retrieval_s = phase_timings["retrieval_s"]
+    session_setup_s = phase_timings["session_create_s"]
+    session_reused_retrieval_s = phase_timings["session_reuse_retrieval_s"]
+    session_first_use_retrieval_s = session_setup_s + session_reused_retrieval_s
+    non_session_forward_s = sum(timing.forward_model_and_jacobian_s for timing in result.timing)
+    session_forward_s = sum(timing.forward_model_and_jacobian_s for timing in session_result.timing)
+    return {
+        "non_session": {
+            "retrieval_s": non_session_retrieval_s,
+            "forward_model_and_jacobian_s": non_session_forward_s,
+            "iterations": result.iterations,
+        },
+        "session": {
+            "setup_s": session_setup_s,
+            "reused_retrieval_s": session_reused_retrieval_s,
+            "first_use_retrieval_s": session_first_use_retrieval_s,
+            "forward_model_and_jacobian_s": session_forward_s,
+            "iterations": session_result.iterations,
+        },
+        "speedup_pct": {
+            "session_reused_forward_vs_non_session_forward": (
+                100.0 * (non_session_forward_s - session_forward_s) / non_session_forward_s
+                if non_session_forward_s
+                else 0.0
+            ),
+            "session_first_use_retrieval_vs_non_session_retrieval": (
+                100.0
+                * (non_session_retrieval_s - session_first_use_retrieval_s)
+                / non_session_retrieval_s
+                if non_session_retrieval_s
+                else 0.0
+            ),
+        },
+    }
+
+
+def print_retrieval_mode_timing(report: JsonObject) -> None:
+    modes = report["retrieval_modes"]
+    non_session = modes["non_session"]
+    session = modes["session"]
+    speedup = modes["speedup_pct"]
+    print("Retrieval mode timing:")
+    print(
+        "  Non-session retrieval: "
+        f"{non_session['retrieval_s']:.6f} s total, "
+        f"{non_session['forward_model_and_jacobian_s']:.6f} s forward+jacobian, "
+        f"{non_session['iterations']} iterations"
+    )
+    print(
+        "  Session first use: "
+        f"{session['first_use_retrieval_s']:.6f} s total "
+        f"= {session['setup_s']:.6f} s setup/warm + "
+        f"{session['reused_retrieval_s']:.6f} s retrieval loop"
+    )
+    print(
+        "  Session reused retrieval loop: "
+        f"{session['reused_retrieval_s']:.6f} s total, "
+        f"{session['forward_model_and_jacobian_s']:.6f} s forward+jacobian, "
+        f"{session['iterations']} iterations"
+    )
+    print(
+        "  Session reused forward+jacobian speedup vs non-session: "
+        f"{speedup['session_reused_forward_vs_non_session_forward']:.2f}%"
+    )
+    print(
+        "  Session first-use retrieval speedup vs non-session retrieval: "
+        f"{speedup['session_first_use_retrieval_vs_non_session_retrieval']:.2f}%"
+    )
+
+
+def session_matches_result(
+    baseline: optimal_estimation.Result,
+    session_result: optimal_estimation.Result,
+) -> bool:
+    return bool(
+        baseline.converged == session_result.converged
+        and baseline.iterations == session_result.iterations
+        and baseline.state_names == session_result.state_names
+        and np.array_equal(baseline.state, session_result.state)
+        and np.array_equal(baseline.posterior_covariance, session_result.posterior_covariance)
+        and np.array_equal(baseline.averaging_kernel, session_result.averaging_kernel)
+        and iteration_records(baseline) == iteration_records(session_result)
+    )
 
 
 def build_summary(
@@ -420,18 +539,48 @@ def main() -> int:
 
     with timer.phase("retrieval_s"):
         result = run_retrieval(case, state_vector, measurement)
+    with timer.phase("session_create_s"):
+        session = zd.o2a_forward_session(case)
+    try:
+        with timer.phase("session_reuse_retrieval_s"):
+            session_result = run_retrieval(
+                case,
+                state_vector,
+                measurement,
+                forward_session=session,
+            )
+    finally:
+        session.close()
     layer_thickness = (
         case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
     )
     with timer.phase("build_summary_s"):
         summary = build_summary(reference, result, profile, layer_thickness)
+        session_summary = build_summary(reference, session_result, profile, layer_thickness)
+        summary["session_reuse"] = {
+            "passes_disamar_two_state_fixture": session_summary["passes_disamar_two_state_fixture"],
+            "matches_baseline_result": session_matches_result(result, session_result),
+            "iterations": session_result.iterations,
+            "converged": session_result.converged,
+            "retrieved": session_summary["retrieved"],
+            "absolute_differences": session_summary["absolute_differences"],
+        }
 
     with timer.phase("write_summary_s"):
         write_json(SUMMARY_PATH, summary)
-    timing = timing_report(timer.finish(), result)
+    phase_timings = timer.finish()
+    timing = timing_report(phase_timings, result, session_result)
+    timing["retrieval_modes"] = retrieval_mode_timing(phase_timings, result, session_result)
     write_json(TIMING_PATH, timing)
+    print_retrieval_mode_timing(timing)
     assert summary["passes_disamar_two_state_fixture"], json.dumps(
         summary, indent=2, sort_keys=True
+    )
+    assert summary["session_reuse"]["passes_disamar_two_state_fixture"], json.dumps(
+        summary["session_reuse"], indent=2, sort_keys=True
+    )
+    assert summary["session_reuse"]["matches_baseline_result"], json.dumps(
+        summary["session_reuse"], indent=2, sort_keys=True
     )
     return 0
 

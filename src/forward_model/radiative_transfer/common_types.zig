@@ -138,6 +138,7 @@ pub const Route = struct {
     regime: Regime,
     execution_mode: ExecutionMode,
     derivative_mode: DerivativeMode,
+    derivative_state_mask: jacobian.StateMask = jacobian.all_states_mask,
     rtm_controls: RadiativeTransferControls = .{},
 
     pub fn derivativeSemantics(self: Route) DerivativeSemantics {

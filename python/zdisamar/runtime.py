@@ -23,7 +23,7 @@ from .native_tables import (
     OxygenCollisionInducedAbsorptionDiagnosticTable,
     RadiativeTransferDiagnosticTable,
 )
-from .spectrum import DiagnosticReport, Spectrum
+from .spectrum import JACOBIAN_STATE_NAMES, DiagnosticReport, Spectrum
 from .types import O2AInput
 
 LibraryPath = str | os.PathLike[str] | None
@@ -51,6 +51,16 @@ def channel_mask(channels: tuple[str, ...]) -> int:
     if mask == 0:
         raise ValueError("channels must not be empty")
     return mask
+
+
+def jacobian_state_ids(state_names: tuple[str, ...]):
+    ids = []
+    for state_name in state_names:
+        try:
+            ids.append(JACOBIAN_STATE_NAMES.index(state_name))
+        except ValueError as exc:
+            raise ValueError(f"unsupported Jacobian state: {state_name}") from exc
+    return (ctypes.c_uint8 * len(ids))(*ids)
 
 
 class Context:
@@ -96,14 +106,41 @@ class Context:
         )
         return self
 
-    def run(self, *, jacobian: bool = False) -> Spectrum:
+    def warm_o2a_session(self) -> Context:
+        self._check(self._lib.zds_warm_o2a_session(self._ctx))
+        return self
+
+    def run(
+        self,
+        *,
+        jacobian: bool = False,
+        jacobian_state_names: tuple[str, ...] | None = None,
+    ) -> Spectrum:
         raw = CSpectrum()
+        if jacobian_state_names is not None and not jacobian:
+            raise ValueError("jacobian_state_names requires jacobian=True")
+        if jacobian_state_names is not None:
+            state_ids = jacobian_state_ids(jacobian_state_names)
+            self._check(
+                self._lib.zds_run_spectrum_jacobian_for_states(
+                    self._ctx,
+                    ctypes.byref(raw),
+                    state_ids,
+                    len(state_ids),
+                )
+            )
+            return Spectrum(self, raw, jacobian_state_names=jacobian_state_names)
         runner = self._lib.zds_run_spectrum_jacobian if jacobian else self._lib.zds_run_spectrum
         self._check(runner(self._ctx, ctypes.byref(raw)))
         return Spectrum(self, raw)
 
-    def forward_model(self, *, jacobian: bool = False) -> Spectrum:
-        return self.run(jacobian=jacobian)
+    def forward_model(
+        self,
+        *,
+        jacobian: bool = False,
+        jacobian_state_names: tuple[str, ...] | None = None,
+    ) -> Spectrum:
+        return self.run(jacobian=jacobian, jacobian_state_names=jacobian_state_names)
 
     def _spectrum_report(self, raw: CSpectrum) -> DiagnosticReport:
         report = CDiagnosticReport()

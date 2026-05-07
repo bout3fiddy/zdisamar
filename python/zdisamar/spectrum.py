@@ -7,6 +7,12 @@ from typing import Any
 
 from .c_abi import CSpectrum
 
+JACOBIAN_STATE_NAMES = (
+    "surface_albedo",
+    "aerosol_optical_depth",
+    "aerosol_layer_mid_pressure_hpa",
+)
+
 
 @dataclass(frozen=True)
 class DiagnosticReport:
@@ -21,10 +27,17 @@ class DiagnosticReport:
 class Spectrum:
     """Bulk spectrum arrays returned by one native run."""
 
-    def __init__(self, owner: Any, raw: CSpectrum, close_owner: bool = False):
+    def __init__(
+        self,
+        owner: Any,
+        raw: CSpectrum,
+        close_owner: bool = False,
+        jacobian_state_names: tuple[str, ...] | None = None,
+    ):
         self._owner = owner
         self._raw = raw
         self._close_owner = close_owner
+        self._jacobian_state_names = jacobian_state_names
         self._diagnostic_report: DiagnosticReport | None = None
 
     def _array(self, pointer: object) -> Any:
@@ -59,11 +72,11 @@ class Spectrum:
     def jacobian_state_names(self) -> tuple[str, ...]:
         if self._raw.jacobian_state_count == 0:
             return ()
-        return (
-            "surface_albedo",
-            "aerosol_optical_depth",
-            "aerosol_layer_mid_pressure_hpa",
-        )
+        if self._jacobian_state_names is not None:
+            if len(self._jacobian_state_names) != self._raw.jacobian_state_count:
+                raise RuntimeError("spectrum Jacobian state metadata does not match native output")
+            return self._jacobian_state_names
+        return JACOBIAN_STATE_NAMES[0 : self._raw.jacobian_state_count]
 
     @property
     def radiance_jacobian(self) -> Any:

@@ -1,40 +1,91 @@
 {
   "iterations": [
     {
-      "forward_model_and_jacobian_s": 1.3993849158287048,
+      "forward_model_and_jacobian_s": 0.7262415830045938,
       "index": 1,
-      "solver_update_s": 0.0010100840590894222,
-      "total_iteration_s": 1.4003960420377553
+      "solver_update_s": 0.000812082551419735,
+      "total_iteration_s": 0.7270545419305563
     },
     {
-      "forward_model_and_jacobian_s": 1.4108699169009924,
+      "forward_model_and_jacobian_s": 0.7316871248185635,
       "index": 2,
-      "solver_update_s": 0.00356337521225214,
-      "total_iteration_s": 1.4144350830465555
+      "solver_update_s": 0.00047558359801769257,
+      "total_iteration_s": 0.7321639163419604
     },
     {
-      "forward_model_and_jacobian_s": 1.3589413752779365,
+      "forward_model_and_jacobian_s": 0.742273542098701,
       "index": 3,
-      "solver_update_s": 0.0005240002647042274,
-      "total_iteration_s": 1.359467291738838
+      "solver_update_s": 0.0008912086486816406,
+      "total_iteration_s": 0.7431656252592802
     },
     {
-      "forward_model_and_jacobian_s": 1.3118460830301046,
+      "forward_model_and_jacobian_s": 0.7360576670616865,
       "index": 4,
-      "solver_update_s": 0.0005450830794870853,
-      "total_iteration_s": 1.3123920420184731
+      "solver_update_s": 0.0011260835453867912,
+      "total_iteration_s": 0.7371849175542593
     }
   ],
   "phases_s": {
-    "boundary_contiguity_check_s": 0.0001510828733444214,
-    "build_case_s": 1.8625054508447647e-05,
-    "build_measurement_s": 1.315996624995023,
-    "build_pressure_altitude_profile_s": 0.16651987470686436,
-    "build_state_vector_s": 3.260831874795258,
-    "build_summary_s": 4.179216921329498e-05,
-    "load_reference_s": 0.00018749991431832314,
-    "retrieval_s": 5.48700120812282,
-    "total_s": 10.231260749977082,
-    "write_summary_s": 0.0004671667702496052
+    "boundary_contiguity_check_s": 0.00012129079550504684,
+    "build_case_s": 1.9458122551441193e-05,
+    "build_measurement_s": 0.7123079169541597,
+    "build_pressure_altitude_profile_s": 0.4221862079575658,
+    "build_state_vector_s": 2.229944959282875,
+    "build_summary_s": 7.195770740509033e-05,
+    "load_reference_s": 0.0008152499794960022,
+    "retrieval_s": 2.9398636668920517,
+    "session_create_s": 0.5343642495572567,
+    "session_reuse_retrieval_s": 0.9025090420618653,
+    "total_s": 7.744004499167204,
+    "write_summary_s": 0.0007199998944997787
+  },
+  "retrieval_modes": {
+    "non_session": {
+      "forward_model_and_jacobian_s": 2.936259916983545,
+      "iterations": 4,
+      "retrieval_s": 2.9398636668920517
+    },
+    "session": {
+      "first_use_retrieval_s": 1.436873291619122,
+      "forward_model_and_jacobian_s": 0.900374498218298,
+      "iterations": 4,
+      "reused_retrieval_s": 0.9025090420618653,
+      "setup_s": 0.5343642495572567
+    },
+    "speedup_pct": {
+      "session_first_use_retrieval_vs_non_session_retrieval": 51.12449234293413,
+      "session_reused_forward_vs_non_session_forward": 69.33600826648673
+    }
+  },
+  "session_reuse": {
+    "baseline_forward_model_and_jacobian_s": 2.936259916983545,
+    "forward_model_and_jacobian_s": 0.900374498218298,
+    "forward_model_and_jacobian_speedup_pct": 69.33600826648673,
+    "iterations": [
+      {
+        "forward_model_and_jacobian_s": 0.2232323745265603,
+        "index": 1,
+        "solver_update_s": 0.0004887497052550316,
+        "total_iteration_s": 0.2237215843051672
+      },
+      {
+        "forward_model_and_jacobian_s": 0.22971612494438887,
+        "index": 2,
+        "solver_update_s": 0.00048345793038606644,
+        "total_iteration_s": 0.23020012490451336
+      },
+      {
+        "forward_model_and_jacobian_s": 0.22013654094189405,
+        "index": 3,
+        "solver_update_s": 0.00048295874148607254,
+        "total_iteration_s": 0.2206199588254094
+      },
+      {
+        "forward_model_and_jacobian_s": 0.22728945780545473,
+        "index": 4,
+        "solver_update_s": 0.0004754168912768364,
+        "total_iteration_s": 0.2277653757482767
+      }
+    ]
   }
 }

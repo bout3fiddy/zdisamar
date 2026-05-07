@@ -133,7 +133,7 @@ pub fn executeWithWorkspace(
             .jacobian = direct_jacobian,
         };
     } else if (input.layers.len > 0)
-        try layerResolvedLabosWithWorkspace(allocator, input, controls, route.derivative_mode != .none, workspace)
+        try layerResolvedLabosWithWorkspace(allocator, input, controls, route.derivative_mode != .none, route.derivative_state_mask, workspace)
     else
         try singleLayerLabos(allocator, input, controls, route.derivative_mode != .none);
 
@@ -156,6 +156,7 @@ fn layerResolvedLabosWithWorkspace(
     input: common.ForwardInput,
     controls: common.RadiativeTransferControls,
     compute_jacobian: bool,
+    derivative_state_mask: jacobian.StateMask,
     workspace: ?*workspace_mod.Workspace,
 ) common.ExecuteError!LabosComputation {
     const nlayer = input.layers.len;
@@ -206,6 +207,9 @@ fn layerResolvedLabosWithWorkspace(
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(input.layers)));
     const fourier_max = resolvedFourierMax(input, controls);
     const phase_max = resolvedPhaseCoefficientMax(input);
+    const wants_surface_albedo = compute_jacobian and jacobian.includes(derivative_state_mask, .surface_albedo);
+    const wants_aerosol_optical_depth = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_optical_depth);
+    const wants_aerosol_layer_mid_pressure = compute_jacobian and jacobian.includes(derivative_state_mask, .aerosol_layer_mid_pressure_hpa);
     var reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
     var aerosol_optical_depth_tangent: f64 = 0.0;
@@ -355,12 +359,12 @@ fn layerResolvedLabosWithWorkspace(
             break :blk (2.0 * refl_fc) * cos_m_dphi;
         };
         reflectance += weighted_refl_fc;
-        if (compute_jacobian and i_fourier == 0) {
+        if (wants_surface_albedo and i_fourier == 0) {
             surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
         }
-        if (compute_jacobian) {
-            const tangent_refl_fc = if (use_integrated_source) blk: {
-                break :blk calcAerosolOpticalDepthWeightingWithBasis(
+        if (wants_aerosol_optical_depth) {
+            const tangent_refl_fc = if (use_integrated_source)
+                calcAerosolOpticalDepthWeightingWithBasis(
                     input.layers,
                     input.rtm_quadrature,
                     orders_result.ud,
@@ -371,42 +375,39 @@ fn layerResolvedLabosWithWorkspace(
                     geo,
                     plm_basis,
                     adjacent_layer_phase_max_indices,
-                );
-            } else try nonIntegratedReflectanceTangent(
-                allocator,
-                input.layers,
-                .aerosol_optical_depth,
-                i_fourier,
-                geo,
-                &atten,
-                rt,
-                controls,
-                plm_basis,
-                num_orders_max,
-            );
-            const weighted_tangent_refl_fc = if (i_fourier == 0) blk: {
-                break :blk tangent_refl_fc;
-            } else blk: {
-                const cos_m_dphi = math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
-                break :blk (2.0 * tangent_refl_fc) * cos_m_dphi;
-            };
-            aerosol_optical_depth_tangent += weighted_tangent_refl_fc;
-            const pressure_tangent_refl_fc = if (use_integrated_source)
-                calcAerosolLayerPressureShiftWeightingWithBasis(
-                    input.layers,
-                    input.rtm_quadrature,
-                    orders_result.ud,
-                    orders_result.ud_sum_local,
-                    nlayer,
-                    i_fourier,
-                    controls.use_spherical_correction,
-                    geo,
-                    plm_basis,
                 )
-            else blk: {
-                if (!hasLayerJacobian(input.layers, .aerosol_layer_mid_pressure_hpa)) {
-                    return error.UnsupportedDerivativeMode;
-                }
+            else
+                try nonIntegratedReflectanceTangent(
+                    allocator,
+                    input.layers,
+                    .aerosol_optical_depth,
+                    i_fourier,
+                    geo,
+                    &atten,
+                    rt,
+                    controls,
+                    plm_basis,
+                    num_orders_max,
+                );
+            const weighted_tangent_refl_fc = if (i_fourier == 0)
+                tangent_refl_fc
+            else
+                (2.0 * tangent_refl_fc) * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+            aerosol_optical_depth_tangent += weighted_tangent_refl_fc;
+        }
+        if (wants_aerosol_layer_mid_pressure) {
+            const pressure_tangent_refl_fc = if (use_integrated_source) calcAerosolLayerPressureShiftWeightingWithBasis(
+                input.layers,
+                input.rtm_quadrature,
+                orders_result.ud,
+                orders_result.ud_sum_local,
+                nlayer,
+                i_fourier,
+                controls.use_spherical_correction,
+                geo,
+                plm_basis,
+            ) else blk: {
+                if (!hasLayerJacobian(input.layers, .aerosol_layer_mid_pressure_hpa)) return error.UnsupportedDerivativeMode;
                 break :blk try nonIntegratedReflectanceTangent(
                     allocator,
                     input.layers,
