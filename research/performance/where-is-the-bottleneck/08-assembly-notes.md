@@ -76,3 +76,23 @@ xcrun llvm-objdump -d --demangle zig-out/bin/labos-bottleneck-trace
 ```
 
 The current evidence does not justify an assembly-first rewrite. The larger question is still whether the exact O2 A route can reduce the number of wavelength, Fourier, layer, doubling, or order iterations without changing the result.
+
+## Simple Python Shape
+
+Assembly inspection should start from measured primitive volume, not from curiosity:
+
+```python
+candidates = [
+    ("smul12x10Into", 25_168_998, 155.266),
+    ("qseriesKnownNonzeroProduct", 3_408_299, 519.493),
+    ("dotGaussPair", 295_581_240, None),
+]
+
+for name, calls, ns_per_call in candidates:
+    if ns_per_call is None:
+        print(name, "inspect if dot-pair loop remains hot")
+    else:
+        print(name, calls * ns_per_call / 1_000_000_000, "estimated CPU seconds")
+```
+
+That ranking tells us which assembly to inspect first. Even then, the full trace must confirm any improvement, because the wall is dominated by repetition counts rather than a single obviously slow function.

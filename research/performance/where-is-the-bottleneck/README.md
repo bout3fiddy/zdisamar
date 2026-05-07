@@ -27,6 +27,24 @@ const product = try InstrumentGrid.simulateProductWithWorkspace(
 
 That is the only path that installs a live trace sink. Normal forward calls keep the trace reference zero-sized.
 
+## Simple Python Shape
+
+The whole folder is explaining this multiplication of work:
+
+```python
+output_wavelengths = 701
+high_resolution_samples = 3_874
+fourier_terms = 120_390
+layer_visits = 5_417_550
+doubling_steps = 8_389_666
+
+print(high_resolution_samples / output_wavelengths)  # about 5.5 radiance samples per output
+print(fourier_terms / high_resolution_samples)       # about 31 Fourier terms per sample
+print(doubling_steps / layer_visits)                 # many visits are cheap skips
+```
+
+The bottleneck is not one big operation. It is many small exact operations repeated through this hierarchy.
+
 ## Documents
 
 - [00. Methodology](00-methodology.md): how the trace is layered, why wall time and worker CPU time are reported separately, and how to regenerate the artifacts.

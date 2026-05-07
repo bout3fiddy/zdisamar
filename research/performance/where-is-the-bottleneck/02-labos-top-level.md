@@ -106,3 +106,24 @@ for (0..fourier_max + 1) |i_fourier| {
 ```
 
 The important result is that the remaining wall is not setup, allocation, or output-grid assembly. It is the exact LABOS Fourier transport calculation, dominated by RT-layer construction and scattering orders.
+
+## Simple Python Shape
+
+The timing hierarchy is nested:
+
+```python
+def high_resolution_sample(wavelength):
+    input_state = build_wavelength_specific_input(wavelength)
+    return labos_execute(input_state)
+
+
+def labos_execute(input_state):
+    total = 0.0
+    for fourier in active_fourier_terms(input_state):
+        rt_layers = build_rt_layers(input_state, fourier)   # largest child
+        orders = propagate_scattering_orders(rt_layers)     # second largest child
+        total += integrate_reflectance(orders, fourier)
+    return total
+```
+
+`labos_execute` contains the Fourier loop, and the Fourier loop contains RT-layer construction and scattering orders. The percentages are nested, not sibling rows that should sum independently.

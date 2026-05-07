@@ -77,3 +77,34 @@ fn dotGaussPair(
 ```
 
 The trace counted `295,581,240` `dotGaussPair` calls, representing `2,955,812,400` multiply-add terms. The [inactive-layer skip is already doing useful work](../why-zdisamar-is-faster/10-carry-layer-activity-into-orders.md): it skipped `5,499,208` down-layer cases and `5,499,208` up-layer cases. The remaining orders cost is the active multiple-scattering propagation that LABOS still has to perform until the order contribution falls below the convergence threshold.
+
+## Simple Python Shape
+
+Scattering orders repeat until the next order is small enough:
+
+```python
+order = initial_source()
+total = order
+
+while True:
+    local_down = []
+    local_up = []
+
+    for layer in layers:
+        if not layer.active:
+            local_down.append(0.0)
+            local_up.append(0.0)
+            continue
+
+        down = dot(layer.R, order.up) + dot(layer.T, order.down)
+        up = dot(layer.R, order.down) + dot(layer.T, order.up)
+        local_down.append(down)
+        local_up.append(up)
+
+    order = transport_to_other_levels(local_down, local_up)
+    if max_abs(order) < convergence_threshold:
+        break
+    total += order
+```
+
+The inactive-layer check prevents some dot products. The active layers still have to propagate upward and downward orders until convergence.

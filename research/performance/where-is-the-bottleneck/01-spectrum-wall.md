@@ -57,3 +57,28 @@ for (0..worker_count) |worker_index| {
 ```
 
 That is why the spectrum wall is dominated by high-resolution radiance prefetch: each miss runs wavelength-specific optical input and then LABOS transport.
+
+## Simple Python Shape
+
+The expensive count is the unique high-resolution radiance list, not the final output wavelength list:
+
+```python
+output_wavelengths = range(701)
+
+# Each output wavelength asks the instrument response for nearby
+# high-resolution radiance samples. Many outputs overlap.
+needed = []
+for output_wavelength in output_wavelengths:
+    needed.extend(high_resolution_support(output_wavelength))
+
+# zdisamar calculates each unique high-resolution wavelength once.
+unique_samples = sorted(set(needed))
+for wavelength in unique_samples:          # 3,874 samples in the trace
+    cache[wavelength] = run_forward_model(wavelength)
+
+# The cheap final step integrates cached samples back to 701 outputs.
+for output_wavelength in output_wavelengths:
+    spectrum[output_wavelength] = integrate_from_cache(output_wavelength, cache)
+```
+
+That is why `forward_prefetch_wall` dominates and output-grid integration is tiny.

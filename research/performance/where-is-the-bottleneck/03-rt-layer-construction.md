@@ -69,3 +69,30 @@ if (use_doubling) {
 ```
 
 The measured split inside active RT-layer construction is: phase matrix construction costs `1.038334 s`; effective-scattering scans cost `0.043808 s`; initial exponentials cost `0.074818 s`; single-scatter setup costs `0.201130 s`; phase renormalization costs `0.055815 s`; and layer doubling costs `6.036863 s`. The conclusion is direct: RT-layer construction dominates because it contains the doubling loop, and the doubling loop is repeated 8.39 million times for this spectrum.
+
+## Simple Python Shape
+
+RT-layer construction is a repeated layer walk with cheap skips and an expensive active path:
+
+```python
+for wavelength in high_resolution_samples:
+    for fourier in active_fourier_terms(wavelength):
+        for layer in atmosphere_layers:
+            visits += 1
+
+            if fourier > layer.max_phase_index:
+                skipped += 1
+                continue
+
+            if layer.optical_depth == 0 or layer.single_scatter_albedo == 0:
+                skipped += 1
+                continue
+
+            zplus, zmin = build_phase_matrices(layer, fourier)
+            r, t = build_single_scatter_layer(layer, zplus, zmin)
+
+            if needs_doubling(layer):
+                r, t = double_until_original_thickness(r, t, layer)
+```
+
+Most visits are filtered out. The bottleneck is the active remainder that still has to build phase matrices and run layer doubling.

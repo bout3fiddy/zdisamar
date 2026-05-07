@@ -41,3 +41,27 @@ for (i_fourier..bounded_max_phase_index + 1) |l| {
 ```
 
 The [PLM basis is already reused](../why-zdisamar-is-faster/08-fourier-tail-and-basis-reuse.md) well enough that it is effectively gone from the wall. The repeated layer-specific matrix fill is the remaining phase cost. This is not currently the final bottleneck, but any future phase-kernel reuse strategy would have to prove that layer phase coefficients are identical or safely reusable across wavelengths without changing the O2 A result.
+
+## Simple Python Shape
+
+The cached basis removes one cost, but each active layer still fills its own matrices:
+
+```python
+plm_basis = basis_cache[fourier]  # reused across wavelengths
+
+zplus = zeros((12, 12))
+zmin = zeros((12, 12))
+
+for l, alpha in layer.phase_coefficients[fourier:]:
+    if alpha == 0:
+        continue
+
+    plus = plm_basis.plus[l]
+    minus = plm_basis.minus[l]
+    for i in range(12):
+        for j in range(12):
+            zplus[i, j] += alpha * plus[i] * plus[j]
+            zmin[i, j] += alpha * minus[i] * plus[j]
+```
+
+The example is small, but the trace counted `1,284,366` phase matrix builds.

@@ -42,3 +42,32 @@ This loop explains the primitive counts. `qseriesKnownNonzeroProduct` was needed
 This is why doubling is the final frontier. The code has already [specialized the common 12x10 and 12x12 matrix shapes](../why-zdisamar-is-faster/06-direct-12x10-12x12-matrix-calculations.md), [fused layer-doubling updates](../why-zdisamar-is-faster/05-fuse-layer-doubling-matrix-updates.md), [skipped empty q-series work](../why-zdisamar-is-faster/11-skip-empty-qseries-work.md), and [combined the D update](../why-zdisamar-is-faster/13-combine-d-update-in-doubling.md). The exact calculation still has to run the same scientific recurrence millions of times.
 
 A small assembly improvement can reduce a primitive. It does not remove the outer product: `3,874` wavelengths times active Fourier terms times active layers times repeated doubling steps. The next large speedup would need to reduce one of those counts or introduce a new scientifically valid reuse boundary.
+
+## Simple Python Shape
+
+One doubled layer runs the same recurrence several times:
+
+```python
+def double_layer(r, t, e, steps):
+    for _ in range(steps):
+        if repeated_reflection_is_tiny(r):
+            d = t
+        else:
+            q = qseries(matmul(r, r))
+            d = t + q * e + matmul(q, t)
+
+        rd = matmul(r, d)
+        u = r * e + rd
+
+        tu = matmul(t, u)
+        r_next = r + e * u + tu
+
+        td = matmul(t, d)
+        t_next = e * d + t * e + td
+
+        r, t = r_next, t_next
+        e = update_attenuation(e)
+    return r, t
+```
+
+The individual matrix operations are small. The cost appears because this recurrence runs `8,389,666` times in one retained spectrum.

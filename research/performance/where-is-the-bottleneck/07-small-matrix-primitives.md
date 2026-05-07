@@ -73,3 +73,25 @@ estimated_ns = count * ns_per_call
 Those estimates sum to `8.359756 s` of primitive CPU. That is larger than the directly timed `6.036863 s` doubling block because the microbench seed is not the exact same data distribution as every in-run matrix and because trace section boundaries are not identical to standalone kernel loops. The value is still useful for ranking: repeated 12x10 matrix products and q-series are the heavy primitive classes.
 
 The primitive conclusion matches the higher-level trace: there is no single slow call. The final wall is millions of operations that are already small after the [direct fixed-shape matrix work](../why-zdisamar-is-faster/06-direct-12x10-12x12-matrix-calculations.md), [separate output writes](../why-zdisamar-is-faster/12-write-matrix-results-into-separate-outputs.md), and [fused doubling updates](../why-zdisamar-is-faster/05-fuse-layer-doubling-matrix-updates.md).
+
+## Simple Python Shape
+
+The primitive estimate is count times cost:
+
+```python
+bench_ns = {
+    "smul_12x10": 155.266,
+    "qseries_nonzero_12x10": 519.493,
+}
+
+counts = {
+    "smul_12x10": 25_168_998,          # R*D + T*U + T*D products
+    "qseries_nonzero_12x10": 3_408_299,
+}
+
+for name, count in counts.items():
+    cpu_seconds = count * bench_ns[name] / 1_000_000_000
+    print(name, cpu_seconds)
+```
+
+A sub-microsecond primitive becomes seconds of aggregate CPU when the count is in the millions.
