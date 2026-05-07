@@ -4,6 +4,7 @@ const phase_functions = @import("../../optical_properties/shared/phase_functions
 const basis = @import("basis.zig");
 const attenuation = @import("attenuation.zig");
 const common = @import("../root.zig");
+const Trace = @import("../../performance_trace.zig");
 
 pub const LayerRT = basis.LayerRT;
 
@@ -236,32 +237,47 @@ fn doDouble(
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
+    trace: Trace.WorkerRef,
 ) void {
     var b = b_start;
     for (0..ndouble) |_| {
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_steps, 1);
         const trace_r = gaussTrace(n, n_gauss, R);
         const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
 
         const D = if (q_is_zero) blk: {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_qseries_skipped, 1);
             break :blk T.*;
         } else blk: {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                sink.addCounter(.doubling_qseries_nonzero, 1);
+                sink.addCounter(.matrix_qseries, 1);
+                sink.addCounter(.matrix_smul_q_product, 1);
+                sink.addCounter(.matrix_smul_add_semul3, 1);
+            };
             const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
             break :blk basis.smulAddSemul3(n, n_gauss, threshold_mul, &Q, E, T);
         };
 
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_rd, 1);
         var rd: basis.Mat = undefined;
         basis.smulInto(&rd, n, n_gauss, threshold_mul, R, &D);
 
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_semul_add, 1);
         const U = basis.semulAdd(n, R, E, &rd);
 
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_tu, 1);
         var tu: basis.Mat = undefined;
         basis.smulInto(&tu, n, n_gauss, threshold_mul, T, &U);
 
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_mat_add_esmul3, 1);
         const R_new = basis.matAddEsmul3(n, R, E, &U, &tu);
 
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_td, 1);
         var td: basis.Mat = undefined;
         basis.smulInto(&td, n, n_gauss, threshold_mul, T, &D);
 
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_esmul_semul_add, 1);
         const T_new = basis.esmulSemulAdd(n, E, &D, T, &td);
 
         // PARITY: DISAMAR's whole-array assignments evaluate both RHS values
@@ -271,10 +287,12 @@ fn doDouble(
 
         b *= 2.0;
         if (b < 0.001) {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_exp_evals, @intCast(geo.nmutot));
             for (0..geo.nmutot) |imu| {
                 E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
             }
         } else {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_square_evals, @intCast(geo.nmutot));
             for (0..geo.nmutot) |imu| {
                 const e = E.data[imu];
                 E.data[imu] = e * e;
@@ -312,6 +330,7 @@ pub fn calcRTlayersIntoWithBasis(
     phase_kernel_cache: ?[]basis.PhaseKernel,
     phase_kernel_valid: ?[]bool,
     rt_active: ?[]bool,
+    trace: Trace.WorkerRef,
 ) void {
     const nlayer = layers.len;
     rt[0] = zeroLayerRt(geo.nmutot);
@@ -319,9 +338,11 @@ pub fn calcRTlayersIntoWithBasis(
     if (phase_kernel_valid) |valid| @memset(valid, false);
 
     for (0..nlayer) |layer_idx| {
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.layer_visits, 1);
         const rt_idx = layer_idx + 1;
         const layer = layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.layer_skipped_fourier_out_of_range, 1);
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
             if (rt_active) |active| active[rt_idx] = false;
             continue;
@@ -333,16 +354,19 @@ pub fn calcRTlayersIntoWithBasis(
         else
             phase_functions.maxPhaseCoefficientIndex(phase_coefs);
         if (i_fourier > max_phase_index) {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.layer_skipped_fourier_out_of_range, 1);
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
             if (rt_active) |active| active[rt_idx] = false;
             continue;
         }
         if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.layer_skipped_empty_optics, 1);
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
             if (rt_active) |active| active[rt_idx] = false;
             continue;
         }
 
+        const phase_start = Trace.begin();
         var z = basis.fillZplusZminFromBasisLimited(
             i_fourier,
             phase_coefs,
@@ -350,6 +374,10 @@ pub fn calcRTlayersIntoWithBasis(
             geo,
             plm_basis,
         );
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+            sink.addSection(.rt_layer_phase_matrix, Trace.elapsed(phase_start));
+            sink.addCounter(.phase_matrix_builds, 1);
+        };
         if (phase_kernel_cache) |cache| {
             cache[rt_idx] = z;
             if (phase_kernel_valid) |valid| valid[rt_idx] = true;
@@ -357,12 +385,22 @@ pub fn calcRTlayersIntoWithBasis(
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
 
+        const beta_start = Trace.begin();
         var max_beta_eff: f64 = 0.0;
+        var scanned_terms: usize = 0;
+        var nonzero_terms: usize = 0;
         for (i_fourier..max_phase_index + 1) |ic| {
+            scanned_terms += 1;
+            if (phase_coefs[ic] != 0.0) nonzero_terms += 1;
             const icf: f64 = @floatFromInt(ic);
             const beta_eff = @abs(phase_coefs[ic]) / (2.0 * icf + 1.0);
             if (beta_eff > max_beta_eff) max_beta_eff = beta_eff;
         }
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+            sink.addSection(.rt_layer_effective_scattering, Trace.elapsed(beta_start));
+            sink.addCounter(.phase_coeff_terms_scanned, @intCast(scanned_terms));
+            sink.addCounter(.phase_coeff_terms_nonzero, @intCast(nonzero_terms));
+        };
         const a_eff = a * max_beta_eff;
 
         var use_doubling = false;
@@ -383,21 +421,46 @@ pub fn calcRTlayersIntoWithBasis(
             b_start = bd;
         }
 
+        const exp_start = Trace.begin();
         var E = basis.Vec.zero(geo.nmutot);
         for (0..geo.nmutot) |imu| {
             E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
         }
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+            sink.addSection(.rt_layer_initial_exponential, Trace.elapsed(exp_start));
+            sink.addCounter(.initial_exp_evals, @intCast(geo.nmutot));
+        };
 
+        const scatter_start = Trace.begin();
         var R = singleScatterR(a, &E, &z.Zmin, geo);
         var T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+            sink.addSection(.rt_layer_single_scatter, Trace.elapsed(scatter_start));
+            sink.addCounter(.single_scatter_r, 1);
+            sink.addCounter(.single_scatter_t, 1);
+        };
 
         if (use_doubling) {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubled_layers, 1);
             if (i_fourier == 0 and controls.renorm_phase_function) {
+                const renorm_start = Trace.begin();
                 renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
+                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                    sink.addSection(.rt_layer_phase_renormalization, Trace.elapsed(renorm_start));
+                    sink.addCounter(.phase_renormalizations, 1);
+                };
+                const renorm_scatter_start = Trace.begin();
                 R = singleScatterR(a, &E, &z.Zmin, geo);
                 T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
+                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                    sink.addSection(.rt_layer_single_scatter, Trace.elapsed(renorm_scatter_start));
+                    sink.addCounter(.single_scatter_r, 1);
+                    sink.addCounter(.single_scatter_t, 1);
+                };
             }
-            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E);
+            const doubling_start = Trace.begin();
+            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E, trace);
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.rt_layer_doubling, Trace.elapsed(doubling_start));
         }
 
         rt[rt_idx].R = R;
@@ -450,6 +513,7 @@ pub fn calcRTlayersTangentIntoWithBasis(
             null,
             null,
             null,
+            Trace.noWorker(),
         );
         calcRTlayersIntoWithBasis(
             &minus_rt,
@@ -462,6 +526,7 @@ pub fn calcRTlayersTangentIntoWithBasis(
             null,
             null,
             null,
+            Trace.noWorker(),
         );
         rt_tangent[layer_idx + 1] = layerRtDifferenceScaled(plus_rt[1], minus_rt[1], inv_span);
     }
@@ -512,6 +577,7 @@ pub fn calcRTlayersInto(
         null,
         null,
         null,
+        Trace.noWorker(),
     );
 }
 

@@ -48,10 +48,21 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const runtime_optimize: std.builtin.OptimizeMode = .ReleaseFast;
+    const trace_optimize = b.option(
+        std.builtin.OptimizeMode,
+        "trace-optimize",
+        "Optimization mode for the LABOS bottleneck trace executable",
+    ) orelse runtime_optimize;
 
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_test_support", false);
+    build_options.addOption(bool, "enable_labos_trace", false);
     const build_options_module = build_options.createModule();
+
+    const trace_build_options = b.addOptions();
+    trace_build_options.addOption(bool, "enable_test_support", false);
+    trace_build_options.addOption(bool, "enable_labos_trace", true);
+    const trace_build_options_module = trace_build_options.createModule();
 
     const lib_module = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -68,6 +79,12 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/validation.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "build_options",
+                .module = build_options_module,
+            },
+        },
     });
 
     const lib = b.addLibrary(.{
@@ -124,6 +141,12 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/disamar_reference_cli.zig"),
         .target = target,
         .optimize = runtime_optimize,
+        .imports = &.{
+            .{
+                .name = "build_options",
+                .module = build_options_module,
+            },
+        },
     });
     const cli_exe = b.addExecutable(.{
         .name = "zdisamar",
@@ -268,6 +291,46 @@ pub fn build(b: *std.Build) void {
     const run_labos_kernel_bench = b.addRunArtifact(labos_kernel_bench_exe);
     const bench_step = b.step("bench", "Run bounded LABOS kernel performance probes");
     bench_step.dependOn(&run_labos_kernel_bench.step);
+
+    const trace_internal_module = b.createModule(.{
+        .root_source_file = b.path("src/internal.zig"),
+        .target = target,
+        .optimize = trace_optimize,
+        .imports = &.{
+            .{
+                .name = "build_options",
+                .module = trace_build_options_module,
+            },
+        },
+    });
+    const labos_bottleneck_trace_module = b.createModule(.{
+        .root_source_file = b.path("src/validation/performance/labos_bottleneck_trace_cli.zig"),
+        .target = target,
+        .optimize = trace_optimize,
+        .imports = &.{
+            .{
+                .name = "internal",
+                .module = trace_internal_module,
+            },
+        },
+    });
+    const labos_bottleneck_trace_exe = b.addExecutable(.{
+        .name = "labos-bottleneck-trace",
+        .root_module = labos_bottleneck_trace_module,
+    });
+    const run_labos_bottleneck_trace = b.addRunArtifact(labos_bottleneck_trace_exe);
+    if (b.args) |args| run_labos_bottleneck_trace.addArgs(args);
+    const labos_bottleneck_trace_step = b.step(
+        "labos-bottleneck-trace",
+        "Run the trace-enabled O2A LABOS bottleneck research harness",
+    );
+    labos_bottleneck_trace_step.dependOn(&run_labos_bottleneck_trace.step);
+    const labos_bottleneck_trace_install = b.addInstallArtifact(labos_bottleneck_trace_exe, .{});
+    const labos_bottleneck_trace_bin_step = b.step(
+        "labos-bottleneck-trace-bin",
+        "Build the trace-enabled LABOS bottleneck executable for disassembly",
+    );
+    labos_bottleneck_trace_bin_step.dependOn(&labos_bottleneck_trace_install.step);
 
     const fmt_check_cmd = b.addFmt(.{
         .check = true,

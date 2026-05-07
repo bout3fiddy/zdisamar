@@ -1,0 +1,8 @@
+qseries_12x10: iterations=200000 elapsed_ms=138.718 ns_per_call=693.590 checksum=12154419.192793801000
+qseries_nonzero_12x10: iterations=200000 elapsed_ms=103.899 ns_per_call=519.493 checksum=12154419.192793801000
+smul_12x10: iterations=800000 elapsed_ms=124.213 ns_per_call=155.266 checksum=202905160.323846400000
+smulAddSemul3_12: iterations=800000 elapsed_ms=135.133 ns_per_call=168.916 checksum=1244627848.321147200000
+matAddSemul3_12: iterations=3000000 elapsed_ms=265.282 ns_per_call=88.427 checksum=5374104780.074755000000
+matAddEsmul3_12: iterations=3000000 elapsed_ms=272.232 ns_per_call=90.744 checksum=5439793259.783155000000
+semulAdd_12: iterations=3000000 elapsed_ms=200.539 ns_per_call=66.846 checksum=3906460079.767075500000
+esmulSemulAdd_12: iterations=3000000 elapsed_ms=280.144 ns_per_call=93.381 checksum=5240192040.225549000000

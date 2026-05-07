@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
+const Trace = @import("../../performance_trace.zig");
 
 pub const OrdersResult = struct {
     allocator: Allocator,
@@ -27,6 +28,7 @@ pub const OrdersWorkspace = struct {
     ud_orde: []basis.UDField,
     ud_local: []basis.UDLocal,
     rt_active: []bool,
+    trace: Trace.WorkerRef = Trace.noWorker(),
 
     pub fn init(
         allocator: Allocator,
@@ -323,6 +325,7 @@ fn ordersScatInternal(
     rt: []const basis.LayerRT,
     controls: common.RadiativeTransferControls,
     num_orders_max: usize,
+    trace: Trace.WorkerRef,
 ) OrdersResultView {
     const nmutot = geo.nmutot;
     const n_gauss = geo.n_gauss;
@@ -339,6 +342,7 @@ fn ordersScatInternal(
     const ud_local_view = ud_local[0..nlevel];
     const rt_active_view = rt_active[0..nlevel];
     initializeOrdersBuffers(track_sum_local, ud_view, ud_sum_local_view, ud_orde_view, ud_local_view, nmutot);
+    if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.orders_calls, 1);
 
     if (!rt_active_ready) {
         for (rt[0..nlevel], rt_active_view) |*layer_rt, *active| {
@@ -346,6 +350,7 @@ fn ordersScatInternal(
         }
     }
 
+    const initial_sources_start = Trace.begin();
     for (start_level..end_level + 1) |ilevel| {
         const e_data = &ud_view[ilevel].E.data;
         const orde_e_data = &ud_orde_view[ilevel].E.data;
@@ -401,8 +406,11 @@ fn ordersScatInternal(
             ud_sum_local_view[ilevel].D = ud_local_view[ilevel].D;
         }
     }
+    if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_initial_sources, Trace.elapsed(initial_sources_start));
 
+    const initial_transport_start = Trace.begin();
     transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
+    if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_initial_transport, Trace.elapsed(initial_transport_start));
 
     for (start_level..end_level + 1) |ilevel| {
         ud_view[ilevel].U = ud_orde_view[ilevel].U;
@@ -418,6 +426,7 @@ fn ordersScatInternal(
         }
     }
     if (controls.scattering != .multiple or max_value < controls.threshold_conv_first) {
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.orders_initial_returns, 1);
         return .{
             .ud = ud_view,
             .ud_sum_local = ud_sum_local_view,
@@ -427,12 +436,16 @@ fn ordersScatInternal(
     var num_orders: usize = 1;
 
     while (true) {
+        const multiple_loop_start = Trace.begin();
         num_orders += 1;
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.orders_multiple_iterations, 1);
 
+        const local_down_start = Trace.begin();
         for (start_level..end_level) |ilevel| {
             const local_d0 = &ud_local_view[ilevel].D.col[0].data;
             const local_d1 = &ud_local_view[ilevel].D.col[1].data;
             if (!rt_active_view[ilevel + 1]) {
+                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.orders_inactive_down_layers, 1);
                 for (0..nmutot) |imu| {
                     local_d0[imu] = 0.0;
                     local_d1[imu] = 0.0;
@@ -443,6 +456,10 @@ fn ordersScatInternal(
             const prev_u1 = &ud_orde_view[ilevel].U.col[1];
             const prev_d0 = &ud_orde_view[ilevel + 1].D.col[0];
             const prev_d1 = &ud_orde_view[ilevel + 1].D.col[1];
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                sink.addCounter(.dot_gauss_pair_calls, @intCast(nmutot * 2));
+                sink.addCounter(.dot_gauss_pair_terms, @intCast(nmutot * 2 * n_gauss));
+            };
             for (0..nmutot) |imu| {
                 const rst_dot_u = dotGaussPair(&rt[ilevel + 1].R, imu, prev_u0, prev_u1, n_gauss);
                 const t_dot_d = dotGaussPair(&rt[ilevel + 1].T, imu, prev_d0, prev_d1, n_gauss);
@@ -451,12 +468,18 @@ fn ordersScatInternal(
             }
         }
         ud_local_view[end_level].D = basis.Vec2.zero(nmutot);
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_local_down, Trace.elapsed(local_down_start));
 
+        const local_up_start = Trace.begin();
         const local_u_start0 = &ud_local_view[start_level].U.col[0].data;
         const local_u_start1 = &ud_local_view[start_level].U.col[1].data;
         const prev_d_start0 = &ud_orde_view[start_level].D.col[0];
         const prev_d_start1 = &ud_orde_view[start_level].D.col[1];
         if (rt_active_view[start_level]) {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                sink.addCounter(.dot_gauss_pair_calls, @intCast(nmutot));
+                sink.addCounter(.dot_gauss_pair_terms, @intCast(nmutot * n_gauss));
+            };
             for (0..nmutot) |imu| {
                 const r_dot_d = dotGaussPair(&rt[start_level].R, imu, prev_d_start0, prev_d_start1, n_gauss);
                 local_u_start0[imu] = r_dot_d.col0;
@@ -473,6 +496,7 @@ fn ordersScatInternal(
             const local_u0 = &ud_local_view[ilevel].U.col[0].data;
             const local_u1 = &ud_local_view[ilevel].U.col[1].data;
             if (!rt_active_view[ilevel]) {
+                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.orders_inactive_up_layers, 1);
                 for (0..nmutot) |imu| {
                     local_u0[imu] = 0.0;
                     local_u1[imu] = 0.0;
@@ -483,6 +507,10 @@ fn ordersScatInternal(
             const prev_d1 = &ud_orde_view[ilevel].D.col[1];
             const prev_u0 = &ud_orde_view[ilevel - 1].U.col[0];
             const prev_u1 = &ud_orde_view[ilevel - 1].U.col[1];
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                sink.addCounter(.dot_gauss_pair_calls, @intCast(nmutot * 2));
+                sink.addCounter(.dot_gauss_pair_terms, @intCast(nmutot * 2 * n_gauss));
+            };
             for (0..nmutot) |imu| {
                 const r_dot_d = dotGaussPair(&rt[ilevel].R, imu, prev_d0, prev_d1, n_gauss);
                 const tst_dot_u = dotGaussPair(&rt[ilevel].T, imu, prev_u0, prev_u1, n_gauss);
@@ -490,8 +518,11 @@ fn ordersScatInternal(
                 local_u1[imu] = r_dot_d.col1 + tst_dot_u.col1;
             }
         }
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_local_up, Trace.elapsed(local_up_start));
 
+        const transport_start = Trace.begin();
         transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_transport, Trace.elapsed(transport_start));
 
         max_value = 0.0;
         for (0..2) |imu0| {
@@ -507,9 +538,11 @@ fn ordersScatInternal(
             //   `LabosModule::ordersScat` exits the scattering-order loop as
             //   soon as the current order falls below `thresholdConv_mult`.
             //   That current below-threshold order is not added to `UD_fc`.
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_multiple_loop, Trace.elapsed(multiple_loop_start));
             break;
         }
 
+        const accumulate_start = Trace.begin();
         accumulateOrderContribution(
             track_sum_local,
             ud_view,
@@ -520,6 +553,8 @@ fn ordersScatInternal(
             end_level,
             nmutot,
         );
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_accumulate, Trace.elapsed(accumulate_start));
+        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_multiple_loop, Trace.elapsed(multiple_loop_start));
     }
 
     return .{
@@ -553,6 +588,7 @@ pub fn ordersScatInto(
         rt,
         controls,
         num_orders_max,
+        storage.trace,
     );
     return .{
         .ud = result.ud,
@@ -585,6 +621,7 @@ pub fn ordersScatIntoWithLocalSum(
         rt,
         controls,
         num_orders_max,
+        storage.trace,
     );
     return .{
         .ud = result.ud,
@@ -621,6 +658,7 @@ pub fn ordersScatIntoWithActive(
         rt,
         controls,
         num_orders_max,
+        storage.trace,
     );
     return .{
         .ud = result.ud,
@@ -657,6 +695,7 @@ pub fn ordersScatIntoWithActiveLocalSum(
         rt,
         controls,
         num_orders_max,
+        storage.trace,
     );
     return .{
         .ud = result.ud,
@@ -689,6 +728,7 @@ pub fn ordersScatTransportInto(
         rt,
         controls,
         num_orders_max,
+        storage.trace,
     );
     return .{
         .ud = result.ud,
@@ -746,6 +786,7 @@ pub fn ordersScat(
         rt,
         controls,
         num_orders_max,
+        Trace.noWorker(),
     );
     return result;
 }

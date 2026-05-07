@@ -5,6 +5,7 @@ const CarrierEval = @import("../../optical_properties/state_build/carrier_eval.z
 const common = @import("../../radiative_transfer/root.zig");
 const jacobian = @import("../../jacobian/root.zig");
 const labos = @import("../../radiative_transfer/labos/root.zig");
+const Trace = @import("../../performance_trace.zig");
 const ForwardInput = @import("forward_input.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
@@ -42,6 +43,7 @@ const ForwardSampleScratch = struct {
         scene: *const Scene,
         route: common.Route,
         prepared: *const OpticsPreparation.PreparedOpticalState,
+        trace: Trace.WorkerRef,
     ) !ForwardSampleScratch {
         const layer_count = Storage.resolvedTransportLayerCount(route, prepared);
         const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, route, prepared);
@@ -66,6 +68,9 @@ const ForwardSampleScratch = struct {
         const support_carriers = try allocator.alloc(CarrierEval.SharedOpticalCarrier, support_cache_count);
         errdefer allocator.free(support_carriers);
 
+        var labos_workspace = labos.Workspace.init(allocator);
+        if (Trace.enabled) labos_workspace.trace = trace;
+
         return .{
             .layer_inputs = layer_inputs,
             .pseudo_spherical_layers = pseudo_spherical_layers,
@@ -76,7 +81,7 @@ const ForwardSampleScratch = struct {
             .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
             .support_carrier_valid = support_carrier_valid,
             .support_carriers = support_carriers,
-            .labos_workspace = labos.Workspace.init(allocator),
+            .labos_workspace = labos_workspace,
         };
     }
 
@@ -115,6 +120,8 @@ const ForwardPrefetchWorker = struct {
     misses: []const ForwardCacheMiss,
     results: []ForwardIntegratedSample,
     error_state: *ForwardPrefetchErrorState,
+    trace: Trace.RunRef = Trace.noRun(),
+    worker_index: usize = 0,
 };
 
 pub fn radianceFromForward(
@@ -184,6 +191,7 @@ pub fn computeForwardSampleAtWavelength(
     const support_carriers = try allocator.alloc(CarrierEval.SharedOpticalCarrier, support_cache_count);
     defer allocator.free(support_carriers);
     var labos_workspace = labos.Workspace.init(allocator);
+    if (Trace.enabled) labos_workspace.trace = null;
     defer labos_workspace.deinit();
     return computeForwardSampleAtWavelengthWithScratch(
         allocator,
@@ -225,6 +233,10 @@ fn computeForwardSampleAtWavelengthWithScratch(
     support_carriers: []CarrierEval.SharedOpticalCarrier,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
+    const trace = Trace.asWorker(labos_workspace.trace);
+    if (Trace.enabled) if (trace) |sink| sink.addCounter(.forward_samples, 1);
+
+    const input_start = Trace.begin();
     const input = try ForwardInput.configuredForwardInput(
         scene,
         route,
@@ -240,12 +252,15 @@ fn computeForwardSampleAtWavelengthWithScratch(
         support_carrier_valid,
         support_carriers,
     );
+    if (Trace.enabled) if (trace) |sink| sink.addSection(.forward_input, Trace.elapsed(input_start));
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
+    const labos_start = Trace.begin();
     const forward = if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
         try execute_with_workspace(allocator, effective_route, input, labos_workspace)
     else
         try implementations.transport.executePrepared(allocator, effective_route, input);
+    if (Trace.enabled) if (trace) |sink| sink.addSection(.labos_execute, Trace.elapsed(labos_start));
     const radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
     return .{
         .radiance = radiance,
@@ -257,12 +272,17 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const trace_worker: Trace.WorkerRef = if (Trace.enabled) blk: {
+        if (Trace.asRun(worker.trace)) |trace| break :blk trace.worker(worker.worker_index);
+        break :blk null;
+    } else {};
 
     var scratch = ForwardSampleScratch.init(
         allocator,
         worker.scene,
         worker.route,
         worker.prepared,
+        trace_worker,
     ) catch |err| {
         worker.error_state.store(err);
         return;
@@ -307,10 +327,25 @@ pub fn prefetchForwardSamples(
 ) Error!void {
     if (misses.len == 0) return;
 
-    const worker_count = preferredForwardWorkerCount(misses.len);
+    const preferred_worker_count = preferredForwardWorkerCount(misses.len);
+    const trace_ref = implementations.trace;
+    const trace = Trace.asRun(trace_ref);
+    const worker_count = if (Trace.enabled and trace != null)
+        @min(preferred_worker_count, Trace.max_workers)
+    else
+        preferred_worker_count;
+    if (Trace.enabled) if (trace) |run| {
+        run.setWorkerCount(worker_count);
+        run.addCounter(.worker_count, @intCast(worker_count));
+        run.addCounter(.high_resolution_misses, @intCast(misses.len));
+    };
 
     if (worker_count == 1) {
-        var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared);
+        const trace_worker: Trace.WorkerRef = if (Trace.enabled) blk: {
+            if (trace) |run| break :blk run.worker(0);
+            break :blk null;
+        } else {};
+        var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared, trace_worker);
         defer scratch.deinit(allocator);
         for (misses, results) |miss, *result| {
             result.* = try computeForwardSampleAtWavelengthWithScratch(
@@ -358,6 +393,8 @@ pub fn prefetchForwardSamples(
             .misses = misses[start_index..end_index],
             .results = results[start_index..end_index],
             .error_state = &error_state,
+            .trace = trace_ref,
+            .worker_index = worker_index,
         };
         if (worker_index + 1 < worker_count) {
             threads[started_thread_count] = std.Thread.spawn(

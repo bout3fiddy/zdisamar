@@ -2,6 +2,8 @@
 
 This note explains why the optimized per-spectrum path remains expensive. The core issue is not one slow helper. The issue is that O2 A asks LABOS to repeat many small, exact matrix calculations millions of times.
 
+The deeper layered trace is in [where-is-the-bottleneck](where-is-the-bottleneck/). That folder keeps the regeneration harness, retained CSV/JSON evidence, and a top-down explanation from the spectrum wall through LABOS layer construction, doubling, scattering orders, matrix primitives, and assembly-level inspection notes.
+
 ## Fourier Loop
 
 The LABOS layer-resolved path is [execute.zig:153-340](../../src/forward_model/radiative_transfer/labos/execute.zig#L153-L340).
@@ -25,12 +27,12 @@ This step exists because the azimuth-dependent reflectance is written as a Fouri
 The largest measured block is [layers.zig:304-407](../../src/forward_model/radiative_transfer/labos/layers.zig#L304-L407). The timing breakdown measured:
 
 ```text
-RT-layer construction      10.760022 s
+RT-layer construction       8.026027 s
 layer visits            5,417,550
 doubled layers          1,075,939
 doubling steps          8,389,666
-doubling calculation        8.347130 s
-phase-matrix calculation    1.090265 s
+doubling calculation        6.036863 s
+phase-matrix calculation    1.038334 s
 ```
 
 For each layer and Fourier term, the code:
@@ -91,7 +93,7 @@ Zplus_ij += alpha_l * P_lm_plus(mu_i)  * w_i * P_lm_plus(mu_j) * w_j
 Zmin_ij  += alpha_l * P_lm_minus(mu_i) * w_i * P_lm_plus(mu_j) * w_j
 ```
 
-For the O2 A route `nmutot=12`, so each nonzero phase coefficient updates a 12x12 matrix. The Fourier basis is reused, but each wavelength, layer, and Fourier term still has to combine the active phase coefficients into layer-specific `Zplus` and `Zmin` matrices.
+For the O2 A route `nmutot=12`, so each nonzero phase coefficient updates a 12x12 matrix. The [Fourier basis is reused](why-zdisamar-is-faster/08-fourier-tail-and-basis-reuse.md), but each wavelength, layer, and Fourier term still has to combine the active phase coefficients into layer-specific `Zplus` and `Zmin` matrices.
 
 This step exists because scattering redistributes light between directions. LABOS needs those matrices before it can build layer reflection and transmission.
 
@@ -117,17 +119,17 @@ smul12x10 = 12 rows * 12 columns * 10 multiply-add terms
 Current `zig build bench` sample:
 
 ```text
-qseries_12x10:              534.184 ns/call
-qseries_nonzero_12x10:      512.396 ns/call
-smul_12x10:                 157.265 ns/call
-smulAddSemul3_12:           169.972 ns/call
-matAddSemul3_12:             88.298 ns/call
-matAddEsmul3_12:             92.961 ns/call
-semulAdd_12:                 67.475 ns/call
-esmulSemulAdd_12:            93.168 ns/call
+qseries_12x10:              693.590 ns/call
+qseries_nonzero_12x10:      519.493 ns/call
+smul_12x10:                 155.266 ns/call
+smulAddSemul3_12:           168.916 ns/call
+matAddSemul3_12:             88.427 ns/call
+matAddEsmul3_12:             90.744 ns/call
+semulAdd_12:                 66.846 ns/call
+esmulSemulAdd_12:            93.381 ns/call
 ```
 
-These calls are already sub-microsecond. The wall comes from repetition. The instrumented run counted millions of calls: `qseries=3,408,299`, `rd=8,389,666`, `tu=8,389,666`, `td=8,389,666`, plus the matching add/update calls.
+These calls are already sub-microsecond after the [fixed-shape matrix specialization](why-zdisamar-is-faster/06-direct-12x10-12x12-matrix-calculations.md) and [fused doubling updates](why-zdisamar-is-faster/05-fuse-layer-doubling-matrix-updates.md). The wall comes from repetition. The instrumented run counted millions of calls: `qseries=3,408,299`, `rd=8,389,666`, `tu=8,389,666`, `td=8,389,666`, plus the matching add/update calls.
 
 ## Scattering Orders
 
@@ -139,11 +141,11 @@ The loop continues until:
 max_value < threshold_conv_mult or num_orders >= num_orders_max
 ```
 
-This step exists because LABOS represents multiple scattering as successive scattering orders. zdisamar has already removed unused local-order accumulation for the non-Jacobian integrated-source path, but the remaining propagation still has to move upward and downward radiation through active levels until convergence.
+This step exists because LABOS represents multiple scattering as successive scattering orders. zdisamar has already [carried layer activity into scattering orders](why-zdisamar-is-faster/10-carry-layer-activity-into-orders.md), but the remaining propagation still has to move upward and downward radiation through active levels until convergence.
 
 ## Wavelength-Specific Optical Input
 
-Wavelength-specific optical input was smaller than LABOS transport but still real: 3.744483 s accumulated across the 3,874 high-resolution wavelengths. The relevant code is:
+Wavelength-specific optical input was smaller than LABOS transport but still real: 3.927454 s accumulated across the 3,874 high-resolution wavelengths. The relevant code is:
 
 - [forward_input.zig:21-103](../../src/forward_model/instrument_grid/grid_calculation/forward_input.zig#L21-L103)
 - [carrier_eval.zig:42-110](../../src/forward_model/optical_properties/state_build/carrier_eval.zig#L42-L110)
