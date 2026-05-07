@@ -2,7 +2,7 @@
 
 Scope: one O2 A forward spectrum, using the same 755-776 nm, 701-output-wavelength validation scene used by the retained O2 A performance notes.
 
-This folder explains the current forward wall from the outside in. The retained run takes `1.958912 s` of caller-visible wall time. That wall is not 701 independent wavelength calculations. The instrument response expands the 701 output wavelengths into `3,874` high-resolution radiance samples; those samples run `120,390` LABOS Fourier terms; those Fourier terms visit `5,417,550` layer/Fourier combinations; and the active layer subset performs `8,389,666` doubling steps.
+This folder explains the current forward wall from the outside in. The retained run takes `1.724582 s` of caller-visible wall time. That wall is not 701 independent wavelength calculations. The instrument response expands the 701 output wavelengths into `3,874` high-resolution radiance samples; those samples run `120,390` LABOS Fourier terms; those Fourier terms visit `5,417,550` layer/Fourier combinations; and the active layer subset performs `8,389,666` doubling steps.
 
 That chain is the bottleneck: the individual kernels are already small, but the exact O2 A calculation repeats them at spectrum scale.
 
@@ -52,13 +52,14 @@ The bottleneck is not one big operation. It is many small exact operations repea
 ## Documents
 
 - [00. Methodology](00-methodology.md): how the trace is layered, why wall time and worker CPU time are reported separately, and how to regenerate the artifacts.
-- [01. Spectrum wall](01-spectrum-wall.md): why the 1.959 s wall is mostly high-resolution radiance prefetch, not 701 output sampling.
+- [01. Spectrum wall](01-spectrum-wall.md): why the 1.725 s wall is mostly high-resolution radiance prefetch, not 701 output sampling.
 - [02. LABOS top level](02-labos-top-level.md): the split between wavelength-specific optical input, LABOS execution, RT-layer construction, orders, and reflectance integration.
 - [03. RT-layer construction](03-rt-layer-construction.md): why layer construction is the dominant LABOS block.
 - [04. Layer doubling](04-layer-doubling.md): why the doubling loop is the main final-frontier calculation.
 - [05. Phase-matrix construction](05-phase-matrix-construction.md): the remaining phase-kernel cost after PLM basis reuse.
 - [06. Scattering orders](06-scattering-orders.md): the multiple-scattering order loop and dot-pair volume.
 - [07. Small matrix primitives](07-small-matrix-primitives.md): call counts, microbench timings, and estimated primitive CPU cost.
+- [08. Assembly optimization probes](08-assembly-optimization-probes.md): instruction-level candidates tried after the bottleneck trace, including retained qseries reciprocal reuse, retained two-lane 12x10 products, retained row-major elementwise updates, phase coefficient reuse, known-trace reuse, zero-aware doubling updates, fixed-12 order transport, and rejected FMA/load-order probes.
 
 ## Evidence
 
@@ -91,6 +92,7 @@ The main files there are:
 - `bench-primitives.asm`
 - `codegen_smul12x10.asm`
 - `codegen_smul_add_semul3_12.asm`
+- `codegen_smul_add_semul3_known_right_trace_12.asm`
 - `codegen_qseries_nonzero_12x10.asm`
 - `codegen_dot_gauss_pair.asm`
 

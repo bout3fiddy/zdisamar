@@ -1,8 +1,8 @@
 # 01. Spectrum Wall
 
-The retained trace measured `1.958912208 s` of forward wall time. That wall starts from `701` output wavelengths, but those are only the final instrument grid. Before zdisamar can write those 701 values, it has to calculate `3,874` unique high-resolution radiance samples.
+The retained trace measured `1.724581500 s` of forward wall time. That wall starts from `701` output wavelengths, but those are only the final instrument grid. Before zdisamar can write those 701 values, it has to calculate `3,874` unique high-resolution radiance samples.
 
-Most of the wall is spent prefetching those high-resolution samples. The prefetch section takes `1.670045 s`, or `85.254%` of the full forward wall. Wavelength sampling takes another `0.279496 s`, while the final integration back to the output grid is only a few milliseconds. In practical terms: the expensive step is not "write 701 outputs"; it is "run thousands of exact radiance calculations that the instrument response needs."
+Most of the wall is spent prefetching those high-resolution samples. The prefetch section takes `1.433842 s`, or `83.141%` of the full forward wall. Wavelength sampling takes another `0.279397 s`, while the final integration back to the output grid is only a few milliseconds. In practical terms: the expensive step is not "write 701 outputs"; it is "run thousands of exact radiance calculations that the instrument response needs."
 
 The handoff happens in [simulate.zig](../../../src/forward_model/instrument_grid/grid_calculation/simulate.zig#L54-L84):
 
@@ -25,7 +25,7 @@ const forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
     wavelength_sampling,
 );
 
-// This is the 1.67 s wall section: calculate all missing high-resolution
+// This is the 1.43 s wall section: calculate all missing high-resolution
 // radiance samples before integrating them back to the 701 output grid.
 try SpectralEval.prefetchForwardSamples(
     allocator,

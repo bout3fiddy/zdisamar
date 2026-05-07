@@ -1,10 +1,10 @@
 # 06. Scattering Orders
 
-Scattering orders are the second major LABOS block after RT-layer construction. They cost `2.826031 s`, or `24.608%` of aggregate LABOS CPU. There is one orders call for each Fourier term, so the trace counted `120,390` orders calls.
+Scattering orders are the second major LABOS block after RT-layer construction. They cost `2.308949 s`, or `24.433%` of aggregate LABOS CPU. There is one orders call for each Fourier term, so the trace counted `120,390` orders calls.
 
 What that means: after LABOS builds layer reflection/transmission matrices, it propagates successive scattering orders upward and downward through the atmosphere. Some calls return after the initial source/transport stage; the trace counted `66,429` initial-return calls. The remaining calls enter the multiple-scattering loop, which ran `258,796` iterations across the spectrum.
 
-The multiple-order loop is in [orders.zig](../../../src/forward_model/radiative_transfer/labos/orders.zig#L439-L558):
+The multiple-order loop is in [orders.zig](../../../src/forward_model/radiative_transfer/labos/orders.zig#L593-L705):
 
 ```zig
 while (true) {
@@ -52,9 +52,9 @@ while (true) {
 }
 ```
 
-The split tells us where that `2.826031 s` goes: initial source setup costs `0.130322 s`; initial transport costs `0.324308 s`; the multiple-order loop costs `2.198735 s`; local downward propagation costs `0.623497 s`; local upward propagation costs `0.609598 s`; transport to other levels costs `0.663621 s`; and accumulation costs `0.277443 s`.
+The split tells us where that `2.308949 s` goes: initial source setup costs `0.105875 s`; initial transport costs `0.213968 s`; the multiple-order loop costs `1.815016 s`; local downward propagation costs `0.612417 s`; local upward propagation costs `0.601224 s`; transport to other levels costs `0.439610 s`; and accumulation costs `0.136958 s`.
 
-The hot primitive in the multiple-order loop is the paired Gauss dot product in [orders.zig](../../../src/forward_model/radiative_transfer/labos/orders.zig#L186-L218):
+The hot primitive in the multiple-order loop is the paired Gauss dot product in [orders.zig](../../../src/forward_model/radiative_transfer/labos/orders.zig#L292-L324):
 
 ```zig
 fn dotGaussPair(
@@ -80,9 +80,9 @@ The trace counted `295,581,240` `dotGaussPair` calls, representing `2,955,812,40
 
 ## Assembly-Level Reading
 
-The paired dot product is also isolated in the research-only [primitive codegen harness](primitive-codegen/bench_primitives.zig). The retained run reports `dot_gauss_pair` at about `4.202 ns` per isolated call through the harness. The extracted [codegen_dot_gauss_pair.asm](primitive-codegen/outputs/codegen_dot_gauss_pair.asm) file contains `135` instructions, including `20` floating-point arithmetic instructions and no floating-point divides.
+The paired dot product is also isolated in the research-only [primitive codegen harness](primitive-codegen/bench_primitives.zig). The retained run reports `dot_gauss_pair` at about `4.376 ns` per isolated call through the harness. The extracted [codegen_dot_gauss_pair.asm](primitive-codegen/outputs/codegen_dot_gauss_pair.asm) file contains `135` instructions, including `20` floating-point arithmetic instructions and no floating-point divides.
 
-That is not a slow primitive by itself. The reason it matters is volume. Multiplying the retained trace count by the isolated harness timing gives about `1.24 s` of CPU-equivalent dot-pair work, which is the same order as the directly measured local up/down propagation time. The exact number should not be read as a replacement for the full trace because the real optimizer can inline the dot product into surrounding loops, but it confirms the bottleneck shape: this section is many cheap Gauss-row dot products, not a hidden heavyweight operation.
+That is not a slow primitive by itself. The reason it matters is volume. Multiplying the retained trace count by the isolated harness timing gives about `1.29 s` of CPU-equivalent dot-pair work, which is the same order as the directly measured local up/down propagation time. The exact number should not be read as a replacement for the full trace because the real optimizer can inline the dot product into surrounding loops, but it confirms the bottleneck shape: this section is many cheap Gauss-row dot products, not a hidden heavyweight operation.
 
 ## Simple Python Shape
 

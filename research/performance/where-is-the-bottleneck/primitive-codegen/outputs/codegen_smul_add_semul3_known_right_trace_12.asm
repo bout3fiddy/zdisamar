@@ -1,59 +1,41 @@
-0000000100004194 <_codegen_smul_add_semul3_12>:
-100004194: a9be6ffc    	stp	x28, x27, [sp, #-0x20]!
-100004198: a9017bfd    	stp	x29, x30, [sp, #0x10]
-10000419c: 910043fd    	add	x29, sp, #0x10
-1000041a0: d11203ff    	sub	sp, sp, #0x480
-1000041a4: 900000c8    	adrp	x8, 0x10001c000 <dyld_stub_binder+0x10001c000>
-1000041a8: 9119c108    	add	x8, x8, #0x670
-1000041ac: fd400100    	ldr	d0, [x8]
-1000041b0: fd403501    	ldr	d1, [x8, #0x68]
-1000041b4: 1e612800    	fadd	d0, d0, d1
-1000041b8: fd406901    	ldr	d1, [x8, #0xd0]
-1000041bc: 1e612800    	fadd	d0, d0, d1
-1000041c0: fd409d01    	ldr	d1, [x8, #0x138]
-1000041c4: 1e612800    	fadd	d0, d0, d1
-1000041c8: fd40d101    	ldr	d1, [x8, #0x1a0]
-1000041cc: 1e612800    	fadd	d0, d0, d1
-1000041d0: fd410501    	ldr	d1, [x8, #0x208]
-1000041d4: 1e612800    	fadd	d0, d0, d1
-1000041d8: fd413901    	ldr	d1, [x8, #0x270]
-1000041dc: 1e612800    	fadd	d0, d0, d1
-1000041e0: fd416d01    	ldr	d1, [x8, #0x2d8]
-1000041e4: 1e612800    	fadd	d0, d0, d1
-1000041e8: fd41a101    	ldr	d1, [x8, #0x340]
-1000041ec: 1e612800    	fadd	d0, d0, d1
-1000041f0: fd41d501    	ldr	d1, [x8, #0x3a8]
-1000041f4: 1e612800    	fadd	d0, d0, d1
-1000041f8: fd448101    	ldr	d1, [x8, #0x900]
-1000041fc: fd44b502    	ldr	d2, [x8, #0x968]
-100004200: 1e622821    	fadd	d1, d1, d2
-100004204: fd44e902    	ldr	d2, [x8, #0x9d0]
-100004208: 1e622821    	fadd	d1, d1, d2
-10000420c: fd451d02    	ldr	d2, [x8, #0xa38]
-100004210: 1e622821    	fadd	d1, d1, d2
-100004214: fd455102    	ldr	d2, [x8, #0xaa0]
-100004218: 1e622821    	fadd	d1, d1, d2
-10000421c: fd458502    	ldr	d2, [x8, #0xb08]
-100004220: 1e622821    	fadd	d1, d1, d2
-100004224: fd45b902    	ldr	d2, [x8, #0xb70]
-100004228: 1e622821    	fadd	d1, d1, d2
-10000422c: fd45ed02    	ldr	d2, [x8, #0xbd8]
-100004230: 1e622821    	fadd	d1, d1, d2
-100004234: fd462102    	ldr	d2, [x8, #0xc40]
-100004238: 1e622821    	fadd	d1, d1, d2
-10000423c: fd465502    	ldr	d2, [x8, #0xca8]
-100004240: 1e622821    	fadd	d1, d1, d2
-100004244: 910003e0    	mov	x0, sp
-100004248: 94001640    	bl	0x100009b48 <_bench_primitives.smulAddSemul3_12KnownTraces>
-10000424c: 900000c0    	adrp	x0, 0x10001c000 <dyld_stub_binder+0x10001c000>
-100004250: 9106c000    	add	x0, x0, #0x1b0
-100004254: 910003e1    	mov	x1, sp
-100004258: 52809002    	mov	w2, #0x480              ; =1152
-10000425c: 94002cd7    	bl	0x10000f5b8 <dyld_stub_binder+0x10000f5b8>
-100004260: 911203ff    	add	sp, sp, #0x480
-100004264: a9417bfd    	ldp	x29, x30, [sp, #0x10]
-100004268: a8c26ffc    	ldp	x28, x27, [sp], #0x20
-10000426c: d65f03c0    	ret
+0000000100004270 <_codegen_smul_add_semul3_known_right_trace_12>:
+100004270: a9be6ffc    	stp	x28, x27, [sp, #-0x20]!
+100004274: a9017bfd    	stp	x29, x30, [sp, #0x10]
+100004278: 910043fd    	add	x29, sp, #0x10
+10000427c: d11203ff    	sub	sp, sp, #0x480
+100004280: 900000c8    	adrp	x8, 0x10001c000 <dyld_stub_binder+0x10001c000>
+100004284: 9118c108    	add	x8, x8, #0x630
+100004288: fd400101    	ldr	d1, [x8]
+10000428c: fd402100    	ldr	d0, [x8, #0x40]
+100004290: fd405502    	ldr	d2, [x8, #0xa8]
+100004294: 1e622800    	fadd	d0, d0, d2
+100004298: fd408902    	ldr	d2, [x8, #0x110]
+10000429c: 1e622800    	fadd	d0, d0, d2
+1000042a0: fd40bd02    	ldr	d2, [x8, #0x178]
+1000042a4: 1e622800    	fadd	d0, d0, d2
+1000042a8: fd40f102    	ldr	d2, [x8, #0x1e0]
+1000042ac: 1e622800    	fadd	d0, d0, d2
+1000042b0: fd412502    	ldr	d2, [x8, #0x248]
+1000042b4: 1e622800    	fadd	d0, d0, d2
+1000042b8: fd415902    	ldr	d2, [x8, #0x2b0]
+1000042bc: 1e622800    	fadd	d0, d0, d2
+1000042c0: fd418d02    	ldr	d2, [x8, #0x318]
+1000042c4: 1e622800    	fadd	d0, d0, d2
+1000042c8: fd41c102    	ldr	d2, [x8, #0x380]
+1000042cc: 1e622800    	fadd	d0, d0, d2
+1000042d0: fd41f502    	ldr	d2, [x8, #0x3e8]
+1000042d4: 1e622800    	fadd	d0, d0, d2
+1000042d8: 910003e0    	mov	x0, sp
+1000042dc: 9400161b    	bl	0x100009b48 <_bench_primitives.smulAddSemul3_12KnownTraces>
+1000042e0: 900000c0    	adrp	x0, 0x10001c000 <dyld_stub_binder+0x10001c000>
+1000042e4: 9106c000    	add	x0, x0, #0x1b0
+1000042e8: 910003e1    	mov	x1, sp
+1000042ec: 52809002    	mov	w2, #0x480              ; =1152
+1000042f0: 94002cb2    	bl	0x10000f5b8 <dyld_stub_binder+0x10000f5b8>
+1000042f4: 911203ff    	add	sp, sp, #0x480
+1000042f8: a9417bfd    	ldp	x29, x30, [sp, #0x10]
+1000042fc: a8c26ffc    	ldp	x28, x27, [sp], #0x20
+100004300: d65f03c0    	ret
 
 
 0000000100009b48 <_bench_primitives.smulAddSemul3_12KnownTraces>:

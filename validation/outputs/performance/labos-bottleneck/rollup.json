@@ -7,10 +7,10 @@
     "summary": "summary.json",
     "worker_sections": "worker_sections.csv"
   },
-  "forward_input_cpu_s": 3.927454,
-  "forward_wall_s": 1.958912208,
-  "labos_execute_cpu_s": 11.484103,
-  "orders_cpu_s": 2.826031,
-  "primitive_estimated_cpu_s": 8.359756215445,
-  "rt_layer_build_cpu_s": 8.026027
+  "forward_input_cpu_s": 3.931236,
+  "forward_wall_s": 1.7245815,
+  "labos_execute_cpu_s": 9.450074,
+  "orders_cpu_s": 2.308949,
+  "primitive_estimated_cpu_s": 6.041409878901,
+  "rt_layer_build_cpu_s": 6.497375
 }

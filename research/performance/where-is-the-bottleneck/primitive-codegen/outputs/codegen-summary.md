@@ -5,32 +5,35 @@ The harness mirrors the fixed 12x10 LABOS primitive shapes with deterministic mo
 
 ## Timing
 
-| operation             | iterations | elapsed ns  | ns/call | checksum    |
-| --------------------- | ---------- | ----------- | ------- | ----------- |
-| smul_12x10            | 1,000,000  | 183,150,083 | 183.150 | 1.36882e+08 |
-| smul_add_semul3_12    | 1,000,000  | 179,686,917 | 179.687 | 1.55578e+09 |
-| qseries_nonzero_12x10 | 200,000    | 97,273,167  | 486.366 | 3.01146e+07 |
-| dot_gauss_pair        | 20,000,000 | 84,041,083  | 4.202   | 1.96133e+07 |
+| operation                            | iterations | elapsed ns  | ns/call | checksum    |
+| ------------------------------------ | ---------- | ----------- | ------- | ----------- |
+| smul_12x10                           | 1,000,000  | 169,671,917 | 169.672 | 1.36882e+08 |
+| smul_add_semul3_12                   | 1,000,000  | 187,996,125 | 187.996 | 1.55578e+09 |
+| smul_add_semul3_known_right_trace_12 | 1,000,000  | 188,876,375 | 188.876 | 1.55578e+09 |
+| qseries_nonzero_12x10                | 200,000    | 103,814,084 | 519.070 | 3.01146e+07 |
+| dot_gauss_pair                       | 20,000,000 | 90,365,667  | 4.518   | 1.96133e+07 |
 
 ## Disassembly Instruction Mix
 
-| symbol                        | instructions | fp arithmetic | fp divide | load/store/move | branch/call/ret |
-| ----------------------------- | ------------ | ------------- | --------- | --------------- | --------------- |
-| codegen_smul12x10             | 2196         | 1368          | 0         | 770             | 1               |
-| codegen_smul_add_semul3_12    | 2976         | 1731          | 0         | 1062            | 6               |
-| codegen_qseries_nonzero_12x10 | 4022         | 2062          | 11        | 1852            | 14              |
-| codegen_dot_gauss_pair        | 135          | 20            | 0         | 93              | 1               |
+| symbol                                       | instructions | fp arithmetic | fp divide | load/store/move | branch/call/ret |
+| -------------------------------------------- | ------------ | ------------- | --------- | --------------- | --------------- |
+| codegen_smul12x10                            | 2195         | 1368          | 0         | 779             | 1               |
+| codegen_smul_add_semul3_12                   | 2851         | 1729          | 0         | 988             | 6               |
+| codegen_smul_add_semul3_known_right_trace_12 | 2842         | 1729          | 0         | 979             | 6               |
+| codegen_qseries_nonzero_12x10                | 4450         | 2054          | 1         | 2303            | 14              |
+| codegen_dot_gauss_pair                       | 135          | 20            | 0         | 93              | 1               |
 
 ## Instruction-Level Orientation
 
 Instruction counts here are static disassembly counts for the extracted symbol/callee group, not dynamic retired-instruction counts. `ns/static instr` is a reading aid for this retained harness run, not a CPU throughput claim.
 
-| operation             | ns/call | static instr | ns/static instr | % isolated call time | % static instr |
-| --------------------- | ------- | ------------ | --------------- | -------------------- | -------------- |
-| smul_12x10            | 183.150 | 2,196        | 0.0834          | 21.46%               | 23.54%         |
-| smul_add_semul3_12    | 179.687 | 2,976        | 0.0604          | 21.06%               | 31.90%         |
-| qseries_nonzero_12x10 | 486.366 | 4,022        | 0.1209          | 56.99%               | 43.11%         |
-| dot_gauss_pair        | 4.202   | 135          | 0.0311          | 0.49%                | 1.45%          |
+| operation                            | ns/call | static instr | ns/static instr | % isolated call time | % static instr |
+| ------------------------------------ | ------- | ------------ | --------------- | -------------------- | -------------- |
+| smul_12x10                           | 169.672 | 2,195        | 0.0773          | 15.86%               | 17.60%         |
+| smul_add_semul3_12                   | 187.996 | 2,851        | 0.0659          | 17.57%               | 22.86%         |
+| smul_add_semul3_known_right_trace_12 | 188.876 | 2,842        | 0.0665          | 17.65%               | 22.79%         |
+| qseries_nonzero_12x10                | 519.070 | 4,450        | 0.1166          | 48.51%               | 35.68%         |
+| dot_gauss_pair                       | 4.518   | 135          | 0.0335          | 0.42%                | 1.08%          |
 
 ## Reading
 

@@ -14,14 +14,27 @@ SYMBOL_GROUPS = {
     "codegen_smul_add_semul3_12": [
         "codegen_smul_add_semul3_12",
         "bench_primitives.smulAddSemul3_12",
+        "bench_primitives.smulAddSemul3_12KnownTraces",
     ],
-    "codegen_qseries_nonzero_12x10": ["codegen_qseries_nonzero_12x10"],
+    "codegen_smul_add_semul3_known_right_trace_12": [
+        "codegen_smul_add_semul3_known_right_trace_12",
+        "bench_primitives.smulAddSemul3_12KnownRightTrace",
+        "bench_primitives.smulAddSemul3_12KnownTraces",
+    ],
+    "codegen_qseries_nonzero_12x10": [
+        "codegen_qseries_nonzero_12x10",
+        "bench_primitives.qseriesFromProduct",
+    ],
     "codegen_dot_gauss_pair": ["codegen_dot_gauss_pair"],
 }
 
 PRIMITIVES = [
     ("smul_12x10", "codegen_smul12x10"),
     ("smul_add_semul3_12", "codegen_smul_add_semul3_12"),
+    (
+        "smul_add_semul3_known_right_trace_12",
+        "codegen_smul_add_semul3_known_right_trace_12",
+    ),
     ("qseries_nonzero_12x10", "codegen_qseries_nonzero_12x10"),
     ("dot_gauss_pair", "codegen_dot_gauss_pair"),
 ]

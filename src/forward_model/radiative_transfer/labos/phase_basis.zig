@@ -364,48 +364,16 @@ fn fillZplusZminFromBasisLimited12(
             const plus_l = &plm_basis.plus[l];
             const minus_l = &plm_basis.minus[l];
             if (first_order) {
-                inline for (0..12) |i| {
-                    const scaled_plus_i = alpha1 * plus_l[i];
-                    const scaled_minus_i = alpha1 * minus_l[i];
-                    const row = i * 12;
-                    inline for (0..12) |j| {
-                        zplus.data[row + j] = scaled_plus_i * plus_l[j];
-                        zmin.data[row + j] = scaled_minus_i * plus_l[j];
-                    }
-                }
+                fillPhaseTerm12(&zplus, &zmin, alpha1, plus_l, minus_l, true);
             } else {
-                inline for (0..12) |i| {
-                    const scaled_plus_i = alpha1 * plus_l[i];
-                    const scaled_minus_i = alpha1 * minus_l[i];
-                    const row = i * 12;
-                    inline for (0..12) |j| {
-                        zplus.data[row + j] += scaled_plus_i * plus_l[j];
-                        zmin.data[row + j] += scaled_minus_i * plus_l[j];
-                    }
-                }
+                fillPhaseTerm12(&zplus, &zmin, alpha1, plus_l, minus_l, false);
             }
         } else {
             const plm = computePlm(i_fourier, l, geo);
             if (first_order) {
-                inline for (0..12) |i| {
-                    const scaled_plus_i = alpha1 * plm.plus[i];
-                    const scaled_minus_i = alpha1 * plm.minus[i];
-                    const row = i * 12;
-                    inline for (0..12) |j| {
-                        zplus.data[row + j] = scaled_plus_i * plm.plus[j];
-                        zmin.data[row + j] = scaled_minus_i * plm.plus[j];
-                    }
-                }
+                fillPhaseTerm12(&zplus, &zmin, alpha1, &plm.plus, &plm.minus, true);
             } else {
-                inline for (0..12) |i| {
-                    const scaled_plus_i = alpha1 * plm.plus[i];
-                    const scaled_minus_i = alpha1 * plm.minus[i];
-                    const row = i * 12;
-                    inline for (0..12) |j| {
-                        zplus.data[row + j] += scaled_plus_i * plm.plus[j];
-                        zmin.data[row + j] += scaled_minus_i * plm.plus[j];
-                    }
-                }
+                fillPhaseTerm12(&zplus, &zmin, alpha1, &plm.plus, &plm.minus, false);
             }
         }
         first_order = false;
@@ -413,6 +381,36 @@ fn fillZplusZminFromBasisLimited12(
     if (first_order) return .{ .Zplus = Mat.zero(12), .Zmin = Mat.zero(12) };
 
     return .{ .Zplus = zplus, .Zmin = zmin };
+}
+
+inline fn fillPhaseTerm12(
+    noalias zplus: *Mat,
+    noalias zmin: *Mat,
+    alpha1: f64,
+    noalias plus_l: *const [types.max_nmutot]f64,
+    noalias minus_l: *const [types.max_nmutot]f64,
+    comptime first_order: bool,
+) void {
+    var scaled_plus_col: [12]f64 = undefined;
+    inline for (0..12) |j| {
+        scaled_plus_col[j] = alpha1 * plus_l[j];
+    }
+
+    inline for (0..12) |i| {
+        const plus_i = plus_l[i];
+        const minus_i = minus_l[i];
+        const row = i * 12;
+        inline for (0..12) |j| {
+            const idx = row + j;
+            if (first_order) {
+                zplus.data[idx] = plus_i * scaled_plus_col[j];
+                zmin.data[idx] = minus_i * scaled_plus_col[j];
+            } else {
+                zplus.data[idx] += plus_i * scaled_plus_col[j];
+                zmin.data[idx] += minus_i * scaled_plus_col[j];
+            }
+        }
+    }
 }
 
 pub fn fillZplusZmin(
