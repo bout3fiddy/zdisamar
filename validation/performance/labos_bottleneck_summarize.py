@@ -41,7 +41,8 @@ def main() -> None:
             "qseries package",
             "matrix_qseries",
             "qseries_nonzero_12x10",
-            "qseriesKnownNonzeroProduct; includes the R*R product and q-series solve path for the benchmark seed",
+            "qseriesKnownNonzeroProduct; includes the R*R product and "
+            "q-series solve path for the benchmark seed",
         ),
         (
             "R*D, T*U, T*D products",
@@ -108,7 +109,11 @@ def main() -> None:
             "estimated_cpu_s": "",
             "estimated_forward_wall_percent": "",
             "estimated_labos_cpu_percent": "",
-            "note": f"{counters['dot_gauss_pair_terms']} multiply-add terms counted; kept as an operation count because it is embedded in orders.zig rather than bench-isolated",
+            "note": (
+                f"{counters['dot_gauss_pair_terms']} multiply-add terms counted; "
+                "kept as an operation count because it is embedded in orders.zig "
+                "rather than bench-isolated"
+            ),
         }
     )
 
