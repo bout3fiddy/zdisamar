@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,7 +32,9 @@ def read_bench(path: Path) -> dict[str, float]:
 
 
 def main() -> None:
-    output_dir = DEFAULT_OUTPUT_DIR
+    if len(sys.argv) > 2:
+        raise SystemExit("usage: labos_bottleneck_summarize.py [output-dir]")
+    output_dir = Path(sys.argv[1]) if len(sys.argv) == 2 else DEFAULT_OUTPUT_DIR
     counters = read_counters(output_dir / "counters.csv")
     bench = read_bench(output_dir / "labos_kernel_bench.txt")
     summary = json.loads((output_dir / "summary.json").read_text())
