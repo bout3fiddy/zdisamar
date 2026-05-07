@@ -68,7 +68,7 @@ if (use_doubling) {
 }
 ```
 
-The measured split inside active RT-layer construction is: phase matrix construction costs `1.020827 s`; effective-scattering scans cost `0.041305 s`; initial exponentials cost `0.076714 s`; single-scatter setup costs `0.185008 s`; phase renormalization costs `0.055546 s`; and layer doubling costs `4.536551 s`. The conclusion is direct: RT-layer construction dominates because it contains the doubling loop, and the doubling loop is repeated 8.39 million times for this spectrum.
+The measured split inside active RT-layer construction is: phase matrix construction costs `1.040362 s`; effective-scattering scans cost `0.039721 s`; initial exponentials cost `0.084012 s`; single-scatter setup costs `0.191708 s`; phase renormalization costs `0.056558 s`; and layer doubling costs `4.777200 s`. The conclusion is direct: RT-layer construction dominates because it contains the doubling loop, and the doubling loop is repeated 8.39 million times for this spectrum.
 
 ## Simple Python Shape
 

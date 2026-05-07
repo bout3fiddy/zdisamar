@@ -32,7 +32,7 @@ matrix_mat_add_esmul3,3523139
 matrix_esmul_semul,4589382
 matrix_esmul_semul_add,3800284
 initial_exp_evals,15412392
-doubling_square_evals,100675992
+doubling_square_evals,54446460
 phase_renormalizations,162708
 orders_calls,120390
 orders_initial_returns,66429

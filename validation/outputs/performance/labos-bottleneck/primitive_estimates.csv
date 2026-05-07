@@ -1,11 +1,11 @@
 operation,counter,bench_name,calls,ns_per_call,estimated_cpu_s,estimated_forward_wall_percent,estimated_labos_cpu_percent,note
-qseries package,matrix_qseries,qseries_nonzero_12x10,3408299,499.257,1.701617133843,98.66840934122277,18.006389514441896,qseriesKnownNonzeroProduct; includes the R*R product and q-series solve path for the benchmark seed
-"nonzero R*D, T*U, T*D products",matrix_smul_rd_nonzero+matrix_smul_tu_nonzero+matrix_smul_td_nonzero,smul_12x10,10931496,170.512,1.863951245952,108.08136617214089,19.724197354983673,threshold-skipped products are counted separately and do not run smul_12x10
-D update,matrix_smul_add_semul3,smulAddSemul3KnownRightTrace_12,3408299,174.334,0.594182397866,34.45371516892649,6.28759518566733,T + Q*diag(E) + Q*T fused update with T trace reused by the doubling loop
-U update with R*D,matrix_semul_add,semulAdd_12,3608073,68.709,0.247907087757,14.374912856075518,2.623334883483452,R*diag(E) + R*D product result
-U update without R*D,matrix_semul,semul_12,4781593,50.958,0.243660416094,14.128669250713868,2.5783969109024962,R*diag(E) when R*D is below threshold
-R_next update with T*U,matrix_mat_add_esmul3,matAddEsmul3_12,3523139,87.532,0.308387402948,17.881868902571437,3.2633332072108643,R + diag(E)*U + T*U product result
-R_next update without T*U,matrix_mat_add_esmul,matAddEsmul_12,4866527,69.191,0.336719869657,19.524729312995646,3.563145322004886,R + diag(E)*U when T*U is below threshold
-T_next update with T*D,matrix_esmul_semul_add,esmulSemulAdd_12,3800284,94.633,0.35963227577199997,20.853307064467522,3.805602747364729,diag(E)*D + T*diag(E) + T*D product result
-T_next update without T*D,matrix_esmul_semul,esmulSemul_12,4589382,83.966,0.385352049012,22.344670229386082,4.077767528719881,diag(E)*D + T*diag(E) when T*D is below threshold
+qseries package,matrix_qseries,qseries_nonzero_12x10,3408299,482.858,1.645724438542,91.43331768530278,16.832046941066107,qseriesKnownNonzeroProduct; includes the R*R product and q-series solve path for the benchmark seed
+"nonzero R*D, T*U, T*D products",matrix_smul_rd_nonzero+matrix_smul_tu_nonzero+matrix_smul_td_nonzero,smul_12x10,10931496,166.327,1.818202935192,101.01589470047686,18.596112712921155,threshold-skipped products are counted separately and do not run smul_12x10
+D update,matrix_smul_add_semul3,smulAddSemul3KnownRightTrace_12,3408299,170.862,0.582348783738,32.35419010629668,5.956113814919577,T + Q*diag(E) + Q*T fused update with T trace reused by the doubling loop
+U update with R*D,matrix_semul_add,semulAdd_12,3608073,67.62,0.24397789626000002,13.554947580832875,2.4953432702677056,R*diag(E) + R*D product result
+U update without R*D,matrix_semul,semul_12,4781593,55.036,0.26315975234800004,14.620654998437772,2.6915303685014966,R*diag(E) when R*D is below threshold
+R_next update with T*U,matrix_mat_add_esmul3,matAddEsmul3_12,3523139,86.527,0.304846648253,16.93669959699329,3.117893234767209,R + diag(E)*U + T*U product result
+R_next update without T*U,matrix_mat_add_esmul,matAddEsmul_12,4866527,69.221,0.336865865467,18.715626366869813,3.445377566007809,R + diag(E)*U when T*U is below threshold
+T_next update with T*D,matrix_esmul_semul_add,esmulSemulAdd_12,3800284,93.325,0.3546615043,19.7043181920165,3.6273867901332553,diag(E)*D + T*diag(E) + T*D product result
+T_next update without T*D,matrix_esmul_semul,esmulSemul_12,4589382,81.68,0.37486072176000007,20.82654827122157,3.8339791992249834,diag(E)*D + T*diag(E) when T*D is below threshold
 scattering-order dot pairs,dot_gauss_pair_calls,not_benchmarked,295581240,,,,,2955812400 multiply-add terms counted; kept as an operation count because it is embedded in orders.zig rather than bench-isolated

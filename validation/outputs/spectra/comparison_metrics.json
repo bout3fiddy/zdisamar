@@ -1,5 +1,5 @@
 {
-  "passes_reflectance_threshold": false,
+  "passes_reflectance_threshold": true,
   "reference_paths": {
     "forward": "validation/spectra/data/reference/o2a_jacobian_retrieval_instrument_forward.csv",
     "reflectance_jacobian": "validation/spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv"
@@ -11,103 +11,103 @@
     {
       "marked_residual_blowup_regions_nm": [
         {
-          "end_nm": 758.73,
-          "peak_abs_residual": 1.0735856648125264e-13,
-          "peak_nm": 758.12,
-          "start_nm": 757.96
+          "end_nm": 768.4499999999999,
+          "peak_abs_residual": 3.9968028886505635e-15,
+          "peak_nm": 768.2,
+          "start_nm": 768.01
         },
         {
-          "end_nm": 759.2099999999999,
-          "peak_abs_residual": 1.101063684671999e-13,
-          "peak_nm": 759.08,
-          "start_nm": 758.83
+          "end_nm": 770.43,
+          "peak_abs_residual": 2.6645352591003757e-15,
+          "peak_nm": 770.21,
+          "start_nm": 770.02
         },
         {
-          "end_nm": 775.0799999999999,
-          "peak_abs_residual": 1.3633538742396922e-13,
-          "peak_nm": 774.83,
-          "start_nm": 774.37
+          "end_nm": 775.4399999999999,
+          "peak_abs_residual": 1.6653345369377348e-15,
+          "peak_nm": 775.34,
+          "start_nm": 775.24
         }
       ],
-      "max_abs_residual": 1.3633538742396922e-13,
-      "max_abs_wavelength_nm": 774.83,
-      "mean_signed": 3.518570435606605e-15,
-      "rmse": 4.416226782232963e-14,
+      "max_abs_residual": 3.9968028886505635e-15,
+      "max_abs_wavelength_nm": 768.2,
+      "mean_signed": 4.624733192695087e-17,
+      "rmse": 6.185377257131102e-16,
       "series": "forward reflectance"
     },
     {
       "marked_residual_blowup_regions_nm": [
         {
-          "end_nm": 755.73,
-          "peak_abs_residual": 6.318279233141766e-13,
-          "peak_nm": 755.57,
-          "start_nm": 755.35
+          "end_nm": 768.42,
+          "peak_abs_residual": 1.6209256159527285e-14,
+          "peak_nm": 768.2,
+          "start_nm": 768.01
         },
         {
-          "end_nm": 758.79,
-          "peak_abs_residual": 5.266898028821743e-13,
-          "peak_nm": 758.66,
-          "start_nm": 758.2900000000001
+          "end_nm": 770.4,
+          "peak_abs_residual": 9.43689570931383e-15,
+          "peak_nm": 770.18,
+          "start_nm": 770.0500000000001
         },
         {
-          "end_nm": 774.9599999999999,
-          "peak_abs_residual": 7.898126597183364e-13,
-          "peak_nm": 774.59,
-          "start_nm": 774.25
+          "end_nm": 775.53,
+          "peak_abs_residual": 8.659739592076221e-15,
+          "peak_nm": 775.31,
+          "start_nm": 775.1800000000001
         }
       ],
-      "max_abs_residual": 7.898126597183364e-13,
-      "max_abs_wavelength_nm": 774.59,
-      "mean_signed": 2.315903477271994e-14,
-      "rmse": 2.2474975830448658e-13,
+      "max_abs_residual": 1.6209256159527285e-14,
+      "max_abs_wavelength_nm": 768.2,
+      "mean_signed": 1.337497165050342e-16,
+      "rmse": 2.526083536721846e-15,
       "series": "dR/d surface albedo"
     },
     {
       "marked_residual_blowup_regions_nm": [
         {
-          "end_nm": 768.06,
-          "peak_abs_residual": 8.50500225801909e-14,
-          "peak_nm": 767.81,
-          "start_nm": 767.59
+          "end_nm": 756.7199999999999,
+          "peak_abs_residual": 4.85722573273506e-16,
+          "peak_nm": 756.68,
+          "start_nm": 756.61
         },
         {
-          "end_nm": 769.98,
-          "peak_abs_residual": 1.0374340275731697e-13,
-          "peak_nm": 769.82,
-          "start_nm": 769.51
+          "end_nm": 758.13,
+          "peak_abs_residual": 5.342948306008566e-16,
+          "peak_nm": 758.03,
+          "start_nm": 757.84
         },
         {
-          "end_nm": 775.4399999999999,
-          "peak_abs_residual": 1.1208395322981346e-13,
-          "peak_nm": 775.1,
-          "start_nm": 774.85
+          "end_nm": 768.4499999999999,
+          "peak_abs_residual": 1.1379786002407855e-15,
+          "peak_nm": 768.2,
+          "start_nm": 768.01
         }
       ],
-      "max_abs_residual": 1.1208395322981346e-13,
-      "max_abs_wavelength_nm": 775.1,
-      "mean_signed": 6.702104768096692e-16,
-      "rmse": 3.446657678341799e-14,
+      "max_abs_residual": 1.1379786002407855e-15,
+      "max_abs_wavelength_nm": 768.2,
+      "mean_signed": 2.254359460143451e-17,
+      "rmse": 1.7404127803084135e-16,
       "series": "dR/d aerosol optical depth"
     },
     {
       "marked_residual_blowup_regions_nm": [
         {
-          "end_nm": 774.8399999999999,
-          "peak_abs_residual": 1.7142846387221966e-13,
-          "peak_nm": 774.62,
-          "start_nm": 774.2800000000001
+          "end_nm": 763.8,
+          "peak_abs_residual": 3.032513476441956e-16,
+          "peak_nm": 763.58,
+          "start_nm": 763.33
         },
         {
-          "end_nm": 775.38,
-          "peak_abs_residual": 2.1652290556209777e-13,
-          "peak_nm": 775.1,
-          "start_nm": 774.9100000000001
+          "end_nm": 767.9399999999999,
+          "peak_abs_residual": 3.2780852685099227e-16,
+          "peak_nm": 767.63,
+          "start_nm": 767.44
         }
       ],
-      "max_abs_residual": 2.1652290556209777e-13,
-      "max_abs_wavelength_nm": 775.1,
-      "mean_signed": -3.2813816645766067e-15,
-      "rmse": 6.046295545993032e-14,
+      "max_abs_residual": 3.2780852685099227e-16,
+      "max_abs_wavelength_nm": 767.63,
+      "mean_signed": -8.769741723707108e-17,
+      "rmse": 1.0598094955175879e-16,
       "series": "dR/d aerosol layer mid pressure"
     }
   ],

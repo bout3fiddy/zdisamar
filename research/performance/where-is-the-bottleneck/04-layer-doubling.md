@@ -1,6 +1,6 @@
 # 04. Layer Doubling
 
-Layer doubling is the largest single measured LABOS sub-block. It costs `4.536551 s`, or `48.005%` of aggregate LABOS CPU. The trace counted `1,075,939` layers that needed doubling. Those layers required `8,389,666` doubling steps, which means each doubled layer ran about `7.8` doubling steps on average.
+Layer doubling is the largest single measured LABOS sub-block. In the retained parity-safe trace it costs `4.777200 s`, or `48.860%` of aggregate LABOS CPU. The trace counted `1,075,939` layers that needed doubling. Those layers required `8,389,666` doubling steps, which means each doubled layer ran about `7.8` doubling steps on average.
 
 What that means: LABOS first builds a thin starting layer that is safe for the configured scattering threshold. It then repeatedly doubles that layer until it represents the original optical thickness. Every doubling step updates the layer reflection matrix `R`, the layer transmission matrix `T`, and the attenuation vector `E`.
 
@@ -40,12 +40,18 @@ for (0..ndouble) |_| {
     const td_nonzero = basis.smulIntoKnownTracesIfNonzero(&td, n, n_gauss, threshold_mul, trace_t, trace_d, T, &D);
     const T_new = if (td_nonzero) basis.esmulSemulAdd(n, E, &D, T, &td) else basis.esmulSemul(n, E, &D, T);
 
-    // The next layer thickness is doubled, so exp(-2*b/mu) is E*E.
-    squareAttenuation(n, E);
+    // The next layer thickness is doubled. While b is tiny, recompute the
+    // exponential to preserve DISAMAR-level rounding; after that, square E.
+    b *= 2.0;
+    if (b < 0.001) {
+        E = exp(-b / max(mu, 1.0e-12));
+    } else {
+        squareAttenuation(n, E);
+    }
 }
 ```
 
-This loop explains the primitive counts. `qseriesKnownNonzeroProduct` was needed `3,408,299` times; the q-series path was skipped `4,981,367` times; and the three matrix products `R*D`, `T*U`, and `T*D` are each attempted once per doubling step. The retained trace counted `10,931,496` nonzero products across those `25,168,998` product slots; the remaining slots take the zero-aware elementwise updates.
+This loop explains the primitive counts. `qseriesKnownNonzeroProduct` was needed `3,408,299` times; the q-series path was skipped `4,981,367` times; and the three matrix products `R*D`, `T*U`, and `T*D` are each attempted once per doubling step. The retained trace counted `10,931,496` nonzero products across those `25,168,998` product slots; the remaining slots take the zero-aware elementwise updates. A probe that squared attenuation on every doubling step was faster, but it raised the plot-bundle residuals above the retained `1e-13` threshold, so the parity-safe recompute-then-square update stays.
 
 This is why doubling is the final frontier. The code has already [specialized the common 12x10 and 12x12 matrix shapes](../why-zdisamar-is-faster/06-direct-12x10-12x12-matrix-calculations.md), [fused layer-doubling updates](../why-zdisamar-is-faster/05-fuse-layer-doubling-matrix-updates.md), [skipped empty q-series work](../why-zdisamar-is-faster/11-skip-empty-qseries-work.md), [combined the D update](../why-zdisamar-is-faster/13-combine-d-update-in-doubling.md), reused Gauss traces across the post-D products, and avoids materializing threshold-skipped product matrices. The exact calculation still has to run the same scientific recurrence millions of times.
 

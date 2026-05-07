@@ -1,6 +1,6 @@
 # 08. Assembly Optimization Probes
 
-This pass looked for instruction-level changes that preserve the exact LABOS recurrence and improve speed. The retained changes are intentionally small: reuse each LU pivot reciprocal inside q-series instead of dividing by the same pivot repeatedly, dispatch the common 12x10 q-series path to a fixed-shape helper, compute 12x10 products in two-column vector lanes, keep row-major access in the elementwise 12x12 update helpers where it improves the production kernel bench, reuse the shared phase coefficient-column product in the fixed-12 phase fill, replace the effective-scattering odd-denominator divide with a reciprocal-table multiply, update doubled attenuation with squaring instead of repeated exponentials, specialize the fixed-12 attenuation squaring path, reuse the known `T` trace in the D update, reuse known traces inside the post-D products, avoid materializing threshold-skipped post-D products, specialize fixed 12-stream orders transport/accumulation loops, and avoid repeated zero stores for orders layers that were already initialized inactive.
+This pass looked for instruction-level changes that preserve the exact LABOS recurrence and improve speed. The retained changes are intentionally small: reuse each LU pivot reciprocal inside q-series instead of dividing by the same pivot repeatedly, dispatch the common 12x10 q-series path to a fixed-shape helper, compute 12x10 products in two-column vector lanes, keep row-major access in the elementwise 12x12 update helpers where it improves the production kernel bench, reuse the shared phase coefficient-column product in the fixed-12 phase fill, replace the effective-scattering odd-denominator divide with a reciprocal-table multiply, specialize the fixed-12 attenuation squaring path after the tiny-optical-thickness exponential recompute window, reuse the known `T` trace in the D update, reuse known traces inside the post-D products, avoid materializing threshold-skipped post-D products, specialize fixed 12-stream orders transport/accumulation loops, and avoid repeated zero stores for orders layers that were already initialized inactive.
 
 ## Optimization Summary
 
@@ -10,15 +10,15 @@ The currently regenerated retained artifact moves the main LABOS bottlenecks by:
 
 | scope | before | current retained | saved | reduction |
 | --- | ---: | ---: | ---: | ---: |
-| forward wall | `1.912424833 s` | `1.724581500 s` | `0.187843 s` | `9.82%` |
-| LABOS worker CPU | `10.918452 s` | `9.450074 s` | `1.468378 s` | `13.45%` |
-| RT-layer construction | `7.868855 s` | `6.497375 s` | `1.371480 s` | `17.43%` |
-| layer doubling | `5.849351 s` | `4.536551 s` | `1.312800 s` | `22.44%` |
-| scattering orders | `2.904469 s` | `2.308949 s` | `0.595520 s` | `20.50%` |
+| forward wall | `1.912424833 s` | `1.799917667 s` | `0.112507 s` | `5.88%` |
+| LABOS worker CPU | `10.918452 s` | `9.777328 s` | `1.141124 s` | `10.45%` |
+| RT-layer construction | `7.868855 s` | `6.783443 s` | `1.085412 s` | `13.79%` |
+| layer doubling | `5.849351 s` | `4.777200 s` | `1.072151 s` | `18.33%` |
+| scattering orders | `2.904469 s` | `2.327972 s` | `0.576497 s` | `19.85%` |
 
-A faster layer-doubling sample also occurred during the pass at `labos.rt_layer.doubling=4.517765 s`. The table above is the current regenerated artifact evidence.
+A faster layer-doubling sample also occurred during the pass at `labos.rt_layer.doubling=4.517765 s`, but that artifact included the rejected always-square attenuation shortcut. The table above is the current regenerated parity-safe artifact evidence.
 
-Accuracy guardrail: the retained state passes `zig build check`, and the refreshed validation artifacts keep the spectra comparison residuals near floating-point noise, but not below every retained threshold. `zig build o2a-plot-bundle` regenerated `validation/outputs/spectra/o2a_validation.png` with forward-reflectance max residual `1.363e-13`, surface-albedo Jacobian max residual `7.898e-13`, aerosol-optical-depth Jacobian max residual `1.121e-13`, and aerosol-layer-mid-pressure Jacobian max residual `2.165e-13`; the plot-bundle smoke test currently reports `passes_reflectance_threshold=false` because the threshold is `1e-13`. The focused vendor lane still exits successfully with its known allowed `fail_regression` status against the older committed vendor baseline (`mean_abs=0.009099922227437973`, `rms=0.01833690112331791`, `max_abs=0.09712867446722206`). Probes that move checked residual or tangent tolerances beyond the retained guardrails are rejected rather than retained.
+Accuracy guardrail: the retained state passes `zig build check`, `zig build o2a-plot-bundle`, and `zig build test-validation-o2a-plot-bundle`. The refreshed plot bundle reports forward-reflectance max residual `3.997e-15`, surface-albedo Jacobian max residual `1.621e-14`, aerosol-optical-depth Jacobian max residual `1.138e-15`, and aerosol-layer-mid-pressure Jacobian max residual `3.278e-16`, all below the retained `1e-13` threshold. The focused vendor lane still exits successfully with its known allowed `fail_regression` status against the older committed vendor baseline (`mean_abs=0.009099922227437973`, `rms=0.01833690112331791`, `max_abs=0.09712867446722206`). Probes that move checked residual or tangent tolerances beyond the retained guardrails are rejected rather than retained.
 
 Accepted instruction-level wins:
 
@@ -30,14 +30,13 @@ Accepted instruction-level wins:
 | row-major winning 12x12 updates | `matAddEsmul3_12` `90.744 -> 86.204 ns/call` (`5.00%`); `esmulSemulAdd_12` `93.381 -> 92.887 ns/call` (`0.53%`) |
 | fixed-12 phase coefficient-column reuse | phase matrix construction `1.124197 -> 1.029042 s` (`8.46%`); full wall `1.907507125 -> 1.892693667 s` (`0.78%`) |
 | effective-scattering reciprocal table | beta scan `8.591 -> 3.524 ns/call` (`58.98%`) |
-| squared attenuation during doubling | removed `46,229,532` doubling-loop exponentials; layer doubling `5.689105 -> 5.515518 s` (`3.05%`) |
-| fixed-12 attenuation squaring | layer doubling `5.515518 -> 5.429431 s` (`1.56%`) |
+| fixed-12 post-threshold attenuation squaring | layer doubling `5.515518 -> 5.429431 s` (`1.56%`) in the rejected all-square sequence; retained only for the parity-safe post-threshold square path |
 | known-right-trace D update | layer doubling `5.429431 -> 4.706511 s` (`13.31%`); LABOS worker CPU `10.545842 -> 9.690431 s` (`8.11%`) |
 | known traces in post-D products | layer doubling `6.036863 -> 5.812329 s` (`3.72%`) in the retained trace sample for that probe |
 | zero-aware post-D updates | skipped materializing millions of below-threshold `R*D`, `T*U`, and `T*D` products; retained current counters show `14,237,502` skipped product slots |
 | lazy inactive orders local fields | scattering orders `2.407124 -> 2.335709 s` (`2.97%`); LABOS worker CPU `9.784209 -> 9.740110 s` (`0.45%`) |
 
-Rejected probes are kept in this file because they are useful negative evidence. The main rejects were: bit-seeded Newton reciprocal (`470.210 -> 516.338 ns/call`, slower despite no static `fdiv`), direct result-as-inverse q-series workspace (larger code and no clear speedup), fully unrolled q-series LU (isolated bench improved, full trace regressed), single-operand q-series square product, two-lane q-series extra blocks, returning `Q` with its trace, two-accumulator trace scans, FMA/vector/batched/fused dot-pair variants, hoisted dot-pair `n_gauss` branch, four-lane 12x10 product, two-lane row-major `matAddEsmul`, two-lane row-major `esmulSemul`, row-major single scatter, reflectance reciprocal scale, two-lane dynamic orders transport, row-major `semul12`, no-pivot q-series, symmetric phase fill, scalarized phase-fill columns, returning `D`/`U` with traces, folded q-series product trace, fused `R*D` U update, fused `T*D` T update, fused `T*U` R update, two-lane D update, activity-aware orders transport, fixed-12 initial source fill, selective inactive local initialization, fixed-12 initial exponential fill, removing duplicate fixed-qseries pivot bookkeeping, and precomputing the initial-exponential reciprocal.
+Rejected probes are kept in this file because they are useful negative evidence. The main rejects were: bit-seeded Newton reciprocal (`470.210 -> 516.338 ns/call`, slower despite no static `fdiv`), direct result-as-inverse q-series workspace (larger code and no clear speedup), fully unrolled q-series LU (isolated bench improved, full trace regressed), single-operand q-series square product, two-lane q-series extra blocks, returning `Q` with its trace, two-accumulator trace scans, FMA/vector/batched/fused dot-pair variants, hoisted dot-pair `n_gauss` branch, four-lane 12x10 product, two-lane row-major `matAddEsmul`, two-lane row-major `esmulSemul`, row-major single scatter, reflectance reciprocal scale, always-squared attenuation during doubling, two-lane dynamic orders transport, row-major `semul12`, no-pivot q-series, symmetric phase fill, scalarized phase-fill columns, returning `D`/`U` with traces, folded q-series product trace, fused `R*D` U update, fused `T*D` T update, fused `T*U` R update, two-lane D update, activity-aware orders transport, fixed-12 initial source fill, selective inactive local initialization, fixed-12 initial exponential fill, removing duplicate fixed-qseries pivot bookkeeping, and precomputing the initial-exponential reciprocal.
 
 ## Kept: Q-Series Pivot Reciprocals
 
@@ -258,7 +257,7 @@ The integrated reflectance reduction repeatedly computes `(0.25 * phase / view_m
 
 The first temporary trace looked slightly better (`labos.reflectance_integral=0.187729 s`, `labos_execute_cpu_s=9.430072`), but the repeat rejected it (`labos.reflectance_integral=0.191426 s`, `labos_execute_cpu_s=9.962353`). Because the speedup was not repeatable and the probe changes floating-point association, the direct divide form stays.
 
-## Kept: Squared Attenuation In Doubling
+## Rejected: Always-Squared Attenuation In Doubling
 
 Layer doubling doubles the optical thickness after each recurrence step. The attenuation vector is:
 
@@ -272,14 +271,14 @@ After a doubling step, the new thickness is `2*b`, so the next attenuation is:
 exp(-2*b / mu) = exp(-b / mu) * exp(-b / mu)
 ```
 
-The previous implementation recomputed `exp(-b/mu)` while the doubled thickness was still below `0.001`, then switched to squaring later. The retained implementation squares every doubling update:
+The retained implementation recomputes `exp(-b/mu)` while the doubled thickness is still below `0.001`, then switches to squaring later. A probe squared every doubling update:
 
 ```zig
 const e = E.data[imu];
 E.data[imu] = e * e;
 ```
 
-This removes `46,229,532` traced exponential evaluations from the doubling loop in the retained spectrum. The current trace counts only the initial layer exponentials and the `100,675,992` squared attenuation updates inside doubling.
+This removed `46,229,532` traced exponential evaluations from the doubling loop and produced a small local speedup:
 
 | metric | before | after |
 | --- | ---: | ---: |
@@ -288,11 +287,11 @@ This removes `46,229,532` traced exponential evaluations from the doubling loop 
 | RT-layer construction | `7.691103 s` | `7.588468 s` |
 | layer doubling | `5.689105 s` | `5.515518 s` |
 
-The vendor validation lane still exits with its known allowed `fail_regression` status. Its current residuals stayed at the same scale: mean absolute difference `0.009099922227437973`, RMS `0.01833690112331791`, and max absolute difference `0.09712867446722206`.
+The refreshed plot-bundle validation rejected it. `passes_reflectance_threshold` flipped to `false`: forward-reflectance max residual rose from about `3.97e-15` to `1.36e-13`, and the surface-albedo Jacobian max residual rose to `7.898e-13` against the retained `1e-13` threshold. Restoring the tiny-optical-thickness exponential recompute brought `passes_reflectance_threshold=true` with forward-reflectance max residual `3.997e-15` and surface-albedo Jacobian max residual `1.621e-14`, while a same-turn trace kept forward wall essentially flat (`1.724581500 s` in the all-square retained artifact versus `1.725189250 s` with the parity-safe update). The always-square shortcut is therefore rejected: it trades a tiny latency win for a two-order residual regression.
 
-## Kept: Fixed-12 Attenuation Squaring
+## Kept: Fixed-12 Post-Threshold Attenuation Squaring
 
-After the full-squaring change, the doubling loop still squared the attenuation vector through a tiny runtime loop:
+After the tiny-optical-thickness exponential recompute window, the doubling loop still squares the attenuation vector through a tiny runtime loop:
 
 ```zig
 for (0..n) |imu| {

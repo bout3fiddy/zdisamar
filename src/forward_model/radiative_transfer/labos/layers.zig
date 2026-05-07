@@ -257,11 +257,14 @@ fn doDouble(
     n: usize,
     n_gauss: usize,
     threshold_mul: f64,
+    geo: *const basis.Geometry,
+    b_start: f64,
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
     trace: Trace.WorkerRef,
 ) void {
+    var b = b_start;
     for (0..ndouble) |_| {
         if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_steps, 1);
         const trace_r = gaussTrace(n, n_gauss, R);
@@ -334,8 +337,15 @@ fn doDouble(
         R.* = R_new;
         T.* = T_new;
 
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_square_evals, @intCast(n));
-        squareAttenuation(n, E);
+        b *= 2.0;
+        if (b < 0.001) {
+            for (0..geo.nmutot) |imu| {
+                E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
+            }
+        } else {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_square_evals, @intCast(n));
+            squareAttenuation(n, E);
+        }
     }
 }
 
@@ -496,7 +506,7 @@ pub fn calcRTlayersIntoWithBasis(
                 };
             }
             const doubling_start = Trace.begin();
-            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, &R, &T, &E, trace);
+            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E, trace);
             if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.rt_layer_doubling, Trace.elapsed(doubling_start));
         }
 
