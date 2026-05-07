@@ -119,7 +119,11 @@ def main() -> None:
 
     primitive_path = output_dir / "primitive_estimates.csv"
     with primitive_path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=list(rows[0].keys()),
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(rows)
 
