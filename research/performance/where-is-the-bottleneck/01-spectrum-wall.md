@@ -1,32 +1,59 @@
 # 01. Spectrum Wall
 
-The retained trace measured:
+The retained trace measured `1.958912208 s` of forward wall time. That wall starts from `701` output wavelengths, but those are only the final instrument grid. Before zdisamar can write those 701 values, it has to calculate `3,874` unique high-resolution radiance samples.
 
-```text
-forward wall                  1.958912208 s
-output wavelengths                    701
-high-resolution misses               3,874
-workers                                 10
+Most of the wall is spent prefetching those high-resolution samples. The prefetch section takes `1.670045 s`, or `85.254%` of the full forward wall. Wavelength sampling takes another `0.279496 s`, while the final integration back to the output grid is only a few milliseconds. In practical terms: the expensive step is not "write 701 outputs"; it is "run thousands of exact radiance calculations that the instrument response needs."
+
+The handoff happens in [simulate.zig](../../../src/forward_model/instrument_grid/grid_calculation/simulate.zig#L54-L84):
+
+```zig
+// Build the 701 output-wavelength sampling plan. This decides which
+// high-resolution radiance wavelengths are needed by the instrument response.
+const wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
+    allocator,
+    scene,
+    prepared,
+    &resolved_axis,
+    radiance_calibration,
+    irradiance_calibration,
+    implementations,
+);
+
+// Collapse the sampling plan to unique high-resolution forward-model misses.
+const forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
+    allocator,
+    wavelength_sampling,
+);
+
+// This is the 1.67 s wall section: calculate all missing high-resolution
+// radiance samples before integrating them back to the 701 output grid.
+try SpectralEval.prefetchForwardSamples(
+    allocator,
+    scene,
+    route,
+    prepared,
+    implementations,
+    safe_span,
+    forward_misses,
+    evaluation_cache,
+);
 ```
 
-The dominant wall section is high-resolution forward prefetch:
+Each miss then becomes a worker-local forward sample in [spectral_forward.zig](../../../src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig#L330-L392):
 
-```text
-forward prefetch wall         1.670045 s   85.254% of wall
-wavelength sampling           0.279496 s   14.268% of wall
-radiance cache integration    0.002981 s    0.152% of wall
-irradiance sampling           0.003161 s    0.161% of wall
+```zig
+const worker_count = preferredForwardWorkerCount(misses.len);
+run.addCounter(.high_resolution_misses, @intCast(misses.len));
+
+for (0..worker_count) |worker_index| {
+    // The 3,874 high-resolution samples are split across workers.
+    workers[worker_index] = .{
+        .misses = misses[start_index..end_index],
+        .results = results[start_index..end_index],
+        .trace = trace_ref,
+        .worker_index = worker_index,
+    };
+}
 ```
 
-The 701 output wavelengths are not the expensive count. They are the final measurement grid. The expensive count is the 3,874 high-resolution radiance samples needed before those output wavelengths can be assembled.
-
-The structure is:
-
-```text
-701 output wavelengths
--> 3,874 high-resolution radiance samples
--> each sample runs wavelength-specific optical input
--> each sample runs LABOS transport
-```
-
-The post-prefetch integration back to the output grid is tiny. The wall is the high-resolution radiance stage.
+That is why the spectrum wall is dominated by high-resolution radiance prefetch: each miss runs wavelength-specific optical input and then LABOS transport.

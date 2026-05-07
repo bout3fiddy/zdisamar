@@ -2,18 +2,30 @@
 
 Scope: one O2 A forward spectrum, using the same 755-776 nm, 701-output-wavelength validation scene used by the retained O2 A performance notes.
 
-This folder explains the current forward wall from the outside in:
+This folder explains the current forward wall from the outside in. The retained run takes `1.958912 s` of caller-visible wall time. That wall is not 701 independent wavelength calculations. The instrument response expands the 701 output wavelengths into `3,874` high-resolution radiance samples; those samples run `120,390` LABOS Fourier terms; those Fourier terms visit `5,417,550` layer/Fourier combinations; and the active layer subset performs `8,389,666` doubling steps.
 
-```text
-forward wall                         1.958912 s
-high-resolution radiance samples        3,874
-Fourier terms                         120,390
-LABOS layer visits                  5,417,550
-doubled layers                      1,075,939
-doubling steps                      8,389,666
-```
+That chain is the bottleneck: the individual kernels are already small, but the exact O2 A calculation repeats them at spectrum scale.
 
 The trace is intentionally disabled in normal builds. The trace-enabled binary is built from a separate build-options module where `enable_labos_trace=true`; normal modules set `enable_labos_trace=false`, and trace references become zero-sized types in that configuration.
+
+The trace run itself is wired in [labos_bottleneck_trace_cli.zig](../../../src/validation/performance/labos_bottleneck_trace_cli.zig#L60-L75):
+
+```zig
+var trace = Trace.Run.init();
+var implementations = internal.forward_model.implementations.exact();
+implementations.trace = &trace;
+
+const product = try InstrumentGrid.simulateProductWithWorkspace(
+    allocator,
+    &storage,
+    &prepared_case.scene,
+    prepared_case.route,
+    &prepared_case.prepared,
+    implementations,
+);
+```
+
+That is the only path that installs a live trace sink. Normal forward calls keep the trace reference zero-sized.
 
 ## Documents
 

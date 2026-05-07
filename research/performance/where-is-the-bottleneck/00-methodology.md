@@ -7,21 +7,31 @@ The trace harness has two jobs:
 
 ## Build Gate
 
-The trace is controlled by `enable_labos_trace`.
+The trace is controlled by `enable_labos_trace`. In [build.zig](../../../build.zig#L57-L65), normal modules receive `enable_labos_trace=false`, while the trace executable receives a separate options module with `enable_labos_trace=true`.
 
-Normal build modules set:
+```zig
+const build_options = b.addOptions();
+build_options.addOption(bool, "enable_labos_trace", false);
 
-```text
-enable_labos_trace = false
+const trace_build_options = b.addOptions();
+trace_build_options.addOption(bool, "enable_labos_trace", true);
 ```
 
-The research executable uses a separate build-options module with:
+When tracing is disabled, trace references become zero-sized types in [performance_trace.zig](../../../src/forward_model/performance_trace.zig#L9-L17):
 
-```text
-enable_labos_trace = true
+```zig
+pub const RunRef = if (enabled) ?*Run else void;
+pub const WorkerRef = if (enabled) ?*Worker else void;
+
+comptime {
+    if (!enabled) {
+        if (@sizeOf(RunRef) != 0) @compileError("disabled trace run references must remain zero-sized");
+        if (@sizeOf(WorkerRef) != 0) @compileError("disabled trace worker references must remain zero-sized");
+    }
+}
 ```
 
-When tracing is disabled, trace references use zero-sized types. That matters because `Implementations`, LABOS workspace state, and orders workspace state are hot-path objects. The normal build should not carry an extra trace pointer or runtime branch just because the research harness exists.
+That matters because `Implementations`, LABOS workspace state, and orders workspace state sit on the forward path. The normal build should not carry an extra trace pointer or runtime trace sink just because the research harness exists; the compile-time size checks are there to catch that kind of regression.
 
 ## Timing Scopes
 
@@ -34,26 +44,25 @@ This is why worker percentages can exceed 100% of wall time. For example, the re
 
 ## Measurement Files
 
-The trace executable writes:
+The trace executable writes `summary.json`, `sections.csv`, `counters.csv`, and `worker_sections.csv`. `zig build bench` writes `labos_kernel_bench.txt`. The summarizer combines the trace counters and kernel timings into `primitive_estimates.csv` and `rollup.json`.
 
-```text
-summary.json
-sections.csv
-counters.csv
-worker_sections.csv
-```
+The top-level summary writer is in [labos_bottleneck_trace_cli.zig](../../../src/validation/performance/labos_bottleneck_trace_cli.zig#L120-L180):
 
-`zig build bench` writes:
+```zig
+const labos_cpu_ns = trace.totalWorkerSectionNs(.labos_execute);
+const rt_layer_cpu_ns = trace.totalWorkerSectionNs(.rt_layer_build);
+const orders_cpu_ns = trace.totalWorkerSectionNs(.orders_total);
 
-```text
-labos_kernel_bench.txt
-```
-
-The summarizer combines counters and kernel timings into:
-
-```text
-primitive_estimates.csv
-rollup.json
+try writer.interface.print(
+    \\  "high_resolution_misses": {},
+    \\  "fourier_terms": {},
+    \\  "layer_visits": {},
+    \\  "doubled_layers": {},
+    \\  "doubling_steps": {},
+    \\  "labos_execute_cpu_ns": {},
+    \\  "rt_layer_build_cpu_ns": {},
+    \\  "orders_cpu_ns": {}
+);
 ```
 
 The trace is not used as a correctness oracle. `zig build check` still verifies the normal disabled-trace build.
