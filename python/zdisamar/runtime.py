@@ -120,6 +120,8 @@ class Context:
         if jacobian_state_names is not None and not jacobian:
             raise ValueError("jacobian_state_names requires jacobian=True")
         if jacobian_state_names is not None:
+            if len(jacobian_state_names) == 0:
+                raise ValueError("jacobian_state_names must not be empty")
             state_ids = jacobian_state_ids(jacobian_state_names)
             self._check(
                 self._lib.zds_run_spectrum_jacobian_for_states(

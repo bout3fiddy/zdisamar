@@ -107,6 +107,11 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
         compact_session_names = compact_session_spectrum.jacobian_state_names
         compact_session_jacobian = compact_session_spectrum.radiance_jacobian.copy()
         compact_session_spectrum.close()
+        empty_jacobian_state_selection_rejected = False
+        try:
+            session.forward_model(jacobian=True, jacobian_state_names=())
+        except ValueError:
+            empty_jacobian_state_selection_rejected = True
 
     with zd.prepare(perturbed_case, library_path=library_path) as prepared:
         perturbed_prepared_spectrum = prepared.forward_model(jacobian=True)
@@ -217,6 +222,7 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
                 rtol=tolerance,
             )
         ),
+        "empty_jacobian_state_selection_rejected": empty_jacobian_state_selection_rejected,
         "parity_route_used": True,
         "tolerance": tolerance,
     }
@@ -271,7 +277,9 @@ def main() -> int:
         "requested_jacobian_dimension_matches_state_vector="
         f"{checks['requested_jacobian_dimension_matches_state_vector']}, "
         "requested_jacobian_columns_match_full_native_columns="
-        f"{checks['requested_jacobian_columns_match_full_native_columns']}"
+        f"{checks['requested_jacobian_columns_match_full_native_columns']}, "
+        "empty_jacobian_state_selection_rejected="
+        f"{checks['empty_jacobian_state_selection_rejected']}"
     )
     print(f"json: {output_path}")
     excluded = {"tolerance", "typed_sample_count", "default_sample_count"}

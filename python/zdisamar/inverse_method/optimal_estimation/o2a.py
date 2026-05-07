@@ -4,16 +4,29 @@ from __future__ import annotations
 
 import copy
 import math
-from typing import cast
+from typing import Protocol
 
 import numpy as np
 
 from ...prepared import O2AForwardSession, PreparedO2ABase, prepare
+from ...spectrum import Spectrum
 from ...types import O2AInput
 from .core import retrieve
 from .forward_evaluation import ForwardEvaluation
 from .retrieval import Measurement, Result, RetrievalControls
 from .state_vector import PressureAltitudeProfile, StateVector
+
+
+class PreparedForwardModel(Protocol):
+    @property
+    def input(self) -> O2AInput: ...
+
+    def forward_model(
+        self,
+        *,
+        jacobian: bool = False,
+        jacobian_state_names: tuple[str, ...] | None = None,
+    ) -> Spectrum: ...
 
 
 class O2AInverseForwardModel:
@@ -51,10 +64,7 @@ class O2AInverseForwardModel:
         state_vector: StateVector,
     ) -> ForwardEvaluation:
         if self._forward_session is not None:
-            prepared = cast(
-                PreparedO2ABase,
-                self._forward_session.prepare(self.settings_for_state(state, state_vector)),
-            )
+            prepared = self._forward_session.prepare(self.settings_for_state(state, state_vector))
             return evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
         with prepare(
             self.settings_for_state(state, state_vector),
@@ -81,7 +91,7 @@ def disamar_oe(
 
 
 def evaluate_prepared_reflectance(
-    prepared: PreparedO2ABase,
+    prepared: PreparedForwardModel,
     state_names: tuple[str, ...],
 ) -> ForwardEvaluation:
     """Evaluate reflectance and selected reflectance Jacobian columns."""

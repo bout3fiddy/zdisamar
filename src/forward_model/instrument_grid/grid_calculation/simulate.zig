@@ -73,7 +73,10 @@ pub fn warmWavelengthPlan(
     try resolved_axis.validate();
 
     const plan_key = wavelengthPlanKey(scene, prepared, implementations);
-    if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) return;
+    if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
+        _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
+        return;
+    }
 
     storage.invalidateWavelengthPlan(allocator);
     errdefer storage.invalidateWavelengthPlan(allocator);
@@ -91,13 +94,39 @@ pub fn warmWavelengthPlan(
         allocator,
         storage.wavelength_sampling,
     );
+    storage.forward_misses_valid = true;
+    _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
+    storage.wavelength_plan_key = plan_key;
+    storage.wavelength_plan_valid = true;
+}
+
+fn ensureProfileSpectroscopyCaches(
+    allocator: Allocator,
+    storage: *Storage.SummaryStorage,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    forward_misses: []const SpectralEval.ForwardCacheMiss,
+) ![]const SpectroscopyState.ProfileNodeSpectroscopyCache {
+    const cache_key = profileSpectroscopyCacheKey(prepared, forward_misses);
+    if (storage.profile_spectroscopy_cache_valid and
+        storage.profile_spectroscopy_cache_key == cache_key and
+        storage.profile_spectroscopy_caches.len == forward_misses.len)
+    {
+        return storage.profile_spectroscopy_caches;
+    }
+
+    allocator.free(storage.profile_spectroscopy_caches);
+    storage.profile_spectroscopy_caches = &.{};
+    storage.profile_spectroscopy_cache_key = 0;
+    storage.profile_spectroscopy_cache_valid = false;
+
     storage.profile_spectroscopy_caches = try buildProfileSpectroscopyCaches(
         allocator,
         prepared,
-        storage.forward_misses,
+        forward_misses,
     );
-    storage.wavelength_plan_key = plan_key;
-    storage.wavelength_plan_valid = true;
+    storage.profile_spectroscopy_cache_key = cache_key;
+    storage.profile_spectroscopy_cache_valid = true;
+    return storage.profile_spectroscopy_caches;
 }
 
 fn buildProfileSpectroscopyCaches(
@@ -224,11 +253,12 @@ pub fn simulateInternal(
     const miss_collection_start = Trace.begin();
     const forward_misses: []const SpectralEval.ForwardCacheMiss = blk: {
         if (wavelength_plan_storage) |storage| {
-            if (storage.forward_misses.len == 0 and wavelength_sampling.len != 0) {
+            if (!storage.forward_misses_valid) {
                 storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
                     allocator,
                     wavelength_sampling,
                 );
+                storage.forward_misses_valid = true;
             }
             break :blk storage.forward_misses;
         }
@@ -240,9 +270,7 @@ pub fn simulateInternal(
     };
     const profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache = blk: {
         if (wavelength_plan_storage) |storage| {
-            if (storage.profile_spectroscopy_caches.len == forward_misses.len) {
-                break :blk storage.profile_spectroscopy_caches;
-            }
+            break :blk try ensureProfileSpectroscopyCaches(allocator, storage, prepared, forward_misses);
         }
         break :blk &.{};
     };
@@ -490,9 +518,27 @@ fn wavelengthPlanKey(
     updateInt(&hash, @intFromEnum(scene.observation_model.sampling));
     updateFloat(&hash, scene.observation_model.wavelength_shift_nm);
     updateFloatSlice(&hash, scene.observation_model.measured_wavelengths_nm);
+    updateAdaptiveReferenceGrid(&hash, scene.observation_model.adaptive_reference_grid);
     updateSpectroscopyPlanInputs(&hash, prepared);
     updateChannelControls(&hash, scene, .radiance);
     updateChannelControls(&hash, scene, .irradiance);
+    return hash.final();
+}
+
+fn profileSpectroscopyCacheKey(
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    forward_misses: []const SpectralEval.ForwardCacheMiss,
+) u64 {
+    var hash = std.hash.Wyhash.init(0x4f32_4132_7072_6f66);
+    updateInt(&hash, forward_misses.len);
+    for (forward_misses) |miss| {
+        updateFloat(&hash, miss.wavelength_nm);
+    }
+    updateFloatSlice(&hash, prepared.spectroscopy_profile_altitudes_km);
+    updateFloatSlice(&hash, prepared.spectroscopy_profile_pressures_hpa);
+    updateFloatSlice(&hash, prepared.spectroscopy_profile_temperatures_k);
+    updateInt(&hash, if (prepared.spectroscopy_profile_strong_line_states) |states| states.len else 0);
+    updateInt(&hash, if (prepared.spectroscopy_profile_weak_line_states) |states| states.len else 0);
     return hash.final();
 }
 
@@ -523,6 +569,15 @@ fn updateChannelControls(hash: *std.hash.Wyhash, scene: *const Scene, channel: S
         @as(usize, response.instrument_line_shape_table.nominal_count) * @as(usize, response.instrument_line_shape_table.sample_count),
     );
     updateFloatSlice(hash, response.instrument_line_shape_table.weights[0..table_weight_count]);
+}
+
+fn updateAdaptiveReferenceGrid(
+    hash: *std.hash.Wyhash,
+    adaptive: @import("../../../input/Instrument.zig").AdaptiveReferenceGrid,
+) void {
+    updateInt(hash, adaptive.points_per_fwhm);
+    updateInt(hash, adaptive.strong_line_min_divisions);
+    updateInt(hash, adaptive.strong_line_max_divisions);
 }
 
 fn updateSpectroscopyPlanInputs(

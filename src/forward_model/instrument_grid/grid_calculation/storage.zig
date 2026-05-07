@@ -74,6 +74,9 @@ pub const SummaryStorage = struct {
     profile_spectroscopy_caches: []SpectroscopyState.ProfileNodeSpectroscopyCache = &.{},
     wavelength_plan_key: u64 = 0,
     wavelength_plan_valid: bool = false,
+    forward_misses_valid: bool = false,
+    profile_spectroscopy_cache_key: u64 = 0,
+    profile_spectroscopy_cache_valid: bool = false,
 
     pub fn deinit(self: *SummaryStorage, allocator: Allocator) void {
         freeBuffer(allocator, self.wavelengths);
@@ -110,6 +113,9 @@ pub const SummaryStorage = struct {
         self.profile_spectroscopy_caches = &.{};
         self.wavelength_plan_key = 0;
         self.wavelength_plan_valid = false;
+        self.forward_misses_valid = false;
+        self.profile_spectroscopy_cache_key = 0;
+        self.profile_spectroscopy_cache_valid = false;
     }
 
     pub fn spectralCache(self: *SummaryStorage, allocator: Allocator) Error!*Cache.SpectralEvaluationCache {

@@ -228,9 +228,7 @@ def run_sweep() -> dict[str, Any]:
             "initial_aerosol_mid_pressure_hpa": initial["aerosol_mid_pressure_hpa"],
             "retrieved_aerosol_optical_depth": retrieved_aod,
             "retrieved_aerosol_mid_pressure_hpa": retrieved_mid_pressure,
-            "aerosol_optical_depth_abs_error": abs(
-                retrieved_aod - truth["aerosol_optical_depth"]
-            ),
+            "aerosol_optical_depth_abs_error": abs(retrieved_aod - truth["aerosol_optical_depth"]),
             "aerosol_mid_pressure_abs_error_hpa": abs(
                 retrieved_mid_pressure - truth["aerosol_mid_pressure_hpa"]
             ),
@@ -271,7 +269,9 @@ def run_sweep() -> dict[str, Any]:
             "surface_pressure_hpa": [820.0, 1040.0],
             "surface_albedo": [0.05, 0.55],
             "aerosol_optical_depth": [0.10, 2.0],
-            "aerosol_mid_pressure_hpa": "sampled between 225 hPa and surface_pressure_hpa - 100 hPa",
+            "aerosol_mid_pressure_hpa": (
+                "sampled between 225 hPa and surface_pressure_hpa - 100 hPa"
+            ),
             "aerosol_layer_thickness_hpa": LAYER_THICKNESS_HPA,
         },
         "run_count": len(rows),
@@ -314,7 +314,7 @@ def run_sweep() -> dict[str, Any]:
 def write_outputs(rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     with CSV_PATH.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     write_json(SUMMARY_PATH, summary)
@@ -332,8 +332,7 @@ def main() -> int:
     print(f"  retrieval_s stats: {summary['stats']['retrieval_s']}")
     print(f"  AOD abs error stats: {summary['stats']['aerosol_optical_depth_abs_error']}")
     print(
-        "  mid-pressure abs error stats: "
-        f"{summary['stats']['aerosol_mid_pressure_abs_error_hpa']}"
+        f"  mid-pressure abs error stats: {summary['stats']['aerosol_mid_pressure_abs_error_hpa']}"
     )
     print(f"  CSV: {stable_repo_path(CSV_PATH)}")
     print(f"  JSON: {stable_repo_path(SUMMARY_PATH)}")
