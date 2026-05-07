@@ -19,6 +19,13 @@ SYMBOL_GROUPS = {
     "codegen_dot_gauss_pair": ["codegen_dot_gauss_pair"],
 }
 
+PRIMITIVES = [
+    ("smul_12x10", "codegen_smul12x10"),
+    ("smul_add_semul3_12", "codegen_smul_add_semul3_12"),
+    ("qseries_nonzero_12x10", "codegen_qseries_nonzero_12x10"),
+    ("dot_gauss_pair", "codegen_dot_gauss_pair"),
+]
+
 LABEL_RE = re.compile(r"^[0-9a-fA-F]+ <([^>]+)>:")
 
 FP_PREFIXES = (
@@ -166,6 +173,26 @@ def main() -> int:
         ]
         for symbol, mix in mixes.items()
     ]
+    timing_by_operation = {row["operation"]: row for row in timings}
+    total_ns_per_call = sum(
+        float(timing_by_operation[operation]["ns_per_call"]) for operation, _ in PRIMITIVES
+    )
+    total_static_instructions = sum(mixes[symbol]["instructions"] for _, symbol in PRIMITIVES)
+    instruction_cost_rows = []
+    for operation, symbol in PRIMITIVES:
+        ns_per_call = float(timing_by_operation[operation]["ns_per_call"])
+        static_instructions = mixes[symbol]["instructions"]
+        ns_per_static_instruction = ns_per_call / static_instructions
+        instruction_cost_rows.append(
+            [
+                operation,
+                f"{ns_per_call:.3f}",
+                f"{static_instructions:,}",
+                f"{ns_per_static_instruction:.4f}",
+                f"{100.0 * ns_per_call / total_ns_per_call:.2f}%",
+                f"{100.0 * static_instructions / total_static_instructions:.2f}%",
+            ]
+        )
 
     summary = "\n".join(
         [
@@ -196,6 +223,27 @@ def main() -> int:
                     "branch/call/ret",
                 ],
                 mix_rows,
+            ),
+            "",
+            "## Instruction-Level Orientation",
+            "",
+            (
+                "Instruction counts here are static disassembly counts for the "
+                "extracted symbol/callee group, not dynamic retired-instruction "
+                "counts. `ns/static instr` is a reading aid for this retained "
+                "harness run, not a CPU throughput claim."
+            ),
+            "",
+            render_table(
+                [
+                    "operation",
+                    "ns/call",
+                    "static instr",
+                    "ns/static instr",
+                    "% isolated call time",
+                    "% static instr",
+                ],
+                instruction_cost_rows,
             ),
             "",
             "## Reading",

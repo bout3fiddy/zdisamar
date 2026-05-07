@@ -84,16 +84,18 @@ research/performance/where-is-the-bottleneck/run-primitive-codegen.sh
 
 That command builds [primitive-codegen/bench_primitives.zig](primitive-codegen/bench_primitives.zig), runs it with deterministic mock matrices, disassembles the resulting binary, and writes retained artifacts under [primitive-codegen/outputs/](primitive-codegen/outputs/). The summary file is [codegen-summary.md](primitive-codegen/outputs/codegen-summary.md).
 
-The retained `aarch64` run says:
+The retained `aarch64` run now joins timing and disassembly into this table:
 
-- `smul_12x10` costs about `181.303 ns` per isolated call.
-- `smul_add_semul3_12` costs about `179.818 ns` per isolated call.
-- `qseries_nonzero_12x10` costs about `486.883 ns` per isolated call.
-- `dot_gauss_pair` costs about `4.387 ns` per isolated call through the harness.
+| operation | ns/call | static instructions | ns/static instruction | isolated call-time share | static-instruction share |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `smul_12x10` | `183.150` | `2,196` | `0.0834` | `21.46%` | `23.54%` |
+| `smul_add_semul3_12` | `179.687` | `2,976` | `0.0604` | `21.06%` | `31.90%` |
+| `qseries_nonzero_12x10` | `486.366` | `4,022` | `0.1209` | `56.99%` | `43.11%` |
+| `dot_gauss_pair` | `4.202` | `135` | `0.0311` | `0.49%` | `1.45%` |
 
 These codegen timings are not replacements for the retained `zig build bench` numbers used in the primitive estimate above. They use a different standalone harness so the generated assembly can be retained and read directly.
 
-The disassembly explains the ranking. The plain 12x10 product and fused D update are mostly straight-line floating-point arithmetic with no divides. The q-series path has more instructions and includes `11` floating-point divides because it performs the small pivoted solve. The dot pair is only a short arithmetic chain, so it is cheap per call; it becomes visible only because the scattering-order loop calls it `295,581,240` times in the retained spectrum.
+The instruction count is a static count of the extracted disassembly, not a dynamic retired-instruction count. The `ns/static instruction` column is still useful as an orientation layer: q-series is not merely longer, it also has heavier work per static instruction because the small pivoted solve introduces `11` floating-point divides. The dot pair is only a short arithmetic chain, so it is cheap per call; it becomes visible only because the scattering-order loop calls it `295,581,240` times in the retained spectrum.
 
 This is the useful role for assembly here. It identifies what the expensive primitive classes really are at the machine-code level: repeated floating-point multiply/add chains, plus a heavier small solve in nonzero q-series calls. It does not change the higher-level conclusion that the remaining wall is dominated by repetition counts.
 

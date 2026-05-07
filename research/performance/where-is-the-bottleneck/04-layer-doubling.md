@@ -49,9 +49,9 @@ The research-only codegen harness in [primitive-codegen/bench_primitives.zig](pr
 
 For layer doubling, the important retained numbers are:
 
-- `smul_12x10` takes about `181.303 ns` per isolated call. The extracted `codegen_smul12x10` disassembly has `2,196` instructions, including `1,368` floating-point arithmetic instructions and no floating-point divides.
-- `smul_add_semul3_12` takes about `179.818 ns` per isolated call. Its extracted wrapper plus callee have `2,976` instructions, including `1,731` floating-point arithmetic instructions and no floating-point divides.
-- `qseries_nonzero_12x10` takes about `486.883 ns` per isolated call. Its extracted disassembly has `4,022` instructions, including `2,062` floating-point arithmetic instructions and `11` floating-point divides.
+- `smul_12x10` takes about `183.150 ns` per isolated call. The extracted `codegen_smul12x10` disassembly has `2,196` instructions, including `1,368` floating-point arithmetic instructions and no floating-point divides.
+- `smul_add_semul3_12` takes about `179.687 ns` per isolated call. Its extracted wrapper plus callee have `2,976` instructions, including `1,731` floating-point arithmetic instructions and no floating-point divides.
+- `qseries_nonzero_12x10` takes about `486.366 ns` per isolated call. Its extracted disassembly has `4,022` instructions, including `2,062` floating-point arithmetic instructions and `11` floating-point divides.
 
 That makes the assembly-level story more specific. The ordinary 12x10 products are not spending time in file I/O, allocation, dynamic dispatch, or text parsing; the retained disassembly is dominated by floating-point multiply/add work over the fixed matrix shape. The q-series path is different: it contains the product plus the 10x10 pivoted solve, and the divides in that solve are why one q-series call is several times heavier than a plain product.
 
