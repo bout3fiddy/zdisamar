@@ -327,9 +327,13 @@ pub fn prefetchForwardSamples(
 ) Error!void {
     if (misses.len == 0) return;
 
-    const worker_count = preferredForwardWorkerCount(misses.len);
+    const preferred_worker_count = preferredForwardWorkerCount(misses.len);
     const trace_ref = implementations.trace;
     const trace = Trace.asRun(trace_ref);
+    const worker_count = if (Trace.enabled and trace != null)
+        @min(preferred_worker_count, Trace.max_workers)
+    else
+        preferred_worker_count;
     if (Trace.enabled) if (trace) |run| {
         run.setWorkerCount(worker_count);
         run.addCounter(.worker_count, @intCast(worker_count));

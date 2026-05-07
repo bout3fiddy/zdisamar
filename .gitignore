@@ -17,6 +17,7 @@ __pycache__/
 *.bundle
 
 # Local DISAMAR reference clone and generated vendor outputs
+vendor
 vendor/
 disamar.asciiHDF
 disamar.imed
