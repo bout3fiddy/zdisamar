@@ -1,8 +1,8 @@
 # 02. LABOS Top Level
 
-Each high-resolution radiance sample has two major worker-local phases. First, zdisamar builds wavelength-specific optical input: layer optical depths, scattering properties, and related prepared values for that wavelength. Across all workers, that accounts for `3.927454 s` of aggregate CPU.
+Each high-resolution radiance sample has two major worker-local phases. First, zdisamar builds wavelength-specific optical input: layer optical depths, scattering properties, and related prepared values for that wavelength. Across all workers, that accounts for `3.931236 s` of aggregate CPU.
 
-Then zdisamar executes LABOS transport. That is the larger cost: `11.484103 s` of aggregate worker CPU. This number is larger than the `1.958912 s` caller wall because the work is spread over 10 workers; it is CPU time summed across workers, not elapsed wall time.
+Then zdisamar executes LABOS transport. That is the larger cost: `9.450074 s` of aggregate worker CPU. This number is larger than the `1.724582 s` caller wall because the work is spread over 10 workers; it is CPU time summed across workers, not elapsed wall time.
 
 The source split is visible in [spectral_forward.zig](../../../src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig#L239-L263):
 
@@ -31,9 +31,9 @@ else
     try implementations.transport.executePrepared(allocator, effective_route, input);
 ```
 
-Inside LABOS, `11.080734 s` of the `11.484103 s` LABOS CPU is inside the Fourier loop. That means `96.488%` of LABOS CPU is spent repeatedly evaluating Fourier terms. The remaining `0.403369 s` is non-Fourier LABOS overhead.
+Inside LABOS, `9.040007 s` of the `9.450074 s` LABOS CPU is inside the Fourier loop. That means `95.661%` of LABOS CPU is spent repeatedly evaluating Fourier terms. The remaining `0.410067 s` is non-Fourier LABOS overhead.
 
-The Fourier loop is a parent scope. Its children are RT-layer construction (`8.026027 s`), scattering orders (`2.826031 s`), reflectance integration (`0.190831 s`), PLM basis lookup/build (`0.006664 s`), and a small amount of loop/tail overhead (`0.031181 s`). Those child costs are inside the Fourier loop; they should not be added to the parent.
+The Fourier loop is a parent scope. Its children are RT-layer construction (`6.497375 s`), scattering orders (`2.308949 s`), reflectance integration (`0.190095 s`), PLM basis lookup/build (`0.008842 s`), and a small amount of loop/tail overhead (`0.034746 s`). Those child costs are inside the Fourier loop; they should not be added to the parent.
 
 The parent loop is in [execute.zig](../../../src/forward_model/radiative_transfer/labos/execute.zig#L250-L350):
 

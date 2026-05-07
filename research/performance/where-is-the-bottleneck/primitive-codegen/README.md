@@ -15,11 +15,11 @@ Run it from the repository root with:
 research/performance/where-is-the-bottleneck/run-primitive-codegen.sh
 ```
 
-The retained outputs are written beside the harness under `primitive-codegen/outputs/`:
+The retained compact outputs are written beside the harness under `primitive-codegen/outputs/`:
 
 - `timings.csv`
-- `bench-primitives.asm`
 - `codegen-summary.md`
-- one extracted `codegen_*.asm` file per inspected primitive
+
+The script also regenerates `bench-primitives.asm` and one extracted `codegen_*.asm` file per inspected primitive for local inspection. Those disassembly files are intentionally ignored because they are large and fully reproducible from the harness.
 
 These outputs answer a narrower question than the full LABOS trace: once the trace has named an expensive primitive class, what does the generated machine code for that primitive shape look like, and which operation classes dominate the isolated loop?

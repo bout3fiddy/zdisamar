@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const basis = @import("basis.zig");
 const common = @import("../root.zig");
+const attenuation_mod = @import("attenuation.zig");
 const Trace = @import("../../performance_trace.zig");
 
 pub const OrdersResult = struct {
@@ -71,6 +72,15 @@ fn transportToOtherLevels(
     ud_local: []const basis.UDLocal,
     ud_orde: []basis.UDField,
 ) void {
+    if (nmutot == basis.max_nmutot) {
+        if (comptime isDynamicAttenPointer(@TypeOf(atten))) {
+            transportToOtherLevelsDynamic12(start_level, end_level, atten, ud_local, ud_orde);
+            return;
+        }
+        transportToOtherLevels12(start_level, end_level, atten, ud_local, ud_orde);
+        return;
+    }
+
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |ilevel| {
         const local_u0 = ud_local[ilevel].U.col[0].data;
@@ -97,6 +107,102 @@ fn transportToOtherLevels(
         const out_d0 = &ud_orde[ilevel].D.col[0].data;
         const out_d1 = &ud_orde[ilevel].D.col[1].data;
         for (0..nmutot) |imu| {
+            const att = atten.get(imu, ilevel + 1, ilevel);
+            out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
+            out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
+        }
+    }
+}
+
+fn isDynamicAttenPointer(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |ptr| ptr.child == attenuation_mod.DynamicAttenArray,
+        else => false,
+    };
+}
+
+fn dynamicAttenAt(atten: *const attenuation_mod.DynamicAttenArray, stream_stride: usize, imu: usize, level_offset: usize) f64 {
+    return atten.data[imu * stream_stride + level_offset];
+}
+
+fn transportToOtherLevelsDynamic12(
+    start_level: usize,
+    end_level: usize,
+    atten: *const attenuation_mod.DynamicAttenArray,
+    ud_local: []const basis.UDLocal,
+    ud_orde: []basis.UDField,
+) void {
+    const nlevel = atten.nlevel;
+    const stream_stride = nlevel * nlevel;
+
+    ud_orde[start_level].U = ud_local[start_level].U;
+    for (start_level + 1..end_level + 1) |ilevel| {
+        const level_offset = (ilevel - 1) * nlevel + ilevel;
+        const local_u0 = ud_local[ilevel].U.col[0].data;
+        const local_u1 = ud_local[ilevel].U.col[1].data;
+        const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
+        const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+        const out_u0 = &ud_orde[ilevel].U.col[0].data;
+        const out_u1 = &ud_orde[ilevel].U.col[1].data;
+        inline for (0..basis.max_nmutot) |imu| {
+            const att = dynamicAttenAt(atten, stream_stride, imu, level_offset);
+            out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
+            out_u1[imu] = local_u1[imu] + att * prev_u1[imu];
+        }
+    }
+
+    ud_orde[end_level].D = basis.Vec2.zero(basis.max_nmutot);
+    var ilevel = end_level;
+    while (ilevel > start_level) {
+        ilevel -= 1;
+        const level_offset = (ilevel + 1) * nlevel + ilevel;
+        const local_d0 = ud_local[ilevel].D.col[0].data;
+        const local_d1 = ud_local[ilevel].D.col[1].data;
+        const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
+        const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+        const out_d0 = &ud_orde[ilevel].D.col[0].data;
+        const out_d1 = &ud_orde[ilevel].D.col[1].data;
+        inline for (0..basis.max_nmutot) |imu| {
+            const att = dynamicAttenAt(atten, stream_stride, imu, level_offset);
+            out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
+            out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
+        }
+    }
+}
+
+fn transportToOtherLevels12(
+    start_level: usize,
+    end_level: usize,
+    atten: anytype,
+    ud_local: []const basis.UDLocal,
+    ud_orde: []basis.UDField,
+) void {
+    ud_orde[start_level].U = ud_local[start_level].U;
+    for (start_level + 1..end_level + 1) |ilevel| {
+        const local_u0 = ud_local[ilevel].U.col[0].data;
+        const local_u1 = ud_local[ilevel].U.col[1].data;
+        const prev_u0 = ud_orde[ilevel - 1].U.col[0].data;
+        const prev_u1 = ud_orde[ilevel - 1].U.col[1].data;
+        const out_u0 = &ud_orde[ilevel].U.col[0].data;
+        const out_u1 = &ud_orde[ilevel].U.col[1].data;
+        inline for (0..basis.max_nmutot) |imu| {
+            const att = atten.get(imu, ilevel - 1, ilevel);
+            out_u0[imu] = local_u0[imu] + att * prev_u0[imu];
+            out_u1[imu] = local_u1[imu] + att * prev_u1[imu];
+        }
+    }
+
+    ud_orde[end_level].D = basis.Vec2.zero(basis.max_nmutot);
+    var ilevel = end_level;
+    while (ilevel > start_level) {
+        ilevel -= 1;
+        const local_d0 = ud_local[ilevel].D.col[0].data;
+        const local_d1 = ud_local[ilevel].D.col[1].data;
+        const prev_d0 = ud_orde[ilevel + 1].D.col[0].data;
+        const prev_d1 = ud_orde[ilevel + 1].D.col[1].data;
+        const out_d0 = &ud_orde[ilevel].D.col[0].data;
+        const out_d1 = &ud_orde[ilevel].D.col[1].data;
+        inline for (0..basis.max_nmutot) |imu| {
             const att = atten.get(imu, ilevel + 1, ilevel);
             out_d0[imu] = local_d0[imu] + att * prev_d0[imu];
             out_d1[imu] = local_d1[imu] + att * prev_d1[imu];
@@ -283,6 +389,19 @@ fn accumulateOrderContribution(
     end_level: usize,
     nmutot: usize,
 ) void {
+    if (nmutot == basis.max_nmutot) {
+        accumulateOrderContribution12(
+            track_sum_local,
+            ud,
+            ud_sum_local,
+            ud_orde,
+            ud_local,
+            start_level,
+            end_level,
+        );
+        return;
+    }
+
     for (start_level..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
             const orde_u = ud_orde[ilevel].U.col[imu0].data;
@@ -302,6 +421,42 @@ fn accumulateOrderContribution(
                 }
             } else {
                 for (0..nmutot) |imu| {
+                    ud_u[imu] += orde_u[imu];
+                    ud_d[imu] += orde_d[imu];
+                }
+            }
+        }
+    }
+}
+
+fn accumulateOrderContribution12(
+    comptime track_sum_local: bool,
+    ud: []basis.UDField,
+    ud_sum_local: []basis.UDLocal,
+    ud_orde: []const basis.UDField,
+    ud_local: []const basis.UDLocal,
+    start_level: usize,
+    end_level: usize,
+) void {
+    for (start_level..end_level + 1) |ilevel| {
+        for (0..2) |imu0| {
+            const orde_u = ud_orde[ilevel].U.col[imu0].data;
+            const orde_d = ud_orde[ilevel].D.col[imu0].data;
+            const ud_u = &ud[ilevel].U.col[imu0].data;
+            const ud_d = &ud[ilevel].D.col[imu0].data;
+            if (track_sum_local) {
+                const local_u = ud_local[ilevel].U.col[imu0].data;
+                const local_d = ud_local[ilevel].D.col[imu0].data;
+                const sum_u = &ud_sum_local[ilevel].U.col[imu0].data;
+                const sum_d = &ud_sum_local[ilevel].D.col[imu0].data;
+                inline for (0..basis.max_nmutot) |imu| {
+                    ud_u[imu] += orde_u[imu];
+                    ud_d[imu] += orde_d[imu];
+                    sum_u[imu] += local_u[imu];
+                    sum_d[imu] += local_d[imu];
+                }
+            } else {
+                inline for (0..basis.max_nmutot) |imu| {
                     ud_u[imu] += orde_u[imu];
                     ud_d[imu] += orde_d[imu];
                 }
@@ -364,35 +519,30 @@ fn ordersScatInternal(
     for (start_level..end_level) |ilevel| {
         for (0..2) |imu0| {
             if (!rt_active_view[ilevel + 1]) {
-                ud_local_view[ilevel].D.col[imu0] = basis.Vec.zero(nmutot);
                 continue;
             }
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel + 1);
             const local_d = &ud_local_view[ilevel].D.col[imu0].data;
             const rt_t = &rt[ilevel + 1].T;
-            const rt_col_offset = col_idx;
-            var rt_idx = rt_col_offset;
+            var rt_idx = col_idx;
             for (0..nmutot) |imu| {
                 local_d[imu] = rt_t.data[rt_idx] * att;
                 rt_idx += rt_t.n;
             }
         }
     }
-    ud_local_view[end_level].D = basis.Vec2.zero(nmutot);
 
     for (start_level..end_level + 1) |ilevel| {
         for (0..2) |imu0| {
             if (!rt_active_view[ilevel]) {
-                ud_local_view[ilevel].U.col[imu0] = basis.Vec.zero(nmutot);
                 continue;
             }
             const col_idx = n_gauss + imu0;
             const att = atten.get(col_idx, end_level, ilevel);
             const local_u = &ud_local_view[ilevel].U.col[imu0].data;
             const rt_r = &rt[ilevel].R;
-            const rt_col_offset = col_idx;
-            var rt_idx = rt_col_offset;
+            var rt_idx = col_idx;
             for (0..nmutot) |imu| {
                 local_u[imu] = rt_r.data[rt_idx] * att;
                 rt_idx += rt_r.n;
@@ -446,10 +596,6 @@ fn ordersScatInternal(
             const local_d1 = &ud_local_view[ilevel].D.col[1].data;
             if (!rt_active_view[ilevel + 1]) {
                 if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.orders_inactive_down_layers, 1);
-                for (0..nmutot) |imu| {
-                    local_d0[imu] = 0.0;
-                    local_d1[imu] = 0.0;
-                }
                 continue;
             }
             const prev_u0 = &ud_orde_view[ilevel].U.col[0];
@@ -485,11 +631,6 @@ fn ordersScatInternal(
                 local_u_start0[imu] = r_dot_d.col0;
                 local_u_start1[imu] = r_dot_d.col1;
             }
-        } else {
-            for (0..nmutot) |imu| {
-                local_u_start0[imu] = 0.0;
-                local_u_start1[imu] = 0.0;
-            }
         }
 
         for (start_level + 1..end_level + 1) |ilevel| {
@@ -497,10 +638,6 @@ fn ordersScatInternal(
             const local_u1 = &ud_local_view[ilevel].U.col[1].data;
             if (!rt_active_view[ilevel]) {
                 if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.orders_inactive_up_layers, 1);
-                for (0..nmutot) |imu| {
-                    local_u0[imu] = 0.0;
-                    local_u1[imu] = 0.0;
-                }
                 continue;
             }
             const prev_d0 = &ud_orde_view[ilevel].D.col[0];

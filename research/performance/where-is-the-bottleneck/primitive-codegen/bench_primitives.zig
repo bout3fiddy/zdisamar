@@ -25,11 +25,13 @@ const Checksum = *const fn () f64;
 const bench_names = [_][]const u8{
     "smul_12x10",
     "smul_add_semul3_12",
+    "smul_add_semul3_known_right_trace_12",
     "qseries_nonzero_12x10",
     "dot_gauss_pair",
 };
 
 const bench_iterations = [_]usize{
+    1_000_000,
     1_000_000,
     1_000_000,
     200_000,
@@ -39,11 +41,13 @@ const bench_iterations = [_]usize{
 var kernels = [_]Kernel{
     codegen_smul12x10,
     codegen_smul_add_semul3_12,
+    codegen_smul_add_semul3_known_right_trace_12,
     codegen_qseries_nonzero_12x10,
     codegen_dot_gauss_pair,
 };
 
 var checksums = [_]Checksum{
+    checksumMatrix,
     checksumMatrix,
     checksumMatrix,
     checksumMatrix,
@@ -53,6 +57,7 @@ var checksums = [_]Checksum{
 var matrix_a: Mat = undefined;
 var matrix_b: Mat = undefined;
 var matrix_c: Mat = undefined;
+var matrix_c_trace: f64 = undefined;
 var vector_e: Vec = undefined;
 var vector_u0: Vec = undefined;
 var vector_u1: Vec = undefined;
@@ -115,6 +120,10 @@ pub export fn codegen_smul_add_semul3_12() void {
     matrix_out = smulAddSemul3_12(&matrix_a, &vector_e, &matrix_c);
 }
 
+pub export fn codegen_smul_add_semul3_known_right_trace_12() void {
+    matrix_out = smulAddSemul3_12KnownRightTrace(&matrix_a, &vector_e, &matrix_c, matrix_c_trace);
+}
+
 pub export fn codegen_qseries_nonzero_12x10() void {
     const ab = smul12x10(&matrix_a, &matrix_b);
     matrix_out = qseriesFromProduct(&ab);
@@ -133,16 +142,16 @@ inline fn smul12x10(a: *const Mat, b: *const Mat) Mat {
 inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void {
     inline for (0..12) |i| {
         const row = i * 12;
-        const a0 = a.data[row];
-        const a1 = a.data[row + 1];
-        const a2 = a.data[row + 2];
-        const a3 = a.data[row + 3];
-        const a4 = a.data[row + 4];
-        const a5 = a.data[row + 5];
-        const a6 = a.data[row + 6];
-        const a7 = a.data[row + 7];
-        const a8 = a.data[row + 8];
-        const a9 = a.data[row + 9];
+        const a0: @Vector(2, f64) = @splat(a.data[row]);
+        const a1: @Vector(2, f64) = @splat(a.data[row + 1]);
+        const a2: @Vector(2, f64) = @splat(a.data[row + 2]);
+        const a3: @Vector(2, f64) = @splat(a.data[row + 3]);
+        const a4: @Vector(2, f64) = @splat(a.data[row + 4]);
+        const a5: @Vector(2, f64) = @splat(a.data[row + 5]);
+        const a6: @Vector(2, f64) = @splat(a.data[row + 6]);
+        const a7: @Vector(2, f64) = @splat(a.data[row + 7]);
+        const a8: @Vector(2, f64) = @splat(a.data[row + 8]);
+        const a9: @Vector(2, f64) = @splat(a.data[row + 9]);
         const b0 = b.data[0..12];
         const b1 = b.data[12..24];
         const b2 = b.data[24..36];
@@ -153,20 +162,26 @@ inline fn smul12x10Into(noalias result: *Mat, a: *const Mat, b: *const Mat) void
         const b7 = b.data[84..96];
         const b8 = b.data[96..108];
         const b9 = b.data[108..120];
-        inline for (0..12) |j| {
-            var s = a0 * b0[j];
-            s += a1 * b1[j];
-            s += a2 * b2[j];
-            s += a3 * b3[j];
-            s += a4 * b4[j];
-            s += a5 * b5[j];
-            s += a6 * b6[j];
-            s += a7 * b7[j];
-            s += a8 * b8[j];
-            s += a9 * b9[j];
-            result.data[row + j] = s;
+        inline for (0..6) |pair_index| {
+            const j = pair_index * 2;
+            var s = a0 * loadPair(b0, j);
+            s += a1 * loadPair(b1, j);
+            s += a2 * loadPair(b2, j);
+            s += a3 * loadPair(b3, j);
+            s += a4 * loadPair(b4, j);
+            s += a5 * loadPair(b5, j);
+            s += a6 * loadPair(b6, j);
+            s += a7 * loadPair(b7, j);
+            s += a8 * loadPair(b8, j);
+            s += a9 * loadPair(b9, j);
+            result.data[row + j] = s[0];
+            result.data[row + j + 1] = s[1];
         }
     }
+}
+
+inline fn loadPair(row: []const f64, comptime j: usize) @Vector(2, f64) {
+    return .{ row[j], row[j + 1] };
 }
 
 fn smulAddSemul3_12(a: *const Mat, e: *const Vec, c: *const Mat) Mat {
@@ -192,6 +207,25 @@ fn smulAddSemul3_12(a: *const Mat, e: *const Vec, c: *const Mat) Mat {
     trc += c.data[104];
     trc += c.data[117];
 
+    return smulAddSemul3_12KnownTraces(a, e, c, tra, trc);
+}
+
+fn smulAddSemul3_12KnownRightTrace(a: *const Mat, e: *const Vec, c: *const Mat, trc: f64) Mat {
+    var tra = a.data[0];
+    tra += a.data[13];
+    tra += a.data[26];
+    tra += a.data[39];
+    tra += a.data[52];
+    tra += a.data[65];
+    tra += a.data[78];
+    tra += a.data[91];
+    tra += a.data[104];
+    tra += a.data[117];
+
+    return smulAddSemul3_12KnownTraces(a, e, c, tra, trc);
+}
+
+fn smulAddSemul3_12KnownTraces(a: *const Mat, e: *const Vec, c: *const Mat, tra: f64, trc: f64) Mat {
     var result: Mat = undefined;
     if (@abs(tra * trc) <= threshold_mul) {
         inline for (0..12) |j| {
@@ -268,6 +302,7 @@ fn qseriesFromProduct(ab: *const Mat) Mat {
 
     var pivot: [n_gauss]usize = undefined;
     var pivot_offset: [n_gauss]usize = undefined;
+    var inverse_diag: [n_gauss]f64 = undefined;
     inline for (0..n_gauss) |i| {
         pivot[i] = i;
         pivot_offset[i] = i * n_gauss;
@@ -293,10 +328,12 @@ fn qseriesFromProduct(ab: *const Mat) Mat {
         }
         const diag = one_minus_ab_gg[pivot_offset[col] + col];
         if (@abs(diag) < 1.0e-30) return ab.*;
+        const inv_diag = 1.0 / diag;
+        inverse_diag[col] = inv_diag;
         for (col + 1..n_gauss) |row| {
             const row_offset = pivot_offset[row];
             const col_offset = pivot_offset[col];
-            const factor = one_minus_ab_gg[row_offset + col] / diag;
+            const factor = one_minus_ab_gg[row_offset + col] * inv_diag;
             one_minus_ab_gg[row_offset + col] = factor;
             for (col + 1..n_gauss) |k| {
                 one_minus_ab_gg[row_offset + k] -=
@@ -322,7 +359,7 @@ fn qseriesFromProduct(ab: *const Mat) Mat {
             var s: f64 = y[ii];
             const row_offset = pivot_offset[ii];
             for (ii + 1..n_gauss) |j| s -= one_minus_ab_gg[row_offset + j] * x[j];
-            x[ii] = s / one_minus_ab_gg[row_offset + ii];
+            x[ii] = s * inverse_diag[ii];
         }
         for (0..n_gauss) |i| inverse[i * n_gauss + rhs_col] = x[i];
     }
@@ -409,9 +446,24 @@ fn seedInputs() void {
     matrix_a = matrixSeed(0.008, 0.0003);
     matrix_b = matrixSeed(0.17, 0.0005);
     matrix_c = matrixSeed(0.41, 0.0008);
+    matrix_c_trace = traceGauss12x10(&matrix_c);
     vector_e = vectorSeed(0.77, 0.010);
     vector_u0 = vectorSeed(0.19, 0.007);
     vector_u1 = vectorSeed(0.31, 0.009);
+}
+
+fn traceGauss12x10(mat: *const Mat) f64 {
+    var trace = mat.data[0];
+    trace += mat.data[13];
+    trace += mat.data[26];
+    trace += mat.data[39];
+    trace += mat.data[52];
+    trace += mat.data[65];
+    trace += mat.data[78];
+    trace += mat.data[91];
+    trace += mat.data[104];
+    trace += mat.data[117];
+    return trace;
 }
 
 fn matrixSeed(base: f64, delta: f64) Mat {

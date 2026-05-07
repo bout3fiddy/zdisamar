@@ -6,6 +6,15 @@ const attenuation = @import("attenuation.zig");
 const common = @import("../root.zig");
 const Trace = @import("../../performance_trace.zig");
 
+const phase_odd_reciprocal = blk: {
+    var values: [basis.max_phase_coef]f64 = undefined;
+    for (&values, 0..) |*value, idx| {
+        const idx_f: f64 = @floatFromInt(idx);
+        value.* = 1.0 / (2.0 * idx_f + 1.0);
+    }
+    break :blk values;
+};
+
 pub const LayerRT = basis.LayerRT;
 
 fn locateLowerIndex(values: []const f64, target: f64) usize {
@@ -226,6 +235,22 @@ fn gaussTrace(n: usize, n_gauss: usize, mat: *const basis.Mat) f64 {
     return trace;
 }
 
+inline fn squareAttenuation(n: usize, E: *basis.Vec) void {
+    if (n == basis.max_nmutot) return squareAttenuation12(E);
+
+    for (0..n) |imu| {
+        const e = E.data[imu];
+        E.data[imu] = e * e;
+    }
+}
+
+inline fn squareAttenuation12(E: *basis.Vec) void {
+    inline for (0..basis.max_nmutot) |imu| {
+        const e = E.data[imu];
+        E.data[imu] = e * e;
+    }
+}
+
 // Perform ndouble doubling steps on R, T, E for a layer.
 fn doDouble(
     ndouble: usize,
@@ -243,6 +268,7 @@ fn doDouble(
     for (0..ndouble) |_| {
         if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_steps, 1);
         const trace_r = gaussTrace(n, n_gauss, R);
+        const trace_t = gaussTrace(n, n_gauss, T);
         const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
 
         const D = if (q_is_zero) blk: {
@@ -256,29 +282,55 @@ fn doDouble(
                 sink.addCounter(.matrix_smul_add_semul3, 1);
             };
             const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
-            break :blk basis.smulAddSemul3(n, n_gauss, threshold_mul, &Q, E, T);
+            break :blk basis.smulAddSemul3KnownRightTrace(n, n_gauss, threshold_mul, &Q, E, T, trace_t);
         };
+        const trace_d = if (q_is_zero) trace_t else gaussTrace(n, n_gauss, &D);
 
         if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_rd, 1);
         var rd: basis.Mat = undefined;
-        basis.smulInto(&rd, n, n_gauss, threshold_mul, R, &D);
+        const rd_nonzero = basis.smulIntoKnownTracesIfNonzero(&rd, n, n_gauss, threshold_mul, trace_r, trace_d, R, &D);
 
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_semul_add, 1);
-        const U = basis.semulAdd(n, R, E, &rd);
+        const U = if (rd_nonzero) blk: {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                sink.addCounter(.matrix_smul_rd_nonzero, 1);
+                sink.addCounter(.matrix_semul_add, 1);
+            };
+            break :blk basis.semulAdd(n, R, E, &rd);
+        } else blk: {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_semul, 1);
+            break :blk basis.semul(n, R, E);
+        };
+        const trace_u = gaussTrace(n, n_gauss, &U);
 
         if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_tu, 1);
         var tu: basis.Mat = undefined;
-        basis.smulInto(&tu, n, n_gauss, threshold_mul, T, &U);
+        const tu_nonzero = basis.smulIntoKnownTracesIfNonzero(&tu, n, n_gauss, threshold_mul, trace_t, trace_u, T, &U);
 
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_mat_add_esmul3, 1);
-        const R_new = basis.matAddEsmul3(n, R, E, &U, &tu);
+        const R_new = if (tu_nonzero) blk: {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                sink.addCounter(.matrix_smul_tu_nonzero, 1);
+                sink.addCounter(.matrix_mat_add_esmul3, 1);
+            };
+            break :blk basis.matAddEsmul3(n, R, E, &U, &tu);
+        } else blk: {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_mat_add_esmul, 1);
+            break :blk basis.matAddEsmul(n, R, E, &U);
+        };
 
         if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_td, 1);
         var td: basis.Mat = undefined;
-        basis.smulInto(&td, n, n_gauss, threshold_mul, T, &D);
+        const td_nonzero = basis.smulIntoKnownTracesIfNonzero(&td, n, n_gauss, threshold_mul, trace_t, trace_d, T, &D);
 
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_esmul_semul_add, 1);
-        const T_new = basis.esmulSemulAdd(n, E, &D, T, &td);
+        const T_new = if (td_nonzero) blk: {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
+                sink.addCounter(.matrix_smul_td_nonzero, 1);
+                sink.addCounter(.matrix_esmul_semul_add, 1);
+            };
+            break :blk basis.esmulSemulAdd(n, E, &D, T, &td);
+        } else blk: {
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_esmul_semul, 1);
+            break :blk basis.esmulSemul(n, E, &D, T);
+        };
 
         // PARITY: DISAMAR's whole-array assignments evaluate both RHS values
         // from the pre-step operators before storing the doubled layer state.
@@ -287,16 +339,12 @@ fn doDouble(
 
         b *= 2.0;
         if (b < 0.001) {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_exp_evals, @intCast(geo.nmutot));
             for (0..geo.nmutot) |imu| {
                 E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
             }
         } else {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_square_evals, @intCast(geo.nmutot));
-            for (0..geo.nmutot) |imu| {
-                const e = E.data[imu];
-                E.data[imu] = e * e;
-            }
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_square_evals, @intCast(n));
+            squareAttenuation(n, E);
         }
     }
 }
@@ -392,8 +440,7 @@ pub fn calcRTlayersIntoWithBasis(
         for (i_fourier..max_phase_index + 1) |ic| {
             scanned_terms += 1;
             if (phase_coefs[ic] != 0.0) nonzero_terms += 1;
-            const icf: f64 = @floatFromInt(ic);
-            const beta_eff = @abs(phase_coefs[ic]) / (2.0 * icf + 1.0);
+            const beta_eff = @abs(phase_coefs[ic]) * phase_odd_reciprocal[ic];
             if (beta_eff > max_beta_eff) max_beta_eff = beta_eff;
         }
         if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {

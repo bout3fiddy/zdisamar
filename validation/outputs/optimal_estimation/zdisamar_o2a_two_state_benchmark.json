@@ -1,40 +1,40 @@
 {
   "iterations": [
     {
-      "forward_model_and_jacobian_s": 1.263594915624708,
+      "forward_model_and_jacobian_s": 1.3993849158287048,
       "index": 1,
-      "solver_update_s": 0.0012273751199245453,
-      "total_iteration_s": 1.2648234581574798
+      "solver_update_s": 0.0010100840590894222,
+      "total_iteration_s": 1.4003960420377553
     },
     {
-      "forward_model_and_jacobian_s": 1.4115668330341578,
+      "forward_model_and_jacobian_s": 1.4108699169009924,
       "index": 2,
-      "solver_update_s": 0.0006355829536914825,
-      "total_iteration_s": 1.4122038329951465
+      "solver_update_s": 0.00356337521225214,
+      "total_iteration_s": 1.4144350830465555
     },
     {
-      "forward_model_and_jacobian_s": 1.4160615410655737,
+      "forward_model_and_jacobian_s": 1.3589413752779365,
       "index": 3,
-      "solver_update_s": 0.0007918751798570156,
-      "total_iteration_s": 1.4168541668914258
+      "solver_update_s": 0.0005240002647042274,
+      "total_iteration_s": 1.359467291738838
     },
     {
-      "forward_model_and_jacobian_s": 1.6174422088079154,
+      "forward_model_and_jacobian_s": 1.3118460830301046,
       "index": 4,
-      "solver_update_s": 0.0004921248182654381,
-      "total_iteration_s": 1.6179350838065147
+      "solver_update_s": 0.0005450830794870853,
+      "total_iteration_s": 1.3123920420184731
     }
   ],
   "phases_s": {
-    "boundary_contiguity_check_s": 0.0003580832853913307,
-    "build_case_s": 1.874985173344612e-05,
-    "build_measurement_s": 1.1614829581230879,
-    "build_pressure_altitude_profile_s": 0.17606770806014538,
-    "build_state_vector_s": 1.3375189155340195e-05,
-    "build_summary_s": 3.729201853275299e-05,
-    "load_reference_s": 0.0003025829792022705,
-    "retrieval_s": 5.712197165936232,
-    "total_s": 7.0509061249904335,
-    "write_summary_s": 0.00039116712287068367
+    "boundary_contiguity_check_s": 0.0001510828733444214,
+    "build_case_s": 1.8625054508447647e-05,
+    "build_measurement_s": 1.315996624995023,
+    "build_pressure_altitude_profile_s": 0.16651987470686436,
+    "build_state_vector_s": 3.260831874795258,
+    "build_summary_s": 4.179216921329498e-05,
+    "load_reference_s": 0.00018749991431832314,
+    "retrieval_s": 5.48700120812282,
+    "total_s": 10.231260749977082,
+    "write_summary_s": 0.0004671667702496052
   }
 }

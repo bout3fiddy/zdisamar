@@ -40,7 +40,7 @@ The O2 A forward path parallelizes high-resolution radiance samples across worke
 - **wall time**: elapsed time seen by the caller;
 - **worker CPU time**: accumulated time inside worker-local traced sections.
 
-This is why worker percentages can exceed 100% of wall time. For example, the retained run measured `1.958912208 s` of forward wall but `11.484103 s` of aggregate LABOS worker CPU time across 10 workers.
+This is why worker percentages can exceed 100% of wall time. For example, the retained run measured `1.724581500 s` of forward wall but `9.450074 s` of aggregate LABOS worker CPU time across 10 workers.
 
 ## Simple Python Shape
 
@@ -58,7 +58,7 @@ class Trace:
 
 
 trace = Trace()
-trace.add("labos.rt_layer_build", 8.026027)  # disabled: does nothing
+trace.add("labos.rt_layer_build", 6.497375)  # disabled: does nothing
 ```
 
 In Zig this is stronger than a runtime `if`: disabled trace references become zero-sized types, so hot structs do not carry trace pointers.
