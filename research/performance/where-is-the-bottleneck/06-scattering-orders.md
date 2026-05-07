@@ -30,4 +30,4 @@ inactive down-layer skips     5,499,208
 inactive up-layer skips       5,499,208
 ```
 
-The inactive-layer skip is already doing useful work. The remaining orders cost is the active multiple-scattering propagation that LABOS still has to perform until the order contribution falls below the convergence threshold.
+The [inactive-layer skip is already doing useful work](../why-zdisamar-is-faster/10-carry-layer-activity-into-orders.md). The remaining orders cost is the active multiple-scattering propagation that LABOS still has to perform until the order contribution falls below the convergence threshold.

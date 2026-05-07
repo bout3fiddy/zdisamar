@@ -35,7 +35,7 @@ matAddEsmul3 updates          8,389,666
 esmulSemulAdd updates         8,389,666
 ```
 
-This is why doubling is the final frontier. The code has already specialized the common matrix shape and fused several updates, but the exact calculation still has to run the same scientific recurrence millions of times.
+This is why doubling is the final frontier. The code has already [specialized the common 12x10 and 12x12 matrix shapes](../why-zdisamar-is-faster/06-direct-12x10-12x12-matrix-calculations.md), [fused layer-doubling updates](../why-zdisamar-is-faster/05-fuse-layer-doubling-matrix-updates.md), [skipped empty q-series work](../why-zdisamar-is-faster/11-skip-empty-qseries-work.md), and [combined the D update](../why-zdisamar-is-faster/13-combine-d-update-in-doubling.md). The exact calculation still has to run the same scientific recurrence millions of times.
 
 A small assembly improvement can reduce a primitive. It does not remove:
 

@@ -10,7 +10,7 @@ nonzero coefficient terms    20,184,718
 PLM basis CPU                 0.006664 s    0.058% of LABOS CPU
 ```
 
-The PLM basis is already reused well enough that it is effectively gone from the wall. The remaining phase cost is combining active layer-specific phase coefficients into `Zplus` and `Zmin` for each active wavelength/layer/Fourier combination.
+The [PLM basis is already reused](../why-zdisamar-is-faster/08-fourier-tail-and-basis-reuse.md) well enough that it is effectively gone from the wall. The remaining phase cost is combining active layer-specific phase coefficients into `Zplus` and `Zmin` for each active wavelength/layer/Fourier combination.
 
 The important distinction is:
 

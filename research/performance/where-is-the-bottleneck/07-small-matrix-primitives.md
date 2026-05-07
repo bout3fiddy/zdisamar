@@ -30,4 +30,4 @@ The exact retained table is:
 validation/outputs/performance/labos-bottleneck/primitive_estimates.csv
 ```
 
-The primitive conclusion matches the higher-level trace: there is no single slow call. The final wall is millions of already-small fixed-shape operations.
+The primitive conclusion matches the higher-level trace: there is no single slow call. The final wall is millions of operations that are already small after the [direct fixed-shape matrix work](../why-zdisamar-is-faster/06-direct-12x10-12x12-matrix-calculations.md), [separate output writes](../why-zdisamar-is-faster/12-write-matrix-results-into-separate-outputs.md), and [fused doubling updates](../why-zdisamar-is-faster/05-fuse-layer-doubling-matrix-updates.md).

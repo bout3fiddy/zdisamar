@@ -93,7 +93,7 @@ Zplus_ij += alpha_l * P_lm_plus(mu_i)  * w_i * P_lm_plus(mu_j) * w_j
 Zmin_ij  += alpha_l * P_lm_minus(mu_i) * w_i * P_lm_plus(mu_j) * w_j
 ```
 
-For the O2 A route `nmutot=12`, so each nonzero phase coefficient updates a 12x12 matrix. The Fourier basis is reused, but each wavelength, layer, and Fourier term still has to combine the active phase coefficients into layer-specific `Zplus` and `Zmin` matrices.
+For the O2 A route `nmutot=12`, so each nonzero phase coefficient updates a 12x12 matrix. The [Fourier basis is reused](why-zdisamar-is-faster/08-fourier-tail-and-basis-reuse.md), but each wavelength, layer, and Fourier term still has to combine the active phase coefficients into layer-specific `Zplus` and `Zmin` matrices.
 
 This step exists because scattering redistributes light between directions. LABOS needs those matrices before it can build layer reflection and transmission.
 
@@ -129,7 +129,7 @@ semulAdd_12:                 66.846 ns/call
 esmulSemulAdd_12:            93.381 ns/call
 ```
 
-These calls are already sub-microsecond. The wall comes from repetition. The instrumented run counted millions of calls: `qseries=3,408,299`, `rd=8,389,666`, `tu=8,389,666`, `td=8,389,666`, plus the matching add/update calls.
+These calls are already sub-microsecond after the [fixed-shape matrix specialization](why-zdisamar-is-faster/06-direct-12x10-12x12-matrix-calculations.md) and [fused doubling updates](why-zdisamar-is-faster/05-fuse-layer-doubling-matrix-updates.md). The wall comes from repetition. The instrumented run counted millions of calls: `qseries=3,408,299`, `rd=8,389,666`, `tu=8,389,666`, `td=8,389,666`, plus the matching add/update calls.
 
 ## Scattering Orders
 
@@ -141,7 +141,7 @@ The loop continues until:
 max_value < threshold_conv_mult or num_orders >= num_orders_max
 ```
 
-This step exists because LABOS represents multiple scattering as successive scattering orders. zdisamar has already removed unused local-order accumulation for the non-Jacobian integrated-source path, but the remaining propagation still has to move upward and downward radiation through active levels until convergence.
+This step exists because LABOS represents multiple scattering as successive scattering orders. zdisamar has already [carried layer activity into scattering orders](why-zdisamar-is-faster/10-carry-layer-activity-into-orders.md), but the remaining propagation still has to move upward and downward radiation through active levels until convergence.
 
 ## Wavelength-Specific Optical Input
 

@@ -17,7 +17,7 @@ skipped by Fourier range      4,133,184
 phase matrix builds           1,284,366
 ```
 
-This is already one of the optimizations from the earlier performance work: layers and Fourier terms that cannot contribute are skipped. The remaining cost is the subset that still has active phase coefficients and scattering optical depth.
+This is already one of the optimizations from the earlier performance work: [layers and Fourier terms that cannot contribute are skipped](../why-zdisamar-is-faster/07-skip-empty-layer-work.md), and [tiny Fourier tails stop early](../why-zdisamar-is-faster/08-fourier-tail-and-basis-reuse.md). The remaining cost is the subset that still has active phase coefficients and scattering optical depth.
 
 The traced split inside active RT-layer work is:
 
