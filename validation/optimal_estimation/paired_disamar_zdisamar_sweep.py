@@ -48,6 +48,8 @@ from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E40
 from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 
+type ScalarValue = bool | int | float | str
+
 RUN_COUNT = 100
 SCENE_SAMPLE_COUNT = 500
 BATCH_SIZE = 10
@@ -60,6 +62,7 @@ WAVELENGTH_END_NM = oe_baseline.WAVELENGTH_END_NM
 WAVELENGTH_STEP_NM = oe_baseline.WAVELENGTH_STEP_NM
 DISAMAR_PRESSURE_PRIOR_VARIANCE = 150.0**2
 DISAMAR_CASE_TIMEOUT_S = 5400.0
+FLOAT_TOKEN_PATTERN = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EDed][+-]?\d+)?")
 
 
 def uniform_lhs(rng: np.random.Generator, low: float, high: float, count: int) -> np.ndarray:
@@ -343,7 +346,7 @@ def render_disamar_config(scene: dict[str, float], initial: dict[str, float]) ->
     return "".join(rendered)
 
 
-def parse_scalar(text: str, name: str, default: Any = math.nan) -> Any:
+def parse_scalar(text: str, name: str, default: ScalarValue = math.nan) -> ScalarValue:
     match = re.search(rf"^{re.escape(name)}\s*=\s*(.+?)\s*$", text, re.MULTILINE)
     if not match:
         return default
@@ -354,7 +357,7 @@ def parse_scalar(text: str, name: str, default: Any = math.nan) -> Any:
         return int(value)
     except ValueError:
         try:
-            return float(value.replace("D", "E"))
+            return float(value.replace("D", "E").replace("d", "E"))
         except ValueError:
             return value
 
@@ -370,10 +373,17 @@ def parse_array(text: str, name: str) -> list[float]:
     size_match = re.search(r"Size\s*=([^\n]+)\n", body)
     if not size_match:
         raise ValueError(f"missing Size for DISAMAR asciiHDF array {name}")
+    declared_size = [int(token) for token in re.findall(r"\d+", size_match.group(1))]
+    expected_count = math.prod(declared_size)
     values_text = body[size_match.end() :]
     values: list[float] = []
-    for token in re.findall(r"[-+]?\d+\.\d+(?:[ED][+-]?\d+)", values_text):
-        values.append(float(token.replace("D", "E")))
+    for token in FLOAT_TOKEN_PATTERN.findall(values_text):
+        values.append(float(token.replace("D", "E").replace("d", "E")))
+    if len(values) != expected_count:
+        raise ValueError(
+            f"DISAMAR asciiHDF array {name} declared {expected_count} values "
+            f"but parsed {len(values)}"
+        )
     return values
 
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -21,6 +22,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.ticker import ScalarFormatter  # noqa: E402
+from numpy.typing import NDArray  # noqa: E402
 
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_reference_case import build_o2a_jacobian_case  # noqa: E402
@@ -88,6 +90,28 @@ MATPLOTLIB_ORANGE = "#ff7f0e"
 MATPLOTLIB_RED = "#d62728"
 MATPLOTLIB_GRID = "#b0b0b0"
 
+type FloatArray = NDArray[np.float64]
+type ResidualRegion = dict[str, float]
+
+
+class ValidationSeries(TypedDict):
+    series: str
+    y_label: str
+    zdisamar: FloatArray
+    reference: FloatArray
+
+
+class MetricRow(TypedDict):
+    max_abs_residual: float
+    max_abs_wavelength_nm: float
+    rmse: float
+    mean_signed: float
+    series: str
+    full_grid_max_abs_residual: float
+    full_grid_max_abs_wavelength_nm: float
+    threshold_excluded_edge_samples_per_side: int
+    marked_residual_blowup_regions_nm: list[ResidualRegion]
+
 
 def import_zdisamar():
     sys.path.insert(0, str(PYTHON_ROOT))
@@ -130,13 +154,13 @@ def mid_pressure_jacobian_scale(case, library_path: Path) -> float:
 
 def build_validation_rows(
     case, current: dict[str, np.ndarray], pressure_jacobian_scale: float
-) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
+) -> tuple[pd.DataFrame, list[MetricRow]]:
     forward_reference = pd.read_csv(FORWARD_REFERENCE_PATH)
     jacobian_reference = pd.read_csv(REFLECTANCE_JACOBIAN_REFERENCE_PATH)
     wavelength_nm = current["wavelength_nm"]
     mu0 = math.cos(math.radians(case.geometry.solar_zenith_deg))
 
-    rows = [
+    rows: list[ValidationSeries] = [
         {
             "series": "forward reflectance",
             "y_label": "Reflectance",
@@ -188,25 +212,29 @@ def build_validation_rows(
     )
     for row in rows:
         residual = row["zdisamar"] - row["reference"]
-        metric = residual_metrics(wavelength_nm[threshold_slice], residual[threshold_slice])
-        full_grid_metric = residual_metrics(wavelength_nm, residual)
-        metric.update(
-            {
-                "series": row["series"],
-                "full_grid_max_abs_residual": full_grid_metric["max_abs_residual"],
-                "full_grid_max_abs_wavelength_nm": full_grid_metric["max_abs_wavelength_nm"],
-                "threshold_excluded_edge_samples_per_side": THRESHOLD_EDGE_EXCLUSION_COUNT,
-                "marked_residual_blowup_regions_nm": residual_blowup_regions(
-                    wavelength_nm,
-                    residual,
-                    fraction=BLOWUP_REGION_FRACTION,
-                    padding_nm=BLOWUP_REGION_PADDING_NM,
-                    limit=BLOWUP_REGION_LIMITS[str(row["series"])],
-                    min_wavelength_nm=oe_baseline.WAVELENGTH_START_NM,
-                    max_wavelength_nm=oe_baseline.WAVELENGTH_END_NM,
-                ),
-            }
+        residual_metric = residual_metrics(
+            wavelength_nm[threshold_slice], residual[threshold_slice]
         )
+        full_grid_metric = residual_metrics(wavelength_nm, residual)
+        metric: MetricRow = {
+            "max_abs_residual": residual_metric["max_abs_residual"],
+            "max_abs_wavelength_nm": residual_metric["max_abs_wavelength_nm"],
+            "rmse": residual_metric["rmse"],
+            "mean_signed": residual_metric["mean_signed"],
+            "series": row["series"],
+            "full_grid_max_abs_residual": full_grid_metric["max_abs_residual"],
+            "full_grid_max_abs_wavelength_nm": full_grid_metric["max_abs_wavelength_nm"],
+            "threshold_excluded_edge_samples_per_side": THRESHOLD_EDGE_EXCLUSION_COUNT,
+            "marked_residual_blowup_regions_nm": residual_blowup_regions(
+                wavelength_nm,
+                residual,
+                fraction=BLOWUP_REGION_FRACTION,
+                padding_nm=BLOWUP_REGION_PADDING_NM,
+                limit=BLOWUP_REGION_LIMITS[row["series"]],
+                min_wavelength_nm=oe_baseline.WAVELENGTH_START_NM,
+                max_wavelength_nm=oe_baseline.WAVELENGTH_END_NM,
+            ),
+        }
         metrics.append(metric)
         for wavelength, reference, zdisamar, value_residual in zip(
             wavelength_nm,
@@ -370,7 +398,7 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
 
 
-def write_metrics(metrics: list[dict[str, float | str]], output_path: Path) -> None:
+def write_metrics(metrics: list[MetricRow], output_path: Path) -> None:
     payload = {
         "schema_version": 2,
         "sample_count": oe_baseline.SAMPLE_COUNT,
@@ -430,7 +458,7 @@ def write_manifest(output_path: Path) -> None:
 def build_bundle(
     output_dir: Path = SPECTRA_DIR,
     library_path: Path = LIBRARY_PATH,
-) -> list[dict[str, float | str]]:
+) -> list[MetricRow]:
     if output_dir != SPECTRA_DIR:
         raise ValueError("plot_validation is intentionally hardwired to validation/spectra/")
     zd = import_zdisamar()

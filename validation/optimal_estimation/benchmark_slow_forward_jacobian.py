@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import copy
-import math
 import statistics
 import sys
 import time
@@ -163,10 +162,7 @@ def probe_prepared_calls(
         "forward_only_s": stats(forward_only_s),
         "forward_and_jacobian_s": stats(forward_and_jacobian_s),
         "jacobian_increment_s": stats(
-            [
-                forward_and_jacobian_s[index] - forward_only_s[index]
-                for index in range(PROBE_RUNS)
-            ]
+            [forward_and_jacobian_s[index] - forward_only_s[index] for index in range(PROBE_RUNS)]
         ),
     }
 
