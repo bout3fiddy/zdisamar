@@ -113,11 +113,12 @@ def evaluate_prepared_reflectance(
     #     dR/dx = dI/dx / (mu0 * E0 / pi).
     mu0 = math.cos(math.radians(prepared.input.geometry.solar_zenith_deg))
     reflectance_jacobian_all = radiance_jacobian / ((mu0 * irradiance / math.pi)[:, None])
-    columns = [available_state_names.index(name) for name in state_names]
+    if available_state_names != state_names:
+        raise ValueError("Native Jacobian state selection did not preserve requested state order")
     return ForwardEvaluation(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
-        reflectance_jacobian=reflectance_jacobian_all[:, columns],
+        reflectance_jacobian=reflectance_jacobian_all,
     )
 
 
