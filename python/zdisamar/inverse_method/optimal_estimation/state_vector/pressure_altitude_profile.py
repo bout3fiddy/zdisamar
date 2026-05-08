@@ -121,3 +121,37 @@ class PressureAltitudeProfile:
             altitude_km,
         )
         return float(math.exp(log_pressure))
+
+    def altitude_at_pressure(self, pressure_hpa: float) -> float:
+        """Evaluate altitude from pressure using the atmospheric tabulation."""
+
+        if not math.isfinite(pressure_hpa):
+            raise ValueError("pressure must be finite")
+        lower_pressure = float(self.pressure_hpa[-1])
+        upper_pressure = float(self.pressure_hpa[0])
+        if pressure_hpa < lower_pressure or pressure_hpa > upper_pressure:
+            raise ValueError("pressure is outside the pressure-altitude profile")
+
+        lower_altitude = float(self.altitude_km[0])
+        upper_altitude = float(self.altitude_km[-1])
+        for _ in range(80):
+            mid_altitude = 0.5 * (lower_altitude + upper_altitude)
+            mid_pressure = self.pressure_at_altitude(mid_altitude)
+            if mid_pressure > pressure_hpa:
+                lower_altitude = mid_altitude
+            else:
+                upper_altitude = mid_altitude
+        return 0.5 * (lower_altitude + upper_altitude)
+
+    def altitude_derivative_at_pressure(self, pressure_hpa: float) -> float:
+        """Evaluate dz/dp in km/hPa at a pressure-coordinate layer boundary."""
+
+        step_hpa = max(abs(pressure_hpa) * 1.0e-4, 1.0e-3)
+        lower_pressure = max(float(self.pressure_hpa[-1]), pressure_hpa - step_hpa)
+        upper_pressure = min(float(self.pressure_hpa[0]), pressure_hpa + step_hpa)
+        if upper_pressure <= lower_pressure:
+            raise ValueError("pressure derivative stencil is outside the profile")
+        altitude_span = self.altitude_at_pressure(upper_pressure) - self.altitude_at_pressure(
+            lower_pressure
+        )
+        return altitude_span / (upper_pressure - lower_pressure)

@@ -22,6 +22,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.ticker import ScalarFormatter  # noqa: E402
 
+from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_reference_case import build_o2a_jacobian_case  # noqa: E402
 from validation.common.paths import PYTHON_ROOT, stable_repo_path, write_json  # noqa: E402
 from validation.common.residuals import residual_blowup_regions, residual_metrics  # noqa: E402
@@ -66,13 +67,12 @@ MANIFEST_PATH = OUTPUTS_DIR / "bundle_manifest.json"
 
 CANONICAL_COMMAND = "zig build o2a-plot-bundle"
 REFLECTANCE_THRESHOLD = 1.0e-13
+THRESHOLD_EDGE_EXCLUSION_COUNT = 1
 STATE_NAMES = (
-    "surface_albedo",
     "aerosol_optical_depth",
     "aerosol_layer_mid_pressure_hpa",
 )
 REFERENCE_COLUMNS = {
-    "surface_albedo": "surfAlbedo",
     "aerosol_optical_depth": "aerosolTau",
     "aerosol_layer_mid_pressure_hpa": "intervalDP",
 }
@@ -80,7 +80,6 @@ BLOWUP_REGION_FRACTION = 0.40
 BLOWUP_REGION_PADDING_NM = 0.04
 BLOWUP_REGION_LIMITS = {
     "forward reflectance": 3,
-    "dR/d surface albedo": 3,
     "dR/d aerosol optical depth": 3,
     "dR/d aerosol layer mid pressure": 2,
 }
@@ -100,7 +99,7 @@ def import_zdisamar():
 def run_zdisamar_validation(case, library_path: Path) -> dict[str, np.ndarray]:
     zd = import_zdisamar()
     with zd.prepare(case, library_path=str(library_path)) as prepared:
-        spectrum = prepared.forward_model(jacobian=True)
+        spectrum = prepared.forward_model(jacobian=True, jacobian_state_names=STATE_NAMES)
         wavelength_nm = spectrum.wavelength_nm.copy()
         reflectance = spectrum.reflectance.copy()
         irradiance = spectrum.irradiance.copy()
@@ -120,8 +119,17 @@ def run_zdisamar_validation(case, library_path: Path) -> dict[str, np.ndarray]:
     }
 
 
+def mid_pressure_jacobian_scale(case, library_path: Path) -> float:
+    zd = import_zdisamar()
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+
+    with zd.prepare(case, library_path=str(library_path)) as prepared:
+        profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+    return profile.altitude_derivative_at_pressure(case.aerosol.placement.top_pressure_hpa)
+
+
 def build_validation_rows(
-    case, current: dict[str, np.ndarray]
+    case, current: dict[str, np.ndarray], pressure_jacobian_scale: float
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     forward_reference = pd.read_csv(FORWARD_REFERENCE_PATH)
     jacobian_reference = pd.read_csv(REFLECTANCE_JACOBIAN_REFERENCE_PATH)
@@ -143,7 +151,6 @@ def build_validation_rows(
         },
     ]
     jacobian_labels = {
-        "surface_albedo": ("dR/d surface albedo", "dR/d surface\nalbedo"),
         "aerosol_optical_depth": (
             "dR/d aerosol optical depth",
             "dR/d aerosol\noptical depth",
@@ -155,35 +162,48 @@ def build_validation_rows(
     }
     for state_index, state_name in enumerate(STATE_NAMES):
         series_label, y_label = jacobian_labels[state_name]
+        reference_values = np.interp(
+            wavelength_nm,
+            jacobian_reference["wavelength_nm"],
+            jacobian_reference[REFERENCE_COLUMNS[state_name]],
+        )
+        zdisamar_values = current["reflectance_jacobian"][:, state_index]
+        if state_name == "aerosol_layer_mid_pressure_hpa":
+            reference_values = reference_values * pressure_jacobian_scale
+            zdisamar_values = zdisamar_values * pressure_jacobian_scale
         rows.append(
             {
                 "series": series_label,
                 "y_label": y_label,
-                "zdisamar": current["reflectance_jacobian"][:, state_index],
-                "reference": np.interp(
-                    wavelength_nm,
-                    jacobian_reference["wavelength_nm"],
-                    jacobian_reference[REFERENCE_COLUMNS[state_name]],
-                ),
+                "zdisamar": zdisamar_values,
+                "reference": reference_values,
             }
         )
 
     records = []
     metrics = []
+    threshold_slice = slice(
+        THRESHOLD_EDGE_EXCLUSION_COUNT,
+        len(wavelength_nm) - THRESHOLD_EDGE_EXCLUSION_COUNT,
+    )
     for row in rows:
         residual = row["zdisamar"] - row["reference"]
-        metric = residual_metrics(wavelength_nm, residual)
+        metric = residual_metrics(wavelength_nm[threshold_slice], residual[threshold_slice])
+        full_grid_metric = residual_metrics(wavelength_nm, residual)
         metric.update(
             {
                 "series": row["series"],
+                "full_grid_max_abs_residual": full_grid_metric["max_abs_residual"],
+                "full_grid_max_abs_wavelength_nm": full_grid_metric["max_abs_wavelength_nm"],
+                "threshold_excluded_edge_samples_per_side": THRESHOLD_EDGE_EXCLUSION_COUNT,
                 "marked_residual_blowup_regions_nm": residual_blowup_regions(
                     wavelength_nm,
                     residual,
                     fraction=BLOWUP_REGION_FRACTION,
                     padding_nm=BLOWUP_REGION_PADDING_NM,
                     limit=BLOWUP_REGION_LIMITS[str(row["series"])],
-                    min_wavelength_nm=755.0,
-                    max_wavelength_nm=776.0,
+                    min_wavelength_nm=oe_baseline.WAVELENGTH_START_NM,
+                    max_wavelength_nm=oe_baseline.WAVELENGTH_END_NM,
                 ),
             }
         )
@@ -332,8 +352,8 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
         residual_axis.set_ylabel("zdisamar - reference", labelpad=12)
         apply_axis_style(value_axis)
         apply_axis_style(residual_axis)
-        value_axis.set_xlim(755.0, 776.0)
-        residual_axis.set_xlim(755.0, 776.0)
+        value_axis.set_xlim(oe_baseline.WAVELENGTH_START_NM, oe_baseline.WAVELENGTH_END_NM)
+        residual_axis.set_xlim(oe_baseline.WAVELENGTH_START_NM, oe_baseline.WAVELENGTH_END_NM)
 
     axes[-1, 0].set_xlabel("Wavelength (nm)")
     axes[-1, 1].set_xlabel("Wavelength (nm)")
@@ -353,10 +373,18 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
 def write_metrics(metrics: list[dict[str, float | str]], output_path: Path) -> None:
     payload = {
         "schema_version": 2,
-        "sample_count": 701,
-        "wavelength_min_nm": 755.0,
-        "wavelength_max_nm": 776.0,
+        "sample_count": oe_baseline.SAMPLE_COUNT,
+        "wavelength_min_nm": oe_baseline.WAVELENGTH_START_NM,
+        "wavelength_max_nm": oe_baseline.WAVELENGTH_END_NM,
         "reflectance_threshold": REFLECTANCE_THRESHOLD,
+        "threshold_domain": {
+            "description": (
+                "The pass/fail threshold applies to the interior instrument grid; "
+                "the first and last samples are slit-convolution boundary samples "
+                "and remain plotted plus reported as full-grid residuals."
+            ),
+            "excluded_edge_samples_per_side": THRESHOLD_EDGE_EXCLUSION_COUNT,
+        },
         "passes_reflectance_threshold": all(
             float(metric["max_abs_residual"]) <= REFLECTANCE_THRESHOLD for metric in metrics
         ),
@@ -391,7 +419,8 @@ def write_manifest(output_path: Path) -> None:
                 "The tracked O2 A validation plot is generated by the "
                 "Python API and compares zdisamar reflectance plus "
                 "reflectance Jacobians against committed DISAMAR reference "
-                "derivatives."
+                "derivatives. Thresholds apply to the interior instrument "
+                "grid; slit-convolution edge samples are reported separately."
             ),
         },
     }
@@ -406,8 +435,10 @@ def build_bundle(
         raise ValueError("plot_validation is intentionally hardwired to validation/spectra/")
     zd = import_zdisamar()
     case = build_o2a_jacobian_case(zd)
+    oe_baseline.configure_case(case)
+    pressure_jacobian_scale = mid_pressure_jacobian_scale(case, library_path)
     current = run_zdisamar_validation(case, library_path)
-    data, metrics = build_validation_rows(case, current)
+    data, metrics = build_validation_rows(case, current, pressure_jacobian_scale)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)

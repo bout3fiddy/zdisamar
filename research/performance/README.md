@@ -6,6 +6,7 @@ This folder tracks durable performance findings for zdisamar. The current scope 
 
 - [O2 A per-spectrum wall](o2a-per-spectrum-wall.md): measured wall, code path, and timing decomposition.
 - [Why zdisamar is faster than DISAMAR](why-zdisamar-is-faster/): plain explanation of why the current O2 A run is faster, split by mechanism with code excerpts and source links.
+- [Why zdisamar optimal estimation is faster than DISAMAR](why-zdisamar-oe-is-faster/): retrieval-loop session reuse, state-vector-sized Jacobians, and the paired DISAMAR/zdisamar sweep harness.
 - [LABOS matrix calculations](labos-matrix-calculations.md): why the LABOS math remains expensive even after each small calculation is fast.
 - [Where is the bottleneck?](where-is-the-bottleneck/): layered trace evidence from spectrum wall to LABOS primitives, retained with generated artifacts.
 - [O2 A calculation demo](o2a-calculation-demo.ipynb): Jupyter notebook that isolates the measured O2 A counts and the small LABOS matrix calculations behind the wall.

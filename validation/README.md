@@ -15,9 +15,9 @@ The validation tree is split by target:
 
 ## Tracked Spectra Bundle
 
-- `spectra/data/reference/o2a_jacobian_retrieval_instrument_forward.csv`: DISAMAR 701-sample forward
+- `spectra/data/reference/o2a_jacobian_retrieval_instrument_forward.csv`: DISAMAR baseline-grid forward
   reference used for the reflectance row.
-- `spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv`: DISAMAR 701-sample
+- `spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv`: DISAMAR baseline-grid
   reflectance-Jacobian reference used for the derivative rows.
 - `spectra/data/reference/o2a_jacobian_reference_provenance.txt`: provenance for the retained
   DISAMAR Jacobian fixture.
@@ -33,10 +33,24 @@ The validation tree is split by target:
   baseline consumed by validation tests.
 - `optimal_estimation/data/reference/disamar_o2a_two_state_reference.json`: DISAMAR optimal-estimation two-state aerosol
   retrieval fixture for aerosol optical depth and fixed-thickness layer pressure.
+- `optimal_estimation/data/reference/baseline_config.in`: retained DISAMAR 4.1.5
+  optimal-estimation baseline config used by the paired retrieval sweep. It keeps
+  the PhD-style aerosol-layer-height, 758-770 nm grid, cloud-free, and reduced
+  retrieval-output settings while using the reference assets available in this
+  repo.
 - `outputs/optimal_estimation/zdisamar_o2a_two_state_summary.json`: generated zdisamar optimal-estimation validation
   summary.
 - `outputs/optimal_estimation/zdisamar_o2a_two_state_benchmark.json`: timing benchmark from the
   optimal-estimation validation run.
+- `optimal_estimation/paired_disamar_zdisamar_sweep.py`: paired DISAMAR/zdisamar optimal-estimation
+  sweep generator. It renders each DISAMAR case from
+  `optimal_estimation/data/reference/baseline_config.in` and writes large
+  generated parquet data and DISAMAR case directories under
+  `out/validation/optimal_estimation/paired_disamar_zdisamar/`.
+- `optimal_estimation/plot_paired_disamar_zdisamar.py`: Altair plot generator for the paired
+  retrieval parquet.
+- `outputs/optimal_estimation/paired_oe_*.png` and
+  `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked paired-retrieval plot outputs.
 
 ## Baseline Commands
 
@@ -45,6 +59,8 @@ The validation tree is split by target:
 - `zig build test-validation-o2a-vendor`
 - `zig build test-validation-o2a-optimal-estimation`
 - `zig build o2a-plot-bundle`
+- `uv run validation/optimal_estimation/paired_disamar_zdisamar_sweep.py`
+- `uv run validation/optimal_estimation/plot_paired_disamar_zdisamar.py`
 
 `zig build o2a-plot-bundle` regenerates the tracked plot files under
 `validation/outputs/spectra/` by running

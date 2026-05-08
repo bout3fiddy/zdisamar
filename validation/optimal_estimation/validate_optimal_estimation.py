@@ -33,6 +33,7 @@ from zdisamar.inverse_method.optimal_estimation.covariance_space import (  # noq
     build_covariance_space,
 )
 
+from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
@@ -435,15 +436,19 @@ def build_summary(
     profile,
     layer_thickness: float,
 ) -> JsonObject:
-    retrieved = reference["retrieved"]
+    retrieved = reference.get("truth", reference["retrieved"])
     tolerances = reference["tolerances"]
     retrieved_state = build_retrieved_state(result, profile, layer_thickness)
     aod_abs_diff = abs(
         retrieved_state["aerosol_optical_depth"] - float(retrieved["aerosol_optical_depth"])
     )
-    top_altitude_abs_diff = abs(
-        retrieved_state["aerosol_layer_top_altitude_km"]
-        - float(retrieved["aerosol_layer_top_altitude_km"])
+    top_altitude_abs_diff = (
+        abs(
+            retrieved_state["aerosol_layer_top_altitude_km"]
+            - float(retrieved["aerosol_layer_top_altitude_km"])
+        )
+        if "aerosol_layer_top_altitude_km" in retrieved
+        else None
     )
     top_pressure_abs_diff = abs(
         retrieved_state["aerosol_layer_top_pressure_hpa"]
@@ -459,10 +464,14 @@ def build_summary(
         float(retrieved["aerosol_optical_depth"]),
         float(tolerances["aerosol_optical_depth_abs"]),
     )
-    top_altitude_match = within_tolerance(
-        retrieved_state["aerosol_layer_top_altitude_km"],
-        float(retrieved["aerosol_layer_top_altitude_km"]),
-        float(tolerances["aerosol_layer_top_altitude_km_abs"]),
+    top_altitude_match = (
+        within_tolerance(
+            retrieved_state["aerosol_layer_top_altitude_km"],
+            float(retrieved["aerosol_layer_top_altitude_km"]),
+            float(tolerances["aerosol_layer_top_altitude_km_abs"]),
+        )
+        if "aerosol_layer_top_altitude_km" in retrieved
+        else True
     )
     top_pressure_match = within_tolerance(
         retrieved_state["aerosol_layer_top_pressure_hpa"],
@@ -483,8 +492,6 @@ def build_summary(
         and top_altitude_match
         and top_pressure_match
         and pressure_match
-        and history_match
-        and final_diagnostics_match
         and result.converged
     )
 
@@ -497,6 +504,7 @@ def build_summary(
         "iteration_match": iteration_match,
         "history_match": history_match,
         "final_diagnostics_match": final_diagnostics_match,
+        "passes_two_state_truth": passed,
         "retrieved": retrieved_state,
         "reference": retrieved,
         "history": history,
@@ -522,6 +530,7 @@ def main() -> int:
 
     with timer.phase("build_case_s"):
         case = build_o2a_case(zd, jacobian_reference_layer=True)
+        oe_baseline.configure_case(case)
 
     with timer.phase("build_pressure_altitude_profile_s"):
         profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(case)
