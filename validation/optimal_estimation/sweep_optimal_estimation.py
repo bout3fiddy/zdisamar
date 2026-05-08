@@ -340,6 +340,19 @@ def write_outputs(rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
     write_json(SUMMARY_PATH, summary)
 
 
+def assert_sweep_success(summary: dict[str, Any]) -> None:
+    run_count = int(summary["run_count"])
+    ok_count = int(summary["ok_count"])
+    converged_count = int(summary["converged_count"])
+    failures = []
+    if ok_count != run_count:
+        failures.append(f"{run_count - ok_count} retrievals returned error rows")
+    if converged_count != run_count:
+        failures.append(f"{run_count - converged_count} retrievals did not converge")
+    if failures:
+        raise AssertionError("; ".join(failures))
+
+
 def main() -> int:
     if RUN_COUNT <= 0:
         raise ValueError("RUN_COUNT must be positive")
@@ -356,6 +369,7 @@ def main() -> int:
     )
     print(f"  CSV: {stable_repo_path(CSV_PATH)}")
     print(f"  JSON: {stable_repo_path(SUMMARY_PATH)}")
+    assert_sweep_success(summary)
     return 0
 
 
