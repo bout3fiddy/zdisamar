@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import cast
 
 import altair as alt
+
+type JsonScalar = str | int | float | bool | None
+type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
 
 VALIDATION_BLUE = "#1f77b4"
 VALIDATION_ORANGE = "#ff7f0e"
@@ -13,7 +16,7 @@ VALIDATION_GREEN = "#2ca02c"
 VALIDATION_GRID = "#b0b0b0"
 
 
-def validation_theme() -> dict[str, Any]:
+def validation_theme() -> dict[str, JsonValue]:
     mono_font = "Menlo, Monaco, 'Courier New', monospace"
     return {
         "config": {
@@ -66,4 +69,4 @@ def validation_theme() -> dict[str, Any]:
 def enable_validation_theme() -> None:
     @alt.theme.register("zdisamar_validation", enable=True)
     def _zdisamar_validation_theme() -> alt.theme.ThemeConfig:
-        return alt.theme.ThemeConfig(cast(Any, validation_theme()))
+        return cast(alt.theme.ThemeConfig, validation_theme())
