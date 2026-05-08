@@ -115,7 +115,36 @@ def error_rows(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([aod, pressure])
 
 
-def save_retrieved_plot(frame: pl.DataFrame) -> None:
+def paired_difference_rows(frame: pl.DataFrame) -> pl.DataFrame:
+    ok = frame.filter(pl.col("status") == "ok")
+    wide = ok.pivot(
+        "model",
+        index="case",
+        values=[
+            "retrieved_aerosol_optical_depth",
+            "retrieved_aerosol_mid_pressure_hpa",
+        ],
+    )
+    aod = wide.select(
+        "case",
+        pl.lit("Aerosol optical depth").alias("parameter"),
+        (
+            pl.col("retrieved_aerosol_optical_depth_zdisamar")
+            - pl.col("retrieved_aerosol_optical_depth_disamar_fortran")
+        ).alias("difference"),
+    )
+    pressure = wide.select(
+        "case",
+        pl.lit("Aerosol mid pressure [hPa]").alias("parameter"),
+        (
+            pl.col("retrieved_aerosol_mid_pressure_hpa_zdisamar")
+            - pl.col("retrieved_aerosol_mid_pressure_hpa_disamar_fortran")
+        ).alias("difference"),
+    )
+    return pl.concat([aod, pressure])
+
+
+def retrieved_scatter_row(frame: pl.DataFrame) -> alt.HConcatChart:
     data = retrieved_rows(frame)
     charts = []
     for parameter in data["parameter"].unique().to_list():
@@ -160,7 +189,60 @@ def save_retrieved_plot(frame: pl.DataFrame) -> None:
             .properties(title=str(parameter), width=340, height=300)
         )
         charts.append(points + line)
-    chart = alt.hconcat(*charts).properties(title="Retrieved State Versus Truth")
+    return alt.hconcat(*charts)
+
+
+def paired_difference_histogram_row(frame: pl.DataFrame) -> alt.HConcatChart:
+    data = paired_difference_rows(frame)
+    charts = []
+    for parameter, x_title in (
+        ("Aerosol optical depth", "zdisamar retrieved - DISAMAR retrieved"),
+        (
+            "Aerosol mid pressure [hPa]",
+            "zdisamar retrieved - DISAMAR retrieved [hPa]",
+        ),
+    ):
+        subset = data.filter(pl.col("parameter") == parameter)
+        zero_line = (
+            alt.Chart(pl.DataFrame([{"zero": 0.0}]))
+            .mark_rule(color="black", strokeDash=[4, 3], strokeWidth=1)
+            .encode(x="zero:Q")
+        )
+        histogram = (
+            alt.Chart(subset)
+            .mark_bar(color=VALIDATION_BLUE, opacity=0.78)
+            .encode(
+                x=alt.X("difference:Q", bin=alt.Bin(maxbins=45), title=x_title),
+                y=alt.Y("count():Q", title="Count"),
+                tooltip=[
+                    "parameter:N",
+                    alt.Tooltip("count():Q", title="count"),
+                ],
+            )
+            .properties(title=parameter, width=340, height=220)
+        )
+        charts.append(histogram + zero_line)
+    return alt.hconcat(*charts)
+
+
+def save_retrieved_plot(frame: pl.DataFrame) -> None:
+    chart = (
+        alt.vconcat(
+            retrieved_scatter_row(frame),
+            paired_difference_histogram_row(frame),
+        )
+        .resolve_scale(x="independent", y="independent")
+        .properties(
+            title=alt.TitleParams(
+                text="Retrieved State Versus Truth",
+                subtitle=(
+                    "Top: each model retrieval against known synthetic truth. "
+                    "Bottom: paired retrieval difference per scene "
+                    "(zdisamar - DISAMAR Fortran)."
+                ),
+            )
+        )
+    )
     chart.save(RETRIEVED_PLOT_PATH, ppi=160)
 
 
@@ -168,8 +250,11 @@ def save_error_histograms(frame: pl.DataFrame) -> None:
     data = error_rows(frame)
     charts = []
     for parameter, x_title in (
-        ("Aerosol optical depth", "AOD retrieval error"),
-        ("Aerosol mid pressure [hPa]", "Mid-pressure retrieval error [hPa]"),
+        ("Aerosol optical depth", "Retrieved AOD - true AOD"),
+        (
+            "Aerosol mid pressure [hPa]",
+            "Retrieved mid pressure - true mid pressure [hPa]",
+        ),
     ):
         subset = data.filter(pl.col("parameter") == parameter)
         chart = (
@@ -192,7 +277,16 @@ def save_error_histograms(frame: pl.DataFrame) -> None:
             .properties(title=parameter, width=340, height=260)
         )
         charts.append(chart)
-    chart = alt.hconcat(*charts).properties(title="Retrieval Error Histograms")
+    chart = alt.hconcat(*charts).properties(
+        title=alt.TitleParams(
+            text="Retrieval Error Histograms",
+            subtitle=(
+                "Error is computed against each model's own synthetic scene truth: "
+                "retrieved value - true value. It is not the zdisamar-minus-DISAMAR "
+                "retrieval difference."
+            ),
+        )
+    )
     chart.save(ERROR_HISTOGRAM_PATH, ppi=160)
 
 
