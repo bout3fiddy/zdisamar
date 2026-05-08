@@ -1,0 +1,58 @@
+{
+  "by_model": {
+    "disamar_fortran": {
+      "aod_abs_error": {
+        "max": 0.00017891453779031452,
+        "mean": 6.567711601162679e-06,
+        "median": 8.364841072028284e-07,
+        "min": 1.3219647598816664e-09
+      },
+      "converged": 100,
+      "mid_pressure_abs_error_hpa": {
+        "max": 0.6605210676323168,
+        "mean": 0.025367094167130518,
+        "median": 0.009845578078682138,
+        "min": 3.288834642489746e-05
+      },
+      "ok": 100,
+      "retrieval_s": {
+        "max": 1687.0362287079915,
+        "mean": 1189.8615561940894,
+        "median": 1228.8262841869146,
+        "min": 617.7209674175829
+      },
+      "rows": 100
+    },
+    "zdisamar": {
+      "aod_abs_error": {
+        "max": 3.951130573603967e-05,
+        "mean": 2.238161977806963e-06,
+        "median": 5.22739788413884e-07,
+        "min": 2.7526474433159365e-09
+      },
+      "converged": 100,
+      "mid_pressure_abs_error_hpa": {
+        "max": 0.08712076504991728,
+        "mean": 0.005235087757519068,
+        "median": 0.0018428682465980728,
+        "min": 8.732435162528418e-05
+      },
+      "ok": 100,
+      "retrieval_s": {
+        "max": 5.951851584017277,
+        "mean": 4.308696538303048,
+        "median": 4.3494345201179385,
+        "min": 2.3322617914527655
+      },
+      "rows": 100
+    }
+  },
+  "plots": {
+    "error_histograms": "validation/outputs/optimal_estimation/paired_oe_error_histograms.png",
+    "latency": "validation/outputs/optimal_estimation/paired_oe_latency.png",
+    "retrieved_scatter": "validation/outputs/optimal_estimation/paired_oe_retrieved_scatter.png"
+  },
+  "source_data": "out/validation/optimal_estimation/paired_disamar_zdisamar/paired_retrieval_runs.parquet",
+  "source_ok_rows": 200,
+  "source_rows": 200
+}

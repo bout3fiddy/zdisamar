@@ -49,6 +49,15 @@ class StateVector:
             getattr(parameter, "jacobian_name", parameter.name) for parameter in self._parameters
         )
 
+    def jacobian_scales(self, state: np.ndarray) -> np.ndarray:
+        if len(state) != len(self._parameters):
+            raise ValueError("state length does not match state vector")
+        scales: list[float] = []
+        for parameter, value in zip(self._parameters, state, strict=True):
+            scale = getattr(parameter, "jacobian_scale", None)
+            scales.append(1.0 if scale is None else float(scale(float(value))))
+        return np.asarray(scales, dtype=np.float64)
+
     def initial_state(self) -> np.ndarray:
         return np.array([parameter.initial for parameter in self._parameters], dtype=np.float64)
 

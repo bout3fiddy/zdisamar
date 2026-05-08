@@ -65,12 +65,14 @@ class O2AInverseForwardModel:
     ) -> ForwardEvaluation:
         if self._forward_session is not None:
             prepared = self._forward_session.prepare(self.settings_for_state(state, state_vector))
-            return evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+            evaluation = evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+            return scale_reflectance_jacobian(evaluation, state_vector.jacobian_scales(state))
         with prepare(
             self.settings_for_state(state, state_vector),
             library_path=self._library_path,
         ) as prepared:
-            return evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+            evaluation = evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+            return scale_reflectance_jacobian(evaluation, state_vector.jacobian_scales(state))
 
 
 def disamar_oe(
@@ -119,6 +121,21 @@ def evaluate_prepared_reflectance(
     )
 
 
+def scale_reflectance_jacobian(
+    evaluation: ForwardEvaluation,
+    scales: np.ndarray,
+) -> ForwardEvaluation:
+    """Convert backend Jacobian columns into state-vector coordinates."""
+
+    if evaluation.reflectance_jacobian.shape[1] != scales.size:
+        raise ValueError("Jacobian scale count does not match state vector dimension")
+    return ForwardEvaluation(
+        wavelength_nm=evaluation.wavelength_nm,
+        reflectance=evaluation.reflectance,
+        reflectance_jacobian=evaluation.reflectance_jacobian * scales[None, :],
+    )
+
+
 def measurement_from_prepared(
     prepared: PreparedO2ABase,
     *,
@@ -136,19 +153,11 @@ def measurement_from_prepared(
     )
 
 
-def pressure_altitude_profile_from_prepared_grid(
-    case: O2AInput,
-    *,
-    library_path: str | None = None,
-) -> PressureAltitudeProfile:
-    """Use the prepared grid as the state-vector pressure/altitude contract."""
-
-    with prepare(case, library_path=library_path) as prepared:
-        budget = prepared.atmospheric_budget(
-            np.array([case.spectral_grid.start_nm], dtype=np.float64)
-        )
-        table = budget.table
-
+def pressure_altitude_profile_from_prepared(prepared: PreparedO2ABase) -> PressureAltitudeProfile:
+    budget = prepared.atmospheric_budget(
+        np.array([prepared.input.spectral_grid.start_nm], dtype=np.float64)
+    )
+    table = budget.table
     levels_by_pressure: dict[float, float] = {}
     for row in table:
         levels_by_pressure[round(float(row["top_pressure_hpa"]), 12)] = float(
@@ -162,6 +171,17 @@ def pressure_altitude_profile_from_prepared_grid(
         altitude_km=np.array([altitude for altitude, _pressure in levels]),
         pressure_hpa=np.array([pressure for _altitude, pressure in levels]),
     )
+
+
+def pressure_altitude_profile_from_prepared_grid(
+    case: O2AInput,
+    *,
+    library_path: str | None = None,
+) -> PressureAltitudeProfile:
+    """Use the prepared grid as the state-vector pressure/altitude contract."""
+
+    with prepare(case, library_path=library_path) as prepared:
+        return pressure_altitude_profile_from_prepared(prepared)
 
 
 def measurement_from_sun_normalized_radiance_noise(

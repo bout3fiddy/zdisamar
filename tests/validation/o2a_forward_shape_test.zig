@@ -9,7 +9,7 @@ test "tracked O2A DISAMAR reflectance jacobian fixture exposes the requested sta
     const simulation_reflectance = try readFixture("validation/spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv");
     defer std.testing.allocator.free(simulation_reflectance);
 
-    try expectJacobianFixtureShape(simulation_reflectance, 701);
+    try expectJacobianFixtureShape(simulation_reflectance, 301);
 }
 
 fn readFixture(path: []const u8) ![]u8 {
@@ -21,13 +21,13 @@ fn readFixture(path: []const u8) ![]u8 {
 test "o2a forward reflectance tracks vendor reference morphology" {
     var disamar_case = try disamar_reference.runDefaultReflectanceCase(std.testing.allocator, .{
         .spectral_grid = .{
-            .start_nm = 755.0,
-            .end_nm = 776.0,
+            .start_nm = 758.0,
+            .end_nm = 770.0,
             .sample_count = 61,
         },
-        .adaptive_points_per_fwhm = 20,
-        .adaptive_strong_line_min_divisions = 8,
-        .adaptive_strong_line_max_divisions = 40,
+        .adaptive_points_per_fwhm = 30,
+        .adaptive_strong_line_min_divisions = 6,
+        .adaptive_strong_line_max_divisions = 30,
         .line_mixing_factor = 1.0,
         .isotopes_sim = &.{ 1, 2, 3 },
         .threshold_line_sim = 3.0e-5,
@@ -51,7 +51,7 @@ test "o2a forward reflectance tracks vendor reference morphology" {
     try std.testing.expect(trough_tau > red_wing_tau);
 
     const metrics = disamar_reference.computeComparisonMetrics(product, disamar_case.reference, 0.0);
-    const blue_wing_mean = meanVectorInRange(product.wavelengths, product.reflectance, 755.0, 758.5);
+    const blue_wing_mean = meanVectorInRange(product.wavelengths, product.reflectance, 758.0, 758.5);
     const trough = minVectorInRange(product.wavelengths, product.reflectance, 760.2, 761.1);
     const trough_ratio = trough.value / @max(blue_wing_mean, 1.0e-12);
 
@@ -69,7 +69,7 @@ test "o2a forward reflectance tracks vendor reference morphology" {
 fn expectJacobianFixtureShape(bytes: []const u8, expected_rows: usize) !void {
     var lines = std.mem.splitScalar(u8, bytes, '\n');
     const header = std.mem.trim(u8, lines.next() orelse return error.InvalidData, "\r \t");
-    try std.testing.expectEqualStrings("wavelength_nm,surfAlbedo,aerosolTau,intervalDP", header);
+    try std.testing.expectEqualStrings("wavelength_nm,aerosolTau,intervalDP", header);
 
     var row_count: usize = 0;
     while (lines.next()) |line| {
@@ -82,7 +82,7 @@ fn expectJacobianFixtureShape(bytes: []const u8, expected_rows: usize) !void {
             _ = try std.fmt.parseFloat(f64, std.mem.trim(u8, column, " \t"));
             column_count += 1;
         }
-        try std.testing.expectEqual(@as(usize, 4), column_count);
+        try std.testing.expectEqual(@as(usize, 3), column_count);
         row_count += 1;
     }
     try std.testing.expectEqual(expected_rows, row_count);

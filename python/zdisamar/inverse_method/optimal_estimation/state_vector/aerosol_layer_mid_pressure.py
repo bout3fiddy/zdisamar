@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .pressure_altitude_profile import PressureAltitudeProfile
+
 AEROSOL_LAYER_MID_PRESSURE_HPA = "aerosol_layer_mid_pressure_hpa"
 
 
@@ -16,9 +18,11 @@ class AerosolLayerMidPressure:
     variance: float
     thickness_hpa: float
     interval_index_1based: int
+    pressure_altitude_profile: PressureAltitudeProfile
     lower: float | None = None
     upper: float | None = None
     name: str = AEROSOL_LAYER_MID_PRESSURE_HPA
+    jacobian_name: str = AEROSOL_LAYER_MID_PRESSURE_HPA
 
     def write_to(self, target, value: float) -> None:
         if not self.thickness_hpa > 0.0:
@@ -44,3 +48,7 @@ class AerosolLayerMidPressure:
 
         if not updated_fit_interval:
             raise ValueError("aerosol fit interval is not present in the atmosphere")
+
+    def jacobian_scale(self, value: float) -> float:
+        top_pressure = value - 0.5 * self.thickness_hpa
+        return self.pressure_altitude_profile.altitude_derivative_at_pressure(top_pressure)

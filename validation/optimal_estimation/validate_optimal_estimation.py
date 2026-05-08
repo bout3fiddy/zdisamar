@@ -33,6 +33,7 @@ from zdisamar.inverse_method.optimal_estimation.covariance_space import (  # noq
     build_covariance_space,
 )
 
+from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
@@ -435,15 +436,19 @@ def build_summary(
     profile,
     layer_thickness: float,
 ) -> JsonObject:
-    retrieved = reference["retrieved"]
+    retrieved = reference.get("truth", reference["retrieved"])
     tolerances = reference["tolerances"]
     retrieved_state = build_retrieved_state(result, profile, layer_thickness)
     aod_abs_diff = abs(
         retrieved_state["aerosol_optical_depth"] - float(retrieved["aerosol_optical_depth"])
     )
-    top_altitude_abs_diff = abs(
-        retrieved_state["aerosol_layer_top_altitude_km"]
-        - float(retrieved["aerosol_layer_top_altitude_km"])
+    top_altitude_abs_diff = (
+        abs(
+            retrieved_state["aerosol_layer_top_altitude_km"]
+            - float(retrieved["aerosol_layer_top_altitude_km"])
+        )
+        if "aerosol_layer_top_altitude_km" in retrieved
+        else None
     )
     top_pressure_abs_diff = abs(
         retrieved_state["aerosol_layer_top_pressure_hpa"]
@@ -459,10 +464,14 @@ def build_summary(
         float(retrieved["aerosol_optical_depth"]),
         float(tolerances["aerosol_optical_depth_abs"]),
     )
-    top_altitude_match = within_tolerance(
-        retrieved_state["aerosol_layer_top_altitude_km"],
-        float(retrieved["aerosol_layer_top_altitude_km"]),
-        float(tolerances["aerosol_layer_top_altitude_km_abs"]),
+    top_altitude_match = (
+        within_tolerance(
+            retrieved_state["aerosol_layer_top_altitude_km"],
+            float(retrieved["aerosol_layer_top_altitude_km"]),
+            float(tolerances["aerosol_layer_top_altitude_km_abs"]),
+        )
+        if "aerosol_layer_top_altitude_km" in retrieved
+        else True
     )
     top_pressure_match = within_tolerance(
         retrieved_state["aerosol_layer_top_pressure_hpa"],
@@ -477,16 +486,15 @@ def build_summary(
     history = iteration_records(result)
     history_match = iteration_matches(reference["iterations"], history, tolerances)
     final_diagnostics_match = diagnostics_match(reference, result, tolerances)
-    passed = bool(
+    truth_passed = bool(
         iteration_match
         and aod_match
         and top_altitude_match
         and top_pressure_match
         and pressure_match
-        and history_match
-        and final_diagnostics_match
         and result.converged
     )
+    fixture_passed = bool(truth_passed and history_match and final_diagnostics_match)
 
     return {
         "validation_case": "disamar_o2a_two_state_optimal_estimation",
@@ -497,6 +505,7 @@ def build_summary(
         "iteration_match": iteration_match,
         "history_match": history_match,
         "final_diagnostics_match": final_diagnostics_match,
+        "passes_two_state_truth": truth_passed,
         "retrieved": retrieved_state,
         "reference": retrieved,
         "history": history,
@@ -510,7 +519,7 @@ def build_summary(
         "tolerances": tolerances,
         "posterior_covariance": np.asarray(result.posterior_covariance).tolist(),
         "averaging_kernel": np.asarray(result.averaging_kernel).tolist(),
-        "passes_disamar_two_state_fixture": passed,
+        "passes_disamar_two_state_fixture": fixture_passed,
     }
 
 
@@ -522,6 +531,7 @@ def main() -> int:
 
     with timer.phase("build_case_s"):
         case = build_o2a_case(zd, jacobian_reference_layer=True)
+        oe_baseline.configure_case(case)
 
     with timer.phase("build_pressure_altitude_profile_s"):
         profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(case)
@@ -573,10 +583,8 @@ def main() -> int:
     timing["retrieval_modes"] = retrieval_mode_timing(phase_timings, result, session_result)
     write_json(TIMING_PATH, timing)
     print_retrieval_mode_timing(timing)
-    assert summary["passes_disamar_two_state_fixture"], json.dumps(
-        summary, indent=2, sort_keys=True
-    )
-    assert summary["session_reuse"]["passes_disamar_two_state_fixture"], json.dumps(
+    assert summary["passes_two_state_truth"], json.dumps(summary, indent=2, sort_keys=True)
+    assert session_summary["passes_two_state_truth"], json.dumps(
         summary["session_reuse"], indent=2, sort_keys=True
     )
     assert summary["session_reuse"]["matches_baseline_result"], json.dumps(

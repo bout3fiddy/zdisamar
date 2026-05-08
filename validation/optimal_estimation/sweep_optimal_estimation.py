@@ -31,13 +31,13 @@ import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
+from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 
 RUN_COUNT = 5
 RNG_SEED = 20260507
-LAYER_THICKNESS_HPA = 50.0
-MEASUREMENT_REFLECTANCE_STD = 0.004
+LAYER_THICKNESS_HPA = oe_baseline.LAYER_THICKNESS_HPA
 
 
 def uniform_lhs(rng: np.random.Generator, low: float, high: float, count: int) -> np.ndarray:
@@ -83,9 +83,9 @@ def build_scene(
     case.surface.pressure_hpa = surface_pressure_hpa
     case.surface.albedo = surface_albedo
     case.aerosol.optical_depth_550_nm = aerosol_optical_depth
-    case.aerosol.single_scatter_albedo = 0.95
-    case.aerosol.asymmetry_factor = 0.7
-    case.aerosol.angstrom_exponent = 0.0
+    case.aerosol.single_scatter_albedo = oe_baseline.AEROSOL_SINGLE_SCATTER_ALBEDO
+    case.aerosol.asymmetry_factor = oe_baseline.AEROSOL_ASYMMETRY_FACTOR
+    case.aerosol.angstrom_exponent = oe_baseline.AEROSOL_ANGSTROM_EXPONENT
     update_layer_pressures(case, aerosol_mid_pressure_hpa)
     return case
 
@@ -132,6 +132,7 @@ def initial_mid_pressure(truth: float, surface_pressure: float, index: int) -> f
 def build_state_vector(
     truth: dict[str, float],
     initial: dict[str, float],
+    profile: optimal_estimation.PressureAltitudeProfile,
 ) -> optimal_estimation.StateVector:
     return optimal_estimation.StateVector(
         [
@@ -148,6 +149,7 @@ def build_state_vector(
                 variance=150.0**2,
                 thickness_hpa=LAYER_THICKNESS_HPA,
                 interval_index_1based=2,
+                pressure_altitude_profile=profile,
                 lower=225.0,
                 upper=truth["surface_pressure_hpa"] - 100.0,
             ),
@@ -155,12 +157,30 @@ def build_state_vector(
     )
 
 
-def retrieve_scene(case: zd.O2AInput, state_vector: optimal_estimation.StateVector):
+def measurement_from_baseline_snr(prepared) -> optimal_estimation.Measurement:
+    with prepared.forward_model() as spectrum:
+        wavelength_nm = spectrum.wavelength_nm.copy()
+        reflectance = spectrum.reflectance.copy()
+    reflectance_noise = np.maximum(
+        np.abs(reflectance) * oe_baseline.REFLECTANCE_RELATIVE_NOISE,
+        1.0e-12,
+    )
+    return optimal_estimation.Measurement(
+        wavelength_nm=wavelength_nm,
+        reflectance=reflectance,
+        variance=reflectance_noise**2,
+    )
+
+
+def retrieve_scene(
+    case: zd.O2AInput,
+    truth: dict[str, float],
+    initial: dict[str, float],
+):
     with zd.prepare(case) as prepared:
-        measurement = o2a_oe.measurement_from_prepared(
-            prepared,
-            reflectance_variance=MEASUREMENT_REFLECTANCE_STD**2,
-        )
+        measurement = measurement_from_baseline_snr(prepared)
+        profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+    state_vector = build_state_vector(truth, initial, profile)
     with zd.o2a_forward_session(case) as session:
         return o2a_oe.disamar_oe(
             inverse_model=optimal_estimation.O2AInverseForwardModel(
@@ -191,6 +211,7 @@ def stats(values: list[float]) -> dict[str, float]:
 
 def run_sweep() -> dict[str, Any]:
     base = build_o2a_case(zd, jacobian_reference_layer=True)
+    oe_baseline.configure_case(base)
     rows: list[dict[str, Any]] = []
     start = time.perf_counter()
     for index, truth in enumerate(sampled_scenes(RUN_COUNT, RNG_SEED), start=1):
@@ -203,10 +224,9 @@ def run_sweep() -> dict[str, Any]:
                 index,
             ),
         }
-        state_vector = build_state_vector(truth, initial)
         run_start = time.perf_counter()
         try:
-            result = retrieve_scene(case, state_vector)
+            result = retrieve_scene(case, truth, initial)
             retrieval_s = time.perf_counter() - run_start
             retrieved_aod = result.value("aerosol_optical_depth")
             retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
