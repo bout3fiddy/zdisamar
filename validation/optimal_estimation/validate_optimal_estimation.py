@@ -486,7 +486,7 @@ def build_summary(
     history = iteration_records(result)
     history_match = iteration_matches(reference["iterations"], history, tolerances)
     final_diagnostics_match = diagnostics_match(reference, result, tolerances)
-    passed = bool(
+    truth_passed = bool(
         iteration_match
         and aod_match
         and top_altitude_match
@@ -494,6 +494,7 @@ def build_summary(
         and pressure_match
         and result.converged
     )
+    fixture_passed = bool(truth_passed and history_match and final_diagnostics_match)
 
     return {
         "validation_case": "disamar_o2a_two_state_optimal_estimation",
@@ -504,7 +505,7 @@ def build_summary(
         "iteration_match": iteration_match,
         "history_match": history_match,
         "final_diagnostics_match": final_diagnostics_match,
-        "passes_two_state_truth": passed,
+        "passes_two_state_truth": truth_passed,
         "retrieved": retrieved_state,
         "reference": retrieved,
         "history": history,
@@ -518,7 +519,7 @@ def build_summary(
         "tolerances": tolerances,
         "posterior_covariance": np.asarray(result.posterior_covariance).tolist(),
         "averaging_kernel": np.asarray(result.averaging_kernel).tolist(),
-        "passes_disamar_two_state_fixture": passed,
+        "passes_disamar_two_state_fixture": fixture_passed,
     }
 
 
@@ -582,10 +583,8 @@ def main() -> int:
     timing["retrieval_modes"] = retrieval_mode_timing(phase_timings, result, session_result)
     write_json(TIMING_PATH, timing)
     print_retrieval_mode_timing(timing)
-    assert summary["passes_disamar_two_state_fixture"], json.dumps(
-        summary, indent=2, sort_keys=True
-    )
-    assert summary["session_reuse"]["passes_disamar_two_state_fixture"], json.dumps(
+    assert summary["passes_two_state_truth"], json.dumps(summary, indent=2, sort_keys=True)
+    assert session_summary["passes_two_state_truth"], json.dumps(
         summary["session_reuse"], indent=2, sort_keys=True
     )
     assert summary["session_reuse"]["matches_baseline_result"], json.dumps(

@@ -59,7 +59,7 @@
   "history_match": false,
   "iteration_match": true,
   "iterations": 4,
-  "passes_disamar_two_state_fixture": true,
+  "passes_disamar_two_state_fixture": false,
   "passes_two_state_truth": true,
   "posterior_covariance": [
     [
@@ -124,7 +124,7 @@
     "converged": true,
     "iterations": 4,
     "matches_baseline_result": true,
-    "passes_disamar_two_state_fixture": true,
+    "passes_disamar_two_state_fixture": false,
     "retrieved": {
       "aerosol_layer_bottom_pressure_hpa": 925.002240365033,
       "aerosol_layer_mid_pressure_hpa": 900.002240365033,
