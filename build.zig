@@ -392,6 +392,20 @@ pub fn build(b: *std.Build) void {
     );
     o2a_optimal_estimation_sweep_step.dependOn(&o2a_optimal_estimation_sweep_cmd.step);
 
+    const o2a_slow_forward_jacobian_benchmark_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "validation/optimal_estimation/benchmark_slow_forward_jacobian.py",
+    });
+    o2a_slow_forward_jacobian_benchmark_cmd.step.dependOn(&c_api_install.step);
+    const o2a_slow_forward_jacobian_benchmark_step = b.step(
+        "validation-o2a-slow-forward-jacobian-benchmark",
+        "Run the retained slow O2A optimal-estimation forward+jacobian latency benchmark",
+    );
+    o2a_slow_forward_jacobian_benchmark_step.dependOn(
+        &o2a_slow_forward_jacobian_benchmark_cmd.step,
+    );
+
     const python_o2a_setup_roundtrip_cmd = b.addSystemCommand(&.{
         "uv",
         "run",

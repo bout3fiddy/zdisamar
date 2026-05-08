@@ -12,3 +12,5 @@
   threshold to make a failing lane pass. If a threshold fails, fix the
   configuration alignment, reference generation, implementation, or explicitly
   change the validation contract with documented scientific justification.
+- You may only change residual/error thresholds after explicit user approval.
+  Ask first, explain why the threshold change is needed, and wait for approval.

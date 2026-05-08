@@ -1,0 +1,126 @@
+{
+  "direct_prepared_call_probe": {
+    "forward_and_jacobian_s": {
+      "max": 1.0258045000955462,
+      "mean": 1.0125132918357849,
+      "median": 1.0107289999723434,
+      "min": 1.0017815418541431
+    },
+    "forward_only_s": {
+      "max": 0.8626847919076681,
+      "mean": 0.8470605753362179,
+      "median": 0.8419384174048901,
+      "min": 0.8356975838541985
+    },
+    "jacobian_increment_s": {
+      "max": 0.18386608269065619,
+      "mean": 0.16545271649956703,
+      "median": 0.1648409590125084,
+      "min": 0.14804420806467533
+    },
+    "probe_runs": 5
+  },
+  "measurement_build_s": 1.198283833451569,
+  "non_session": {
+    "converged": true,
+    "forward_model_and_jacobian_s": 5.352449084632099,
+    "iterations": 4,
+    "iterations_detail": [
+      {
+        "forward_model_and_jacobian_s": 1.317429916933179,
+        "index": 1,
+        "solver_update_s": 0.0005396250635385513,
+        "total_iteration_s": 1.3179702926427126
+      },
+      {
+        "forward_model_and_jacobian_s": 1.3659634171053767,
+        "index": 2,
+        "solver_update_s": 0.000428750179708004,
+        "total_iteration_s": 1.3663930837064981
+      },
+      {
+        "forward_model_and_jacobian_s": 1.340698542073369,
+        "index": 3,
+        "solver_update_s": 0.0002242494374513626,
+        "total_iteration_s": 1.3409235002472997
+      },
+      {
+        "forward_model_and_jacobian_s": 1.328357208520174,
+        "index": 4,
+        "solver_update_s": 0.00024516694247722626,
+        "total_iteration_s": 1.3286029156297445
+      }
+    ],
+    "other_retrieval_s": 0.00025612302124500275,
+    "retrieved": {
+      "aerosol_layer_mid_pressure_hpa": 329.19077238157064,
+      "aerosol_optical_depth": 1.968191325313343
+    },
+    "solver_update_s": 0.0014377916231751442,
+    "state_names": [
+      "aerosol_optical_depth",
+      "aerosol_layer_mid_pressure_hpa"
+    ],
+    "wall_s": 5.354142999276519
+  },
+  "scene": {
+    "aerosol_mid_pressure_hpa": 329.192074869615,
+    "aerosol_optical_depth": 1.9681905891962788,
+    "initial_aerosol_mid_pressure_hpa": 354.192074869615,
+    "initial_aerosol_optical_depth": 1.7420077184927254,
+    "relative_azimuth_deg": 7.0232796692031245,
+    "solar_zenith_deg": 53.76029607719826,
+    "surface_albedo": 0.19528921533381227,
+    "surface_pressure_hpa": 896.819424951348,
+    "viewing_zenith_deg": 45.71214389158657
+  },
+  "session": {
+    "first_use_retrieval_s": 4.42586962506175,
+    "reused_retrieval": {
+      "converged": true,
+      "forward_model_and_jacobian_s": 4.097322249785066,
+      "iterations": 4,
+      "iterations_detail": [
+        {
+          "forward_model_and_jacobian_s": 1.0097174169495702,
+          "index": 1,
+          "solver_update_s": 0.00021975021809339523,
+          "total_iteration_s": 1.0099377073347569
+        },
+        {
+          "forward_model_and_jacobian_s": 1.0349629996344447,
+          "index": 2,
+          "solver_update_s": 0.00019949954003095627,
+          "total_iteration_s": 1.035162916406989
+        },
+        {
+          "forward_model_and_jacobian_s": 1.0301444167271256,
+          "index": 3,
+          "solver_update_s": 0.00022183358669281006,
+          "total_iteration_s": 1.0303667495027184
+        },
+        {
+          "forward_model_and_jacobian_s": 1.0224974164739251,
+          "index": 4,
+          "solver_update_s": 0.00023516733199357986,
+          "total_iteration_s": 1.0227331668138504
+        }
+      ],
+      "other_retrieval_s": 0.0001914575695991516,
+      "retrieved": {
+        "aerosol_layer_mid_pressure_hpa": 329.19077238157064,
+        "aerosol_optical_depth": 1.968191325313343
+      },
+      "solver_update_s": 0.0008762506768107414,
+      "state_names": [
+        "aerosol_optical_depth",
+        "aerosol_layer_mid_pressure_hpa"
+      ],
+      "wall_s": 4.0983899580314755
+    },
+    "setup_s": 0.32747966703027487
+  },
+  "session_matches_non_session_result": true,
+  "source": "Slow retained scene from out/validation/optimal_estimation/paired_disamar_zdisamar/paired_retrieval_runs.parquet case 71.",
+  "validation_case": "zdisamar_o2a_slow_forward_jacobian_latency"
+}
