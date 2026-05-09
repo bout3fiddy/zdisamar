@@ -29,8 +29,10 @@ def reflectance_from_radiance(radiance: Any, irradiance: Any, mu0: float):
 
     import numpy as np
 
-    return np.asarray(radiance, dtype=np.float64) * np.pi / (
-        float(mu0) * np.asarray(irradiance, dtype=np.float64)
+    return (
+        np.asarray(radiance, dtype=np.float64)
+        * np.pi
+        / (float(mu0) * np.asarray(irradiance, dtype=np.float64))
     )
 
 

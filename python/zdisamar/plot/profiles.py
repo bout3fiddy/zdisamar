@@ -1,13 +1,13 @@
 """Shared profile-table transforms for vertical diagnostic plots."""
 
-from typing import Any
+from typing import Any, cast
 
 from . import fields
 from .data import require_columns, to_dataframe
 
 
 def nearest_wavelength_value(obj: Any, wavelength_nm: float) -> float:
-    result = to_dataframe(obj)
+    result = cast(Any, to_dataframe(obj))
     require_columns(result, [fields.WAVELENGTH_NM])
     unique_wavelengths = result[fields.WAVELENGTH_NM].drop_duplicates()
     index = (unique_wavelengths - float(wavelength_nm)).abs().idxmin()
@@ -24,7 +24,7 @@ def active_profile_rows(
     import numpy as np
 
     required = [fields.WAVELENGTH_NM, vertical_axis, value]
-    result = to_dataframe(obj)
+    result = cast(Any, to_dataframe(obj))
     require_columns(result, required)
     result = result.copy()
     if wavelength_nm is not None:
@@ -67,8 +67,11 @@ def interval_profile_rows(
         required.append(numerator)
     if denominator is not None:
         required.append(denominator)
-    result = active_profile_rows(
-        obj, value=value, vertical_axis=vertical_axis, wavelength_nm=wavelength_nm
+    result = cast(
+        Any,
+        active_profile_rows(
+            obj, value=value, vertical_axis=vertical_axis, wavelength_nm=wavelength_nm
+        ),
     )
     require_columns(result, required)
 

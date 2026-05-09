@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from typing import Any
 
-from .c_abi import CSpectrum
-from .types import O2AInput
+from ..bindings.abi import CSpectrum
+from ..types import O2AInput
 
 JACOBIAN_STATE_NAMES = (
     "surface_albedo",
@@ -81,7 +81,7 @@ class Spectrum:
 
     @property
     def sun_normalized_radiance(self) -> Any:
-        from .quantities import sun_normalized_radiance
+        from ..quantities import sun_normalized_radiance
 
         return sun_normalized_radiance(self.radiance, self.irradiance)
 
@@ -92,7 +92,7 @@ class Spectrum:
         mu0 = self.solar_mu0
         if mu0 is None:
             raise RuntimeError("spectrum input geometry is unavailable")
-        from .quantities import reflectance_jacobian_from_radiance_jacobian
+        from ..quantities import reflectance_jacobian_from_radiance_jacobian
 
         index = names.index(state)
         return reflectance_jacobian_from_radiance_jacobian(
@@ -126,9 +126,9 @@ class Spectrum:
 
     @property
     def plot(self):
-        from ._plot.spectrum import _SpectrumPlot
+        from ..plot.spectrum import SpectrumPlot
 
-        return _SpectrumPlot(self)
+        return SpectrumPlot(self)
 
     @property
     def diagnostic_report(self) -> DiagnosticReport:

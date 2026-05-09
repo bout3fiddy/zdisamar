@@ -4,15 +4,15 @@ import copy
 import ctypes
 from typing import Any
 
-from .c_abi import CSpectrum
-from .native_tables import (
+from ..bindings.abi import CSpectrum
+from ..bindings.context import Context, LibraryPath
+from ..output.spectrum import Spectrum
+from ..output.tables import (
     AtmosphericBudget,
     InstrumentResponseTable,
     OxygenCollisionInducedAbsorptionDiagnosticTable,
 )
-from .runtime import Context, LibraryPath
-from .spectrum import Spectrum
-from .types import O2AInput
+from ..types import O2AInput
 
 
 class AtmosphereDiagnostics:
@@ -65,14 +65,14 @@ class PreparedO2ABase:
     @property
     def collision_induced_absorption(self):
         self._require_context()
-        from .diagnostics import OxygenCollisionInducedAbsorptionDiagnostics
+        from ..output.diagnostics import OxygenCollisionInducedAbsorptionDiagnostics
 
         return OxygenCollisionInducedAbsorptionDiagnostics(self)
 
     @property
     def instrument_response(self):
         self._require_context()
-        from .diagnostics import InstrumentResponseDiagnostics
+        from ..output.diagnostics import InstrumentResponseDiagnostics
 
         return InstrumentResponseDiagnostics(self)
 

@@ -208,7 +208,7 @@ def load_library(path: str | os.PathLike[str] | None = None) -> ctypes.CDLL:
     if env_path:
         return ctypes.CDLL(env_path)
 
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = Path(__file__).resolve().parents[3]
     candidates = [
         repo_root / "zig-out" / "lib" / _library_name(),
         repo_root / _library_name(),

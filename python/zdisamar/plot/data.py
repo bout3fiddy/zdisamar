@@ -44,9 +44,12 @@ def with_channel_labels(obj: Any):
     result = to_dataframe(obj)
     if "channel_label" in result.columns or "channel" not in result.columns:
         return result
-    labels = {0: "radiance", 1: "irradiance", "0": "radiance", "1": "irradiance"}
     result = result.copy()
-    result["channel_label"] = result["channel"].map(labels).fillna(result["channel"].astype(str))
+    result["channel_label"] = result["channel"].map(
+        lambda value: {0: "radiance", 1: "irradiance", "0": "radiance", "1": "irradiance"}.get(
+            value, str(value)
+        )
+    )
     return result
 
 

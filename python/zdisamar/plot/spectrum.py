@@ -1,4 +1,4 @@
-"""Private spectrum plot accessors."""
+"""Spectrum plot accessors."""
 
 from pathlib import Path
 from typing import Any
@@ -8,10 +8,10 @@ import altair as alt
 from . import fields
 from .axes import marker_rules, scaled_y, wavelength_x
 from .data import spectrum_frame
-from .properties import PLOT, _PlotAccessor
+from .properties import PLOT, PlotAccessor
 
 
-class _SpectrumPlot(_PlotAccessor):
+class SpectrumPlot(PlotAccessor):
     def __init__(self, spectrum: Any):
         super().__init__(spectrum)
 

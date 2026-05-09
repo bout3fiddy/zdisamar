@@ -4,8 +4,17 @@ import copy
 import ctypes
 import os
 
-from . import reference_data
-from .c_abi import (
+from .. import reference_data
+from ..output.spectrum import JACOBIAN_STATE_NAMES, DiagnosticReport, Spectrum
+from ..output.tables import (
+    AtmosphericBudget,
+    InstrumentResponseTable,
+    O2LineContributions,
+    OxygenCollisionInducedAbsorptionDiagnosticTable,
+    RadiativeTransferDiagnosticTable,
+)
+from ..types import O2AInput
+from .abi import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
@@ -16,15 +25,6 @@ from .c_abi import (
     configure,
     load_library,
 )
-from .native_tables import (
-    AtmosphericBudget,
-    InstrumentResponseTable,
-    O2LineContributions,
-    OxygenCollisionInducedAbsorptionDiagnosticTable,
-    RadiativeTransferDiagnosticTable,
-)
-from .spectrum import JACOBIAN_STATE_NAMES, DiagnosticReport, Spectrum
-from .types import O2AInput
 
 LibraryPath = str | os.PathLike[str] | None
 

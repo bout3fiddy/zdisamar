@@ -1,4 +1,4 @@
-"""Private reflectance-jacobian plots."""
+"""Reflectance-Jacobian plots."""
 
 from typing import Any
 
@@ -10,7 +10,7 @@ from .properties import PLOT
 
 
 def reflectance_jacobian(spectrum: Any, state: str):
-    data, y_field, y_title = _jacobian_frame(spectrum, state)
+    data, y_field, y_title = jacobian_frame(spectrum, state)
     data, _, y = scaled_y(data, y_field, y_title)
     line = (
         alt.Chart(data)
@@ -24,12 +24,10 @@ def reflectance_jacobian(spectrum: Any, state: str):
             ],
         )
     )
-    return alt.layer(line, marker_rules(data)).properties(
-        **PLOT.chart(f"{y_title}: {state}")
-    )
+    return alt.layer(line, marker_rules(data)).properties(**PLOT.chart(f"{y_title}: {state}"))
 
 
-def _jacobian_frame(spectrum: Any, state: str):
+def jacobian_frame(spectrum: Any, state: str):
     import pandas as pd
 
     names = spectrum.jacobian_state_names

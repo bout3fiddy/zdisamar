@@ -34,7 +34,7 @@ MANIFEST_PATH = OUTPUTS_DIR / "paired_oe_plot_manifest.json"
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-from zdisamar._plot.properties import PLOT  # noqa: E402
+from zdisamar.plot.properties import PLOT  # noqa: E402
 
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 

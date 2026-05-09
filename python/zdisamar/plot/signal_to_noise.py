@@ -1,6 +1,6 @@
-"""Private signal-to-noise plots."""
+"""Signal-to-noise plots."""
 
-from typing import Any
+from typing import Any, cast
 
 import altair as alt
 
@@ -100,7 +100,8 @@ def _noise_arrays(noise_table):
             np.asarray(noise_table[0], dtype=float),
             np.asarray(noise_table[1], dtype=float),
         )
+    table = cast(Any, noise_table)
     return (
-        np.asarray(noise_table.snr_wavelengths_nm, dtype=float),
-        np.asarray(noise_table.snr_values, dtype=float),
+        np.asarray(table.snr_wavelengths_nm, dtype=float),
+        np.asarray(table.snr_values, dtype=float),
     )

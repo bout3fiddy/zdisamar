@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
-from .c_abi import (
+from ..bindings.abi import (
     CAtmosphericBudget,
     CAtmosphericBudgetRow,
     CInstrumentResponse,
@@ -117,9 +117,9 @@ class AtmosphericBudget(NativeTable):
 
     @property
     def plot(self):
-        from ._plot.atmosphere import _BudgetPlot
+        from ..plot.atmosphere import BudgetPlot
 
-        return _BudgetPlot(self)
+        return BudgetPlot(self)
 
 
 class O2LineContributions(NativeTable):
@@ -177,9 +177,9 @@ class InstrumentResponseTable(NativeTable):
 
     @property
     def plot(self):
-        from ._plot.instrument_response import _ISRFPlot
+        from ..plot.instrument_response import InstrumentResponsePlot
 
-        return _ISRFPlot(self)
+        return InstrumentResponsePlot(self)
 
 
 class OxygenCollisionInducedAbsorptionDiagnosticTable(NativeTable):
@@ -192,9 +192,9 @@ class OxygenCollisionInducedAbsorptionDiagnosticTable(NativeTable):
 
     @property
     def plot(self):
-        from ._plot.collision_induced_absorption import _CIAPlot
+        from ..plot.collision_induced_absorption import CollisionInducedAbsorptionPlot
 
-        return _CIAPlot(self)
+        return CollisionInducedAbsorptionPlot(self)
 
 
 class RadiativeTransferDiagnosticTable(NativeTable):

@@ -1,4 +1,4 @@
-"""Private atmospheric-budget plot accessor."""
+"""Atmospheric-budget plot accessor."""
 
 from pathlib import Path
 from typing import Any
@@ -8,12 +8,12 @@ import altair as alt
 from . import fields
 from .axes import label, scaled_x
 from .profiles import interval_profile_rows, nearest_wavelength_value
-from .properties import PLOT, _PlotAccessor
+from .properties import PLOT, PlotAccessor
 
 DEFAULT_PROFILE_WAVELENGTH_NM = 760.76
 
 
-class _BudgetPlot(_PlotAccessor):
+class BudgetPlot(PlotAccessor):
     def __init__(self, budget: Any):
         super().__init__(budget)
 

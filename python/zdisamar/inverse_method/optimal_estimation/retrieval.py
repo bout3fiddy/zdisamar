@@ -91,6 +91,6 @@ class Result:
 
     @property
     def plot(self):
-        from ..._plot.optimal_estimation import _OptimalEstimationPlot
+        from ...plot.optimal_estimation import OptimalEstimationPlot
 
-        return _OptimalEstimationPlot(self)
+        return OptimalEstimationPlot(self)

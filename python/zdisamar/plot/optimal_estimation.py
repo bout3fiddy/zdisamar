@@ -1,4 +1,4 @@
-"""Private optimal-estimation result plot accessor."""
+"""Optimal-estimation result plot accessor."""
 
 from pathlib import Path
 from typing import Any
@@ -6,7 +6,7 @@ from typing import Any
 import altair as alt
 
 from .axes import finite_padded_scale, scaled_y
-from .properties import PLOT, _PlotAccessor
+from .properties import PLOT, PlotAccessor
 
 STATE_LABELS = {
     "aerosol_optical_depth": "Aerosol optical depth",
@@ -15,7 +15,7 @@ STATE_LABELS = {
 }
 
 
-class _OptimalEstimationPlot(_PlotAccessor):
+class OptimalEstimationPlot(PlotAccessor):
     def __init__(self, result: Any):
         super().__init__(result)
 
@@ -65,7 +65,7 @@ def _fit_frame(result: Any):
     )
 
 
-def _jacobian_frame(result: Any):
+def jacobian_frame(result: Any):
     import numpy as np
     import pandas as pd
 
@@ -128,10 +128,10 @@ def _measurement_fit(result: Any):
         value_name="reflectance",
     )
     long["series_label"] = long["series"].map(
-        {
+        lambda value: {
             "measurement": "Measurement",
             "retrieved_model": "Retrieved model",
-        }
+        }.get(value, str(value))
     )
     return (
         alt.Chart(long)
@@ -176,7 +176,7 @@ def _residual(result: Any):
 
 
 def _jacobian(result: Any):
-    data = _jacobian_frame(result)
+    data = jacobian_frame(result)
     data, _, y = scaled_y(data, "reflectance_jacobian", "Reflectance jacobian")
     return (
         alt.Chart(data)

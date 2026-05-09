@@ -1,12 +1,12 @@
-"""Single internal plot policy object."""
+"""Plot styling and save policy."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import altair as alt
 
 
-class _PlotProperties:
+class PlotProperties:
     width = 1311
     height = 465
     theme_name = "zdisamar_validation"
@@ -52,9 +52,9 @@ class _PlotProperties:
         if self._enabled:
             return
         if not self._registered:
-            alt.themes.register(self.theme_name, self._theme)
+            alt.themes.register(self.theme_name, cast(Any, self._theme))
             self._registered = True
-        alt.themes.enable(self.theme_name)
+        alt.themes.enable(cast(Any, self.theme_name))
         self._enabled = True
 
     def chart(self, title: str) -> dict[str, object]:
@@ -132,18 +132,18 @@ class _PlotProperties:
         }
 
 
-PLOT = _PlotProperties()
+PLOT = PlotProperties()
 
 
-class _PlotAccessor:
-    """Shared private accessor behavior backed by the single plot policy object."""
+class PlotAccessor:
+    """Shared plot accessor behavior backed by the single plot policy object."""
 
     def __init__(self, target: Any):
         PLOT.prepare()
         self._target = target
 
     @property
-    def properties(self) -> _PlotProperties:
+    def properties(self) -> PlotProperties:
         return PLOT
 
     def _chart_properties(self, title: str) -> dict[str, object]:

@@ -25,10 +25,11 @@ def assert_import_laziness() -> None:
     assert "RadiativeTransferDiagnosticTable" not in api.__all__
 
 
-def assert_plot_api_boundary() -> None:
-    assert importlib.util.find_spec("zdisamar.plot") is None
+def assert_plot_package_boundary() -> None:
+    assert importlib.util.find_spec("zdisamar.plot") is not None
+    assert "zdisamar.plot" not in sys.modules
 
-    from zdisamar._plot.properties import PLOT
+    from zdisamar.plot.properties import PLOT
 
     assert PLOT.width == 1311
     assert PLOT.height == 465
@@ -69,7 +70,7 @@ def assert_quantity_conversions() -> None:
 
 def assert_plot_jacobian_uses_shared_conversion() -> None:
     import numpy as np
-    from zdisamar._plot.jacobian import _jacobian_frame
+    from zdisamar.plot.jacobian import jacobian_frame
     from zdisamar.quantities import reflectance_jacobian_from_radiance_jacobian
 
     class Spectrum:
@@ -86,7 +87,7 @@ def assert_plot_jacobian_uses_shared_conversion() -> None:
                 0.5,
             )
 
-    frame, field, _title = _jacobian_frame(Spectrum(), "aerosol_optical_depth")
+    frame, field, _title = jacobian_frame(Spectrum(), "aerosol_optical_depth")
     assert field == "reflectance_jacobian"
     assert np.allclose(
         frame[field].to_numpy(dtype=float),
@@ -135,7 +136,7 @@ def assert_reference_data_and_native_table() -> None:
 
 def main() -> int:
     assert_import_laziness()
-    assert_plot_api_boundary()
+    assert_plot_package_boundary()
     assert_quantity_conversions()
     assert_plot_jacobian_uses_shared_conversion()
     assert_reference_data_and_native_table()

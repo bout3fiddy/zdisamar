@@ -1,15 +1,15 @@
-"""Private instrument-response plot accessor."""
+"""Instrument-response plot accessor."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import altair as alt
 
 from .data import with_channel_labels
-from .properties import PLOT, _PlotAccessor
+from .properties import PLOT, PlotAccessor
 
 
-class _ISRFPlot(_PlotAccessor):
+class InstrumentResponsePlot(PlotAccessor):
     def __init__(self, response: Any):
         super().__init__(response)
 
@@ -18,7 +18,7 @@ class _ISRFPlot(_PlotAccessor):
 
 
 def _curve(response: Any):
-    data = with_channel_labels(response)
+    data = cast(Any, with_channel_labels(response))
     required = [
         "nominal_wavelength_nm",
         "channel_label",

@@ -6,12 +6,12 @@ from typing import Protocol
 
 import numpy as np
 
-from ...prepared import O2AForwardSession, PreparedO2ABase, prepare
+from ...forward_model.prepared import O2AForwardSession, PreparedO2ABase, prepare
+from ...output.spectrum import Spectrum
 from ...quantities import (
     reflectance_jacobian_from_radiance_jacobian,
     reflectance_noise_from_sun_normalized_radiance_noise,
 )
-from ...spectrum import Spectrum
 from ...types import O2AInput
 from .core import retrieve
 from .forward_evaluation import ForwardEvaluation
