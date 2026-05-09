@@ -12,13 +12,13 @@ from .forward_model.prepared import (
     prepare,
     prepare_default_o2a,
 )
+from .input.o2a import O2AInput
 from .output.spectrum import DiagnosticReport, Spectrum
 from .output.tables import (
     AtmosphericBudget,
     InstrumentResponseTable,
     OxygenCollisionInducedAbsorptionDiagnosticTable,
 )
-from .types import O2AInput
 
 __all__ = [
     "AtmosphereDiagnostics",

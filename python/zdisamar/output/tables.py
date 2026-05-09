@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
-from ..bindings.abi import (
+from ..bindings.structures import (
     CAtmosphericBudget,
     CAtmosphericBudgetRow,
     CInstrumentResponse,

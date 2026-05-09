@@ -4,15 +4,15 @@ import copy
 import ctypes
 from typing import Any
 
-from ..bindings.abi import CSpectrum
 from ..bindings.context import Context, LibraryPath
+from ..bindings.structures import CSpectrum
+from ..input.o2a import O2AInput
 from ..output.spectrum import Spectrum
 from ..output.tables import (
     AtmosphericBudget,
     InstrumentResponseTable,
     OxygenCollisionInducedAbsorptionDiagnosticTable,
 )
-from ..types import O2AInput
 
 
 class AtmosphereDiagnostics:

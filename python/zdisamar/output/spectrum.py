@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from typing import Any
 
-from ..bindings.abi import CSpectrum
-from ..types import O2AInput
+from ..bindings.structures import CSpectrum
+from ..input.o2a import O2AInput
 
 JACOBIAN_STATE_NAMES = (
     "surface_albedo",

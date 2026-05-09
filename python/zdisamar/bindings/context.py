@@ -5,6 +5,7 @@ import ctypes
 import os
 
 from .. import reference_data
+from ..input.o2a import O2AInput
 from ..output.spectrum import JACOBIAN_STATE_NAMES, DiagnosticReport, Spectrum
 from ..output.tables import (
     AtmosphericBudget,
@@ -13,8 +14,9 @@ from ..output.tables import (
     OxygenCollisionInducedAbsorptionDiagnosticTable,
     RadiativeTransferDiagnosticTable,
 )
-from ..types import O2AInput
-from .abi import (
+from .library import load_library
+from .signatures import configure
+from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
@@ -22,8 +24,6 @@ from .abi import (
     CSpectrum,
     O2LineContributionsRaw,
     OxygenCollisionInducedAbsorptionDiagnosticsRaw,
-    configure,
-    load_library,
 )
 
 LibraryPath = str | os.PathLike[str] | None

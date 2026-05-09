@@ -1,6 +1,6 @@
-"""Compatibility exports for typed O2 A input objects."""
+"""Typed O2 A input objects."""
 
-from .input.o2a import (
+from .o2a import (
     Aerosol,
     AerosolPlacement,
     Atmosphere,
