@@ -1,7 +1,5 @@
 """Prepared O2A inputs and user-facing forward-model helpers."""
 
-from __future__ import annotations
-
 import copy
 import ctypes
 from typing import Any
@@ -10,9 +8,7 @@ from .c_abi import CSpectrum
 from .native_tables import (
     AtmosphericBudget,
     InstrumentResponseTable,
-    O2LineContributions,
     OxygenCollisionInducedAbsorptionDiagnosticTable,
-    RadiativeTransferDiagnosticTable,
 )
 from .runtime import Context, LibraryPath
 from .spectrum import Spectrum
@@ -27,16 +23,6 @@ class AtmosphereDiagnostics:
 
     def budget(self, wavelengths_nm) -> AtmosphericBudget:
         return self._prepared.atmospheric_budget(wavelengths_nm)
-
-
-class O2LineDiagnostics:
-    """Prepared O2 line diagnostic entrypoints."""
-
-    def __init__(self, prepared: Any):
-        self._prepared = prepared
-
-    def contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
-        return self._prepared.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
 
 
 class PreparedO2ABase:
@@ -77,11 +63,6 @@ class PreparedO2ABase:
         return AtmosphereDiagnostics(self)
 
     @property
-    def o2_lines(self) -> O2LineDiagnostics:
-        self._require_context()
-        return O2LineDiagnostics(self)
-
-    @property
     def collision_induced_absorption(self):
         self._require_context()
         from .diagnostics import OxygenCollisionInducedAbsorptionDiagnostics
@@ -95,25 +76,8 @@ class PreparedO2ABase:
 
         return InstrumentResponseDiagnostics(self)
 
-    @property
-    def radiative_transfer(self):
-        self._require_context()
-        from .diagnostics import RadiativeTransferDiagnostics
-
-        return RadiativeTransferDiagnostics(self)
-
-    @property
-    def perturbations(self):
-        self._require_context()
-        from .diagnostics import PerturbationDiagnostics
-
-        return PerturbationDiagnostics(self)
-
     def atmospheric_budget(self, wavelengths_nm) -> AtmosphericBudget:
         return self._require_context().atmospheric_budget(wavelengths_nm)
-
-    def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
-        return self._require_context().o2_line_contributions(wavelengths_nm, max_rows=max_rows)
 
     def instrument_response_sampling(
         self,
@@ -128,15 +92,6 @@ class PreparedO2ABase:
         self, wavelengths_nm
     ) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
         return self._require_context().collision_induced_absorption_diagnostics(wavelengths_nm)
-
-    def radiative_transfer_diagnostics(
-        self,
-        wavelengths_nm,
-        spectrum: Spectrum | None = None,
-    ) -> RadiativeTransferDiagnosticTable:
-        return self._require_context().radiative_transfer_diagnostics(
-            wavelengths_nm, spectrum=spectrum
-        )
 
     def close(self) -> None:
         if self._ctx is not None:

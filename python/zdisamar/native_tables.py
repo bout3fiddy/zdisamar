@@ -1,7 +1,5 @@
 """Shared wrappers for native-owned diagnostic tables."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
@@ -31,6 +29,7 @@ class NativeTable:
     def __init__(self, owner: Any, raw: Any):
         self._owner: Any | None = owner
         self._raw: Any = raw
+        self._table_cache: Any | None = None
 
     def _require_open(self) -> None:
         if self._owner is None or self._owner._ctx is None:
@@ -42,19 +41,16 @@ class NativeTable:
 
     @property
     def table(self) -> Any:
-        self._require_open()
-        import numpy as np
-
-        return np.ctypeslib.as_array(self._raw.rows, shape=(self._raw.len,)).copy()
+        return self._table().copy()
 
     def column(self, name: str) -> Any:
         if name not in self.columns:
             raise KeyError(name)
-        return self.table[name]
+        return self._table()[name].copy()
 
     def to_rows(self) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
-        for row in self.table:
+        for row in self._table():
             item = {name: row[name].item() for name in self.columns}
             for label_name, (source_name, labels) in self.label_columns.items():
                 item[label_name] = labels.get(int(item[source_name]), "unknown")
@@ -71,12 +67,24 @@ class NativeTable:
             getattr(self._owner, self._free_method)(self._raw)
             self._owner = None
             self._raw = self._raw_type()
+            self._table_cache = None
 
     def __enter__(self):
         return self
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+    def _table(self) -> Any:
+        self._require_open()
+        if self._table_cache is None:
+            import numpy as np
+
+            self._table_cache = np.ctypeslib.as_array(
+                self._raw.rows,
+                shape=(self._raw.len,),
+            ).copy()
+        return self._table_cache
 
 
 def field_names(structure: type[Any]) -> tuple[str, ...]:
@@ -106,6 +114,12 @@ class AtmosphericBudget(NativeTable):
     _closed_message = "atmospheric budget is closed"
     _free_method = "_free_atmospheric_budget"
     _raw_type = CAtmosphericBudget
+
+    @property
+    def plot(self):
+        from ._plot.atmosphere import _BudgetPlot
+
+        return _BudgetPlot(self)
 
 
 class O2LineContributions(NativeTable):
@@ -161,6 +175,12 @@ class InstrumentResponseTable(NativeTable):
     _free_method = "_free_instrument_response"
     _raw_type = CInstrumentResponse
 
+    @property
+    def plot(self):
+        from ._plot.instrument_response import _ISRFPlot
+
+        return _ISRFPlot(self)
+
 
 class OxygenCollisionInducedAbsorptionDiagnosticTable(NativeTable):
     """Native O2-O2 collision-induced absorption diagnostic table."""
@@ -169,6 +189,12 @@ class OxygenCollisionInducedAbsorptionDiagnosticTable(NativeTable):
     _closed_message = "O2-O2 collision-induced absorption diagnostic table is closed"
     _free_method = "_free_collision_induced_absorption_diagnostics"
     _raw_type = OxygenCollisionInducedAbsorptionDiagnosticsRaw
+
+    @property
+    def plot(self):
+        from ._plot.collision_induced_absorption import _CIAPlot
+
+        return _CIAPlot(self)
 
 
 class RadiativeTransferDiagnosticTable(NativeTable):

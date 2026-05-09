@@ -1,7 +1,5 @@
 """Pressure-altitude conversion for pressure-coordinate scene settings."""
 
-from __future__ import annotations
-
 import csv
 import math
 from dataclasses import dataclass, field

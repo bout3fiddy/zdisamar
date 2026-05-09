@@ -10,8 +10,6 @@ That separation keeps inverse-method experiments from spreading scene-specific
 write logic into the numerical solver.
 """
 
-from __future__ import annotations
-
 import time
 from collections.abc import Callable, Iterable
 

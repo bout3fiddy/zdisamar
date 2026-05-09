@@ -1,10 +1,10 @@
 """Typed Python setup objects for the DISAMAR O2 A reference family."""
 
-from __future__ import annotations
-
 import json
 import math
+from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -57,6 +57,12 @@ class ReferenceAsset:
 
     def to_dict(self) -> dict[str, Any]:
         return {"id": self.id, "path": self.path, "format": self.format}
+
+    def with_resolved_path(self, resolver) -> ReferenceAsset:
+        path = Path(self.path)
+        if path.is_absolute():
+            return deepcopy(self)
+        return ReferenceAsset(id=self.id, path=str(resolver(path)), format=self.format)
 
 
 @dataclass
@@ -166,6 +172,12 @@ class Geometry:
     solar_zenith_deg: float
     viewing_zenith_deg: float
     relative_azimuth_deg: float
+
+    @property
+    def solar_mu0(self) -> float:
+        from .quantities import solar_mu0
+
+        return solar_mu0(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Geometry:
@@ -491,3 +503,38 @@ class O2AInput:
         return json.dumps(
             _json_value(self.to_dict()), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
+
+    def with_resolved_asset_paths(self, base: str | Path) -> O2AInput:
+        root = Path(base)
+        return self.with_resolved_asset_resolver(lambda path: (root / path).resolve())
+
+    def with_resolved_asset_resolver(self, resolver) -> O2AInput:
+        resolved = deepcopy(self)
+        resolved.reference_assets.atmosphere_profile = (
+            resolved.reference_assets.atmosphere_profile.with_resolved_path(resolver)
+        )
+        resolved.reference_assets.vendor_reference_csv = (
+            resolved.reference_assets.vendor_reference_csv.with_resolved_path(resolver)
+        )
+        resolved.reference_assets.raw_solar_reference = (
+            resolved.reference_assets.raw_solar_reference.with_resolved_path(resolver)
+        )
+        resolved.reference_assets.airmass_factor_lut = (
+            resolved.reference_assets.airmass_factor_lut.with_resolved_path(resolver)
+        )
+        resolved.o2_lines.line_list_asset = resolved.o2_lines.line_list_asset.with_resolved_path(
+            resolver
+        )
+        resolved.o2_lines.line_mixing_asset = (
+            resolved.o2_lines.line_mixing_asset.with_resolved_path(resolver)
+        )
+        resolved.o2_lines.strong_lines_asset = (
+            resolved.o2_lines.strong_lines_asset.with_resolved_path(resolver)
+        )
+        if resolved.collision_induced_absorption.cross_section_asset is not None:
+            resolved.collision_induced_absorption.cross_section_asset = (
+                resolved.collision_induced_absorption.cross_section_asset.with_resolved_path(
+                    resolver
+                )
+            )
+        return resolved

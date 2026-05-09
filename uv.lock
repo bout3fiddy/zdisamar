@@ -385,9 +385,9 @@ wheels = [
 ]
 
 [[package]]
-name = "zdisamar-tools"
+name = "zdisamar"
 version = "0.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "altair" },
     { name = "numpy" },

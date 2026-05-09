@@ -1,14 +1,16 @@
 """O2 A inverse forward-model adapter for optimal estimation."""
 
-from __future__ import annotations
-
 import copy
-import math
+from dataclasses import replace
 from typing import Protocol
 
 import numpy as np
 
 from ...prepared import O2AForwardSession, PreparedO2ABase, prepare
+from ...quantities import (
+    reflectance_jacobian_from_radiance_jacobian,
+    reflectance_noise_from_sun_normalized_radiance_noise,
+)
 from ...spectrum import Spectrum
 from ...types import O2AInput
 from .core import retrieve
@@ -84,11 +86,16 @@ def disamar_oe(
 ) -> Result:
     """Retrieve O2 A state-vector parameters with the DISAMAR optimal estimation controls."""
 
-    return retrieve(
+    result = retrieve(
         lambda state: inverse_model.evaluate(state, state_vector),
         measurement,
         state_vector,
         controls=controls or RetrievalControls.from_disamar_retrieval_specs(),
+    )
+    return replace(
+        result,
+        measurement=measurement,
+        final_evaluation=inverse_model.evaluate(result.state, state_vector),
     )
 
 
@@ -111,8 +118,11 @@ def evaluate_prepared_reflectance(
     #
     #     R = pi * I / (mu0 * E0)
     #     dR/dx = dI/dx / (mu0 * E0 / pi).
-    mu0 = math.cos(math.radians(prepared.input.geometry.solar_zenith_deg))
-    reflectance_jacobian_all = radiance_jacobian / ((mu0 * irradiance / math.pi)[:, None])
+    reflectance_jacobian_all = reflectance_jacobian_from_radiance_jacobian(
+        radiance_jacobian,
+        irradiance,
+        prepared.input.geometry.solar_mu0,
+    )
     if available_state_names != state_names:
         raise ValueError("Native Jacobian state selection did not preserve requested state order")
     return ForwardEvaluation(
@@ -212,12 +222,15 @@ def measurement_from_sun_normalized_radiance_noise(
 
     # The retrieval vector is reflectance, so the measurement covariance must
     # live in the same units before it enters the inverse problem.
-    mu0 = math.cos(math.radians(prepared.input.geometry.solar_zenith_deg))
     reflectance_noise = np.interp(
         measurement_wavelength,
         source_wavelength,
         source_noise,
-    ) * (math.pi / mu0)
+    )
+    reflectance_noise = reflectance_noise_from_sun_normalized_radiance_noise(
+        reflectance_noise,
+        prepared.input.geometry.solar_mu0,
+    )
     return Measurement(
         wavelength_nm=measurement_wavelength,
         reflectance=reflectance,

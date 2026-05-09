@@ -1,5 +1,5 @@
 [project]
-name = "zdisamar-tools"
+name = "zdisamar"
 version = "0.0.0"
 requires-python = ">=3.14"
 dependencies = [
@@ -10,6 +10,10 @@ dependencies = [
     "vl-convert-python>=1.7",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [dependency-groups]
 dev = [
     "basedpyright>=1.22",
@@ -17,8 +21,19 @@ dev = [
     "ty>=0.0.1a1",
 ]
 
-[tool.uv]
-package = false
+[tool.hatch.build.targets.wheel]
+packages = ["python/zdisamar"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"data/reference_data" = "zdisamar/reference_data/assets"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "python/zdisamar",
+    "data/reference_data",
+    "pyproject.toml",
+    "uv.lock",
+]
 
 [tool.ruff]
 target-version = "py314"

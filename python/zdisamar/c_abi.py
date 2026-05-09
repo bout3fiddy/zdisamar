@@ -1,7 +1,5 @@
 """Private ctypes declarations for the native zdisamar C ABI."""
 
-from __future__ import annotations
-
 import ctypes
 import os
 import sys

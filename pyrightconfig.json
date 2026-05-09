@@ -1,6 +1,6 @@
 {
   "include": ["python/zdisamar"],
-  "exclude": ["python/zdisamar/plot"],
+  "exclude": ["python/zdisamar/_plot"],
   "pythonVersion": "3.14",
   "typeCheckingMode": "standard",
   "reportImportCycles": "none",

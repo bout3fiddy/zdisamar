@@ -1,7 +1,5 @@
 """Shared O2 A optimal-estimation retrieval baseline settings."""
 
-from __future__ import annotations
-
 import math
 
 WAVELENGTH_START_NM = 758.0

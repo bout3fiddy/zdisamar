@@ -1,10 +1,10 @@
 """Native context runtime for O2A forward-model calls."""
 
-from __future__ import annotations
-
+import copy
 import ctypes
 import os
 
+from . import reference_data
 from .c_abi import (
     CAtmosphericBudget,
     CDiagnosticReport,
@@ -69,6 +69,7 @@ class Context:
     def __init__(self, library_path: LibraryPath = None):
         self._lib = configure(load_library(library_path))
         self._ctx = self._lib.zds_context_create()
+        self._input: O2AInput | None = None
         if not self._ctx:
             raise RuntimeError("failed to create zdisamar context")
 
@@ -77,7 +78,12 @@ class Context:
             self._lib.zds_context_destroy(self._ctx)
             self._ctx = None
 
+    @property
+    def input(self) -> O2AInput | None:
+        return None if self._input is None else copy.deepcopy(self._input)
+
     def prepare_default_o2a(self) -> Context:
+        self._input = self.default_o2a_input()
         self._check(self._lib.zds_prepare_default_o2a(self._ctx))
         return self
 
@@ -96,7 +102,8 @@ class Context:
         return O2AInput.from_json(buffer.value[: size.value])
 
     def prepare_o2a(self, input: O2AInput) -> Context:
-        payload = input.to_json_bytes()
+        resolved = input.with_resolved_asset_resolver(reference_data.resolve_asset_path)
+        payload = resolved.to_json_bytes()
         self._check(
             self._lib.zds_prepare_o2a_json(
                 self._ctx,
@@ -104,6 +111,7 @@ class Context:
                 len(payload),
             )
         )
+        self._input = input
         return self
 
     def warm_o2a_session(self) -> Context:

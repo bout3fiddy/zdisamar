@@ -1,18 +1,13 @@
 """Public exports for the Python O2A native wrapper."""
 
-from __future__ import annotations
-
 from .native_tables import (
     AtmosphericBudget,
     InstrumentResponseTable,
-    O2LineContributions,
     OxygenCollisionInducedAbsorptionDiagnosticTable,
-    RadiativeTransferDiagnosticTable,
 )
 from .prepared import (
     AtmosphereDiagnostics,
     O2AForwardSession,
-    O2LineDiagnostics,
     PreparedDefaultO2A,
     PreparedO2A,
     forward,
@@ -31,14 +26,11 @@ __all__ = [
     "Context",
     "DiagnosticReport",
     "InstrumentResponseTable",
-    "O2LineContributions",
-    "O2LineDiagnostics",
     "OxygenCollisionInducedAbsorptionDiagnosticTable",
     "O2AInput",
     "O2AForwardSession",
     "PreparedDefaultO2A",
     "PreparedO2A",
-    "RadiativeTransferDiagnosticTable",
     "Spectrum",
     "forward",
     "o2a_forward_session",

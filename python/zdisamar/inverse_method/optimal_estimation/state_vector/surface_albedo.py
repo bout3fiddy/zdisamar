@@ -1,7 +1,5 @@
 """Surface albedo retrieval parameter."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 SURFACE_ALBEDO = "surface_albedo"

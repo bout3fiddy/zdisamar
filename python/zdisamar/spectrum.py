@@ -1,11 +1,10 @@
 """Spectrum result wrappers for native O2A forward-model output."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 
 from .c_abi import CSpectrum
+from .types import O2AInput
 
 JACOBIAN_STATE_NAMES = (
     "surface_albedo",
@@ -53,6 +52,18 @@ class Spectrum:
         return owner
 
     @property
+    def input(self) -> O2AInput | None:
+        owner = self._require_open()
+        return owner.input
+
+    @property
+    def solar_mu0(self) -> float | None:
+        input = self.input
+        if input is None:
+            return None
+        return input.geometry.solar_mu0
+
+    @property
     def wavelength_nm(self) -> Any:
         return self._array(self._raw.wavelength_nm)
 
@@ -67,6 +78,28 @@ class Spectrum:
     @property
     def reflectance(self) -> Any:
         return self._array(self._raw.reflectance)
+
+    @property
+    def sun_normalized_radiance(self) -> Any:
+        from .quantities import sun_normalized_radiance
+
+        return sun_normalized_radiance(self.radiance, self.irradiance)
+
+    def reflectance_jacobian(self, state: str) -> Any:
+        names = self.jacobian_state_names
+        if state not in names:
+            raise ValueError(f"unknown Jacobian state: {state}")
+        mu0 = self.solar_mu0
+        if mu0 is None:
+            raise RuntimeError("spectrum input geometry is unavailable")
+        from .quantities import reflectance_jacobian_from_radiance_jacobian
+
+        index = names.index(state)
+        return reflectance_jacobian_from_radiance_jacobian(
+            self.radiance_jacobian[:, index],
+            self.irradiance,
+            mu0,
+        )
 
     @property
     def jacobian_state_names(self) -> tuple[str, ...]:
@@ -90,6 +123,12 @@ class Spectrum:
             shape=(self._raw.len * self._raw.jacobian_state_count,),
         )
         return flat.reshape((self._raw.len, self._raw.jacobian_state_count))
+
+    @property
+    def plot(self):
+        from ._plot.spectrum import _SpectrumPlot
+
+        return _SpectrumPlot(self)
 
     @property
     def diagnostic_report(self) -> DiagnosticReport:

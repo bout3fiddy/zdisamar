@@ -1,7 +1,5 @@
 """Covariance-space preparation for optimal-estimation updates."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 import numpy as np

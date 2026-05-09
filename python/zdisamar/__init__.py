@@ -1,6 +1,8 @@
 """Python wrapper for the native zdisamar O2A C ABI."""
 
-from . import inverse_method
+from importlib import import_module
+
+from . import reference_data
 from .api import (
     AtmosphereDiagnostics,
     AtmosphericBudget,
@@ -8,27 +10,15 @@ from .api import (
     DiagnosticReport,
     InstrumentResponseTable,
     O2AForwardSession,
-    O2LineContributions,
-    O2LineDiagnostics,
     OxygenCollisionInducedAbsorptionDiagnosticTable,
     PreparedDefaultO2A,
     PreparedO2A,
-    RadiativeTransferDiagnosticTable,
     Spectrum,
     forward,
     o2a_disamar_reference_input,
     o2a_forward_session,
     prepare,
     prepare_default_o2a,
-)
-from .diagnostics import (
-    DiagnosticTable,
-    InstrumentResponseDiagnostics,
-    OxygenCollisionInducedAbsorptionDiagnostics,
-    PerturbationDiagnostics,
-    PerturbationResult,
-    PerturbationSummary,
-    RadiativeTransferDiagnostics,
 )
 from .types import (
     Aerosol,
@@ -47,6 +37,15 @@ from .types import (
     VerticalInterval,
 )
 
+
+def __getattr__(name: str):
+    if name == "inverse_method":
+        module = import_module(".inverse_method", __name__)
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "Aerosol",
     "AerosolPlacement",
@@ -55,27 +54,17 @@ __all__ = [
     "AtmosphericBudget",
     "Context",
     "DiagnosticReport",
-    "DiagnosticTable",
     "Geometry",
     "InstrumentResponse",
-    "InstrumentResponseDiagnostics",
     "InstrumentResponseTable",
     "O2AInput",
     "O2LineByLine",
-    "O2LineContributions",
-    "O2LineDiagnostics",
     "O2AForwardSession",
-    "OxygenCollisionInducedAbsorptionDiagnostics",
     "OxygenCollisionInducedAbsorptionDiagnosticTable",
     "OxygenCollisionInducedAbsorption",
-    "PerturbationDiagnostics",
-    "PerturbationResult",
-    "PerturbationSummary",
     "PreparedO2A",
     "PreparedDefaultO2A",
     "RadiativeTransferControls",
-    "RadiativeTransferDiagnostics",
-    "RadiativeTransferDiagnosticTable",
     "ReferenceAsset",
     "ReferenceAssets",
     "SpectralGrid",
@@ -85,7 +74,7 @@ __all__ = [
     "forward",
     "o2a_forward_session",
     "o2a_disamar_reference_input",
-    "inverse_method",
+    "reference_data",
     "prepare",
     "prepare_default_o2a",
 ]
