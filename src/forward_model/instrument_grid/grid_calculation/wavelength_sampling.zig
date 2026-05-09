@@ -5,18 +5,13 @@ const calibration = @import("../spectral_math/calibration.zig");
 const grid = @import("../spectral_math/grid.zig");
 const SpectralEval = @import("spectral_eval.zig");
 const Types = @import("types.zig");
+const Plan = @import("wavelength_plan.zig");
 const IntegrationKernel = @import("../../implementations/instrument.zig").IntegrationKernel;
 const instrument_integration = @import("../../implementations/instrument/integration.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const WavelengthSampling = struct {
-    nominal_wavelength_nm: f64,
-    radiance_wavelength_nm: f64,
-    irradiance_wavelength_nm: f64,
-    radiance_integration: IntegrationKernel,
-    irradiance_integration: IntegrationKernel,
-};
+pub const WavelengthSampling = Plan.WavelengthSampling;
 
 pub fn buildWavelengthSampling(
     allocator: Allocator,
@@ -109,10 +104,10 @@ pub fn buildWavelengthSampling(
 pub fn collectUniqueForwardMisses(
     allocator: Allocator,
     plans: []const WavelengthSampling,
-) ![]SpectralEval.ForwardCacheMiss {
+) ![]Plan.ForwardCacheMiss {
     var seen = std.AutoHashMap(u64, void).init(allocator);
     defer seen.deinit();
-    var misses = std.ArrayList(SpectralEval.ForwardCacheMiss).empty;
+    var misses = std.ArrayList(Plan.ForwardCacheMiss).empty;
     errdefer misses.deinit(allocator);
 
     for (plans) |plan| {

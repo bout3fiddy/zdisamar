@@ -12,7 +12,7 @@ const max_spectroscopy_profile_nodes: usize = 256;
 
 pub const ProfileNodeSpectroscopyCache = struct {
     node_count: usize = 0,
-    altitudes_km: []const f64 = &.{},
+    altitudes_km: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     weak_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     strong_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
     line_values: [max_spectroscopy_profile_nodes]f64 = [_]f64{0.0} ** max_spectroscopy_profile_nodes,
@@ -45,7 +45,7 @@ pub const ProfileNodeSpectroscopyCache = struct {
 
         var cache = ProfileNodeSpectroscopyCache{
             .node_count = node_count,
-            .altitudes_km = self.spectroscopy_profile_altitudes_km[0..node_count],
+            .altitudes_km = undefined,
             .weak_values = undefined,
             .strong_values = undefined,
             .line_values = undefined,
@@ -62,6 +62,7 @@ pub const ProfileNodeSpectroscopyCache = struct {
         else
             null;
         for (0..node_count) |index| {
+            cache.altitudes_km[index] = self.spectroscopy_profile_altitudes_km[index];
             const evaluation = if (prepared_states) |states|
                 LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
                     line_list,

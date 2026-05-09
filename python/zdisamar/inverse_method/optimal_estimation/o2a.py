@@ -4,15 +4,29 @@ from __future__ import annotations
 
 import copy
 import math
+from typing import Protocol
 
 import numpy as np
 
-from ...prepared import PreparedO2ABase, prepare
+from ...prepared import O2AForwardSession, PreparedO2ABase, prepare
+from ...spectrum import Spectrum
 from ...types import O2AInput
 from .core import retrieve
 from .forward_evaluation import ForwardEvaluation
 from .retrieval import Measurement, Result, RetrievalControls
 from .state_vector import PressureAltitudeProfile, StateVector
+
+
+class PreparedForwardModel(Protocol):
+    @property
+    def input(self) -> O2AInput: ...
+
+    def forward_model(
+        self,
+        *,
+        jacobian: bool = False,
+        jacobian_state_names: tuple[str, ...] | None = None,
+    ) -> Spectrum: ...
 
 
 class O2AInverseForwardModel:
@@ -25,9 +39,15 @@ class O2AInverseForwardModel:
     that implementation without changing the optimal-estimation loop.
     """
 
-    def __init__(self, template: O2AInput, library_path: str | None = None):
+    def __init__(
+        self,
+        template: O2AInput,
+        library_path: str | None = None,
+        forward_session: O2AForwardSession | None = None,
+    ):
         self._template = copy.deepcopy(template)
         self._library_path = library_path
+        self._forward_session = forward_session
 
     def settings_for_state(
         self,
@@ -43,11 +63,16 @@ class O2AInverseForwardModel:
         state: np.ndarray,
         state_vector: StateVector,
     ) -> ForwardEvaluation:
+        if self._forward_session is not None:
+            prepared = self._forward_session.prepare(self.settings_for_state(state, state_vector))
+            evaluation = evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+            return scale_reflectance_jacobian(evaluation, state_vector.jacobian_scales(state))
         with prepare(
             self.settings_for_state(state, state_vector),
             library_path=self._library_path,
         ) as prepared:
-            return evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+            evaluation = evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+            return scale_reflectance_jacobian(evaluation, state_vector.jacobian_scales(state))
 
 
 def disamar_oe(
@@ -68,12 +93,12 @@ def disamar_oe(
 
 
 def evaluate_prepared_reflectance(
-    prepared: PreparedO2ABase,
+    prepared: PreparedForwardModel,
     state_names: tuple[str, ...],
 ) -> ForwardEvaluation:
     """Evaluate reflectance and selected reflectance Jacobian columns."""
 
-    with prepared.forward_model(jacobian=True) as spectrum:
+    with prepared.forward_model(jacobian=True, jacobian_state_names=state_names) as spectrum:
         wavelength_nm = spectrum.wavelength_nm.copy()
         reflectance = spectrum.reflectance.copy()
         radiance_jacobian = spectrum.radiance_jacobian.copy()
@@ -88,11 +113,27 @@ def evaluate_prepared_reflectance(
     #     dR/dx = dI/dx / (mu0 * E0 / pi).
     mu0 = math.cos(math.radians(prepared.input.geometry.solar_zenith_deg))
     reflectance_jacobian_all = radiance_jacobian / ((mu0 * irradiance / math.pi)[:, None])
-    columns = [available_state_names.index(name) for name in state_names]
+    if available_state_names != state_names:
+        raise ValueError("Native Jacobian state selection did not preserve requested state order")
     return ForwardEvaluation(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
-        reflectance_jacobian=reflectance_jacobian_all[:, columns],
+        reflectance_jacobian=reflectance_jacobian_all,
+    )
+
+
+def scale_reflectance_jacobian(
+    evaluation: ForwardEvaluation,
+    scales: np.ndarray,
+) -> ForwardEvaluation:
+    """Convert backend Jacobian columns into state-vector coordinates."""
+
+    if evaluation.reflectance_jacobian.shape[1] != scales.size:
+        raise ValueError("Jacobian scale count does not match state vector dimension")
+    return ForwardEvaluation(
+        wavelength_nm=evaluation.wavelength_nm,
+        reflectance=evaluation.reflectance,
+        reflectance_jacobian=evaluation.reflectance_jacobian * scales[None, :],
     )
 
 
@@ -113,19 +154,11 @@ def measurement_from_prepared(
     )
 
 
-def pressure_altitude_profile_from_prepared_grid(
-    case: O2AInput,
-    *,
-    library_path: str | None = None,
-) -> PressureAltitudeProfile:
-    """Use the prepared grid as the state-vector pressure/altitude contract."""
-
-    with prepare(case, library_path=library_path) as prepared:
-        budget = prepared.atmospheric_budget(
-            np.array([case.spectral_grid.start_nm], dtype=np.float64)
-        )
-        table = budget.table
-
+def pressure_altitude_profile_from_prepared(prepared: PreparedO2ABase) -> PressureAltitudeProfile:
+    budget = prepared.atmospheric_budget(
+        np.array([prepared.input.spectral_grid.start_nm], dtype=np.float64)
+    )
+    table = budget.table
     levels_by_pressure: dict[float, float] = {}
     for row in table:
         levels_by_pressure[round(float(row["top_pressure_hpa"]), 12)] = float(
@@ -139,6 +172,17 @@ def pressure_altitude_profile_from_prepared_grid(
         altitude_km=np.array([altitude for altitude, _pressure in levels]),
         pressure_hpa=np.array([pressure for _altitude, pressure in levels]),
     )
+
+
+def pressure_altitude_profile_from_prepared_grid(
+    case: O2AInput,
+    *,
+    library_path: str | None = None,
+) -> PressureAltitudeProfile:
+    """Use the prepared grid as the state-vector pressure/altitude contract."""
+
+    with prepare(case, library_path=library_path) as prepared:
+        return pressure_altitude_profile_from_prepared(prepared)
 
 
 def measurement_from_sun_normalized_radiance_noise(

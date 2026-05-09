@@ -7,12 +7,19 @@
 #   "pandas>=2.2",
 # ]
 # ///
+# ruff: noqa: E402, I001
 
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
-import plot_validation
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
+import plot_validation  # noqa: E402
 
 
 def main() -> int:
@@ -27,11 +34,10 @@ def main() -> int:
     metrics_payload = json.loads(plot_validation.METRICS_PATH.read_text())
     metrics = metrics_payload["series"]
     assert metrics_payload["passes_reflectance_threshold"] is True
-    assert metrics_payload["sample_count"] == 701
-    assert len(metrics) == 4
+    assert metrics_payload["sample_count"] == oe_baseline.SAMPLE_COUNT
+    assert len(metrics) == 3
     assert [metric["series"] for metric in metrics] == [
         "forward reflectance",
-        "dR/d surface albedo",
         "dR/d aerosol optical depth",
         "dR/d aerosol layer mid pressure",
     ]

@@ -10,12 +10,172 @@ const jacobian = @import("../../jacobian/root.zig");
 const Postprocess = @import("postprocess.zig");
 const WavelengthSampling = @import("wavelength_sampling.zig");
 const SpectralEval = @import("spectral_eval.zig");
+const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
 const Trace = @import("../../performance_trace.zig");
 
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
+const profile_cache_build_chunk_size: usize = 8;
+
+const ProfileCacheBuildQueue = struct {
+    mutex: std.Thread.Mutex = .{},
+    next_index: usize = 0,
+    len: usize,
+
+    fn next(self: *ProfileCacheBuildQueue) ?struct { start: usize, end: usize } {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.next_index >= self.len) return null;
+        const start = self.next_index;
+        const end = @min(start + profile_cache_build_chunk_size, self.len);
+        self.next_index = end;
+        return .{ .start = start, .end = end };
+    }
+};
+
+const ProfileCacheBuildWorker = struct {
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    forward_misses: []const SpectralEval.ForwardCacheMiss,
+    caches: []SpectroscopyState.ProfileNodeSpectroscopyCache,
+    queue: *ProfileCacheBuildQueue,
+};
+
+fn profileCacheBuildWorkerMain(worker: *ProfileCacheBuildWorker) void {
+    while (worker.queue.next()) |chunk| {
+        for (chunk.start..chunk.end) |index| {
+            worker.caches[index] = SpectroscopyState.ProfileNodeSpectroscopyCache.init(
+                worker.prepared,
+                worker.forward_misses[index].wavelength_nm,
+            );
+        }
+    }
+}
+
+pub fn warmWavelengthPlan(
+    allocator: Allocator,
+    storage: *Storage.SummaryStorage,
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+) Storage.Error!void {
+    try scene.validate();
+    const spectral_grid: grid.SpectralGrid = .{
+        .start_nm = scene.spectral_grid.start_nm,
+        .end_nm = scene.spectral_grid.end_nm,
+        .sample_count = scene.spectral_grid.sample_count,
+    };
+    const resolved_axis: grid.ResolvedAxis = .{
+        .base = spectral_grid,
+        .explicit_wavelengths_nm = scene.observation_model.measured_wavelengths_nm,
+    };
+    try resolved_axis.validate();
+
+    const plan_key = wavelengthPlanKey(scene, prepared, implementations);
+    if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
+        _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
+        return;
+    }
+
+    storage.invalidateWavelengthPlan(allocator);
+    errdefer storage.invalidateWavelengthPlan(allocator);
+
+    storage.wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
+        allocator,
+        scene,
+        prepared,
+        &resolved_axis,
+        implementations.instrument.calibrationForScene(scene, .radiance),
+        implementations.instrument.calibrationForScene(scene, .irradiance),
+        implementations,
+    );
+    storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
+        allocator,
+        storage.wavelength_sampling,
+    );
+    storage.forward_misses_valid = true;
+    _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
+    storage.wavelength_plan_key = plan_key;
+    storage.wavelength_plan_valid = true;
+}
+
+fn ensureProfileSpectroscopyCaches(
+    allocator: Allocator,
+    storage: *Storage.SummaryStorage,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    forward_misses: []const SpectralEval.ForwardCacheMiss,
+) ![]const SpectroscopyState.ProfileNodeSpectroscopyCache {
+    const cache_key = profileSpectroscopyCacheKey(prepared, forward_misses);
+    if (storage.profile_spectroscopy_cache_valid and
+        storage.profile_spectroscopy_cache_key == cache_key and
+        storage.profile_spectroscopy_caches.len == forward_misses.len)
+    {
+        return storage.profile_spectroscopy_caches;
+    }
+
+    allocator.free(storage.profile_spectroscopy_caches);
+    storage.profile_spectroscopy_caches = &.{};
+    storage.profile_spectroscopy_cache_key = 0;
+    storage.profile_spectroscopy_cache_valid = false;
+
+    storage.profile_spectroscopy_caches = try buildProfileSpectroscopyCaches(
+        allocator,
+        prepared,
+        forward_misses,
+    );
+    storage.profile_spectroscopy_cache_key = cache_key;
+    storage.profile_spectroscopy_cache_valid = true;
+    return storage.profile_spectroscopy_caches;
+}
+
+fn buildProfileSpectroscopyCaches(
+    allocator: Allocator,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    forward_misses: []const SpectralEval.ForwardCacheMiss,
+) ![]SpectroscopyState.ProfileNodeSpectroscopyCache {
+    const caches = try allocator.alloc(SpectroscopyState.ProfileNodeSpectroscopyCache, forward_misses.len);
+    errdefer allocator.free(caches);
+
+    const worker_count = SpectralEval.preferredForwardWorkerCount(forward_misses.len);
+    if (worker_count == 1) {
+        for (forward_misses, caches) |miss, *cache| {
+            cache.* = SpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, miss.wavelength_nm);
+        }
+        return caches;
+    }
+
+    var queue: ProfileCacheBuildQueue = .{ .len = forward_misses.len };
+    const workers = try allocator.alloc(ProfileCacheBuildWorker, worker_count);
+    defer allocator.free(workers);
+    const threads = try allocator.alloc(std.Thread, worker_count - 1);
+    defer allocator.free(threads);
+
+    var started_thread_count: usize = 0;
+    for (0..worker_count) |worker_index| {
+        workers[worker_index] = .{
+            .prepared = prepared,
+            .forward_misses = forward_misses,
+            .caches = caches,
+            .queue = &queue,
+        };
+        if (worker_index + 1 < worker_count) {
+            threads[started_thread_count] = std.Thread.spawn(
+                .{},
+                profileCacheBuildWorkerMain,
+                .{&workers[worker_index]},
+            ) catch {
+                profileCacheBuildWorkerMain(&workers[worker_index]);
+                continue;
+            };
+            started_thread_count += 1;
+        } else {
+            profileCacheBuildWorkerMain(&workers[worker_index]);
+        }
+    }
+    for (threads[0..started_thread_count]) |thread| thread.join();
+    return caches;
+}
 
 pub fn simulateInternal(
     allocator: Allocator,
@@ -25,6 +185,7 @@ pub fn simulateInternal(
     implementations: Types.Implementations,
     buffers: Storage.Buffers,
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+    wavelength_plan_storage: ?*Storage.SummaryStorage,
 ) Storage.Error!Types.InstrumentGridSummary {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
@@ -51,25 +212,69 @@ pub fn simulateInternal(
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
     const trace = Trace.asRun(implementations.trace);
     if (Trace.enabled) if (trace) |run| run.addCounter(.output_wavelengths, @intCast(sample_count));
+    const plan_key = wavelengthPlanKey(scene, prepared, implementations);
+    var owned_wavelength_sampling: []WavelengthSampling.WavelengthSampling = &.{};
+    defer allocator.free(owned_wavelength_sampling);
+    var owned_forward_misses: []SpectralEval.ForwardCacheMiss = &.{};
+    defer allocator.free(owned_forward_misses);
+
     const wavelength_sampling_start = Trace.begin();
-    const wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
-        allocator,
-        scene,
-        prepared,
-        &resolved_axis,
-        radiance_calibration,
-        irradiance_calibration,
-        implementations,
-    );
+    const wavelength_sampling: []const WavelengthSampling.WavelengthSampling = blk: {
+        if (wavelength_plan_storage) |storage| {
+            if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
+                break :blk storage.wavelength_sampling;
+            }
+            storage.invalidateWavelengthPlan(allocator);
+            storage.wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
+                allocator,
+                scene,
+                prepared,
+                &resolved_axis,
+                radiance_calibration,
+                irradiance_calibration,
+                implementations,
+            );
+            storage.wavelength_plan_key = plan_key;
+            storage.wavelength_plan_valid = true;
+            break :blk storage.wavelength_sampling;
+        }
+        owned_wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
+            allocator,
+            scene,
+            prepared,
+            &resolved_axis,
+            radiance_calibration,
+            irradiance_calibration,
+            implementations,
+        );
+        break :blk owned_wavelength_sampling;
+    };
     if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_wavelength_sampling, Trace.elapsed(wavelength_sampling_start));
-    defer allocator.free(wavelength_sampling);
     const miss_collection_start = Trace.begin();
-    const forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
-        allocator,
-        wavelength_sampling,
-    );
+    const forward_misses: []const SpectralEval.ForwardCacheMiss = blk: {
+        if (wavelength_plan_storage) |storage| {
+            if (!storage.forward_misses_valid) {
+                storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
+                    allocator,
+                    wavelength_sampling,
+                );
+                storage.forward_misses_valid = true;
+            }
+            break :blk storage.forward_misses;
+        }
+        owned_forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
+            allocator,
+            wavelength_sampling,
+        );
+        break :blk owned_forward_misses;
+    };
+    const profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache = blk: {
+        if (wavelength_plan_storage) |storage| {
+            break :blk try ensureProfileSpectroscopyCaches(allocator, storage, prepared, forward_misses);
+        }
+        break :blk &.{};
+    };
     if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_forward_miss_collection, Trace.elapsed(miss_collection_start));
-    defer allocator.free(forward_misses);
     const forward_prefetch_start = Trace.begin();
     try SpectralEval.prefetchForwardSamples(
         allocator,
@@ -79,6 +284,7 @@ pub fn simulateInternal(
         implementations,
         safe_span,
         forward_misses,
+        profile_spectroscopy_caches,
         evaluation_cache,
     );
     if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_forward_prefetch_wall, Trace.elapsed(forward_prefetch_start));
@@ -299,6 +505,250 @@ pub fn simulateInternal(
     };
 }
 
+fn wavelengthPlanKey(
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+) u64 {
+    var hash = std.hash.Wyhash.init(0x4f32_4132_7761_7665);
+    hash.update(implementations.instrument.id);
+    updateFloat(&hash, scene.spectral_grid.start_nm);
+    updateFloat(&hash, scene.spectral_grid.end_nm);
+    updateInt(&hash, scene.spectral_grid.sample_count);
+    updateInt(&hash, @intFromEnum(scene.observation_model.sampling));
+    updateFloat(&hash, scene.observation_model.wavelength_shift_nm);
+    updateFloatSlice(&hash, scene.observation_model.measured_wavelengths_nm);
+    updateAdaptiveReferenceGrid(&hash, scene.observation_model.adaptive_reference_grid);
+    updateSpectroscopyPlanInputs(&hash, prepared);
+    updateChannelControls(&hash, scene, .radiance);
+    updateChannelControls(&hash, scene, .irradiance);
+    return hash.final();
+}
+
+fn profileSpectroscopyCacheKey(
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    forward_misses: []const SpectralEval.ForwardCacheMiss,
+) u64 {
+    var hash = std.hash.Wyhash.init(0x4f32_4132_7072_6f66);
+    updateInt(&hash, forward_misses.len);
+    for (forward_misses) |miss| {
+        updateFloat(&hash, miss.wavelength_nm);
+    }
+    updateFloatSlice(&hash, prepared.spectroscopy_profile_altitudes_km);
+    updateFloatSlice(&hash, prepared.spectroscopy_profile_pressures_hpa);
+    updateFloatSlice(&hash, prepared.spectroscopy_profile_temperatures_k);
+    updateSpectroscopyCacheInputs(&hash, prepared);
+    return hash.final();
+}
+
+fn updateSpectroscopyCacheInputs(
+    hash: *std.hash.Wyhash,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+) void {
+    updateInt(hash, prepared.spectroscopy_lines != null);
+    if (prepared.spectroscopy_lines) |line_list| updateFullLineListInputs(hash, line_list);
+    updateInt(hash, prepared.operational_o2_lut.enabled());
+    updateStrongLinePreparedStates(hash, prepared.spectroscopy_profile_strong_line_states);
+    updateWeakLinePreparedStates(hash, prepared.spectroscopy_profile_weak_line_states);
+}
+
+fn updateStrongLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
+    updateInt(hash, states != null);
+    if (states) |resolved| {
+        updateInt(hash, resolved.len);
+        for (resolved) |state| {
+            updateInt(hash, state.line_count);
+            updateFloat(hash, state.sig_moy_cm1);
+            updateFloatSlice(hash, state.population_t);
+            updateFloatSlice(hash, state.dipole_t);
+            updateFloatSlice(hash, state.mod_sig_cm1);
+            updateFloatSlice(hash, state.half_width_cm1_at_t);
+            updateFloatSlice(hash, state.line_mixing_coefficients);
+            updateFloatSlice(hash, state.relaxation_weights);
+        }
+    }
+}
+
+fn updateWeakLinePreparedStates(hash: *std.hash.Wyhash, states: anytype) void {
+    updateInt(hash, states != null);
+    if (states) |resolved| {
+        updateInt(hash, resolved.len);
+        for (resolved) |state| {
+            updateInt(hash, state.line_count);
+            updateInt(hash, state.lines.len);
+            for (state.lines) |line| {
+                updateFloat(hash, line.shifted_center_wavenumber_cm1);
+                updateFloat(hash, line.cte);
+                updateFloat(hash, line.line_shape_y);
+                updateFloat(hash, line.prefactor_base);
+                updateFloat(hash, line.safe_temperature);
+                updateFloat(hash, line.safe_pressure);
+            }
+        }
+    }
+}
+
+fn updateChannelControls(hash: *std.hash.Wyhash, scene: *const Scene, channel: SpectralChannel) void {
+    const controls = scene.observation_model.resolvedChannelControls(channel);
+    updateInt(hash, @intFromEnum(channel));
+    updateFloat(hash, controls.wavelength_shift_nm);
+    const response = controls.response;
+    updateInt(hash, response.explicit);
+    updateInt(hash, @intFromEnum(response.slit_index));
+    updateFloat(hash, response.fwhm_nm);
+    updateFloat(hash, response.amplitude);
+    updateFloat(hash, response.scale);
+    updateFloat(hash, response.phase_deg);
+    updateInt(hash, @intFromEnum(response.builtin_line_shape));
+    updateInt(hash, @intFromEnum(response.integration_mode));
+    updateFloat(hash, response.high_resolution_step_nm);
+    updateFloat(hash, response.high_resolution_half_span_nm);
+    updateInt(hash, response.instrument_line_shape.sample_count);
+    updateFloatSlice(hash, response.instrument_line_shape.offsets_nm[0..@min(response.instrument_line_shape.offsets_nm.len, response.instrument_line_shape.sample_count)]);
+    updateFloatSlice(hash, response.instrument_line_shape.weights[0..@min(response.instrument_line_shape.weights.len, response.instrument_line_shape.sample_count)]);
+    updateInt(hash, response.instrument_line_shape_table.nominal_count);
+    updateInt(hash, response.instrument_line_shape_table.sample_count);
+    updateFloatSlice(hash, response.instrument_line_shape_table.nominal_wavelengths_nm[0..@min(response.instrument_line_shape_table.nominal_wavelengths_nm.len, response.instrument_line_shape_table.nominal_count)]);
+    updateFloatSlice(hash, response.instrument_line_shape_table.offsets_nm[0..@min(response.instrument_line_shape_table.offsets_nm.len, response.instrument_line_shape_table.sample_count)]);
+    const table_weight_count = @min(
+        response.instrument_line_shape_table.weights.len,
+        @as(usize, response.instrument_line_shape_table.nominal_count) * @as(usize, response.instrument_line_shape_table.sample_count),
+    );
+    updateFloatSlice(hash, response.instrument_line_shape_table.weights[0..table_weight_count]);
+}
+
+fn updateAdaptiveReferenceGrid(
+    hash: *std.hash.Wyhash,
+    adaptive: @import("../../../input/Instrument.zig").AdaptiveReferenceGrid,
+) void {
+    updateInt(hash, adaptive.points_per_fwhm);
+    updateInt(hash, adaptive.strong_line_min_divisions);
+    updateInt(hash, adaptive.strong_line_max_divisions);
+}
+
+fn updateSpectroscopyPlanInputs(
+    hash: *std.hash.Wyhash,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+) void {
+    updateInt(hash, prepared.spectroscopy_lines != null);
+    if (prepared.spectroscopy_lines) |line_list| {
+        updateLineListPlanInputs(hash, line_list);
+    }
+    updateInt(hash, prepared.line_absorbers.len);
+    for (prepared.line_absorbers) |line_absorber| {
+        updateLineListPlanInputs(hash, line_absorber.line_list);
+    }
+}
+
+fn updateLineListPlanInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
+    updateOptionalFloat(hash, line_list.runtime_controls.threshold_line_scale);
+    updateInt(hash, line_list.lines.len);
+    for (line_list.lines) |line| {
+        updateFloat(hash, line.center_wavelength_nm);
+        updateFloat(hash, line.line_strength_cm2_per_molecule);
+    }
+}
+
+fn updateFullLineListInputs(hash: *std.hash.Wyhash, line_list: anytype) void {
+    updateFloat(hash, line_list.strong_line_tolerance_nm);
+    updateInt(hash, line_list.lines_sorted_ascending);
+    updateInt(hash, line_list.preserve_anchor_weak_lines);
+    updateInt(hash, line_list.vendor_strong_line_partition);
+    updateOptionalIntSlice(hash, line_list.strong_line_match_by_line);
+    updateFullRuntimeControls(hash, line_list.runtime_controls);
+
+    updateInt(hash, line_list.lines.len);
+    for (line_list.lines) |line| {
+        updateInt(hash, line.gas_index);
+        updateInt(hash, line.isotope_number);
+        updateFloat(hash, line.abundance_fraction);
+        updateInt(hash, line.vendor_filter_metadata_from_source);
+        updateFloat(hash, line.center_wavelength_nm);
+        updateFloat(hash, line.center_wavenumber_cm1);
+        updateFloat(hash, line.line_strength_cm2_per_molecule);
+        updateFloat(hash, line.air_half_width_nm);
+        updateFloat(hash, line.air_half_width_cm1);
+        updateFloat(hash, line.temperature_exponent);
+        updateFloat(hash, line.lower_state_energy_cm1);
+        updateFloat(hash, line.pressure_shift_nm);
+        updateFloat(hash, line.pressure_shift_cm1);
+        updateFloat(hash, line.line_mixing_coefficient);
+        updateOptionalInt(hash, line.branch_ic1);
+        updateOptionalInt(hash, line.branch_ic2);
+        updateOptionalInt(hash, line.rotational_nf);
+    }
+
+    updateInt(hash, line_list.strong_lines != null);
+    if (line_list.strong_lines) |strong_lines| {
+        updateInt(hash, strong_lines.len);
+        for (strong_lines) |line| {
+            updateFloat(hash, line.center_wavenumber_cm1);
+            updateFloat(hash, line.center_wavelength_nm);
+            updateFloat(hash, line.population_t0);
+            updateFloat(hash, line.dipole_ratio);
+            updateFloat(hash, line.dipole_t0);
+            updateFloat(hash, line.lower_state_energy_cm1);
+            updateFloat(hash, line.air_half_width_cm1);
+            updateFloat(hash, line.air_half_width_nm);
+            updateFloat(hash, line.temperature_exponent);
+            updateFloat(hash, line.pressure_shift_cm1);
+            updateFloat(hash, line.pressure_shift_nm);
+            updateInt(hash, line.rotational_index_m1);
+        }
+    }
+
+    updateInt(hash, line_list.relaxation_matrix != null);
+    if (line_list.relaxation_matrix) |matrix| {
+        updateInt(hash, matrix.line_count);
+        updateFloatSlice(hash, matrix.wt0);
+        updateFloatSlice(hash, matrix.bw);
+    }
+}
+
+fn updateFullRuntimeControls(hash: *std.hash.Wyhash, controls: anytype) void {
+    updateOptionalInt(hash, controls.gas_index);
+    updateInt(hash, controls.active_isotopes.len);
+    hash.update(controls.active_isotopes);
+    updateOptionalFloat(hash, controls.threshold_line_scale);
+    updateOptionalFloat(hash, controls.cutoff_cm1);
+    updateFloatSlice(hash, controls.cutoff_grid_wavelengths_nm);
+    updateFloatSlice(hash, controls.cutoff_grid_wavenumbers_cm1);
+    updateFloat(hash, controls.line_mixing_factor);
+}
+
+fn updateOptionalInt(hash: *std.hash.Wyhash, value: anytype) void {
+    updateInt(hash, value != null);
+    if (value) |resolved| updateInt(hash, resolved);
+}
+
+fn updateOptionalIntSlice(hash: *std.hash.Wyhash, value: anytype) void {
+    updateInt(hash, value != null);
+    if (value) |resolved| {
+        updateInt(hash, resolved.len);
+        for (resolved) |item| updateOptionalInt(hash, item);
+    }
+}
+
+fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
+    updateInt(hash, value != null);
+    if (value) |resolved| updateFloat(hash, resolved);
+}
+
+fn updateFloatSlice(hash: *std.hash.Wyhash, values: []const f64) void {
+    updateInt(hash, values.len);
+    hash.update(std.mem.sliceAsBytes(values));
+}
+
+fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
+    var bits = @as(u64, @bitCast(value));
+    hash.update(std.mem.asBytes(&bits));
+}
+
+fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
+    var bits = value;
+    hash.update(std.mem.asBytes(&bits));
+}
+
 fn jacobianOffset(sample_index: usize, state_index: usize) usize {
     return sample_index * jacobian.state_count + state_index;
 }
@@ -340,7 +790,7 @@ pub fn simulate(
     var evaluation_cache = SpectralEval.SpectralEvaluationCache.init(allocator);
     defer evaluation_cache.deinit();
     evaluation_cache.reset();
-    return simulateInternal(allocator, scene, route, prepared, implementations, buffers, &evaluation_cache);
+    return simulateInternal(allocator, scene, route, prepared, implementations, buffers, &evaluation_cache, null);
 }
 
 pub fn simulateSummary(
@@ -378,5 +828,6 @@ pub fn simulateSummaryWithWorkspace(
         implementations,
         try storage.buffers(allocator, &summary_scene, route, implementations),
         try storage.spectralCache(allocator),
+        storage,
     );
 }

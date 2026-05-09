@@ -3,10 +3,12 @@ const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const jacobian = @import("../../jacobian/root.zig");
+const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const cache_module = @import("cache.zig");
 const spectral_forward = @import("spectral_forward.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
+const Plan = @import("wavelength_plan.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 
 const Allocator = std.mem.Allocator;
@@ -14,7 +16,8 @@ const OperationalInstrumentIntegration = @import("../../implementations/instrume
 const Error = Storage.Error;
 
 pub const ForwardIntegratedSample = spectral_forward.ForwardIntegratedSample;
-pub const ForwardCacheMiss = spectral_forward.ForwardCacheMiss;
+pub const ForwardCacheMiss = Plan.ForwardCacheMiss;
+pub const preferredForwardWorkerCount = spectral_forward.preferredForwardWorkerCount;
 
 pub const SpectralEvaluationCache = cache_module.SpectralEvaluationCache;
 
@@ -141,6 +144,7 @@ pub fn prefetchForwardSamples(
     implementations: Types.Implementations,
     safe_span: f64,
     misses: []const ForwardCacheMiss,
+    profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     cache: *SpectralEvaluationCache,
 ) Error!void {
     if (misses.len == 0) return;
@@ -156,6 +160,7 @@ pub fn prefetchForwardSamples(
         implementations,
         safe_span,
         misses,
+        profile_spectroscopy_caches,
         results,
     );
     for (misses, results) |miss, result| {

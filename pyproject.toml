@@ -6,6 +6,7 @@ dependencies = [
     "altair>=5.5",
     "numpy>=2.2",
     "pandas>=2.2",
+    "polars>=1.35",
     "vl-convert-python>=1.7",
 ]
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 import time
@@ -69,6 +70,55 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
         default_arrays = spectrum_arrays(default_spectrum)
         default_spectrum.close()
 
+    perturbed_case = copy.deepcopy(case)
+    perturbed_case.aerosol.optical_depth_550_nm *= 1.05
+
+    session_create_start_s = time.perf_counter()
+    with zd.o2a_forward_session(library_path=library_path) as session:
+        session_create_s = time.perf_counter() - session_create_start_s
+
+        session_prepare_start_s = time.perf_counter()
+        session.prepare(case)
+        session_prepare_s = time.perf_counter() - session_prepare_start_s
+        session_forward_start_s = time.perf_counter()
+        session_spectrum = session.forward_model()
+        session_forward_s = time.perf_counter() - session_forward_start_s
+        session_arrays = spectrum_arrays(session_spectrum)
+        session_spectrum.close()
+
+        perturbed_session_prepare_start_s = time.perf_counter()
+        session.prepare(perturbed_case)
+        perturbed_session_prepare_s = time.perf_counter() - perturbed_session_prepare_start_s
+        perturbed_session_forward_start_s = time.perf_counter()
+        perturbed_session_spectrum = session.forward_model(jacobian=True)
+        perturbed_session_forward_s = time.perf_counter() - perturbed_session_forward_start_s
+        perturbed_session_arrays = spectrum_arrays(perturbed_session_spectrum)
+        perturbed_session_jacobian = perturbed_session_spectrum.radiance_jacobian.copy()
+        perturbed_session_spectrum.close()
+
+        requested_jacobian_names = (
+            "aerosol_optical_depth",
+            "aerosol_layer_mid_pressure_hpa",
+        )
+        compact_session_spectrum = session.forward_model(
+            jacobian=True,
+            jacobian_state_names=requested_jacobian_names,
+        )
+        compact_session_names = compact_session_spectrum.jacobian_state_names
+        compact_session_jacobian = compact_session_spectrum.radiance_jacobian.copy()
+        compact_session_spectrum.close()
+        empty_jacobian_state_selection_rejected = False
+        try:
+            session.forward_model(jacobian=True, jacobian_state_names=())
+        except ValueError:
+            empty_jacobian_state_selection_rejected = True
+
+    with zd.prepare(perturbed_case, library_path=library_path) as prepared:
+        perturbed_prepared_spectrum = prepared.forward_model(jacobian=True)
+        perturbed_prepared_arrays = spectrum_arrays(perturbed_prepared_spectrum)
+        perturbed_prepared_jacobian = perturbed_prepared_spectrum.radiance_jacobian.copy()
+        perturbed_prepared_spectrum.close()
+
     checks = {
         "typed_sample_count": int(typed_arrays["wavelength_nm"].size),
         "default_sample_count": int(default_arrays["wavelength_nm"].size),
@@ -119,6 +169,60 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
                 rtol=tolerance,
             )
         ),
+        "session_matches_typed_arrays": bool(
+            np.allclose(
+                session_arrays["wavelength_nm"],
+                typed_arrays["wavelength_nm"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+            and np.allclose(
+                session_arrays["radiance"],
+                typed_arrays["radiance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+            and np.allclose(
+                session_arrays["irradiance"],
+                typed_arrays["irradiance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+            and np.allclose(
+                session_arrays["reflectance"],
+                typed_arrays["reflectance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+        ),
+        "session_reprepare_matches_prepared_jacobian": bool(
+            np.allclose(
+                perturbed_session_arrays["reflectance"],
+                perturbed_prepared_arrays["reflectance"],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+            and np.allclose(
+                perturbed_session_jacobian,
+                perturbed_prepared_jacobian,
+                atol=tolerance,
+                rtol=tolerance,
+            )
+        ),
+        "requested_jacobian_dimension_matches_state_vector": bool(
+            compact_session_names == requested_jacobian_names
+            and compact_session_jacobian.shape
+            == (perturbed_session_arrays["wavelength_nm"].size, len(requested_jacobian_names))
+        ),
+        "requested_jacobian_columns_match_full_native_columns": bool(
+            np.allclose(
+                compact_session_jacobian,
+                perturbed_session_jacobian[:, 1:3],
+                atol=tolerance,
+                rtol=tolerance,
+            )
+        ),
+        "empty_jacobian_state_selection_rejected": empty_jacobian_state_selection_rejected,
         "parity_route_used": True,
         "tolerance": tolerance,
     }
@@ -138,6 +242,11 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
             "typed_forward_s": typed_forward_s,
             "default_prepare_s": default_prepare_s,
             "default_forward_s": default_forward_s,
+            "session_create_s": session_create_s,
+            "session_prepare_s": session_prepare_s,
+            "session_forward_s": session_forward_s,
+            "perturbed_session_prepare_s": perturbed_session_prepare_s,
+            "perturbed_session_forward_jacobian_s": perturbed_session_forward_s,
             "total_s": time.perf_counter() - start_s,
         },
     }
@@ -161,7 +270,16 @@ def main() -> int:
         f"sample_counts_match={checks['sample_counts_match']}, "
         f"typed_report_matches_arrays={checks['typed_report_matches_arrays']}, "
         f"default_report_matches_arrays={checks['default_report_matches_arrays']}, "
-        f"default_matches_typed_arrays={checks['default_matches_typed_arrays']}"
+        f"default_matches_typed_arrays={checks['default_matches_typed_arrays']}, "
+        f"session_matches_typed_arrays={checks['session_matches_typed_arrays']}, "
+        "session_reprepare_matches_prepared_jacobian="
+        f"{checks['session_reprepare_matches_prepared_jacobian']}, "
+        "requested_jacobian_dimension_matches_state_vector="
+        f"{checks['requested_jacobian_dimension_matches_state_vector']}, "
+        "requested_jacobian_columns_match_full_native_columns="
+        f"{checks['requested_jacobian_columns_match_full_native_columns']}, "
+        "empty_jacobian_state_selection_rejected="
+        f"{checks['empty_jacobian_state_selection_rejected']}"
     )
     print(f"json: {output_path}")
     excluded = {"tolerance", "typed_sample_count", "default_sample_count"}

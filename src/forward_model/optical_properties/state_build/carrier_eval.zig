@@ -53,11 +53,15 @@ pub const WavelengthCarrierCache = struct {
         wavelength_nm: f64,
         support_row_valid: []bool,
         support_row_carriers: []SharedOpticalCarrier,
+        profile_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     ) WavelengthCarrierCache {
         @memset(support_row_valid, false);
         const continuum_table: ReferenceData.CrossSectionTable = .{ .points = prepared.continuum_points };
         return .{
-            .profile_cache = SpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm),
+            .profile_cache = if (profile_cache) |cache|
+                cache.*
+            else
+                SpectroscopyState.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm),
             .support_row_valid = support_row_valid,
             .support_row_carriers = support_row_carriers,
             .continuum_sigma = if (prepared.cross_section_absorbers.len == 0)

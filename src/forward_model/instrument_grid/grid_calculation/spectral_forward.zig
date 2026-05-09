@@ -2,6 +2,7 @@ const std = @import("std");
 const Scene = @import("../../../input/Scene.zig").Scene;
 const OpticsPreparation = @import("../../optical_properties/root.zig");
 const CarrierEval = @import("../../optical_properties/state_build/carrier_eval.zig");
+const SpectroscopyState = @import("../../optical_properties/state_build/state_spectroscopy.zig");
 const common = @import("../../radiative_transfer/root.zig");
 const jacobian = @import("../../jacobian/root.zig");
 const labos = @import("../../radiative_transfer/labos/root.zig");
@@ -9,6 +10,7 @@ const Trace = @import("../../performance_trace.zig");
 const ForwardInput = @import("forward_input.zig");
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
+const Plan = @import("wavelength_plan.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
 
 const Allocator = std.mem.Allocator;
@@ -21,10 +23,8 @@ pub const ForwardIntegratedSample = struct {
     jacobian: jacobian.Vector = jacobian.zero(),
 };
 
-pub const ForwardCacheMiss = struct {
-    key: u64,
-    wavelength_nm: f64,
-};
+pub const ForwardCacheMiss = Plan.ForwardCacheMiss;
+const forward_prefetch_chunk_size: usize = 8;
 
 const ForwardSampleScratch = struct {
     layer_inputs: []common.LayerInput,
@@ -111,6 +111,22 @@ const ForwardPrefetchErrorState = struct {
     }
 };
 
+const ForwardPrefetchQueue = struct {
+    mutex: std.Thread.Mutex = .{},
+    next_index: usize = 0,
+    len: usize,
+
+    fn next(self: *ForwardPrefetchQueue) ?struct { start: usize, end: usize } {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.next_index >= self.len) return null;
+        const start = self.next_index;
+        const end = @min(start + forward_prefetch_chunk_size, self.len);
+        self.next_index = end;
+        return .{ .start = start, .end = end };
+    }
+};
+
 const ForwardPrefetchWorker = struct {
     scene: *const Scene,
     route: common.Route,
@@ -118,7 +134,9 @@ const ForwardPrefetchWorker = struct {
     implementations: Types.Implementations,
     safe_span: f64,
     misses: []const ForwardCacheMiss,
+    profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
+    queue: *ForwardPrefetchQueue,
     error_state: *ForwardPrefetchErrorState,
     trace: Trace.RunRef = Trace.noRun(),
     worker_index: usize = 0,
@@ -210,6 +228,7 @@ pub fn computeForwardSampleAtWavelength(
         pseudo_spherical_level_altitudes,
         support_carrier_valid,
         support_carriers,
+        null,
         &labos_workspace,
     );
 }
@@ -231,6 +250,7 @@ fn computeForwardSampleAtWavelengthWithScratch(
     pseudo_spherical_level_altitudes: []f64,
     support_carrier_valid: []bool,
     support_carriers: []CarrierEval.SharedOpticalCarrier,
+    profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
     const trace = Trace.asWorker(labos_workspace.trace);
@@ -251,6 +271,8 @@ fn computeForwardSampleAtWavelengthWithScratch(
         pseudo_spherical_level_altitudes,
         support_carrier_valid,
         support_carriers,
+        profile_spectroscopy_cache,
+        if (Trace.enabled) trace else {},
     );
     if (Trace.enabled) if (trace) |sink| sink.addSection(.forward_input, Trace.elapsed(input_start));
     var effective_route = route;
@@ -289,29 +311,37 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     };
     defer scratch.deinit(allocator);
 
-    for (worker.misses, worker.results) |miss, *result| {
-        result.* = computeForwardSampleAtWavelengthWithScratch(
-            allocator,
-            worker.scene,
-            worker.route,
-            worker.prepared,
-            miss.wavelength_nm,
-            worker.safe_span,
-            worker.implementations,
-            scratch.layer_inputs,
-            scratch.pseudo_spherical_layers,
-            scratch.source_interfaces,
-            scratch.rtm_quadrature_levels,
-            scratch.pseudo_spherical_samples,
-            scratch.pseudo_spherical_level_starts,
-            scratch.pseudo_spherical_level_altitudes,
-            scratch.support_carrier_valid,
-            scratch.support_carriers,
-            &scratch.labos_workspace,
-        ) catch |err| {
-            worker.error_state.store(err);
-            return;
-        };
+    while (worker.queue.next()) |chunk| {
+        for (chunk.start..chunk.end) |index| {
+            const miss = worker.misses[index];
+            const profile_spectroscopy_cache = if (worker.profile_spectroscopy_caches.len == worker.misses.len)
+                &worker.profile_spectroscopy_caches[index]
+            else
+                null;
+            worker.results[index] = computeForwardSampleAtWavelengthWithScratch(
+                allocator,
+                worker.scene,
+                worker.route,
+                worker.prepared,
+                miss.wavelength_nm,
+                worker.safe_span,
+                worker.implementations,
+                scratch.layer_inputs,
+                scratch.pseudo_spherical_layers,
+                scratch.source_interfaces,
+                scratch.rtm_quadrature_levels,
+                scratch.pseudo_spherical_samples,
+                scratch.pseudo_spherical_level_starts,
+                scratch.pseudo_spherical_level_altitudes,
+                scratch.support_carrier_valid,
+                scratch.support_carriers,
+                profile_spectroscopy_cache,
+                &scratch.labos_workspace,
+            ) catch |err| {
+                worker.error_state.store(err);
+                return;
+            };
+        }
     }
 }
 
@@ -323,6 +353,7 @@ pub fn prefetchForwardSamples(
     implementations: Types.Implementations,
     safe_span: f64,
     misses: []const ForwardCacheMiss,
+    profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
 ) Error!void {
     if (misses.len == 0) return;
@@ -347,7 +378,11 @@ pub fn prefetchForwardSamples(
         } else {};
         var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared, trace_worker);
         defer scratch.deinit(allocator);
-        for (misses, results) |miss, *result| {
+        for (misses, results, 0..) |miss, *result, miss_index| {
+            const profile_spectroscopy_cache = if (profile_spectroscopy_caches.len == misses.len)
+                &profile_spectroscopy_caches[miss_index]
+            else
+                null;
             result.* = try computeForwardSampleAtWavelengthWithScratch(
                 allocator,
                 scene,
@@ -365,6 +400,7 @@ pub fn prefetchForwardSamples(
                 scratch.pseudo_spherical_level_altitudes,
                 scratch.support_carrier_valid,
                 scratch.support_carriers,
+                profile_spectroscopy_cache,
                 &scratch.labos_workspace,
             );
         }
@@ -377,21 +413,19 @@ pub fn prefetchForwardSamples(
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
     defer allocator.free(threads);
 
-    const base_count = misses.len / worker_count;
-    const remainder = misses.len % worker_count;
-    var start_index: usize = 0;
+    var queue: ForwardPrefetchQueue = .{ .len = misses.len };
     var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
-        const batch_count = base_count + @as(usize, if (worker_index < remainder) 1 else 0);
-        const end_index = start_index + batch_count;
         workers[worker_index] = .{
             .scene = scene,
             .route = route,
             .prepared = prepared,
             .implementations = implementations,
             .safe_span = safe_span,
-            .misses = misses[start_index..end_index],
-            .results = results[start_index..end_index],
+            .misses = misses,
+            .profile_spectroscopy_caches = profile_spectroscopy_caches,
+            .results = results,
+            .queue = &queue,
             .error_state = &error_state,
             .trace = trace_ref,
             .worker_index = worker_index,
@@ -403,14 +437,12 @@ pub fn prefetchForwardSamples(
                 .{&workers[worker_index]},
             ) catch {
                 prefetchForwardWorkerMain(&workers[worker_index]);
-                start_index = end_index;
                 continue;
             };
             started_thread_count += 1;
         } else {
             prefetchForwardWorkerMain(&workers[worker_index]);
         }
-        start_index = end_index;
     }
     for (threads[0..started_thread_count]) |thread| thread.join();
     if (error_state.err) |err| return err;

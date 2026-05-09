@@ -1,14 +1,15 @@
 # Performance Research
 
-This folder tracks durable performance findings for zdisamar. The current scope is one O2 A forward spectrum. Retrieval-loop reuse and `prepare_o2a` are separate topics.
+This folder tracks durable performance findings for zdisamar. The notes are
+organized by question and by measurement provenance, so current retained
+artifacts are not mixed with historical checkpoint numbers.
 
 ## Documents
 
-- [O2 A per-spectrum wall](o2a-per-spectrum-wall.md): measured wall, code path, and timing decomposition.
-- [Why zdisamar is faster than DISAMAR](why-zdisamar-is-faster/): plain explanation of why the current O2 A run is faster, split by mechanism with code excerpts and source links.
-- [LABOS matrix calculations](labos-matrix-calculations.md): why the LABOS math remains expensive even after each small calculation is fast.
-- [Where is the bottleneck?](where-is-the-bottleneck/): layered trace evidence from spectrum wall to LABOS primitives, retained with generated artifacts.
-- [O2 A calculation demo](o2a-calculation-demo.ipynb): Jupyter notebook that isolates the measured O2 A counts and the small LABOS matrix calculations behind the wall.
+- [O2 A forward performance](o2a-forward/): current forward elapsed time, historical optimization path, detailed optimisation notes, remaining LABOS bottlenecks, and rejected ideas.
+- [O2 A retrieval performance](o2a-retrieval/): session reuse, state-vector Jacobians, paired DISAMAR/zdisamar validation, optimisation notes, and current retrieval elapsed time.
+- [Performance cases](cases/): case provenance for original reference measurements, current baseline config, slow OE case, and paired sweep scenes.
+- [O2 A calculation demo](o2a-calculation-demo.ipynb): Jupyter notebook that isolates the measured O2 A counts and the small LABOS matrix calculations behind the elapsed time.
 
 ## Run the notebook
 
@@ -22,7 +23,9 @@ uvx --from jupyterlab jupyter lab research/performance/o2a-calculation-demo.ipyn
 
 ## Current finding
 
-The forward run is dominated by the high-resolution radiance calculations needed before the 701 output wavelengths can be produced. The current O2 A summary is in the expected band: `prepare_o2a` is about 200 ms, and the forward model is about 1.9-2.0 s.
+The forward run is dominated by the high-resolution radiance calculations needed
+before the 701 output wavelengths can be produced. The current retained trace is
+`prepare_o2a=0.177154 s` and `forward elapsed time=1.799918 s`.
 
 The important count is not 701. Each output wavelength represents an instrument-weighted measurement, so the model first calculates radiance at 3,874 high-resolution wavelengths and then averages those values back to the 701 output wavelengths.
 
@@ -44,4 +47,39 @@ The expensive product is:
 * repeated layer-doubling and scattering-order calculations
 ```
 
-That product is the current per-spectrum wall.
+That product is the current per-spectrum elapsed time.
+
+## Artifacts
+
+Tracked outputs live under `validation/outputs/`. Generated local data lives
+under `out/` and is intentionally gitignored.
+
+Current forward trace artifacts:
+
+```text
+validation/outputs/performance/labos-bottleneck/summary.json
+validation/outputs/performance/labos-bottleneck/sections.csv
+validation/outputs/performance/labos-bottleneck/counters.csv
+validation/outputs/performance/labos-bottleneck/primitive_estimates.csv
+validation/outputs/performance/labos-bottleneck/labos_kernel_bench.txt
+validation/outputs/performance/labos-bottleneck/rollup.json
+```
+
+Current retrieval artifacts:
+
+```text
+validation/outputs/optimal_estimation/paired_oe_plot_manifest.json
+validation/outputs/optimal_estimation/paired_oe_retrieved_scatter.png
+validation/outputs/optimal_estimation/paired_oe_error_histograms.png
+validation/outputs/optimal_estimation/paired_oe_latency.png
+validation/outputs/optimal_estimation/zdisamar_o2a_slow_forward_jacobian_benchmark.json
+```
+
+Local generated retrieval data:
+
+```text
+out/validation/optimal_estimation/paired_disamar_zdisamar/
+```
+
+Do not cite `out/` as retained evidence unless the corresponding tracked
+manifest, plot, or summary is also named.

@@ -7,6 +7,8 @@ pub const State = enum(u8) {
 };
 
 pub const Vector = [state_count]f64;
+pub const StateMask = u8;
+pub const all_states_mask: StateMask = (1 << state_count) - 1;
 
 pub const StateNames = struct {
     pub const surface_albedo = "surface_albedo";
@@ -20,6 +22,18 @@ pub fn zero() Vector {
 
 pub fn stateIndex(state: State) usize {
     return @intFromEnum(state);
+}
+
+pub fn stateMask(state: State) StateMask {
+    return @as(StateMask, 1) << @intCast(stateIndex(state));
+}
+
+pub fn includes(mask: StateMask, state: State) bool {
+    return (mask & stateMask(state)) != 0;
+}
+
+pub fn sanitizedMask(mask: StateMask) StateMask {
+    return mask & all_states_mask;
 }
 
 pub fn get(vector: Vector, state: State) f64 {

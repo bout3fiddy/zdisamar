@@ -60,8 +60,16 @@ class PreparedO2ABase:
             raise RuntimeError("prepared input is closed")
         return self._ctx
 
-    def forward_model(self, *, jacobian: bool = False) -> Spectrum:
-        return self._require_context().forward_model(jacobian=jacobian)
+    def forward_model(
+        self,
+        *,
+        jacobian: bool = False,
+        jacobian_state_names: tuple[str, ...] | None = None,
+    ) -> Spectrum:
+        return self._require_context().forward_model(
+            jacobian=jacobian,
+            jacobian_state_names=jacobian_state_names,
+        )
 
     @property
     def atmosphere(self) -> AtmosphereDiagnostics:
@@ -169,6 +177,68 @@ class PreparedO2A(PreparedO2ABase):
         super().__init__(ctx, input, library_path)
 
 
+class O2AForwardSession:
+    """Long-lived O2 A forward-model session for repeated scene evaluations."""
+
+    def __init__(self, input: O2AInput | None = None, library_path: LibraryPath = None):
+        self._ctx: Context | None = Context(library_path)
+        self._input: O2AInput | None = None
+        self._library_path = library_path
+        if input is not None:
+            try:
+                self.prepare(input)
+                self._require_context().warm_o2a_session()
+            except Exception:
+                self.close()
+                raise
+
+    @property
+    def input(self) -> O2AInput:
+        if self._input is None:
+            raise RuntimeError("O2 A session is not prepared")
+        return copy.deepcopy(self._input)
+
+    @property
+    def library_path(self) -> LibraryPath:
+        return self._library_path
+
+    def _require_context(self) -> Context:
+        if self._ctx is None:
+            raise RuntimeError("O2 A session is closed")
+        return self._ctx
+
+    def prepare(self, input: O2AInput) -> O2AForwardSession:
+        self._require_context().prepare_o2a(input)
+        self._input = copy.deepcopy(input)
+        return self
+
+    def forward_model(
+        self,
+        *,
+        jacobian: bool = False,
+        jacobian_state_names: tuple[str, ...] | None = None,
+    ) -> Spectrum:
+        if self._input is None:
+            raise RuntimeError("O2 A session is not prepared")
+        return self._require_context().forward_model(
+            jacobian=jacobian,
+            jacobian_state_names=jacobian_state_names,
+        )
+
+    def close(self) -> None:
+        if self._ctx is not None:
+            self._ctx.close()
+            self._ctx = None
+        self._input = None
+
+    def __enter__(self) -> O2AForwardSession:
+        self._require_context()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
 def o2a_disamar_reference_input(
     library_path: LibraryPath = None,
 ) -> O2AInput:
@@ -181,6 +251,13 @@ def prepare(
     library_path: LibraryPath = None,
 ) -> PreparedO2A:
     return PreparedO2A(input, library_path)
+
+
+def o2a_forward_session(
+    input: O2AInput | None = None,
+    library_path: LibraryPath = None,
+) -> O2AForwardSession:
+    return O2AForwardSession(input, library_path)
 
 
 def prepare_default_o2a(

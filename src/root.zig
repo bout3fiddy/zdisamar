@@ -17,6 +17,7 @@ pub const Method = @import("forward_model/method.zig").Method;
 pub const CalculationStorage = @import("forward_model/instrument_grid/grid_calculation/storage.zig").SummaryStorage;
 pub const Output = spectrum.Result;
 pub const PreparedO2A = o2a_reference.PreparedO2A;
+pub const O2ASessionStorage = o2a_reference.SessionStorage;
 pub const DiagnosticReport = report_json.SummaryReport;
 pub const AtmosphericBudgetRow = atmospheric_budget.AtmosphericBudgetRow;
 pub const InstrumentResponseRow = instrument_response.InstrumentResponseRow;
@@ -111,6 +112,22 @@ pub fn runO2A(
     prepared: *const PreparedO2A,
 ) !Output {
     return o2a_reference.runO2A(allocator, prepared);
+}
+
+pub fn runO2AWithSessionStorage(
+    allocator: std.mem.Allocator,
+    storage: *O2ASessionStorage,
+    prepared: *const PreparedO2A,
+) !Output {
+    return o2a_reference.runO2AWithSessionStorage(allocator, storage, prepared);
+}
+
+pub fn warmO2ASessionStorage(
+    allocator: std.mem.Allocator,
+    storage: *O2ASessionStorage,
+    prepared: *const PreparedO2A,
+) !void {
+    return o2a_reference.warmO2ASessionStorage(allocator, storage, prepared);
 }
 
 pub fn buildAtmosphericBudget(

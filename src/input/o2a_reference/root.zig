@@ -11,6 +11,7 @@ pub const ReferenceData = metrics.ReferenceData;
 pub const ReferenceSample = metrics.ReferenceSample;
 pub const O2AInput = reference_types.ResolvedVendorO2ACase;
 pub const PreparedO2A = metrics.VendorO2APreparedCase;
+pub const SessionStorage = InstrumentGrid.ProductStorage;
 pub const Output = InstrumentGrid.InstrumentGridProduct;
 pub const ReflectanceCase = metrics.VendorO2AReflectanceCase;
 pub const ComparisonMetrics = metrics.ComparisonMetrics;
@@ -248,6 +249,37 @@ pub fn prepareO2A(allocator: Allocator, input: *const O2AInput) !PreparedO2A {
 pub fn runO2A(allocator: Allocator, prepared: *const PreparedO2A) !Output {
     return InstrumentGrid.simulateProduct(
         allocator,
+        &prepared.scene,
+        prepared.route,
+        &prepared.prepared,
+        implementations.exact(),
+    );
+}
+
+pub fn runO2AWithSessionStorage(
+    allocator: Allocator,
+    storage: *SessionStorage,
+    prepared: *const PreparedO2A,
+) !Output {
+    const view = try InstrumentGrid.simulateProductWithWorkspace(
+        allocator,
+        storage,
+        &prepared.scene,
+        prepared.route,
+        &prepared.prepared,
+        implementations.exact(),
+    );
+    return view.toOwned(allocator);
+}
+
+pub fn warmO2ASessionStorage(
+    allocator: Allocator,
+    storage: *SessionStorage,
+    prepared: *const PreparedO2A,
+) !void {
+    return InstrumentGrid.warmProductWorkspace(
+        allocator,
+        storage,
         &prepared.scene,
         prepared.route,
         &prepared.prepared,
