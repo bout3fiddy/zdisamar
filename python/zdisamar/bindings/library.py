@@ -32,4 +32,3 @@ def library_name() -> str:
     if os.name == "nt":
         return "zdisamar_c.dll"
     return "libzdisamar_c.so"
-

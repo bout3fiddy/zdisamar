@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import math
 import os
@@ -109,6 +110,15 @@ def assert_reference_data_and_native_table() -> None:
             os.chdir(tmpdir)
             case = zd.o2a_disamar_reference_input()
             assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
+            mutable_case = copy.deepcopy(case)
+            with zd.o2a_forward_session() as session:
+                session.prepare(mutable_case)
+                mutable_case.geometry.solar_zenith_deg = 0.0
+                with session.forward_model() as spectrum:
+                    assert spectrum.input is not None
+                    assert (
+                        spectrum.input.geometry.solar_zenith_deg == case.geometry.solar_zenith_deg
+                    )
             with (
                 zd.prepare(case) as prepared,
                 prepared.atmosphere.budget(np.array([760.76], dtype=np.float64)) as budget,

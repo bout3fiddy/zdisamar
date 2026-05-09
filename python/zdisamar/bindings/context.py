@@ -111,7 +111,7 @@ class Context:
                 len(payload),
             )
         )
-        self._input = input
+        self._input = copy.deepcopy(input)
         return self
 
     def warm_o2a_session(self) -> Context:
