@@ -11,6 +11,10 @@ def main() -> int:
         assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
         with zd.prepare(case) as prepared, prepared.forward_model() as spectrum:
             assert int(spectrum.wavelength_nm.size) == int(case.spectral_grid.sample_count)
+        with zd.prepare_default_o2a() as prepared, prepared.forward_model() as spectrum:
+            assert int(spectrum.wavelength_nm.size) == int(case.spectral_grid.sample_count)
+        with zd.forward() as spectrum:
+            assert int(spectrum.wavelength_nm.size) == int(case.spectral_grid.sample_count)
     print("prepare_external_cwd=ok")
     return 0
 

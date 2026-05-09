@@ -83,9 +83,7 @@ class Context:
         return None if self._input is None else copy.deepcopy(self._input)
 
     def prepare_default_o2a(self) -> Context:
-        self._input = self.default_o2a_input()
-        self._check(self._lib.zds_prepare_default_o2a(self._ctx))
-        return self
+        return self.prepare_o2a(self.default_o2a_input())
 
     def default_o2a_input(self) -> O2AInput:
         size = ctypes.c_size_t()
