@@ -8,13 +8,11 @@ from .covariance_space import CovarianceSpace
 
 
 @dataclass(frozen=True)
-class Step:
+class StepResult:
     """Result of one modified Gauss-Newton state-vector update."""
 
     state: np.ndarray
     posterior_precision: np.ndarray
-    posterior_covariance: np.ndarray
-    averaging_kernel: np.ndarray
     snr_normal: bool
 
 
@@ -22,10 +20,8 @@ def gauss_newton_step(
     problem: CovarianceSpace,
     *,
     prior: np.ndarray,
-    jacobian: np.ndarray,
-    measurement_variance: np.ndarray,
     max_change_transformed_state: float,
-) -> Step:
+) -> StepResult:
     """Compute one modified Gauss-Newton update.
 
     In the SVD basis K_white = U W V^T, each singular direction is independent:
@@ -83,19 +79,9 @@ def gauss_newton_step(
     posterior_precision_white = np.eye(state_count, dtype=np.float64)
     posterior_precision_white += v @ np.diag(singular_values**2) @ vt
     posterior_precision = problem.sqrt_inv_sa.T @ posterior_precision_white @ problem.sqrt_inv_sa
-    posterior_covariance = np.linalg.inv(posterior_precision)
-
-    # The averaging kernel is not required to choose the next x, but it is part
-    # of optimal estimation's scientific output: it tells later experiments how much of the
-    # retrieved state came from the measurement rather than the prior.
-    averaging_kernel = (
-        posterior_covariance @ jacobian.T @ np.diag(1.0 / measurement_variance) @ jacobian
-    )
-    return Step(
+    return StepResult(
         state=state,
         posterior_precision=posterior_precision,
-        posterior_covariance=posterior_covariance,
-        averaging_kernel=averaging_kernel,
         snr_normal=snr_normal,
     )
 

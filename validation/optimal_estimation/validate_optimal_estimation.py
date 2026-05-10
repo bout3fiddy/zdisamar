@@ -30,6 +30,9 @@ from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estima
 from zdisamar.inverse_method.optimal_estimation.covariance_space import (  # noqa: E402
     build_covariance_space,
 )
+from zdisamar.inverse_method.optimal_estimation.diagnostics import (  # noqa: E402
+    final_diagnostics,
+)
 
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
@@ -144,12 +147,15 @@ def assert_gauss_newton_retains_prior_precision_nullspace() -> None:
     step = optimal_estimation.gauss_newton_step(
         problem,
         prior=np.zeros(2, dtype=np.float64),
-        jacobian=np.array([[2.0, 0.0]], dtype=np.float64),
-        measurement_variance=np.array([1.0], dtype=np.float64),
         max_change_transformed_state=100.0,
     )
     assert np.allclose(step.posterior_precision, np.array([[5.0, 0.0], [0.0, 1.0]]))
-    assert np.allclose(step.posterior_covariance, np.array([[0.2, 0.0], [0.0, 1.0]]))
+    diagnostics = final_diagnostics(
+        posterior_precision=step.posterior_precision,
+        jacobian=np.array([[2.0, 0.0]], dtype=np.float64),
+        measurement_variance=np.array([1.0], dtype=np.float64),
+    )
+    assert np.allclose(diagnostics.posterior_covariance, np.array([[0.2, 0.0], [0.0, 1.0]]))
 
 
 def build_measurement(

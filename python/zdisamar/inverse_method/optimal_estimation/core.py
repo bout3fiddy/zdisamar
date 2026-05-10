@@ -11,20 +11,21 @@ write logic into the numerical solver.
 """
 
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 
 import numpy as np
 
-from .covariance_space import build_covariance_space
+from .covariance_space import build_covariance_space_from_workspace, build_solver_workspace
+from .diagnostics import final_diagnostics
 from .forward_evaluation import ForwardEvaluation
 from .gauss_newton import gauss_newton_step
+from .measurement import measurement_arrays, require_matching_wavelength_grid
 from .retrieval import (
     Iteration,
     IterationTiming,
     Measurement,
     Result,
     RetrievalControls,
-    StateName,
 )
 from .state_vector import StateVector
 
@@ -53,17 +54,23 @@ def retrieve(
     x = state_vector.initial_state()
     xa = state_vector.prior_state()
     sa = state_vector.prior_covariance()
-    se_variance = np.asarray(measurement.variance, dtype=np.float64)
-    if np.any(se_variance <= 0.0):
-        raise ValueError("measurement variance must be positive")
+    measured = measurement_arrays(measurement)
 
-    inv_se = np.diag(1.0 / se_variance)
+    workspace = build_solver_workspace(
+        prior=xa,
+        prior_covariance=sa,
+        measurement_variance=measured.variance,
+    )
     history: list[Iteration] = []
     posterior = np.array(sa, copy=True)
     state_count = len(state_names)
     averaging_kernel = np.eye(state_count, dtype=np.float64)
     converged = False
     timing: list[IterationTiming] = []
+    last_evaluated_state: np.ndarray | None = None
+    last_evaluation: ForwardEvaluation | None = None
+    final_posterior_precision = workspace.inv_prior_covariance
+    final_jacobian: np.ndarray | None = None
 
     for iteration_index in range(1, controls.max_iterations + 1):
         iteration_start = time.perf_counter()
@@ -74,44 +81,43 @@ def retrieve(
         # `initial == prior`.
         forward_start = time.perf_counter()
         evaluation = forward_model(previous)
+        last_evaluated_state = np.array(previous, copy=True)
+        last_evaluation = evaluation
         forward_seconds = time.perf_counter() - forward_start
 
         solver_start = time.perf_counter()
-        reflectance = _interpolate(
-            measurement.wavelength_nm, evaluation.wavelength_nm, evaluation.reflectance
-        )
-        jacobian = _interpolate_columns(
-            measurement.wavelength_nm,
+        require_matching_wavelength_grid(
+            measured.wavelength_nm,
             evaluation.wavelength_nm,
-            evaluation.reflectance_jacobian,
-            state_names,
+            expected_name="measurement",
+            actual_name="forward evaluation",
         )
-        residual = np.asarray(measurement.reflectance, dtype=np.float64) - reflectance
+        reflectance = np.asarray(evaluation.reflectance, dtype=np.float64)
+        jacobian = np.asarray(evaluation.reflectance_jacobian, dtype=np.float64)
+        if jacobian.shape != (measured.wavelength_nm.size, state_count):
+            raise ValueError("forward evaluation Jacobian shape does not match retrieval state")
+        residual = measured.reflectance - reflectance
 
         # The solver is deliberately split at this point.  The retrieval loop
         # owns the expensive model evaluation and bookkeeping, while the
         # covariance-space and Gauss-Newton modules own the math that can be
         # swapped for LM or other inverse-method experiments.
-        covariance_space = build_covariance_space(
+        covariance_space = build_covariance_space_from_workspace(
+            workspace=workspace,
             previous=previous,
-            prior=xa,
             residual=residual,
             jacobian=jacobian,
-            prior_covariance=sa,
-            measurement_variance=se_variance,
         )
         step = gauss_newton_step(
             covariance_space,
             prior=xa,
-            jacobian=jacobian,
-            measurement_variance=se_variance,
             max_change_transformed_state=controls.max_change_transformed_state,
         )
         x = state_vector.clip_to_bounds(step.state)
 
         dx_iter = x - previous
-        chi2_reflectance = float(residual @ inv_se @ residual)
-        chi2_state = float(dx_iter @ np.linalg.inv(sa) @ dx_iter)
+        chi2_reflectance = float(residual @ workspace.inv_se @ residual)
+        chi2_state = float(dx_iter @ workspace.inv_prior_covariance @ dx_iter)
         state_conv = float(dx_iter @ step.posterior_precision @ dx_iter / state_count)
         history.append(
             Iteration(
@@ -133,8 +139,8 @@ def retrieve(
                 total_iteration_s=time.perf_counter() - iteration_start,
             )
         )
-        posterior = step.posterior_covariance
-        averaging_kernel = step.averaging_kernel
+        final_posterior_precision = step.posterior_precision
+        final_jacobian = jacobian
         # Convergence requires both a small accepted state movement and a normal
         # signal-to-noise step.  Without the second condition an artificially
         # reduced spectral signal could make a too-large proposed move look
@@ -143,6 +149,15 @@ def retrieve(
         if state_conv < controls.state_vector_convergence_threshold and step.snr_normal:
             converged = True
             break
+
+    if final_jacobian is not None:
+        diagnostics = final_diagnostics(
+            posterior_precision=final_posterior_precision,
+            jacobian=final_jacobian,
+            measurement_variance=measured.variance,
+        )
+        posterior = diagnostics.posterior_covariance
+        averaging_kernel = diagnostics.averaging_kernel
 
     return Result(
         state_names=state_names,
@@ -153,25 +168,6 @@ def retrieve(
         posterior_covariance=posterior,
         averaging_kernel=averaging_kernel,
         timing=tuple(timing),
+        last_evaluated_state=last_evaluated_state,
+        last_evaluation=last_evaluation,
     )
-
-
-def _interpolate(target: np.ndarray, source: np.ndarray, values: np.ndarray) -> np.ndarray:
-    if np.array_equal(target, source):
-        return np.asarray(values, dtype=np.float64)
-    return np.interp(target, source, values)
-
-
-def _interpolate_columns(
-    target: np.ndarray,
-    source: np.ndarray,
-    values: np.ndarray,
-    state_names: Iterable[StateName],
-) -> np.ndarray:
-    columns = tuple(state_names)
-    if np.array_equal(target, source):
-        return np.asarray(values, dtype=np.float64)
-    interpolated = np.empty((target.size, len(columns)), dtype=np.float64)
-    for column_index in range(len(columns)):
-        interpolated[:, column_index] = np.interp(target, source, values[:, column_index])
-    return interpolated

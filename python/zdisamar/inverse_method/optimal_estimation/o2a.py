@@ -1,6 +1,7 @@
 """O2 A inverse forward-model adapter for optimal estimation."""
 
 import copy
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Protocol
 
@@ -15,6 +16,7 @@ from ...quantities import (
 from ...types import O2AInput
 from .core import retrieve
 from .forward_evaluation import ForwardEvaluation
+from .measurement import require_matching_wavelength_grid
 from .retrieval import Measurement, Result, RetrievalControls
 from .state_vector import PressureAltitudeProfile, StateVector
 
@@ -92,10 +94,29 @@ def disamar_oe(
         state_vector,
         controls=controls or RetrievalControls.from_disamar_retrieval_specs(),
     )
+    return attach_final_evaluation(
+        replace(result, measurement=measurement),
+        lambda state: inverse_model.evaluate(state, state_vector),
+    )
+
+
+def attach_final_evaluation(
+    result: Result,
+    evaluate_state: Callable[[np.ndarray], ForwardEvaluation],
+) -> Result:
+    """Attach the final-state model product required by OE result plots."""
+
+    if (
+        result.last_evaluation is not None
+        and result.last_evaluated_state is not None
+        and np.array_equal(result.state, result.last_evaluated_state)
+    ):
+        final_evaluation = result.last_evaluation
+    else:
+        final_evaluation = evaluate_state(result.state)
     return replace(
         result,
-        measurement=measurement,
-        final_evaluation=inverse_model.evaluate(result.state, state_vector),
+        final_evaluation=final_evaluation,
     )
 
 
@@ -220,13 +241,15 @@ def measurement_from_sun_normalized_radiance_noise(
         measurement_wavelength = spectrum.wavelength_nm.copy()
         reflectance = spectrum.reflectance.copy()
 
-    # The retrieval vector is reflectance, so the measurement covariance must
-    # live in the same units before it enters the inverse problem.
-    reflectance_noise = np.interp(
+    require_matching_wavelength_grid(
         measurement_wavelength,
         source_wavelength,
-        source_noise,
+        expected_name="measurement",
+        actual_name="noise",
     )
+    # The retrieval vector is reflectance, so the measurement covariance must
+    # live in the same units before it enters the inverse problem.
+    reflectance_noise = source_noise
     reflectance_noise = reflectance_noise_from_sun_normalized_radiance_noise(
         reflectance_noise,
         prepared.input.geometry.solar_mu0,

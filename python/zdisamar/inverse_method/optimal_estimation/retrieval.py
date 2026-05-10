@@ -85,6 +85,8 @@ class Result:
     timing: tuple[IterationTiming, ...] = ()
     measurement: Measurement | None = None
     final_evaluation: ForwardEvaluation | None = None
+    last_evaluated_state: np.ndarray | None = None
+    last_evaluation: ForwardEvaluation | None = None
 
     def value(self, name: StateName) -> float:
         return float(self.state[self.state_names.index(name)])

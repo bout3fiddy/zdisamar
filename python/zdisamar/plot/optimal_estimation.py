@@ -48,37 +48,46 @@ def _history_frame(result: Any):
 
 
 def _fit_frame(result: Any):
-    import numpy as np
     import pandas as pd
+
+    from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
 
     measurement = _require_measurement(result)
     evaluation = _require_final_evaluation(result)
     wavelength_nm = measurement.wavelength_nm
-    modeled = np.interp(wavelength_nm, evaluation.wavelength_nm, evaluation.reflectance)
+    require_matching_wavelength_grid(
+        wavelength_nm,
+        evaluation.wavelength_nm,
+        expected_name="measurement",
+        actual_name="final evaluation",
+    )
     return pd.DataFrame(
         {
             "wavelength_nm": wavelength_nm,
             "measurement": measurement.reflectance,
-            "retrieved_model": modeled,
-            "residual": measurement.reflectance - modeled,
+            "retrieved_model": evaluation.reflectance,
+            "residual": measurement.reflectance - evaluation.reflectance,
         }
     )
 
 
 def jacobian_frame(result: Any):
-    import numpy as np
     import pandas as pd
+
+    from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
 
     measurement = _require_measurement(result)
     evaluation = _require_final_evaluation(result)
     wavelength_nm = measurement.wavelength_nm
+    require_matching_wavelength_grid(
+        wavelength_nm,
+        evaluation.wavelength_nm,
+        expected_name="measurement",
+        actual_name="final evaluation",
+    )
     columns = []
     for index, state_name in enumerate(result.state_names):
-        values = np.interp(
-            wavelength_nm,
-            evaluation.wavelength_nm,
-            evaluation.reflectance_jacobian[:, index],
-        )
+        values = evaluation.reflectance_jacobian[:, index]
         columns.append(
             pd.DataFrame(
                 {

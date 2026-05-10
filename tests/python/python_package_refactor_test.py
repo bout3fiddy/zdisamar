@@ -100,6 +100,27 @@ def assert_plot_jacobian_uses_shared_conversion() -> None:
     )
 
 
+def assert_optimal_estimation_grid_mismatch_rejected() -> None:
+    import numpy as np
+    from zdisamar.inverse_method.optimal_estimation import (
+        WavelengthGridMismatchError,
+    )
+    from zdisamar.inverse_method.optimal_estimation.measurement import (
+        require_matching_wavelength_grid,
+    )
+
+    try:
+        require_matching_wavelength_grid(
+            np.array([758.0, 758.04], dtype=np.float64),
+            np.array([758.0, 758.03], dtype=np.float64),
+            expected_name="measurement",
+            actual_name="noise",
+        )
+    except WavelengthGridMismatchError:
+        return
+    raise AssertionError("optimal-estimation wavelength grid mismatch was accepted")
+
+
 def assert_reference_data_and_native_table() -> None:
     import numpy as np
     import zdisamar as zd
@@ -149,6 +170,7 @@ def main() -> int:
     assert_plot_package_boundary()
     assert_quantity_conversions()
     assert_plot_jacobian_uses_shared_conversion()
+    assert_optimal_estimation_grid_mismatch_rejected()
     assert_reference_data_and_native_table()
     print("python_package_refactor=ok")
     return 0
