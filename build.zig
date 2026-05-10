@@ -325,6 +325,14 @@ pub fn build(b: *std.Build) void {
         "Run the trace-enabled O2A LABOS bottleneck research harness",
     );
     labos_bottleneck_trace_step.dependOn(&run_labos_bottleneck_trace.step);
+    const run_o2a_jacobian_trace = b.addRunArtifact(labos_bottleneck_trace_exe);
+    run_o2a_jacobian_trace.addArg("--derivative-sweep");
+    if (b.args) |args| run_o2a_jacobian_trace.addArgs(args);
+    const o2a_jacobian_trace_step = b.step(
+        "o2a-jacobian-trace",
+        "Run the trace-enabled O2A forward/Jacobian derivative sweep",
+    );
+    o2a_jacobian_trace_step.dependOn(&run_o2a_jacobian_trace.step);
     const labos_bottleneck_trace_install = b.addInstallArtifact(labos_bottleneck_trace_exe, .{});
     const labos_bottleneck_trace_bin_step = b.step(
         "labos-bottleneck-trace-bin",

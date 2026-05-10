@@ -56,6 +56,9 @@ pub const Section = enum(u8) {
     orders_transport,
     orders_accumulate,
     reflectance_integral,
+    reflectance_aerosol_optical_depth_weighting,
+    reflectance_aerosol_layer_pressure_weighting,
+    reflectance_jacobian_assembly,
 
     pub fn name(self: Section) []const u8 {
         return switch (self) {
@@ -97,6 +100,9 @@ pub const Section = enum(u8) {
             .orders_transport => "labos.orders.transport",
             .orders_accumulate => "labos.orders.accumulate",
             .reflectance_integral => "labos.reflectance_integral",
+            .reflectance_aerosol_optical_depth_weighting => "labos.reflectance.aod_weighting",
+            .reflectance_aerosol_layer_pressure_weighting => "labos.reflectance.pressure_weighting",
+            .reflectance_jacobian_assembly => "labos.reflectance.jacobian_assembly",
         };
     }
 };

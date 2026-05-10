@@ -1,26 +1,26 @@
 {
   "direct_prepared_call_probe": {
     "forward_and_jacobian_s": {
-      "max": 1.0992881674319506,
-      "mean": 1.0441547084599734,
-      "median": 1.0453137923032045,
-      "min": 1.0055398745462298
+      "max": 1.009112791158259,
+      "mean": 0.9991243168711662,
+      "median": 0.9963897503912449,
+      "min": 0.9915239997208118
     },
     "forward_only_s": {
-      "max": 0.9417740823701024,
-      "mean": 0.8953308334574104,
-      "median": 0.8833239581435919,
-      "min": 0.8724624589085579
+      "max": 0.8811933333054185,
+      "mean": 0.8597787251695991,
+      "median": 0.8611088749021292,
+      "min": 0.8424095846712589
     },
     "jacobian_increment_s": {
-      "max": 0.22682570852339268,
-      "mean": 0.148823875002563,
-      "median": 0.1415336662903428,
-      "min": 0.06376579217612743
+      "max": 0.15398016571998596,
+      "mean": 0.13934559170156718,
+      "median": 0.14196433313190937,
+      "min": 0.12490041740238667
     },
     "probe_runs": 5
   },
-  "measurement_build_s": 1.252968791872263,
+  "measurement_build_s": 1.229893833398819,
   "scene": {
     "aerosol_mid_pressure_hpa": 329.192074869615,
     "aerosol_optical_depth": 1.9681905891962788,
@@ -33,50 +33,50 @@
     "viewing_zenith_deg": 45.71214389158657
   },
   "session": {
-    "first_use_retrieval_s": 6.665412374772131,
+    "first_use_retrieval_s": 5.59318095818162,
     "reused_retrieval": {
       "converged": true,
-      "forward_model_and_jacobian_s": 5.228556916117668,
+      "forward_model_and_jacobian_s": 4.218972706235945,
       "iterations": 4,
       "iterations_detail": [
         {
-          "forward_model_and_jacobian_s": 1.123608416877687,
+          "forward_model_and_jacobian_s": 1.0425040824338794,
           "index": 1,
-          "solver_update_s": 0.0002571661025285721,
-          "total_iteration_s": 1.1238707080483437
+          "solver_update_s": 0.0013908743858337402,
+          "total_iteration_s": 1.043902582488954
         },
         {
-          "forward_model_and_jacobian_s": 1.495506875216961,
+          "forward_model_and_jacobian_s": 1.0925911655649543,
           "index": 2,
-          "solver_update_s": 0.00018520839512348175,
-          "total_iteration_s": 1.49569758400321
+          "solver_update_s": 0.00017020944505929947,
+          "total_iteration_s": 1.09276616666466
         },
         {
-          "forward_model_and_jacobian_s": 1.406568999402225,
+          "forward_model_and_jacobian_s": 1.0500760423019528,
           "index": 3,
-          "solver_update_s": 0.00016679149121046066,
-          "total_iteration_s": 1.406740459613502
+          "solver_update_s": 0.00015583261847496033,
+          "total_iteration_s": 1.050235416740179
         },
         {
-          "forward_model_and_jacobian_s": 1.2028726246207952,
+          "forward_model_and_jacobian_s": 1.0338014159351587,
           "index": 4,
-          "solver_update_s": 0.0001589590683579445,
-          "total_iteration_s": 1.2030351664870977
+          "solver_update_s": 0.00016316678375005722,
+          "total_iteration_s": 1.0339684579521418
         }
       ],
-      "other_retrieval_s": 1.0881945416331291,
+      "other_retrieval_s": 1.0459615858271718,
       "retrieved": {
         "aerosol_layer_mid_pressure_hpa": 329.1909677351909,
         "aerosol_optical_depth": 1.968191215510923
       },
-      "solver_update_s": 0.000768125057220459,
+      "solver_update_s": 0.0018800832331180573,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 6.317519582808018
+      "wall_s": 5.266814375296235
     },
-    "setup_s": 0.3478927919641137
+    "setup_s": 0.32636658288538456
   },
   "source": "Slow retained scene from out/validation/optimal_estimation/paired_disamar_zdisamar/paired_retrieval_runs.parquet case 71.",
   "validation_case": "zdisamar_o2a_slow_forward_jacobian_latency"
