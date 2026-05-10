@@ -1,8 +1,6 @@
 """Canonical O2 A validation scene construction."""
 
-from __future__ import annotations
-
-O2A_REFERENCE_CSV = "validation/spectra/data/reference/o2a_with_cia_disamar_reference.csv"
+O2A_REFERENCE_CSV = "data/reference_data/validation/o2a_with_cia_disamar_reference.csv"
 
 
 def asset(zd, id: str, path: str, format: str):
@@ -124,7 +122,7 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
             line_list_asset=asset(
                 zd,
                 "o2_hitran",
-                "vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par",
+                "data/reference_data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
                 "hitran_par_o2a",
             ),
             line_mixing_asset=asset(

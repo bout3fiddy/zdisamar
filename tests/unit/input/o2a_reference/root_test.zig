@@ -16,6 +16,10 @@ test "default O2A input renders and parses as strict JSON" {
 
     try std.testing.expectEqual(@as(u32, 701), parsed.value.spectral_grid.sample_count);
     try std.testing.expectEqualStrings(
+        "data/reference_data/validation/o2a_with_cia_disamar_reference.csv",
+        parsed.value.inputs.vendor_reference_csv.path,
+    );
+    try std.testing.expectEqualStrings(
         "data/reference_data/solar/o2a_solar_reference_753_778.csv",
         parsed.value.inputs.raw_solar_reference.path,
     );
@@ -119,7 +123,7 @@ test "validation YAML resolves into the shared native O2A input type" {
     try zdisamar.o2a.validateInput(&input);
     try std.testing.expectEqual(@as(u32, 21), input.spectral_grid.sample_count);
     try std.testing.expectEqualStrings(
-        "vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par",
+        "data/reference_data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
         input.o2.line_list_asset.path,
     );
 }

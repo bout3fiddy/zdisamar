@@ -69,7 +69,7 @@ pub fn defaultInput() O2AInput {
             ),
             .vendor_reference_csv = asset(
                 "vendor_reference_csv",
-                "validation/spectra/data/reference/o2a_with_cia_disamar_reference.csv",
+                "data/reference_data/validation/o2a_with_cia_disamar_reference.csv",
                 "disamar_o2a_reference_csv",
             ),
             .raw_solar_reference = asset(
@@ -135,7 +135,7 @@ pub fn defaultInput() O2AInput {
         .o2 = .{
             .line_list_asset = asset(
                 "o2_hitran",
-                "vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par",
+                "data/reference_data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
                 "hitran_par_o2a",
             ),
             .line_mixing_asset = asset(

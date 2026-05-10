@@ -13,7 +13,7 @@ inputs:
       format: profile_csv
     vendor_reference_csv:
       kind: file
-      path: validation/spectra/data/reference/o2a_with_cia_disamar_reference.csv
+      path: data/reference_data/validation/o2a_with_cia_disamar_reference.csv
       format: disamar_o2a_reference_csv
     raw_solar_reference:
       kind: file
@@ -25,7 +25,7 @@ inputs:
       format: csv
     o2_hitran:
       kind: file
-      path: vendor/disamar-fortran/RefSpec/07_HIT08_TROPOMI.par
+      path: data/reference_data/cross_sections/o2a_hitran_07_hit08_tropomi.par
       format: hitran_par_o2a
     o2_line_mixing:
       kind: file

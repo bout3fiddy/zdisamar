@@ -1,68 +1,26 @@
 {
   "direct_prepared_call_probe": {
     "forward_and_jacobian_s": {
-      "max": 1.0258045000955462,
-      "mean": 1.0125132918357849,
-      "median": 1.0107289999723434,
-      "min": 1.0017815418541431
+      "max": 1.0992881674319506,
+      "mean": 1.0441547084599734,
+      "median": 1.0453137923032045,
+      "min": 1.0055398745462298
     },
     "forward_only_s": {
-      "max": 0.8626847919076681,
-      "mean": 0.8470605753362179,
-      "median": 0.8419384174048901,
-      "min": 0.8356975838541985
+      "max": 0.9417740823701024,
+      "mean": 0.8953308334574104,
+      "median": 0.8833239581435919,
+      "min": 0.8724624589085579
     },
     "jacobian_increment_s": {
-      "max": 0.18386608269065619,
-      "mean": 0.16545271649956703,
-      "median": 0.1648409590125084,
-      "min": 0.14804420806467533
+      "max": 0.22682570852339268,
+      "mean": 0.148823875002563,
+      "median": 0.1415336662903428,
+      "min": 0.06376579217612743
     },
     "probe_runs": 5
   },
-  "measurement_build_s": 1.198283833451569,
-  "non_session": {
-    "converged": true,
-    "forward_model_and_jacobian_s": 5.352449084632099,
-    "iterations": 4,
-    "iterations_detail": [
-      {
-        "forward_model_and_jacobian_s": 1.317429916933179,
-        "index": 1,
-        "solver_update_s": 0.0005396250635385513,
-        "total_iteration_s": 1.3179702926427126
-      },
-      {
-        "forward_model_and_jacobian_s": 1.3659634171053767,
-        "index": 2,
-        "solver_update_s": 0.000428750179708004,
-        "total_iteration_s": 1.3663930837064981
-      },
-      {
-        "forward_model_and_jacobian_s": 1.340698542073369,
-        "index": 3,
-        "solver_update_s": 0.0002242494374513626,
-        "total_iteration_s": 1.3409235002472997
-      },
-      {
-        "forward_model_and_jacobian_s": 1.328357208520174,
-        "index": 4,
-        "solver_update_s": 0.00024516694247722626,
-        "total_iteration_s": 1.3286029156297445
-      }
-    ],
-    "other_retrieval_s": 0.00025612302124500275,
-    "retrieved": {
-      "aerosol_layer_mid_pressure_hpa": 329.19077238157064,
-      "aerosol_optical_depth": 1.968191325313343
-    },
-    "solver_update_s": 0.0014377916231751442,
-    "state_names": [
-      "aerosol_optical_depth",
-      "aerosol_layer_mid_pressure_hpa"
-    ],
-    "wall_s": 5.354142999276519
-  },
+  "measurement_build_s": 1.252968791872263,
   "scene": {
     "aerosol_mid_pressure_hpa": 329.192074869615,
     "aerosol_optical_depth": 1.9681905891962788,
@@ -75,52 +33,51 @@
     "viewing_zenith_deg": 45.71214389158657
   },
   "session": {
-    "first_use_retrieval_s": 4.42586962506175,
+    "first_use_retrieval_s": 6.665412374772131,
     "reused_retrieval": {
       "converged": true,
-      "forward_model_and_jacobian_s": 4.097322249785066,
+      "forward_model_and_jacobian_s": 5.228556916117668,
       "iterations": 4,
       "iterations_detail": [
         {
-          "forward_model_and_jacobian_s": 1.0097174169495702,
+          "forward_model_and_jacobian_s": 1.123608416877687,
           "index": 1,
-          "solver_update_s": 0.00021975021809339523,
-          "total_iteration_s": 1.0099377073347569
+          "solver_update_s": 0.0002571661025285721,
+          "total_iteration_s": 1.1238707080483437
         },
         {
-          "forward_model_and_jacobian_s": 1.0349629996344447,
+          "forward_model_and_jacobian_s": 1.495506875216961,
           "index": 2,
-          "solver_update_s": 0.00019949954003095627,
-          "total_iteration_s": 1.035162916406989
+          "solver_update_s": 0.00018520839512348175,
+          "total_iteration_s": 1.49569758400321
         },
         {
-          "forward_model_and_jacobian_s": 1.0301444167271256,
+          "forward_model_and_jacobian_s": 1.406568999402225,
           "index": 3,
-          "solver_update_s": 0.00022183358669281006,
-          "total_iteration_s": 1.0303667495027184
+          "solver_update_s": 0.00016679149121046066,
+          "total_iteration_s": 1.406740459613502
         },
         {
-          "forward_model_and_jacobian_s": 1.0224974164739251,
+          "forward_model_and_jacobian_s": 1.2028726246207952,
           "index": 4,
-          "solver_update_s": 0.00023516733199357986,
-          "total_iteration_s": 1.0227331668138504
+          "solver_update_s": 0.0001589590683579445,
+          "total_iteration_s": 1.2030351664870977
         }
       ],
-      "other_retrieval_s": 0.0001914575695991516,
+      "other_retrieval_s": 1.0881945416331291,
       "retrieved": {
-        "aerosol_layer_mid_pressure_hpa": 329.19077238157064,
-        "aerosol_optical_depth": 1.968191325313343
+        "aerosol_layer_mid_pressure_hpa": 329.1909677351909,
+        "aerosol_optical_depth": 1.968191215510923
       },
-      "solver_update_s": 0.0008762506768107414,
+      "solver_update_s": 0.000768125057220459,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 4.0983899580314755
+      "wall_s": 6.317519582808018
     },
-    "setup_s": 0.32747966703027487
+    "setup_s": 0.3478927919641137
   },
-  "session_matches_non_session_result": true,
   "source": "Slow retained scene from out/validation/optimal_estimation/paired_disamar_zdisamar/paired_retrieval_runs.parquet case 71.",
   "validation_case": "zdisamar_o2a_slow_forward_jacobian_latency"
 }

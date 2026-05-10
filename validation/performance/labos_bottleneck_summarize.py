@@ -3,8 +3,6 @@
 # requires-python = ">=3.14"
 # ///
 
-from __future__ import annotations
-
 import csv
 import json
 import re

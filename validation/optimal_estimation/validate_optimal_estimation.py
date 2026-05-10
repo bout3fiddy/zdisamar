@@ -6,8 +6,6 @@
 # ]
 # ///
 
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path
@@ -32,8 +30,14 @@ from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estima
 from zdisamar.inverse_method.optimal_estimation.covariance_space import (  # noqa: E402
     build_covariance_space,
 )
+from zdisamar.inverse_method.optimal_estimation.diagnostics import (  # noqa: E402
+    final_diagnostics,
+)
 
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
+from validation.common.o2a_measurement_noise import (  # noqa: E402
+    measurement_from_o2a_baseline_noise,
+)
 from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
@@ -146,12 +150,15 @@ def assert_gauss_newton_retains_prior_precision_nullspace() -> None:
     step = optimal_estimation.gauss_newton_step(
         problem,
         prior=np.zeros(2, dtype=np.float64),
-        jacobian=np.array([[2.0, 0.0]], dtype=np.float64),
-        measurement_variance=np.array([1.0], dtype=np.float64),
         max_change_transformed_state=100.0,
     )
     assert np.allclose(step.posterior_precision, np.array([[5.0, 0.0], [0.0, 1.0]]))
-    assert np.allclose(step.posterior_covariance, np.array([[0.2, 0.0], [0.0, 1.0]]))
+    diagnostics = final_diagnostics(
+        posterior_precision=step.posterior_precision,
+        jacobian=np.array([[2.0, 0.0]], dtype=np.float64),
+        measurement_variance=np.array([1.0], dtype=np.float64),
+    )
+    assert np.allclose(diagnostics.posterior_covariance, np.array([[0.2, 0.0], [0.0, 1.0]]))
 
 
 def build_measurement(
@@ -159,21 +166,12 @@ def build_measurement(
     reference: JsonObject,
 ) -> optimal_estimation.Measurement:
     # The measurement is simulated once from the truth scene. The inverse pass
-    # only sees this spectrum plus covariance, so a wrong retrieval trajectory
-    # cannot be excused by regenerating the target at each state.
-    noise_reference = reference["measurement_noise"]
+    # only sees this spectrum plus retained O2 A baseline covariance, so a wrong
+    # retrieval trajectory cannot be excused by regenerating the target at each
+    # state.
+    _ = reference
     with zd.prepare(case) as prepared:
-        return o2a_optimal_estimation.measurement_from_sun_normalized_radiance_noise(
-            prepared,
-            wavelength_nm=np.asarray(
-                noise_reference["wavelength_nm"],
-                dtype=np.float64,
-            ),
-            sun_normalized_radiance_noise=np.asarray(
-                noise_reference["assumed_noise_sun_normalized_radiance"],
-                dtype=np.float64,
-            ),
-        )
+        return measurement_from_o2a_baseline_noise(prepared)
 
 
 def run_retrieval(
@@ -300,10 +298,20 @@ def diagnostics_match(
 def timing_report(
     phase_timings: dict[str, float],
     result: optimal_estimation.Result,
-    session_result: optimal_estimation.Result | None = None,
 ) -> JsonObject:
-    report: JsonObject = {
+    forward_model_and_jacobian_s = sum(
+        timing.forward_model_and_jacobian_s for timing in result.timing
+    )
+    return {
         "phases_s": phase_timings,
+        "retrieval": {
+            "setup_s": phase_timings["session_create_s"],
+            "retrieval_s": phase_timings["retrieval_s"],
+            "first_use_retrieval_s": phase_timings["session_create_s"]
+            + phase_timings["retrieval_s"],
+            "forward_model_and_jacobian_s": forward_model_and_jacobian_s,
+            "iterations": result.iterations,
+        },
         "iterations": [
             {
                 "index": timing.index,
@@ -314,119 +322,22 @@ def timing_report(
             for timing in result.timing
         ],
     }
-    if session_result is not None:
-        baseline_forward_s = sum(timing.forward_model_and_jacobian_s for timing in result.timing)
-        session_forward_s = sum(
-            timing.forward_model_and_jacobian_s for timing in session_result.timing
-        )
-        report["session_reuse"] = {
-            "forward_model_and_jacobian_s": session_forward_s,
-            "baseline_forward_model_and_jacobian_s": baseline_forward_s,
-            "forward_model_and_jacobian_speedup_pct": (
-                100.0 * (baseline_forward_s - session_forward_s) / baseline_forward_s
-                if baseline_forward_s
-                else 0.0
-            ),
-            "iterations": [
-                {
-                    "index": timing.index,
-                    "forward_model_and_jacobian_s": timing.forward_model_and_jacobian_s,
-                    "solver_update_s": timing.solver_update_s,
-                    "total_iteration_s": timing.total_iteration_s,
-                }
-                for timing in session_result.timing
-            ],
-        }
-    return report
 
 
-def retrieval_mode_timing(
-    phase_timings: dict[str, float],
-    result: optimal_estimation.Result,
-    session_result: optimal_estimation.Result,
-) -> JsonObject:
-    non_session_retrieval_s = phase_timings["retrieval_s"]
-    session_setup_s = phase_timings["session_create_s"]
-    session_reused_retrieval_s = phase_timings["session_reuse_retrieval_s"]
-    session_first_use_retrieval_s = session_setup_s + session_reused_retrieval_s
-    non_session_forward_s = sum(timing.forward_model_and_jacobian_s for timing in result.timing)
-    session_forward_s = sum(timing.forward_model_and_jacobian_s for timing in session_result.timing)
-    return {
-        "non_session": {
-            "retrieval_s": non_session_retrieval_s,
-            "forward_model_and_jacobian_s": non_session_forward_s,
-            "iterations": result.iterations,
-        },
-        "session": {
-            "setup_s": session_setup_s,
-            "reused_retrieval_s": session_reused_retrieval_s,
-            "first_use_retrieval_s": session_first_use_retrieval_s,
-            "forward_model_and_jacobian_s": session_forward_s,
-            "iterations": session_result.iterations,
-        },
-        "speedup_pct": {
-            "session_reused_forward_vs_non_session_forward": (
-                100.0 * (non_session_forward_s - session_forward_s) / non_session_forward_s
-                if non_session_forward_s
-                else 0.0
-            ),
-            "session_first_use_retrieval_vs_non_session_retrieval": (
-                100.0
-                * (non_session_retrieval_s - session_first_use_retrieval_s)
-                / non_session_retrieval_s
-                if non_session_retrieval_s
-                else 0.0
-            ),
-        },
-    }
-
-
-def print_retrieval_mode_timing(report: JsonObject) -> None:
-    modes = report["retrieval_modes"]
-    non_session = modes["non_session"]
-    session = modes["session"]
-    speedup = modes["speedup_pct"]
-    print("Retrieval mode timing:")
+def print_retrieval_timing(report: JsonObject) -> None:
+    retrieval = report["retrieval"]
+    print("Fast session-backed retrieval timing:")
     print(
-        "  Non-session retrieval: "
-        f"{non_session['retrieval_s']:.6f} s total, "
-        f"{non_session['forward_model_and_jacobian_s']:.6f} s forward+jacobian, "
-        f"{non_session['iterations']} iterations"
+        "  Retrieval loop: "
+        f"{retrieval['retrieval_s']:.6f} s total, "
+        f"{retrieval['forward_model_and_jacobian_s']:.6f} s forward+jacobian, "
+        f"{retrieval['iterations']} iterations"
     )
     print(
-        "  Session first use: "
-        f"{session['first_use_retrieval_s']:.6f} s total "
-        f"= {session['setup_s']:.6f} s setup/warm + "
-        f"{session['reused_retrieval_s']:.6f} s retrieval loop"
-    )
-    print(
-        "  Session reused retrieval loop: "
-        f"{session['reused_retrieval_s']:.6f} s total, "
-        f"{session['forward_model_and_jacobian_s']:.6f} s forward+jacobian, "
-        f"{session['iterations']} iterations"
-    )
-    print(
-        "  Session reused forward+jacobian speedup vs non-session: "
-        f"{speedup['session_reused_forward_vs_non_session_forward']:.2f}%"
-    )
-    print(
-        "  Session first-use retrieval speedup vs non-session retrieval: "
-        f"{speedup['session_first_use_retrieval_vs_non_session_retrieval']:.2f}%"
-    )
-
-
-def session_matches_result(
-    baseline: optimal_estimation.Result,
-    session_result: optimal_estimation.Result,
-) -> bool:
-    return bool(
-        baseline.converged == session_result.converged
-        and baseline.iterations == session_result.iterations
-        and baseline.state_names == session_result.state_names
-        and np.array_equal(baseline.state, session_result.state)
-        and np.array_equal(baseline.posterior_covariance, session_result.posterior_covariance)
-        and np.array_equal(baseline.averaging_kernel, session_result.averaging_kernel)
-        and iteration_records(baseline) == iteration_records(session_result)
+        "  First use including setup/warm: "
+        f"{retrieval['first_use_retrieval_s']:.6f} s "
+        f"= {retrieval['setup_s']:.6f} s setup/warm + "
+        f"{retrieval['retrieval_s']:.6f} s retrieval loop"
     )
 
 
@@ -547,13 +458,11 @@ def main() -> int:
     with timer.phase("build_measurement_s"):
         measurement = build_measurement(case, reference)
 
-    with timer.phase("retrieval_s"):
-        result = run_retrieval(case, state_vector, measurement)
     with timer.phase("session_create_s"):
         session = zd.o2a_forward_session(case)
     try:
-        with timer.phase("session_reuse_retrieval_s"):
-            session_result = run_retrieval(
+        with timer.phase("retrieval_s"):
+            result = run_retrieval(
                 case,
                 state_vector,
                 measurement,
@@ -566,30 +475,14 @@ def main() -> int:
     )
     with timer.phase("build_summary_s"):
         summary = build_summary(reference, result, profile, layer_thickness)
-        session_summary = build_summary(reference, session_result, profile, layer_thickness)
-        summary["session_reuse"] = {
-            "passes_disamar_two_state_fixture": session_summary["passes_disamar_two_state_fixture"],
-            "matches_baseline_result": session_matches_result(result, session_result),
-            "iterations": session_result.iterations,
-            "converged": session_result.converged,
-            "retrieved": session_summary["retrieved"],
-            "absolute_differences": session_summary["absolute_differences"],
-        }
 
     with timer.phase("write_summary_s"):
         write_json(SUMMARY_PATH, summary)
     phase_timings = timer.finish()
-    timing = timing_report(phase_timings, result, session_result)
-    timing["retrieval_modes"] = retrieval_mode_timing(phase_timings, result, session_result)
+    timing = timing_report(phase_timings, result)
     write_json(TIMING_PATH, timing)
-    print_retrieval_mode_timing(timing)
+    print_retrieval_timing(timing)
     assert summary["passes_two_state_truth"], json.dumps(summary, indent=2, sort_keys=True)
-    assert session_summary["passes_two_state_truth"], json.dumps(
-        summary["session_reuse"], indent=2, sort_keys=True
-    )
-    assert summary["session_reuse"]["matches_baseline_result"], json.dumps(
-        summary["session_reuse"], indent=2, sort_keys=True
-    )
     return 0
 
 

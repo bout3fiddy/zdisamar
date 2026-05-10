@@ -1,91 +1,48 @@
 {
   "iterations": [
     {
-      "forward_model_and_jacobian_s": 0.5053601255640388,
+      "forward_model_and_jacobian_s": 0.20492616668343544,
       "index": 1,
-      "solver_update_s": 0.0003280835226178169,
-      "total_iteration_s": 0.5056891245767474
+      "solver_update_s": 0.00020150002092123032,
+      "total_iteration_s": 0.20513283368200064
     },
     {
-      "forward_model_and_jacobian_s": 0.510616791434586,
+      "forward_model_and_jacobian_s": 0.2071420419961214,
       "index": 2,
-      "solver_update_s": 0.0002820827066898346,
-      "total_iteration_s": 0.5109002087265253
+      "solver_update_s": 0.00018875021487474442,
+      "total_iteration_s": 0.20733524952083826
     },
     {
-      "forward_model_and_jacobian_s": 0.5111472504213452,
+      "forward_model_and_jacobian_s": 0.21054512541741133,
       "index": 3,
-      "solver_update_s": 0.00024749990552663803,
-      "total_iteration_s": 0.5113955838605762
+      "solver_update_s": 0.00015616696327924728,
+      "total_iteration_s": 0.21070462558418512
     },
     {
-      "forward_model_and_jacobian_s": 0.514045000076294,
+      "forward_model_and_jacobian_s": 0.2088409997522831,
       "index": 4,
-      "solver_update_s": 0.00025012530386447906,
-      "total_iteration_s": 0.5142958322539926
+      "solver_update_s": 0.0001626666635274887,
+      "total_iteration_s": 0.20900729205459356
     }
   ],
   "phases_s": {
-    "boundary_contiguity_check_s": 0.0001172926276922226,
-    "build_case_s": 2.2124499082565308e-05,
-    "build_measurement_s": 0.5127823753282428,
-    "build_pressure_altitude_profile_s": 0.16562312468886375,
-    "build_state_vector_s": 1.6076419577002525,
-    "build_summary_s": 5.6041404604911804e-05,
-    "load_reference_s": 0.0003460422158241272,
-    "retrieval_s": 2.0424469159916043,
-    "session_create_s": 0.3241211250424385,
-    "session_reuse_retrieval_s": 0.8059477498754859,
-    "total_s": 5.4622976668179035,
-    "write_summary_s": 0.001743333414196968
+    "boundary_contiguity_check_s": 0.0001277923583984375,
+    "build_case_s": 2.5083310902118683e-05,
+    "build_measurement_s": 0.5287073329091072,
+    "build_pressure_altitude_profile_s": 0.1700722500681877,
+    "build_state_vector_s": 1.667015416547656,
+    "build_summary_s": 3.470759838819504e-05,
+    "load_reference_s": 0.0001681651920080185,
+    "retrieval_s": 1.0349199585616589,
+    "session_create_s": 0.3700838750228286,
+    "total_s": 3.7730056662112474,
+    "write_summary_s": 0.0003242501989006996
   },
-  "retrieval_modes": {
-    "non_session": {
-      "forward_model_and_jacobian_s": 2.041169167496264,
-      "iterations": 4,
-      "retrieval_s": 2.0424469159916043
-    },
-    "session": {
-      "first_use_retrieval_s": 1.1300688749179244,
-      "forward_model_and_jacobian_s": 0.8049058327451348,
-      "iterations": 4,
-      "reused_retrieval_s": 0.8059477498754859,
-      "setup_s": 0.3241211250424385
-    },
-    "speedup_pct": {
-      "session_first_use_retrieval_vs_non_session_retrieval": 44.67083251614018,
-      "session_reused_forward_vs_non_session_forward": 60.566431946821574
-    }
-  },
-  "session_reuse": {
-    "baseline_forward_model_and_jacobian_s": 2.041169167496264,
-    "forward_model_and_jacobian_s": 0.8049058327451348,
-    "forward_model_and_jacobian_speedup_pct": 60.566431946821574,
-    "iterations": [
-      {
-        "forward_model_and_jacobian_s": 0.19828575011342764,
-        "index": 1,
-        "solver_update_s": 0.00022279098629951477,
-        "total_iteration_s": 0.19850924983620644
-      },
-      {
-        "forward_model_and_jacobian_s": 0.2017476251348853,
-        "index": 2,
-        "solver_update_s": 0.0002171248197555542,
-        "total_iteration_s": 0.20196545869112015
-      },
-      {
-        "forward_model_and_jacobian_s": 0.20217908266931772,
-        "index": 3,
-        "solver_update_s": 0.00023024994879961014,
-        "total_iteration_s": 0.2024101670831442
-      },
-      {
-        "forward_model_and_jacobian_s": 0.20269337482750416,
-        "index": 4,
-        "solver_update_s": 0.0001977924257516861,
-        "total_iteration_s": 0.20289179123938084
-      }
-    ]
+  "retrieval": {
+    "first_use_retrieval_s": 1.4050038335844874,
+    "forward_model_and_jacobian_s": 0.8314543338492513,
+    "iterations": 4,
+    "retrieval_s": 1.0349199585616589,
+    "setup_s": 0.3700838750228286
   }
 }

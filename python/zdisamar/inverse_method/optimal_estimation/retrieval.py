@@ -1,11 +1,10 @@
 """Retrieval data objects and diagnostics."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 import numpy as np
 
+from .forward_evaluation import ForwardEvaluation
 from .state_vector import StateName
 
 
@@ -84,6 +83,16 @@ class Result:
     posterior_covariance: np.ndarray
     averaging_kernel: np.ndarray
     timing: tuple[IterationTiming, ...] = ()
+    measurement: Measurement | None = None
+    final_evaluation: ForwardEvaluation | None = None
+    last_evaluated_state: np.ndarray | None = None
+    last_evaluation: ForwardEvaluation | None = None
 
     def value(self, name: StateName) -> float:
         return float(self.state[self.state_names.index(name)])
+
+    @property
+    def plot(self):
+        from ...plot.optimal_estimation import OptimalEstimationPlot
+
+        return OptimalEstimationPlot(self)

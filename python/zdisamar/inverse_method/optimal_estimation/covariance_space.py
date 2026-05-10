@@ -1,7 +1,5 @@
 """Covariance-space preparation for optimal-estimation updates."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 import numpy as np
@@ -22,6 +20,45 @@ class CovarianceSpace:
     k_white: np.ndarray
     sqrt_sa: np.ndarray
     sqrt_inv_sa: np.ndarray
+
+
+@dataclass(frozen=True)
+class SolverWorkspace:
+    """Static covariance terms reused across retrieval iterations."""
+
+    prior: np.ndarray
+    prior_covariance: np.ndarray
+    inv_prior_covariance: np.ndarray
+    sqrt_sa: np.ndarray
+    sqrt_inv_sa: np.ndarray
+    measurement_variance: np.ndarray
+    sqrt_inv_se: np.ndarray
+    inv_se: np.ndarray
+
+
+def build_solver_workspace(
+    *,
+    prior: np.ndarray,
+    prior_covariance: np.ndarray,
+    measurement_variance: np.ndarray,
+) -> SolverWorkspace:
+    """Precompute covariance transforms that do not change between iterations."""
+
+    prior_values = np.asarray(prior, dtype=np.float64)
+    prior_covariance_values = np.asarray(prior_covariance, dtype=np.float64)
+    measurement_variance_values = np.asarray(measurement_variance, dtype=np.float64)
+    sqrt_sa = np.linalg.cholesky(prior_covariance_values)
+    sqrt_inv_sa = np.linalg.inv(sqrt_sa)
+    return SolverWorkspace(
+        prior=prior_values,
+        prior_covariance=prior_covariance_values,
+        inv_prior_covariance=np.linalg.inv(prior_covariance_values),
+        sqrt_sa=sqrt_sa,
+        sqrt_inv_sa=sqrt_inv_sa,
+        measurement_variance=measurement_variance_values,
+        sqrt_inv_se=np.diag(1.0 / np.sqrt(measurement_variance_values)),
+        inv_se=np.diag(1.0 / measurement_variance_values),
+    )
 
 
 def build_covariance_space(
@@ -47,27 +84,36 @@ def build_covariance_space(
     display units, should define what a large move means.
     """
 
-    # S_a^1/2 maps a unit move in normalized state space back to physical state
-    # units.  Cholesky gives the same role for diagonal and future full prior
-    # covariances, so this code path will not need to change once correlated
-    # priors are introduced.
-    sqrt_sa = np.linalg.cholesky(prior_covariance)
-    sqrt_inv_sa = np.linalg.inv(sqrt_sa)
+    workspace = build_solver_workspace(
+        prior=prior,
+        prior_covariance=prior_covariance,
+        measurement_variance=measurement_variance,
+    )
+    return build_covariance_space_from_workspace(
+        workspace=workspace,
+        previous=previous,
+        residual=residual,
+        jacobian=jacobian,
+    )
 
-    # The current public Measurement stores only the diagonal of S_e.  Keeping
-    # the covariance conversion here isolates that interface decision from the
-    # step solver, so a future full covariance changes one boundary instead of
-    # every inverse-method experiment.
-    sqrt_inv_se = np.diag(1.0 / np.sqrt(measurement_variance))
+
+def build_covariance_space_from_workspace(
+    *,
+    workspace: SolverWorkspace,
+    previous: np.ndarray,
+    residual: np.ndarray,
+    jacobian: np.ndarray,
+) -> CovarianceSpace:
+    """Return the normalized linear problem using cached covariance transforms."""
 
     # dx is measured from the a-priori state, not the previous iteration delta,
     # because optimal estimation regularizes absolute distance from x_a.  Using x_i - x_{i-1}
     # here would remove the prior penalty from the linearized update.
-    dx = previous - prior
+    dx = previous - workspace.prior
     return CovarianceSpace(
-        dx_white=sqrt_inv_sa @ dx,
-        d_r_white=sqrt_inv_se @ residual,
-        k_white=sqrt_inv_se @ jacobian @ sqrt_sa,
-        sqrt_sa=sqrt_sa,
-        sqrt_inv_sa=sqrt_inv_sa,
+        dx_white=workspace.sqrt_inv_sa @ dx,
+        d_r_white=workspace.sqrt_inv_se @ residual,
+        k_white=workspace.sqrt_inv_se @ jacobian @ workspace.sqrt_sa,
+        sqrt_sa=workspace.sqrt_sa,
+        sqrt_inv_sa=workspace.sqrt_inv_sa,
     )

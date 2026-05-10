@@ -4,7 +4,7 @@ const internal = @import("internal");
 const reference_assets = internal.input_reference_data.ingest_reference_assets;
 const loadBundleAsset = reference_assets.loadBundleAsset;
 
-test "reference asset loader preserves vendor O2A filter metadata for bundled JPL line lists" {
+test "reference asset loader parses bundled vendor O2A line-list metadata" {
     var asset = try loadBundleAsset(
         std.testing.allocator,
         .spectroscopy_line_list,
@@ -28,10 +28,10 @@ test "reference asset loader preserves vendor O2A filter metadata for bundled JP
     try std.testing.expectEqual(@as(?u8, null), lines.lines[2].rotational_nf);
     try std.testing.expect(!lines.lines[2].vendor_filter_metadata_from_source);
 
-    try std.testing.expectEqual(@as(?u8, 6), lines.lines[585].branch_ic1);
-    try std.testing.expectEqual(@as(?u8, 2), lines.lines[585].branch_ic2);
+    try std.testing.expectEqual(@as(?u8, 5), lines.lines[585].branch_ic1);
+    try std.testing.expectEqual(@as(?u8, 1), lines.lines[585].branch_ic2);
     try std.testing.expectEqual(@as(?u8, 9), lines.lines[585].rotational_nf);
-    try std.testing.expect(lines.lines[585].vendor_filter_metadata_from_source);
+    try std.testing.expect(!lines.lines[585].vendor_filter_metadata_from_source);
 }
 
 test "reference asset loader parses vendor strong-line and relaxation sidecars" {

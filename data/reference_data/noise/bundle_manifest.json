@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "bundle_id": "disamar_standard.noise.o2a_s5_reference_radiance",
+  "owner_package": "disamar_standard",
+  "description": "S5/TROPOMI O2 A reference radiance spectrum used to derive retained O2 A baseline wavelength-dependent measurement SNR.",
+  "upstream": {
+    "vendor_root": "vendor/disamar_4.0.1",
+    "source_paths": [
+      "RefSpec/refRadSpectForS5_defSNR.dat"
+    ],
+    "reference_snapshot": "disamar_4.0.1"
+  },
+  "assets": [
+    {
+      "id": "o2a_s5_reference_radiance_755_775",
+      "path": "data/reference_data/noise/o2a_s5_reference_radiance_755_775.csv",
+      "format": "csv",
+      "sha256": "sha256:65e6af6fcff82ac40f309447472d46e191f1b5610971766f3b05e329e80e9b62",
+      "columns": [
+        "wavelength_nm",
+        "reference_radiance_photons_cm2_s_sr_nm"
+      ],
+      "derivation": "Rows with 755.0 <= wavelength_nm <= 774.98 copied from the upstream S5 reference radiance file."
+    }
+  ]
+}

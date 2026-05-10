@@ -7,8 +7,6 @@
 # ]
 # ///
 
-from __future__ import annotations
-
 import copy
 import math
 import os
@@ -45,6 +43,9 @@ from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
+from validation.common.o2a_measurement_noise import (  # noqa: E402
+    measurement_from_o2a_baseline_noise,
+)
 from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 
@@ -182,21 +183,6 @@ def build_state_vector(
     )
 
 
-def measurement_from_baseline_snr(prepared) -> optimal_estimation.Measurement:
-    with prepared.forward_model() as spectrum:
-        wavelength_nm = spectrum.wavelength_nm.copy()
-        reflectance = spectrum.reflectance.copy()
-    reflectance_noise = np.maximum(
-        np.abs(reflectance) * oe_baseline.REFLECTANCE_RELATIVE_NOISE,
-        1.0e-12,
-    )
-    return optimal_estimation.Measurement(
-        wavelength_nm=wavelength_nm,
-        reflectance=reflectance,
-        variance=reflectance_noise**2,
-    )
-
-
 def retrieve_zdisamar(
     *,
     index: int,
@@ -209,7 +195,7 @@ def retrieve_zdisamar(
     start = time.perf_counter()
     try:
         with zd.prepare(case) as prepared:
-            measurement = measurement_from_baseline_snr(prepared)
+            measurement = measurement_from_o2a_baseline_noise(prepared)
             profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
         state_vector = build_state_vector(scene, initial, profile)
         with zd.o2a_forward_session(case) as session:

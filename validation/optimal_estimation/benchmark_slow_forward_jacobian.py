@@ -6,16 +6,12 @@
 # ]
 # ///
 
-from __future__ import annotations
-
 import copy
 import statistics
 import sys
 import time
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -29,6 +25,9 @@ from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
+from validation.common.o2a_measurement_noise import (  # noqa: E402
+    measurement_from_o2a_baseline_noise,
+)
 from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 
@@ -67,21 +66,6 @@ def build_state_vector(
                 upper=case.surface.pressure_hpa - 100.0,
             ),
         ]
-    )
-
-
-def measurement_from_baseline_snr(prepared) -> optimal_estimation.Measurement:
-    with prepared.forward_model() as spectrum:
-        wavelength_nm = spectrum.wavelength_nm.copy()
-        reflectance = spectrum.reflectance.copy()
-    reflectance_noise = np.maximum(
-        np.abs(reflectance) * oe_baseline.REFLECTANCE_RELATIVE_NOISE,
-        1.0e-12,
-    )
-    return optimal_estimation.Measurement(
-        wavelength_nm=wavelength_nm,
-        reflectance=reflectance,
-        variance=reflectance_noise**2,
     )
 
 
@@ -183,12 +167,8 @@ def main() -> int:
 
     measurement_start = time.perf_counter()
     with zd.prepare(case) as prepared:
-        measurement = measurement_from_baseline_snr(prepared)
+        measurement = measurement_from_o2a_baseline_noise(prepared)
     measurement_s = time.perf_counter() - measurement_start
-
-    non_session_start = time.perf_counter()
-    non_session_result = run_retrieval(case, state_vector, measurement)
-    non_session_s = time.perf_counter() - non_session_start
 
     session_setup_start = time.perf_counter()
     session = zd.o2a_forward_session(case)
@@ -209,28 +189,17 @@ def main() -> int:
         ),
         "scene": copy.deepcopy(oe_baseline.SLOW_VALIDATION_SCENE),
         "measurement_build_s": measurement_s,
-        "non_session": retrieval_record(non_session_result, non_session_s),
         "session": {
             "setup_s": session_setup_s,
             "reused_retrieval": retrieval_record(session_result, session_reused_s),
             "first_use_retrieval_s": session_setup_s + session_reused_s,
         },
         "direct_prepared_call_probe": prepared_probe,
-        "session_matches_non_session_result": bool(
-            non_session_result.converged == session_result.converged
-            and non_session_result.iterations == session_result.iterations
-            and np.array_equal(non_session_result.state, session_result.state)
-        ),
     }
     write_json(BENCHMARK_PATH, report)
 
     print("Slow forward+jacobian latency benchmark:")
     print(f"  measurement build: {measurement_s:.6f} s")
-    print(
-        "  non-session retrieval: "
-        f"{report['non_session']['wall_s']:.6f} s total, "
-        f"{report['non_session']['forward_model_and_jacobian_s']:.6f} s forward+jacobian"
-    )
     print(
         "  session reused retrieval: "
         f"{report['session']['reused_retrieval']['wall_s']:.6f} s total, "

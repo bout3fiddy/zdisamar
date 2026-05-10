@@ -1,7 +1,5 @@
 """Aerosol optical-depth retrieval parameter."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 AEROSOL_OPTICAL_DEPTH = "aerosol_optical_depth"

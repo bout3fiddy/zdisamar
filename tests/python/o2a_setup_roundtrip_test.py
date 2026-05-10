@@ -1,9 +1,6 @@
-from __future__ import annotations
-
 import argparse
 import copy
 import json
-import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -12,7 +9,6 @@ from typing import Any
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PYTHON_ROOT = REPO_ROOT / "python"
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,7 +36,6 @@ def spectrum_arrays(spectrum: Any) -> dict[str, np.ndarray]:
 
 
 def run_roundtrip(library_path: str | None) -> dict[str, Any]:
-    sys.path.insert(0, str(PYTHON_ROOT))
     import zdisamar as zd
 
     tolerance = 1.0e-12

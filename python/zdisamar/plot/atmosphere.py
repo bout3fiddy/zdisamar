@@ -1,201 +1,78 @@
-"""Atmospheric budget plots."""
+"""Atmospheric-budget plot accessor."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
-from typing import Literal
+from pathlib import Path
+from typing import Any
 
 import altair as alt
 
 from . import fields
-from .common import (
-    component_sums,
-    frame,
-    interval_profile_rows,
-    label,
-    nearest_wavelength_value,
-    numeric_cell_bounds,
-)
-from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
-from .theme import SEMANTIC_COLORS
+from .axes import label, scaled_x
+from .profiles import interval_profile_rows, nearest_wavelength_value
+from .properties import PLOT, PlotAccessor
 
-DEFAULT_COMPONENTS = (
-    "gas_absorption_optical_depth",
-    "gas_scattering_optical_depth",
-    fields.COLLISION_INDUCED_ABSORPTION_OPTICAL_DEPTH,
-    fields.AEROSOL_OPTICAL_DEPTH,
-    fields.CLOUD_OPTICAL_DEPTH,
-)
+DEFAULT_PROFILE_WAVELENGTH_NM = 760.76
 
 
-def optical_depth_heatmap(
-    budget,
-    *,
-    quantity: str = fields.TOTAL_OPTICAL_DEPTH,
-    vertical_axis: Literal["altitude_km", "pressure_hpa"] = "altitude_km",
-    log_color: bool = False,
-    markers_nm: Sequence[float] = (),
-):
-    data = frame(budget, [fields.WAVELENGTH_NM, vertical_axis, quantity])
-    if "support_row_kind_label" in data.columns:
-        active = data[data["support_row_kind_label"] == "parity_active"].copy()
-        if not active.empty:
-            data = active
-    data = numeric_cell_bounds(data, fields.WAVELENGTH_NM, y=vertical_axis)
-    color_scale = alt.Scale(scheme="greys", type="log" if log_color else "linear")
-    y_scale = alt.Scale(reverse=True) if vertical_axis == "pressure_hpa" else alt.Scale()
-    heatmap = (
-        alt.Chart(data)
-        .mark_rect()
-        .encode(
-            x=alt.X(
-                "_x_start:Q",
-                title=label(fields.WAVELENGTH_NM),
-                scale=alt.Scale(zero=False),
-                axis=alt.Axis(tickMinStep=5),
-            ),
-            x2="_x_end:Q",
-            y=alt.Y("_y_start:Q", title=label(vertical_axis), scale=y_scale),
-            y2="_y_end:Q",
-            color=alt.Color(f"{quantity}:Q", title=label(quantity), scale=color_scale),
-            tooltip=_tooltip([fields.WAVELENGTH_NM, vertical_axis, quantity]),
+class BudgetPlot(PlotAccessor):
+    def __init__(self, budget: Any):
+        super().__init__(budget)
+
+    def optical_depth(
+        self,
+        wavelength_nm: float | None = None,
+        save: str | Path | None = None,
+    ):
+        return self._finish(
+            _optical_depth_profile(self._target, wavelength_nm=wavelength_nm),
+            save=save,
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title=label(quantity))
-    )
-    if not markers_nm:
-        return heatmap
-    import pandas as pd
-
-    rules = (
-        alt.Chart(pd.DataFrame({fields.WAVELENGTH_NM: list(markers_nm)}))
-        .mark_rule(color="#737373", strokeDash=[4, 3], strokeWidth=0.8)
-        .encode(x=f"{fields.WAVELENGTH_NM}:Q")
-    )
-    return alt.layer(heatmap, rules)
 
 
-def optical_depth_profile(
-    budget,
+def _optical_depth_profile(
+    budget: Any,
     *,
-    quantity: str = fields.TOTAL_OPTICAL_DEPTH,
-    vertical_axis: Literal["altitude_km", "pressure_hpa"] = "altitude_km",
-    wavelengths_nm: Sequence[float] | None = None,
+    wavelength_nm: float | None,
 ):
-    wavelength_nm = wavelengths_nm[0] if wavelengths_nm else None
+    quantity = fields.TOTAL_OPTICAL_DEPTH
+    selected_wavelength_nm = _profile_wavelength(budget, wavelength_nm)
     data = interval_profile_rows(
         budget,
         value=quantity,
-        vertical_axis=vertical_axis,
-        wavelength_nm=wavelength_nm,
+        vertical_axis="altitude_km",
+        wavelength_nm=selected_wavelength_nm,
     )
     title = f"{label(quantity)} profile"
-    color = alt.value(SEMANTIC_COLORS.get(quantity, "#111111"))
-    if wavelength_nm is not None and not data.empty:
-        selected = nearest_wavelength_value(data, wavelength_nm)
-        title = f"{label(quantity)} profile, {selected:.2f} nm"
-        color = alt.value("#111111")
+    if selected_wavelength_nm is not None and not data.empty:
+        nearest_nm = nearest_wavelength_value(data, selected_wavelength_nm)
+        title = f"{label(quantity)} profile, {nearest_nm:.2f} nm"
+    data, _, x = scaled_x(data, quantity, label(quantity))
     return (
         alt.Chart(data)
-        .mark_point(filled=True, size=26, opacity=0.9)
-        .encode(
-            x=alt.X(f"{quantity}:Q", title=label(quantity), scale=alt.Scale(zero=False)),
-            y=_vertical_y(vertical_axis),
-            color=color,
-            tooltip=_tooltip([fields.WAVELENGTH_NM, vertical_axis, quantity]),
+        .mark_point(
+            filled=True,
+            color=PLOT.colors[quantity],
+            size=PLOT.profile_point_size,
+            opacity=PLOT.profile_point_opacity,
         )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title=title)
-    )
-
-
-def component_stack(
-    budget,
-    *,
-    components: Sequence[str] = DEFAULT_COMPONENTS,
-    aggregate_layers: bool = True,
-):
-    data = (
-        component_sums(budget, components)
-        if aggregate_layers
-        else component_sums(
-            budget, components, group_by=(fields.WAVELENGTH_NM, "global_sublayer_index")
-        )
-    )
-    return (
-        alt.Chart(data)
-        .mark_area()
         .encode(
-            x=alt.X(f"{fields.WAVELENGTH_NM}:Q", title=label(fields.WAVELENGTH_NM)),
-            y=alt.Y(f"{fields.VALUE}:Q", title="Optical depth"),
-            color=alt.Color(
-                "component_label:N",
-                title="Component",
-                legend=alt.Legend(orient="right"),
-            ),
+            x=x,
+            y=alt.Y("altitude_km:Q", title=label("altitude_km")),
             tooltip=[
                 alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip("component_label:N", title="Component"),
-                alt.Tooltip(f"{fields.VALUE}:Q", title="Optical depth", format=".4g"),
+                alt.Tooltip("altitude_km:Q", title=label("altitude_km"), format=".4g"),
+                alt.Tooltip(f"{quantity}:Q", title=label(quantity), format=".4e"),
             ],
         )
-        .properties(
-            width=DEFAULT_WIDTH,
-            height=DEFAULT_HEIGHT,
-            title="Optical-depth component stack",
-        )
+        .properties(**PLOT.chart(title))
     )
 
 
-def single_scatter_albedo_profile(
-    budget,
-    *,
-    vertical_axis: str = "altitude_km",
-    wavelengths_nm: Sequence[float] | None = None,
-):
-    wavelength_nm = wavelengths_nm[0] if wavelengths_nm else None
-    data = interval_profile_rows(
-        budget,
-        value="single_scatter_albedo",
-        vertical_axis=vertical_axis,
-        wavelength_nm=wavelength_nm,
-        numerator=fields.TOTAL_SCATTERING_OPTICAL_DEPTH,
-        denominator=fields.TOTAL_OPTICAL_DEPTH,
-    )
-    title = "Single-scatter albedo profile"
-    if wavelength_nm is not None and not data.empty:
-        title = (
-            f"Single-scatter albedo profile, {nearest_wavelength_value(data, wavelength_nm):.2f} nm"
-        )
-    return (
-        alt.Chart(data)
-        .mark_point(filled=True, color=SEMANTIC_COLORS["scattering"], size=26, opacity=0.9)
-        .encode(
-            x=alt.X(
-                "single_scatter_albedo:Q",
-                title="Single-scatter albedo",
-                scale=alt.Scale(zero=False),
-            ),
-            y=_vertical_y(vertical_axis),
-            tooltip=_tooltip([fields.WAVELENGTH_NM, vertical_axis, "single_scatter_albedo"]),
-        )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title=title)
-    )
+def _profile_wavelength(budget: Any, wavelength_nm: float | None) -> float | None:
+    if wavelength_nm is not None:
+        return wavelength_nm
+    import numpy as np
 
-
-def _vertical_y(vertical_axis: str):
-    if vertical_axis == "pressure_hpa":
-        return alt.Y(
-            f"{vertical_axis}:Q",
-            title=label(vertical_axis),
-            scale=alt.Scale(reverse=True),
-        )
-    return alt.Y(f"{vertical_axis}:Q", title=label(vertical_axis))
-
-
-def _tooltip(columns: Sequence[str]):
-    return [
-        alt.Tooltip(
-            f"{column}:Q" if column != "component" else f"{column}:N",
-            title=label(column),
-        )
-        for column in columns
-    ]
+    values = np.unique(budget.column(fields.WAVELENGTH_NM))
+    if values.size <= 1:
+        return None
+    return float(values[int(np.argmin(np.abs(values - DEFAULT_PROFILE_WAVELENGTH_NM)))])

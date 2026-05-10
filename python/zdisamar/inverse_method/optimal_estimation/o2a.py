@@ -1,18 +1,27 @@
 """O2 A inverse forward-model adapter for optimal estimation."""
 
-from __future__ import annotations
-
 import copy
-import math
+from collections.abc import Callable
+from dataclasses import replace
 from typing import Protocol
 
 import numpy as np
 
-from ...prepared import O2AForwardSession, PreparedO2ABase, prepare
-from ...spectrum import Spectrum
+from ...forward_model.prepared import (
+    O2AForwardSession,
+    PreparedO2ABase,
+    o2a_forward_session,
+    prepare,
+)
+from ...output.spectrum import Spectrum
+from ...quantities import (
+    reflectance_jacobian_from_radiance_jacobian,
+    reflectance_noise_from_sun_normalized_radiance_noise,
+)
 from ...types import O2AInput
 from .core import retrieve
 from .forward_evaluation import ForwardEvaluation
+from .measurement import require_matching_wavelength_grid
 from .retrieval import Measurement, Result, RetrievalControls
 from .state_vector import PressureAltitudeProfile, StateVector
 
@@ -44,10 +53,14 @@ class O2AInverseForwardModel:
         template: O2AInput,
         library_path: str | None = None,
         forward_session: O2AForwardSession | None = None,
+        use_forward_session: bool = True,
     ):
+        if forward_session is not None and not use_forward_session:
+            raise ValueError("forward_session requires use_forward_session=True")
         self._template = copy.deepcopy(template)
         self._library_path = library_path
         self._forward_session = forward_session
+        self._use_forward_session = use_forward_session
 
     def settings_for_state(
         self,
@@ -84,11 +97,66 @@ def disamar_oe(
 ) -> Result:
     """Retrieve O2 A state-vector parameters with the DISAMAR optimal estimation controls."""
 
-    return retrieve(
+    if inverse_model._forward_session is None and inverse_model._use_forward_session:
+        with o2a_forward_session(
+            inverse_model._template,
+            library_path=inverse_model._library_path,
+        ) as session:
+            session_model = O2AInverseForwardModel(
+                inverse_model._template,
+                library_path=inverse_model._library_path,
+                forward_session=session,
+            )
+            return _disamar_oe(
+                inverse_model=session_model,
+                measurement=measurement,
+                state_vector=state_vector,
+                controls=controls,
+            )
+    return _disamar_oe(
+        inverse_model=inverse_model,
+        measurement=measurement,
+        state_vector=state_vector,
+        controls=controls,
+    )
+
+
+def _disamar_oe(
+    *,
+    inverse_model: O2AInverseForwardModel,
+    measurement: Measurement,
+    state_vector: StateVector,
+    controls: RetrievalControls | None = None,
+) -> Result:
+    result = retrieve(
         lambda state: inverse_model.evaluate(state, state_vector),
         measurement,
         state_vector,
         controls=controls or RetrievalControls.from_disamar_retrieval_specs(),
+    )
+    return attach_final_evaluation(
+        replace(result, measurement=measurement),
+        lambda state: inverse_model.evaluate(state, state_vector),
+    )
+
+
+def attach_final_evaluation(
+    result: Result,
+    evaluate_state: Callable[[np.ndarray], ForwardEvaluation],
+) -> Result:
+    """Attach the final-state model product required by OE result plots."""
+
+    if (
+        result.last_evaluation is not None
+        and result.last_evaluated_state is not None
+        and np.array_equal(result.state, result.last_evaluated_state)
+    ):
+        final_evaluation = result.last_evaluation
+    else:
+        final_evaluation = evaluate_state(result.state)
+    return replace(
+        result,
+        final_evaluation=final_evaluation,
     )
 
 
@@ -111,8 +179,11 @@ def evaluate_prepared_reflectance(
     #
     #     R = pi * I / (mu0 * E0)
     #     dR/dx = dI/dx / (mu0 * E0 / pi).
-    mu0 = math.cos(math.radians(prepared.input.geometry.solar_zenith_deg))
-    reflectance_jacobian_all = radiance_jacobian / ((mu0 * irradiance / math.pi)[:, None])
+    reflectance_jacobian_all = reflectance_jacobian_from_radiance_jacobian(
+        radiance_jacobian,
+        irradiance,
+        prepared.input.geometry.solar_mu0,
+    )
     if available_state_names != state_names:
         raise ValueError("Native Jacobian state selection did not preserve requested state order")
     return ForwardEvaluation(
@@ -210,14 +281,19 @@ def measurement_from_sun_normalized_radiance_noise(
         measurement_wavelength = spectrum.wavelength_nm.copy()
         reflectance = spectrum.reflectance.copy()
 
-    # The retrieval vector is reflectance, so the measurement covariance must
-    # live in the same units before it enters the inverse problem.
-    mu0 = math.cos(math.radians(prepared.input.geometry.solar_zenith_deg))
-    reflectance_noise = np.interp(
+    require_matching_wavelength_grid(
         measurement_wavelength,
         source_wavelength,
-        source_noise,
-    ) * (math.pi / mu0)
+        expected_name="measurement",
+        actual_name="noise",
+    )
+    # The retrieval vector is reflectance, so the measurement covariance must
+    # live in the same units before it enters the inverse problem.
+    reflectance_noise = source_noise
+    reflectance_noise = reflectance_noise_from_sun_normalized_radiance_noise(
+        reflectance_noise,
+        prepared.input.geometry.solar_mu0,
+    )
     return Measurement(
         wavelength_nm=measurement_wavelength,
         reflectance=reflectance,

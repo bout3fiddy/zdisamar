@@ -8,8 +8,6 @@
 # ]
 # ///
 
-from __future__ import annotations
-
 import math
 import sys
 from pathlib import Path
@@ -126,16 +124,15 @@ def run_zdisamar_validation(case, library_path: Path) -> dict[str, np.ndarray]:
         spectrum = prepared.forward_model(jacobian=True, jacobian_state_names=STATE_NAMES)
         wavelength_nm = spectrum.wavelength_nm.copy()
         reflectance = spectrum.reflectance.copy()
-        irradiance = spectrum.irradiance.copy()
-        radiance_jacobian = spectrum.radiance_jacobian.copy()
         state_names = spectrum.jacobian_state_names
+        reflectance_jacobian = np.column_stack(
+            [spectrum.reflectance_jacobian(state_name) for state_name in STATE_NAMES]
+        )
         spectrum.close()
 
     if tuple(state_names) != STATE_NAMES:
         raise RuntimeError(f"unexpected Jacobian states: {state_names}")
 
-    mu0 = math.cos(math.radians(case.geometry.solar_zenith_deg))
-    reflectance_jacobian = radiance_jacobian / ((mu0 * irradiance / np.pi)[:, None])
     return {
         "wavelength_nm": wavelength_nm,
         "reflectance": reflectance,

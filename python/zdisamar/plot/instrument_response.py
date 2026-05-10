@@ -1,22 +1,24 @@
-"""Instrument-response diagnostic plots."""
+"""Instrument-response plot accessor."""
 
-from __future__ import annotations
-
-from typing import Literal
+from pathlib import Path
+from typing import Any, cast
 
 import altair as alt
 
-from .common import frame, label, numeric_cell_bounds, with_channel_labels
-from .spectrum import DEFAULT_HEIGHT, DEFAULT_WIDTH
+from .data import with_channel_labels
+from .properties import PLOT, PlotAccessor
 
 
-def isrf(
-    response,
-    *,
-    nominal_wavelength_nm: float = 760.76,
-    channel: Literal["radiance", "irradiance"] = "radiance",
-):
-    data = with_channel_labels(response)
+class InstrumentResponsePlot(PlotAccessor):
+    def __init__(self, response: Any):
+        super().__init__(response)
+
+    def curve(self, save: str | Path | None = None):
+        return self._finish(_curve(self._target), save=save)
+
+
+def _curve(response: Any):
+    data = cast(Any, with_channel_labels(response))
     required = [
         "nominal_wavelength_nm",
         "channel_label",
@@ -25,13 +27,13 @@ def isrf(
         "weight",
         "instrument_fwhm_nm",
     ]
-    for column in required:
-        if column not in data.columns:
-            raise ValueError(f"missing required plotting column: {column}")
-    data = data[data["channel_label"] == channel].copy()
+    missing = [column for column in required if column not in data.columns]
+    if missing:
+        raise ValueError(f"missing required plotting columns: {', '.join(missing)}")
+    data = data[data["channel_label"] == "radiance"].copy()
     if data.empty:
-        raise ValueError(f"no instrument response rows for channel: {channel}")
-    nearest = (data["nominal_wavelength_nm"] - float(nominal_wavelength_nm)).abs().idxmin()
+        raise ValueError("no radiance instrument response rows")
+    nearest = (data["nominal_wavelength_nm"] - 760.76).abs().idxmin()
     selected = float(data.loc[nearest, "nominal_wavelength_nm"])
     data = data[data["nominal_wavelength_nm"] == selected].sort_values("offset_nm").copy()
     max_weight = float(data["weight"].max())
@@ -44,10 +46,10 @@ def isrf(
     x_min = float(plot_data["offset_nm"].min())
     x_max = float(plot_data["offset_nm"].max())
     x_pad = max((x_max - x_min) * 0.04, 0.01)
-
+    title = f"Instrument spectral response function (ISRF), {selected:.5f} nm"
     return (
         alt.Chart(plot_data)
-        .mark_line(color="#111111", strokeWidth=1.6)
+        .mark_line(color=PLOT.colors["black"], strokeWidth=PLOT.isrf_line_width)
         .encode(
             x=alt.X(
                 "offset_nm:Q",
@@ -77,117 +79,5 @@ def isrf(
                 alt.Tooltip("instrument_fwhm_nm:Q", title="FWHM (nm)", format=".5f"),
             ],
         )
-        .properties(
-            width=DEFAULT_WIDTH,
-            height=560,
-            title=f"Instrument spectral response function (ISRF), {selected:.5f} nm",
-        )
-    )
-
-
-def matrix(
-    response,
-    *,
-    channel: Literal["radiance", "irradiance"] = "radiance",
-):
-    data = with_channel_labels(response)
-    data = data[data["channel_label"] == channel]
-    data = numeric_cell_bounds(data, "support_wavelength_nm", y="nominal_wavelength_nm")
-    return (
-        alt.Chart(data)
-        .mark_rect()
-        .encode(
-            x=alt.X(
-                "_x_start:Q",
-                title="Support wavelength (nm)",
-                scale=alt.Scale(zero=False),
-                axis=alt.Axis(tickMinStep=5),
-            ),
-            x2="_x_end:Q",
-            y=alt.Y(
-                "_y_start:Q",
-                title="Nominal wavelength (nm)",
-                scale=alt.Scale(zero=False),
-                axis=alt.Axis(tickMinStep=5),
-            ),
-            y2="_y_end:Q",
-            color=alt.Color("weight:Q", title="Weight", scale=alt.Scale(scheme="greys")),
-            tooltip=[
-                alt.Tooltip(
-                    "support_wavelength_nm:Q",
-                    title="Support wavelength (nm)",
-                    format=".5f",
-                ),
-                alt.Tooltip(
-                    "nominal_wavelength_nm:Q",
-                    title="Nominal wavelength (nm)",
-                    format=".5f",
-                ),
-                alt.Tooltip("weight:Q", title="Weight", format=".5g"),
-            ],
-        )
-        .properties(
-            width=DEFAULT_WIDTH,
-            height=DEFAULT_HEIGHT,
-            title="Instrument response matrix",
-        )
-    )
-
-
-def support_width(
-    response,
-    *,
-    y: Literal["support_width_nm", "support_count"] = "support_width_nm",
-):
-    data = with_channel_labels(response)
-    data = frame(data, ["nominal_wavelength_nm", "channel_label", y]).drop_duplicates(
-        subset=["nominal_wavelength_nm", "channel_label"]
-    )
-    return (
-        alt.Chart(data)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("nominal_wavelength_nm:Q", title="Nominal wavelength (nm)"),
-            y=alt.Y(f"{y}:Q", title=label(y)),
-            color=alt.Color("channel_label:N", title="Channel"),
-            tooltip=[
-                alt.Tooltip(
-                    "nominal_wavelength_nm:Q",
-                    title="Nominal wavelength (nm)",
-                    format=".4f",
-                ),
-                alt.Tooltip(f"{y}:Q", title=label(y), format=".4g"),
-            ],
-        )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Instrument support width")
-    )
-
-
-def weight_rank(
-    response,
-    *,
-    nominal_wavelength_nm: float,
-    channel: Literal["radiance", "irradiance"] = "radiance",
-    top_n: int | None = None,
-):
-    data = with_channel_labels(response)
-    data = data[data["channel_label"] == channel].copy()
-    nearest = (data["nominal_wavelength_nm"] - float(nominal_wavelength_nm)).abs().idxmin()
-    selected = float(data.loc[nearest, "nominal_wavelength_nm"])
-    data = data[data["nominal_wavelength_nm"] == selected].sort_values("weight", ascending=False)
-    if top_n is not None:
-        data = data.head(top_n)
-    return (
-        alt.Chart(data)
-        .mark_bar(color="#737373")
-        .encode(
-            x=alt.X("sample_index:O", title="Support sample"),
-            y=alt.Y("weight:Q", title="Weight"),
-            tooltip=[
-                alt.Tooltip("sample_index:O", title="Sample"),
-                alt.Tooltip("offset_nm:Q", title="Offset (nm)", format=".5f"),
-                alt.Tooltip("weight:Q", title="Weight", format=".5g"),
-            ],
-        )
-        .properties(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, title="Dominant support weights")
+        .properties(**PLOT.chart(title))
     )

@@ -1,7 +1,5 @@
 """Aerosol layer pressure-placement retrieval parameter."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from .pressure_altitude_profile import PressureAltitudeProfile

@@ -1,18 +1,9 @@
 """Public exports for the Python O2A native wrapper."""
 
-from __future__ import annotations
-
-from .native_tables import (
-    AtmosphericBudget,
-    InstrumentResponseTable,
-    O2LineContributions,
-    OxygenCollisionInducedAbsorptionDiagnosticTable,
-    RadiativeTransferDiagnosticTable,
-)
-from .prepared import (
+from .bindings.context import Context
+from .forward_model.prepared import (
     AtmosphereDiagnostics,
     O2AForwardSession,
-    O2LineDiagnostics,
     PreparedDefaultO2A,
     PreparedO2A,
     forward,
@@ -21,9 +12,13 @@ from .prepared import (
     prepare,
     prepare_default_o2a,
 )
-from .runtime import Context
-from .spectrum import DiagnosticReport, Spectrum
-from .types import O2AInput
+from .input.o2a import O2AInput
+from .output.spectrum import DiagnosticReport, Spectrum
+from .output.tables import (
+    AtmosphericBudget,
+    InstrumentResponseTable,
+    OxygenCollisionInducedAbsorptionDiagnosticTable,
+)
 
 __all__ = [
     "AtmosphereDiagnostics",
@@ -31,14 +26,11 @@ __all__ = [
     "Context",
     "DiagnosticReport",
     "InstrumentResponseTable",
-    "O2LineContributions",
-    "O2LineDiagnostics",
     "OxygenCollisionInducedAbsorptionDiagnosticTable",
     "O2AInput",
     "O2AForwardSession",
     "PreparedDefaultO2A",
     "PreparedO2A",
-    "RadiativeTransferDiagnosticTable",
     "Spectrum",
     "forward",
     "o2a_forward_session",

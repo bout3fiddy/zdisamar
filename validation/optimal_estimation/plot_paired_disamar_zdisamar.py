@@ -8,8 +8,6 @@
 # ]
 # ///
 
-from __future__ import annotations
-
 import math
 import sys
 from pathlib import Path
@@ -36,21 +34,18 @@ MANIFEST_PATH = OUTPUTS_DIR / "paired_oe_plot_manifest.json"
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-from validation.common.altair_style import (  # noqa: E402
-    VALIDATION_BLUE,
-    VALIDATION_ORANGE,
-    enable_validation_theme,
-)
+from zdisamar.plot.properties import PLOT  # noqa: E402
+
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 
 alt.data_transformers.disable_max_rows()
-enable_validation_theme()
+PLOT.prepare()
 
 MODEL_LABELS = {
     "disamar_fortran": "DISAMAR Fortran",
     "zdisamar": "zdisamar",
 }
-MODEL_COLORS = [VALIDATION_BLUE, VALIDATION_ORANGE]
+MODEL_COLORS = [PLOT.colors["blue"], PLOT.colors["orange"]]
 
 
 def require_data() -> pl.DataFrame:
@@ -210,7 +205,7 @@ def paired_difference_histogram_row(frame: pl.DataFrame) -> alt.HConcatChart:
         )
         histogram = (
             alt.Chart(subset)
-            .mark_bar(color=VALIDATION_BLUE, opacity=0.78)
+            .mark_bar(color=PLOT.colors["blue"], opacity=0.78)
             .encode(
                 x=alt.X("difference:Q", bin=alt.Bin(maxbins=45), title=x_title),
                 y=alt.Y("count():Q", title="Count"),

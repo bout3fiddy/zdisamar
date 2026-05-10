@@ -1,7 +1,5 @@
 """Forward-model values used by inverse-method solvers."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 import numpy as np

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Summarize the retained primitive-codegen timing and disassembly outputs."""
 
-from __future__ import annotations
-
 import csv
 import re
 import sys
