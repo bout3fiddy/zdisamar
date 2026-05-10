@@ -7,7 +7,12 @@ from typing import Protocol
 
 import numpy as np
 
-from ...forward_model.prepared import O2AForwardSession, PreparedO2ABase, prepare
+from ...forward_model.prepared import (
+    O2AForwardSession,
+    PreparedO2ABase,
+    o2a_forward_session,
+    prepare,
+)
 from ...output.spectrum import Spectrum
 from ...quantities import (
     reflectance_jacobian_from_radiance_jacobian,
@@ -48,10 +53,14 @@ class O2AInverseForwardModel:
         template: O2AInput,
         library_path: str | None = None,
         forward_session: O2AForwardSession | None = None,
+        use_forward_session: bool = True,
     ):
+        if forward_session is not None and not use_forward_session:
+            raise ValueError("forward_session requires use_forward_session=True")
         self._template = copy.deepcopy(template)
         self._library_path = library_path
         self._forward_session = forward_session
+        self._use_forward_session = use_forward_session
 
     def settings_for_state(
         self,
@@ -88,6 +97,37 @@ def disamar_oe(
 ) -> Result:
     """Retrieve O2 A state-vector parameters with the DISAMAR optimal estimation controls."""
 
+    if inverse_model._forward_session is None and inverse_model._use_forward_session:
+        with o2a_forward_session(
+            inverse_model._template,
+            library_path=inverse_model._library_path,
+        ) as session:
+            session_model = O2AInverseForwardModel(
+                inverse_model._template,
+                library_path=inverse_model._library_path,
+                forward_session=session,
+            )
+            return _disamar_oe(
+                inverse_model=session_model,
+                measurement=measurement,
+                state_vector=state_vector,
+                controls=controls,
+            )
+    return _disamar_oe(
+        inverse_model=inverse_model,
+        measurement=measurement,
+        state_vector=state_vector,
+        controls=controls,
+    )
+
+
+def _disamar_oe(
+    *,
+    inverse_model: O2AInverseForwardModel,
+    measurement: Measurement,
+    state_vector: StateVector,
+    controls: RetrievalControls | None = None,
+) -> Result:
     result = retrieve(
         lambda state: inverse_model.evaluate(state, state_vector),
         measurement,

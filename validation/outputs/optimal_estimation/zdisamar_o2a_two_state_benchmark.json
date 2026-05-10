@@ -1,91 +1,48 @@
 {
   "iterations": [
     {
-      "forward_model_and_jacobian_s": 0.5032677492126822,
+      "forward_model_and_jacobian_s": 0.20492616668343544,
       "index": 1,
-      "solver_update_s": 0.00025354232639074326,
-      "total_iteration_s": 0.5035275826230645
+      "solver_update_s": 0.00020150002092123032,
+      "total_iteration_s": 0.20513283368200064
     },
     {
-      "forward_model_and_jacobian_s": 0.5117844166234136,
+      "forward_model_and_jacobian_s": 0.2071420419961214,
       "index": 2,
-      "solver_update_s": 0.00017120875418186188,
-      "total_iteration_s": 0.5119615001603961
+      "solver_update_s": 0.00018875021487474442,
+      "total_iteration_s": 0.20733524952083826
     },
     {
-      "forward_model_and_jacobian_s": 0.5066944165155292,
+      "forward_model_and_jacobian_s": 0.21054512541741133,
       "index": 3,
-      "solver_update_s": 0.00016366690397262573,
-      "total_iteration_s": 0.5068629579618573
+      "solver_update_s": 0.00015616696327924728,
+      "total_iteration_s": 0.21070462558418512
     },
     {
-      "forward_model_and_jacobian_s": 0.5062203742563725,
+      "forward_model_and_jacobian_s": 0.2088409997522831,
       "index": 4,
-      "solver_update_s": 0.00017116591334342957,
-      "total_iteration_s": 0.506395791657269
+      "solver_update_s": 0.0001626666635274887,
+      "total_iteration_s": 0.20900729205459356
     }
   ],
   "phases_s": {
-    "boundary_contiguity_check_s": 0.00011545885354280472,
-    "build_case_s": 2.750009298324585e-05,
-    "build_measurement_s": 0.5037797084078193,
-    "build_pressure_altitude_profile_s": 0.17005024943500757,
-    "build_state_vector_s": 1.8071250412613153,
-    "build_summary_s": 7.37905502319336e-05,
-    "load_reference_s": 0.00029412563890218735,
-    "retrieval_s": 2.549685792066157,
-    "session_create_s": 0.3266921257600188,
-    "session_reuse_retrieval_s": 1.0212254580110312,
-    "total_s": 6.3810498751699924,
-    "write_summary_s": 0.000518416054546833
+    "boundary_contiguity_check_s": 0.0001277923583984375,
+    "build_case_s": 2.5083310902118683e-05,
+    "build_measurement_s": 0.5287073329091072,
+    "build_pressure_altitude_profile_s": 0.1700722500681877,
+    "build_state_vector_s": 1.667015416547656,
+    "build_summary_s": 3.470759838819504e-05,
+    "load_reference_s": 0.0001681651920080185,
+    "retrieval_s": 1.0349199585616589,
+    "session_create_s": 0.3700838750228286,
+    "total_s": 3.7730056662112474,
+    "write_summary_s": 0.0003242501989006996
   },
-  "retrieval_modes": {
-    "non_session": {
-      "forward_model_and_jacobian_s": 2.0279669566079974,
-      "iterations": 4,
-      "retrieval_s": 2.549685792066157
-    },
-    "session": {
-      "first_use_retrieval_s": 1.34791758377105,
-      "forward_model_and_jacobian_s": 0.8173231678083539,
-      "iterations": 4,
-      "reused_retrieval_s": 1.0212254580110312,
-      "setup_s": 0.3266921257600188
-    },
-    "speedup_pct": {
-      "session_first_use_retrieval_vs_non_session_retrieval": 47.1339728226373,
-      "session_reused_forward_vs_non_session_forward": 59.697411974827304
-    }
-  },
-  "session_reuse": {
-    "baseline_forward_model_and_jacobian_s": 2.0279669566079974,
-    "forward_model_and_jacobian_s": 0.8173231678083539,
-    "forward_model_and_jacobian_speedup_pct": 59.697411974827304,
-    "iterations": [
-      {
-        "forward_model_and_jacobian_s": 0.19540074933320284,
-        "index": 1,
-        "solver_update_s": 0.0001643327996134758,
-        "total_iteration_s": 0.1955684581771493
-      },
-      {
-        "forward_model_and_jacobian_s": 0.19843579269945621,
-        "index": 2,
-        "solver_update_s": 0.00016158446669578552,
-        "total_iteration_s": 0.1986016659066081
-      },
-      {
-        "forward_model_and_jacobian_s": 0.20077137555927038,
-        "index": 3,
-        "solver_update_s": 0.00015429221093654633,
-        "total_iteration_s": 0.20092962495982647
-      },
-      {
-        "forward_model_and_jacobian_s": 0.22271525021642447,
-        "index": 4,
-        "solver_update_s": 0.00013704132288694382,
-        "total_iteration_s": 0.2228555828332901
-      }
-    ]
+  "retrieval": {
+    "first_use_retrieval_s": 1.4050038335844874,
+    "forward_model_and_jacobian_s": 0.8314543338492513,
+    "iterations": 4,
+    "retrieval_s": 1.0349199585616589,
+    "setup_s": 0.3700838750228286
   }
 }

@@ -35,9 +35,9 @@ The validation tree is split by target:
   retrieval fixture for aerosol optical depth and fixed-thickness layer pressure.
 - `optimal_estimation/data/reference/baseline_config.in`: retained DISAMAR 4.1.5
   optimal-estimation baseline config used by the paired retrieval sweep. It keeps
-  the PhD-style aerosol-layer-height, 758-770 nm grid, cloud-free, and reduced
-  retrieval-output settings while using the reference assets available in this
-  repo.
+  the aerosol-layer-height retrieval setup, 758-770 nm grid, cloud-free scene,
+  and reduced retrieval-output settings while using the reference assets
+  available in this repo.
 - `outputs/optimal_estimation/zdisamar_o2a_two_state_summary.json`: generated zdisamar optimal-estimation validation
   summary.
 - `outputs/optimal_estimation/zdisamar_o2a_two_state_benchmark.json`: timing benchmark from the

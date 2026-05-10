@@ -22,7 +22,8 @@ zig build
 - `o2a_plot_bundle.ipynb`: demonstrates the supported `.plot` accessor surface
   on `Spectrum`, atmospheric budget, O2-O2 CIA diagnostics, and the instrument
   response table. Each chart has its own notebook cell, including SNR and the
-  sun-normalized radiance noise envelope.
+  sun-normalized radiance noise envelope from the retained O2 A baseline
+  measurement-noise model.
 - `optimal_estimation_demo.ipynb`: demonstrates a two-state O2 A
   optimal-estimation flow using aerosol optical depth and aerosol layer top
   altitude, with convergence, measurement-fit, residual, and Jacobian plots in

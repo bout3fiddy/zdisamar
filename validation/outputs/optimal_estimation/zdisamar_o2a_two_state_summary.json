@@ -1,18 +1,18 @@
 {
   "absolute_differences": {
-    "aerosol_layer_mid_pressure_hpa": 0.0022403650330033997,
+    "aerosol_layer_mid_pressure_hpa": 0.0017723031577361326,
     "aerosol_layer_top_altitude_km": null,
-    "aerosol_layer_top_pressure_hpa": 0.0022403650330033997,
-    "aerosol_optical_depth": 2.7967939908446482e-08
+    "aerosol_layer_top_pressure_hpa": 0.0017723031577361326,
+    "aerosol_optical_depth": 3.084286620547161e-08
   },
   "averaging_kernel": [
     [
-      0.9999993528309682,
-      3.7246153373554434e-07
+      0.9999994987266975,
+      2.456298070039259e-07
     ],
     [
-      9.128521015192054e-06,
-      0.9999827796721221
+      6.0200494709005706e-06,
+      0.999989062204657
     ]
   ],
   "converged": true,
@@ -20,40 +20,40 @@
   "final_diagnostics_match": false,
   "history": [
     {
-      "aerosol_layer_top_altitude_km": 1.0666235949677818,
-      "aerosol_optical_depth": 0.3548581654619779,
-      "chi2_reflectance": 48563.76498038121,
-      "chi2_state_vector": 0.0627241873955888,
+      "aerosol_layer_top_altitude_km": 1.0032982050929573,
+      "aerosol_optical_depth": 0.3548467352942965,
+      "chi2_reflectance": 59701.32731624772,
+      "chi2_state_vector": 0.06510767764332283,
       "index": 1,
       "snr_normal": true,
-      "state_vector_convergence": 24268.79969497582
+      "state_vector_convergence": 29834.575805289005
     },
     {
-      "aerosol_layer_top_altitude_km": 1.2165348038453243,
-      "aerosol_optical_depth": 0.30184955468029395,
-      "chi2_reflectance": 6196.797499973714,
-      "chi2_state_vector": 0.0037268703428737183,
+      "aerosol_layer_top_altitude_km": 1.210896220107828,
+      "aerosol_optical_depth": 0.3017550981433761,
+      "chi2_reflectance": 7252.759851288953,
+      "chi2_state_vector": 0.0045771613103493675,
       "index": 2,
       "snr_normal": true,
-      "state_vector_convergence": 3098.3281879905676
+      "state_vector_convergence": 3626.0905957759205
     },
     {
-      "aerosol_layer_top_altitude_km": 1.251739747585333,
-      "aerosol_optical_depth": 0.30000726744505757,
-      "chi2_reflectance": 5.525225366714883,
-      "chi2_state_vector": 5.396348223792539e-05,
+      "aerosol_layer_top_altitude_km": 1.2518658359712083,
+      "aerosol_optical_depth": 0.3000059089879875,
+      "chi2_reflectance": 8.068231507566686,
+      "chi2_state_vector": 7.154613407178808e-05,
       "index": 3,
       "snr_normal": true,
-      "state_vector_convergence": 2.762599770714113
+      "state_vector_convergence": 4.033293838268431
     },
     {
-      "aerosol_layer_top_altitude_km": 1.2527562550583808,
-      "aerosol_optical_depth": 0.3000000279679399,
-      "chi2_reflectance": 0.002909857728671991,
-      "chi2_state_vector": 4.2212561085969614e-08,
+      "aerosol_layer_top_altitude_km": 1.2527607771881129,
+      "aerosol_optical_depth": 0.3000000308428662,
+      "chi2_reflectance": 0.0035211747942799523,
+      "chi2_state_vector": 3.2713648052009866e-08,
       "index": 4,
       "snr_normal": true,
-      "state_vector_convergence": 0.0014659153022744422
+      "state_vector_convergence": 0.0017700225576561125
     }
   ],
   "history_match": false,
@@ -63,12 +63,12 @@
   "passes_two_state_truth": true,
   "posterior_covariance": [
     [
-      6.471690324332469e-07,
-      -9.12852103394387e-06
+      5.012733035000291e-07,
+      -6.020049472710691e-06
     ],
     [
-      -9.128521033943871e-06,
-      0.00042204660347259593
+      -6.02004947271069e-06,
+      0.00026807035308691374
     ]
   ],
   "reference": {
@@ -108,30 +108,11 @@
     }
   ],
   "retrieved": {
-    "aerosol_layer_bottom_pressure_hpa": 925.002240365033,
-    "aerosol_layer_mid_pressure_hpa": 900.002240365033,
-    "aerosol_layer_top_altitude_km": 1.2527562550583808,
-    "aerosol_layer_top_pressure_hpa": 875.002240365033,
-    "aerosol_optical_depth": 0.3000000279679399
-  },
-  "session_reuse": {
-    "absolute_differences": {
-      "aerosol_layer_mid_pressure_hpa": 0.0022403650330033997,
-      "aerosol_layer_top_altitude_km": null,
-      "aerosol_layer_top_pressure_hpa": 0.0022403650330033997,
-      "aerosol_optical_depth": 2.7967939908446482e-08
-    },
-    "converged": true,
-    "iterations": 4,
-    "matches_baseline_result": true,
-    "passes_disamar_two_state_fixture": false,
-    "retrieved": {
-      "aerosol_layer_bottom_pressure_hpa": 925.002240365033,
-      "aerosol_layer_mid_pressure_hpa": 900.002240365033,
-      "aerosol_layer_top_altitude_km": 1.2527562550583808,
-      "aerosol_layer_top_pressure_hpa": 875.002240365033,
-      "aerosol_optical_depth": 0.3000000279679399
-    }
+    "aerosol_layer_bottom_pressure_hpa": 925.0017723031577,
+    "aerosol_layer_mid_pressure_hpa": 900.0017723031577,
+    "aerosol_layer_top_altitude_km": 1.2527607771881129,
+    "aerosol_layer_top_pressure_hpa": 875.0017723031577,
+    "aerosol_optical_depth": 0.3000000308428662
   },
   "state_names": [
     "aerosol_optical_depth",

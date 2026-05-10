@@ -3,6 +3,7 @@
 import ctypes
 import os
 import sys
+from importlib import resources
 from pathlib import Path
 
 
@@ -13,6 +14,11 @@ def load_library(path: str | os.PathLike[str] | None = None) -> ctypes.CDLL:
     env_path = os.environ.get("ZDISAMAR_LIBRARY")
     if env_path:
         return ctypes.CDLL(env_path)
+
+    packaged = resources.files("zdisamar").joinpath("native", library_name())
+    if packaged.is_file():
+        with resources.as_file(packaged) as packaged_path:
+            return ctypes.CDLL(str(packaged_path))
 
     repo_root = Path(__file__).resolve().parents[3]
     candidates = [
