@@ -9,6 +9,13 @@ const PhaseRows = struct {
     zmin: []const f64,
 };
 
+const ScatteringSourceRowSums = struct {
+    pplusplus_ed: f64,
+    pminplus_ed: f64,
+    pminmin_u: f64,
+    pplusmin_u: f64,
+};
+
 fn sourceInterfaceAtLevel(
     layers: []const common.LayerInput,
     source_interfaces: []const common.SourceInterfaceInput,
@@ -318,6 +325,49 @@ fn absorptionInterfaceWeighting(
     return sum;
 }
 
+inline fn scatteringSourceRowSums(
+    scaled_phase_coefficients: [basis.max_phase_coef]f64,
+    max_phase_index: usize,
+    level: *const basis.UDField,
+    i_fourier: usize,
+    geo: *const basis.Geometry,
+    plm_basis: *const basis.FourierPlmBasis,
+    row_index: usize,
+) ScatteringSourceRowSums {
+    const solar_col: usize = 1;
+    const solar_idx = geo.n_gauss + 1;
+    const rows = basis.fillZplusZminRowFromBasisLimited(
+        i_fourier,
+        scaled_phase_coefficients,
+        max_phase_index,
+        geo,
+        plm_basis,
+        row_index,
+    );
+    const mu_row = @max(geo.u[row_index], 1.0e-12);
+    var sums = ScatteringSourceRowSums{
+        .pplusplus_ed = 0.0,
+        .pminplus_ed = 0.0,
+        .pminmin_u = 0.0,
+        .pplusmin_u = 0.0,
+    };
+    for (0..geo.n_gauss) |imu| {
+        const mu_col = @max(geo.u[imu], 1.0e-12);
+        const pplus = (0.25 * rows.zplus[imu] / mu_row) / mu_col;
+        const pmin = (0.25 * rows.zmin[imu] / mu_row) / mu_col;
+        sums.pplusplus_ed += pplus * level.D.col[solar_col].get(imu);
+        sums.pminplus_ed += pmin * level.D.col[solar_col].get(imu);
+        sums.pminmin_u += pplus * level.U.col[solar_col].get(imu);
+        sums.pplusmin_u += pmin * level.U.col[solar_col].get(imu);
+    }
+    const mu_solar = @max(geo.u[solar_idx], 1.0e-12);
+    const pplus_direct = (0.25 * rows.zplus[solar_idx] / mu_row) / mu_solar;
+    const pmin_direct = (0.25 * rows.zmin[solar_idx] / mu_row) / mu_solar;
+    sums.pplusplus_ed += pplus_direct * level.E.get(solar_idx);
+    sums.pminplus_ed += pmin_direct * level.E.get(solar_idx);
+    return sums;
+}
+
 fn scatteringSourceWeightingFromScaledPhase(
     scaled_phase_coefficients: [basis.max_phase_coef]f64,
     max_phase_index: usize,
@@ -328,49 +378,33 @@ fn scatteringSourceWeightingFromScaledPhase(
     plm_basis: *const basis.FourierPlmBasis,
 ) f64 {
     const view_col: usize = 0;
-    const solar_col: usize = 1;
     const view_idx = geo.viewIdx();
-    const solar_idx = geo.n_gauss + 1;
-    const level = ud[ilevel];
+    const level = &ud[ilevel];
 
-    var pplusplus_ed = [_]f64{0.0} ** basis.max_nmutot;
-    var pminplus_ed = [_]f64{0.0} ** basis.max_nmutot;
-    var pminmin_u = [_]f64{0.0} ** basis.max_nmutot;
-    var pplusmin_u = [_]f64{0.0} ** basis.max_nmutot;
-
-    for (0..geo.nmutot) |row_index| {
-        const rows = basis.fillZplusZminRowFromBasisLimited(
-            i_fourier,
+    var sum: f64 = 0.0;
+    for (0..geo.n_gauss) |row_index| {
+        const row = scatteringSourceRowSums(
             scaled_phase_coefficients,
             max_phase_index,
+            level,
+            i_fourier,
             geo,
             plm_basis,
             row_index,
         );
-        for (0..geo.n_gauss) |imu| {
-            const mu_row = @max(geo.u[row_index], 1.0e-12);
-            const mu_col = @max(geo.u[imu], 1.0e-12);
-            const pplus = (0.25 * rows.zplus[imu] / mu_row) / mu_col;
-            const pmin = (0.25 * rows.zmin[imu] / mu_row) / mu_col;
-            pplusplus_ed[row_index] += pplus * level.D.col[solar_col].get(imu);
-            pminplus_ed[row_index] += pmin * level.D.col[solar_col].get(imu);
-            pminmin_u[row_index] += pplus * level.U.col[solar_col].get(imu);
-            pplusmin_u[row_index] += pmin * level.U.col[solar_col].get(imu);
-        }
-        const mu_row = @max(geo.u[row_index], 1.0e-12);
-        const mu_solar = @max(geo.u[solar_idx], 1.0e-12);
-        const pplus_direct = (0.25 * rows.zplus[solar_idx] / mu_row) / mu_solar;
-        const pmin_direct = (0.25 * rows.zmin[solar_idx] / mu_row) / mu_solar;
-        pplusplus_ed[row_index] += pplus_direct * level.E.get(solar_idx);
-        pminplus_ed[row_index] += pmin_direct * level.E.get(solar_idx);
+        sum += level.D.col[view_col].get(row_index) * (row.pminplus_ed + row.pminmin_u) +
+            level.U.col[view_col].get(row_index) * (row.pplusplus_ed + row.pplusmin_u);
     }
-
-    var sum: f64 = 0.0;
-    for (0..geo.n_gauss) |imu| {
-        sum += level.D.col[view_col].get(imu) * (pminplus_ed[imu] + pminmin_u[imu]) +
-            level.U.col[view_col].get(imu) * (pplusplus_ed[imu] + pplusmin_u[imu]);
-    }
-    sum += level.E.get(view_idx) * (pminplus_ed[view_idx] + pminmin_u[view_idx]);
+    const view_row = scatteringSourceRowSums(
+        scaled_phase_coefficients,
+        max_phase_index,
+        level,
+        i_fourier,
+        geo,
+        plm_basis,
+        view_idx,
+    );
+    sum += level.E.get(view_idx) * (view_row.pminplus_ed + view_row.pminmin_u);
     return sum;
 }
 
@@ -501,6 +535,7 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
     if (activeAerosolInteriorBounds(rtm_quadrature, end_level)) |bounds| {
         if (bounds.top <= bounds.bottom + 1) return 0.0;
         const aerosol_ssa = aerosolSingleScatteringAlbedo(layers);
+        const needs_absorption_weighting = (1.0 - aerosol_ssa) != 0.0;
         const denominator =
             rtm_quadrature.levels[bounds.top - 1].altitude_km -
             rtm_quadrature.levels[bounds.bottom].altitude_km;
@@ -518,14 +553,17 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
                 geo,
                 plm_basis,
             ),
-            absorptionInterfaceWeighting(
-                ud,
-                ud_sum_local,
-                rtm_quadrature,
-                bounds.bottom,
-                use_pseudo_spherical,
-                geo,
-            ),
+            if (needs_absorption_weighting)
+                absorptionInterfaceWeighting(
+                    ud,
+                    ud_sum_local,
+                    rtm_quadrature,
+                    bounds.bottom,
+                    use_pseudo_spherical,
+                    geo,
+                )
+            else
+                0.0,
             aerosol_ssa,
         );
         for (bounds.bottom + 1..bounds.top) |ilevel| {
@@ -541,14 +579,17 @@ pub fn calcAerosolOpticalDepthWeightingWithBasis(
                     geo,
                     plm_basis,
                 ),
-                absorptionInterfaceWeighting(
-                    ud,
-                    ud_sum_local,
-                    rtm_quadrature,
-                    ilevel,
-                    use_pseudo_spherical,
-                    geo,
-                ),
+                if (needs_absorption_weighting)
+                    absorptionInterfaceWeighting(
+                        ud,
+                        ud_sum_local,
+                        rtm_quadrature,
+                        ilevel,
+                        use_pseudo_spherical,
+                        geo,
+                    )
+                else
+                    0.0,
                 aerosol_ssa,
             );
             const dz = rtm_quadrature.levels[ilevel].altitude_km -
@@ -627,6 +668,9 @@ pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
         geo,
         plm_basis,
     );
+    const ksca = rtm_quadrature.levels[bounds.top].aerosol_ksca_phase_below_per_km[0];
+    const kabs = if (aerosol_ssa > 0.0) ksca * (1.0 - aerosol_ssa) / aerosol_ssa else 0.0;
+    if (kabs == 0.0) return (top_sca_weighting - bottom_sca_weighting) * ksca;
     const top_abs_weighting = absorptionInterfaceWeighting(
         ud,
         ud_sum_local,
@@ -643,8 +687,6 @@ pub fn calcAerosolLayerPressureShiftWeightingWithBasis(
         use_pseudo_spherical,
         geo,
     );
-    const ksca = rtm_quadrature.levels[bounds.top].aerosol_ksca_phase_below_per_km[0];
-    const kabs = if (aerosol_ssa > 0.0) ksca * (1.0 - aerosol_ssa) / aerosol_ssa else 0.0;
     return (top_sca_weighting - bottom_sca_weighting) * ksca +
         (top_abs_weighting - bottom_abs_weighting) * kabs;
 }

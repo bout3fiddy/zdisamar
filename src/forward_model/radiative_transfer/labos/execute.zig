@@ -363,6 +363,7 @@ fn layerResolvedLabosWithWorkspace(
             surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
         }
         if (wants_aerosol_optical_depth) {
+            const aod_weighting_start = Trace.begin();
             const tangent_refl_fc = if (use_integrated_source)
                 calcAerosolOpticalDepthWeightingWithBasis(
                     input.layers,
@@ -394,8 +395,10 @@ fn layerResolvedLabosWithWorkspace(
             else
                 (2.0 * tangent_refl_fc) * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
             aerosol_optical_depth_tangent += weighted_tangent_refl_fc;
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_aerosol_optical_depth_weighting, Trace.elapsed(aod_weighting_start));
         }
         if (wants_aerosol_layer_mid_pressure) {
+            const pressure_weighting_start = Trace.begin();
             const pressure_tangent_refl_fc = if (use_integrated_source) calcAerosolLayerPressureShiftWeightingWithBasis(
                 input.layers,
                 input.rtm_quadrature,
@@ -428,6 +431,7 @@ fn layerResolvedLabosWithWorkspace(
                 break :blk (2.0 * pressure_tangent_refl_fc) * cos_m_dphi;
             };
             aerosol_layer_mid_pressure_tangent += weighted_pressure_tangent_refl_fc;
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_aerosol_layer_pressure_weighting, Trace.elapsed(pressure_weighting_start));
         }
         if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.labos_fourier_total, Trace.elapsed(fourier_start));
         if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) {
@@ -436,10 +440,12 @@ fn layerResolvedLabosWithWorkspace(
         }
     }
 
+    const jacobian_assembly_start = Trace.begin();
     var result_jacobian = jacobian.zero();
     jacobian.set(&result_jacobian, .surface_albedo, surface_albedo_tangent);
     jacobian.set(&result_jacobian, .aerosol_optical_depth, aerosol_optical_depth_tangent);
     jacobian.set(&result_jacobian, .aerosol_layer_mid_pressure_hpa, aerosol_layer_mid_pressure_tangent);
+    if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_jacobian_assembly, Trace.elapsed(jacobian_assembly_start));
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),
         .jacobian = result_jacobian,

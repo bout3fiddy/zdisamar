@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from functools import cache
 
 import numpy as np
-
 from zdisamar import reference_data
 from zdisamar.inverse_method import optimal_estimation
 
@@ -80,9 +79,7 @@ def components_from_spectrum(
         )
     )
 
-    reference_snr = baseline.RADIANCE_REFERENCE_SNR * np.sqrt(
-        reference_radiance / reference_anchor
-    )
+    reference_snr = baseline.RADIANCE_REFERENCE_SNR * np.sqrt(reference_radiance / reference_anchor)
     radiance_snr = (
         reference_snr
         * np.sqrt(radiance_values / reference_radiance)
@@ -121,8 +118,7 @@ def instrument_mapped_s5_reference_radiance(
     upper = reference_wavelength[-1] - half_span_nm
     if np.min(target) < lower or np.max(target) > upper:
         raise ValueError(
-            "wavelength_nm extends beyond the S5 reference support needed for "
-            "instrument mapping"
+            "wavelength_nm extends beyond the S5 reference support needed for instrument mapping"
         )
 
     mapped = np.empty(target.shape, dtype=np.float64)

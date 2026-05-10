@@ -1,48 +1,48 @@
 {
   "iterations": [
     {
-      "forward_model_and_jacobian_s": 0.20492616668343544,
+      "forward_model_and_jacobian_s": 0.19720341637730598,
       "index": 1,
-      "solver_update_s": 0.00020150002092123032,
-      "total_iteration_s": 0.20513283368200064
+      "solver_update_s": 0.00020037498325109482,
+      "total_iteration_s": 0.19740858301520348
     },
     {
-      "forward_model_and_jacobian_s": 0.2071420419961214,
+      "forward_model_and_jacobian_s": 0.20558845810592175,
       "index": 2,
-      "solver_update_s": 0.00018875021487474442,
-      "total_iteration_s": 0.20733524952083826
+      "solver_update_s": 0.00017862487584352493,
+      "total_iteration_s": 0.2057717079296708
     },
     {
-      "forward_model_and_jacobian_s": 0.21054512541741133,
+      "forward_model_and_jacobian_s": 0.2040439574047923,
       "index": 3,
-      "solver_update_s": 0.00015616696327924728,
-      "total_iteration_s": 0.21070462558418512
+      "solver_update_s": 0.00015816651284694672,
+      "total_iteration_s": 0.20420591719448566
     },
     {
-      "forward_model_and_jacobian_s": 0.2088409997522831,
+      "forward_model_and_jacobian_s": 0.2052899170666933,
       "index": 4,
-      "solver_update_s": 0.0001626666635274887,
-      "total_iteration_s": 0.20900729205459356
+      "solver_update_s": 0.00016395747661590576,
+      "total_iteration_s": 0.20545766688883305
     }
   ],
   "phases_s": {
-    "boundary_contiguity_check_s": 0.0001277923583984375,
-    "build_case_s": 2.5083310902118683e-05,
-    "build_measurement_s": 0.5287073329091072,
-    "build_pressure_altitude_profile_s": 0.1700722500681877,
-    "build_state_vector_s": 1.667015416547656,
-    "build_summary_s": 3.470759838819504e-05,
-    "load_reference_s": 0.0001681651920080185,
-    "retrieval_s": 1.0349199585616589,
-    "session_create_s": 0.3700838750228286,
-    "total_s": 3.7730056662112474,
-    "write_summary_s": 0.0003242501989006996
+    "boundary_contiguity_check_s": 0.00012075062841176987,
+    "build_case_s": 2.187490463256836e-05,
+    "build_measurement_s": 0.519909500144422,
+    "build_pressure_altitude_profile_s": 0.16711570788174868,
+    "build_state_vector_s": 1.5634625423699617,
+    "build_summary_s": 3.304053097963333e-05,
+    "load_reference_s": 0.000151708722114563,
+    "retrieval_s": 1.01853262539953,
+    "session_create_s": 0.33409654162824154,
+    "total_s": 3.6049665827304125,
+    "write_summary_s": 0.00030687451362609863
   },
   "retrieval": {
-    "first_use_retrieval_s": 1.4050038335844874,
-    "forward_model_and_jacobian_s": 0.8314543338492513,
+    "first_use_retrieval_s": 1.3526291670277715,
+    "forward_model_and_jacobian_s": 0.8121257489547133,
     "iterations": 4,
-    "retrieval_s": 1.0349199585616589,
-    "setup_s": 0.3700838750228286
+    "retrieval_s": 1.01853262539953,
+    "setup_s": 0.33409654162824154
   }
 }
