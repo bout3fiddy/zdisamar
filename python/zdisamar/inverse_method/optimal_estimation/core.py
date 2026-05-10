@@ -10,7 +10,6 @@ That separation keeps inverse-method experiments from spreading scene-specific
 write logic into the numerical solver.
 """
 
-import time
 from collections.abc import Callable
 
 import numpy as np
@@ -28,6 +27,7 @@ from .retrieval import (
     RetrievalControls,
 )
 from .state_vector import StateVector
+from .timing import IterationTimer
 
 
 def retrieve(
@@ -73,19 +73,17 @@ def retrieve(
     final_jacobian: np.ndarray | None = None
 
     for iteration_index in range(1, controls.max_iterations + 1):
-        iteration_start = time.perf_counter()
+        iteration_timer = IterationTimer(iteration_index)
         previous = np.array(x, copy=True)
         # The expensive part of optimal estimation is here: every iteration
         # asks the forward model for both F(x_i) and K_i.  `prior` is not used
         # to generate this spectrum unless the caller deliberately chose
         # `initial == prior`.
-        forward_start = time.perf_counter()
-        evaluation = forward_model(previous)
+        evaluation = iteration_timer.forward(lambda state=previous: forward_model(state))
         last_evaluated_state = np.array(previous, copy=True)
         last_evaluation = evaluation
-        forward_seconds = time.perf_counter() - forward_start
 
-        solver_start = time.perf_counter()
+        iteration_timer.start_solver()
         require_matching_wavelength_grid(
             measured.wavelength_nm,
             evaluation.wavelength_nm,
@@ -130,15 +128,8 @@ def retrieve(
                 snr_normal=step.snr_normal,
             )
         )
-        solver_seconds = time.perf_counter() - solver_start
-        timing.append(
-            IterationTiming(
-                index=iteration_index,
-                forward_model_and_jacobian_s=forward_seconds,
-                solver_update_s=solver_seconds,
-                total_iteration_s=time.perf_counter() - iteration_start,
-            )
-        )
+        iteration_timer.stop_solver()
+        timing.append(iteration_timer.finish())
         final_posterior_precision = step.posterior_precision
         final_jacobian = jacobian
         # Convergence requires both a small accepted state movement and a normal
