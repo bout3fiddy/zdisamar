@@ -146,7 +146,10 @@ def mid_pressure_jacobian_scale(case, library_path: Path) -> float:
 
     with zd.prepare(case, library_path=str(library_path)) as prepared:
         profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
-    return profile.altitude_derivative_at_pressure(case.aerosol.placement.top_pressure_hpa)
+    aerosol_mid_pressure_hpa = 0.5 * (
+        case.aerosol.placement.top_pressure_hpa + case.aerosol.placement.bottom_pressure_hpa
+    )
+    return profile.altitude_derivative_at_pressure(aerosol_mid_pressure_hpa)
 
 
 def build_validation_rows(

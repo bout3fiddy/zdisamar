@@ -149,9 +149,7 @@ def aerosol_two_state_vector(
     mid_pressure_upper_hpa: float | None = None,
 ) -> optimal_estimation.StateVector:
     upper = (
-        surface_pressure_hpa - 100.0
-        if mid_pressure_upper_hpa is None
-        else mid_pressure_upper_hpa
+        surface_pressure_hpa - 100.0 if mid_pressure_upper_hpa is None else mid_pressure_upper_hpa
     )
     return optimal_estimation.StateVector(
         [
