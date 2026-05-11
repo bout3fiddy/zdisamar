@@ -206,7 +206,12 @@ def retrieve_zdisamar(
                 ),
                 measurement=measurement,
                 state_vector=state_vector,
-                controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
+                controls=optimal_estimation.RetrievalControls(
+                    max_iterations=10,
+                    state_vector_convergence_threshold=1.0,
+                    max_change_transformed_state=1.0,
+                    collect_timing=True,
+                ),
             )
         retrieved_aod = result.value("aerosol_optical_depth")
         retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")

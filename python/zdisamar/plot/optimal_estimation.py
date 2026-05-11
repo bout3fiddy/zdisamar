@@ -9,8 +9,8 @@ from .axes import finite_padded_scale, scaled_y
 from .properties import PLOT, PlotAccessor
 
 STATE_LABELS = {
+    "surface_albedo": "Surface albedo",
     "aerosol_optical_depth": "Aerosol optical depth",
-    "aerosol_layer_top_altitude_km": "Aerosol layer top altitude (km)",
     "aerosol_layer_mid_pressure_hpa": "Aerosol layer mid-pressure (hPa)",
 }
 

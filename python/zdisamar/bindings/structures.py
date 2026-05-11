@@ -41,22 +41,6 @@ class CO2APrepareTrace(ctypes.Structure):
     ]
 
 
-class CO2ASessionCacheTrace(ctypes.Structure):
-    _fields_ = [
-        ("wavelength_plan_hits", ctypes.c_uint64),
-        ("wavelength_plan_misses", ctypes.c_uint64),
-        ("forward_miss_list_hits", ctypes.c_uint64),
-        ("forward_miss_list_misses", ctypes.c_uint64),
-        ("profile_spectroscopy_hits", ctypes.c_uint64),
-        ("profile_spectroscopy_misses", ctypes.c_uint64),
-        ("last_wavelength_plan_hit", ctypes.c_uint8),
-        ("last_forward_miss_list_hit", ctypes.c_uint8),
-        ("last_profile_spectroscopy_hit", ctypes.c_uint8),
-        ("last_forward_miss_count", ctypes.c_uint64),
-        ("last_profile_spectroscopy_cache_count", ctypes.c_uint64),
-    ]
-
-
 class CAtmosphericBudgetRow(ctypes.Structure):
     _fields_ = [
         ("wavelength_nm", ctypes.c_double),

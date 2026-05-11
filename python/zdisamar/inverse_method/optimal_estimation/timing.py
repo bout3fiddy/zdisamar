@@ -38,3 +38,27 @@ class IterationTimer:
             solver_update_s=self._solver_seconds,
             total_iteration_s=time.perf_counter() - self._iteration_start,
         )
+
+
+class NoopIterationTimer:
+    """Avoid wall-clock probes on production retrieval calls."""
+
+    def __init__(self, index: int):
+        self._index = index
+
+    def forward(self, call: Callable[[], T]) -> T:
+        return call()
+
+    def start_solver(self) -> None:
+        pass
+
+    def stop_solver(self) -> None:
+        pass
+
+    def finish(self) -> IterationTiming:
+        return IterationTiming(
+            index=self._index,
+            forward_model_and_jacobian_s=0.0,
+            solver_update_s=0.0,
+            total_iteration_s=0.0,
+        )

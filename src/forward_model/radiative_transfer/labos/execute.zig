@@ -43,14 +43,20 @@ const DirectSurfaceOnlyComputation = struct {
     surface_albedo_tangent: f64,
 };
 
-fn directSurfaceOnly(input: common.ForwardInput) DirectSurfaceOnlyComputation {
+fn directSurfaceOnly(
+    input: common.ForwardInput,
+    compute_surface_albedo_tangent: bool,
+) DirectSurfaceOnlyComputation {
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
     const direct = math.exp(-input.optical_depth / mu0) * math.exp(-input.optical_depth / muv);
     const reflectance = input.surface_albedo * direct;
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),
-        .surface_albedo_tangent = if (reflectance >= 0.0 and reflectance < 2.0) direct else 0.0,
+        .surface_albedo_tangent = if (compute_surface_albedo_tangent and reflectance >= 0.0 and reflectance < 2.0)
+            direct
+        else
+            0.0,
     };
 }
 
@@ -59,8 +65,9 @@ fn directSurfaceOnlyResolvedWithWorkspace(
     input: common.ForwardInput,
     controls: common.RadiativeTransferControls,
     workspace: ?*workspace_mod.Workspace,
+    compute_surface_albedo_tangent: bool,
 ) common.ExecuteError!DirectSurfaceOnlyComputation {
-    if (input.layers.len == 0) return directSurfaceOnly(input);
+    if (input.layers.len == 0) return directSurfaceOnly(input, compute_surface_albedo_tangent);
 
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
@@ -92,18 +99,18 @@ fn directSurfaceOnlyResolvedWithWorkspace(
     const view_idx = geo.viewIdx();
     const solar_idx = geo.n_gauss + 1;
     const surface = fillSurface(0, input.surface_albedo, geo);
-    const surface_derivative = fillSurface(0, 1.0, geo);
     var upward_path: f64 = 1.0;
     for (1..input.layers.len + 1) |ilevel| upward_path *= atten.get(view_idx, ilevel - 1, ilevel);
 
     const path = atten.get(solar_idx, input.layers.len, 0) * upward_path;
     const reflectance = surface.R.get(view_idx, solar_idx) * path;
+    const surface_albedo_tangent = if (compute_surface_albedo_tangent and reflectance >= 0.0 and reflectance < 2.0) blk: {
+        const surface_derivative = fillSurface(0, 1.0, geo);
+        break :blk surface_derivative.R.get(view_idx, solar_idx) * path;
+    } else 0.0;
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),
-        .surface_albedo_tangent = if (reflectance >= 0.0 and reflectance < 2.0)
-            surface_derivative.R.get(view_idx, solar_idx) * path
-        else
-            0.0,
+        .surface_albedo_tangent = surface_albedo_tangent,
     };
 }
 
@@ -124,18 +131,28 @@ pub fn executeWithWorkspace(
     if (route.family != .labos) unreachable;
 
     const controls = route.rtm_controls;
+    const compute_jacobian = route.derivative_mode != .none;
+    const wants_surface_albedo = compute_jacobian and jacobian.includes(route.derivative_state_mask, .surface_albedo);
     const computation = if (controls.scattering == .none) blk: {
-        const direct = try directSurfaceOnlyResolvedWithWorkspace(allocator, input, controls, workspace);
+        const direct = try directSurfaceOnlyResolvedWithWorkspace(
+            allocator,
+            input,
+            controls,
+            workspace,
+            wants_surface_albedo,
+        );
         var direct_jacobian = jacobian.zero();
-        jacobian.set(&direct_jacobian, .surface_albedo, direct.surface_albedo_tangent);
+        if (wants_surface_albedo) {
+            jacobian.set(&direct_jacobian, .surface_albedo, direct.surface_albedo_tangent);
+        }
         break :blk LabosComputation{
             .reflectance = direct.reflectance,
             .jacobian = direct_jacobian,
         };
     } else if (input.layers.len > 0)
-        try layerResolvedLabosWithWorkspace(allocator, input, controls, route.derivative_mode != .none, route.derivative_state_mask, workspace)
+        try layerResolvedLabosWithWorkspace(allocator, input, controls, compute_jacobian, route.derivative_state_mask, workspace)
     else
-        try singleLayerLabos(allocator, input, controls, route.derivative_mode != .none);
+        try singleLayerLabos(allocator, input, controls, compute_jacobian, route.derivative_state_mask);
 
     return .{
         .family = route.family,
@@ -505,6 +522,7 @@ fn singleLayerLabos(
     input: common.ForwardInput,
     controls: common.RadiativeTransferControls,
     compute_jacobian: bool,
+    derivative_state_mask: jacobian.StateMask,
 ) common.ExecuteError!LabosComputation {
     const mu0 = @max(input.mu0, 0.05);
     const muv = @max(input.muv, 0.05);
@@ -521,6 +539,7 @@ fn singleLayerLabos(
     const atten = fillAttenuation(&layers, &geo, controls.use_spherical_correction);
     const num_orders_max: usize = @intCast(controls.resolvedNumOrdersMax(layer.scattering_optical_depth));
     const fourier_max = resolvedFourierMax(input, controls);
+    const wants_surface_albedo = compute_jacobian and jacobian.includes(derivative_state_mask, .surface_albedo);
 
     var reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
@@ -545,13 +564,15 @@ fn singleLayerLabos(
         else
             2.0 * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
         reflectance += fourier_weight * refl_fc;
-        if (compute_jacobian and i_fourier == 0) {
+        if (wants_surface_albedo and i_fourier == 0) {
             surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, &geo);
         }
     }
 
     var result_jacobian = jacobian.zero();
-    jacobian.set(&result_jacobian, .surface_albedo, surface_albedo_tangent);
+    if (wants_surface_albedo) {
+        jacobian.set(&result_jacobian, .surface_albedo, surface_albedo_tangent);
+    }
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),
         .jacobian = result_jacobian,

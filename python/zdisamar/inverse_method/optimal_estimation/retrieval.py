@@ -31,6 +31,7 @@ class RetrievalControls:
     max_iterations: int = 10
     state_vector_convergence_threshold: float = 1.0
     max_change_transformed_state: float = 1.0
+    collect_timing: bool = False
 
     @classmethod
     def from_disamar_retrieval_specs(cls) -> RetrievalControls:

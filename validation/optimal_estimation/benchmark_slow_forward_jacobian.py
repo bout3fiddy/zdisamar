@@ -88,7 +88,12 @@ def run_retrieval(
         inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
-        controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
+        controls=optimal_estimation.RetrievalControls(
+            max_iterations=10,
+            state_vector_convergence_threshold=1.0,
+            max_change_transformed_state=1.0,
+            collect_timing=True,
+        ),
     )
 
 
@@ -117,7 +122,6 @@ def tracing_evaluate(
             prepared,
             state_vector.jacobian_names,
         )
-        session_cache_trace = prepared.last_session_cache_trace()
         scale_start = time.perf_counter()
         scaled = o2a_oe.scale_reflectance_jacobian(
             evaluation,
@@ -132,7 +136,6 @@ def tracing_evaluate(
                 "prepare_total_s": prepare_s,
                 "prepare_trace": prepare_trace,
                 "forward_evaluation_trace": evaluation_trace,
-                "session_cache_trace": session_cache_trace,
                 "scale_jacobian_s": scale_s,
                 "total_evaluate_s": time.perf_counter() - total_start,
             }
@@ -317,38 +320,6 @@ def trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "scale_jacobian_s": phase(("scale_jacobian_s",)),
         "total_evaluate_s": phase(("total_evaluate_s",)),
-        "session_cache": cache_trace_summary(trace_records),
-    }
-
-
-def cache_trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
-    def count_last_hits(key: str) -> int:
-        return sum(1 for record in trace_records if record["session_cache_trace"][key])
-
-    wavelength_plan_hits = count_last_hits("last_wavelength_plan_hit")
-    forward_miss_list_hits = count_last_hits("last_forward_miss_list_hit")
-    profile_spectroscopy_hits = count_last_hits("last_profile_spectroscopy_hit")
-    evaluations = len(trace_records)
-
-    return {
-        "wavelength_plan_hits": wavelength_plan_hits,
-        "wavelength_plan_misses": evaluations - wavelength_plan_hits,
-        "forward_miss_list_hits": forward_miss_list_hits,
-        "forward_miss_list_misses": evaluations - forward_miss_list_hits,
-        "profile_spectroscopy_hits": profile_spectroscopy_hits,
-        "profile_spectroscopy_misses": evaluations - profile_spectroscopy_hits,
-        "forward_miss_count": stats(
-            [
-                float(record["session_cache_trace"]["last_forward_miss_count"])
-                for record in trace_records
-            ]
-        ),
-        "profile_spectroscopy_cache_count": stats(
-            [
-                float(record["session_cache_trace"]["last_profile_spectroscopy_cache_count"])
-                for record in trace_records
-            ]
-        ),
     }
 
 

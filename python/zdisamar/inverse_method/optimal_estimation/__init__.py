@@ -21,11 +21,9 @@ from .retrieval import (
 )
 from .state_vector import (
     AEROSOL_LAYER_MID_PRESSURE_HPA,
-    AEROSOL_LAYER_TOP_ALTITUDE_KM,
     AEROSOL_OPTICAL_DEPTH,
     SURFACE_ALBEDO,
     AerosolLayerMidPressure,
-    AerosolLayerTopAltitude,
     AerosolOpticalDepth,
     PressureAltitudeProfile,
     StateVector,
@@ -35,11 +33,9 @@ from .state_vector import (
 
 __all__ = [
     "AEROSOL_LAYER_MID_PRESSURE_HPA",
-    "AEROSOL_LAYER_TOP_ALTITUDE_KM",
     "AEROSOL_OPTICAL_DEPTH",
     "SURFACE_ALBEDO",
     "AerosolLayerMidPressure",
-    "AerosolLayerTopAltitude",
     "AerosolOpticalDepth",
     "FinalDiagnostics",
     "ForwardEvaluation",
