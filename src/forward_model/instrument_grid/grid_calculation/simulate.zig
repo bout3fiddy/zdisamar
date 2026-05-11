@@ -75,6 +75,7 @@ pub fn warmWavelengthPlan(
     const plan_key = wavelengthPlanKey(scene, prepared, implementations);
     if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
         _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
+        storage.cache_trace = .{};
         return;
     }
 
@@ -98,6 +99,7 @@ pub fn warmWavelengthPlan(
     _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
     storage.wavelength_plan_key = plan_key;
     storage.wavelength_plan_valid = true;
+    storage.cache_trace = .{};
 }
 
 fn ensureProfileSpectroscopyCaches(

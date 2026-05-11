@@ -183,6 +183,8 @@ def assert_lazy_final_evaluation_preserves_session_library_path() -> None:
 
 
 def assert_optimal_estimation_result_compatibility() -> None:
+    from dataclasses import fields
+
     import numpy as np
     from zdisamar.inverse_method.optimal_estimation.forward_evaluation import ForwardEvaluation
     from zdisamar.inverse_method.optimal_estimation.retrieval import Result
@@ -202,6 +204,21 @@ def assert_optimal_estimation_result_compatibility() -> None:
     assert result.final_evaluation is first
     assert replace(result, final_evaluation=second).final_evaluation is second
     assert replace(result, final_evaluation=None).final_evaluation is None
+    assert "final_evaluation" in {field.name for field in fields(result)}
+
+    positional = Result(
+        (),
+        np.array([], dtype=np.float64),
+        0,
+        True,
+        (),
+        np.empty((0, 0), dtype=np.float64),
+        np.empty((0, 0), dtype=np.float64),
+        (),
+        None,
+        first,
+    )
+    assert positional.final_evaluation is first
 
 
 def assert_session_library_path_mismatch_rejected() -> None:

@@ -2,14 +2,11 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import cast
 
 import numpy as np
 
 from .forward_evaluation import ForwardEvaluation
 from .state_vector import StateName
-
-_FINAL_EVALUATION_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -75,7 +72,7 @@ class IterationTiming:
     total_iteration_s: float
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class Result:
     """Final optimal estimation state plus diagnostics needed for retrieval experiments."""
 
@@ -88,64 +85,31 @@ class Result:
     averaging_kernel: np.ndarray
     timing: tuple[IterationTiming, ...] = ()
     measurement: Measurement | None = None
+    final_evaluation: ForwardEvaluation | None = None
     last_evaluated_state: np.ndarray | None = None
     last_evaluation: ForwardEvaluation | None = None
-    _final_evaluation: ForwardEvaluation | None = field(default=None, repr=False)
     _final_evaluation_factory: Callable[[], ForwardEvaluation] | None = field(
         default=None,
         repr=False,
         compare=False,
     )
 
-    def __init__(
-        self,
-        state_names: tuple[StateName, ...],
-        state: np.ndarray,
-        iterations: int,
-        converged: bool,
-        history: tuple[Iteration, ...],
-        posterior_covariance: np.ndarray,
-        averaging_kernel: np.ndarray,
-        timing: tuple[IterationTiming, ...] = (),
-        measurement: Measurement | None = None,
-        last_evaluated_state: np.ndarray | None = None,
-        last_evaluation: ForwardEvaluation | None = None,
-        final_evaluation: ForwardEvaluation | None | object = _FINAL_EVALUATION_UNSET,
-        _final_evaluation: ForwardEvaluation | None = None,
-        _final_evaluation_factory: Callable[[], ForwardEvaluation] | None = None,
-    ):
-        object.__setattr__(self, "state_names", state_names)
-        object.__setattr__(self, "state", state)
-        object.__setattr__(self, "iterations", iterations)
-        object.__setattr__(self, "converged", converged)
-        object.__setattr__(self, "history", history)
-        object.__setattr__(self, "posterior_covariance", posterior_covariance)
-        object.__setattr__(self, "averaging_kernel", averaging_kernel)
-        object.__setattr__(self, "timing", timing)
-        object.__setattr__(self, "measurement", measurement)
-        object.__setattr__(self, "last_evaluated_state", last_evaluated_state)
-        object.__setattr__(self, "last_evaluation", last_evaluation)
-        if final_evaluation is not _FINAL_EVALUATION_UNSET:
-            _final_evaluation = cast(ForwardEvaluation | None, final_evaluation)
-            _final_evaluation_factory = None
-        object.__setattr__(self, "_final_evaluation", _final_evaluation)
-        object.__setattr__(self, "_final_evaluation_factory", _final_evaluation_factory)
-
-    def value(self, name: StateName) -> float:
-        return float(self.state[self.state_names.index(name)])
-
-    @property
-    def final_evaluation(self) -> ForwardEvaluation | None:
-        evaluation = self._final_evaluation
+    def __getattribute__(self, name: str):
+        if name != "final_evaluation":
+            return object.__getattribute__(self, name)
+        evaluation = object.__getattribute__(self, name)
         if evaluation is not None:
             return evaluation
-        factory = self._final_evaluation_factory
+        factory = object.__getattribute__(self, "_final_evaluation_factory")
         if factory is None:
             return None
         evaluation = factory()
-        object.__setattr__(self, "_final_evaluation", evaluation)
+        object.__setattr__(self, "final_evaluation", evaluation)
         object.__setattr__(self, "_final_evaluation_factory", None)
         return evaluation
+
+    def value(self, name: StateName) -> float:
+        return float(self.state[self.state_names.index(name)])
 
     @property
     def plot(self):

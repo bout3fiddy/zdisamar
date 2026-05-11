@@ -7,6 +7,7 @@
 # ///
 
 import copy
+import dataclasses
 import statistics
 import sys
 import time
@@ -20,6 +21,7 @@ BENCHMARK_PATH = OUTPUTS_DIR / "zdisamar_o2a_slow_forward_jacobian_benchmark.jso
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
+import numpy as np  # noqa: E402
 import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
@@ -138,6 +140,19 @@ def tracing_evaluate(
         return scaled
 
     return evaluate
+
+
+def evaluate_final_state_with_trace(
+    case: zd.O2AInput,
+    state_vector: optimal_estimation.StateVector,
+    state,
+    trace_records: list[dict[str, Any]],
+) -> optimal_estimation.ForwardEvaluation:
+    with zd.o2a_forward_session(case) as session:
+        session.enable_prepare_trace()
+        model = o2a_oe.O2AInverseForwardModel(case, forward_session=session)
+        cast(Any, model).evaluate = tracing_evaluate(model, trace_records)
+        return model.evaluate(state, state_vector)
 
 
 def evaluate_prepared_reflectance_timed(
@@ -363,6 +378,18 @@ def main() -> int:
         )
         session_reused_s = time.perf_counter() - session_start
         retrieval_iteration_trace = iteration_trace[: session_result.iterations]
+        if object.__getattribute__(session_result, "_final_evaluation_factory") is not None:
+            final_state = np.array(session_result.state, copy=True)
+            session_result = dataclasses.replace(
+                session_result,
+                final_evaluation=None,
+                _final_evaluation_factory=lambda: evaluate_final_state_with_trace(
+                    case,
+                    state_vector,
+                    final_state,
+                    iteration_trace,
+                ),
+            )
         lazy_final_start = time.perf_counter()
         _ = session_result.final_evaluation
         lazy_final_evaluation_s = time.perf_counter() - lazy_final_start

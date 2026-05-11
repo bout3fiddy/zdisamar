@@ -150,7 +150,7 @@ def _disamar_oe(
     if type(inverse_model) is not O2AInverseForwardModel:
         return replace(
             result,
-            _final_evaluation=final_evaluate_state(np.array(result.state, copy=True)),
+            final_evaluation=final_evaluate_state(np.array(result.state, copy=True)),
             _final_evaluation_factory=None,
         )
     return attach_final_evaluation(
@@ -200,13 +200,13 @@ def attach_final_evaluation(
     ):
         return replace(
             result,
-            _final_evaluation=result.last_evaluation,
+            final_evaluation=result.last_evaluation,
             _final_evaluation_factory=None,
         )
     final_state = np.array(result.state, copy=True)
     return replace(
         result,
-        _final_evaluation=None,
+        final_evaluation=None,
         _final_evaluation_factory=lambda: evaluate_state(final_state),
     )
 
