@@ -275,6 +275,12 @@ def stats(values: list[float]) -> dict[str, float]:
 
 
 def trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not trace_records:
+        return {
+            "iterations": 0,
+            "source": "cached_last_evaluation",
+        }
+
     def phase(path: tuple[str, ...]) -> dict[str, float]:
         values = []
         for record in trace_records:

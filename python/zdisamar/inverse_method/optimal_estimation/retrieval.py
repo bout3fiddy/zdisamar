@@ -72,7 +72,7 @@ class IterationTiming:
     total_iteration_s: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class Result:
     """Final optimal estimation state plus diagnostics needed for retrieval experiments."""
 
@@ -93,6 +93,40 @@ class Result:
         repr=False,
         compare=False,
     )
+
+    def __init__(
+        self,
+        state_names: tuple[StateName, ...],
+        state: np.ndarray,
+        iterations: int,
+        converged: bool,
+        history: tuple[Iteration, ...],
+        posterior_covariance: np.ndarray,
+        averaging_kernel: np.ndarray,
+        timing: tuple[IterationTiming, ...] = (),
+        measurement: Measurement | None = None,
+        last_evaluated_state: np.ndarray | None = None,
+        last_evaluation: ForwardEvaluation | None = None,
+        final_evaluation: ForwardEvaluation | None = None,
+        _final_evaluation: ForwardEvaluation | None = None,
+        _final_evaluation_factory: Callable[[], ForwardEvaluation] | None = None,
+    ):
+        object.__setattr__(self, "state_names", state_names)
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "iterations", iterations)
+        object.__setattr__(self, "converged", converged)
+        object.__setattr__(self, "history", history)
+        object.__setattr__(self, "posterior_covariance", posterior_covariance)
+        object.__setattr__(self, "averaging_kernel", averaging_kernel)
+        object.__setattr__(self, "timing", timing)
+        object.__setattr__(self, "measurement", measurement)
+        object.__setattr__(self, "last_evaluated_state", last_evaluated_state)
+        object.__setattr__(self, "last_evaluation", last_evaluation)
+        if final_evaluation is not None:
+            _final_evaluation = final_evaluation
+            _final_evaluation_factory = None
+        object.__setattr__(self, "_final_evaluation", _final_evaluation)
+        object.__setattr__(self, "_final_evaluation_factory", _final_evaluation_factory)
 
     def value(self, name: StateName) -> float:
         return float(self.state[self.state_names.index(name)])

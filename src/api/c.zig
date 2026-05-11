@@ -333,7 +333,7 @@ const Context = struct {
 };
 
 fn elapsedNs(start: i128) u64 {
-    return @intCast(std.time.nanoTimestamp() - start);
+    return @intCast(@max(std.time.nanoTimestamp() - start, 0));
 }
 
 fn prepareTraceFromNative(profile: anytype) ZdsO2APrepareTrace {

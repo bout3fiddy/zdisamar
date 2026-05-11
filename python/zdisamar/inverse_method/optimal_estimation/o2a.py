@@ -58,6 +58,13 @@ class O2AInverseForwardModel:
     ):
         if forward_session is not None and not use_forward_session:
             raise ValueError("forward_session requires use_forward_session=True")
+        if (
+            forward_session is not None
+            and library_path is not None
+            and forward_session.library_path is not None
+            and library_path != forward_session.library_path
+        ):
+            raise ValueError("library_path must match the supplied forward_session library_path")
         self._template = copy.deepcopy(template)
         self._library_path = (
             library_path
@@ -140,8 +147,15 @@ def _disamar_oe(
         state_vector,
         controls=controls or RetrievalControls.from_disamar_retrieval_specs(),
     )
+    result = replace(result, measurement=measurement)
+    if type(inverse_model) is not O2AInverseForwardModel:
+        return replace(
+            result,
+            _final_evaluation=final_evaluate_state(np.array(result.state, copy=True)),
+            _final_evaluation_factory=None,
+        )
     return attach_final_evaluation(
-        replace(result, measurement=measurement),
+        result,
         final_evaluate_state,
     )
 
