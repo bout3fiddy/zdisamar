@@ -44,7 +44,7 @@ def retrieve(
         J(x) = (y - F(x))^T S_e^-1 (y - F(x))
              + (x - x_a)^T S_a^-1 (x - x_a),
 
-    with a diagonal measurement covariance S_e in this first API slice.  The
+    with a diagonal measurement covariance S_e in this first API slice. The
     update policy is factored into `gauss_newton_step` so future LM,
     line-search, or alternative regularization experiments can reuse the same
     state history and diagnostics.

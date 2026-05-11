@@ -1,62 +1,216 @@
 # zdisamar
 
-`zdisamar` is a Zig O2 A forward-model lab built around the DISAMAR scientific
-path. The repository is organized around a direct calculation flow:
+`zdisamar` is a Zig implementation of the oxygen A-band forward model used in
+DISAMAR aerosol-layer-height retrieval studies. It calculates
+top-of-atmosphere reflectance and reflectance derivatives for scenes in which
+oxygen absorption, aerosol scattering, surface reflection, and instrument
+spectral response all affect the measured spectrum.
 
-`input -> forward model -> output`
+The Fortran DISAMAR code family is the scientific reference for this work.
+`zdisamar` keeps the same radiative-transfer problem and reorganizes the
+repeated oxygen A-band calculations so validation cases can be run, timed, and
+inspected through generated spectra and timing files.
 
-Scientific input, reference data, optical-property preparation, radiative
-transfer, instrument-grid calculation, and diagnostic output are kept explicit
-so execution stays reproducible and easy to validate against DISAMAR reference
-evidence.
+The Python wrapper is demonstrated in executable notebooks under
+[`scripts/demo/`](./scripts/demo/). Build the native library first:
 
-## What The Repository Contains
+```bash
+zig build
+```
 
-- A buildable Zig library, C API library, DISAMAR-reference CLI, and O2 A plot-spectrum helper.
-- A small O2 A product surface in `src/root.zig`.
-- Retained typed atmosphere, geometry, spectroscopy, and instrument inputs in `src/input/`.
-- Reusable numerical routines for radiative transfer, optics, interpolation,
-  quadrature, spectra, and linear algebra in `src/forward_model/` and `src/common/`.
-- Narrow ingestion helpers for bundled reference assets in `src/input/reference_data/ingest/`.
-- Tracked O2 A scientific bundles and reference assets under `data/`.
-- Retained O2 A validation assets and executable test lanes under `tests/` and `validation/`.
+Then open the notebooks:
 
-## Current Runtime Model
+```bash
+uv run --with jupyterlab --with ipykernel python -m jupyter lab scripts/demo
+```
 
-The public execution surface is intentionally small:
+The two demos are
+[`o2a_plot_bundle.ipynb`](./scripts/demo/o2a_plot_bundle.ipynb), which shows the
+Python-facing O2 A output and plotting accessors, and
+[`optimal_estimation_demo.ipynb`](./scripts/demo/optimal_estimation_demo.ipynb),
+which shows a two-state O2 A optimal-estimation flow.
 
-- `Input` owns the retained O2 A inputs.
-- `ReferenceData` owns the loaded reference datasets and bundled helper assets.
-- `OpticalProperties` owns the prepared wavelength-dependent optical state.
-- `CalculationStorage` owns reusable internal storage for the forward model.
-- `Output` owns the generated spectrum and summary outputs.
-- `DiagnosticReport` owns timings, counters, and diagnostic artifacts.
+## Why The Oxygen A Band
 
-That structure is why numerical routines stay free of file I/O, CLI parsing,
-and global mutable state. Product wiring stays at the public root, while hot
-numeric routines stay under `src/forward_model/` and `src/common/`.
+The oxygen A band near 758-770 nm is a strong molecular oxygen absorption band
+used by passive satellite retrievals to infer information about the vertical
+placement of scattering layers. Oxygen is well mixed in the atmosphere, so the
+absorption structure in a measured top-of-atmosphere spectrum carries
+information about photon path length. Photons scattered by a lower aerosol or
+cloud layer travel through more oxygen than photons scattered by a higher layer.
+
+This makes the band useful for aerosol-layer-height and cloud-height retrievals.
+The oxygen absorption signal is also sensitive to surface brightness, geometry,
+aerosol optical thickness, and the balance between atmospheric and surface
+contributions to the measured reflectance. Aerosols scatter less strongly than
+clouds, so aerosol retrievals need a detailed forward model.
+
+![Aerosol scene and oxygen A-band reflectance](./docs/assets/o2a-aerosol-spectrum-context.png)
+
+The figure links a visible aerosol scene to the O2 A reflectance spectrum seen
+by the instrument: the aerosol contribution changes both the absolute
+reflectance and the structure inside the absorption band. Aerosol optical
+thickness, aerosol vertical distribution, and surface reflection all affect the
+oxygen A-band retrieval.
+
+That spectral change can be used to retrieve atmospheric properties. Light that
+travels deeper into the atmosphere passes through more oxygen and therefore has
+deeper absorption-band structure. If photons meet an aerosol or cloud layer
+higher in the atmosphere, they scatter back toward the instrument earlier and
+travel through less oxygen. The absorption profile then carries information
+about where the scattering happened. A forward model makes this usable: for a
+given atmosphere, surface, viewing geometry, and instrument response, it
+calculates the reflectance spectrum and the derivatives needed by the retrieval
+to update the atmospheric state.
+
+## What Changed Relative To Fortran DISAMAR
+
+The comparisons use the Fortran DISAMAR code family. Source links in the
+performance notes point to the KNMI GitLab snapshot
+[`d17c52884a875cb87b98e4c4ea7f722659e685ac`](https://gitlab.com/KNMI-OSS/disamar/disamar/-/tree/d17c52884a875cb87b98e4c4ea7f722659e685ac).
+
+Fortran DISAMAR is the grandfather of this implementation. It is a mature
+radiative-transfer and retrieval model for passive atmospheric remote sensing:
+it reads a retrieval configuration, prepares atmospheric and surface inputs,
+calculates spectra and Jacobians, and runs inverse methods such as optimal
+estimation. Its strength is breadth. It supports many retrieval families,
+spectral ranges, configuration options, and operational/research use cases. That
+breadth also makes focused O2 A benchmarking difficult: a single aerosol-height
+case still passes through general setup, broad configuration handling, and
+general numerical routines built for a much wider set of retrieval problems.
+
+Both implementations target the same O2 A retrieval forward model: line-by-line
+oxygen absorption, multiple scattering, instrument-grid convolution, and
+reflectance derivatives for optimal estimation. The performance improvements
+come from reducing repeated setup around that calculation:
+
+- scene, spectroscopy, geometry, and reference data are prepared once and reused
+  across repeated forward-model calls;
+- optimal-estimation retrievals call the forward model several times while the
+  scene, instrument grid, spectroscopy, and many optical inputs stay the same.
+  Each iteration reuses that O2 A calculation state in memory;
+- retrieval Jacobians are calculated for the active state-vector columns;
+- common O2 A LABOS matrix shapes for the 20-stream case use specialized
+  implementations in the repeated layer-doubling calculations;
+- validation and benchmark evidence is stored under
+  [`validation/outputs/`](./validation/outputs/).
+
+The benchmark cases use `nstreamsSim = 20` and `nstreamsRetr = 20`. The DISAMAR
+baseline configuration also uses `aerosolLayerHeight = 0`.
+The Fortran `aerosolLayerHeight = 1` setting activates an older shortcut option;
+the benchmark references use the normal physical inverse problem with
+`aerosolLayerHeight = 0`.
+
+## Benchmarks
+
+The benchmark evidence covers forward-model timing and
+optimal-estimation retrieval timing.
+
+### Forward Model
+
+The forward-model benchmark calculates one O2 A spectrum over 755-776 nm. The
+reported spectrum has 701 instrument-grid wavelengths, but each instrument
+channel is an average over sharper oxygen absorption structure at higher
+spectral resolution:
+
+```text
+prepare_o2a                    0.177154 s
+forward-model elapsed time     1.799918 s
+output wavelengths                  701
+high-resolution radiance samples  3,874
+LABOS Fourier terms             120,390
+LABOS layer visits            5,417,550
+doubling steps                8,389,666
+```
+
+The tracked evidence is
+[`validation/outputs/performance/labos-bottleneck/summary.json`](./validation/outputs/performance/labos-bottleneck/summary.json)
+and the accompanying CSV summaries in the same directory. The detailed
+performance notes live in
+[`research/performance/o2a-forward/`](./research/performance/o2a-forward/).
+
+### Retrieval
+
+The paired optimal-estimation sweep compares DISAMAR Fortran and `zdisamar`
+using the same scene and a-priori sampling. Each system retrieves its own
+synthetic spectrum, which keeps the retrieval problem aligned while measuring
+the two systems separately.
+
+```text
+DISAMAR Fortran: 100/100 converged, median 1228.826 s, mean 1189.862 s
+zdisamar:        100/100 converged, median    3.834 s, mean    3.794 s
+```
+
+The tracked summary is
+[`validation/outputs/optimal_estimation/paired_oe_plot_manifest.json`](./validation/outputs/optimal_estimation/paired_oe_plot_manifest.json).
+The retrieval notes live in
+[`research/performance/o2a-retrieval/`](./research/performance/o2a-retrieval/).
+
+## Bottlenecks
+
+The oxygen A band contains narrow absorption lines. To model an instrument
+measurement, `zdisamar` calculates radiance at high-resolution wavelengths and
+then applies the instrument spectral response to form the 701 reported
+wavelengths.
+
+The benchmark expands one spectrum as follows:
+
+```text
+701 output wavelengths
+-> 3,874 high-resolution radiance samples
+-> 120,390 LABOS Fourier terms
+-> millions of layer, doubling, and scattering-order operations
+```
+
+The main remaining costs are the repeated LABOS radiative-transfer calculations:
+Fourier transport, RT-layer construction, layer doubling, scattering-order
+accumulation, and phase-matrix construction. The detailed timing and operation
+counts are in
+[`research/performance/o2a-forward/remaining-bottlenecks.md`](./research/performance/o2a-forward/remaining-bottlenecks.md).
+
+## Production Status And Next Work
+
+The stable implementation today is the O2 A forward model: typed inputs, bundled
+reference data, the Zig library and CLI helpers, Python wrapper demos, spectra
+validation, and benchmark artifacts.
+
+The optimal-estimation retrieval code currently supports the aerosol-only
+two-state retrieval case used by the benchmark evidence. The stable API remains
+centered on the forward model.
+
+The next work is to reduce the cost of repeated reflectance and derivative
+calculations during retrievals, while preserving the full O2 A result, and to
+decide which retrieval functions should become part of the stable API.
+
+[Nanda et al. (2019)](https://doi.org/10.5194/amt-12-6619-2019) describes an
+operational neural-network approach that uses a trained replacement for repeated
+online radiative-transfer calculations. `zdisamar` keeps the online full-physics
+calculation explicit, measurable, and available for validation and further
+optimization.
 
 ## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
-| `src/input/` | retained atmosphere, geometry, surface, spectroscopy, instrument, and reference-data inputs |
+| `src/input/` | atmosphere, geometry, surface, spectroscopy, instrument, and reference-data inputs |
 | `src/forward_model/` | optical properties, radiative transfer, instrument-grid calculation, and implementations |
 | `src/output/` | diagnostic reports and spectrum serialization |
 | `src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
 | `src/validation/disamar_reference/` | DISAMAR reference comparison helpers and CLI support |
 | `data/` | tracked O2 A bundles and reference assets |
-| `tests/` | retained O2 A executable checks |
-| `validation/` | O2 A compatibility and reference evidence |
+| `tests/` | O2 A executable checks |
+| `validation/` | O2 A compatibility, benchmark, and reference evidence |
+| `research/performance/` | performance provenance, current benchmark notes, and bottleneck analysis |
+| `scripts/demo/` | executable Python-facing demo notebooks |
 | `docs/` | DISAMAR context, O2 A runtime, and reference-data boundary |
 
-## Prerequisites
-
-- Zig `0.15.2` or newer. The repo currently declares `minimum_zig_version =
-  "0.15.2"` in [`build.zig.zon`](./build.zig.zon).
-- [`uv`](https://docs.astral.sh/uv/) for Python-based harness helpers. Python helper scripts in this repo are run via `uv run ...`.
-
 ## Build And Verification
+
+Prerequisites:
+
+- Zig `0.15.2` or newer. The repo declares `minimum_zig_version = "0.15.2"` in
+  [`build.zig.zon`](./build.zig.zon).
+- [`uv`](https://docs.astral.sh/uv/) for Python-based helpers.
 
 Build the library and CLI:
 
@@ -73,28 +227,10 @@ Run the fast local verification loop:
 zig build check
 ```
 
-Run the focused radiative-transfer/DISAMAR-reference verification loop:
+Run the broader fast presubmit:
 
 ```bash
-zig build test-transport
-```
-
-Run the retained O2A shape lane:
-
-```bash
-zig build test-validation-o2a
-```
-
-Run the optional O2A vendor trend assessment lane when you need a vendor comparison:
-
-```bash
-zig build test-validation-o2a-vendor
-```
-
-Regenerate the tracked O2A comparison bundle that is meant to be committed:
-
-```bash
-zig build o2a-plot-bundle
+zig build test-fast
 ```
 
 Run the full verification baseline:
@@ -103,127 +239,30 @@ Run the full verification baseline:
 zig build test
 ```
 
-When disk is tight and you do not want `zig build` to leave a persistent
-`.zig-cache` or global Zig cache behind, use the ephemeral wrapper instead:
+Regenerate the tracked O2 A comparison bundle after changing the O2 A
+forward-model or Jacobian validation outputs:
+
+```bash
+zig build o2a-plot-bundle
+```
+
+For temporary Zig caches, use the ephemeral wrapper:
 
 ```bash
 ./scripts/zig-build-ephemeral.sh check
 ./scripts/zig-build-ephemeral.sh test-fast --summary all
 ```
 
-That wrapper points both Zig cache roots at temporary directories and removes
-them automatically when the build exits. It is slower than the default flow
-because it disables cache reuse across runs.
-
-If you only need to reclaim space from prior runs, remove the repo-local caches
-after the build finishes:
+To reclaim space from prior runs:
 
 ```bash
 ./scripts/clean-zig-caches.sh
 ```
-
-That deletes `.zig-cache`, `.zig-cache-int`, and the repo's disposable
-`zig-cache/` test-output directory.
-
-## Tracked O2A Plot Bundle
-
-The committed O2A comparison evidence lives directly under `validation/`.
-
-- Canonical refresh command: `zig build o2a-plot-bundle`
-- Validation script: `validation/spectra/plot_validation.py`
-- Default references: the committed 701-sample DISAMAR forward and
-  reflectance-Jacobian fixtures under `validation/spectra/data/reference/`.
-
-## The O2A Workflow
-
-The retained executable surface is the public Zig API plus focused
-DISAMAR-reference helpers. The normal local workflow is:
-
-1. build the library and CLI,
-2. run the retained fast verification lanes,
-3. run the stock O2A diagnostic path when you need artifacts,
-4. refresh the tracked plot bundle only when the O2A forward/Jacobian validation shape changes.
-
-The plot-spectrum helper surface is:
-
-```text
-zdisamar-o2a-plot-spectrum [--output-dir DIR] [--case PATH]
-```
-
-Example:
-
-```bash
-./zig-out/bin/zdisamar-o2a-plot-spectrum --output-dir out/analysis/o2a/manual
-```
-
-That writes:
-
-- `out/analysis/o2a/manual/generated_spectrum.csv`
-
-## Using `zdisamar` As A Zig Library
-
-The shipped Zig surface is intentionally small and literal:
-
-```zig
-const std = @import("std");
-const zdisamar = @import("zdisamar");
-
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-defer _ = gpa.deinit();
-const allocator = gpa.allocator();
-
-var input: zdisamar.Input = .{
-    .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 121 },
-};
-var prepared = try zdisamar.prepare(allocator, &input);
-defer prepared.deinit(allocator);
-
-var output = try zdisamar.run(
-    allocator,
-    &prepared,
-    .exact,
-    .{},
-);
-defer output.deinit(allocator);
-```
-
-`PreparedInput` owns the resolved input, bundled reference data, prepared optical
-properties, and reusable calculation storage. Reference-data loading,
-optical-property preparation, and spectrum generation are not separate public
-entrypoints.
-
-## Data, Packages, And Exporters
-
-- `data/` contains tracked O2A climatologies, cross-sections, LUTs, and vendor reference assets.
-- `validation/` contains the tracked O2A comparison bundle.
-- The retained artifact outputs are diagnostic summaries and generated spectra, not exporter backends.
-
-## Validation And Scientific Scope
-
-This repository is meant to be testable as a scientific system, not only as a
-build artifact.
-
-- `tests/validation/` carries the retained O2A executable checks.
-- `validation/outputs/spectra/o2a_validation.png`, `validation/outputs/spectra/comparison_metrics.json`, and
-  `validation/outputs/spectra/bundle_manifest.json` are the bounded O2A forward/Jacobian
-  validation artifacts generated by the tracked plot bundle.
 
 ## Recommended Reading
 
 - [`docs/disamar-overview.md`](./docs/disamar-overview.md)
 - [`docs/o2a-forward.md`](./docs/o2a-forward.md)
 - [`docs/reference-data-and-bundles.md`](./docs/reference-data-and-bundles.md)
-
-## Short Version
-
-If you only need the essentials:
-
-```bash
-zig build
-zig build check
-zig build test-transport
-zig build test-validation-o2a
-# optional: zig build test-validation-o2a-vendor
-zig build o2a-plot-bundle
-zig build test
-```
+- [`research/performance/README.md`](./research/performance/README.md)
+- [`validation/README.md`](./validation/README.md)
