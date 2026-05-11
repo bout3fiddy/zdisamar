@@ -8,6 +8,7 @@ from typing import Protocol
 import numpy as np
 
 from ...forward_model.prepared import (
+    LibraryPath,
     O2AForwardSession,
     PreparedO2ABase,
     o2a_forward_session,
@@ -51,14 +52,18 @@ class O2AInverseForwardModel:
     def __init__(
         self,
         template: O2AInput,
-        library_path: str | None = None,
+        library_path: LibraryPath = None,
         forward_session: O2AForwardSession | None = None,
         use_forward_session: bool = True,
     ):
         if forward_session is not None and not use_forward_session:
             raise ValueError("forward_session requires use_forward_session=True")
         self._template = copy.deepcopy(template)
-        self._library_path = library_path
+        self._library_path = (
+            library_path
+            if library_path is not None
+            else (None if forward_session is None else forward_session.library_path)
+        )
         self._forward_session = forward_session
         self._use_forward_session = use_forward_session
 

@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 
 def assert_import_laziness() -> None:
@@ -121,6 +122,61 @@ def assert_optimal_estimation_grid_mismatch_rejected() -> None:
     raise AssertionError("optimal-estimation wavelength grid mismatch was accepted")
 
 
+def assert_lazy_final_evaluation_preserves_session_library_path() -> None:
+    import numpy as np
+    from zdisamar.forward_model.prepared import O2AForwardSession
+    from zdisamar.input.o2a import O2AInput
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_module
+    from zdisamar.inverse_method.optimal_estimation.forward_evaluation import ForwardEvaluation
+    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+
+    custom_library_path = Path("/tmp/custom/libzdisamar.dylib")
+    sentinel = cast(ForwardEvaluation, object())
+    calls: list[object] = []
+
+    class SuppliedSession:
+        @property
+        def library_path(self) -> Path:
+            return custom_library_path
+
+    class FreshSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    def fake_o2a_forward_session(_template: object, library_path: object = None) -> FreshSession:
+        calls.append(library_path)
+        return FreshSession()
+
+    def fake_evaluate(
+        self: Any,
+        state: np.ndarray,
+        state_vector: StateVector,
+    ) -> ForwardEvaluation:
+        _ = (state, state_vector)
+        assert self._library_path == custom_library_path
+        assert self._forward_session is not None
+        return sentinel
+
+    original_session = o2a_module.o2a_forward_session
+    original_evaluate = o2a_module.O2AInverseForwardModel.evaluate
+    try:
+        cast(Any, o2a_module).o2a_forward_session = fake_o2a_forward_session
+        cast(Any, o2a_module.O2AInverseForwardModel).evaluate = fake_evaluate
+        model = o2a_module.O2AInverseForwardModel(
+            template=cast(O2AInput, {}),
+            forward_session=cast(O2AForwardSession, SuppliedSession()),
+        )
+        evaluator = o2a_module._lazy_final_evaluator(model, cast(StateVector, object()))
+        assert evaluator(np.array([1.0])) is sentinel
+        assert calls == [custom_library_path]
+    finally:
+        cast(Any, o2a_module).o2a_forward_session = original_session
+        cast(Any, o2a_module.O2AInverseForwardModel).evaluate = original_evaluate
+
+
 def assert_reference_data_and_native_table() -> None:
     import numpy as np
     import zdisamar as zd
@@ -171,6 +227,7 @@ def main() -> int:
     assert_quantity_conversions()
     assert_plot_jacobian_uses_shared_conversion()
     assert_optimal_estimation_grid_mismatch_rejected()
+    assert_lazy_final_evaluation_preserves_session_library_path()
     assert_reference_data_and_native_table()
     print("python_package_refactor=ok")
     return 0
