@@ -27,6 +27,36 @@ class CDiagnosticReport(ctypes.Structure):
     ]
 
 
+class CO2APrepareTrace(ctypes.Structure):
+    _fields_ = [
+        ("parse_json_ns", ctypes.c_uint64),
+        ("load_inputs_ns", ctypes.c_uint64),
+        ("build_scene_ns", ctypes.c_uint64),
+        ("optical_prepare_ns", ctypes.c_uint64),
+        ("weak_cutoff_grid_ns", ctypes.c_uint64),
+        ("solar_rewindow_ns", ctypes.c_uint64),
+        ("route_prepare_ns", ctypes.c_uint64),
+        ("native_prepare_ns", ctypes.c_uint64),
+        ("total_ns", ctypes.c_uint64),
+    ]
+
+
+class CO2ASessionCacheTrace(ctypes.Structure):
+    _fields_ = [
+        ("wavelength_plan_hits", ctypes.c_uint64),
+        ("wavelength_plan_misses", ctypes.c_uint64),
+        ("forward_miss_list_hits", ctypes.c_uint64),
+        ("forward_miss_list_misses", ctypes.c_uint64),
+        ("profile_spectroscopy_hits", ctypes.c_uint64),
+        ("profile_spectroscopy_misses", ctypes.c_uint64),
+        ("last_wavelength_plan_hit", ctypes.c_uint8),
+        ("last_forward_miss_list_hit", ctypes.c_uint8),
+        ("last_profile_spectroscopy_hit", ctypes.c_uint8),
+        ("last_forward_miss_count", ctypes.c_uint64),
+        ("last_profile_spectroscopy_cache_count", ctypes.c_uint64),
+    ]
+
+
 class CAtmosphericBudgetRow(ctypes.Structure):
     _fields_ = [
         ("wavelength_nm", ctypes.c_double),

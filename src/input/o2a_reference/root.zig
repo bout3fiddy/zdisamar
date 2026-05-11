@@ -11,6 +11,7 @@ pub const ReferenceData = metrics.ReferenceData;
 pub const ReferenceSample = metrics.ReferenceSample;
 pub const O2AInput = reference_types.ResolvedVendorO2ACase;
 pub const PreparedO2A = metrics.VendorO2APreparedCase;
+pub const O2APrepareTrace = metrics.O2APrepareTrace;
 pub const SessionStorage = InstrumentGrid.ProductStorage;
 pub const Output = InstrumentGrid.InstrumentGridProduct;
 pub const ReflectanceCase = metrics.VendorO2AReflectanceCase;
@@ -21,6 +22,7 @@ pub const RangeExtremum = metrics.RangeExtremum;
 
 pub const runResolvedVendorO2AReflectanceCase = metrics.runResolvedVendorO2AReflectanceCase;
 pub const prepareResolvedVendorO2ACase = metrics.prepareResolvedVendorO2ACase;
+pub const prepareResolvedVendorO2ACaseWithTrace = metrics.prepareResolvedVendorO2ACaseWithTrace;
 pub const computeComparisonMetrics = metrics.computeComparisonMetrics;
 pub const assessAgainstBaseline = metrics.assessAgainstBaseline;
 pub const loadResolvedO2ASpectroscopyLineList = metrics.loadResolvedO2ASpectroscopyLineList;
@@ -244,6 +246,15 @@ pub fn renderDefaultInputJson(allocator: Allocator) ![]u8 {
 pub fn prepareO2A(allocator: Allocator, input: *const O2AInput) !PreparedO2A {
     try validateInput(input);
     return metrics.prepareResolvedVendorO2ACase(allocator, input);
+}
+
+pub fn prepareO2AWithTrace(
+    allocator: Allocator,
+    input: *const O2AInput,
+    trace: *O2APrepareTrace,
+) !PreparedO2A {
+    try validateInput(input);
+    return metrics.prepareResolvedVendorO2ACaseWithTrace(allocator, input, trace);
 }
 
 pub fn runO2A(allocator: Allocator, prepared: *const PreparedO2A) !Output {

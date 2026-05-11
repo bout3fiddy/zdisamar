@@ -1,0 +1,77 @@
+# O2 A OE Inter-Iteration Hillclimb
+
+This note records the May 2026 audit of repeated work in the session-backed
+O2 A optimal-estimation path.
+
+## Evidence
+
+The retained benchmark artifact is
+`validation/outputs/optimal_estimation/zdisamar_o2a_slow_forward_jacobian_benchmark.json`.
+The current slow retained case reports:
+
+- retrieval loop wall time: 4.134691 s
+- retrieval iteration forward model plus Jacobian: 4.133298 s
+- deferred final-state evaluation when requested: 0.987428 s
+- remaining retrieval work: 0.000490 s
+
+The session cache trace shows that all retrieval iterations hit the persistent
+session caches:
+
+- wavelength plan: 4 hits, 0 misses
+- forward-miss list: 4 hits, 0 misses
+- profile spectroscopy cache: 4 hits, 0 misses
+- cached forward-miss/profile spectroscopy count: 3736
+
+The lazy final-state evaluation also hits those caches once when requested. This
+means the slow case is not repeatedly rebuilding the wavelength sampling plan,
+forward-miss list, or profile spectroscopy caches between OE iterations.
+
+The traced native Jacobian sweep is
+`validation/outputs/performance/o2a-jacobian-trace/summary.json`. For the
+two-state aerosol Jacobian variant, the dominant native costs remain:
+
+- forward wall time: 2.017445 s
+- LABOS RT layer build CPU time: 7.144270 s
+- LABOS orders CPU time: 2.904401 s
+- aerosol optical-depth weighting CPU time: 1.990068 s
+- aerosol layer-pressure weighting CPU time: 0.580569 s
+- result copy time: 0.000012 s
+
+## Conclusions
+
+The main repeated inter-iteration work still visible from Python is not the
+solver update, output copying, reflectance-Jacobian conversion, wavelength-plan
+construction, or spectroscopy-cache construction. Those costs are small or
+already cached.
+
+The large repeated work is the physical forward model and Jacobian itself. In
+the current algorithm each accepted state requires a full forward-plus-Jacobian
+evaluation. After convergence, exact final-state plots need a final-state
+forward-plus-Jacobian evaluation because the plotting surface uses final
+reflectance, residuals, and final reflectance Jacobians. That work is now lazy:
+retrieval callers that only need the state and diagnostics return before this
+extra native evaluation, while plot consumers still compute the exact final
+state product on demand.
+
+The remaining inter-iteration prepare cost is measurable but small: repeated
+prepare is about 15 ms per evaluation in the slow benchmark, mostly optical
+prepare. Caching or mutating prepared optical state may be worth revisiting
+later, but it is around one to two percent of a slow forward-plus-Jacobian call
+and would need careful parity coverage.
+
+## Rejected Direction
+
+A borrowed C result view for session-backed OE was tested to avoid cloning the
+native product before Python copies arrays. Sequential benchmark runs did not
+show a stable improvement, and the native trace reports result copy around
+0.000012 s for the two-state Jacobian variant. The borrowed-view path was
+removed rather than adding C ABI surface area for a non-bottleneck.
+
+## Current Priority
+
+Further speedups should target native LABOS work:
+
+1. reduce repeated RT layer build work across nearby aerosol states,
+2. reduce orders work inside the forward samples,
+3. reduce aerosol optical-depth and layer-pressure Jacobian weighting work,
+4. only then revisit prepared-optical-state mutation or caching.

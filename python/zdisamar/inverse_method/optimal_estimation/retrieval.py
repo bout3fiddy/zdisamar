@@ -1,6 +1,7 @@
 """Retrieval data objects and diagnostics."""
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -87,6 +88,25 @@ class Result:
     final_evaluation: ForwardEvaluation | None = None
     last_evaluated_state: np.ndarray | None = None
     last_evaluation: ForwardEvaluation | None = None
+    _final_evaluation_factory: Callable[[], ForwardEvaluation] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def __getattribute__(self, name: str):
+        if name != "final_evaluation":
+            return object.__getattribute__(self, name)
+        evaluation = object.__getattribute__(self, name)
+        if evaluation is not None:
+            return evaluation
+        factory = object.__getattribute__(self, "_final_evaluation_factory")
+        if factory is None:
+            return None
+        evaluation = factory()
+        object.__setattr__(self, "final_evaluation", evaluation)
+        object.__setattr__(self, "_final_evaluation_factory", None)
+        return evaluation
 
     def value(self, name: StateName) -> float:
         return float(self.state[self.state_names.index(name)])
