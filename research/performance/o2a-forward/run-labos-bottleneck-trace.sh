@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUT="${OUT:-validation/outputs/performance/labos-bottleneck}"
+OUT="${OUT:-research/performance/tracing/output/labos-bottleneck}"
 
-zig build labos-bottleneck-trace -- --output-dir "$OUT"
-zig build bench > "$OUT/labos_kernel_bench.txt" 2>&1
-uv run validation/performance/labos_bottleneck_summarize.py "$OUT"
+zig build labos-bottleneck-trace \
+  -Denable-ztracy=true \
+  -Dtrace-optimize=ReleaseFast \
+  -- --output-dir "$OUT"
 
 printf 'wrote %s\n' "$OUT"

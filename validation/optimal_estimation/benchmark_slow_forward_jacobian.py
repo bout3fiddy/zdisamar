@@ -100,7 +100,6 @@ def tracing_evaluate(
         prepare_start = time.perf_counter()
         prepared = model._forward_session.prepare(settings)
         prepare_s = time.perf_counter() - prepare_start
-        prepare_trace = model._forward_session.last_prepare_trace()
 
         evaluation, evaluation_trace = evaluate_prepared_reflectance_timed(
             prepared,
@@ -118,7 +117,6 @@ def tracing_evaluate(
                 "index": len(trace_records) + 1,
                 "settings_for_state_s": settings_s,
                 "prepare_total_s": prepare_s,
-                "prepare_trace": prepare_trace,
                 "forward_evaluation_trace": evaluation_trace,
                 "scale_jacobian_s": scale_s,
                 "total_evaluate_s": time.perf_counter() - total_start,
@@ -136,7 +134,6 @@ def evaluate_final_state_with_trace(
     trace_records: list[dict[str, Any]],
 ) -> optimal_estimation.ForwardEvaluation:
     with zd.o2a_forward_session(case) as session:
-        session.enable_prepare_trace()
         model = o2a_oe.O2AInverseForwardModel(case, forward_session=session)
         cast(Any, model).evaluate = tracing_evaluate(model, trace_records)
         return model.evaluate(state, state_vector)
@@ -291,12 +288,6 @@ def trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
         "iterations": len(trace_records),
         "settings_for_state_s": phase(("settings_for_state_s",)),
         "prepare_total_s": phase(("prepare_total_s",)),
-        "prepare_python_total_s": phase(("prepare_trace", "python_total_s")),
-        "prepare_native_call_s": phase(("prepare_trace", "native_call_s")),
-        "prepare_parse_json_s": phase(("prepare_trace", "parse_json_s")),
-        "prepare_load_inputs_s": phase(("prepare_trace", "load_inputs_s")),
-        "prepare_build_scene_s": phase(("prepare_trace", "build_scene_s")),
-        "prepare_optical_s": phase(("prepare_trace", "optical_prepare_s")),
         "native_forward_s": phase(("forward_evaluation_trace", "native_forward_s")),
         "copy_outputs_s": phase(("forward_evaluation_trace", "copy_outputs_s")),
         "radiance_to_reflectance_jacobian_s": phase(
@@ -319,7 +310,6 @@ def main() -> int:
 
     session_setup_start = time.perf_counter()
     session = zd.o2a_forward_session(case)
-    session.enable_prepare_trace()
     session_setup_s = time.perf_counter() - session_setup_start
     try:
         iteration_trace: list[dict[str, Any]] = []

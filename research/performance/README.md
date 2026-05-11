@@ -51,18 +51,13 @@ That product is the current per-spectrum elapsed time.
 
 ## Artifacts
 
-Tracked outputs live under `validation/outputs/`. Generated local data lives
-under `out/` and is intentionally gitignored.
+Performance trace outputs live under `research/performance/tracing/output/`.
+Generated local scratch data lives under `out/` and is intentionally gitignored.
 
 Current forward trace artifacts:
 
 ```text
-validation/outputs/performance/labos-bottleneck/summary.json
-validation/outputs/performance/labos-bottleneck/sections.csv
-validation/outputs/performance/labos-bottleneck/counters.csv
-validation/outputs/performance/labos-bottleneck/primitive_estimates.csv
-validation/outputs/performance/labos-bottleneck/labos_kernel_bench.txt
-validation/outputs/performance/labos-bottleneck/rollup.json
+research/performance/tracing/output/labos-bottleneck/summary.json
 ```
 
 Current retrieval artifacts:

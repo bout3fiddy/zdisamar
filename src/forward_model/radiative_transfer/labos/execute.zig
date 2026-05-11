@@ -263,11 +263,6 @@ fn layerResolvedLabosWithWorkspace(
         }
         break :blk null;
     } else null;
-    const trace: Trace.WorkerRef = if (Trace.enabled) blk: {
-        if (workspace) |scratch| break :blk scratch.trace;
-        break :blk Trace.noWorker();
-    } else {};
-
     for (0..fourier_max + 1) |i_fourier| {
         var stop_fourier_loop = false;
         {
@@ -275,10 +270,8 @@ fn layerResolvedLabosWithWorkspace(
             fourier_zone.value(@intCast(i_fourier));
             defer fourier_zone.end();
 
-            const fourier_start = Trace.begin();
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.fourier_terms, 1);
+            Trace.plotU("fourier_terms", 1);
             var owned_plm_basis: basis.FourierPlmBasis = undefined;
-            const plm_start = Trace.begin();
             const plm_basis = plm_basis: {
                 const zone = Trace.deepStaticZone(@src(), "labos.plm_basis");
                 defer zone.end();
@@ -289,8 +282,6 @@ fn layerResolvedLabosWithWorkspace(
                     break :blk &owned_plm_basis;
                 };
             };
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.plm_basis, Trace.elapsed(plm_start));
-            const rt_start = Trace.begin();
             {
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer_build");
                 defer zone.end();
@@ -305,14 +296,10 @@ fn layerResolvedLabosWithWorkspace(
                     layer_phase_kernels,
                     layer_phase_kernel_valid,
                     if (workspace != null) orders_workspace.rt_active else null,
-                    trace,
                 );
             }
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.rt_layer_build, Trace.elapsed(rt_start));
             rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
             if (workspace != null) orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
-            if (Trace.enabled) orders_workspace.trace = trace;
-            const orders_start = Trace.begin();
             const orders_result = orders_result: {
                 const zone = Trace.deepStaticZone(@src(), "labos.orders.total");
                 defer zone.end();
@@ -368,8 +355,6 @@ fn layerResolvedLabosWithWorkspace(
                         num_orders_max,
                     );
             };
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_total, Trace.elapsed(orders_start));
-            const reflectance_start = Trace.begin();
             const refl_fc = refl_fc: {
                 const zone = Trace.deepStaticZone(@src(), "labos.reflectance_integral");
                 defer zone.end();
@@ -390,7 +375,6 @@ fn layerResolvedLabosWithWorkspace(
                 else
                     calcReflectance(orders_result.ud, nlayer, geo);
             };
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_integral, Trace.elapsed(reflectance_start));
             const weighted_refl_fc = if (i_fourier == 0) blk: {
                 break :blk refl_fc;
             } else blk: {
@@ -402,7 +386,6 @@ fn layerResolvedLabosWithWorkspace(
                 surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
             }
             if (wants_aerosol_optical_depth) {
-                const aod_weighting_start = Trace.begin();
                 const tangent_refl_fc = tangent_refl_fc: {
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aod_weighting");
                     defer zone.end();
@@ -438,10 +421,8 @@ fn layerResolvedLabosWithWorkspace(
                 else
                     (2.0 * tangent_refl_fc) * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
                 aerosol_optical_depth_tangent += weighted_tangent_refl_fc;
-                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_aerosol_optical_depth_weighting, Trace.elapsed(aod_weighting_start));
             }
             if (wants_aerosol_layer_mid_pressure) {
-                const pressure_weighting_start = Trace.begin();
                 const pressure_tangent_refl_fc = pressure_tangent_refl_fc: {
                     const zone = Trace.deepStaticZone(@src(), "labos.reflectance.pressure_weighting");
                     defer zone.end();
@@ -478,18 +459,15 @@ fn layerResolvedLabosWithWorkspace(
                     break :blk (2.0 * pressure_tangent_refl_fc) * cos_m_dphi;
                 };
                 aerosol_layer_mid_pressure_tangent += weighted_pressure_tangent_refl_fc;
-                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_aerosol_layer_pressure_weighting, Trace.elapsed(pressure_weighting_start));
             }
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.labos_fourier_total, Trace.elapsed(fourier_start));
             if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) {
-                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.fourier_tail_breaks, 1);
+                Trace.plotU("fourier_tail_breaks", 1);
                 stop_fourier_loop = true;
             }
         }
         if (stop_fourier_loop) break;
     }
 
-    const jacobian_assembly_start = Trace.begin();
     const result_jacobian = result_jacobian: {
         const zone = Trace.deepStaticZone(@src(), "labos.reflectance.jacobian_assembly");
         defer zone.end();
@@ -499,7 +477,6 @@ fn layerResolvedLabosWithWorkspace(
         jacobian.set(&assembled, .aerosol_layer_mid_pressure_hpa, aerosol_layer_mid_pressure_tangent);
         break :result_jacobian assembled;
     };
-    if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_jacobian_assembly, Trace.elapsed(jacobian_assembly_start));
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),
         .jacobian = result_jacobian,

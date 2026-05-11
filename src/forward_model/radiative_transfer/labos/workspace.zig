@@ -3,7 +3,6 @@ const basis = @import("basis.zig");
 const common = @import("../root.zig");
 const attenuation_mod = @import("attenuation.zig");
 const orders_mod = @import("orders.zig");
-const Trace = @import("../../performance_trace.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -23,7 +22,6 @@ pub const Workspace = struct {
     previous_layer_phase_signature_valid: []bool = &.{},
     cached_geometry: basis.Geometry = undefined,
     cached_geometry_valid: bool = false,
-    trace: Trace.WorkerRef = Trace.noWorker(),
 
     pub fn init(allocator: Allocator) Workspace {
         return .{ .allocator = allocator };
@@ -122,14 +120,12 @@ pub const Workspace = struct {
     pub fn ordersWorkspace(self: *Workspace, nlevel: usize) !*orders_mod.OrdersWorkspace {
         if (self.orders) |*orders| {
             if (orders.ud.len >= nlevel) {
-                if (Trace.enabled) orders.trace = self.trace;
                 return orders;
             }
             orders.deinit();
             self.orders = null;
         }
         self.orders = try orders_mod.OrdersWorkspace.init(self.allocator, nlevel);
-        if (Trace.enabled) self.orders.?.trace = self.trace;
         return &(self.orders.?);
     }
 

@@ -27,7 +27,7 @@ means the slow case is not repeatedly rebuilding the wavelength sampling plan,
 forward-miss list, or profile spectroscopy caches between OE iterations.
 
 The traced native Jacobian sweep is
-`validation/outputs/performance/o2a-jacobian-trace/summary.json`. For the
+`research/performance/tracing/output/o2a-jacobian-trace/summary.json`. For the
 two-state aerosol Jacobian variant, the dominant native costs remain:
 
 - forward wall time: 2.017445 s

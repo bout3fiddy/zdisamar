@@ -3,7 +3,7 @@
 Current retained artifact:
 
 ```text
-validation/outputs/performance/labos-bottleneck/summary.json
+research/performance/tracing/output/labos-bottleneck/summary.json
 ```
 
 Top-level timing:

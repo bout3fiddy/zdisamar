@@ -7,10 +7,7 @@ The performance notes contain three kinds of numbers. Keep them separate.
 The current retained trace is the checked-in labos-bottleneck artifact:
 
 ```text
-validation/outputs/performance/labos-bottleneck/summary.json
-validation/outputs/performance/labos-bottleneck/sections.csv
-validation/outputs/performance/labos-bottleneck/counters.csv
-validation/outputs/performance/labos-bottleneck/primitive_estimates.csv
+research/performance/tracing/output/labos-bottleneck/summary.json
 ```
 
 Those files describe the current baseline forward case. They are the source for
@@ -36,7 +33,7 @@ saved" or "this commit moved the forward elapsed time from ... to ...".
 Some validation and sweep data live under `out/`. Those files are local
 generated evidence and are intentionally gitignored. If a claim must survive in
 the repository, keep a tracked summary, manifest, plot, or concise markdown note
-under `validation/outputs/` or `research/performance/`.
+under `research/performance/` or `validation/outputs/`.
 
 ## Regeneration
 

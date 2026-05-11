@@ -34,11 +34,27 @@ pub inline fn Zone(comptime src: Src) ZoneCtx {
     return .{};
 }
 
+pub inline fn ZoneN(comptime src: Src, name: [*:0]const u8) ZoneCtx {
+    _ = src;
+    _ = name;
+    return .{};
+}
+
 pub inline fn Message(text: []const u8) void {
     _ = text;
 }
 
 pub inline fn FrameMark() void {}
+
+pub inline fn PlotU(name: [*:0]const u8, value: u64) void {
+    _ = name;
+    _ = value;
+}
+
+pub inline fn PlotF(name: [*:0]const u8, value: f64) void {
+    _ = name;
+    _ = value;
+}
 
 pub const TracyAllocator = struct {
     child_allocator: std.mem.Allocator,

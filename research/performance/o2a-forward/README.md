@@ -22,10 +22,7 @@ Fourier transport.
 Current retained evidence:
 
 ```text
-validation/outputs/performance/labos-bottleneck/summary.json
-validation/outputs/performance/labos-bottleneck/sections.csv
-validation/outputs/performance/labos-bottleneck/counters.csv
-validation/outputs/performance/labos-bottleneck/primitive_estimates.csv
+research/performance/tracing/output/labos-bottleneck/summary.json
 ```
 
 Read these notes in order:

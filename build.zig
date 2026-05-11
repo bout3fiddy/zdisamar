@@ -51,22 +51,7 @@ pub fn build(b: *std.Build) void {
     const enable_ztracy = b.option(
         bool,
         "enable-ztracy",
-        "Enable Tracy profile zones in the trace executable",
-    ) orelse false;
-    const ztracy_on_demand = b.option(
-        bool,
-        "ztracy-on-demand",
-        "Build Tracy with TRACY_ON_DEMAND so capture starts only when a profiler connects",
-    ) orelse true;
-    const ztracy_callstack = b.option(
-        u32,
-        "ztracy-callstack",
-        "If > 0, enable Tracy call stacks at this depth",
-    ) orelse 0;
-    const enable_ztracy_deep = b.option(
-        bool,
-        "enable-ztracy-deep",
-        "Enable high-volume inner LABOS Tracy zones for short diagnostic captures",
+        "Enable full Tracy profile zones in the trace executable",
     ) orelse false;
     const trace_optimize = b.option(
         std.builtin.OptimizeMode,
@@ -82,8 +67,8 @@ pub fn build(b: *std.Build) void {
     const trace_ztracy_dependency = b.dependency("ztracy", .{
         .enable_ztracy = enable_ztracy,
         .enable_fibers = false,
-        .on_demand = ztracy_on_demand,
-        .callstack = ztracy_callstack,
+        .on_demand = false,
+        .callstack = 8,
     });
     const trace_ztracy_module = if (enable_ztracy)
         trace_ztracy_dependency.module("root")
@@ -92,16 +77,12 @@ pub fn build(b: *std.Build) void {
 
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_test_support", false);
-    build_options.addOption(bool, "enable_labos_trace", false);
     build_options.addOption(bool, "enable_ztracy", false);
-    build_options.addOption(bool, "enable_ztracy_deep", false);
     const build_options_module = build_options.createModule();
 
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
-    trace_build_options.addOption(bool, "enable_labos_trace", true);
     trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);
-    trace_build_options.addOption(bool, "enable_ztracy_deep", enable_ztracy_deep);
     const trace_build_options_module = trace_build_options.createModule();
 
     const lib_module = b.createModule(.{

@@ -1,0 +1,13 @@
+{
+  "trace_enabled": true,
+  "prepare_ns": 42145541,
+  "forward_wall_ns": 2620363458,
+  "prepare_s": 0.042145541,
+  "forward_wall_s": 2.620363458,
+  "sample_count": 701,
+  "wavelength_start_nm": 755.00000000,
+  "wavelength_end_nm": 776.00000000,
+  "mean_radiance": 1.27882454557708180e13,
+  "mean_irradiance": 4.75946650953468060e14,
+  "mean_reflectance": 1.69299446204588800e-1
+}

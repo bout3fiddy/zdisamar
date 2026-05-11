@@ -28,18 +28,6 @@ pub const ZdsDiagnosticReport = extern struct {
     mean_reflectance: f64 = 0.0,
 };
 
-pub const ZdsO2APrepareTrace = extern struct {
-    parse_json_ns: u64 = 0,
-    load_inputs_ns: u64 = 0,
-    build_scene_ns: u64 = 0,
-    optical_prepare_ns: u64 = 0,
-    weak_cutoff_grid_ns: u64 = 0,
-    solar_rewindow_ns: u64 = 0,
-    route_prepare_ns: u64 = 0,
-    native_prepare_ns: u64 = 0,
-    total_ns: u64 = 0,
-};
-
 pub const ZdsAtmosphericBudgetRow = extern struct {
     wavelength_nm: f64 = 0.0,
     layer_index: u32 = 0,
@@ -194,8 +182,6 @@ const Context = struct {
     prepared: ?zdisamar.PreparedO2A = null,
     parsed_input: ?std.json.Parsed(zdisamar.O2AInput) = null,
     o2a_session_storage: zdisamar.O2ASessionStorage = .{},
-    last_prepare_trace: ZdsO2APrepareTrace = .{},
-    trace_prepare: bool = false,
     results: std.ArrayList(*zdisamar.Output) = .empty,
     atmospheric_budgets: std.ArrayList([]ZdsAtmosphericBudgetRow) = .empty,
     o2_line_contribution_tables: std.ArrayList([]ZdsO2LineContributionRow) = .empty,
@@ -319,24 +305,6 @@ const Context = struct {
     }
 };
 
-fn elapsedNs(start: i128) u64 {
-    return @intCast(@max(std.time.nanoTimestamp() - start, 0));
-}
-
-fn prepareTraceFromNative(profile: anytype) ZdsO2APrepareTrace {
-    return .{
-        .parse_json_ns = profile.parse_json_ns,
-        .load_inputs_ns = profile.native.load_inputs_ns,
-        .build_scene_ns = profile.native.build_scene_ns,
-        .optical_prepare_ns = profile.native.optical_prepare_ns,
-        .weak_cutoff_grid_ns = profile.native.weak_cutoff_grid_ns,
-        .solar_rewindow_ns = profile.native.solar_rewindow_ns,
-        .route_prepare_ns = profile.native.route_prepare_ns,
-        .native_prepare_ns = profile.native_prepare_ns,
-        .total_ns = profile.parse_json_ns + profile.native_prepare_ns,
-    };
-}
-
 export fn zds_context_create() ?*Context {
     const ctx = allocator.create(Context) catch return null;
     ctx.* = .{};
@@ -360,25 +328,10 @@ export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
     resolved.clearPrepared();
     const input = zdisamar.defaultO2AInput();
-    if (resolved.trace_prepare) {
-        var native_trace: zdisamar.O2APrepareTrace = .{};
-        const native_prepare_start = std.time.nanoTimestamp();
-        resolved.prepared = zdisamar.prepareO2AWithTrace(allocator, &input, &native_trace) catch |err| {
-            resolved.setError(@errorName(err));
-            return @intFromEnum(ZdsStatus.failure);
-        };
-        resolved.last_prepare_trace = prepareTraceFromNative(.{
-            .parse_json_ns = 0,
-            .native_prepare_ns = elapsedNs(native_prepare_start),
-            .native = native_trace,
-        });
-    } else {
-        resolved.prepared = zdisamar.prepareO2A(allocator, &input) catch |err| {
-            resolved.setError(@errorName(err));
-            return @intFromEnum(ZdsStatus.failure);
-        };
-        resolved.last_prepare_trace = .{};
-    }
+    resolved.prepared = zdisamar.prepareO2A(allocator, &input) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
     resolved.setError("");
     return @intFromEnum(ZdsStatus.ok);
 }
@@ -394,54 +347,21 @@ export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len:
         return @intFromEnum(ZdsStatus.failure);
     }
 
-    const parse_start = if (resolved.trace_prepare) std.time.nanoTimestamp() else 0;
     var parsed = zdisamar.parseO2AInputJson(allocator, ptr[0..json_len]) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
     errdefer parsed.deinit();
-    const parse_json_ns = if (resolved.trace_prepare) elapsedNs(parse_start) else 0;
 
-    var prepared = if (resolved.trace_prepare) blk: {
-        var native_trace: zdisamar.O2APrepareTrace = .{};
-        const native_prepare_start = std.time.nanoTimestamp();
-        const prepared_with_trace = zdisamar.prepareO2AWithTrace(allocator, &parsed.value, &native_trace) catch |err| {
-            resolved.setError(@errorName(err));
-            return @intFromEnum(ZdsStatus.failure);
-        };
-        resolved.last_prepare_trace = prepareTraceFromNative(.{
-            .parse_json_ns = parse_json_ns,
-            .native_prepare_ns = elapsedNs(native_prepare_start),
-            .native = native_trace,
-        });
-        break :blk prepared_with_trace;
-    } else blk: {
-        resolved.last_prepare_trace = .{};
-        break :blk zdisamar.prepareO2A(allocator, &parsed.value) catch |err| {
-            resolved.setError(@errorName(err));
-            return @intFromEnum(ZdsStatus.failure);
-        };
+    var prepared = zdisamar.prepareO2A(allocator, &parsed.value) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
     };
     errdefer prepared.deinit(allocator);
 
     resolved.clearPrepared();
     resolved.parsed_input = parsed;
     resolved.prepared = prepared;
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
-}
-
-export fn zds_enable_o2a_prepare_trace(ctx: ?*Context) c_int {
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    resolved.trace_prepare = true;
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
-}
-
-export fn zds_last_o2a_prepare_trace(ctx: ?*Context, out: ?*ZdsO2APrepareTrace) c_int {
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    const trace_out = out orelse return @intFromEnum(ZdsStatus.failure);
-    trace_out.* = resolved.last_prepare_trace;
     resolved.setError("");
     return @intFromEnum(ZdsStatus.ok);
 }

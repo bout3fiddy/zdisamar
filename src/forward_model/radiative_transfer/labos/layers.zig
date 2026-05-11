@@ -262,73 +262,64 @@ fn doDouble(
     R: *basis.Mat,
     T: *basis.Mat,
     E: *basis.Vec,
-    trace: Trace.WorkerRef,
 ) void {
     var b = b_start;
     for (0..ndouble) |_| {
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_steps, 1);
+        Trace.plotU("doubling_steps", 1);
         const trace_r = gaussTrace(n, n_gauss, R);
         const trace_t = gaussTrace(n, n_gauss, T);
         const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
 
         const D = if (q_is_zero) blk: {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_qseries_skipped, 1);
+            Trace.plotU("doubling_qseries_skipped", 1);
             break :blk T.*;
         } else blk: {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-                sink.addCounter(.doubling_qseries_nonzero, 1);
-                sink.addCounter(.matrix_qseries, 1);
-                sink.addCounter(.matrix_smul_q_product, 1);
-                sink.addCounter(.matrix_smul_add_semul3, 1);
-            };
+            Trace.plotU("doubling_qseries_nonzero", 1);
+            Trace.plotU("matrix_qseries", 1);
+            Trace.plotU("matrix_smul_q_product", 1);
+            Trace.plotU("matrix_smul_add_semul3", 1);
             const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
             break :blk basis.smulAddSemul3KnownRightTrace(n, n_gauss, threshold_mul, &Q, E, T, trace_t);
         };
         const trace_d = if (q_is_zero) trace_t else gaussTrace(n, n_gauss, &D);
 
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_rd, 1);
+        Trace.plotU("matrix_smul_rd", 1);
         var rd: basis.Mat = undefined;
         const rd_nonzero = basis.smulIntoKnownTracesIfNonzero(&rd, n, n_gauss, threshold_mul, trace_r, trace_d, R, &D);
 
         const U = if (rd_nonzero) blk: {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-                sink.addCounter(.matrix_smul_rd_nonzero, 1);
-                sink.addCounter(.matrix_semul_add, 1);
-            };
+            Trace.plotU("matrix_smul_rd_nonzero", 1);
+            Trace.plotU("matrix_semul_add", 1);
             break :blk basis.semulAdd(n, R, E, &rd);
         } else blk: {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_semul, 1);
+            Trace.plotU("matrix_semul", 1);
             break :blk basis.semul(n, R, E);
         };
         const trace_u = gaussTrace(n, n_gauss, &U);
 
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_tu, 1);
+        Trace.plotU("matrix_smul_tu", 1);
         var tu: basis.Mat = undefined;
         const tu_nonzero = basis.smulIntoKnownTracesIfNonzero(&tu, n, n_gauss, threshold_mul, trace_t, trace_u, T, &U);
 
         const R_new = if (tu_nonzero) blk: {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-                sink.addCounter(.matrix_smul_tu_nonzero, 1);
-                sink.addCounter(.matrix_mat_add_esmul3, 1);
-            };
+            Trace.plotU("matrix_smul_tu_nonzero", 1);
+            Trace.plotU("matrix_mat_add_esmul3", 1);
             break :blk basis.matAddEsmul3(n, R, E, &U, &tu);
         } else blk: {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_mat_add_esmul, 1);
+            Trace.plotU("matrix_mat_add_esmul", 1);
             break :blk basis.matAddEsmul(n, R, E, &U);
         };
 
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_smul_td, 1);
+        Trace.plotU("matrix_smul_td", 1);
         var td: basis.Mat = undefined;
         const td_nonzero = basis.smulIntoKnownTracesIfNonzero(&td, n, n_gauss, threshold_mul, trace_t, trace_d, T, &D);
 
         const T_new = if (td_nonzero) blk: {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-                sink.addCounter(.matrix_smul_td_nonzero, 1);
-                sink.addCounter(.matrix_esmul_semul_add, 1);
-            };
+            Trace.plotU("matrix_smul_td_nonzero", 1);
+            Trace.plotU("matrix_esmul_semul_add", 1);
             break :blk basis.esmulSemulAdd(n, E, &D, T, &td);
         } else blk: {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.matrix_esmul_semul, 1);
+            Trace.plotU("matrix_esmul_semul", 1);
             break :blk basis.esmulSemul(n, E, &D, T);
         };
 
@@ -343,7 +334,7 @@ fn doDouble(
                 E.data[imu] = math.exp(-b / @max(geo.u[imu], 1.0e-12));
             }
         } else {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubling_square_evals, @intCast(n));
+            Trace.plotU("doubling_square_evals", @intCast(n));
             squareAttenuation(n, E);
         }
     }
@@ -378,7 +369,6 @@ pub fn calcRTlayersIntoWithBasis(
     phase_kernel_cache: ?[]basis.PhaseKernel,
     phase_kernel_valid: ?[]bool,
     rt_active: ?[]bool,
-    trace: Trace.WorkerRef,
 ) void {
     const nlayer = layers.len;
     rt[0] = zeroLayerRt(geo.nmutot);
@@ -386,11 +376,11 @@ pub fn calcRTlayersIntoWithBasis(
     if (phase_kernel_valid) |valid| @memset(valid, false);
 
     for (0..nlayer) |layer_idx| {
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.layer_visits, 1);
+        Trace.plotU("layer_visits", 1);
         const rt_idx = layer_idx + 1;
         const layer = layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.layer_skipped_fourier_out_of_range, 1);
+            Trace.plotU("layer_skipped_fourier_out_of_range", 1);
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
             if (rt_active) |active| active[rt_idx] = false;
             continue;
@@ -402,30 +392,30 @@ pub fn calcRTlayersIntoWithBasis(
         else
             phase_functions.maxPhaseCoefficientIndex(phase_coefs);
         if (i_fourier > max_phase_index) {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.layer_skipped_fourier_out_of_range, 1);
+            Trace.plotU("layer_skipped_fourier_out_of_range", 1);
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
             if (rt_active) |active| active[rt_idx] = false;
             continue;
         }
         if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.layer_skipped_empty_optics, 1);
+            Trace.plotU("layer_skipped_empty_optics", 1);
             rt[rt_idx] = zeroLayerRt(geo.nmutot);
             if (rt_active) |active| active[rt_idx] = false;
             continue;
         }
 
-        const phase_start = Trace.begin();
-        var z = basis.fillZplusZminFromBasisLimited(
-            i_fourier,
-            phase_coefs,
-            max_phase_index,
-            geo,
-            plm_basis,
-        );
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-            sink.addSection(.rt_layer_phase_matrix, Trace.elapsed(phase_start));
-            sink.addCounter(.phase_matrix_builds, 1);
+        var z = z: {
+            const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_matrix");
+            defer zone.end();
+            break :z basis.fillZplusZminFromBasisLimited(
+                i_fourier,
+                phase_coefs,
+                max_phase_index,
+                geo,
+                plm_basis,
+            );
         };
+        Trace.plotU("phase_matrix_builds", 1);
         if (phase_kernel_cache) |cache| {
             cache[rt_idx] = z;
             if (phase_kernel_valid) |valid| valid[rt_idx] = true;
@@ -433,21 +423,21 @@ pub fn calcRTlayersIntoWithBasis(
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
 
-        const beta_start = Trace.begin();
         var max_beta_eff: f64 = 0.0;
-        var scanned_terms: usize = 0;
-        var nonzero_terms: usize = 0;
-        for (i_fourier..max_phase_index + 1) |ic| {
-            scanned_terms += 1;
-            if (phase_coefs[ic] != 0.0) nonzero_terms += 1;
-            const beta_eff = @abs(phase_coefs[ic]) * phase_odd_reciprocal[ic];
-            if (beta_eff > max_beta_eff) max_beta_eff = beta_eff;
+        {
+            const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.effective_scattering");
+            defer zone.end();
+            var scanned_terms: usize = 0;
+            var nonzero_terms: usize = 0;
+            for (i_fourier..max_phase_index + 1) |ic| {
+                scanned_terms += 1;
+                if (phase_coefs[ic] != 0.0) nonzero_terms += 1;
+                const beta_eff = @abs(phase_coefs[ic]) * phase_odd_reciprocal[ic];
+                if (beta_eff > max_beta_eff) max_beta_eff = beta_eff;
+            }
+            Trace.plotU("phase_coeff_terms_scanned", @intCast(scanned_terms));
+            Trace.plotU("phase_coeff_terms_nonzero", @intCast(nonzero_terms));
         }
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-            sink.addSection(.rt_layer_effective_scattering, Trace.elapsed(beta_start));
-            sink.addCounter(.phase_coeff_terms_scanned, @intCast(scanned_terms));
-            sink.addCounter(.phase_coeff_terms_nonzero, @intCast(nonzero_terms));
-        };
         const a_eff = a * max_beta_eff;
 
         var use_doubling = false;
@@ -468,46 +458,50 @@ pub fn calcRTlayersIntoWithBasis(
             b_start = bd;
         }
 
-        const exp_start = Trace.begin();
         var E = basis.Vec.zero(geo.nmutot);
-        for (0..geo.nmutot) |imu| {
-            E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
+        {
+            const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.initial_exponential");
+            defer zone.end();
+            for (0..geo.nmutot) |imu| {
+                E.data[imu] = math.exp(-b_start / @max(geo.u[imu], 1.0e-12));
+            }
         }
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-            sink.addSection(.rt_layer_initial_exponential, Trace.elapsed(exp_start));
-            sink.addCounter(.initial_exp_evals, @intCast(geo.nmutot));
-        };
+        Trace.plotU("initial_exp_evals", @intCast(geo.nmutot));
 
-        const scatter_start = Trace.begin();
-        var R = singleScatterR(a, &E, &z.Zmin, geo);
-        var T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-            sink.addSection(.rt_layer_single_scatter, Trace.elapsed(scatter_start));
-            sink.addCounter(.single_scatter_r, 1);
-            sink.addCounter(.single_scatter_t, 1);
-        };
+        var R: basis.Mat = undefined;
+        var T: basis.Mat = undefined;
+        {
+            const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.single_scatter");
+            defer zone.end();
+            R = singleScatterR(a, &E, &z.Zmin, geo);
+            T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
+        }
+        Trace.plotU("single_scatter_r", 1);
+        Trace.plotU("single_scatter_t", 1);
 
         if (use_doubling) {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.doubled_layers, 1);
+            Trace.plotU("doubled_layers", 1);
             if (i_fourier == 0 and controls.renorm_phase_function) {
-                const renorm_start = Trace.begin();
-                renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
-                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-                    sink.addSection(.rt_layer_phase_renormalization, Trace.elapsed(renorm_start));
-                    sink.addCounter(.phase_renormalizations, 1);
-                };
-                const renorm_scatter_start = Trace.begin();
-                R = singleScatterR(a, &E, &z.Zmin, geo);
-                T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
-                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| {
-                    sink.addSection(.rt_layer_single_scatter, Trace.elapsed(renorm_scatter_start));
-                    sink.addCounter(.single_scatter_r, 1);
-                    sink.addCounter(.single_scatter_t, 1);
-                };
+                {
+                    const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.phase_renormalization");
+                    defer zone.end();
+                    renormalizeZeroFourierPhaseKernel(geo, &z.Zplus, &z.Zmin);
+                }
+                Trace.plotU("phase_renormalizations", 1);
+                {
+                    const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.single_scatter");
+                    defer zone.end();
+                    R = singleScatterR(a, &E, &z.Zmin, geo);
+                    T = singleScatterT(a, b_start, &E, &z.Zplus, geo);
+                }
+                Trace.plotU("single_scatter_r", 1);
+                Trace.plotU("single_scatter_t", 1);
             }
-            const doubling_start = Trace.begin();
-            doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E, trace);
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.rt_layer_doubling, Trace.elapsed(doubling_start));
+            {
+                const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.doubling");
+                defer zone.end();
+                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E);
+            }
         }
 
         rt[rt_idx].R = R;
@@ -560,7 +554,6 @@ pub fn calcRTlayersTangentIntoWithBasis(
             null,
             null,
             null,
-            Trace.noWorker(),
         );
         calcRTlayersIntoWithBasis(
             &minus_rt,
@@ -573,7 +566,6 @@ pub fn calcRTlayersTangentIntoWithBasis(
             null,
             null,
             null,
-            Trace.noWorker(),
         );
         rt_tangent[layer_idx + 1] = layerRtDifferenceScaled(plus_rt[1], minus_rt[1], inv_span);
     }
@@ -624,7 +616,6 @@ pub fn calcRTlayersInto(
         null,
         null,
         null,
-        Trace.noWorker(),
     );
 }
 

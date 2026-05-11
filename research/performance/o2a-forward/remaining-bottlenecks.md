@@ -3,7 +3,7 @@
 Current retained trace source:
 
 ```text
-validation/outputs/performance/labos-bottleneck/
+research/performance/tracing/output/labos-bottleneck/
 ```
 
 ## LABOS Fourier Transport
