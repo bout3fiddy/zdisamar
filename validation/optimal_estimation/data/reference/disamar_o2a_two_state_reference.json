@@ -2,7 +2,7 @@
   "a_priori": {
     "aerosol_layer_bottom_pressure_hpa": 900.0,
     "aerosol_layer_mid_pressure_hpa": 875.0,
-    "aerosol_layer_mid_pressure_variance_hpa2": 22500.0,
+    "aerosol_layer_mid_pressure_variance_hpa2": 1000000.0,
     "aerosol_layer_top_pressure_hpa": 850.0,
     "aerosol_optical_depth": 0.12
   },
@@ -21,24 +21,28 @@
   "iterations": [
     {
       "aerosol_optical_depth": 0.3532851151610544,
+      "aerosol_layer_mid_pressure_hpa": 902.777286344684,
       "index": 1,
       "snr_normal": true,
       "state_vector_convergence": 72829.536
     },
     {
       "aerosol_optical_depth": 0.301455816255051,
+      "aerosol_layer_mid_pressure_hpa": 901.6178815852032,
       "index": 2,
       "snr_normal": true,
       "state_vector_convergence": 9921.502
     },
     {
       "aerosol_optical_depth": 0.2999926903646105,
+      "aerosol_layer_mid_pressure_hpa": 900.107598601943,
       "index": 3,
       "snr_normal": true,
       "state_vector_convergence": 5.924
     },
     {
       "aerosol_optical_depth": 0.2999999756662076,
+      "aerosol_layer_mid_pressure_hpa": 900.0043286474889,
       "index": 4,
       "snr_normal": true,
       "state_vector_convergence": 0.00254999528262586
@@ -58,7 +62,7 @@
   "tolerances": {
     "aerosol_layer_mid_pressure_hpa_abs": 0.005,
     "aerosol_layer_top_pressure_hpa_abs": 0.005,
-    "aerosol_optical_depth_abs": 1e-06,
+    "aerosol_optical_depth_abs": 1e-07,
     "final_diagnostic_abs": {
       "chi2_reflectance": 2e-05,
       "chi2_state_vector": 1e-10,

@@ -25,6 +25,6 @@ zig build
   sun-normalized radiance noise envelope from the retained O2 A baseline
   measurement-noise model.
 - `optimal_estimation_demo.ipynb`: demonstrates a two-state O2 A
-  optimal-estimation flow using aerosol optical depth and aerosol layer top
-  altitude, with convergence, measurement-fit, residual, and Jacobian plots in
+  optimal-estimation flow using aerosol optical depth and aerosol layer
+  mid-pressure, with convergence, measurement-fit, residual, and Jacobian plots in
   separate cells.

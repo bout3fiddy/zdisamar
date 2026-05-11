@@ -142,7 +142,7 @@ class PressureAltitudeProfile:
         return 0.5 * (lower_altitude + upper_altitude)
 
     def altitude_derivative_at_pressure(self, pressure_hpa: float) -> float:
-        """Evaluate dz/dp in km/hPa at a pressure-coordinate layer boundary."""
+        """Evaluate dz/dp in km/hPa at a pressure coordinate."""
 
         step_hpa = max(abs(pressure_hpa) * 1.0e-4, 1.0e-3)
         lower_pressure = max(float(self.pressure_hpa[-1]), pressure_hpa - step_hpa)

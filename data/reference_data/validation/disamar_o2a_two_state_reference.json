@@ -1,8 +1,8 @@
 {
   "a_priori": {
     "aerosol_layer_bottom_pressure_hpa": 900.0,
-    "aerosol_layer_top_altitude_km": 1.497237224745422,
-    "aerosol_layer_top_altitude_variance_km2": 24.50862762243219,
+    "aerosol_layer_mid_pressure_hpa": 875.0,
+    "aerosol_layer_mid_pressure_variance_hpa2": 1000000.0,
     "aerosol_layer_top_pressure_hpa": 850.0,
     "aerosol_optical_depth": 0.12
   },
@@ -21,29 +21,29 @@
   "iterations": [
     {
       "aerosol_optical_depth": 0.3532851151610544,
+      "aerosol_layer_mid_pressure_hpa": 902.777286344684,
       "index": 1,
-      "intervalDP_top_altitude_km": 1.225980889609287,
       "snr_normal": true,
       "state_vector_convergence": 72829.536
     },
     {
       "aerosol_optical_depth": 0.301455816255051,
+      "aerosol_layer_mid_pressure_hpa": 901.6178815852032,
       "index": 2,
-      "intervalDP_top_altitude_km": 1.237158805177976,
       "snr_normal": true,
       "state_vector_convergence": 9921.502
     },
     {
       "aerosol_optical_depth": 0.2999926903646105,
+      "aerosol_layer_mid_pressure_hpa": 900.107598601943,
       "index": 3,
-      "intervalDP_top_altitude_km": 1.251738397843931,
       "snr_normal": true,
       "state_vector_convergence": 5.924
     },
     {
       "aerosol_optical_depth": 0.2999999756662076,
+      "aerosol_layer_mid_pressure_hpa": 900.0043286474889,
       "index": 4,
-      "intervalDP_top_altitude_km": 1.252736079364835,
       "snr_normal": true,
       "state_vector_convergence": 0.00254999528262586
     }
@@ -51,7 +51,6 @@
   "retrieved": {
     "aerosol_layer_bottom_pressure_hpa": 925.0035179507574,
     "aerosol_layer_mid_pressure_hpa": 900.0035179507574,
-    "aerosol_layer_top_altitude_km": 1.252736079364835,
     "aerosol_layer_top_pressure_hpa": 875.0035179507574,
     "aerosol_optical_depth": 0.2999999756662076
   },
@@ -62,7 +61,6 @@
   ],
   "tolerances": {
     "aerosol_layer_mid_pressure_hpa_abs": 0.005,
-    "aerosol_layer_top_altitude_km_abs": 2e-05,
     "aerosol_layer_top_pressure_hpa_abs": 0.005,
     "aerosol_optical_depth_abs": 1e-07,
     "final_diagnostic_abs": {
@@ -74,7 +72,7 @@
       "state_vector_convergence": 0.5
     },
     "iteration_state_abs": {
-      "aerosol_layer_top_altitude_km": 0.0002,
+      "aerosol_layer_mid_pressure_hpa": 0.005,
       "aerosol_optical_depth": 2e-06
     }
   },

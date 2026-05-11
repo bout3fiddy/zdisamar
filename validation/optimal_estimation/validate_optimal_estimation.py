@@ -220,7 +220,9 @@ def iteration_matches(
             float(state_tolerances["aerosol_optical_depth"]),
         ):
             return False
-        if "aerosol_layer_mid_pressure_hpa" in expected and not within_tolerance(
+        if "aerosol_layer_mid_pressure_hpa" not in expected:
+            return False
+        if not within_tolerance(
             float(actual["aerosol_layer_mid_pressure_hpa"]),
             float(expected["aerosol_layer_mid_pressure_hpa"]),
             float(state_tolerances["aerosol_layer_mid_pressure_hpa"]),
