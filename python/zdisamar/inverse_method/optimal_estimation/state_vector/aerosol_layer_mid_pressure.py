@@ -48,5 +48,4 @@ class AerosolLayerMidPressure:
             raise ValueError("aerosol fit interval is not present in the atmosphere")
 
     def jacobian_scale(self, value: float) -> float:
-        top_pressure = value - 0.5 * self.thickness_hpa
-        return self.pressure_altitude_profile.altitude_derivative_at_pressure(top_pressure)
+        return self.pressure_altitude_profile.altitude_derivative_at_pressure(value)

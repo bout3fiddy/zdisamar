@@ -34,6 +34,7 @@ from zdisamar.inverse_method.optimal_estimation.diagnostics import (  # noqa: E4
     final_diagnostics,
 )
 
+from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
@@ -43,35 +44,6 @@ from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
 
 JsonObject = dict[str, Any]
-
-
-def build_state_vector(
-    case: zd.O2AInput,
-    reference: JsonObject,
-    profile: optimal_estimation.PressureAltitudeProfile,
-):
-    prior = reference["a_priori"]
-    layer_thickness = (
-        case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
-    )
-    return optimal_estimation.StateVector(
-        [
-            optimal_estimation.AerosolOpticalDepth(
-                initial=float(prior["aerosol_optical_depth"]),
-                prior=float(prior["aerosol_optical_depth"]),
-                variance=1.0,
-                lower=0.0,
-            ),
-            optimal_estimation.AerosolLayerTopAltitude(
-                initial=float(prior["aerosol_layer_top_altitude_km"]),
-                prior=float(prior["aerosol_layer_top_altitude_km"]),
-                variance=float(prior["aerosol_layer_top_altitude_variance_km2"]),
-                pressure_thickness_hpa=layer_thickness,
-                interval_index_1based=case.aerosol.placement.interval_index_1based,
-                pressure_altitude_profile=profile,
-            ),
-        ]
-    )
 
 
 def assert_layer_boundaries_are_contiguous(
@@ -84,14 +56,14 @@ def assert_layer_boundaries_are_contiguous(
         np.array(
             [
                 float(prior["aerosol_optical_depth"]),
-                float(prior["aerosol_layer_top_altitude_km"]) + 0.02,
+                float(prior["aerosol_layer_mid_pressure_hpa"]) + 2.0,
             ]
         ),
         state_vector,
     )
-    # The altitude state is written back as pressure boundaries. This check
-    # catches broken interval updates before the retrieval can hide them behind
-    # a plausible-looking spectrum.
+    # The pressure state is written back as contiguous pressure boundaries. This
+    # catches broken interval updates before the retrieval can hide them behind a
+    # plausible-looking spectrum.
     assert (
         moved_case.atmosphere.intervals[0].bottom_pressure_hpa
         == moved_case.atmosphere.intervals[1].top_pressure_hpa
@@ -102,7 +74,7 @@ def assert_layer_boundaries_are_contiguous(
     )
 
 
-def assert_altitude_jacobian_matches_finite_difference(
+def assert_mid_pressure_jacobian_matches_finite_difference(
     case: zd.O2AInput,
     state_vector,
 ) -> None:
@@ -114,11 +86,11 @@ def assert_altitude_jacobian_matches_finite_difference(
             state_vector.jacobian_names,
         )
 
-    eps_km = 1.0e-2
+    eps_hpa = 0.5
     plus_state = np.array(state, copy=True)
-    plus_state[1] += eps_km
+    plus_state[1] += eps_hpa
     minus_state = np.array(state, copy=True)
-    minus_state[1] -= eps_km
+    minus_state[1] -= eps_hpa
     with zd.prepare(inverse_model.settings_for_state(plus_state, state_vector)) as prepared:
         plus = o2a_optimal_estimation.evaluate_prepared_reflectance(
             prepared,
@@ -130,11 +102,13 @@ def assert_altitude_jacobian_matches_finite_difference(
             state_vector.jacobian_names,
         )
 
-    finite_difference = (plus.reflectance - minus.reflectance) / (2.0 * eps_km)
-    altitude_index = state_vector.names.index("aerosol_layer_top_altitude_km")
-    max_abs_residual = np.max(
-        np.abs(evaluation.reflectance_jacobian[:, altitude_index] - finite_difference)
+    finite_difference = (plus.reflectance - minus.reflectance) / (2.0 * eps_hpa)
+    mid_pressure_index = state_vector.names.index("aerosol_layer_mid_pressure_hpa")
+    scaled_jacobian = (
+        evaluation.reflectance_jacobian[:, mid_pressure_index]
+        * state_vector.jacobian_scales(state)[mid_pressure_index]
     )
+    max_abs_residual = np.max(np.abs(scaled_jacobian - finite_difference))
     assert max_abs_residual <= 5.0e-5
 
 
@@ -188,7 +162,7 @@ def run_retrieval(
         inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
-        controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
+        controls=oe_setup.retrieval_controls(),
     )
 
 
@@ -199,7 +173,7 @@ def iteration_records(
         {
             "index": iteration.index,
             "aerosol_optical_depth": float(iteration.state[0]),
-            "aerosol_layer_top_altitude_km": float(iteration.state[1]),
+            "aerosol_layer_mid_pressure_hpa": float(iteration.state[1]),
             "state_vector_convergence": iteration.state_vector_convergence,
             "chi2_reflectance": iteration.chi2_reflectance,
             "chi2_state_vector": iteration.chi2_state_vector,
@@ -211,18 +185,16 @@ def iteration_records(
 
 def build_retrieved_state(
     result: optimal_estimation.Result,
-    profile,
     layer_thickness: float,
 ) -> dict[str, float]:
-    top_altitude = result.value("aerosol_layer_top_altitude_km")
-    top_pressure = profile.pressure_at_altitude(top_altitude)
-    bottom_pressure = top_pressure + layer_thickness
+    mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
+    top_pressure = mid_pressure - 0.5 * layer_thickness
+    bottom_pressure = mid_pressure + 0.5 * layer_thickness
     return {
         "aerosol_optical_depth": result.value("aerosol_optical_depth"),
-        "aerosol_layer_top_altitude_km": top_altitude,
         "aerosol_layer_top_pressure_hpa": top_pressure,
         "aerosol_layer_bottom_pressure_hpa": bottom_pressure,
-        "aerosol_layer_mid_pressure_hpa": 0.5 * (top_pressure + bottom_pressure),
+        "aerosol_layer_mid_pressure_hpa": mid_pressure,
     }
 
 
@@ -248,10 +220,12 @@ def iteration_matches(
             float(state_tolerances["aerosol_optical_depth"]),
         ):
             return False
+        if "aerosol_layer_mid_pressure_hpa" not in expected:
+            return False
         if not within_tolerance(
-            float(actual["aerosol_layer_top_altitude_km"]),
-            float(expected["intervalDP_top_altitude_km"]),
-            float(state_tolerances["aerosol_layer_top_altitude_km"]),
+            float(actual["aerosol_layer_mid_pressure_hpa"]),
+            float(expected["aerosol_layer_mid_pressure_hpa"]),
+            float(state_tolerances["aerosol_layer_mid_pressure_hpa"]),
         ):
             return False
         if "state_vector_convergence" in expected and not within_tolerance(
@@ -344,22 +318,13 @@ def print_retrieval_timing(report: JsonObject) -> None:
 def build_summary(
     reference: JsonObject,
     result: optimal_estimation.Result,
-    profile,
     layer_thickness: float,
 ) -> JsonObject:
     retrieved = reference.get("truth", reference["retrieved"])
     tolerances = reference["tolerances"]
-    retrieved_state = build_retrieved_state(result, profile, layer_thickness)
+    retrieved_state = build_retrieved_state(result, layer_thickness)
     aod_abs_diff = abs(
         retrieved_state["aerosol_optical_depth"] - float(retrieved["aerosol_optical_depth"])
-    )
-    top_altitude_abs_diff = (
-        abs(
-            retrieved_state["aerosol_layer_top_altitude_km"]
-            - float(retrieved["aerosol_layer_top_altitude_km"])
-        )
-        if "aerosol_layer_top_altitude_km" in retrieved
-        else None
     )
     top_pressure_abs_diff = abs(
         retrieved_state["aerosol_layer_top_pressure_hpa"]
@@ -375,15 +340,6 @@ def build_summary(
         float(retrieved["aerosol_optical_depth"]),
         float(tolerances["aerosol_optical_depth_abs"]),
     )
-    top_altitude_match = (
-        within_tolerance(
-            retrieved_state["aerosol_layer_top_altitude_km"],
-            float(retrieved["aerosol_layer_top_altitude_km"]),
-            float(tolerances["aerosol_layer_top_altitude_km_abs"]),
-        )
-        if "aerosol_layer_top_altitude_km" in retrieved
-        else True
-    )
     top_pressure_match = within_tolerance(
         retrieved_state["aerosol_layer_top_pressure_hpa"],
         float(retrieved["aerosol_layer_top_pressure_hpa"]),
@@ -398,12 +354,7 @@ def build_summary(
     history_match = iteration_matches(reference["iterations"], history, tolerances)
     final_diagnostics_match = diagnostics_match(reference, result, tolerances)
     truth_passed = bool(
-        iteration_match
-        and aod_match
-        and top_altitude_match
-        and top_pressure_match
-        and pressure_match
-        and result.converged
+        iteration_match and aod_match and top_pressure_match and pressure_match and result.converged
     )
     fixture_passed = bool(truth_passed and history_match and final_diagnostics_match)
 
@@ -423,7 +374,6 @@ def build_summary(
         "reference_history": reference["iterations"],
         "absolute_differences": {
             "aerosol_optical_depth": aod_abs_diff,
-            "aerosol_layer_top_altitude_km": top_altitude_abs_diff,
             "aerosol_layer_top_pressure_hpa": top_pressure_abs_diff,
             "aerosol_layer_mid_pressure_hpa": pressure_abs_diff,
         },
@@ -448,8 +398,12 @@ def main() -> int:
         profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(case)
 
     with timer.phase("build_state_vector_s"):
-        state_vector = build_state_vector(case, reference, profile)
-        assert_altitude_jacobian_matches_finite_difference(case, state_vector)
+        state_vector = oe_setup.reference_two_state_vector(
+            case=case,
+            reference=reference,
+            profile=profile,
+        )
+        assert_mid_pressure_jacobian_matches_finite_difference(case, state_vector)
         assert_gauss_newton_retains_prior_precision_nullspace()
 
     with timer.phase("boundary_contiguity_check_s"):
@@ -474,7 +428,7 @@ def main() -> int:
         case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
     )
     with timer.phase("build_summary_s"):
-        summary = build_summary(reference, result, profile, layer_thickness)
+        summary = build_summary(reference, result, layer_thickness)
 
     with timer.phase("write_summary_s"):
         write_json(SUMMARY_PATH, summary)

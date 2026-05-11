@@ -21,7 +21,6 @@ from .structures import (
     CDiagnosticReport,
     CInstrumentResponse,
     CO2APrepareTrace,
-    CO2ASessionCacheTrace,
     CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
@@ -91,6 +90,7 @@ class Context:
 
     def enable_prepare_trace(self) -> Context:
         self._trace_prepare_python = True
+        self._check(self._lib.zds_enable_o2a_prepare_trace(self._ctx))
         return self
 
     def default_o2a_input(self) -> O2AInput:
@@ -169,23 +169,6 @@ class Context:
             "route_prepare_s": raw.route_prepare_ns / 1.0e9,
             "native_prepare_s": raw.native_prepare_ns / 1.0e9,
             "total_s": raw.total_ns / 1.0e9,
-        }
-
-    def last_o2a_session_cache_trace(self) -> dict[str, int | bool]:
-        raw = CO2ASessionCacheTrace()
-        self._check(self._lib.zds_last_o2a_session_cache_trace(self._ctx, ctypes.byref(raw)))
-        return {
-            "wavelength_plan_hits": int(raw.wavelength_plan_hits),
-            "wavelength_plan_misses": int(raw.wavelength_plan_misses),
-            "forward_miss_list_hits": int(raw.forward_miss_list_hits),
-            "forward_miss_list_misses": int(raw.forward_miss_list_misses),
-            "profile_spectroscopy_hits": int(raw.profile_spectroscopy_hits),
-            "profile_spectroscopy_misses": int(raw.profile_spectroscopy_misses),
-            "last_wavelength_plan_hit": bool(raw.last_wavelength_plan_hit),
-            "last_forward_miss_list_hit": bool(raw.last_forward_miss_list_hit),
-            "last_profile_spectroscopy_hit": bool(raw.last_profile_spectroscopy_hit),
-            "last_forward_miss_count": int(raw.last_forward_miss_count),
-            "last_profile_spectroscopy_cache_count": int(raw.last_profile_spectroscopy_cache_count),
         }
 
     def run(

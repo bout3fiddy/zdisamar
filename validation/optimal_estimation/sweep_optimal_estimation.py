@@ -6,7 +6,6 @@
 # ]
 # ///
 
-import copy
 import csv
 import math
 import statistics
@@ -26,9 +25,9 @@ CSV_PATH = OUTPUTS_DIR / "zdisamar_o2a_sweep_runs.csv"
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
 import zdisamar as zd  # noqa: E402
-from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
+from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
@@ -38,124 +37,6 @@ from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 
 RUN_COUNT = 5
 RNG_SEED = 20260507
-LAYER_THICKNESS_HPA = oe_baseline.LAYER_THICKNESS_HPA
-
-
-def uniform_lhs(rng: np.random.Generator, low: float, high: float, count: int) -> np.ndarray:
-    values = (np.arange(count, dtype=np.float64) + rng.random(count)) / count
-    rng.shuffle(values)
-    return low + values * (high - low)
-
-
-def update_layer_pressures(case: zd.O2AInput, mid_pressure_hpa: float) -> None:
-    top_pressure = mid_pressure_hpa - 0.5 * LAYER_THICKNESS_HPA
-    bottom_pressure = mid_pressure_hpa + 0.5 * LAYER_THICKNESS_HPA
-    case.aerosol.placement.top_pressure_hpa = top_pressure
-    case.aerosol.placement.bottom_pressure_hpa = bottom_pressure
-    for interval in case.atmosphere.intervals:
-        if interval.index_1based == 1:
-            interval.bottom_pressure_hpa = top_pressure
-        elif interval.index_1based == 2:
-            interval.top_pressure_hpa = top_pressure
-            interval.bottom_pressure_hpa = bottom_pressure
-        elif interval.index_1based == 3:
-            interval.top_pressure_hpa = bottom_pressure
-            interval.bottom_pressure_hpa = case.surface.pressure_hpa
-
-
-def build_scene(
-    base: zd.O2AInput,
-    *,
-    index: int,
-    solar_zenith_deg: float,
-    viewing_zenith_deg: float,
-    relative_azimuth_deg: float,
-    surface_pressure_hpa: float,
-    surface_albedo: float,
-    aerosol_optical_depth: float,
-    aerosol_mid_pressure_hpa: float,
-) -> zd.O2AInput:
-    case = copy.deepcopy(base)
-    case.metadata["id"] = f"o2a_oe_sweep_{index:03d}"
-    case.scene_id = f"o2a_oe_sweep_{index:03d}"
-    case.geometry.solar_zenith_deg = solar_zenith_deg
-    case.geometry.viewing_zenith_deg = viewing_zenith_deg
-    case.geometry.relative_azimuth_deg = relative_azimuth_deg
-    case.surface.pressure_hpa = surface_pressure_hpa
-    case.surface.albedo = surface_albedo
-    case.aerosol.optical_depth_550_nm = aerosol_optical_depth
-    case.aerosol.single_scatter_albedo = oe_baseline.AEROSOL_SINGLE_SCATTER_ALBEDO
-    case.aerosol.asymmetry_factor = oe_baseline.AEROSOL_ASYMMETRY_FACTOR
-    case.aerosol.angstrom_exponent = oe_baseline.AEROSOL_ANGSTROM_EXPONENT
-    update_layer_pressures(case, aerosol_mid_pressure_hpa)
-    return case
-
-
-def sampled_scenes(count: int, seed: int) -> list[dict[str, float]]:
-    rng = np.random.default_rng(seed)
-    solar = uniform_lhs(rng, 25.0, 65.0, count)
-    view = uniform_lhs(rng, 0.0, 50.0, count)
-    azimuth = uniform_lhs(rng, 0.0, 180.0, count)
-    surface_pressure = uniform_lhs(rng, 820.0, 1040.0, count)
-    surface_albedo = uniform_lhs(rng, 0.05, 0.55, count)
-    aerosol_optical_depth = np.exp(uniform_lhs(rng, math.log(0.10), math.log(2.0), count))
-    mid_fraction = uniform_lhs(rng, 0.18, 0.78, count)
-    scenes: list[dict[str, float]] = []
-    for index in range(count):
-        mid_min = 225.0
-        mid_max = surface_pressure[index] - 100.0
-        scenes.append(
-            {
-                "solar_zenith_deg": float(solar[index]),
-                "viewing_zenith_deg": float(view[index]),
-                "relative_azimuth_deg": float(azimuth[index]),
-                "surface_pressure_hpa": float(surface_pressure[index]),
-                "surface_albedo": float(surface_albedo[index]),
-                "aerosol_optical_depth": float(aerosol_optical_depth[index]),
-                "aerosol_mid_pressure_hpa": float(
-                    mid_min + mid_fraction[index] * (mid_max - mid_min)
-                ),
-            }
-        )
-    return scenes
-
-
-def initial_aod(truth: float, index: int) -> float:
-    factor = 1.12 if index % 2 == 0 else 0.88
-    return min(5.0, max(0.02, truth * factor + 0.01))
-
-
-def initial_mid_pressure(truth: float, surface_pressure: float, index: int) -> float:
-    offset = [-25.0, -15.0, 15.0, 25.0][index % 4]
-    return min(surface_pressure - 75.0, max(100.0, truth + offset))
-
-
-def build_state_vector(
-    truth: dict[str, float],
-    initial: dict[str, float],
-    profile: optimal_estimation.PressureAltitudeProfile,
-) -> optimal_estimation.StateVector:
-    return optimal_estimation.StateVector(
-        [
-            optimal_estimation.AerosolOpticalDepth(
-                initial=initial["aerosol_optical_depth"],
-                prior=initial["aerosol_optical_depth"],
-                variance=0.8,
-                lower=0.02,
-                upper=5.0,
-            ),
-            optimal_estimation.AerosolLayerMidPressure(
-                initial=initial["aerosol_mid_pressure_hpa"],
-                prior=initial["aerosol_mid_pressure_hpa"],
-                variance=150.0**2,
-                thickness_hpa=LAYER_THICKNESS_HPA,
-                interval_index_1based=2,
-                pressure_altitude_profile=profile,
-                lower=225.0,
-                upper=truth["surface_pressure_hpa"] - 100.0,
-            ),
-        ]
-    )
 
 
 def retrieve_scene(
@@ -166,16 +47,20 @@ def retrieve_scene(
     with zd.prepare(case) as prepared:
         measurement = measurement_from_o2a_baseline_noise(prepared)
         profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
-    state_vector = build_state_vector(truth, initial, profile)
+    state_vector = oe_setup.aerosol_two_state_vector(
+        initial=initial,
+        profile=profile,
+        surface_pressure_hpa=truth["surface_pressure_hpa"],
+    )
     with zd.o2a_forward_session(case) as session:
         return o2a_oe.disamar_oe(
-            inverse_model=optimal_estimation.O2AInverseForwardModel(
+            inverse_model=o2a_oe.O2AInverseForwardModel(
                 case,
                 forward_session=session,
             ),
             measurement=measurement,
             state_vector=state_vector,
-            controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
+            controls=oe_setup.retrieval_controls(),
         )
 
 
@@ -200,16 +85,9 @@ def run_sweep() -> dict[str, Any]:
     oe_baseline.configure_case(base)
     rows: list[dict[str, Any]] = []
     start = time.perf_counter()
-    for index, truth in enumerate(sampled_scenes(RUN_COUNT, RNG_SEED), start=1):
-        case = build_scene(base, index=index, **truth)
-        initial = {
-            "aerosol_optical_depth": initial_aod(truth["aerosol_optical_depth"], index),
-            "aerosol_mid_pressure_hpa": initial_mid_pressure(
-                truth["aerosol_mid_pressure_hpa"],
-                truth["surface_pressure_hpa"],
-                index,
-            ),
-        }
+    for index, truth in enumerate(oe_setup.sampled_scenes(RUN_COUNT, RNG_SEED), start=1):
+        case = oe_setup.build_scene(base, index=index, id_prefix="o2a_oe_sweep", scene=truth)
+        initial = oe_setup.initial_state(index, truth)
         run_start = time.perf_counter()
         try:
             result = retrieve_scene(case, truth, initial)
@@ -278,7 +156,7 @@ def run_sweep() -> dict[str, Any]:
             "aerosol_mid_pressure_hpa": (
                 "sampled between 225 hPa and surface_pressure_hpa - 100 hPa"
             ),
-            "aerosol_layer_thickness_hpa": LAYER_THICKNESS_HPA,
+            "aerosol_layer_thickness_hpa": oe_baseline.LAYER_THICKNESS_HPA,
         },
         "run_count": len(rows),
         "ok_count": len(ok_rows),

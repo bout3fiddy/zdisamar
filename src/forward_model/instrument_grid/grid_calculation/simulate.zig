@@ -75,7 +75,6 @@ pub fn warmWavelengthPlan(
     const plan_key = wavelengthPlanKey(scene, prepared, implementations);
     if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
         _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
-        storage.cache_trace = .{};
         return;
     }
 
@@ -99,7 +98,6 @@ pub fn warmWavelengthPlan(
     _ = try ensureProfileSpectroscopyCaches(allocator, storage, prepared, storage.forward_misses);
     storage.wavelength_plan_key = plan_key;
     storage.wavelength_plan_valid = true;
-    storage.cache_trace = .{};
 }
 
 fn ensureProfileSpectroscopyCaches(
@@ -113,7 +111,6 @@ fn ensureProfileSpectroscopyCaches(
         storage.profile_spectroscopy_cache_key == cache_key and
         storage.profile_spectroscopy_caches.len == forward_misses.len)
     {
-        storage.cache_trace.recordProfileSpectroscopy(true, storage.profile_spectroscopy_caches.len);
         return storage.profile_spectroscopy_caches;
     }
 
@@ -129,7 +126,6 @@ fn ensureProfileSpectroscopyCaches(
     );
     storage.profile_spectroscopy_cache_key = cache_key;
     storage.profile_spectroscopy_cache_valid = true;
-    storage.cache_trace.recordProfileSpectroscopy(false, storage.profile_spectroscopy_caches.len);
     return storage.profile_spectroscopy_caches;
 }
 
@@ -217,7 +213,6 @@ pub fn simulateInternal(
     const trace = Trace.asRun(implementations.trace);
     if (Trace.enabled) if (trace) |run| run.addCounter(.output_wavelengths, @intCast(sample_count));
     const plan_key = wavelengthPlanKey(scene, prepared, implementations);
-    if (wavelength_plan_storage) |storage| storage.cache_trace.startEvaluation();
     var owned_wavelength_sampling: []WavelengthSampling.WavelengthSampling = &.{};
     defer allocator.free(owned_wavelength_sampling);
     var owned_forward_misses: []SpectralEval.ForwardCacheMiss = &.{};
@@ -227,10 +222,8 @@ pub fn simulateInternal(
     const wavelength_sampling: []const WavelengthSampling.WavelengthSampling = blk: {
         if (wavelength_plan_storage) |storage| {
             if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
-                storage.cache_trace.recordWavelengthPlan(true);
                 break :blk storage.wavelength_sampling;
             }
-            storage.cache_trace.recordWavelengthPlan(false);
             storage.invalidateWavelengthPlan(allocator);
             storage.wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
                 allocator,
@@ -260,15 +253,12 @@ pub fn simulateInternal(
     const miss_collection_start = Trace.begin();
     const forward_misses: []const SpectralEval.ForwardCacheMiss = blk: {
         if (wavelength_plan_storage) |storage| {
-            if (storage.forward_misses_valid) {
-                storage.cache_trace.recordForwardMissList(true, storage.forward_misses.len);
-            } else {
+            if (!storage.forward_misses_valid) {
                 storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
                     allocator,
                     wavelength_sampling,
                 );
                 storage.forward_misses_valid = true;
-                storage.cache_trace.recordForwardMissList(false, storage.forward_misses.len);
             }
             break :blk storage.forward_misses;
         }

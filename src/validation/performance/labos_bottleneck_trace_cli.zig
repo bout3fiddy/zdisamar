@@ -40,11 +40,6 @@ const derivative_variants = [_]TraceVariant{
         .state_label = "aerosol_optical_depth+aerosol_layer_mid_pressure_hpa",
         .states = &.{ .aerosol_optical_depth, .aerosol_layer_mid_pressure_hpa },
     },
-    .{
-        .name = "all_states",
-        .state_label = "surface_albedo+aerosol_optical_depth+aerosol_layer_mid_pressure_hpa",
-        .states = &.{ .surface_albedo, .aerosol_optical_depth, .aerosol_layer_mid_pressure_hpa },
-    },
 };
 
 pub fn main() !void {

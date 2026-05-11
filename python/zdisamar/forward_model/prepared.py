@@ -174,9 +174,6 @@ class O2AForwardSession:
     def last_prepare_trace(self) -> dict[str, float]:
         return self._require_context().last_o2a_prepare_trace()
 
-    def last_session_cache_trace(self) -> dict[str, int | bool]:
-        return self._require_context().last_o2a_session_cache_trace()
-
     def forward_model(
         self,
         *,

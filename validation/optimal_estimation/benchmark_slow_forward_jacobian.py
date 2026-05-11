@@ -26,6 +26,7 @@ import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
+from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
@@ -48,26 +49,14 @@ def build_state_vector(
     profile: optimal_estimation.PressureAltitudeProfile,
 ) -> optimal_estimation.StateVector:
     scene = oe_baseline.SLOW_VALIDATION_SCENE
-    return optimal_estimation.StateVector(
-        [
-            optimal_estimation.AerosolOpticalDepth(
-                initial=scene["initial_aerosol_optical_depth"],
-                prior=scene["initial_aerosol_optical_depth"],
-                variance=0.8,
-                lower=0.02,
-                upper=5.0,
-            ),
-            optimal_estimation.AerosolLayerMidPressure(
-                initial=scene["initial_aerosol_mid_pressure_hpa"],
-                prior=scene["initial_aerosol_mid_pressure_hpa"],
-                variance=150.0**2,
-                thickness_hpa=oe_baseline.LAYER_THICKNESS_HPA,
-                interval_index_1based=case.aerosol.placement.interval_index_1based,
-                pressure_altitude_profile=profile,
-                lower=225.0,
-                upper=case.surface.pressure_hpa - 100.0,
-            ),
-        ]
+    return oe_setup.aerosol_two_state_vector(
+        initial={
+            "aerosol_optical_depth": scene["initial_aerosol_optical_depth"],
+            "aerosol_mid_pressure_hpa": scene["initial_aerosol_mid_pressure_hpa"],
+        },
+        profile=profile,
+        surface_pressure_hpa=case.surface.pressure_hpa,
+        interval_index_1based=case.aerosol.placement.interval_index_1based,
     )
 
 
@@ -88,7 +77,7 @@ def run_retrieval(
         inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
-        controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
+        controls=oe_setup.retrieval_controls(),
     )
 
 
@@ -117,7 +106,6 @@ def tracing_evaluate(
             prepared,
             state_vector.jacobian_names,
         )
-        session_cache_trace = prepared.last_session_cache_trace()
         scale_start = time.perf_counter()
         scaled = o2a_oe.scale_reflectance_jacobian(
             evaluation,
@@ -132,7 +120,6 @@ def tracing_evaluate(
                 "prepare_total_s": prepare_s,
                 "prepare_trace": prepare_trace,
                 "forward_evaluation_trace": evaluation_trace,
-                "session_cache_trace": session_cache_trace,
                 "scale_jacobian_s": scale_s,
                 "total_evaluate_s": time.perf_counter() - total_start,
             }
@@ -317,38 +304,6 @@ def trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "scale_jacobian_s": phase(("scale_jacobian_s",)),
         "total_evaluate_s": phase(("total_evaluate_s",)),
-        "session_cache": cache_trace_summary(trace_records),
-    }
-
-
-def cache_trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
-    def count_last_hits(key: str) -> int:
-        return sum(1 for record in trace_records if record["session_cache_trace"][key])
-
-    wavelength_plan_hits = count_last_hits("last_wavelength_plan_hit")
-    forward_miss_list_hits = count_last_hits("last_forward_miss_list_hit")
-    profile_spectroscopy_hits = count_last_hits("last_profile_spectroscopy_hit")
-    evaluations = len(trace_records)
-
-    return {
-        "wavelength_plan_hits": wavelength_plan_hits,
-        "wavelength_plan_misses": evaluations - wavelength_plan_hits,
-        "forward_miss_list_hits": forward_miss_list_hits,
-        "forward_miss_list_misses": evaluations - forward_miss_list_hits,
-        "profile_spectroscopy_hits": profile_spectroscopy_hits,
-        "profile_spectroscopy_misses": evaluations - profile_spectroscopy_hits,
-        "forward_miss_count": stats(
-            [
-                float(record["session_cache_trace"]["last_forward_miss_count"])
-                for record in trace_records
-            ]
-        ),
-        "profile_spectroscopy_cache_count": stats(
-            [
-                float(record["session_cache_trace"]["last_profile_spectroscopy_cache_count"])
-                for record in trace_records
-            ]
-        ),
     }
 
 

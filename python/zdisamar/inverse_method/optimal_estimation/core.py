@@ -27,7 +27,7 @@ from .retrieval import (
     RetrievalControls,
 )
 from .state_vector import StateVector
-from .timing import IterationTimer
+from .timing import IterationTimer, NoopIterationTimer
 
 
 def retrieve(
@@ -44,7 +44,7 @@ def retrieve(
         J(x) = (y - F(x))^T S_e^-1 (y - F(x))
              + (x - x_a)^T S_a^-1 (x - x_a),
 
-    with a diagonal measurement covariance S_e in this first API slice.  The
+    with a diagonal measurement covariance S_e in this first API slice. The
     update policy is factored into `gauss_newton_step` so future LM,
     line-search, or alternative regularization experiments can reuse the same
     state history and diagnostics.
@@ -73,7 +73,11 @@ def retrieve(
     final_jacobian: np.ndarray | None = None
 
     for iteration_index in range(1, controls.max_iterations + 1):
-        iteration_timer = IterationTimer(iteration_index)
+        iteration_timer = (
+            IterationTimer(iteration_index)
+            if controls.collect_timing
+            else NoopIterationTimer(iteration_index)
+        )
         previous = np.array(x, copy=True)
         # The expensive part of optimal estimation is here: every iteration
         # asks the forward model for both F(x_i) and K_i.  `prior` is not used
@@ -129,7 +133,8 @@ def retrieve(
             )
         )
         iteration_timer.stop_solver()
-        timing.append(iteration_timer.finish())
+        if controls.collect_timing:
+            timing.append(iteration_timer.finish())
         final_posterior_precision = step.posterior_precision
         final_jacobian = jacobian
         # Convergence requires both a small accepted state movement and a normal

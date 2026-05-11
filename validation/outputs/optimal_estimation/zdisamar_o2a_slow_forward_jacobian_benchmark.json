@@ -1,26 +1,26 @@
 {
   "direct_prepared_call_probe": {
     "forward_and_jacobian_s": {
-      "max": 2.4011319170003844,
-      "mean": 1.8970228416001191,
-      "median": 1.7512804580001102,
-      "min": 1.7236327079999683
+      "max": 0.8962368749998859,
+      "mean": 0.8901725250001619,
+      "median": 0.8888307500001247,
+      "min": 0.8837167919991771
     },
     "forward_only_s": {
-      "max": 1.8584141669998644,
-      "mean": 1.7331366086000344,
-      "median": 1.725552500000049,
-      "min": 1.6119376249998822
+      "max": 0.761545749999641,
+      "mean": 0.7592889831998036,
+      "median": 0.7592855419989064,
+      "min": 0.7566551660002006
     },
     "jacobian_increment_s": {
-      "max": 0.54271775000052,
-      "mean": 0.16388623300008476,
-      "median": 0.13083337500029302,
-      "min": -0.01715708400024596
+      "max": 0.13779587600038212,
+      "mean": 0.13088354180035822,
+      "median": 0.12964962499972899,
+      "min": 0.12443125000027067
     },
     "probe_runs": 5
   },
-  "measurement_build_s": 2.4665673340005014,
+  "measurement_build_s": 1.103106625001601,
   "scene": {
     "aerosol_mid_pressure_hpa": 329.192074869615,
     "aerosol_optical_depth": 1.9681905891962788,
@@ -36,464 +36,325 @@
     "final_evaluation_trace": [
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 0.00011083400022471324,
-          "native_forward_s": 2.1316308330005995,
-          "radiance_to_reflectance_jacobian_s": 0.0002810420000969316
+          "copy_outputs_s": 4.7540999730699696e-05,
+          "native_forward_s": 0.8998129579995293,
+          "radiance_to_reflectance_jacobian_s": 0.00011020899910363369
         },
-        "index": 5,
-        "prepare_total_s": 0.021907999999712047,
+        "index": 4,
+        "prepare_total_s": 0.016072917000201414,
         "prepare_trace": {
-          "build_scene_s": 6.9e-05,
-          "input_copy_s": 0.00011529099992912961,
-          "json_serialize_s": 0.0001981250006792834,
-          "load_inputs_s": 0.001135,
-          "native_call_s": 0.020203874999424443,
-          "native_prepare_s": 0.02009,
-          "optical_prepare_s": 0.015844,
-          "parse_json_s": 8.4e-05,
-          "python_total_s": 0.021852792000572663,
-          "resolve_assets_s": 0.0013335829999050475,
+          "build_scene_s": 3.3e-05,
+          "input_copy_s": 6.550000034621917e-05,
+          "json_serialize_s": 7.71670001995517e-05,
+          "load_inputs_s": 0.000547,
+          "native_call_s": 0.015467540999452467,
+          "native_prepare_s": 0.015006,
+          "optical_prepare_s": 0.012427,
+          "parse_json_s": 3e-05,
+          "python_total_s": 0.016022542000428075,
+          "resolve_assets_s": 0.0004118750002817251,
           "route_prepare_s": 0.0,
-          "solar_rewindow_s": 0.000596,
-          "total_s": 0.020175,
-          "weak_cutoff_grid_s": 0.001441
+          "solar_rewindow_s": 0.000579,
+          "total_s": 0.015036,
+          "weak_cutoff_grid_s": 0.001391
         },
-        "scale_jacobian_s": 0.0006357910006045131,
-        "session_cache_trace": {
-          "forward_miss_list_hits": 1,
-          "forward_miss_list_misses": 0,
-          "last_forward_miss_count": 3736,
-          "last_forward_miss_list_hit": true,
-          "last_profile_spectroscopy_cache_count": 3736,
-          "last_profile_spectroscopy_hit": true,
-          "last_wavelength_plan_hit": true,
-          "profile_spectroscopy_hits": 1,
-          "profile_spectroscopy_misses": 1,
-          "wavelength_plan_hits": 1,
-          "wavelength_plan_misses": 0
-        },
-        "settings_for_state_s": 0.00015041599999676691,
-        "total_evaluate_s": 2.1547989159998906
+        "scale_jacobian_s": 0.00028729199948429596,
+        "settings_for_state_s": 5.804199827252887e-05,
+        "total_evaluate_s": 0.9164159159990959
       }
     ],
     "final_evaluation_trace_summary": {
       "copy_outputs_s": {
-        "max": 0.00011083400022471324,
-        "mean": 0.00011083400022471324,
-        "median": 0.00011083400022471324,
-        "min": 0.00011083400022471324
+        "max": 4.7540999730699696e-05,
+        "mean": 4.7540999730699696e-05,
+        "median": 4.7540999730699696e-05,
+        "min": 4.7540999730699696e-05
       },
       "iterations": 1,
       "native_forward_s": {
-        "max": 2.1316308330005995,
-        "mean": 2.1316308330005995,
-        "median": 2.1316308330005995,
-        "min": 2.1316308330005995
+        "max": 0.8998129579995293,
+        "mean": 0.8998129579995293,
+        "median": 0.8998129579995293,
+        "min": 0.8998129579995293
       },
       "prepare_build_scene_s": {
-        "max": 6.9e-05,
-        "mean": 6.9e-05,
-        "median": 6.9e-05,
-        "min": 6.9e-05
+        "max": 3.3e-05,
+        "mean": 3.3e-05,
+        "median": 3.3e-05,
+        "min": 3.3e-05
       },
       "prepare_load_inputs_s": {
-        "max": 0.001135,
-        "mean": 0.001135,
-        "median": 0.001135,
-        "min": 0.001135
+        "max": 0.000547,
+        "mean": 0.000547,
+        "median": 0.000547,
+        "min": 0.000547
       },
       "prepare_native_call_s": {
-        "max": 0.020203874999424443,
-        "mean": 0.020203874999424443,
-        "median": 0.020203874999424443,
-        "min": 0.020203874999424443
+        "max": 0.015467540999452467,
+        "mean": 0.015467540999452467,
+        "median": 0.015467540999452467,
+        "min": 0.015467540999452467
       },
       "prepare_optical_s": {
-        "max": 0.015844,
-        "mean": 0.015844,
-        "median": 0.015844,
-        "min": 0.015844
+        "max": 0.012427,
+        "mean": 0.012427,
+        "median": 0.012427,
+        "min": 0.012427
       },
       "prepare_parse_json_s": {
-        "max": 8.4e-05,
-        "mean": 8.4e-05,
-        "median": 8.4e-05,
-        "min": 8.4e-05
+        "max": 3e-05,
+        "mean": 3e-05,
+        "median": 3e-05,
+        "min": 3e-05
       },
       "prepare_python_total_s": {
-        "max": 0.021852792000572663,
-        "mean": 0.021852792000572663,
-        "median": 0.021852792000572663,
-        "min": 0.021852792000572663
+        "max": 0.016022542000428075,
+        "mean": 0.016022542000428075,
+        "median": 0.016022542000428075,
+        "min": 0.016022542000428075
       },
       "prepare_total_s": {
-        "max": 0.021907999999712047,
-        "mean": 0.021907999999712047,
-        "median": 0.021907999999712047,
-        "min": 0.021907999999712047
+        "max": 0.016072917000201414,
+        "mean": 0.016072917000201414,
+        "median": 0.016072917000201414,
+        "min": 0.016072917000201414
       },
       "radiance_to_reflectance_jacobian_s": {
-        "max": 0.0002810420000969316,
-        "mean": 0.0002810420000969316,
-        "median": 0.0002810420000969316,
-        "min": 0.0002810420000969316
+        "max": 0.00011020899910363369,
+        "mean": 0.00011020899910363369,
+        "median": 0.00011020899910363369,
+        "min": 0.00011020899910363369
       },
       "scale_jacobian_s": {
-        "max": 0.0006357910006045131,
-        "mean": 0.0006357910006045131,
-        "median": 0.0006357910006045131,
-        "min": 0.0006357910006045131
-      },
-      "session_cache": {
-        "forward_miss_count": {
-          "max": 3736.0,
-          "mean": 3736.0,
-          "median": 3736.0,
-          "min": 3736.0
-        },
-        "forward_miss_list_hits": 1,
-        "forward_miss_list_misses": 0,
-        "profile_spectroscopy_cache_count": {
-          "max": 3736.0,
-          "mean": 3736.0,
-          "median": 3736.0,
-          "min": 3736.0
-        },
-        "profile_spectroscopy_hits": 1,
-        "profile_spectroscopy_misses": 0,
-        "wavelength_plan_hits": 1,
-        "wavelength_plan_misses": 0
+        "max": 0.00028729199948429596,
+        "mean": 0.00028729199948429596,
+        "median": 0.00028729199948429596,
+        "min": 0.00028729199948429596
       },
       "settings_for_state_s": {
-        "max": 0.00015041599999676691,
-        "mean": 0.00015041599999676691,
-        "median": 0.00015041599999676691,
-        "min": 0.00015041599999676691
+        "max": 5.804199827252887e-05,
+        "mean": 5.804199827252887e-05,
+        "median": 5.804199827252887e-05,
+        "min": 5.804199827252887e-05
       },
       "total_evaluate_s": {
-        "max": 2.1547989159998906,
-        "mean": 2.1547989159998906,
-        "median": 2.1547989159998906,
-        "min": 2.1547989159998906
+        "max": 0.9164159159990959,
+        "mean": 0.9164159159990959,
+        "median": 0.9164159159990959,
+        "min": 0.9164159159990959
       }
     },
-    "first_use_retrieval_s": 8.73812579100013,
+    "first_use_retrieval_s": 3.0740614579990506,
     "reused_retrieval": {
       "converged": true,
       "final_evaluation_in_retrieval_s": 0.0,
       "final_evaluation_mode": "lazy",
-      "forward_model_and_jacobian_s": 8.048260749999827,
-      "iterations": 4,
+      "forward_model_and_jacobian_s": 2.7341697920019215,
+      "iterations": 3,
       "iterations_detail": [
         {
-          "forward_model_and_jacobian_s": 1.8948880830002963,
+          "forward_model_and_jacobian_s": 0.9022943750005652,
           "index": 1,
-          "solver_update_s": 0.002785125000627886,
-          "total_iteration_s": 1.897684957999445
+          "solver_update_s": 0.00018937499953608494,
+          "total_iteration_s": 0.902489832998981
         },
         {
-          "forward_model_and_jacobian_s": 2.207465417000094,
+          "forward_model_and_jacobian_s": 0.9177136250000331,
           "index": 2,
-          "solver_update_s": 0.0007354579993261723,
-          "total_iteration_s": 2.2082191669996973
+          "solver_update_s": 0.00016308399972331244,
+          "total_iteration_s": 0.9178820000015548
         },
         {
-          "forward_model_and_jacobian_s": 2.0579251250001107,
+          "forward_model_and_jacobian_s": 0.9141617920013232,
           "index": 3,
-          "solver_update_s": 0.00023929100007080706,
-          "total_iteration_s": 2.0581729160003306
-        },
-        {
-          "forward_model_and_jacobian_s": 1.8879821249993256,
-          "index": 4,
-          "solver_update_s": 0.0003876670007230132,
-          "total_iteration_s": 1.8883790840000074
+          "solver_update_s": 0.00015962499855959322,
+          "total_iteration_s": 0.9143251670011523
         }
       ],
       "lazy_final_evaluation_cached": true,
-      "lazy_final_evaluation_s": 2.7402789159996246,
-      "lazy_final_evaluation_trace_s": 2.1547989159998906,
-      "other_retrieval_s": 0.0048877499993977835,
-      "retrieval_plus_lazy_final_evaluation_s": 10.797574956999597,
+      "lazy_final_evaluation_s": 1.2589698749998206,
+      "lazy_final_evaluation_trace_s": 0.9164159159990959,
+      "other_retrieval_s": 0.0004834159990423359,
+      "retrieval_plus_lazy_final_evaluation_s": 3.9941351669986034,
       "retrieved": {
-        "aerosol_layer_mid_pressure_hpa": 329.1909677350834,
-        "aerosol_optical_depth": 1.9681912155109065
+        "aerosol_layer_mid_pressure_hpa": 329.19089154066546,
+        "aerosol_optical_depth": 1.9681945906310179
       },
-      "solver_update_s": 0.004147541000747879,
+      "solver_update_s": 0.0005120839978189906,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 8.057296040999972
+      "wall_s": 2.7351652919987828
     },
     "reused_retrieval_iteration_trace": [
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 0.00012591700033226516,
-          "native_forward_s": 1.865241791999324,
-          "radiance_to_reflectance_jacobian_s": 0.0001286670003537438
+          "copy_outputs_s": 0.00011216699931537732,
+          "native_forward_s": 0.8852764580005896,
+          "radiance_to_reflectance_jacobian_s": 0.00011470800018287264
         },
         "index": 1,
-        "prepare_total_s": 0.028011209000396775,
+        "prepare_total_s": 0.01635612500103889,
         "prepare_trace": {
-          "build_scene_s": 3.7e-05,
-          "input_copy_s": 0.00021699999979318818,
-          "json_serialize_s": 0.00010599999950500205,
-          "load_inputs_s": 0.000618,
-          "native_call_s": 0.027032375000089814,
-          "native_prepare_s": 0.026947,
-          "optical_prepare_s": 0.021405,
-          "parse_json_s": 4.9e-05,
-          "python_total_s": 0.02787058400008391,
-          "resolve_assets_s": 0.0005122499997014529,
-          "route_prepare_s": 1e-06,
-          "solar_rewindow_s": 0.001092,
-          "total_s": 0.026996,
-          "weak_cutoff_grid_s": 0.00252
+          "build_scene_s": 3.3e-05,
+          "input_copy_s": 9.87090006674407e-05,
+          "json_serialize_s": 7.575000017823186e-05,
+          "load_inputs_s": 0.000533,
+          "native_call_s": 0.015724374999990687,
+          "native_prepare_s": 0.015127,
+          "optical_prepare_s": 0.012536,
+          "parse_json_s": 3.2e-05,
+          "python_total_s": 0.016300875000524684,
+          "resolve_assets_s": 0.0004007919997093268,
+          "route_prepare_s": 0.0,
+          "solar_rewindow_s": 0.000596,
+          "total_s": 0.015159,
+          "weak_cutoff_grid_s": 0.001394
         },
-        "scale_jacobian_s": 0.0011641660003078869,
-        "session_cache_trace": {
-          "forward_miss_list_hits": 1,
-          "forward_miss_list_misses": 0,
-          "last_forward_miss_count": 3736,
-          "last_forward_miss_list_hit": true,
-          "last_profile_spectroscopy_cache_count": 3736,
-          "last_profile_spectroscopy_hit": true,
-          "last_wavelength_plan_hit": true,
-          "profile_spectroscopy_hits": 1,
-          "profile_spectroscopy_misses": 1,
-          "wavelength_plan_hits": 1,
-          "wavelength_plan_misses": 0
-        },
-        "settings_for_state_s": 0.00012683400018431712,
-        "total_evaluate_s": 1.8948755840001468
+        "scale_jacobian_s": 0.00030250000054365955,
+        "settings_for_state_s": 7.016599920461886e-05,
+        "total_evaluate_s": 0.9022897079994436
       },
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 0.00012062499990861397,
-          "native_forward_s": 2.185002875000464,
-          "radiance_to_reflectance_jacobian_s": 0.0003443339992372785
+          "copy_outputs_s": 5.012499968870543e-05,
+          "native_forward_s": 0.8993207919993438,
+          "radiance_to_reflectance_jacobian_s": 0.00011191599878657144
         },
         "index": 2,
-        "prepare_total_s": 0.020954958000402257,
+        "prepare_total_s": 0.017847167000581976,
         "prepare_trace": {
-          "build_scene_s": 3.6e-05,
-          "input_copy_s": 0.00011895900024683215,
-          "json_serialize_s": 0.00010741700043581659,
-          "load_inputs_s": 0.000573,
-          "native_call_s": 0.020156415999736055,
-          "native_prepare_s": 0.020077,
-          "optical_prepare_s": 0.013077,
-          "parse_json_s": 4.8e-05,
-          "python_total_s": 0.02089783300016279,
-          "resolve_assets_s": 0.0005129579994900269,
+          "build_scene_s": 3.4e-05,
+          "input_copy_s": 6.254100117075723e-05,
+          "json_serialize_s": 8.504199831804726e-05,
+          "load_inputs_s": 0.000588,
+          "native_call_s": 0.017184333000841434,
+          "native_prepare_s": 0.016689,
+          "optical_prepare_s": 0.013869,
+          "parse_json_s": 3.2e-05,
+          "python_total_s": 0.01779079200059641,
+          "resolve_assets_s": 0.0004583749996527331,
           "route_prepare_s": 0.0,
-          "solar_rewindow_s": 0.002743,
-          "total_s": 0.020126,
-          "weak_cutoff_grid_s": 0.001448
+          "solar_rewindow_s": 0.000629,
+          "total_s": 0.016721,
+          "weak_cutoff_grid_s": 0.001555
         },
-        "scale_jacobian_s": 0.000820041999759269,
-        "session_cache_trace": {
-          "forward_miss_list_hits": 2,
-          "forward_miss_list_misses": 0,
-          "last_forward_miss_count": 3736,
-          "last_forward_miss_list_hit": true,
-          "last_profile_spectroscopy_cache_count": 3736,
-          "last_profile_spectroscopy_hit": true,
-          "last_wavelength_plan_hit": true,
-          "profile_spectroscopy_hits": 2,
-          "profile_spectroscopy_misses": 1,
-          "wavelength_plan_hits": 2,
-          "wavelength_plan_misses": 0
-        },
-        "settings_for_state_s": 0.00011420900045777671,
-        "total_evaluate_s": 2.2074457089993302
+        "scale_jacobian_s": 0.00028375000147207174,
+        "settings_for_state_s": 6.745899918314535e-05,
+        "total_evaluate_s": 0.9177083329996094
       },
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 7.662500047445064e-05,
-          "native_forward_s": 2.029284207999808,
-          "radiance_to_reflectance_jacobian_s": 0.00016420900010416517
+          "copy_outputs_s": 4.662500032281969e-05,
+          "native_forward_s": 0.8959659580013977,
+          "radiance_to_reflectance_jacobian_s": 0.0001089590004994534
         },
         "index": 3,
-        "prepare_total_s": 0.02775066600042919,
+        "prepare_total_s": 0.017672666999715148,
         "prepare_trace": {
-          "build_scene_s": 4.2e-05,
-          "input_copy_s": 0.0002735409998422256,
-          "json_serialize_s": 0.00019104100010736147,
-          "load_inputs_s": 0.000934,
-          "native_call_s": 0.025848208000752493,
-          "native_prepare_s": 0.02572,
-          "optical_prepare_s": 0.020216,
-          "parse_json_s": 9.2e-05,
-          "python_total_s": 0.02739329100040777,
-          "resolve_assets_s": 0.0010785840004245983,
-          "route_prepare_s": 1e-06,
-          "solar_rewindow_s": 0.001069,
-          "total_s": 0.025812,
-          "weak_cutoff_grid_s": 0.002447
-        },
-        "scale_jacobian_s": 0.0003433330002735602,
-        "session_cache_trace": {
-          "forward_miss_list_hits": 3,
-          "forward_miss_list_misses": 0,
-          "last_forward_miss_count": 3736,
-          "last_forward_miss_list_hit": true,
-          "last_profile_spectroscopy_cache_count": 3736,
-          "last_profile_spectroscopy_hit": true,
-          "last_wavelength_plan_hit": true,
-          "profile_spectroscopy_hits": 3,
-          "profile_spectroscopy_misses": 1,
-          "wavelength_plan_hits": 3,
-          "wavelength_plan_misses": 0
-        },
-        "settings_for_state_s": 0.0002132500003426685,
-        "total_evaluate_s": 2.0579170000000886
-      },
-      {
-        "forward_evaluation_trace": {
-          "copy_outputs_s": 0.00010358399958931841,
-          "native_forward_s": 1.8624650840001777,
-          "radiance_to_reflectance_jacobian_s": 0.00026041699948109454
-        },
-        "index": 4,
-        "prepare_total_s": 0.024329875000148604,
-        "prepare_trace": {
-          "build_scene_s": 4.4e-05,
-          "input_copy_s": 0.00013866700010112254,
-          "json_serialize_s": 0.00010850000035134144,
-          "load_inputs_s": 0.000665,
-          "native_call_s": 0.0234320409999782,
-          "native_prepare_s": 0.023346,
-          "optical_prepare_s": 0.015729,
-          "parse_json_s": 6.3e-05,
-          "python_total_s": 0.02426516699961212,
-          "resolve_assets_s": 0.0005850420002389001,
+          "build_scene_s": 3.7e-05,
+          "input_copy_s": 6.191700049384963e-05,
+          "json_serialize_s": 8.295800034829881e-05,
+          "load_inputs_s": 0.000582,
+          "native_call_s": 0.017033916999935172,
+          "native_prepare_s": 0.016625,
+          "optical_prepare_s": 0.013811,
+          "parse_json_s": 3.4e-05,
+          "python_total_s": 0.017618457999560633,
+          "resolve_assets_s": 0.0004393340004753554,
           "route_prepare_s": 0.0,
-          "solar_rewindow_s": 0.00108,
-          "total_s": 0.023409,
-          "weak_cutoff_grid_s": 0.003775
+          "solar_rewindow_s": 0.000629,
+          "total_s": 0.016659,
+          "weak_cutoff_grid_s": 0.001551
         },
-        "scale_jacobian_s": 0.0006258749999688007,
-        "session_cache_trace": {
-          "forward_miss_list_hits": 4,
-          "forward_miss_list_misses": 0,
-          "last_forward_miss_count": 3736,
-          "last_forward_miss_list_hit": true,
-          "last_profile_spectroscopy_cache_count": 3736,
-          "last_profile_spectroscopy_hit": true,
-          "last_wavelength_plan_hit": true,
-          "profile_spectroscopy_hits": 4,
-          "profile_spectroscopy_misses": 1,
-          "wavelength_plan_hits": 4,
-          "wavelength_plan_misses": 0
-        },
-        "settings_for_state_s": 9.583300015947316e-05,
-        "total_evaluate_s": 1.8879678339999373
+        "scale_jacobian_s": 0.00027666700043482706,
+        "settings_for_state_s": 6.408400076907128e-05,
+        "total_evaluate_s": 0.9141577499995037
       }
     ],
     "reused_retrieval_iteration_trace_summary": {
       "copy_outputs_s": {
-        "max": 0.00012591700033226516,
-        "mean": 0.00010668775007616205,
-        "median": 0.00011210449974896619,
-        "min": 7.662500047445064e-05
+        "max": 0.00011216699931537732,
+        "mean": 6.963899977563415e-05,
+        "median": 5.012499968870543e-05,
+        "min": 4.662500032281969e-05
       },
-      "iterations": 4,
+      "iterations": 3,
       "native_forward_s": {
-        "max": 2.185002875000464,
-        "mean": 1.9854984897499435,
-        "median": 1.947262999999566,
-        "min": 1.8624650840001777
+        "max": 0.8993207919993438,
+        "mean": 0.8935210693337771,
+        "median": 0.8959659580013977,
+        "min": 0.8852764580005896
       },
       "prepare_build_scene_s": {
-        "max": 4.4e-05,
-        "mean": 3.975e-05,
-        "median": 3.95e-05,
-        "min": 3.6e-05
+        "max": 3.7e-05,
+        "mean": 3.466666666666667e-05,
+        "median": 3.4e-05,
+        "min": 3.3e-05
       },
       "prepare_load_inputs_s": {
-        "max": 0.000934,
-        "mean": 0.0006975,
-        "median": 0.0006414999999999999,
-        "min": 0.000573
+        "max": 0.000588,
+        "mean": 0.0005676666666666667,
+        "median": 0.000582,
+        "min": 0.000533
       },
       "prepare_native_call_s": {
-        "max": 0.027032375000089814,
-        "mean": 0.02411726000013914,
-        "median": 0.024640124500365346,
-        "min": 0.020156415999736055
+        "max": 0.017184333000841434,
+        "mean": 0.016647541666922432,
+        "median": 0.017033916999935172,
+        "min": 0.015724374999990687
       },
       "prepare_optical_s": {
-        "max": 0.021405,
-        "mean": 0.01760675,
-        "median": 0.017972500000000002,
-        "min": 0.013077
+        "max": 0.013869,
+        "mean": 0.013405333333333333,
+        "median": 0.013811,
+        "min": 0.012536
       },
       "prepare_parse_json_s": {
-        "max": 9.2e-05,
-        "mean": 6.3e-05,
-        "median": 5.6e-05,
-        "min": 4.8e-05
+        "max": 3.4e-05,
+        "mean": 3.266666666666666e-05,
+        "median": 3.2e-05,
+        "min": 3.2e-05
       },
       "prepare_python_total_s": {
-        "max": 0.02787058400008391,
-        "mean": 0.025106718750066648,
-        "median": 0.025829229000009946,
-        "min": 0.02089783300016279
+        "max": 0.01779079200059641,
+        "mean": 0.017236708333560575,
+        "median": 0.017618457999560633,
+        "min": 0.016300875000524684
       },
       "prepare_total_s": {
-        "max": 0.028011209000396775,
-        "mean": 0.025261677000344207,
-        "median": 0.026040270500288898,
-        "min": 0.020954958000402257
+        "max": 0.017847167000581976,
+        "mean": 0.01729198633377867,
+        "median": 0.017672666999715148,
+        "min": 0.01635612500103889
       },
       "radiance_to_reflectance_jacobian_s": {
-        "max": 0.0003443339992372785,
-        "mean": 0.0002244067497940705,
-        "median": 0.00021231299979262985,
-        "min": 0.0001286670003537438
+        "max": 0.00011470800018287264,
+        "mean": 0.00011186099982296582,
+        "median": 0.00011191599878657144,
+        "min": 0.0001089590004994534
       },
       "scale_jacobian_s": {
-        "max": 0.0011641660003078869,
-        "mean": 0.0007383540000773792,
-        "median": 0.0007229584998640348,
-        "min": 0.0003433330002735602
-      },
-      "session_cache": {
-        "forward_miss_count": {
-          "max": 3736.0,
-          "mean": 3736.0,
-          "median": 3736.0,
-          "min": 3736.0
-        },
-        "forward_miss_list_hits": 4,
-        "forward_miss_list_misses": 0,
-        "profile_spectroscopy_cache_count": {
-          "max": 3736.0,
-          "mean": 3736.0,
-          "median": 3736.0,
-          "min": 3736.0
-        },
-        "profile_spectroscopy_hits": 4,
-        "profile_spectroscopy_misses": 0,
-        "wavelength_plan_hits": 4,
-        "wavelength_plan_misses": 0
+        "max": 0.00030250000054365955,
+        "mean": 0.0002876390008168528,
+        "median": 0.00028375000147207174,
+        "min": 0.00027666700043482706
       },
       "settings_for_state_s": {
-        "max": 0.0002132500003426685,
-        "mean": 0.00013753150028605887,
-        "median": 0.00012052150032104691,
-        "min": 9.583300015947316e-05
+        "max": 7.016599920461886e-05,
+        "mean": 6.72363330522785e-05,
+        "median": 6.745899918314535e-05,
+        "min": 6.408400076907128e-05
       },
       "total_evaluate_s": {
-        "max": 2.2074457089993302,
-        "mean": 2.0120515317498757,
-        "median": 1.9763962920001177,
-        "min": 1.8879678339999373
+        "max": 0.9177083329996094,
+        "mean": 0.9113852636661856,
+        "median": 0.9141577499995037,
+        "min": 0.9022897079994436
       }
     },
-    "setup_s": 0.6808297500001572
+    "setup_s": 0.33889616600026784
   },
   "source": "Slow retained scene from out/validation/optimal_estimation/paired_disamar_zdisamar/paired_retrieval_runs.parquet case 71.",
   "validation_case": "zdisamar_o2a_slow_forward_jacobian_latency"
