@@ -7,7 +7,6 @@
 # ]
 # ///
 
-import copy
 import math
 import os
 import re
@@ -19,7 +18,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
 
-import numpy as np
 import polars as pl
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -39,9 +37,9 @@ DISAMAR_REFSPEC = REPO_ROOT / "vendor" / "disamar-fortran" / "RefSpec"
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
 import zdisamar as zd  # noqa: E402
-from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
+from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
@@ -57,130 +55,12 @@ BATCH_SIZE = 10
 RNG_SEED = 20260507
 DISAMAR_WORKERS = max(1, min(BATCH_SIZE, os.cpu_count() or 2))
 ZDISAMAR_WORKERS = 1
-LAYER_THICKNESS_HPA = oe_baseline.LAYER_THICKNESS_HPA
 WAVELENGTH_START_NM = oe_baseline.WAVELENGTH_START_NM
 WAVELENGTH_END_NM = oe_baseline.WAVELENGTH_END_NM
 WAVELENGTH_STEP_NM = oe_baseline.WAVELENGTH_STEP_NM
 DISAMAR_PRESSURE_PRIOR_VARIANCE = 150.0**2
 DISAMAR_CASE_TIMEOUT_S = 5400.0
 FLOAT_TOKEN_PATTERN = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EDed][+-]?\d+)?")
-
-
-def uniform_lhs(rng: np.random.Generator, low: float, high: float, count: int) -> np.ndarray:
-    values = (np.arange(count, dtype=np.float64) + rng.random(count)) / count
-    rng.shuffle(values)
-    return low + values * (high - low)
-
-
-def sampled_scenes(count: int, seed: int) -> list[dict[str, float]]:
-    rng = np.random.default_rng(seed)
-    solar = uniform_lhs(rng, 25.0, 65.0, count)
-    view = uniform_lhs(rng, 0.0, 50.0, count)
-    azimuth = uniform_lhs(rng, 0.0, 180.0, count)
-    surface_pressure = uniform_lhs(rng, 820.0, 1040.0, count)
-    surface_albedo = uniform_lhs(rng, 0.05, 0.55, count)
-    aerosol_optical_depth = np.exp(uniform_lhs(rng, math.log(0.10), math.log(2.0), count))
-    mid_fraction = uniform_lhs(rng, 0.18, 0.78, count)
-    scenes: list[dict[str, float]] = []
-    for index in range(count):
-        mid_min = 225.0
-        mid_max = surface_pressure[index] - 100.0
-        scenes.append(
-            {
-                "solar_zenith_deg": float(solar[index]),
-                "viewing_zenith_deg": float(view[index]),
-                "relative_azimuth_deg": float(azimuth[index]),
-                "surface_pressure_hpa": float(surface_pressure[index]),
-                "surface_albedo": float(surface_albedo[index]),
-                "aerosol_optical_depth": float(aerosol_optical_depth[index]),
-                "aerosol_mid_pressure_hpa": float(
-                    mid_min + mid_fraction[index] * (mid_max - mid_min)
-                ),
-            }
-        )
-    return scenes
-
-
-def initial_aod(truth: float, index: int) -> float:
-    factor = 1.12 if index % 2 == 0 else 0.88
-    return min(5.0, max(0.02, truth * factor + 0.01))
-
-
-def initial_mid_pressure(truth: float, surface_pressure: float, index: int) -> float:
-    offset = [-25.0, -15.0, 15.0, 25.0][index % 4]
-    return min(surface_pressure - 75.0, max(100.0, truth + offset))
-
-
-def layer_bounds(mid_pressure_hpa: float) -> tuple[float, float]:
-    return (
-        mid_pressure_hpa - 0.5 * LAYER_THICKNESS_HPA,
-        mid_pressure_hpa + 0.5 * LAYER_THICKNESS_HPA,
-    )
-
-
-def update_layer_pressures(case: zd.O2AInput, mid_pressure_hpa: float) -> None:
-    top_pressure, bottom_pressure = layer_bounds(mid_pressure_hpa)
-    case.aerosol.placement.top_pressure_hpa = top_pressure
-    case.aerosol.placement.bottom_pressure_hpa = bottom_pressure
-    for interval in case.atmosphere.intervals:
-        if interval.index_1based == 1:
-            interval.bottom_pressure_hpa = top_pressure
-        elif interval.index_1based == 2:
-            interval.top_pressure_hpa = top_pressure
-            interval.bottom_pressure_hpa = bottom_pressure
-        elif interval.index_1based == 3:
-            interval.top_pressure_hpa = bottom_pressure
-            interval.bottom_pressure_hpa = case.surface.pressure_hpa
-
-
-def build_scene(
-    base: zd.O2AInput,
-    *,
-    index: int,
-    scene: dict[str, float],
-) -> zd.O2AInput:
-    case = copy.deepcopy(base)
-    case.metadata["id"] = f"paired_oe_{index:04d}"
-    case.scene_id = f"paired_oe_{index:04d}"
-    case.geometry.solar_zenith_deg = scene["solar_zenith_deg"]
-    case.geometry.viewing_zenith_deg = scene["viewing_zenith_deg"]
-    case.geometry.relative_azimuth_deg = scene["relative_azimuth_deg"]
-    case.surface.pressure_hpa = scene["surface_pressure_hpa"]
-    case.surface.albedo = scene["surface_albedo"]
-    case.aerosol.optical_depth_550_nm = scene["aerosol_optical_depth"]
-    case.aerosol.single_scatter_albedo = oe_baseline.AEROSOL_SINGLE_SCATTER_ALBEDO
-    case.aerosol.asymmetry_factor = oe_baseline.AEROSOL_ASYMMETRY_FACTOR
-    case.aerosol.angstrom_exponent = oe_baseline.AEROSOL_ANGSTROM_EXPONENT
-    update_layer_pressures(case, scene["aerosol_mid_pressure_hpa"])
-    return case
-
-
-def build_state_vector(
-    scene: dict[str, float],
-    initial: dict[str, float],
-    profile: optimal_estimation.PressureAltitudeProfile,
-) -> optimal_estimation.StateVector:
-    return optimal_estimation.StateVector(
-        [
-            optimal_estimation.AerosolOpticalDepth(
-                initial=initial["aerosol_optical_depth"],
-                prior=initial["aerosol_optical_depth"],
-                variance=0.8,
-                lower=0.02,
-                upper=5.0,
-            ),
-            optimal_estimation.AerosolLayerMidPressure(
-                initial=initial["aerosol_mid_pressure_hpa"],
-                prior=initial["aerosol_mid_pressure_hpa"],
-                variance=150.0**2,
-                thickness_hpa=LAYER_THICKNESS_HPA,
-                interval_index_1based=2,
-                pressure_altitude_profile=profile,
-                lower=225.0,
-                upper=scene["surface_pressure_hpa"] - 100.0,
-            ),
-        ]
-    )
 
 
 def retrieve_zdisamar(
@@ -191,27 +71,26 @@ def retrieve_zdisamar(
 ) -> dict[str, Any]:
     base = build_o2a_case(zd, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
-    case = build_scene(base, index=index, scene=scene)
+    case = oe_setup.build_scene(base, index=index, id_prefix="paired_oe", scene=scene, id_width=4)
     start = time.perf_counter()
     try:
         with zd.prepare(case) as prepared:
             measurement = measurement_from_o2a_baseline_noise(prepared)
             profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
-        state_vector = build_state_vector(scene, initial, profile)
+        state_vector = oe_setup.aerosol_two_state_vector(
+            initial=initial,
+            profile=profile,
+            surface_pressure_hpa=scene["surface_pressure_hpa"],
+        )
         with zd.o2a_forward_session(case) as session:
             result = o2a_oe.disamar_oe(
-                inverse_model=optimal_estimation.O2AInverseForwardModel(
+                inverse_model=o2a_oe.O2AInverseForwardModel(
                     case,
                     forward_session=session,
                 ),
                 measurement=measurement,
                 state_vector=state_vector,
-                controls=optimal_estimation.RetrievalControls(
-                    max_iterations=10,
-                    state_vector_convergence_threshold=1.0,
-                    max_change_transformed_state=1.0,
-                    collect_timing=True,
-                ),
+                controls=oe_setup.retrieval_controls(),
             )
         retrieved_aod = result.value("aerosol_optical_depth")
         retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
@@ -243,8 +122,8 @@ def config_line(key: str, values: str) -> str:
 
 
 def render_disamar_config(scene: dict[str, float], initial: dict[str, float]) -> str:
-    truth_top, truth_bottom = layer_bounds(scene["aerosol_mid_pressure_hpa"])
-    initial_top, initial_bottom = layer_bounds(initial["aerosol_mid_pressure_hpa"])
+    truth_top, truth_bottom = oe_setup.layer_bounds(scene["aerosol_mid_pressure_hpa"])
+    initial_top, initial_bottom = oe_setup.layer_bounds(initial["aerosol_mid_pressure_hpa"])
     lines = DISAMAR_TEMPLATE.read_text().splitlines(keepends=True)
     rendered: list[str] = []
     section = ""
@@ -460,14 +339,7 @@ def add_common_fields(
 
 
 def case_initial(index: int, scene: dict[str, float]) -> dict[str, float]:
-    return {
-        "aerosol_optical_depth": initial_aod(scene["aerosol_optical_depth"], index),
-        "aerosol_mid_pressure_hpa": initial_mid_pressure(
-            scene["aerosol_mid_pressure_hpa"],
-            scene["surface_pressure_hpa"],
-            index,
-        ),
-    }
+    return oe_setup.initial_state(index, scene)
 
 
 def run_model_case(task: tuple[str, int, dict[str, float]]) -> dict[str, Any]:
@@ -483,14 +355,7 @@ def run_model_case(task: tuple[str, int, dict[str, float]]) -> dict[str, Any]:
 
 
 def run_case(index: int, scene: dict[str, float]) -> list[dict[str, Any]]:
-    initial = {
-        "aerosol_optical_depth": initial_aod(scene["aerosol_optical_depth"], index),
-        "aerosol_mid_pressure_hpa": initial_mid_pressure(
-            scene["aerosol_mid_pressure_hpa"],
-            scene["surface_pressure_hpa"],
-            index,
-        ),
-    }
+    initial = case_initial(index, scene)
     rows: list[dict[str, Any]] = []
     for result in (
         retrieve_zdisamar(index=index, scene=scene, initial=initial),
@@ -535,7 +400,7 @@ def model_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def scene_rows() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    scenes = sampled_scenes(SCENE_SAMPLE_COUNT, RNG_SEED)[:RUN_COUNT]
+    scenes = oe_setup.sampled_scenes(SCENE_SAMPLE_COUNT, RNG_SEED)[:RUN_COUNT]
     for index, scene in enumerate(scenes, start=1):
         initial = case_initial(index, scene)
         rows.append(

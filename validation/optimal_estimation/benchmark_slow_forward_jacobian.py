@@ -26,6 +26,7 @@ import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
+from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
@@ -48,26 +49,14 @@ def build_state_vector(
     profile: optimal_estimation.PressureAltitudeProfile,
 ) -> optimal_estimation.StateVector:
     scene = oe_baseline.SLOW_VALIDATION_SCENE
-    return optimal_estimation.StateVector(
-        [
-            optimal_estimation.AerosolOpticalDepth(
-                initial=scene["initial_aerosol_optical_depth"],
-                prior=scene["initial_aerosol_optical_depth"],
-                variance=0.8,
-                lower=0.02,
-                upper=5.0,
-            ),
-            optimal_estimation.AerosolLayerMidPressure(
-                initial=scene["initial_aerosol_mid_pressure_hpa"],
-                prior=scene["initial_aerosol_mid_pressure_hpa"],
-                variance=150.0**2,
-                thickness_hpa=oe_baseline.LAYER_THICKNESS_HPA,
-                interval_index_1based=case.aerosol.placement.interval_index_1based,
-                pressure_altitude_profile=profile,
-                lower=225.0,
-                upper=case.surface.pressure_hpa - 100.0,
-            ),
-        ]
+    return oe_setup.aerosol_two_state_vector(
+        initial={
+            "aerosol_optical_depth": scene["initial_aerosol_optical_depth"],
+            "aerosol_mid_pressure_hpa": scene["initial_aerosol_mid_pressure_hpa"],
+        },
+        profile=profile,
+        surface_pressure_hpa=case.surface.pressure_hpa,
+        interval_index_1based=case.aerosol.placement.interval_index_1based,
     )
 
 
@@ -88,12 +77,7 @@ def run_retrieval(
         inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
-        controls=optimal_estimation.RetrievalControls(
-            max_iterations=10,
-            state_vector_convergence_threshold=1.0,
-            max_change_transformed_state=1.0,
-            collect_timing=True,
-        ),
+        controls=oe_setup.retrieval_controls(),
     )
 
 

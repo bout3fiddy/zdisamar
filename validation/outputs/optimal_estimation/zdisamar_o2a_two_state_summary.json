@@ -1,17 +1,17 @@
 {
   "absolute_differences": {
-    "aerosol_layer_mid_pressure_hpa": 0.0014444267993667381,
-    "aerosol_layer_top_pressure_hpa": 0.0014444267993667381,
-    "aerosol_optical_depth": 6.275366384311809e-07
+    "aerosol_layer_mid_pressure_hpa": 0.0017121090747878043,
+    "aerosol_layer_top_pressure_hpa": 0.0017121090747878043,
+    "aerosol_optical_depth": 6.50903478727205e-07
   },
   "averaging_kernel": [
     [
-      0.9999994987496267,
-      -2.769110332493045e-08
+      0.9999994987559595,
+      -2.7689730010552206e-08
     ],
     [
-      -0.0006230498260894267,
-      0.999872368724528
+      -0.0006230189252989392,
+      0.9998723827821597
     ]
   ],
   "converged": true,
@@ -19,40 +19,40 @@
   "final_diagnostics_match": false,
   "history": [
     {
-      "aerosol_layer_mid_pressure_hpa": 924.8515949451032,
+      "aerosol_layer_mid_pressure_hpa": 913.25,
       "aerosol_optical_depth": 0.35484218994602496,
       "chi2_reflectance": 59701.37323855399,
-      "chi2_state_vector": 0.16560336611511778,
+      "chi2_state_vector": 0.12017585417864488,
       "index": 1,
       "snr_normal": true,
-      "state_vector_convergence": 29834.548225361246
+      "state_vector_convergence": 30130.421740555896
     },
     {
-      "aerosol_layer_mid_pressure_hpa": 904.0117086819675,
-      "aerosol_optical_depth": 0.30177081861839805,
-      "chi2_reflectance": 7313.6910202919935,
-      "chi2_state_vector": 0.022118830875058445,
+      "aerosol_layer_mid_pressure_hpa": 902.6265867797331,
+      "aerosol_optical_depth": 0.3018866403763242,
+      "chi2_reflectance": 7968.069540072386,
+      "chi2_state_vector": 0.007820152827942005,
       "index": 2,
       "snr_normal": true,
-      "state_vector_convergence": 3656.6320334570783
+      "state_vector_convergence": 3984.022883866225
     },
     {
-      "aerosol_layer_mid_pressure_hpa": 900.0812434340545,
-      "aerosol_optical_depth": 0.3000051514497829,
-      "chi2_reflectance": 7.578954679111224,
-      "chi2_state_vector": 0.0006897201167748668,
+      "aerosol_layer_mid_pressure_hpa": 900.0694797591467,
+      "aerosol_optical_depth": 0.30000443411028355,
+      "chi2_reflectance": 7.098320034088509,
+      "chi2_state_vector": 0.0002941558699715753,
       "index": 3,
       "snr_normal": true,
-      "state_vector_convergence": 3.793191523777673
+      "state_vector_convergence": 3.5519586604391167
     },
     {
-      "aerosol_layer_mid_pressure_hpa": 899.9985555732006,
-      "aerosol_optical_depth": 0.29999937246336156,
-      "chi2_reflectance": 0.0026033900107713917,
-      "chi2_state_vector": 3.039126114657633e-07,
+      "aerosol_layer_mid_pressure_hpa": 899.9982878909252,
+      "aerosol_optical_depth": 0.29999934909652126,
+      "chi2_reflectance": 0.0019025393221365414,
+      "chi2_state_vector": 2.252828396256739e-07,
       "index": 4,
       "snr_normal": true,
-      "state_vector_convergence": 0.0013924567788116218
+      "state_vector_convergence": 0.0010292004855263217
     }
   ],
   "history_match": false,
@@ -62,12 +62,12 @@
   "passes_two_state_truth": true,
   "posterior_covariance": [
     [
-      5.012503734285717e-07,
-      0.0006230498248066446
+      5.012440408582288e-07,
+      0.0006230189252376027
     ],
     [
-      0.0006230498248066445,
-      2.871703698109859
+      0.0006230189252376027,
+      2.8713874014063774
     ]
   ],
   "reference": {
@@ -103,10 +103,10 @@
     }
   ],
   "retrieved": {
-    "aerosol_layer_bottom_pressure_hpa": 924.9985555732006,
-    "aerosol_layer_mid_pressure_hpa": 899.9985555732006,
-    "aerosol_layer_top_pressure_hpa": 874.9985555732006,
-    "aerosol_optical_depth": 0.29999937246336156
+    "aerosol_layer_bottom_pressure_hpa": 924.9982878909252,
+    "aerosol_layer_mid_pressure_hpa": 899.9982878909252,
+    "aerosol_layer_top_pressure_hpa": 874.9982878909252,
+    "aerosol_optical_depth": 0.29999934909652126
   },
   "state_names": [
     "aerosol_optical_depth",

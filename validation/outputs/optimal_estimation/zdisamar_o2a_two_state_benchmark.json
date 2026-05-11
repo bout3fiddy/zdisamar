@@ -1,48 +1,48 @@
 {
   "iterations": [
     {
-      "forward_model_and_jacobian_s": 0.18611945799966634,
+      "forward_model_and_jacobian_s": 0.19516383399968618,
       "index": 1,
-      "solver_update_s": 0.0001660409998294199,
-      "total_iteration_s": 0.18629045800116728
+      "solver_update_s": 0.0002346660003240686,
+      "total_iteration_s": 0.19540366699948208
     },
     {
-      "forward_model_and_jacobian_s": 0.1931444999991072,
+      "forward_model_and_jacobian_s": 0.20526033399983135,
       "index": 2,
-      "solver_update_s": 0.00016629200035822578,
-      "total_iteration_s": 0.19331633300134854
+      "solver_update_s": 0.00016141699961735867,
+      "total_iteration_s": 0.20542674999887822
     },
     {
-      "forward_model_and_jacobian_s": 0.1908595000004425,
+      "forward_model_and_jacobian_s": 0.201829749999888,
       "index": 3,
-      "solver_update_s": 0.00015062499915075023,
-      "total_iteration_s": 0.1910139169995091
+      "solver_update_s": 0.00015920799887680914,
+      "total_iteration_s": 0.201992791999146
     },
     {
-      "forward_model_and_jacobian_s": 0.18842845799917995,
+      "forward_model_and_jacobian_s": 0.20150016700063134,
       "index": 4,
-      "solver_update_s": 0.00014883299991197418,
-      "total_iteration_s": 0.1885802920005517
+      "solver_update_s": 0.00016537500050617382,
+      "total_iteration_s": 0.20166941699972085
     }
   ],
   "phases_s": {
-    "boundary_contiguity_check_s": 0.00012670900105149485,
-    "build_case_s": 2.2707999960402958e-05,
-    "build_measurement_s": 0.5083125000001019,
-    "build_pressure_altitude_profile_s": 0.1685001249989,
-    "build_state_vector_s": 1.6287682500005758,
-    "build_summary_s": 1.9458999304333702e-05,
-    "load_reference_s": 6.587500138266478e-05,
-    "retrieval_s": 0.7596004999995785,
-    "session_create_s": 0.34045420799884596,
-    "total_s": 3.4071141250005894,
-    "write_summary_s": 0.0003250839999964228
+    "boundary_contiguity_check_s": 0.00013045800005784258,
+    "build_case_s": 3.491699862934183e-05,
+    "build_measurement_s": 0.5243566659992211,
+    "build_pressure_altitude_profile_s": 0.17994137499954377,
+    "build_state_vector_s": 1.649308125000971,
+    "build_summary_s": 2.0417000996530987e-05,
+    "load_reference_s": 0.00022454200006905012,
+    "retrieval_s": 0.8049140839993925,
+    "session_create_s": 0.34799479200046335,
+    "total_s": 3.5089322090007045,
+    "write_summary_s": 0.0009749170003487961
   },
   "retrieval": {
-    "first_use_retrieval_s": 1.1000547079984244,
-    "forward_model_and_jacobian_s": 0.758551915998396,
+    "first_use_retrieval_s": 1.1529088759998558,
+    "forward_model_and_jacobian_s": 0.8037540850000369,
     "iterations": 4,
-    "retrieval_s": 0.7596004999995785,
-    "setup_s": 0.34045420799884596
+    "retrieval_s": 0.8049140839993925,
+    "setup_s": 0.34799479200046335
   }
 }

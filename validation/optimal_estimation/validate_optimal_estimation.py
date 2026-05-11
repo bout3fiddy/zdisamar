@@ -34,6 +34,7 @@ from zdisamar.inverse_method.optimal_estimation.diagnostics import (  # noqa: E4
     final_diagnostics,
 )
 
+from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
@@ -43,35 +44,6 @@ from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
 
 JsonObject = dict[str, Any]
-
-
-def build_state_vector(
-    case: zd.O2AInput,
-    reference: JsonObject,
-    profile: optimal_estimation.PressureAltitudeProfile,
-):
-    prior = reference["a_priori"]
-    layer_thickness = (
-        case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
-    )
-    return optimal_estimation.StateVector(
-        [
-            optimal_estimation.AerosolOpticalDepth(
-                initial=float(prior["aerosol_optical_depth"]),
-                prior=float(prior["aerosol_optical_depth"]),
-                variance=1.0,
-                lower=0.0,
-            ),
-            optimal_estimation.AerosolLayerMidPressure(
-                initial=float(prior["aerosol_layer_mid_pressure_hpa"]),
-                prior=float(prior["aerosol_layer_mid_pressure_hpa"]),
-                variance=float(prior["aerosol_layer_mid_pressure_variance_hpa2"]),
-                thickness_hpa=layer_thickness,
-                interval_index_1based=case.aerosol.placement.interval_index_1based,
-                pressure_altitude_profile=profile,
-            ),
-        ]
-    )
 
 
 def assert_layer_boundaries_are_contiguous(
@@ -190,12 +162,7 @@ def run_retrieval(
         inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
-        controls=optimal_estimation.RetrievalControls(
-            max_iterations=10,
-            state_vector_convergence_threshold=1.0,
-            max_change_transformed_state=1.0,
-            collect_timing=True,
-        ),
+        controls=oe_setup.retrieval_controls(),
     )
 
 
@@ -429,7 +396,11 @@ def main() -> int:
         profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(case)
 
     with timer.phase("build_state_vector_s"):
-        state_vector = build_state_vector(case, reference, profile)
+        state_vector = oe_setup.reference_two_state_vector(
+            case=case,
+            reference=reference,
+            profile=profile,
+        )
         assert_mid_pressure_jacobian_matches_finite_difference(case, state_vector)
         assert_gauss_newton_retains_prior_precision_nullspace()
 
