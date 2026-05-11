@@ -15,6 +15,7 @@ pub const shared_carrier = @import("state_build/shared_carrier.zig");
 pub const state_spectroscopy = @import("state_build/state_spectroscopy.zig");
 
 pub const PreparationInputs = builder.PreparationInputs;
+pub const PrepareTrace = builder.PrepareTrace;
 pub const PreparedLayer = state.PreparedLayer;
 pub const PreparedSublayer = state.PreparedSublayer;
 pub const OpticalDepthBreakdown = state.OpticalDepthBreakdown;
@@ -26,4 +27,13 @@ pub fn prepare(
     inputs: PreparationInputs,
 ) !PreparedOpticalState {
     return builder.prepare(allocator, scene, inputs);
+}
+
+pub fn prepareWithTrace(
+    allocator: @import("std").mem.Allocator,
+    scene: *const @import("../../input/Scene.zig").Scene,
+    inputs: PreparationInputs,
+    trace: ?*PrepareTrace,
+) !PreparedOpticalState {
+    return builder.prepareWithTrace(allocator, scene, inputs, trace);
 }

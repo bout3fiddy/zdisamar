@@ -13,9 +13,11 @@ pub const AssessmentTrend = shared.AssessmentTrend;
 pub const AssessmentOutcome = shared.AssessmentOutcome;
 pub const VendorO2AReflectanceCase = shared.VendorO2AReflectanceCase;
 pub const VendorO2APreparedCase = shared.VendorO2APreparedCase;
+pub const O2APrepareTrace = shared.O2APrepareTrace;
 
 pub const runResolvedVendorO2AReflectanceCase = shared.runResolvedVendorO2AReflectanceCase;
 pub const prepareResolvedVendorO2ACase = shared.prepareResolvedVendorO2ACase;
+pub const prepareResolvedVendorO2ACaseWithTrace = shared.prepareResolvedVendorO2ACaseWithTrace;
 pub const meanVectorInRange = shared.meanVectorInRange;
 pub const minVectorInRange = shared.minVectorInRange;
 pub const maxVectorInRange = shared.maxVectorInRange;

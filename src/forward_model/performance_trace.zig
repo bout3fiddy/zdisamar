@@ -1,8 +1,19 @@
 const std = @import("std");
 const build_options = @import("build_options");
+const ztracy = @import("ztracy");
+
+const SourceLocation = std.builtin.SourceLocation;
 
 pub const enabled: bool = if (@hasDecl(build_options, "enable_labos_trace"))
     build_options.enable_labos_trace
+else
+    false;
+pub const tracy_enabled: bool = enabled and if (@hasDecl(build_options, "enable_ztracy"))
+    build_options.enable_ztracy
+else
+    false;
+pub const tracy_deep_enabled: bool = tracy_enabled and if (@hasDecl(build_options, "enable_ztracy_deep"))
+    build_options.enable_ztracy_deep
 else
     false;
 
@@ -204,6 +215,76 @@ pub const Counter = enum(u8) {
 };
 
 pub const counter_count = @typeInfo(Counter).@"enum".fields.len;
+
+pub const Zone = if (tracy_enabled) struct {
+    ctx: ?ztracy.ZoneCtx,
+
+    pub inline fn end(self: Zone) void {
+        if (self.ctx) |ctx| ctx.End();
+    }
+
+    pub inline fn value(self: Zone, val: u64) void {
+        if (self.ctx) |ctx| ctx.Value(val);
+    }
+} else struct {
+    pub inline fn end(self: Zone) void {
+        _ = self;
+    }
+
+    pub inline fn value(self: Zone, val: u64) void {
+        _ = self;
+        _ = val;
+    }
+};
+
+pub inline fn zone(comptime src: SourceLocation, section: Section) Zone {
+    if (!tracy_enabled) return .{};
+    return namedZone(src, section.name());
+}
+
+pub inline fn staticZone(comptime src: SourceLocation, comptime name: [*:0]const u8) Zone {
+    if (!tracy_enabled) return .{};
+    const ctx = ztracy.ZoneN(src, name);
+    return .{ .ctx = ctx };
+}
+
+pub inline fn deepZone(comptime src: SourceLocation, section: Section) Zone {
+    if (!tracy_enabled) return .{};
+    if (!tracy_deep_enabled) return .{ .ctx = null };
+    return namedZone(src, section.name());
+}
+
+pub inline fn deepStaticZone(comptime src: SourceLocation, comptime name: [*:0]const u8) Zone {
+    if (!tracy_enabled) return .{};
+    if (!tracy_deep_enabled) return .{ .ctx = null };
+    const ctx = ztracy.ZoneN(src, name);
+    return .{ .ctx = ctx };
+}
+
+pub inline fn deepNamedZone(comptime src: SourceLocation, name: []const u8) Zone {
+    if (!tracy_enabled) return .{};
+    if (!tracy_deep_enabled) return .{ .ctx = null };
+    return namedZone(src, name);
+}
+
+pub inline fn namedZone(comptime src: SourceLocation, name: []const u8) Zone {
+    if (!tracy_enabled) return .{};
+    const ctx = ztracy.Zone(src);
+    ctx.Name(name);
+    return .{ .ctx = ctx };
+}
+
+pub inline fn setThreadName(name: [*:0]const u8) void {
+    if (tracy_enabled) ztracy.SetThreadName(name);
+}
+
+pub inline fn frameMark() void {
+    if (tracy_enabled) ztracy.FrameMark();
+}
+
+pub inline fn message(text: []const u8) void {
+    if (tracy_enabled) ztracy.Message(text);
+}
 
 pub const Worker = struct {
     sections_ns: [section_count]u64 = [_]u64{0} ** section_count,

@@ -48,20 +48,60 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const runtime_optimize: std.builtin.OptimizeMode = .ReleaseFast;
+    const enable_ztracy = b.option(
+        bool,
+        "enable-ztracy",
+        "Enable Tracy profile zones in the trace executable",
+    ) orelse false;
+    const ztracy_on_demand = b.option(
+        bool,
+        "ztracy-on-demand",
+        "Build Tracy with TRACY_ON_DEMAND so capture starts only when a profiler connects",
+    ) orelse true;
+    const ztracy_callstack = b.option(
+        u32,
+        "ztracy-callstack",
+        "If > 0, enable Tracy call stacks at this depth",
+    ) orelse 0;
+    const enable_ztracy_deep = b.option(
+        bool,
+        "enable-ztracy-deep",
+        "Enable high-volume inner LABOS Tracy zones for short diagnostic captures",
+    ) orelse false;
     const trace_optimize = b.option(
         std.builtin.OptimizeMode,
         "trace-optimize",
         "Optimization mode for the LABOS bottleneck trace executable",
     ) orelse runtime_optimize;
 
+    const ztracy_stub_module = b.createModule(.{
+        .root_source_file = b.path("src/forward_model/tracy_stub.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const trace_ztracy_dependency = b.dependency("ztracy", .{
+        .enable_ztracy = enable_ztracy,
+        .enable_fibers = false,
+        .on_demand = ztracy_on_demand,
+        .callstack = ztracy_callstack,
+    });
+    const trace_ztracy_module = if (enable_ztracy)
+        trace_ztracy_dependency.module("root")
+    else
+        ztracy_stub_module;
+
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_test_support", false);
     build_options.addOption(bool, "enable_labos_trace", false);
+    build_options.addOption(bool, "enable_ztracy", false);
+    build_options.addOption(bool, "enable_ztracy_deep", false);
     const build_options_module = build_options.createModule();
 
     const trace_build_options = b.addOptions();
     trace_build_options.addOption(bool, "enable_test_support", false);
     trace_build_options.addOption(bool, "enable_labos_trace", true);
+    trace_build_options.addOption(bool, "enable_ztracy", enable_ztracy);
+    trace_build_options.addOption(bool, "enable_ztracy_deep", enable_ztracy_deep);
     const trace_build_options_module = trace_build_options.createModule();
 
     const lib_module = b.createModule(.{
@@ -73,6 +113,10 @@ pub fn build(b: *std.Build) void {
                 .name = "build_options",
                 .module = build_options_module,
             },
+            .{
+                .name = "ztracy",
+                .module = ztracy_stub_module,
+            },
         },
     });
     const disamar_reference_support_module = b.createModule(.{
@@ -83,6 +127,10 @@ pub fn build(b: *std.Build) void {
             .{
                 .name = "build_options",
                 .module = build_options_module,
+            },
+            .{
+                .name = "ztracy",
+                .module = trace_ztracy_module,
             },
         },
     });
@@ -105,6 +153,10 @@ pub fn build(b: *std.Build) void {
             .{
                 .name = "build_options",
                 .module = build_options_module,
+            },
+            .{
+                .name = "ztracy",
+                .module = ztracy_stub_module,
             },
         },
     });
@@ -129,6 +181,10 @@ pub fn build(b: *std.Build) void {
                 .name = "build_options",
                 .module = build_options_module,
             },
+            .{
+                .name = "ztracy",
+                .module = ztracy_stub_module,
+            },
         },
     });
     const plot_spectrum_exe = b.addExecutable(.{
@@ -145,6 +201,10 @@ pub fn build(b: *std.Build) void {
             .{
                 .name = "build_options",
                 .module = build_options_module,
+            },
+            .{
+                .name = "ztracy",
+                .module = ztracy_stub_module,
             },
         },
     });
@@ -184,6 +244,10 @@ pub fn build(b: *std.Build) void {
                         .{
                             .name = "build_options",
                             .module = build_options_module,
+                        },
+                        .{
+                            .name = "ztracy",
+                            .module = ztracy_stub_module,
                         },
                     },
                 }),
@@ -279,6 +343,10 @@ pub fn build(b: *std.Build) void {
                             .name = "build_options",
                             .module = build_options_module,
                         },
+                        .{
+                            .name = "ztracy",
+                            .module = ztracy_stub_module,
+                        },
                     },
                 }),
             },
@@ -301,6 +369,10 @@ pub fn build(b: *std.Build) void {
                 .name = "build_options",
                 .module = trace_build_options_module,
             },
+            .{
+                .name = "ztracy",
+                .module = trace_ztracy_module,
+            },
         },
     });
     const labos_bottleneck_trace_module = b.createModule(.{
@@ -318,6 +390,9 @@ pub fn build(b: *std.Build) void {
         .name = "labos-bottleneck-trace",
         .root_module = labos_bottleneck_trace_module,
     });
+    if (enable_ztracy) {
+        labos_bottleneck_trace_exe.root_module.linkLibrary(trace_ztracy_dependency.artifact("tracy"));
+    }
     const run_labos_bottleneck_trace = b.addRunArtifact(labos_bottleneck_trace_exe);
     if (b.args) |args| run_labos_bottleneck_trace.addArgs(args);
     const labos_bottleneck_trace_step = b.step(

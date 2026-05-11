@@ -28,6 +28,7 @@ pub const disamar_reference = struct {
     pub const scene = @import("validation/disamar_reference/scene.zig");
     pub const yaml = @import("validation/disamar_reference/yaml.zig");
     pub const run = @import("validation/disamar_reference/run.zig");
+    pub const metrics = @import("validation/disamar_reference/metrics.zig");
 };
 
 pub const common = struct {

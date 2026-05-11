@@ -53,6 +53,12 @@ fn mainInner() !void {
     comptime {
         if (!Trace.enabled) @compileError("labos-bottleneck-trace must be built with enable_labos_trace=true");
     }
+    const main_zone = Trace.staticZone(@src(), "trace_cli.main");
+    defer main_zone.end();
+    Trace.message("zdisamar labos trace start");
+    Trace.frameMark();
+    defer Trace.frameMark();
+    defer Trace.message("zdisamar labos trace end");
 
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
@@ -67,29 +73,43 @@ fn mainInner() !void {
     try std.fs.cwd().makePath(config.output_dir);
 
     var prepare_timer = try std.time.Timer.start();
-    var loaded = try internal.disamar_reference.yaml.loadResolvedCaseFromFile(
-        allocator,
-        config.case_yaml_path,
-    );
+    var loaded = loaded: {
+        const zone = Trace.staticZone(@src(), "trace_cli.load_case");
+        defer zone.end();
+        break :loaded try internal.disamar_reference.yaml.loadResolvedCaseFromFile(
+            allocator,
+            config.case_yaml_path,
+        );
+    };
     defer loaded.deinit();
-    internal.disamar_reference.yaml.applyExecutionOverrides(&loaded.resolved, .{
-        .spectral_grid = .{
-            .start_nm = 755.0,
-            .end_nm = 776.0,
-            .sample_count = 701,
-        },
-        .adaptive_points_per_fwhm = 20,
-        .adaptive_strong_line_min_divisions = 8,
-        .adaptive_strong_line_max_divisions = 40,
-        .line_mixing_factor = 1.0,
-        .isotopes_sim = &.{ 1, 2, 3 },
-        .threshold_line_sim = 3.0e-5,
-        .cutoff_sim_cm1 = 200.0,
-    });
-    var prepared_case = try internal.disamar_reference.yaml.prepareResolvedVendorO2ACase(
-        allocator,
-        &loaded.resolved,
-    );
+    {
+        const zone = Trace.staticZone(@src(), "trace_cli.apply_overrides");
+        defer zone.end();
+        internal.disamar_reference.yaml.applyExecutionOverrides(&loaded.resolved, .{
+            .spectral_grid = .{
+                .start_nm = 755.0,
+                .end_nm = 776.0,
+                .sample_count = 701,
+            },
+            .adaptive_points_per_fwhm = 20,
+            .adaptive_strong_line_min_divisions = 8,
+            .adaptive_strong_line_max_divisions = 40,
+            .line_mixing_factor = 1.0,
+            .isotopes_sim = &.{ 1, 2, 3 },
+            .threshold_line_sim = 3.0e-5,
+            .cutoff_sim_cm1 = 200.0,
+        });
+    }
+    var prepare_trace: internal.disamar_reference.metrics.O2APrepareTrace = .{};
+    var prepared_case = prepared_case: {
+        const zone = Trace.staticZone(@src(), "trace_cli.prepare_case");
+        defer zone.end();
+        break :prepared_case try internal.disamar_reference.metrics.prepareResolvedVendorO2ACaseWithTrace(
+            allocator,
+            &loaded.resolved,
+            &prepare_trace,
+        );
+    };
     const prepare_ns = prepare_timer.read();
     defer prepared_case.deinit(allocator);
 
@@ -98,15 +118,19 @@ fn mainInner() !void {
         return;
     }
 
-    try runSingleTrace(allocator, config.output_dir, prepare_ns, &prepared_case);
+    try runSingleTrace(allocator, config.output_dir, prepare_ns, prepare_trace, &prepared_case);
 }
 
 fn runSingleTrace(
     allocator: std.mem.Allocator,
     output_dir: []const u8,
     prepare_ns: u64,
+    prepare_trace: internal.disamar_reference.metrics.O2APrepareTrace,
     prepared_case: anytype,
 ) !void {
+    const zone = Trace.staticZone(@src(), "trace_cli.single_trace");
+    defer zone.end();
+
     var trace = Trace.Run.init();
     var implementations = internal.forward_model.implementations.exact();
     implementations.trace = &trace;
@@ -115,18 +139,22 @@ fn runSingleTrace(
     defer storage.deinit(allocator);
 
     var forward_timer = try std.time.Timer.start();
-    const product = try InstrumentGrid.simulateProductWithWorkspace(
-        allocator,
-        &storage,
-        &prepared_case.scene,
-        prepared_case.route,
-        &prepared_case.prepared,
-        implementations,
-    );
+    const product = product: {
+        const simulate_zone = Trace.staticZone(@src(), "trace_cli.simulate_product");
+        defer simulate_zone.end();
+        break :product try InstrumentGrid.simulateProductWithWorkspace(
+            allocator,
+            &storage,
+            &prepared_case.scene,
+            prepared_case.route,
+            &prepared_case.prepared,
+            implementations,
+        );
+    };
     const forward_ns = forward_timer.read();
     trace.setForwardWallNs(forward_ns);
 
-    try writeSummary(output_dir, prepare_ns, forward_ns, product.summary, &trace);
+    try writeSummary(output_dir, prepare_ns, prepare_trace, forward_ns, product.summary, &trace);
     try writeSections(output_dir, &trace);
     try writeCounters(output_dir, &trace);
     try writeWorkerSections(output_dir, &trace);
@@ -426,6 +454,7 @@ fn openOutputFile(allocator: std.mem.Allocator, output_dir: []const u8, name: []
 fn writeSummary(
     output_dir: []const u8,
     prepare_ns: u64,
+    prepare_trace: internal.disamar_reference.metrics.O2APrepareTrace,
     forward_ns: u64,
     summary: InstrumentGrid.InstrumentGridSummary,
     trace: *const Trace.Run,
@@ -442,9 +471,63 @@ fn writeSummary(
         \\{{
         \\  "trace_enabled": true,
         \\  "prepare_ns": {},
+        \\  "prepare_load_inputs_ns": {},
+        \\  "prepare_build_scene_ns": {},
+        \\  "prepare_optical_prepare_ns": {},
+        \\  "prepare_optical_context_init_ns": {},
+        \\  "prepare_optical_absorbers_build_ns": {},
+        \\  "prepare_optical_accumulation_ns": {},
+        \\  "prepare_optical_finalize_ns": {},
+        \\  "prepare_optical_shared_geometry_ns": {},
+        \\  "prepare_weak_cutoff_grid_ns": {},
+        \\  "prepare_solar_rewindow_ns": {},
+        \\  "prepare_route_prepare_ns": {},
         \\  "forward_wall_ns": {},
         \\  "prepare_s": {d:.9},
+        \\  "prepare_load_inputs_s": {d:.9},
+        \\  "prepare_build_scene_s": {d:.9},
+        \\  "prepare_optical_prepare_s": {d:.9},
+        \\  "prepare_optical_context_init_s": {d:.9},
+        \\  "prepare_optical_absorbers_build_s": {d:.9},
+        \\  "prepare_optical_accumulation_s": {d:.9},
+        \\  "prepare_optical_finalize_s": {d:.9},
+        \\  "prepare_optical_shared_geometry_s": {d:.9},
+        \\  "prepare_weak_cutoff_grid_s": {d:.9},
+        \\  "prepare_solar_rewindow_s": {d:.9},
+        \\  "prepare_route_prepare_s": {d:.9},
         \\  "forward_wall_s": {d:.9},
+    ,
+        .{
+            prepare_ns,
+            prepare_trace.load_inputs_ns,
+            prepare_trace.build_scene_ns,
+            prepare_trace.optical_prepare_ns,
+            prepare_trace.optical_context_init_ns,
+            prepare_trace.optical_absorbers_build_ns,
+            prepare_trace.optical_accumulation_ns,
+            prepare_trace.optical_finalize_ns,
+            prepare_trace.optical_shared_geometry_ns,
+            prepare_trace.weak_cutoff_grid_ns,
+            prepare_trace.solar_rewindow_ns,
+            prepare_trace.route_prepare_ns,
+            forward_ns,
+            @as(f64, @floatFromInt(prepare_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.load_inputs_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.build_scene_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.optical_prepare_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.optical_context_init_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.optical_absorbers_build_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.optical_accumulation_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.optical_finalize_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.optical_shared_geometry_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.weak_cutoff_grid_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.solar_rewindow_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(prepare_trace.route_prepare_ns)) / 1.0e9,
+            @as(f64, @floatFromInt(forward_ns)) / 1.0e9,
+        },
+    );
+    try writer.interface.print(
+        \\
         \\  "worker_count": {},
         \\  "sample_count": {},
         \\  "wavelength_start_nm": {d:.8},
@@ -465,10 +548,6 @@ fn writeSummary(
         \\
     ,
         .{
-            prepare_ns,
-            forward_ns,
-            @as(f64, @floatFromInt(prepare_ns)) / 1.0e9,
-            @as(f64, @floatFromInt(forward_ns)) / 1.0e9,
             trace.worker_count,
             summary.sample_count,
             summary.wavelength_start_nm,

@@ -269,199 +269,236 @@ fn layerResolvedLabosWithWorkspace(
     } else {};
 
     for (0..fourier_max + 1) |i_fourier| {
-        const fourier_start = Trace.begin();
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.fourier_terms, 1);
-        var owned_plm_basis: basis.FourierPlmBasis = undefined;
-        const plm_start = Trace.begin();
-        const plm_basis = if (workspace) |scratch| blk: {
-            break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, geo);
-        } else blk: {
-            owned_plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
-            break :blk &owned_plm_basis;
-        };
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.plm_basis, Trace.elapsed(plm_start));
-        const rt_start = Trace.begin();
-        calcRTlayersIntoWithBasis(
-            rt,
-            input.layers,
-            i_fourier,
-            geo,
-            controls,
-            plm_basis,
-            layer_phase_max_indices,
-            layer_phase_kernels,
-            layer_phase_kernel_valid,
-            if (workspace != null) orders_workspace.rt_active else null,
-            trace,
-        );
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.rt_layer_build, Trace.elapsed(rt_start));
-        rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
-        if (workspace != null) orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
-        if (Trace.enabled) orders_workspace.trace = trace;
-        const orders_start = Trace.begin();
-        const orders_result = if (use_integrated_source)
-            if (compute_jacobian)
-                if (workspace != null) orders_mod.ordersScatIntoWithActiveLocalSum(
-                    orders_workspace,
-                    0,
-                    nlayer,
-                    geo,
-                    &atten,
-                    rt,
-                    controls,
-                    num_orders_max,
-                ) else orders_mod.ordersScatIntoWithLocalSum(
-                    orders_workspace,
-                    0,
-                    nlayer,
-                    geo,
-                    &atten,
-                    rt,
-                    controls,
-                    num_orders_max,
-                )
-            else if (workspace != null) orders_mod.ordersScatIntoWithActive(
-                orders_workspace,
-                0,
-                nlayer,
-                geo,
-                &atten,
-                rt,
-                controls,
-                num_orders_max,
-            ) else orders_mod.ordersScatInto(
-                orders_workspace,
-                0,
-                nlayer,
-                geo,
-                &atten,
-                rt,
-                controls,
-                num_orders_max,
-            )
-        else
-            orders_mod.ordersScatTransportInto(
-                orders_workspace,
-                0,
-                nlayer,
-                geo,
-                &atten,
-                rt,
-                controls,
-                num_orders_max,
-            );
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_total, Trace.elapsed(orders_start));
-        const reflectance_start = Trace.begin();
-        const refl_fc = if (use_integrated_source)
-            calcIntegratedReflectanceWithBasis(
-                input.layers,
-                input.source_interfaces,
-                input.rtm_quadrature,
-                orders_result.ud,
-                nlayer,
-                i_fourier,
-                geo,
-                plm_basis,
-                adjacent_layer_phase_max_indices,
-                layer_phase_kernels,
-                layer_phase_kernel_valid,
-            )
-        else
-            calcReflectance(orders_result.ud, nlayer, geo);
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_integral, Trace.elapsed(reflectance_start));
-        const weighted_refl_fc = if (i_fourier == 0) blk: {
-            break :blk refl_fc;
-        } else blk: {
-            const cos_m_dphi = math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
-            break :blk (2.0 * refl_fc) * cos_m_dphi;
-        };
-        reflectance += weighted_refl_fc;
-        if (wants_surface_albedo and i_fourier == 0) {
-            surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
-        }
-        if (wants_aerosol_optical_depth) {
-            const aod_weighting_start = Trace.begin();
-            const tangent_refl_fc = if (use_integrated_source)
-                calcAerosolOpticalDepthWeightingWithBasis(
-                    input.layers,
-                    input.rtm_quadrature,
-                    orders_result.ud,
-                    orders_result.ud_sum_local,
-                    nlayer,
-                    i_fourier,
-                    controls.use_spherical_correction,
-                    geo,
-                    plm_basis,
-                    adjacent_layer_phase_max_indices,
-                )
-            else
-                try nonIntegratedReflectanceTangent(
-                    allocator,
-                    input.layers,
-                    .aerosol_optical_depth,
-                    i_fourier,
-                    geo,
-                    &atten,
-                    rt,
-                    controls,
-                    plm_basis,
-                    num_orders_max,
-                );
-            const weighted_tangent_refl_fc = if (i_fourier == 0)
-                tangent_refl_fc
-            else
-                (2.0 * tangent_refl_fc) * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
-            aerosol_optical_depth_tangent += weighted_tangent_refl_fc;
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_aerosol_optical_depth_weighting, Trace.elapsed(aod_weighting_start));
-        }
-        if (wants_aerosol_layer_mid_pressure) {
-            const pressure_weighting_start = Trace.begin();
-            const pressure_tangent_refl_fc = if (use_integrated_source) calcAerosolLayerPressureShiftWeightingWithBasis(
-                input.layers,
-                input.rtm_quadrature,
-                orders_result.ud,
-                orders_result.ud_sum_local,
-                nlayer,
-                i_fourier,
-                controls.use_spherical_correction,
-                geo,
-                plm_basis,
-            ) else blk: {
-                if (!hasLayerJacobian(input.layers, .aerosol_layer_mid_pressure_hpa)) return error.UnsupportedDerivativeMode;
-                break :blk try nonIntegratedReflectanceTangent(
-                    allocator,
-                    input.layers,
-                    .aerosol_layer_mid_pressure_hpa,
-                    i_fourier,
-                    geo,
-                    &atten,
-                    rt,
-                    controls,
-                    plm_basis,
-                    num_orders_max,
-                );
+        var stop_fourier_loop = false;
+        {
+            const fourier_zone = Trace.deepStaticZone(@src(), "labos.fourier_loop");
+            fourier_zone.value(@intCast(i_fourier));
+            defer fourier_zone.end();
+
+            const fourier_start = Trace.begin();
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.fourier_terms, 1);
+            var owned_plm_basis: basis.FourierPlmBasis = undefined;
+            const plm_start = Trace.begin();
+            const plm_basis = plm_basis: {
+                const zone = Trace.deepStaticZone(@src(), "labos.plm_basis");
+                defer zone.end();
+                break :plm_basis if (workspace) |scratch| blk: {
+                    break :blk try scratch.fourierPlmBasis(i_fourier, phase_max, geo);
+                } else blk: {
+                    owned_plm_basis = basis.FourierPlmBasis.init(i_fourier, phase_max, geo);
+                    break :blk &owned_plm_basis;
+                };
             };
-            const weighted_pressure_tangent_refl_fc = if (i_fourier == 0) blk: {
-                break :blk pressure_tangent_refl_fc;
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.plm_basis, Trace.elapsed(plm_start));
+            const rt_start = Trace.begin();
+            {
+                const zone = Trace.deepStaticZone(@src(), "labos.rt_layer_build");
+                defer zone.end();
+                calcRTlayersIntoWithBasis(
+                    rt,
+                    input.layers,
+                    i_fourier,
+                    geo,
+                    controls,
+                    plm_basis,
+                    layer_phase_max_indices,
+                    layer_phase_kernels,
+                    layer_phase_kernel_valid,
+                    if (workspace != null) orders_workspace.rt_active else null,
+                    trace,
+                );
+            }
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.rt_layer_build, Trace.elapsed(rt_start));
+            rt[0] = fillSurface(i_fourier, input.surface_albedo, geo);
+            if (workspace != null) orders_workspace.rt_active[0] = i_fourier == 0 and input.surface_albedo != 0.0;
+            if (Trace.enabled) orders_workspace.trace = trace;
+            const orders_start = Trace.begin();
+            const orders_result = orders_result: {
+                const zone = Trace.deepStaticZone(@src(), "labos.orders.total");
+                defer zone.end();
+                break :orders_result if (use_integrated_source)
+                    if (compute_jacobian)
+                        if (workspace != null) orders_mod.ordersScatIntoWithActiveLocalSum(
+                            orders_workspace,
+                            0,
+                            nlayer,
+                            geo,
+                            &atten,
+                            rt,
+                            controls,
+                            num_orders_max,
+                        ) else orders_mod.ordersScatIntoWithLocalSum(
+                            orders_workspace,
+                            0,
+                            nlayer,
+                            geo,
+                            &atten,
+                            rt,
+                            controls,
+                            num_orders_max,
+                        )
+                    else if (workspace != null) orders_mod.ordersScatIntoWithActive(
+                        orders_workspace,
+                        0,
+                        nlayer,
+                        geo,
+                        &atten,
+                        rt,
+                        controls,
+                        num_orders_max,
+                    ) else orders_mod.ordersScatInto(
+                        orders_workspace,
+                        0,
+                        nlayer,
+                        geo,
+                        &atten,
+                        rt,
+                        controls,
+                        num_orders_max,
+                    )
+                else
+                    orders_mod.ordersScatTransportInto(
+                        orders_workspace,
+                        0,
+                        nlayer,
+                        geo,
+                        &atten,
+                        rt,
+                        controls,
+                        num_orders_max,
+                    );
+            };
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.orders_total, Trace.elapsed(orders_start));
+            const reflectance_start = Trace.begin();
+            const refl_fc = refl_fc: {
+                const zone = Trace.deepStaticZone(@src(), "labos.reflectance_integral");
+                defer zone.end();
+                break :refl_fc if (use_integrated_source)
+                    calcIntegratedReflectanceWithBasis(
+                        input.layers,
+                        input.source_interfaces,
+                        input.rtm_quadrature,
+                        orders_result.ud,
+                        nlayer,
+                        i_fourier,
+                        geo,
+                        plm_basis,
+                        adjacent_layer_phase_max_indices,
+                        layer_phase_kernels,
+                        layer_phase_kernel_valid,
+                    )
+                else
+                    calcReflectance(orders_result.ud, nlayer, geo);
+            };
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_integral, Trace.elapsed(reflectance_start));
+            const weighted_refl_fc = if (i_fourier == 0) blk: {
+                break :blk refl_fc;
             } else blk: {
                 const cos_m_dphi = math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
-                break :blk (2.0 * pressure_tangent_refl_fc) * cos_m_dphi;
+                break :blk (2.0 * refl_fc) * cos_m_dphi;
             };
-            aerosol_layer_mid_pressure_tangent += weighted_pressure_tangent_refl_fc;
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_aerosol_layer_pressure_weighting, Trace.elapsed(pressure_weighting_start));
+            reflectance += weighted_refl_fc;
+            if (wants_surface_albedo and i_fourier == 0) {
+                surface_albedo_tangent += surfaceAlbedoWeightingFunction(orders_result.ud, geo);
+            }
+            if (wants_aerosol_optical_depth) {
+                const aod_weighting_start = Trace.begin();
+                const tangent_refl_fc = tangent_refl_fc: {
+                    const zone = Trace.deepStaticZone(@src(), "labos.reflectance.aod_weighting");
+                    defer zone.end();
+                    break :tangent_refl_fc if (use_integrated_source)
+                        calcAerosolOpticalDepthWeightingWithBasis(
+                            input.layers,
+                            input.rtm_quadrature,
+                            orders_result.ud,
+                            orders_result.ud_sum_local,
+                            nlayer,
+                            i_fourier,
+                            controls.use_spherical_correction,
+                            geo,
+                            plm_basis,
+                            adjacent_layer_phase_max_indices,
+                        )
+                    else
+                        try nonIntegratedReflectanceTangent(
+                            allocator,
+                            input.layers,
+                            .aerosol_optical_depth,
+                            i_fourier,
+                            geo,
+                            &atten,
+                            rt,
+                            controls,
+                            plm_basis,
+                            num_orders_max,
+                        );
+                };
+                const weighted_tangent_refl_fc = if (i_fourier == 0)
+                    tangent_refl_fc
+                else
+                    (2.0 * tangent_refl_fc) * math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+                aerosol_optical_depth_tangent += weighted_tangent_refl_fc;
+                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_aerosol_optical_depth_weighting, Trace.elapsed(aod_weighting_start));
+            }
+            if (wants_aerosol_layer_mid_pressure) {
+                const pressure_weighting_start = Trace.begin();
+                const pressure_tangent_refl_fc = pressure_tangent_refl_fc: {
+                    const zone = Trace.deepStaticZone(@src(), "labos.reflectance.pressure_weighting");
+                    defer zone.end();
+                    break :pressure_tangent_refl_fc if (use_integrated_source) calcAerosolLayerPressureShiftWeightingWithBasis(
+                        input.layers,
+                        input.rtm_quadrature,
+                        orders_result.ud,
+                        orders_result.ud_sum_local,
+                        nlayer,
+                        i_fourier,
+                        controls.use_spherical_correction,
+                        geo,
+                        plm_basis,
+                    ) else blk: {
+                        if (!hasLayerJacobian(input.layers, .aerosol_layer_mid_pressure_hpa)) return error.UnsupportedDerivativeMode;
+                        break :blk try nonIntegratedReflectanceTangent(
+                            allocator,
+                            input.layers,
+                            .aerosol_layer_mid_pressure_hpa,
+                            i_fourier,
+                            geo,
+                            &atten,
+                            rt,
+                            controls,
+                            plm_basis,
+                            num_orders_max,
+                        );
+                    };
+                };
+                const weighted_pressure_tangent_refl_fc = if (i_fourier == 0) blk: {
+                    break :blk pressure_tangent_refl_fc;
+                } else blk: {
+                    const cos_m_dphi = math.cos(@as(f64, @floatFromInt(i_fourier)) * input.relative_azimuth_rad);
+                    break :blk (2.0 * pressure_tangent_refl_fc) * cos_m_dphi;
+                };
+                aerosol_layer_mid_pressure_tangent += weighted_pressure_tangent_refl_fc;
+                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_aerosol_layer_pressure_weighting, Trace.elapsed(pressure_weighting_start));
+            }
+            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.labos_fourier_total, Trace.elapsed(fourier_start));
+            if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) {
+                if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.fourier_tail_breaks, 1);
+                stop_fourier_loop = true;
+            }
         }
-        if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.labos_fourier_total, Trace.elapsed(fourier_start));
-        if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) {
-            if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addCounter(.fourier_tail_breaks, 1);
-            break;
-        }
+        if (stop_fourier_loop) break;
     }
 
     const jacobian_assembly_start = Trace.begin();
-    var result_jacobian = jacobian.zero();
-    jacobian.set(&result_jacobian, .surface_albedo, surface_albedo_tangent);
-    jacobian.set(&result_jacobian, .aerosol_optical_depth, aerosol_optical_depth_tangent);
-    jacobian.set(&result_jacobian, .aerosol_layer_mid_pressure_hpa, aerosol_layer_mid_pressure_tangent);
+    const result_jacobian = result_jacobian: {
+        const zone = Trace.deepStaticZone(@src(), "labos.reflectance.jacobian_assembly");
+        defer zone.end();
+        var assembled = jacobian.zero();
+        jacobian.set(&assembled, .surface_albedo, surface_albedo_tangent);
+        jacobian.set(&assembled, .aerosol_optical_depth, aerosol_optical_depth_tangent);
+        jacobian.set(&assembled, .aerosol_layer_mid_pressure_hpa, aerosol_layer_mid_pressure_tangent);
+        break :result_jacobian assembled;
+    };
     if (Trace.enabled) if (Trace.asWorker(trace)) |sink| sink.addSection(.reflectance_jacobian_assembly, Trace.elapsed(jacobian_assembly_start));
     return .{
         .reflectance = math.clamp(reflectance, 0.0, 2.0),

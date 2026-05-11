@@ -253,35 +253,46 @@ fn computeForwardSampleAtWavelengthWithScratch(
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
+    const sample_zone = Trace.deepStaticZone(@src(), "forward_sample");
+    defer sample_zone.end();
+
     const trace = Trace.asWorker(labos_workspace.trace);
     if (Trace.enabled) if (trace) |sink| sink.addCounter(.forward_samples, 1);
 
     const input_start = Trace.begin();
-    const input = try ForwardInput.configuredForwardInput(
-        scene,
-        route,
-        prepared,
-        wavelength_nm,
-        layer_inputs,
-        pseudo_spherical_layers,
-        source_interfaces,
-        rtm_quadrature_levels,
-        pseudo_spherical_samples,
-        pseudo_spherical_level_starts,
-        pseudo_spherical_level_altitudes,
-        support_carrier_valid,
-        support_carriers,
-        profile_spectroscopy_cache,
-        if (Trace.enabled) trace else {},
-    );
+    const input = input: {
+        const zone = Trace.deepStaticZone(@src(), "forward_sample.configured_forward_input");
+        defer zone.end();
+        break :input try ForwardInput.configuredForwardInput(
+            scene,
+            route,
+            prepared,
+            wavelength_nm,
+            layer_inputs,
+            pseudo_spherical_layers,
+            source_interfaces,
+            rtm_quadrature_levels,
+            pseudo_spherical_samples,
+            pseudo_spherical_level_starts,
+            pseudo_spherical_level_altitudes,
+            support_carrier_valid,
+            support_carriers,
+            profile_spectroscopy_cache,
+            if (Trace.enabled) trace else {},
+        );
+    };
     if (Trace.enabled) if (trace) |sink| sink.addSection(.forward_input, Trace.elapsed(input_start));
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
     const labos_start = Trace.begin();
-    const forward = if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
-        try execute_with_workspace(allocator, effective_route, input, labos_workspace)
-    else
-        try implementations.transport.executePrepared(allocator, effective_route, input);
+    const forward = forward: {
+        const zone = Trace.deepStaticZone(@src(), "forward_sample.labos_execute");
+        defer zone.end();
+        break :forward if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
+            try execute_with_workspace(allocator, effective_route, input, labos_workspace)
+        else
+            try implementations.transport.executePrepared(allocator, effective_route, input);
+    };
     if (Trace.enabled) if (trace) |sink| sink.addSection(.labos_execute, Trace.elapsed(labos_start));
     const radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
     return .{
@@ -291,6 +302,18 @@ fn computeForwardSampleAtWavelengthWithScratch(
 }
 
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-forward-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-forward-worker";
+    Trace.setThreadName(thread_name);
+
+    const worker_zone = Trace.staticZone(@src(), "forward_prefetch.worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -312,35 +335,41 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     defer scratch.deinit(allocator);
 
     while (worker.queue.next()) |chunk| {
-        for (chunk.start..chunk.end) |index| {
-            const miss = worker.misses[index];
-            const profile_spectroscopy_cache = if (worker.profile_spectroscopy_caches.len == worker.misses.len)
-                &worker.profile_spectroscopy_caches[index]
-            else
-                null;
-            worker.results[index] = computeForwardSampleAtWavelengthWithScratch(
-                allocator,
-                worker.scene,
-                worker.route,
-                worker.prepared,
-                miss.wavelength_nm,
-                worker.safe_span,
-                worker.implementations,
-                scratch.layer_inputs,
-                scratch.pseudo_spherical_layers,
-                scratch.source_interfaces,
-                scratch.rtm_quadrature_levels,
-                scratch.pseudo_spherical_samples,
-                scratch.pseudo_spherical_level_starts,
-                scratch.pseudo_spherical_level_altitudes,
-                scratch.support_carrier_valid,
-                scratch.support_carriers,
-                profile_spectroscopy_cache,
-                &scratch.labos_workspace,
-            ) catch |err| {
-                worker.error_state.store(err);
-                return;
-            };
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "forward_prefetch.chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
+
+            for (chunk.start..chunk.end) |index| {
+                const miss = worker.misses[index];
+                const profile_spectroscopy_cache = if (worker.profile_spectroscopy_caches.len == worker.misses.len)
+                    &worker.profile_spectroscopy_caches[index]
+                else
+                    null;
+                worker.results[index] = computeForwardSampleAtWavelengthWithScratch(
+                    allocator,
+                    worker.scene,
+                    worker.route,
+                    worker.prepared,
+                    miss.wavelength_nm,
+                    worker.safe_span,
+                    worker.implementations,
+                    scratch.layer_inputs,
+                    scratch.pseudo_spherical_layers,
+                    scratch.source_interfaces,
+                    scratch.rtm_quadrature_levels,
+                    scratch.pseudo_spherical_samples,
+                    scratch.pseudo_spherical_level_starts,
+                    scratch.pseudo_spherical_level_altitudes,
+                    scratch.support_carrier_valid,
+                    scratch.support_carriers,
+                    profile_spectroscopy_cache,
+                    &scratch.labos_workspace,
+                ) catch |err| {
+                    worker.error_state.store(err);
+                    return;
+                };
+            }
         }
     }
 }

@@ -509,17 +509,25 @@ pub fn prepareResolvedVendorO2ACaseWithTrace(
     inputs.reference = inputs.reference[0..0];
     errdefer allocator.free(reference);
 
+    var optical_trace: OpticsPrepare.PrepareTrace = .{};
     const optical_start = std.time.nanoTimestamp();
-    var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
+    var prepared = try OpticsPrepare.prepareWithTrace(allocator, &scene, .{
         .profile = &inputs.profile,
         .spectroscopy_profile = &inputs.spectroscopy_profile,
         .cross_sections = &inputs.cross_sections,
         .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
         .spectroscopy_lines = &inputs.line_list,
         .lut = &inputs.lut,
-    });
+    }, &optical_trace);
     errdefer prepared.deinit(allocator);
-    if (trace) |profile| profile.optical_prepare_ns = elapsedNs(optical_start);
+    if (trace) |profile| {
+        profile.optical_prepare_ns = elapsedNs(optical_start);
+        profile.optical_context_init_ns = optical_trace.context_init_ns;
+        profile.optical_absorbers_build_ns = optical_trace.absorbers_build_ns;
+        profile.optical_accumulation_ns = optical_trace.accumulation_ns;
+        profile.optical_finalize_ns = optical_trace.finalize_ns;
+        profile.optical_shared_geometry_ns = optical_trace.shared_geometry_ns;
+    }
 
     const weak_cutoff_start = std.time.nanoTimestamp();
     try installVendorWeakCutoffGrid(allocator, &scene, &prepared);

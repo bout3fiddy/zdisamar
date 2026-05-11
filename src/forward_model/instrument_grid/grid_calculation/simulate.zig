@@ -40,9 +40,22 @@ const ProfileCacheBuildWorker = struct {
     forward_misses: []const SpectralEval.ForwardCacheMiss,
     caches: []SpectroscopyState.ProfileNodeSpectroscopyCache,
     queue: *ProfileCacheBuildQueue,
+    worker_index: usize = 0,
 };
 
 fn profileCacheBuildWorkerMain(worker: *ProfileCacheBuildWorker) void {
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-profile-cache-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-profile-cache";
+    Trace.setThreadName(thread_name);
+
+    const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.worker");
+    zone.value(@intCast(worker.worker_index));
+    defer zone.end();
+
     while (worker.queue.next()) |chunk| {
         for (chunk.start..chunk.end) |index| {
             worker.caches[index] = SpectroscopyState.ProfileNodeSpectroscopyCache.init(
@@ -134,6 +147,10 @@ fn buildProfileSpectroscopyCaches(
     prepared: *const OpticsPreparation.PreparedOpticalState,
     forward_misses: []const SpectralEval.ForwardCacheMiss,
 ) ![]SpectroscopyState.ProfileNodeSpectroscopyCache {
+    const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.build");
+    zone.value(@intCast(forward_misses.len));
+    defer zone.end();
+
     const caches = try allocator.alloc(SpectroscopyState.ProfileNodeSpectroscopyCache, forward_misses.len);
     errdefer allocator.free(caches);
 
@@ -158,6 +175,7 @@ fn buildProfileSpectroscopyCaches(
             .forward_misses = forward_misses,
             .caches = caches,
             .queue = &queue,
+            .worker_index = worker_index,
         };
         if (worker_index + 1 < worker_count) {
             threads[started_thread_count] = std.Thread.spawn(
@@ -187,6 +205,9 @@ pub fn simulateInternal(
     evaluation_cache: *SpectralEval.SpectralEvaluationCache,
     wavelength_plan_storage: ?*Storage.SummaryStorage,
 ) Storage.Error!Types.InstrumentGridSummary {
+    const simulate_zone = Trace.staticZone(@src(), "simulate.product");
+    defer simulate_zone.end();
+
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try Storage.validateBuffers(sample_count, buffers);
@@ -220,6 +241,9 @@ pub fn simulateInternal(
 
     const wavelength_sampling_start = Trace.begin();
     const wavelength_sampling: []const WavelengthSampling.WavelengthSampling = blk: {
+        const zone = Trace.staticZone(@src(), "simulate.wavelength_sampling");
+        defer zone.end();
+
         if (wavelength_plan_storage) |storage| {
             if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
                 break :blk storage.wavelength_sampling;
@@ -252,6 +276,9 @@ pub fn simulateInternal(
     if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_wavelength_sampling, Trace.elapsed(wavelength_sampling_start));
     const miss_collection_start = Trace.begin();
     const forward_misses: []const SpectralEval.ForwardCacheMiss = blk: {
+        const zone = Trace.staticZone(@src(), "simulate.forward_miss_collection");
+        defer zone.end();
+
         if (wavelength_plan_storage) |storage| {
             if (!storage.forward_misses_valid) {
                 storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
@@ -268,25 +295,33 @@ pub fn simulateInternal(
         );
         break :blk owned_forward_misses;
     };
+    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_forward_miss_collection, Trace.elapsed(miss_collection_start));
     const profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache = blk: {
+        const zone = Trace.staticZone(@src(), "simulate.profile_spectroscopy_cache");
+        defer zone.end();
+
         if (wavelength_plan_storage) |storage| {
             break :blk try ensureProfileSpectroscopyCaches(allocator, storage, prepared, forward_misses);
         }
         break :blk &.{};
     };
-    if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_forward_miss_collection, Trace.elapsed(miss_collection_start));
     const forward_prefetch_start = Trace.begin();
-    try SpectralEval.prefetchForwardSamples(
-        allocator,
-        scene,
-        route,
-        prepared,
-        implementations,
-        safe_span,
-        forward_misses,
-        profile_spectroscopy_caches,
-        evaluation_cache,
-    );
+    {
+        const zone = Trace.staticZone(@src(), "simulate.forward_prefetch_wall");
+        zone.value(@intCast(forward_misses.len));
+        defer zone.end();
+        try SpectralEval.prefetchForwardSamples(
+            allocator,
+            scene,
+            route,
+            prepared,
+            implementations,
+            safe_span,
+            forward_misses,
+            profile_spectroscopy_caches,
+            evaluation_cache,
+        );
+    }
     if (Trace.enabled) if (trace) |run| run.addWallSection(.simulate_forward_prefetch_wall, Trace.elapsed(forward_prefetch_start));
 
     var radiance_sum: f64 = 0.0;
