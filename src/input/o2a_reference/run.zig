@@ -39,6 +39,13 @@ pub const ResolvedVendorO2ACase = reference_types.ResolvedVendorO2ACase;
 pub const LoadedVendorO2AInputs = reference_types.LoadedVendorO2AInputs;
 pub const SolarSpectrumSample = reference_types.SolarSpectrumSample;
 
+pub const PreparedRuntimeCase = struct {
+    reference: []ReferenceSample,
+    scene: Scene,
+    route: Route,
+    prepared: OpticsPrepare.PreparedOpticalState,
+};
+
 pub fn loadReferenceSamples(allocator: Allocator, path: []const u8) ![]ReferenceSample {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
@@ -476,22 +483,33 @@ pub fn runResolvedVendorO2AReflectanceCase(
 pub fn prepareResolvedVendorO2ACase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
-) !struct {
-    reference: []ReferenceSample,
-    scene: Scene,
-    route: Route,
-    prepared: OpticsPrepare.PreparedOpticalState,
-} {
+) !PreparedRuntimeCase {
+    return prepareResolvedVendorO2ACaseWithTrace(allocator, resolved, null);
+}
+
+pub fn prepareResolvedVendorO2ACaseWithTrace(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+    trace: ?*@import("support_types.zig").O2APrepareTrace,
+) !PreparedRuntimeCase {
+    const total_start = std.time.nanoTimestamp();
+    if (trace) |profile| profile.* = .{};
+
+    const load_start = std.time.nanoTimestamp();
     var inputs = try loadResolvedVendorO2AInputs(allocator, resolved);
     defer inputs.deinit(allocator);
+    if (trace) |profile| profile.load_inputs_ns = elapsedNs(load_start);
 
+    const scene_start = std.time.nanoTimestamp();
     var scene = try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
     errdefer scene.deinitOwned(allocator);
+    if (trace) |profile| profile.build_scene_ns = elapsedNs(scene_start);
 
     const reference = inputs.reference;
     inputs.reference = inputs.reference[0..0];
     errdefer allocator.free(reference);
 
+    const optical_start = std.time.nanoTimestamp();
     var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
         .profile = &inputs.profile,
         .spectroscopy_profile = &inputs.spectroscopy_profile,
@@ -501,11 +519,20 @@ pub fn prepareResolvedVendorO2ACase(
         .lut = &inputs.lut,
     });
     errdefer prepared.deinit(allocator);
+    if (trace) |profile| profile.optical_prepare_ns = elapsedNs(optical_start);
 
+    const weak_cutoff_start = std.time.nanoTimestamp();
     try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
-    try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
+    if (trace) |profile| profile.weak_cutoff_grid_ns = elapsedNs(weak_cutoff_start);
 
+    const solar_rewindow_start = std.time.nanoTimestamp();
+    try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
+    if (trace) |profile| profile.solar_rewindow_ns = elapsedNs(solar_rewindow_start);
+
+    const route_start = std.time.nanoTimestamp();
     const route = try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
+    if (trace) |profile| profile.route_prepare_ns = elapsedNs(route_start);
+    if (trace) |profile| profile.total_ns = elapsedNs(total_start);
 
     return .{
         .reference = reference,
@@ -513,6 +540,10 @@ pub fn prepareResolvedVendorO2ACase(
         .route = route,
         .prepared = prepared,
     };
+}
+
+fn elapsedNs(start: i128) u64 {
+    return @intCast(std.time.nanoTimestamp() - start);
 }
 
 fn installVendorWeakCutoffGrid(

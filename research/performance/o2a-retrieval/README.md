@@ -15,7 +15,7 @@ Current paired sweep summary:
 
 ```text
 DISAMAR Fortran: 100/100 converged, median 1228.826 s, mean 1189.862 s
-zdisamar:        100/100 converged, median    4.349 s, mean    4.309 s
+zdisamar:        100/100 converged, median    3.834 s, mean    3.794 s
 ```
 
 The result is not a different optimal-estimation shape. zdisamar is faster
@@ -29,5 +29,6 @@ Read these notes in order:
 - [Optimisation notes](optimisation-notes/)
 - [Session reuse](session-reuse.md)
 - [State-vector Jacobians](state-vector-jacobians.md)
+- [Inter-iteration hillclimb](inter-iteration-hillclimb.md)
 - [Paired DISAMAR/zdisamar validation](paired-disamar-zdisamar-validation.md)
 - [Open questions](open-questions.md)

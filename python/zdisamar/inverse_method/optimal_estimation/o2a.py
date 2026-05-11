@@ -128,6 +128,7 @@ def _disamar_oe(
     state_vector: StateVector,
     controls: RetrievalControls | None = None,
 ) -> Result:
+    final_evaluate_state = _lazy_final_evaluator(inverse_model, state_vector)
     result = retrieve(
         lambda state: inverse_model.evaluate(state, state_vector),
         measurement,
@@ -136,8 +137,36 @@ def _disamar_oe(
     )
     return attach_final_evaluation(
         replace(result, measurement=measurement),
-        lambda state: inverse_model.evaluate(state, state_vector),
+        final_evaluate_state,
     )
+
+
+def _lazy_final_evaluator(
+    inverse_model: O2AInverseForwardModel,
+    state_vector: StateVector,
+) -> Callable[[np.ndarray], ForwardEvaluation]:
+    if type(inverse_model) is not O2AInverseForwardModel:
+        return lambda state: inverse_model.evaluate(state, state_vector)
+
+    template = inverse_model._template
+    library_path = inverse_model._library_path
+    if not inverse_model._use_forward_session:
+        return lambda state: O2AInverseForwardModel(
+            template,
+            library_path=library_path,
+            use_forward_session=False,
+        ).evaluate(state, state_vector)
+
+    def evaluate_with_fresh_session(state: np.ndarray) -> ForwardEvaluation:
+        with o2a_forward_session(template, library_path=library_path) as session:
+            session_model = O2AInverseForwardModel(
+                template,
+                library_path=library_path,
+                forward_session=session,
+            )
+            return session_model.evaluate(state, state_vector)
+
+    return evaluate_with_fresh_session
 
 
 def attach_final_evaluation(
@@ -151,12 +180,16 @@ def attach_final_evaluation(
         and result.last_evaluated_state is not None
         and np.array_equal(result.state, result.last_evaluated_state)
     ):
-        final_evaluation = result.last_evaluation
-    else:
-        final_evaluation = evaluate_state(result.state)
+        return replace(
+            result,
+            _final_evaluation=result.last_evaluation,
+            _final_evaluation_factory=None,
+        )
+    final_state = np.array(result.state, copy=True)
     return replace(
         result,
-        final_evaluation=final_evaluation,
+        _final_evaluation=None,
+        _final_evaluation_factory=lambda: evaluate_state(final_state),
     )
 
 

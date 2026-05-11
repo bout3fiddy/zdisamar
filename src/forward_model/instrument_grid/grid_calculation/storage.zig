@@ -48,6 +48,57 @@ pub const Buffers = struct {
     reflectance_noise_sigma: ?[]f64 = null,
 };
 
+pub const CacheTrace = struct {
+    wavelength_plan_hits: u64 = 0,
+    wavelength_plan_misses: u64 = 0,
+    forward_miss_list_hits: u64 = 0,
+    forward_miss_list_misses: u64 = 0,
+    profile_spectroscopy_hits: u64 = 0,
+    profile_spectroscopy_misses: u64 = 0,
+    last_wavelength_plan_hit: bool = false,
+    last_forward_miss_list_hit: bool = false,
+    last_profile_spectroscopy_hit: bool = false,
+    last_forward_miss_count: u64 = 0,
+    last_profile_spectroscopy_cache_count: u64 = 0,
+
+    pub fn startEvaluation(self: *CacheTrace) void {
+        self.last_wavelength_plan_hit = false;
+        self.last_forward_miss_list_hit = false;
+        self.last_profile_spectroscopy_hit = false;
+        self.last_forward_miss_count = 0;
+        self.last_profile_spectroscopy_cache_count = 0;
+    }
+
+    pub fn recordWavelengthPlan(self: *CacheTrace, hit: bool) void {
+        self.last_wavelength_plan_hit = hit;
+        if (hit) {
+            self.wavelength_plan_hits += 1;
+        } else {
+            self.wavelength_plan_misses += 1;
+        }
+    }
+
+    pub fn recordForwardMissList(self: *CacheTrace, hit: bool, count: usize) void {
+        self.last_forward_miss_list_hit = hit;
+        self.last_forward_miss_count = @intCast(count);
+        if (hit) {
+            self.forward_miss_list_hits += 1;
+        } else {
+            self.forward_miss_list_misses += 1;
+        }
+    }
+
+    pub fn recordProfileSpectroscopy(self: *CacheTrace, hit: bool, count: usize) void {
+        self.last_profile_spectroscopy_hit = hit;
+        self.last_profile_spectroscopy_cache_count = @intCast(count);
+        if (hit) {
+            self.profile_spectroscopy_hits += 1;
+        } else {
+            self.profile_spectroscopy_misses += 1;
+        }
+    }
+};
+
 // Reusable instrument grid storage that owns the backing storage.
 pub const SummaryStorage = struct {
     wavelengths: []f64 = &.{},
@@ -77,6 +128,7 @@ pub const SummaryStorage = struct {
     forward_misses_valid: bool = false,
     profile_spectroscopy_cache_key: u64 = 0,
     profile_spectroscopy_cache_valid: bool = false,
+    cache_trace: CacheTrace = .{},
 
     pub fn deinit(self: *SummaryStorage, allocator: Allocator) void {
         freeBuffer(allocator, self.wavelengths);

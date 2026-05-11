@@ -6,6 +6,8 @@ from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
+    CO2APrepareTrace,
+    CO2ASessionCacheTrace,
     CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
@@ -28,6 +30,16 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
     lib.zds_prepare_o2a_json.restype = ctypes.c_int
     lib.zds_warm_o2a_session.argtypes = [ctypes.c_void_p]
     lib.zds_warm_o2a_session.restype = ctypes.c_int
+    lib.zds_last_o2a_prepare_trace.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(CO2APrepareTrace),
+    ]
+    lib.zds_last_o2a_prepare_trace.restype = ctypes.c_int
+    lib.zds_last_o2a_session_cache_trace.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(CO2ASessionCacheTrace),
+    ]
+    lib.zds_last_o2a_session_cache_trace.restype = ctypes.c_int
     lib.zds_default_o2a_input_json.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,

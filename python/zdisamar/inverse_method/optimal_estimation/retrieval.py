@@ -1,6 +1,7 @@
 """Retrieval data objects and diagnostics."""
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -84,12 +85,30 @@ class Result:
     averaging_kernel: np.ndarray
     timing: tuple[IterationTiming, ...] = ()
     measurement: Measurement | None = None
-    final_evaluation: ForwardEvaluation | None = None
     last_evaluated_state: np.ndarray | None = None
     last_evaluation: ForwardEvaluation | None = None
+    _final_evaluation: ForwardEvaluation | None = field(default=None, repr=False)
+    _final_evaluation_factory: Callable[[], ForwardEvaluation] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def value(self, name: StateName) -> float:
         return float(self.state[self.state_names.index(name)])
+
+    @property
+    def final_evaluation(self) -> ForwardEvaluation | None:
+        evaluation = self._final_evaluation
+        if evaluation is not None:
+            return evaluation
+        factory = self._final_evaluation_factory
+        if factory is None:
+            return None
+        evaluation = factory()
+        object.__setattr__(self, "_final_evaluation", evaluation)
+        object.__setattr__(self, "_final_evaluation_factory", None)
+        return evaluation
 
     @property
     def plot(self):

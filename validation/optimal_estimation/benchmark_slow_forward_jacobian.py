@@ -74,16 +74,111 @@ def run_retrieval(
     state_vector: optimal_estimation.StateVector,
     measurement: optimal_estimation.Measurement,
     forward_session: zd.O2AForwardSession | None = None,
+    trace_records: list[dict[str, Any]] | None = None,
 ) -> optimal_estimation.Result:
     return o2a_oe.disamar_oe(
-        inverse_model=optimal_estimation.O2AInverseForwardModel(
+        inverse_model=TracingO2AInverseForwardModel(
             case,
             forward_session=forward_session,
+            trace_records=trace_records,
         ),
         measurement=measurement,
         state_vector=state_vector,
         controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
     )
+
+
+class TracingO2AInverseForwardModel(o2a_oe.O2AInverseForwardModel):
+    def __init__(
+        self,
+        template: zd.O2AInput,
+        *,
+        forward_session: zd.O2AForwardSession | None,
+        trace_records: list[dict[str, Any]] | None,
+    ):
+        super().__init__(template, forward_session=forward_session)
+        self._trace_records = trace_records
+
+    def evaluate(
+        self,
+        state,
+        state_vector: optimal_estimation.StateVector,
+    ) -> optimal_estimation.ForwardEvaluation:
+        total_start = time.perf_counter()
+        settings_start = time.perf_counter()
+        settings = self.settings_for_state(state, state_vector)
+        settings_s = time.perf_counter() - settings_start
+
+        if self._forward_session is None:
+            return super().evaluate(state, state_vector)
+
+        prepare_start = time.perf_counter()
+        prepared = self._forward_session.prepare(settings)
+        prepare_s = time.perf_counter() - prepare_start
+        prepare_trace = self._forward_session.last_prepare_trace()
+
+        evaluation, evaluation_trace = evaluate_prepared_reflectance_timed(
+            prepared,
+            state_vector.jacobian_names,
+        )
+        session_cache_trace = prepared.last_session_cache_trace()
+        scale_start = time.perf_counter()
+        scaled = o2a_oe.scale_reflectance_jacobian(
+            evaluation,
+            state_vector.jacobian_scales(state),
+        )
+        scale_s = time.perf_counter() - scale_start
+
+        if self._trace_records is not None:
+            self._trace_records.append(
+                {
+                    "index": len(self._trace_records) + 1,
+                    "settings_for_state_s": settings_s,
+                    "prepare_total_s": prepare_s,
+                    "prepare_trace": prepare_trace,
+                    "forward_evaluation_trace": evaluation_trace,
+                    "session_cache_trace": session_cache_trace,
+                    "scale_jacobian_s": scale_s,
+                    "total_evaluate_s": time.perf_counter() - total_start,
+                }
+            )
+        return scaled
+
+
+def evaluate_prepared_reflectance_timed(
+    prepared,
+    state_names: tuple[str, ...],
+) -> tuple[optimal_estimation.ForwardEvaluation, dict[str, float]]:
+    run_start = time.perf_counter()
+    with prepared.forward_model(jacobian=True, jacobian_state_names=state_names) as spectrum:
+        native_forward_s = time.perf_counter() - run_start
+        copy_start = time.perf_counter()
+        wavelength_nm = spectrum.wavelength_nm.copy()
+        reflectance = spectrum.reflectance.copy()
+        radiance_jacobian = spectrum.radiance_jacobian.copy()
+        irradiance = spectrum.irradiance.copy()
+        available_state_names = spectrum.jacobian_state_names
+        copy_outputs_s = time.perf_counter() - copy_start
+
+    conversion_start = time.perf_counter()
+    reflectance_jacobian_all = o2a_oe.reflectance_jacobian_from_radiance_jacobian(
+        radiance_jacobian,
+        irradiance,
+        prepared.input.geometry.solar_mu0,
+    )
+    conversion_s = time.perf_counter() - conversion_start
+    if available_state_names != state_names:
+        raise ValueError("Native Jacobian state selection did not preserve requested state order")
+    evaluation = optimal_estimation.ForwardEvaluation(
+        wavelength_nm=wavelength_nm,
+        reflectance=reflectance,
+        reflectance_jacobian=reflectance_jacobian_all,
+    )
+    return evaluation, {
+        "native_forward_s": native_forward_s,
+        "copy_outputs_s": copy_outputs_s,
+        "radiance_to_reflectance_jacobian_s": conversion_s,
+    }
 
 
 def retrieval_record(result: optimal_estimation.Result, wall_s: float) -> dict[str, Any]:
@@ -110,6 +205,25 @@ def retrieval_record(result: optimal_estimation.Result, wall_s: float) -> dict[s
             }
             for timing in result.timing
         ],
+    }
+
+
+def add_final_evaluation_accounting(
+    record: dict[str, Any],
+    final_evaluation_trace: list[dict[str, Any]],
+    lazy_final_evaluation_s: float,
+    lazy_final_evaluation_cached: bool,
+) -> dict[str, Any]:
+    traced_final_evaluation_s = sum(
+        float(item["total_evaluate_s"]) for item in final_evaluation_trace
+    )
+    return record | {
+        "final_evaluation_mode": "lazy",
+        "final_evaluation_in_retrieval_s": 0.0,
+        "lazy_final_evaluation_s": lazy_final_evaluation_s,
+        "lazy_final_evaluation_trace_s": traced_final_evaluation_s,
+        "lazy_final_evaluation_cached": lazy_final_evaluation_cached,
+        "retrieval_plus_lazy_final_evaluation_s": record["wall_s"] + lazy_final_evaluation_s,
     }
 
 
@@ -160,6 +274,68 @@ def stats(values: list[float]) -> dict[str, float]:
     }
 
 
+def trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
+    def phase(path: tuple[str, ...]) -> dict[str, float]:
+        values = []
+        for record in trace_records:
+            value: Any = record
+            for key in path:
+                value = value[key]
+            values.append(float(value))
+        return stats(values)
+
+    return {
+        "iterations": len(trace_records),
+        "settings_for_state_s": phase(("settings_for_state_s",)),
+        "prepare_total_s": phase(("prepare_total_s",)),
+        "prepare_python_total_s": phase(("prepare_trace", "python_total_s")),
+        "prepare_native_call_s": phase(("prepare_trace", "native_call_s")),
+        "prepare_parse_json_s": phase(("prepare_trace", "parse_json_s")),
+        "prepare_load_inputs_s": phase(("prepare_trace", "load_inputs_s")),
+        "prepare_build_scene_s": phase(("prepare_trace", "build_scene_s")),
+        "prepare_optical_s": phase(("prepare_trace", "optical_prepare_s")),
+        "native_forward_s": phase(("forward_evaluation_trace", "native_forward_s")),
+        "copy_outputs_s": phase(("forward_evaluation_trace", "copy_outputs_s")),
+        "radiance_to_reflectance_jacobian_s": phase(
+            ("forward_evaluation_trace", "radiance_to_reflectance_jacobian_s")
+        ),
+        "scale_jacobian_s": phase(("scale_jacobian_s",)),
+        "total_evaluate_s": phase(("total_evaluate_s",)),
+        "session_cache": cache_trace_summary(trace_records),
+    }
+
+
+def cache_trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
+    def count_last_hits(key: str) -> int:
+        return sum(1 for record in trace_records if record["session_cache_trace"][key])
+
+    wavelength_plan_hits = count_last_hits("last_wavelength_plan_hit")
+    forward_miss_list_hits = count_last_hits("last_forward_miss_list_hit")
+    profile_spectroscopy_hits = count_last_hits("last_profile_spectroscopy_hit")
+    evaluations = len(trace_records)
+
+    return {
+        "wavelength_plan_hits": wavelength_plan_hits,
+        "wavelength_plan_misses": evaluations - wavelength_plan_hits,
+        "forward_miss_list_hits": forward_miss_list_hits,
+        "forward_miss_list_misses": evaluations - forward_miss_list_hits,
+        "profile_spectroscopy_hits": profile_spectroscopy_hits,
+        "profile_spectroscopy_misses": evaluations - profile_spectroscopy_hits,
+        "forward_miss_count": stats(
+            [
+                float(record["session_cache_trace"]["last_forward_miss_count"])
+                for record in trace_records
+            ]
+        ),
+        "profile_spectroscopy_cache_count": stats(
+            [
+                float(record["session_cache_trace"]["last_profile_spectroscopy_cache_count"])
+                for record in trace_records
+            ]
+        ),
+    }
+
+
 def main() -> int:
     case = build_case()
     profile = o2a_oe.pressure_altitude_profile_from_prepared_grid(case)
@@ -172,11 +348,27 @@ def main() -> int:
 
     session_setup_start = time.perf_counter()
     session = zd.o2a_forward_session(case)
+    session.enable_prepare_trace()
     session_setup_s = time.perf_counter() - session_setup_start
     try:
+        iteration_trace: list[dict[str, Any]] = []
         session_start = time.perf_counter()
-        session_result = run_retrieval(case, state_vector, measurement, forward_session=session)
+        session_result = run_retrieval(
+            case,
+            state_vector,
+            measurement,
+            forward_session=session,
+            trace_records=iteration_trace,
+        )
         session_reused_s = time.perf_counter() - session_start
+        retrieval_iteration_trace = iteration_trace[: session_result.iterations]
+        lazy_final_start = time.perf_counter()
+        _ = session_result.final_evaluation
+        lazy_final_evaluation_s = time.perf_counter() - lazy_final_start
+        final_evaluation_trace = iteration_trace[session_result.iterations :]
+        trace_count_after_lazy_final = len(iteration_trace)
+        _ = session_result.final_evaluation
+        lazy_final_evaluation_cached = len(iteration_trace) == trace_count_after_lazy_final
         prepared_probe = probe_prepared_calls(session, case, state_vector)
     finally:
         session.close()
@@ -191,7 +383,16 @@ def main() -> int:
         "measurement_build_s": measurement_s,
         "session": {
             "setup_s": session_setup_s,
-            "reused_retrieval": retrieval_record(session_result, session_reused_s),
+            "reused_retrieval": add_final_evaluation_accounting(
+                retrieval_record(session_result, session_reused_s),
+                final_evaluation_trace,
+                lazy_final_evaluation_s,
+                lazy_final_evaluation_cached,
+            ),
+            "reused_retrieval_iteration_trace": retrieval_iteration_trace,
+            "reused_retrieval_iteration_trace_summary": trace_summary(retrieval_iteration_trace),
+            "final_evaluation_trace": final_evaluation_trace,
+            "final_evaluation_trace_summary": trace_summary(final_evaluation_trace),
             "first_use_retrieval_s": session_setup_s + session_reused_s,
         },
         "direct_prepared_call_probe": prepared_probe,
@@ -205,6 +406,11 @@ def main() -> int:
         f"{report['session']['reused_retrieval']['wall_s']:.6f} s total, "
         f"{report['session']['reused_retrieval']['forward_model_and_jacobian_s']:.6f} s "
         "forward+jacobian"
+    )
+    print(
+        "  lazy final evaluation: "
+        f"{report['session']['reused_retrieval']['lazy_final_evaluation_s']:.6f} s "
+        "when requested"
     )
     print(
         "  prepared probe median: "
