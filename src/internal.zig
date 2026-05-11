@@ -23,13 +23,7 @@ pub const input_reference_data = struct {
     pub const ingest_reference_assets_loaded_asset = @import("input/reference_data/ingest/reference_assets_loaded_asset.zig");
 };
 
-pub const disamar_reference = struct {
-    pub const parser = @import("validation/disamar_reference/parser.zig");
-    pub const scene = @import("validation/disamar_reference/scene.zig");
-    pub const yaml = @import("validation/disamar_reference/yaml.zig");
-    pub const run = @import("validation/disamar_reference/run.zig");
-    pub const metrics = @import("validation/disamar_reference/metrics.zig");
-};
+pub const o2a_reference = @import("input/o2a_reference/root.zig");
 
 pub const common = struct {
     pub const errors = @import("common/errors.zig");

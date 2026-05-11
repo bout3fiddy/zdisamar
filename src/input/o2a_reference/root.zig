@@ -16,6 +16,8 @@ pub const Output = InstrumentGrid.InstrumentGridProduct;
 pub const ReflectanceCase = metrics.VendorO2AReflectanceCase;
 pub const ComparisonMetrics = metrics.ComparisonMetrics;
 pub const TrendTolerances = metrics.TrendTolerances;
+pub const TrendState = metrics.TrendState;
+pub const AssessmentVerdict = metrics.AssessmentVerdict;
 pub const AssessmentOutcome = metrics.AssessmentOutcome;
 pub const RangeExtremum = metrics.RangeExtremum;
 
@@ -24,6 +26,8 @@ pub const prepareResolvedVendorO2ACase = metrics.prepareResolvedVendorO2ACase;
 pub const computeComparisonMetrics = metrics.computeComparisonMetrics;
 pub const assessAgainstBaseline = metrics.assessAgainstBaseline;
 pub const loadResolvedO2ASpectroscopyLineList = metrics.loadResolvedO2ASpectroscopyLineList;
+pub const meanVectorInRange = metrics.meanVectorInRange;
+pub const minVectorInRange = metrics.minVectorInRange;
 
 const default_intervals = [_]AtmosphereModel.VerticalInterval{
     .{

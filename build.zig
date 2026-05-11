@@ -100,22 +100,6 @@ pub fn build(b: *std.Build) void {
             },
         },
     });
-    const disamar_reference_support_module = b.createModule(.{
-        .root_source_file = b.path("src/validation.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "build_options",
-                .module = build_options_module,
-            },
-            .{
-                .name = "ztracy",
-                .module = trace_ztracy_module,
-            },
-        },
-    });
-
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "zdisamar",
@@ -150,7 +134,7 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&c_api_install.step);
 
     const plot_spectrum_module = b.createModule(.{
-        .root_source_file = b.path("src/validation/disamar_reference/plot_spectrum_cli.zig"),
+        .root_source_file = b.path("src/validation/o2a_plot_spectrum_cli.zig"),
         .target = target,
         .optimize = runtime_optimize,
         .imports = &.{
@@ -173,27 +157,6 @@ pub fn build(b: *std.Build) void {
         .root_module = plot_spectrum_module,
     });
     b.installArtifact(plot_spectrum_exe);
-
-    const cli_module = b.createModule(.{
-        .root_source_file = b.path("src/disamar_reference_cli.zig"),
-        .target = target,
-        .optimize = runtime_optimize,
-        .imports = &.{
-            .{
-                .name = "build_options",
-                .module = build_options_module,
-            },
-            .{
-                .name = "ztracy",
-                .module = ztracy_stub_module,
-            },
-        },
-    });
-    const cli_exe = b.addExecutable(.{
-        .name = "zdisamar",
-        .root_module = cli_module,
-    });
-    b.installArtifact(cli_exe);
 
     const unit_test_module = b.createModule(.{
         .root_source_file = b.path("tests/unit/root.zig"),
@@ -273,30 +236,6 @@ pub fn build(b: *std.Build) void {
         "Run O2A vendor line-list helper smoke tests",
         "tests/validation/o2a_vendor_line_list_smoke_test.zig",
     );
-    const validation_o2a_yaml_module = b.createModule(.{
-        .root_source_file = b.path("tests/validation/o2a_yaml_parity_runtime_test.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "disamar_reference_support",
-                .module = disamar_reference_support_module,
-            },
-        },
-    });
-    const validation_o2a_yaml_tests = b.addTest(.{
-        .root_module = validation_o2a_yaml_module,
-    });
-    const run_validation_o2a_yaml = b.addRunArtifact(validation_o2a_yaml_tests);
-    const validation_o2a_yaml = SuiteSteps{
-        .compile_step = &validation_o2a_yaml_tests.step,
-        .run_step = &run_validation_o2a_yaml.step,
-    };
-    const validation_o2a_yaml_step = b.step(
-        "test-validation-o2a-yaml",
-        "Run the YAML-driven O2A DISAMAR reference and CLI validation lane",
-    );
-    validation_o2a_yaml_step.dependOn(&run_validation_o2a_yaml.step);
     const transport_smoke = addTestStep(
         b,
         target,
@@ -502,13 +441,11 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&lib.step);
     check_step.dependOn(&c_api_lib.step);
     check_step.dependOn(&plot_spectrum_exe.step);
-    check_step.dependOn(&cli_exe.step);
     check_step.dependOn(&unit_tests.step);
     check_step.dependOn(&internal_tests.step);
     check_step.dependOn(validation_o2a.compile_step);
     check_step.dependOn(validation_o2a_vendor.compile_step);
     check_step.dependOn(validation_o2a_vendor_line_list.compile_step);
-    check_step.dependOn(validation_o2a_yaml.compile_step);
     check_step.dependOn(&run_unit_tests.step);
     check_step.dependOn(&run_internal_tests.step);
 
@@ -517,7 +454,6 @@ pub fn build(b: *std.Build) void {
     test_fast_step.dependOn(&run_internal_tests.step);
     test_fast_step.dependOn(validation_o2a.compile_step);
     test_fast_step.dependOn(validation_o2a_vendor_line_list.run_step);
-    test_fast_step.dependOn(validation_o2a_yaml.run_step);
     test_fast_step.dependOn(o2a_optimal_estimation_validation_step);
 
     const test_transport_step = b.step("test-transport", "Run focused O2A exact transport verification");
@@ -531,7 +467,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(validation_o2a.run_step);
     test_step.dependOn(validation_o2a_vendor.run_step);
     test_step.dependOn(validation_o2a_vendor_line_list.run_step);
-    test_step.dependOn(validation_o2a_yaml.run_step);
     test_step.dependOn(o2a_plot_bundle_test_step);
     test_step.dependOn(o2a_optimal_estimation_validation_step);
 }

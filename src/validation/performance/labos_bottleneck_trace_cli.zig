@@ -2,6 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 
 const InstrumentGrid = internal.forward_model.instrument_grid;
+const o2a_reference = internal.o2a_reference;
 const RadiativeTransfer = internal.forward_model.radiative_transfer;
 const Trace = internal.forward_model.performance_trace;
 
@@ -11,7 +12,6 @@ const default_jacobian_trace_output_dir = "research/performance/tracing/output/o
 const Config = struct {
     output_dir: []const u8 = default_labos_trace_output_dir,
     output_dir_set: bool = false,
-    case_yaml_path: []const u8 = internal.disamar_reference.yaml.default_yaml_path,
     derivative_sweep: bool = false,
 };
 
@@ -74,39 +74,13 @@ fn mainInner() !void {
     try std.fs.cwd().makePath(config.output_dir);
 
     var prepare_timer = try std.time.Timer.start();
-    var loaded = loaded: {
-        const zone = Trace.staticZone(@src(), "trace_cli.load_case");
-        defer zone.end();
-        break :loaded try internal.disamar_reference.yaml.loadResolvedCaseFromFile(
-            allocator,
-            config.case_yaml_path,
-        );
-    };
-    defer loaded.deinit();
-    {
-        const zone = Trace.staticZone(@src(), "trace_cli.apply_overrides");
-        defer zone.end();
-        internal.disamar_reference.yaml.applyExecutionOverrides(&loaded.resolved, .{
-            .spectral_grid = .{
-                .start_nm = 755.0,
-                .end_nm = 776.0,
-                .sample_count = 701,
-            },
-            .adaptive_points_per_fwhm = 20,
-            .adaptive_strong_line_min_divisions = 8,
-            .adaptive_strong_line_max_divisions = 40,
-            .line_mixing_factor = 1.0,
-            .isotopes_sim = &.{ 1, 2, 3 },
-            .threshold_line_sim = 3.0e-5,
-            .cutoff_sim_cm1 = 200.0,
-        });
-    }
+    const input = o2a_reference.defaultInput();
     var prepared_case = prepared_case: {
         const zone = Trace.staticZone(@src(), "trace_cli.prepare_case");
         defer zone.end();
-        break :prepared_case try internal.disamar_reference.metrics.prepareResolvedVendorO2ACase(
+        break :prepared_case try o2a_reference.prepareResolvedVendorO2ACase(
             allocator,
-            &loaded.resolved,
+            &input,
         );
     };
     const prepare_ns = prepare_timer.read();
@@ -255,10 +229,6 @@ fn parseArgs(args: []const []const u8) !Config {
             if (index >= args.len) return error.MissingOutputDir;
             config.output_dir = args[index];
             config.output_dir_set = true;
-        } else if (std.mem.eql(u8, arg, "--case")) {
-            index += 1;
-            if (index >= args.len) return error.MissingCasePath;
-            config.case_yaml_path = args[index];
         } else if (std.mem.eql(u8, arg, "--derivative-sweep")) {
             config.derivative_sweep = true;
         } else {

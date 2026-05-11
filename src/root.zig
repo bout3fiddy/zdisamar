@@ -42,7 +42,6 @@ pub const PreparedInput = struct {
     }
 };
 
-pub const disamar_reference = @import("validation/disamar_reference/yaml.zig");
 pub const o2a = o2a_reference;
 pub const report = report_json;
 pub const atmospheric_budget_table = atmospheric_budget;
