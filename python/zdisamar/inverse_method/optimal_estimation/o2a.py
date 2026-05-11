@@ -61,7 +61,6 @@ class O2AInverseForwardModel:
         if (
             forward_session is not None
             and library_path is not None
-            and forward_session.library_path is not None
             and library_path != forward_session.library_path
         ):
             raise ValueError("library_path must match the supplied forward_session library_path")

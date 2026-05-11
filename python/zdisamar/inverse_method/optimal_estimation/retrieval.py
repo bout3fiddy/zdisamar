@@ -2,11 +2,14 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 
 from .forward_evaluation import ForwardEvaluation
 from .state_vector import StateName
+
+_FINAL_EVALUATION_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -107,7 +110,7 @@ class Result:
         measurement: Measurement | None = None,
         last_evaluated_state: np.ndarray | None = None,
         last_evaluation: ForwardEvaluation | None = None,
-        final_evaluation: ForwardEvaluation | None = None,
+        final_evaluation: ForwardEvaluation | None | object = _FINAL_EVALUATION_UNSET,
         _final_evaluation: ForwardEvaluation | None = None,
         _final_evaluation_factory: Callable[[], ForwardEvaluation] | None = None,
     ):
@@ -122,8 +125,8 @@ class Result:
         object.__setattr__(self, "measurement", measurement)
         object.__setattr__(self, "last_evaluated_state", last_evaluated_state)
         object.__setattr__(self, "last_evaluation", last_evaluation)
-        if final_evaluation is not None:
-            _final_evaluation = final_evaluation
+        if final_evaluation is not _FINAL_EVALUATION_UNSET:
+            _final_evaluation = cast(ForwardEvaluation | None, final_evaluation)
             _final_evaluation_factory = None
         object.__setattr__(self, "_final_evaluation", _final_evaluation)
         object.__setattr__(self, "_final_evaluation_factory", _final_evaluation_factory)

@@ -201,6 +201,7 @@ def assert_optimal_estimation_result_compatibility() -> None:
     )
     assert result.final_evaluation is first
     assert replace(result, final_evaluation=second).final_evaluation is second
+    assert replace(result, final_evaluation=None).final_evaluation is None
 
 
 def assert_session_library_path_mismatch_rejected() -> None:
@@ -213,6 +214,11 @@ def assert_session_library_path_mismatch_rejected() -> None:
         def library_path(self) -> Path:
             return Path("/tmp/custom/libzdisamar-a.dylib")
 
+    class DefaultLibrarySession:
+        @property
+        def library_path(self) -> None:
+            return None
+
     try:
         O2AInverseForwardModel(
             template=cast(O2AInput, {}),
@@ -220,8 +226,19 @@ def assert_session_library_path_mismatch_rejected() -> None:
             forward_session=cast(O2AForwardSession, SuppliedSession()),
         )
     except ValueError:
+        pass
+    else:
+        raise AssertionError("mismatched forward_session and library_path were accepted")
+
+    try:
+        O2AInverseForwardModel(
+            template=cast(O2AInput, {}),
+            library_path=Path("/tmp/custom/libzdisamar-b.dylib"),
+            forward_session=cast(O2AForwardSession, DefaultLibrarySession()),
+        )
+    except ValueError:
         return
-    raise AssertionError("mismatched forward_session and library_path were accepted")
+    raise AssertionError("explicit library_path with default-library session was accepted")
 
 
 def assert_subclass_final_evaluation_is_preserved_eagerly() -> None:

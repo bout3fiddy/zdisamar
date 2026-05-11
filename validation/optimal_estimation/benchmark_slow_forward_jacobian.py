@@ -11,7 +11,7 @@ import statistics
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -76,46 +76,40 @@ def run_retrieval(
     forward_session: zd.O2AForwardSession | None = None,
     trace_records: list[dict[str, Any]] | None = None,
 ) -> optimal_estimation.Result:
+    inverse_model = o2a_oe.O2AInverseForwardModel(case, forward_session=forward_session)
+    if trace_records is not None:
+        cast(Any, inverse_model).evaluate = tracing_evaluate(
+            inverse_model,
+            trace_records,
+        )
     return o2a_oe.disamar_oe(
-        inverse_model=TracingO2AInverseForwardModel(
-            case,
-            forward_session=forward_session,
-            trace_records=trace_records,
-        ),
+        inverse_model=inverse_model,
         measurement=measurement,
         state_vector=state_vector,
         controls=optimal_estimation.RetrievalControls.from_disamar_retrieval_specs(),
     )
 
 
-class TracingO2AInverseForwardModel(o2a_oe.O2AInverseForwardModel):
-    def __init__(
-        self,
-        template: zd.O2AInput,
-        *,
-        forward_session: zd.O2AForwardSession | None,
-        trace_records: list[dict[str, Any]] | None,
-    ):
-        super().__init__(template, forward_session=forward_session)
-        self._trace_records = trace_records
-
+def tracing_evaluate(
+    model: o2a_oe.O2AInverseForwardModel,
+    trace_records: list[dict[str, Any]],
+):
     def evaluate(
-        self,
         state,
         state_vector: optimal_estimation.StateVector,
     ) -> optimal_estimation.ForwardEvaluation:
         total_start = time.perf_counter()
         settings_start = time.perf_counter()
-        settings = self.settings_for_state(state, state_vector)
+        settings = model.settings_for_state(state, state_vector)
         settings_s = time.perf_counter() - settings_start
 
-        if self._forward_session is None:
-            return super().evaluate(state, state_vector)
+        if model._forward_session is None:
+            return o2a_oe.O2AInverseForwardModel.evaluate(model, state, state_vector)
 
         prepare_start = time.perf_counter()
-        prepared = self._forward_session.prepare(settings)
+        prepared = model._forward_session.prepare(settings)
         prepare_s = time.perf_counter() - prepare_start
-        prepare_trace = self._forward_session.last_prepare_trace()
+        prepare_trace = model._forward_session.last_prepare_trace()
 
         evaluation, evaluation_trace = evaluate_prepared_reflectance_timed(
             prepared,
@@ -129,20 +123,21 @@ class TracingO2AInverseForwardModel(o2a_oe.O2AInverseForwardModel):
         )
         scale_s = time.perf_counter() - scale_start
 
-        if self._trace_records is not None:
-            self._trace_records.append(
-                {
-                    "index": len(self._trace_records) + 1,
-                    "settings_for_state_s": settings_s,
-                    "prepare_total_s": prepare_s,
-                    "prepare_trace": prepare_trace,
-                    "forward_evaluation_trace": evaluation_trace,
-                    "session_cache_trace": session_cache_trace,
-                    "scale_jacobian_s": scale_s,
-                    "total_evaluate_s": time.perf_counter() - total_start,
-                }
-            )
+        trace_records.append(
+            {
+                "index": len(trace_records) + 1,
+                "settings_for_state_s": settings_s,
+                "prepare_total_s": prepare_s,
+                "prepare_trace": prepare_trace,
+                "forward_evaluation_trace": evaluation_trace,
+                "session_cache_trace": session_cache_trace,
+                "scale_jacobian_s": scale_s,
+                "total_evaluate_s": time.perf_counter() - total_start,
+            }
+        )
         return scaled
+
+    return evaluate
 
 
 def evaluate_prepared_reflectance_timed(
