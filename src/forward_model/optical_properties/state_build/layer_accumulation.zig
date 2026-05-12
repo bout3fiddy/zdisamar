@@ -442,32 +442,34 @@ fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
-        const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.parity_rows_chunk");
-        chunk_zone.value(@intCast(chunk.end - chunk.start));
-        defer chunk_zone.end();
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.parity_rows_chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
 
-        for (chunk.start..chunk.end) |write_index| {
-            populateParitySupportRow(
-                worker.allocator,
-                worker.context,
-                worker.absorbers,
-                worker.profile_spectroscopy_cache,
-                &worker.totals,
-                worker.aerosol_sublayer_distribution,
-                worker.cloud_sublayer_distribution,
-                worker.aerosol_phase_coefficients,
-                worker.cloud_phase_coefficients,
-                worker.aerosol_single_scatter_albedo,
-                worker.cloud_single_scatter_albedo,
-                worker.aerosol_extinction_scale,
-                worker.cloud_extinction_scale,
-                worker.aerosol_fraction,
-                worker.cloud_fraction,
-                write_index,
-            ) catch |err| {
-                worker.error_state.store(err);
-                return;
-            };
+            for (chunk.start..chunk.end) |write_index| {
+                populateParitySupportRow(
+                    worker.allocator,
+                    worker.context,
+                    worker.absorbers,
+                    worker.profile_spectroscopy_cache,
+                    &worker.totals,
+                    worker.aerosol_sublayer_distribution,
+                    worker.cloud_sublayer_distribution,
+                    worker.aerosol_phase_coefficients,
+                    worker.cloud_phase_coefficients,
+                    worker.aerosol_single_scatter_albedo,
+                    worker.cloud_single_scatter_albedo,
+                    worker.aerosol_extinction_scale,
+                    worker.cloud_extinction_scale,
+                    worker.aerosol_fraction,
+                    worker.cloud_fraction,
+                    write_index,
+                ) catch |err| {
+                    worker.error_state.store(err);
+                    return;
+                };
+            }
         }
     }
 }
@@ -942,19 +944,33 @@ fn populateSublayer(
         cross_section_absorber.column_density_factor += absorber_density * sublayer_path_length_cm;
     }
 
-    const spectroscopy_eval = try LayerSpectroscopy.resolveSpectroscopyEvaluation(
-        allocator,
-        context,
-        absorbers,
-        write_index,
-        density,
-        pressure,
-        temperature,
-        oxygen_mixing_ratio,
-        sublayer_path_length_cm,
-        &absorber_density_cm3,
-        profile_spectroscopy_cache,
-    );
+    const spectroscopy_eval = if (absorbers.owned_line_absorbers.len == 0 and
+        absorbers.strong_line_states == null and
+        profile_spectroscopy_cache != null)
+        LayerSpectroscopy.resolveCachedSingleLineEvaluation(
+            context,
+            absorbers,
+            write_index,
+            density,
+            pressure,
+            temperature,
+            &absorber_density_cm3,
+            profile_spectroscopy_cache.?,
+        )
+    else
+        try LayerSpectroscopy.resolveSpectroscopyEvaluation(
+            allocator,
+            context,
+            absorbers,
+            write_index,
+            density,
+            pressure,
+            temperature,
+            oxygen_mixing_ratio,
+            sublayer_path_length_cm,
+            &absorber_density_cm3,
+            profile_spectroscopy_cache,
+        );
 
     const o2_density_cm3 = density * oxygen_mixing_ratio;
     const continuum_density_cm3 = LayerSpectroscopy.continuumCarrierDensity(

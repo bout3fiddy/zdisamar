@@ -159,7 +159,8 @@ if [[ ! -x "$forward_exe" ]]; then
   exit 1
 fi
 
-child_command="$(quote_command "$forward_exe" --output-dir "$forward_output_dir")"
+child_args=("$forward_exe" --output-dir "$forward_output_dir")
+child_command="$(quote_command "${child_args[@]}")"
 printf '%s\n' "$child_command" >"$command_path"
 
 cat >"$manifest_path" <<JSON
@@ -185,7 +186,7 @@ lauka_args=(
   --warmup "$warmup"
   --measurements "$measurements"
   --
-  "$child_command"
+  "${child_args[@]}"
 )
 
 if ((use_sudo)); then

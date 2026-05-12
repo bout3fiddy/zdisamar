@@ -403,11 +403,8 @@ pub fn calcRTlayersIntoWithBasis(
         const layer = layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
-            if (rt_active) |active| {
-                active[rt_idx] = false;
-            } else {
-                rt[rt_idx] = zeroLayerRt(geo.nmutot);
-            }
+            if (rt_active) |active| active[rt_idx] = false;
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
             continue;
         }
 
@@ -418,20 +415,14 @@ pub fn calcRTlayersIntoWithBasis(
             phase_functions.maxPhaseCoefficientIndex(phase_coefs);
         if (i_fourier > max_phase_index) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
-            if (rt_active) |active| {
-                active[rt_idx] = false;
-            } else {
-                rt[rt_idx] = zeroLayerRt(geo.nmutot);
-            }
+            if (rt_active) |active| active[rt_idx] = false;
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
             continue;
         }
         if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
             Trace.plotU("layer_skipped_empty_optics", 1);
-            if (rt_active) |active| {
-                active[rt_idx] = false;
-            } else {
-                rt[rt_idx] = zeroLayerRt(geo.nmutot);
-            }
+            if (rt_active) |active| active[rt_idx] = false;
+            rt[rt_idx] = zeroLayerRt(geo.nmutot);
             continue;
         }
 

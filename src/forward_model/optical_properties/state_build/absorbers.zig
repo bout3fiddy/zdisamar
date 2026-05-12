@@ -354,19 +354,21 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
-        const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_line_state_chunk");
-        chunk_zone.value(@intCast(chunk.end - chunk.start));
-        defer chunk_zone.end();
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_line_state_chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
 
-        fillProfileLineStateRange(
-            worker.line_list,
-            worker.temperatures_k,
-            worker.pressures_hpa,
-            worker.weak_states,
-            worker.strong_states,
-            chunk.start,
-            chunk.end,
-        );
+            fillProfileLineStateRange(
+                worker.line_list,
+                worker.temperatures_k,
+                worker.pressures_hpa,
+                worker.weak_states,
+                worker.strong_states,
+                chunk.start,
+                chunk.end,
+            );
+        }
     }
 }
 

@@ -198,26 +198,28 @@ fn wavelengthSamplingWorkerMain(worker: *WavelengthSamplingWorker) void {
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
-        const chunk_zone = Trace.deepStaticZone(@src(), "wavelength_sampling.chunk");
-        chunk_zone.value(@intCast(chunk.end - chunk.start));
-        defer chunk_zone.end();
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "wavelength_sampling.chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
 
-        fillWavelengthSamplingPlanRange(
-            worker.scene,
-            worker.prepared,
-            worker.resolved_axis,
-            worker.radiance_calibration,
-            worker.irradiance_calibration,
-            worker.can_cache_adaptive_plan,
-            worker.radiance_adaptive_cache,
-            worker.irradiance_adaptive_cache,
-            worker.plans,
-            chunk.start,
-            chunk.end,
-        ) catch |err| {
-            worker.error_state.store(err);
-            return;
-        };
+            fillWavelengthSamplingPlanRange(
+                worker.scene,
+                worker.prepared,
+                worker.resolved_axis,
+                worker.radiance_calibration,
+                worker.irradiance_calibration,
+                worker.can_cache_adaptive_plan,
+                worker.radiance_adaptive_cache,
+                worker.irradiance_adaptive_cache,
+                worker.plans,
+                chunk.start,
+                chunk.end,
+            ) catch |err| {
+                worker.error_state.store(err);
+                return;
+            };
+        }
     }
 }
 
@@ -325,7 +327,7 @@ fn resolvedSampleAtAssumeValid(resolved_axis: *const grid.ResolvedAxis, index: u
 fn preferredWavelengthSamplingWorkerCount(sample_count: usize) usize {
     if (sample_count < min_parallel_wavelength_sample_count) return 1;
     const cpu_count = std.Thread.getCpuCount() catch 1;
-    return @min(cpu_count, @max(@as(usize, 1), sample_count / min_parallel_wavelength_sample_count));
+    return @min(Trace.max_workers, @min(cpu_count, @max(@as(usize, 1), sample_count / min_parallel_wavelength_sample_count)));
 }
 
 pub fn collectUniqueForwardMisses(

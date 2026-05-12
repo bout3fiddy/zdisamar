@@ -64,14 +64,19 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const trace_ztracy_dependency = b.dependency("ztracy", .{
-        .enable_ztracy = enable_ztracy,
-        .enable_fibers = false,
-        .on_demand = false,
-        .callstack = 8,
-    });
-    const trace_ztracy_module = if (enable_ztracy)
-        trace_ztracy_dependency.module("root")
+    const trace_ztracy_dependency = if (enable_ztracy)
+        b.dependency("ztracy", .{
+            .target = target,
+            .optimize = trace_optimize,
+            .enable_ztracy = true,
+            .enable_fibers = false,
+            .on_demand = false,
+            .callstack = 8,
+        })
+    else
+        null;
+    const trace_ztracy_module = if (trace_ztracy_dependency) |dependency|
+        dependency.module("root")
     else
         ztracy_stub_module;
 
@@ -310,8 +315,8 @@ pub fn build(b: *std.Build) void {
         .name = "labos-bottleneck-trace",
         .root_module = labos_bottleneck_trace_module,
     });
-    if (enable_ztracy) {
-        labos_bottleneck_trace_exe.root_module.linkLibrary(trace_ztracy_dependency.artifact("tracy"));
+    if (trace_ztracy_dependency) |dependency| {
+        labos_bottleneck_trace_exe.root_module.linkLibrary(dependency.artifact("tracy"));
     }
     const run_labos_bottleneck_trace = b.addRunArtifact(labos_bottleneck_trace_exe);
     if (b.args) |args| run_labos_bottleneck_trace.addArgs(args);

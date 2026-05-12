@@ -263,21 +263,23 @@ fn profileCacheValueWorkerMain(worker: *ProfileCacheValueWorker) void {
     defer worker_zone.end();
 
     while (worker.queue.next()) |chunk| {
-        const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_cache_init_chunk");
-        chunk_zone.value(@intCast(chunk.end - chunk.start));
-        defer chunk_zone.end();
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_cache_init_chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
 
-        fillProfileSpectroscopyCacheValueRange(
-            worker.cache,
-            worker.line_list,
-            worker.context,
-            worker.wavelength_nm,
-            worker.prepared_states,
-            worker.prepared_weak_states,
-            worker.wavelength_window,
-            chunk.start,
-            chunk.end,
-        );
+            fillProfileSpectroscopyCacheValueRange(
+                worker.cache,
+                worker.line_list,
+                worker.context,
+                worker.wavelength_nm,
+                worker.prepared_states,
+                worker.prepared_weak_states,
+                worker.wavelength_window,
+                chunk.start,
+                chunk.end,
+            );
+        }
     }
 }
 
@@ -341,7 +343,7 @@ fn sampleCachedEndpointSecant(
 }
 
 pub fn continuumCarrierDensity(
-    absorbers: *Absorbers.AbsorberBuildState,
+    absorbers: *const Absorbers.AbsorberBuildState,
     context: *Context,
     write_index: usize,
     absorber_density_cm3: f64,
@@ -357,6 +359,63 @@ pub fn continuumCarrierDensity(
         return line_absorber.number_densities_cm3[write_index];
     }
     return absorber_density_cm3;
+}
+
+pub fn resolveCachedSingleLineEvaluation(
+    context: *const Context,
+    absorbers: *const Absorbers.AbsorberBuildState,
+    write_index: usize,
+    density: f64,
+    pressure: f64,
+    temperature: f64,
+    absorber_density_cm3: *f64,
+    profile_cache: *const ProfileSpectroscopyCache,
+) ReferenceData.SpectroscopyEvaluation {
+    const species = absorbers.active_line_species;
+    const absorber_mixing_ratio = if (species) |active_species|
+        Spectroscopy.speciesMixingRatioAtPressure(
+            context.scene,
+            active_species,
+            if (absorbers.single_active_line_absorber) |line_absorber|
+                line_absorber.volume_mixing_ratio_profile_ppmv
+            else
+                &.{},
+            pressure,
+            if (active_species == .o2) oxygen_volume_mixing_ratio else null,
+        ) orelse oxygen_volume_mixing_ratio
+    else
+        oxygen_volume_mixing_ratio;
+    absorber_density_cm3.* = density * absorber_mixing_ratio;
+
+    if (context.operational_o2_lut.enabled()) {
+        const sigma = context.operational_o2_lut.sigmaAt(context.midpoint_nm, temperature, pressure);
+        return .{
+            .weak_line_sigma_cm2_per_molecule = sigma,
+            .strong_line_sigma_cm2_per_molecule = 0.0,
+            .line_sigma_cm2_per_molecule = sigma,
+            .line_mixing_sigma_cm2_per_molecule = 0.0,
+            .total_sigma_cm2_per_molecule = sigma,
+            .d_sigma_d_temperature_cm2_per_molecule_per_k = context.operational_o2_lut.dSigmaDTemperatureAt(
+                context.midpoint_nm,
+                temperature,
+                pressure,
+            ),
+        };
+    }
+    if (absorbers.owned_lines) |line_list| {
+        if (profile_cache.evaluationAtAltitude(context.vertical_grid.sublayer_mid_altitudes_km[write_index])) |evaluation| {
+            return evaluation;
+        }
+        return line_list.evaluateAt(context.midpoint_nm, temperature, pressure);
+    }
+    return .{
+        .weak_line_sigma_cm2_per_molecule = 0.0,
+        .strong_line_sigma_cm2_per_molecule = 0.0,
+        .line_sigma_cm2_per_molecule = 0.0,
+        .line_mixing_sigma_cm2_per_molecule = 0.0,
+        .total_sigma_cm2_per_molecule = 0.0,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+    };
 }
 
 pub fn resolveSpectroscopyEvaluation(

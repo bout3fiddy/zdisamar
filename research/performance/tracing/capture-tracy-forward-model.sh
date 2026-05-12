@@ -84,10 +84,22 @@ mkdir -p "$capture_dir" "$run_output_dir"
 rm -f "$trace_file"
 
 build_args=(
-  labos-bottleneck-trace
+  labos-bottleneck-trace-bin
   -Denable-ztracy=true
   -Dtrace-optimize=ReleaseFast
 )
+
+echo "building trace executable"
+(
+  cd "$repo_root"
+  zig build "${build_args[@]}"
+)
+
+trace_exe="$repo_root/zig-out/bin/labos-bottleneck-trace"
+if [[ ! -x "$trace_exe" ]]; then
+  echo "expected executable not found: $trace_exe" >&2
+  exit 1
+fi
 
 echo "capturing full Tracy run to $trace_file"
 (
@@ -103,7 +115,7 @@ echo "capturing full Tracy run to $trace_file"
   trap cleanup EXIT
 
   sleep 0.1
-  zig build "${build_args[@]}" -- --output-dir "$run_output_dir"
+  "$trace_exe" --output-dir "$run_output_dir"
   wait "$capture_pid"
   trap - EXIT
 )
