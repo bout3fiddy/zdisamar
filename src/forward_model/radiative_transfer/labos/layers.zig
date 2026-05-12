@@ -358,6 +358,27 @@ pub fn fillLayerPhaseMaxIndices(
     }
 }
 
+pub fn fillLayerEffectiveScatteringSuffixes(
+    suffixes: []f64,
+    layers: []const common.LayerInput,
+    layer_phase_max_indices: []const usize,
+) void {
+    std.debug.assert(layer_phase_max_indices.len >= layers.len);
+    std.debug.assert(suffixes.len >= layers.len * basis.max_phase_coef);
+    for (layers, layer_phase_max_indices[0..layers.len], 0..) |layer, max_phase_index, layer_idx| {
+        const layer_suffixes = suffixes[layer_idx * basis.max_phase_coef ..][0..basis.max_phase_coef];
+        @memset(layer_suffixes, 0.0);
+        var suffix: f64 = 0.0;
+        var reverse_index = @min(max_phase_index + 1, basis.max_phase_coef);
+        while (reverse_index > 0) {
+            reverse_index -= 1;
+            const beta_eff = @abs(layer.phase_coefficients[reverse_index]) * phase_odd_reciprocal[reverse_index];
+            suffix = @max(suffix, beta_eff);
+            layer_suffixes[reverse_index] = suffix;
+        }
+    }
+}
+
 pub fn calcRTlayersIntoWithBasis(
     rt: []LayerRT,
     layers: []const common.LayerInput,
@@ -366,6 +387,7 @@ pub fn calcRTlayersIntoWithBasis(
     controls: common.RadiativeTransferControls,
     plm_basis: *const basis.FourierPlmBasis,
     layer_phase_max_indices: ?[]const usize,
+    layer_effective_scattering_suffixes: ?[]const f64,
     phase_kernel_cache: ?[]basis.PhaseKernel,
     phase_kernel_valid: ?[]bool,
     rt_active: ?[]bool,
@@ -381,8 +403,11 @@ pub fn calcRTlayersIntoWithBasis(
         const layer = layers[layer_idx];
         if (i_fourier >= basis.max_phase_coef) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
-            rt[rt_idx] = zeroLayerRt(geo.nmutot);
-            if (rt_active) |active| active[rt_idx] = false;
+            if (rt_active) |active| {
+                active[rt_idx] = false;
+            } else {
+                rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            }
             continue;
         }
 
@@ -393,14 +418,20 @@ pub fn calcRTlayersIntoWithBasis(
             phase_functions.maxPhaseCoefficientIndex(phase_coefs);
         if (i_fourier > max_phase_index) {
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
-            rt[rt_idx] = zeroLayerRt(geo.nmutot);
-            if (rt_active) |active| active[rt_idx] = false;
+            if (rt_active) |active| {
+                active[rt_idx] = false;
+            } else {
+                rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            }
             continue;
         }
         if (layer.optical_depth < 1.0e-20 or layer.scattering_optical_depth <= 0.0 or layer.single_scatter_albedo <= 0.0) {
             Trace.plotU("layer_skipped_empty_optics", 1);
-            rt[rt_idx] = zeroLayerRt(geo.nmutot);
-            if (rt_active) |active| active[rt_idx] = false;
+            if (rt_active) |active| {
+                active[rt_idx] = false;
+            } else {
+                rt[rt_idx] = zeroLayerRt(geo.nmutot);
+            }
             continue;
         }
 
@@ -423,21 +454,26 @@ pub fn calcRTlayersIntoWithBasis(
         const b = layer.optical_depth;
         const a = layer.single_scatter_albedo;
 
-        var max_beta_eff: f64 = 0.0;
-        {
+        const max_beta_eff = max_beta_eff: {
             const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.effective_scattering");
             defer zone.end();
+            if (layer_effective_scattering_suffixes) |suffixes| {
+                std.debug.assert(suffixes.len >= layers.len * basis.max_phase_coef);
+                break :max_beta_eff suffixes[layer_idx * basis.max_phase_coef + i_fourier];
+            }
+            var suffix: f64 = 0.0;
             var scanned_terms: usize = 0;
             var nonzero_terms: usize = 0;
             for (i_fourier..max_phase_index + 1) |ic| {
                 scanned_terms += 1;
                 if (phase_coefs[ic] != 0.0) nonzero_terms += 1;
                 const beta_eff = @abs(phase_coefs[ic]) * phase_odd_reciprocal[ic];
-                if (beta_eff > max_beta_eff) max_beta_eff = beta_eff;
+                if (beta_eff > suffix) suffix = beta_eff;
             }
             Trace.plotU("phase_coeff_terms_scanned", @intCast(scanned_terms));
             Trace.plotU("phase_coeff_terms_nonzero", @intCast(nonzero_terms));
-        }
+            break :max_beta_eff suffix;
+        };
         const a_eff = a * max_beta_eff;
 
         var use_doubling = false;
@@ -554,6 +590,7 @@ pub fn calcRTlayersTangentIntoWithBasis(
             null,
             null,
             null,
+            null,
         );
         calcRTlayersIntoWithBasis(
             &minus_rt,
@@ -562,6 +599,7 @@ pub fn calcRTlayersTangentIntoWithBasis(
             geo,
             controls,
             plm_basis,
+            null,
             null,
             null,
             null,
@@ -612,6 +650,7 @@ pub fn calcRTlayersInto(
         geo,
         controls,
         &plm_basis,
+        null,
         null,
         null,
         null,

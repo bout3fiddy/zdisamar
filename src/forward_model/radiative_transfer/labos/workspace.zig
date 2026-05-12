@@ -12,6 +12,7 @@ pub const Workspace = struct {
     attenuation_layer_transmittance: []f64 = &.{},
     rt_layers: []basis.LayerRT = &.{},
     layer_phase_max_indices: []usize = &.{},
+    layer_effective_scattering_suffix: []f64 = &.{},
     source_phase_max_indices: []usize = &.{},
     orders: ?orders_mod.OrdersWorkspace = null,
     layer_phase_kernels: []basis.PhaseKernel = &.{},
@@ -33,6 +34,7 @@ pub const Workspace = struct {
         self.allocator.free(self.attenuation_layer_transmittance);
         self.allocator.free(self.rt_layers);
         self.allocator.free(self.layer_phase_max_indices);
+        self.allocator.free(self.layer_effective_scattering_suffix);
         self.allocator.free(self.source_phase_max_indices);
         self.allocator.free(self.layer_phase_kernels);
         self.allocator.free(self.layer_phase_kernel_valid);
@@ -110,6 +112,12 @@ pub const Workspace = struct {
     pub fn layerPhaseMaxIndices(self: *Workspace, nlayer: usize) ![]usize {
         try ensureCapacity(usize, self.allocator, &self.layer_phase_max_indices, nlayer);
         return self.layer_phase_max_indices[0..nlayer];
+    }
+
+    pub fn layerEffectiveScatteringSuffix(self: *Workspace, nlayer: usize) ![]f64 {
+        const required_len = nlayer * basis.max_phase_coef;
+        try ensureCapacity(f64, self.allocator, &self.layer_effective_scattering_suffix, required_len);
+        return self.layer_effective_scattering_suffix[0..required_len];
     }
 
     pub fn sourcePhaseMaxIndices(self: *Workspace, nlevel: usize) ![]usize {

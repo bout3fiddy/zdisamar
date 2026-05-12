@@ -41,3 +41,10 @@ memory access pattern. The rectangular fixed-12 phase fill stays.
 Reducing zero initialization in orders looked plausible, but repeat traces were
 mixed or worse. The broader local initialization remains because it is simpler
 and robust.
+
+## Initial Attenuation Cache
+
+Caching the initial attenuation vector by `(layer, ndouble)` during LABOS
+RT-layer construction was residual-safe, but the LABOS bottleneck timing changed
+by less than a millisecond. The cache was removed because it added state and
+cache-invalidation surface without a measurable forward-model gain.

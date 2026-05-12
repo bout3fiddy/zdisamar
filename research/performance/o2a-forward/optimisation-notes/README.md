@@ -27,3 +27,4 @@ Notes:
 - [11. Write matrix results into separate outputs](11-separate-matrix-outputs.md)
 - [12. Combine the D update in doubling](12-combine-d-update.md)
 - [13. Parallelize traced setup phases](13-parallel-setup-phases.md)
+- [14. Use Tracy counts to remove repeated layer work](14-tracy-layer-reuse-and-inactive-rt.md)

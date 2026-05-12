@@ -20,6 +20,7 @@ const fillSurface = layers_mod.fillSurface;
 const calcRTlayers = layers_mod.calcRTlayers;
 const calcRTlayersIntoWithBasis = layers_mod.calcRTlayersIntoWithBasis;
 const calcRTlayersTangentIntoWithBasis = layers_mod.calcRTlayersTangentIntoWithBasis;
+const fillLayerEffectiveScatteringSuffixes = layers_mod.fillLayerEffectiveScatteringSuffixes;
 const fillLayerPhaseMaxIndices = layers_mod.fillLayerPhaseMaxIndices;
 const calcReflectance = reflectance_mod.calcReflectance;
 const calcIntegratedReflectanceWithBasis = reflectance_mod.calcIntegratedReflectanceWithBasis;
@@ -255,6 +256,14 @@ fn layerResolvedLabosWithWorkspace(
         fillLayerPhaseMaxIndices(indices, input.layers);
         break :blk indices;
     } else null;
+    const layer_effective_scattering_suffixes = if (workspace) |scratch| blk: {
+        if (layer_phase_max_indices) |indices| {
+            const suffixes = try scratch.layerEffectiveScatteringSuffix(nlayer);
+            fillLayerEffectiveScatteringSuffixes(suffixes, input.layers, indices);
+            break :blk suffixes;
+        }
+        break :blk null;
+    } else null;
     const adjacent_layer_phase_max_indices = if (workspace) |scratch| blk: {
         if (layer_phase_max_indices) |layer_indices| {
             const indices = try scratch.sourcePhaseMaxIndices(nlayer + 1);
@@ -293,6 +302,7 @@ fn layerResolvedLabosWithWorkspace(
                     controls,
                     plm_basis,
                     layer_phase_max_indices,
+                    layer_effective_scattering_suffixes,
                     layer_phase_kernels,
                     layer_phase_kernel_valid,
                     if (workspace != null) orders_workspace.rt_active else null,
