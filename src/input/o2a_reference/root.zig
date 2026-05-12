@@ -23,11 +23,19 @@ pub const RangeExtremum = metrics.RangeExtremum;
 
 pub const runResolvedVendorO2AReflectanceCase = metrics.runResolvedVendorO2AReflectanceCase;
 pub const prepareResolvedVendorO2ACase = metrics.prepareResolvedVendorO2ACase;
+pub const meanVectorInRange = metrics.meanVectorInRange;
+pub const minVectorInRange = metrics.minVectorInRange;
+pub const maxVectorInRange = metrics.maxVectorInRange;
+pub const meanReferenceInRange = metrics.meanReferenceInRange;
+pub const minReferenceInRange = metrics.minReferenceInRange;
+pub const maxReferenceInRange = metrics.maxReferenceInRange;
+pub const interpolateVector = metrics.interpolateVector;
+pub const compareLowerIsBetter = metrics.compareLowerIsBetter;
+pub const compareHigherIsBetter = metrics.compareHigherIsBetter;
+pub const compareAbsoluteCeiling = metrics.compareAbsoluteCeiling;
 pub const computeComparisonMetrics = metrics.computeComparisonMetrics;
 pub const assessAgainstBaseline = metrics.assessAgainstBaseline;
 pub const loadResolvedO2ASpectroscopyLineList = metrics.loadResolvedO2ASpectroscopyLineList;
-pub const meanVectorInRange = metrics.meanVectorInRange;
-pub const minVectorInRange = metrics.minVectorInRange;
 
 const default_intervals = [_]AtmosphereModel.VerticalInterval{
     .{
