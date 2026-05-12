@@ -19,6 +19,7 @@ __pycache__/
 # Regenerable primitive-codegen disassembly blobs
 research/performance/where-is-the-bottleneck/primitive-codegen/outputs/*.asm
 research/performance/tracing/output/captures/*.tracy
+research/performance/tracing/output/lauka-forward/
 
 # Local DISAMAR reference clone and generated vendor outputs
 vendor

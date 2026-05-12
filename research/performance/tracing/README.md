@@ -43,6 +43,13 @@ From the repo root:
 research/performance/tracing/record-lauka-forward-model.sh
 ```
 
+The default counter set is restricted to counters reported as supported by
+`lauka counters --details` on the current Apple Silicon machine:
+
+```text
+fixed_cycles,fixed_instructions,arm_l1d_cache_refill,arm_l1d_cache,arm_br_mis_pred,arm_br_pred
+```
+
 The script builds the same O2 A LABOS forward harness in `ReleaseFast`, but
 without ztracy:
 

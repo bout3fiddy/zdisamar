@@ -7,7 +7,7 @@ Usage:
   research/performance/tracing/record-lauka-forward-model.sh [options]
 
 Options:
-  --runs N             Measured Lauka runs. Default: 5.
+  --runs N             Measured Lauka runs. Default: 7.
   --warmup N           Lauka warmup runs before measurement. Default: 1.
   --measurements LIST  Comma-separated Lauka counters.
   --output-dir DIR     Output directory. Default: research/performance/tracing/output/lauka-forward.
@@ -16,7 +16,10 @@ Options:
 
 The measured child command is the ReleaseFast O2 A LABOS forward-model harness
 built without ztracy. That keeps the PMU counters focused on the forward path,
-not Tracy instrumentation or the optimal-estimation retrieval loop.
+not Tracy instrumentation or the optimal-estimation retrieval loop. The default
+measurements use supported Apple/ARM counters:
+fixed_cycles,fixed_instructions,arm_l1d_cache_refill,arm_l1d_cache,
+arm_br_mis_pred,arm_br_pred.
 USAGE
 }
 
@@ -52,9 +55,11 @@ require_positive_int() {
   esac
 }
 
-runs="${RUNS:-5}"
+default_measurements="fixed_cycles,fixed_instructions,arm_l1d_cache_refill,arm_l1d_cache,arm_br_mis_pred,arm_br_pred"
+
+runs="${RUNS:-7}"
 warmup="${WARMUP:-1}"
-measurements="${MEASUREMENTS:-core_active_cycle,inst_all,l1d_cache_miss_ld_nonspec,branch_mispred_nonspec}"
+measurements="${MEASUREMENTS:-$default_measurements}"
 output_dir=""
 use_sudo=1
 
