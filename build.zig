@@ -317,7 +317,7 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_labos_bottleneck_trace.addArgs(args);
     const labos_bottleneck_trace_step = b.step(
         "labos-bottleneck-trace",
-        "Run the trace-enabled O2A LABOS bottleneck research harness",
+        "Run the O2A LABOS bottleneck research harness",
     );
     labos_bottleneck_trace_step.dependOn(&run_labos_bottleneck_trace.step);
     const run_o2a_jacobian_trace = b.addRunArtifact(labos_bottleneck_trace_exe);
@@ -331,7 +331,7 @@ pub fn build(b: *std.Build) void {
     const labos_bottleneck_trace_install = b.addInstallArtifact(labos_bottleneck_trace_exe, .{});
     const labos_bottleneck_trace_bin_step = b.step(
         "labos-bottleneck-trace-bin",
-        "Build the trace-enabled LABOS bottleneck executable for disassembly",
+        "Build the O2A LABOS bottleneck executable for profiling and disassembly",
     );
     labos_bottleneck_trace_bin_step.dependOn(&labos_bottleneck_trace_install.step);
 

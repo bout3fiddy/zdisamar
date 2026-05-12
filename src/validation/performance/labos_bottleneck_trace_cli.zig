@@ -51,9 +51,6 @@ pub fn main() !void {
 }
 
 fn mainInner() !void {
-    comptime {
-        if (!Trace.enabled) @compileError("labos-bottleneck-trace must be built with -Denable-ztracy=true");
-    }
     const main_zone = Trace.staticZone(@src(), "trace_cli.main");
     defer main_zone.end();
     Trace.message("zdisamar labos trace start");
@@ -146,13 +143,14 @@ fn runDerivativeSweep(
 
     try summary_writer.interface.print(
         \\{{
-        \\  "trace_enabled": true,
+        \\  "trace_enabled": {},
         \\  "prepare_ns": {},
         \\  "prepare_s": {d:.9},
         \\  "variants": [
         \\
     ,
         .{
+            Trace.enabled,
             prepare_ns,
             @as(f64, @floatFromInt(prepare_ns)) / 1.0e9,
         },
@@ -303,7 +301,7 @@ fn writeSummary(
     var writer = file.writer(&.{});
     try writer.interface.print(
         \\{{
-        \\  "trace_enabled": true,
+        \\  "trace_enabled": {},
         \\  "prepare_ns": {},
         \\  "forward_wall_ns": {},
         \\  "prepare_s": {d:.9},
@@ -318,6 +316,7 @@ fn writeSummary(
         \\
     ,
         .{
+            Trace.enabled,
             prepare_ns,
             forward_ns,
             @as(f64, @floatFromInt(prepare_ns)) / 1.0e9,

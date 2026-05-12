@@ -30,3 +30,34 @@ research/performance/tracing/output/
 
 The retained JSON summary is a coarse sanity check. The detailed phase, nesting,
 overlap, and per-thread view is the `.tracy` capture opened in `tracy-profiler`.
+
+## Lauka PMU Counters
+
+Lauka records Apple Silicon PMU counters around a command. Use it for aggregate
+hardware-counter evidence; keep using Tracy when you need the timeline, nesting,
+overlap, and per-thread view.
+
+From the repo root:
+
+```sh
+research/performance/tracing/record-lauka-forward-model.sh
+```
+
+The script builds the same O2 A LABOS forward harness in `ReleaseFast`, but
+without ztracy:
+
+```sh
+zig build labos-bottleneck-trace-bin -Dtrace-optimize=ReleaseFast
+```
+
+It then records the forward-model executable with Lauka. The wrapper is
+forward-only: it does not run the optimal-estimation retrieval loop.
+
+Lauka must be on `PATH`, and on Apple Silicon it normally needs `sudo` for PMU
+counters. Pass `--no-sudo` only if your local Lauka setup does not require it.
+
+Generated Lauka outputs are written under:
+
+```text
+research/performance/tracing/output/lauka-forward/
+```
