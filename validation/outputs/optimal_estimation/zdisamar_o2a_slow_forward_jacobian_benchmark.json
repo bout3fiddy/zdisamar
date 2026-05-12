@@ -1,26 +1,26 @@
 {
   "direct_prepared_call_probe": {
     "forward_and_jacobian_s": {
-      "max": 0.8809056249956484,
-      "mean": 0.879439749798621,
-      "median": 0.8795594580005854,
-      "min": 0.8768969160009874
+      "max": 0.9117252500000177,
+      "mean": 0.8972277917986503,
+      "median": 0.9015547500021057,
+      "min": 0.871913291994133
     },
     "forward_only_s": {
-      "max": 0.7463643750015763,
-      "mean": 0.7436748830004944,
-      "median": 0.7426462910007103,
-      "min": 0.7421468329994241
+      "max": 0.7470700830017449,
+      "mean": 0.744750283198664,
+      "median": 0.7448207499983255,
+      "min": 0.7424496659950819
     },
     "jacobian_increment_s": {
-      "max": 0.1386783749985625,
-      "mean": 0.1357648667981266,
-      "median": 0.13475008300156333,
-      "min": 0.13412099999550264
+      "max": 0.1669045000016922,
+      "mean": 0.15247750859998632,
+      "median": 0.15910508400702383,
+      "min": 0.1248432089923881
     },
     "probe_runs": 5
   },
-  "measurement_build_s": 1.0364405410000472,
+  "measurement_build_s": 1.0296402500098338,
   "scene": {
     "aerosol_mid_pressure_hpa": 329.192074869615,
     "aerosol_optical_depth": 1.9681905891962788,
@@ -36,189 +36,189 @@
     "final_evaluation_trace": [
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 4.599999374477193e-05,
-          "native_forward_s": 0.8896756670001196,
-          "radiance_to_reflectance_jacobian_s": 0.00010570800077402964
+          "copy_outputs_s": 4.758300201501697e-05,
+          "native_forward_s": 1.0056658329995116,
+          "radiance_to_reflectance_jacobian_s": 0.00011050001194234937
         },
         "index": 4,
-        "prepare_total_s": 0.01520804099709494,
-        "scale_jacobian_s": 0.00028125000244472176,
-        "settings_for_state_s": 5.83749933866784e-05,
-        "total_evaluate_s": 0.9053918749996228
+        "prepare_total_s": 0.014474416006123647,
+        "scale_jacobian_s": 0.00028087499958928674,
+        "settings_for_state_s": 5.683398921974003e-05,
+        "total_evaluate_s": 1.0206510410062037
       }
     ],
     "final_evaluation_trace_summary": {
       "copy_outputs_s": {
-        "max": 4.599999374477193e-05,
-        "mean": 4.599999374477193e-05,
-        "median": 4.599999374477193e-05,
-        "min": 4.599999374477193e-05
+        "max": 4.758300201501697e-05,
+        "mean": 4.758300201501697e-05,
+        "median": 4.758300201501697e-05,
+        "min": 4.758300201501697e-05
       },
       "iterations": 1,
       "native_forward_s": {
-        "max": 0.8896756670001196,
-        "mean": 0.8896756670001196,
-        "median": 0.8896756670001196,
-        "min": 0.8896756670001196
+        "max": 1.0056658329995116,
+        "mean": 1.0056658329995116,
+        "median": 1.0056658329995116,
+        "min": 1.0056658329995116
       },
       "prepare_total_s": {
-        "max": 0.01520804099709494,
-        "mean": 0.01520804099709494,
-        "median": 0.01520804099709494,
-        "min": 0.01520804099709494
+        "max": 0.014474416006123647,
+        "mean": 0.014474416006123647,
+        "median": 0.014474416006123647,
+        "min": 0.014474416006123647
       },
       "radiance_to_reflectance_jacobian_s": {
-        "max": 0.00010570800077402964,
-        "mean": 0.00010570800077402964,
-        "median": 0.00010570800077402964,
-        "min": 0.00010570800077402964
+        "max": 0.00011050001194234937,
+        "mean": 0.00011050001194234937,
+        "median": 0.00011050001194234937,
+        "min": 0.00011050001194234937
       },
       "scale_jacobian_s": {
-        "max": 0.00028125000244472176,
-        "mean": 0.00028125000244472176,
-        "median": 0.00028125000244472176,
-        "min": 0.00028125000244472176
+        "max": 0.00028087499958928674,
+        "mean": 0.00028087499958928674,
+        "median": 0.00028087499958928674,
+        "min": 0.00028087499958928674
       },
       "settings_for_state_s": {
-        "max": 5.83749933866784e-05,
-        "mean": 5.83749933866784e-05,
-        "median": 5.83749933866784e-05,
-        "min": 5.83749933866784e-05
+        "max": 5.683398921974003e-05,
+        "mean": 5.683398921974003e-05,
+        "median": 5.683398921974003e-05,
+        "min": 5.683398921974003e-05
       },
       "total_evaluate_s": {
-        "max": 0.9053918749996228,
-        "mean": 0.9053918749996228,
-        "median": 0.9053918749996228,
-        "min": 0.9053918749996228
+        "max": 1.0206510410062037,
+        "mean": 1.0206510410062037,
+        "median": 1.0206510410062037,
+        "min": 1.0206510410062037
       }
     },
-    "first_use_retrieval_s": 3.0069208750064718,
+    "first_use_retrieval_s": 3.1095210009953007,
     "reused_retrieval": {
       "converged": true,
       "final_evaluation_in_retrieval_s": 0.0,
       "final_evaluation_mode": "lazy",
-      "forward_model_and_jacobian_s": 2.7255601249999017,
+      "forward_model_and_jacobian_s": 2.834101709013339,
       "iterations": 3,
       "iterations_detail": [
         {
-          "forward_model_and_jacobian_s": 0.8951929159957217,
+          "forward_model_and_jacobian_s": 0.8925226249994012,
           "index": 1,
-          "solver_update_s": 0.00025195800117217004,
-          "total_iteration_s": 0.8954498329985654
+          "solver_update_s": 0.0002562079898780212,
+          "total_iteration_s": 0.8927840420074062
         },
         {
-          "forward_model_and_jacobian_s": 0.9152934170051594,
+          "forward_model_and_jacobian_s": 0.9039025000092806,
           "index": 2,
-          "solver_update_s": 0.00016637500084470958,
-          "total_iteration_s": 0.9154646250026417
+          "solver_update_s": 0.00016187499568331987,
+          "total_iteration_s": 0.9040701250050915
         },
         {
-          "forward_model_and_jacobian_s": 0.9150737919990206,
+          "forward_model_and_jacobian_s": 1.0376765840046573,
           "index": 3,
-          "solver_update_s": 0.00016070799756562337,
-          "total_iteration_s": 0.9152377919963328
+          "solver_update_s": 0.0001659159897826612,
+          "total_iteration_s": 1.0378465419926215
         }
       ],
       "lazy_final_evaluation_cached": true,
-      "lazy_final_evaluation_s": 1.1894388329965295,
-      "lazy_final_evaluation_trace_s": 0.9053918749996228,
-      "other_retrieval_s": 0.000410459004342556,
-      "retrieval_plus_lazy_final_evaluation_s": 3.9159884580003563,
+      "lazy_final_evaluation_s": 1.2978166660032002,
+      "lazy_final_evaluation_trace_s": 1.0206510410062037,
+      "other_retrieval_s": 0.0004890840064035729,
+      "retrieval_plus_lazy_final_evaluation_s": 4.132991457998287,
       "retrieved": {
         "aerosol_layer_mid_pressure_hpa": 329.19089154066546,
         "aerosol_optical_depth": 1.9681945906310179
       },
-      "solver_update_s": 0.000579040999582503,
+      "solver_update_s": 0.0005839989753440022,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 2.726549625003827
+      "wall_s": 2.8351747919950867
     },
     "reused_retrieval_iteration_trace": [
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 9.14999982342124e-05,
-          "native_forward_s": 0.879351832998509,
-          "radiance_to_reflectance_jacobian_s": 0.00010366700007580221
+          "copy_outputs_s": 0.00010641699191182852,
+          "native_forward_s": 0.8769498750043567,
+          "radiance_to_reflectance_jacobian_s": 0.00010941601067315787
         },
         "index": 1,
-        "prepare_total_s": 0.014938291002181359,
-        "scale_jacobian_s": 0.0006234579996089451,
-        "settings_for_state_s": 6.20420032646507e-05,
-        "total_evaluate_s": 0.8951892080003745
+        "prepare_total_s": 0.014606708995415829,
+        "scale_jacobian_s": 0.0006622499931836501,
+        "settings_for_state_s": 6.299999949987978e-05,
+        "total_evaluate_s": 0.8925182920065708
       },
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 5.36660008947365e-05,
-          "native_forward_s": 0.8987610420008423,
-          "radiance_to_reflectance_jacobian_s": 0.00011449999874457717
+          "copy_outputs_s": 5.037500523030758e-05,
+          "native_forward_s": 0.8873627090069931,
+          "radiance_to_reflectance_jacobian_s": 0.00011799999629147351
         },
         "index": 2,
-        "prepare_total_s": 0.01599533300031908,
-        "scale_jacobian_s": 0.0002811250014929101,
-        "settings_for_state_s": 6.454100366681814e-05,
-        "total_evaluate_s": 0.9152886250012671
+        "prepare_total_s": 0.015999750001356006,
+        "scale_jacobian_s": 0.0002800830116029829,
+        "settings_for_state_s": 6.566599768120795e-05,
+        "total_evaluate_s": 0.9038974589930149
       },
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 4.3624997488223016e-05,
-          "native_forward_s": 0.8985105419997126,
-          "radiance_to_reflectance_jacobian_s": 0.00010570899758022279
+          "copy_outputs_s": 5.43750065844506e-05,
+          "native_forward_s": 1.021655999997165,
+          "radiance_to_reflectance_jacobian_s": 0.00011887498840223998
         },
         "index": 3,
-        "prepare_total_s": 0.01605441699939547,
-        "scale_jacobian_s": 0.00027470799977891147,
-        "settings_for_state_s": 6.549999670824036e-05,
-        "total_evaluate_s": 0.9150698340017698
+        "prepare_total_s": 0.015468249999685213,
+        "scale_jacobian_s": 0.0002922080020653084,
+        "settings_for_state_s": 6.287501309998333e-05,
+        "total_evaluate_s": 1.0376718750048894
       }
     ],
     "reused_retrieval_iteration_trace_summary": {
       "copy_outputs_s": {
-        "max": 9.14999982342124e-05,
-        "mean": 6.293033220572397e-05,
-        "median": 5.36660008947365e-05,
-        "min": 4.3624997488223016e-05
+        "max": 0.00010641699191182852,
+        "mean": 7.038900124219556e-05,
+        "median": 5.43750065844506e-05,
+        "min": 5.037500523030758e-05
       },
       "iterations": 3,
       "native_forward_s": {
-        "max": 0.8987610420008423,
-        "mean": 0.8922078056663546,
-        "median": 0.8985105419997126,
-        "min": 0.879351832998509
+        "max": 1.021655999997165,
+        "mean": 0.928656194669505,
+        "median": 0.8873627090069931,
+        "min": 0.8769498750043567
       },
       "prepare_total_s": {
-        "max": 0.01605441699939547,
-        "mean": 0.0156626803339653,
-        "median": 0.01599533300031908,
-        "min": 0.014938291002181359
+        "max": 0.015999750001356006,
+        "mean": 0.01535823633215235,
+        "median": 0.015468249999685213,
+        "min": 0.014606708995415829
       },
       "radiance_to_reflectance_jacobian_s": {
-        "max": 0.00011449999874457717,
-        "mean": 0.00010795866546686739,
-        "median": 0.00010570899758022279,
-        "min": 0.00010366700007580221
+        "max": 0.00011887498840223998,
+        "mean": 0.00011543033178895712,
+        "median": 0.00011799999629147351,
+        "min": 0.00010941601067315787
       },
       "scale_jacobian_s": {
-        "max": 0.0006234579996089451,
-        "mean": 0.0003930970002935889,
-        "median": 0.0002811250014929101,
-        "min": 0.00027470799977891147
+        "max": 0.0006622499931836501,
+        "mean": 0.0004115136689506471,
+        "median": 0.0002922080020653084,
+        "min": 0.0002800830116029829
       },
       "settings_for_state_s": {
-        "max": 6.549999670824036e-05,
-        "mean": 6.402766787990306e-05,
-        "median": 6.454100366681814e-05,
-        "min": 6.20420032646507e-05
+        "max": 6.566599768120795e-05,
+        "mean": 6.38470034270237e-05,
+        "median": 6.299999949987978e-05,
+        "min": 6.287501309998333e-05
       },
       "total_evaluate_s": {
-        "max": 0.9152886250012671,
-        "mean": 0.9085158890011371,
-        "median": 0.9150698340017698,
-        "min": 0.8951892080003745
+        "max": 1.0376718750048894,
+        "mean": 0.944695875334825,
+        "median": 0.9038974589930149,
+        "min": 0.8925182920065708
       }
     },
-    "setup_s": 0.28037125000264496
+    "setup_s": 0.274346209000214
   },
   "source": "Slow retained scene from out/validation/optimal_estimation/paired_disamar_zdisamar/paired_retrieval_runs.parquet case 71.",
   "validation_case": "zdisamar_o2a_slow_forward_jacobian_latency"

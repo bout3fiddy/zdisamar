@@ -114,8 +114,9 @@ channel is an average over sharper oxygen absorption structure at higher
 spectral resolution:
 
 ```text
-prepare_o2a                    0.177154 s
-forward-model elapsed time     1.799918 s
+low-overhead prepare_o2a       0.057692 s
+low-overhead forward elapsed   1.328534 s
+ztracy forward elapsed         2.443697 s
 output wavelengths                  701
 high-resolution radiance samples  3,874
 LABOS Fourier terms             120,390
@@ -123,10 +124,11 @@ LABOS layer visits            5,417,550
 doubling steps                8,389,666
 ```
 
-The tracked evidence is
-[`validation/outputs/performance/labos-bottleneck/summary.json`](./validation/outputs/performance/labos-bottleneck/summary.json)
-and the accompanying CSV summaries in the same directory. The detailed
-performance notes live in
+The low-overhead evidence is
+[`research/performance/tracing/output/lauka-forward/forward-run/summary.json`](./research/performance/tracing/output/lauka-forward/forward-run/summary.json).
+The timeline trace summary is
+[`research/performance/tracing/output/labos-bottleneck/summary.json`](./research/performance/tracing/output/labos-bottleneck/summary.json).
+The detailed performance notes live in
 [`research/performance/o2a-forward/`](./research/performance/o2a-forward/).
 
 ### Retrieval
@@ -137,8 +139,8 @@ synthetic spectrum, which keeps the retrieval problem aligned while measuring
 the two systems separately.
 
 ```text
-DISAMAR Fortran: 100/100 converged, median 1228.826 s, mean 1189.862 s
-zdisamar:        100/100 converged, median    3.834 s, mean    3.794 s
+DISAMAR Fortran: 100/100 converged, median 1227.947 s, mean 1197.811 s
+zdisamar:        100/100 converged, median    3.327 s, mean    3.235 s
 ```
 
 The tracked summary is
@@ -196,7 +198,6 @@ optimization.
 | `src/forward_model/` | optical properties, radiative transfer, instrument-grid calculation, and implementations |
 | `src/output/` | diagnostic reports and spectrum serialization |
 | `src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
-| `src/validation/disamar_reference/` | DISAMAR reference comparison helpers and CLI support |
 | `data/` | tracked O2 A bundles and reference assets |
 | `tests/` | O2 A executable checks |
 | `validation/` | O2 A compatibility, benchmark, and reference evidence |

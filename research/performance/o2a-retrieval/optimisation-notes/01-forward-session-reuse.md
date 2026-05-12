@@ -1,6 +1,6 @@
 # 01. Reuse The O2 A Forward Session
 
-Current slow-case evidence:
+Historical slow-case evidence from the session-reuse optimization:
 
 ```text
 non-session retrieval elapsed time  5.354143 s
@@ -9,6 +9,15 @@ same retrieved state                true
 ```
 
 In short: reuse one O2 A session across retrieval iterations for the same scene.
+
+Current retained slow-case evidence after later Jacobian and lazy-final-state
+work:
+
+```text
+session reused elapsed time         2.835175 s
+forward+jacobian time               2.834102 s
+lazy final evaluation on demand      1.297817 s
+```
 
 Source links:
 

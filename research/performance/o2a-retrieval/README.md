@@ -14,8 +14,8 @@ but they are fixed inside each retrieval.
 Current paired sweep summary:
 
 ```text
-DISAMAR Fortran: 100/100 converged, median 1228.826 s, mean 1189.862 s
-zdisamar:        100/100 converged, median    3.834 s, mean    3.794 s
+DISAMAR Fortran: 100/100 converged, median 1227.947 s, mean 1197.811 s
+zdisamar:        100/100 converged, median    3.327 s, mean    3.235 s
 ```
 
 The result is not a different optimal-estimation shape. zdisamar is faster

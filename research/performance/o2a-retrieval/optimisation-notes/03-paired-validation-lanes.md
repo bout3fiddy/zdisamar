@@ -3,8 +3,8 @@
 Current paired sweep evidence:
 
 ```text
-DISAMAR Fortran: 100/100 converged, median 1228.826 s
-zdisamar:        100/100 converged, median    4.349 s
+DISAMAR Fortran: 100/100 converged, median 1227.947 s
+zdisamar:        100/100 converged, median    3.327 s
 ```
 
 In short: compare complete retrieval lanes without sharing synthetic spectra
