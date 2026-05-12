@@ -113,6 +113,48 @@ pub fn prepareStrongLineState(
     pressure_hpa: f64,
 ) !?Types.StrongLinePreparedState {
     if (!self.hasStrongLineSidecars()) return null;
+    var prepared = (try allocStrongLinePreparedState(self, allocator)).?;
+    errdefer prepared.deinit(allocator);
+    prepareStrongLineStateInto(self, &prepared, temperature_k, pressure_hpa);
+    return prepared;
+}
+
+pub fn allocStrongLinePreparedState(
+    self: SpectroscopyLineList,
+    allocator: Types.Allocator,
+) !?Types.StrongLinePreparedState {
+    if (!self.hasStrongLineSidecars()) return null;
+    const line_count = strongLinePreparedLineCount(self);
+    const population_t = try allocator.alloc(f64, line_count);
+    errdefer allocator.free(population_t);
+    const dipole_t = try allocator.alloc(f64, line_count);
+    errdefer allocator.free(dipole_t);
+    const mod_sig_cm1 = try allocator.alloc(f64, line_count);
+    errdefer allocator.free(mod_sig_cm1);
+    const half_width_cm1_at_t = try allocator.alloc(f64, line_count);
+    errdefer allocator.free(half_width_cm1_at_t);
+    const line_mixing_coefficients = try allocator.alloc(f64, line_count);
+    errdefer allocator.free(line_mixing_coefficients);
+    const relaxation_weights = try allocator.alloc(f64, line_count * line_count);
+    return .{
+        .line_count = line_count,
+        .sig_moy_cm1 = 0.0,
+        .population_t = population_t,
+        .dipole_t = dipole_t,
+        .mod_sig_cm1 = mod_sig_cm1,
+        .half_width_cm1_at_t = half_width_cm1_at_t,
+        .line_mixing_coefficients = line_mixing_coefficients,
+        .relaxation_weights = relaxation_weights,
+    };
+}
+
+pub fn prepareStrongLineStateInto(
+    self: SpectroscopyLineList,
+    prepared: *Types.StrongLinePreparedState,
+    temperature_k: f64,
+    pressure_hpa: f64,
+) void {
+    std.debug.assert(self.hasStrongLineSidecars());
     const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
     const stack_state = Physics.prepareStrongLineConvTPState(
         self.strong_lines.?,
@@ -120,7 +162,27 @@ pub fn prepareStrongLineState(
         @max(temperature_k, 150.0),
         pressure_scale,
     );
-    return try Physics.clonePreparedStrongLineState(allocator, stack_state);
+    const line_count = stack_state.line_count;
+    std.debug.assert(prepared.population_t.len >= line_count);
+    std.debug.assert(prepared.dipole_t.len >= line_count);
+    std.debug.assert(prepared.mod_sig_cm1.len >= line_count);
+    std.debug.assert(prepared.half_width_cm1_at_t.len >= line_count);
+    std.debug.assert(prepared.line_mixing_coefficients.len >= line_count);
+    std.debug.assert(prepared.relaxation_weights.len >= line_count * line_count);
+
+    prepared.line_count = line_count;
+    prepared.sig_moy_cm1 = stack_state.sig_moy_cm1;
+    @memcpy(prepared.population_t[0..line_count], stack_state.population_t[0..line_count]);
+    @memcpy(prepared.dipole_t[0..line_count], stack_state.dipole_t[0..line_count]);
+    @memcpy(prepared.mod_sig_cm1[0..line_count], stack_state.mod_sig_cm1[0..line_count]);
+    @memcpy(prepared.half_width_cm1_at_t[0..line_count], stack_state.half_width_cm1_at_t[0..line_count]);
+    @memcpy(prepared.line_mixing_coefficients[0..line_count], stack_state.line_mixing_coefficients[0..line_count]);
+    for (0..line_count) |row_index| {
+        for (0..line_count) |column_index| {
+            prepared.relaxation_weights[row_index * line_count + column_index] =
+                stack_state.weightAt(row_index, column_index);
+        }
+    }
 }
 
 pub fn prepareWeakLineState(
@@ -129,10 +191,30 @@ pub fn prepareWeakLineState(
     temperature_k: f64,
     pressure_hpa: f64,
 ) !Types.WeakLinePreparedState {
+    var prepared = try allocWeakLinePreparedState(self, allocator);
+    prepareWeakLineStateInto(self, &prepared, temperature_k, pressure_hpa);
+    return prepared;
+}
+
+pub fn allocWeakLinePreparedState(
+    self: SpectroscopyLineList,
+    allocator: Types.Allocator,
+) !Types.WeakLinePreparedState {
+    return .{
+        .line_count = self.lines.len,
+        .lines = try allocator.alloc(Types.WeakLinePreparedLineState, self.lines.len),
+    };
+}
+
+pub fn prepareWeakLineStateInto(
+    self: SpectroscopyLineList,
+    prepared: *Types.WeakLinePreparedState,
+    temperature_k: f64,
+    pressure_hpa: f64,
+) void {
+    std.debug.assert(prepared.lines.len >= self.lines.len);
     const pressure_scale = @max(pressure_hpa / 1013.25, Types.min_spectroscopy_pressure_atm);
-    const lines = try allocator.alloc(Types.WeakLinePreparedLineState, self.lines.len);
-    errdefer allocator.free(lines);
-    for (self.lines, lines) |line, *slot| {
+    for (self.lines, prepared.lines[0..self.lines.len]) |line, *slot| {
         slot.* = Physics.prepareWeakLinePreparedLineState(
             line,
             temperature_k,
@@ -140,10 +222,14 @@ pub fn prepareWeakLineState(
             Types.hitran_reference_temperature_k,
         );
     }
-    return .{
-        .line_count = self.lines.len,
-        .lines = lines,
-    };
+    prepared.line_count = self.lines.len;
+}
+
+fn strongLinePreparedLineCount(self: SpectroscopyLineList) usize {
+    return @min(
+        @min(self.strong_lines.?.len, self.relaxation_matrix.?.line_count),
+        Types.max_strong_line_sidecars,
+    );
 }
 
 pub fn findStrongLineMatch(self: SpectroscopyLineList, wavelength_nm: f64) ?usize {

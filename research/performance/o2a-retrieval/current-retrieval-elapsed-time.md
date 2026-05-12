@@ -19,32 +19,32 @@ Paired sweep results:
 ```text
 DISAMAR Fortran:
   converged              100/100
-  retrieval median       1228.826 s
-  retrieval mean         1189.862 s
+  retrieval median       1227.947 s
+  retrieval mean         1197.811 s
   max AOD error          1.789e-4
   max mid-pressure error 0.661 hPa
 
 zdisamar:
   converged              100/100
-  retrieval median       4.349 s
-  retrieval mean         4.309 s
-  max AOD error          3.951e-5
-  max mid-pressure error 0.087 hPa
+  retrieval median       3.327 s
+  retrieval mean         3.235 s
+  max AOD error          1.521e-4
+  max mid-pressure error 0.272 hPa
 ```
 
 Slow retained zdisamar case:
 
 ```text
 source case                          paired sweep case 71
-measurement build                   1.198284 s
-direct forward-only median          0.841938 s
-direct forward+jacobian median      1.010729 s
-jacobian increment median           0.164841 s
-non-session retrieval elapsed time  5.354143 s
-session first-use elapsed time      4.425870 s
-session reused elapsed time         4.098390 s
-iterations                          4
-session matches non-session result  true
+measurement build                   1.029640 s
+direct forward-only median          0.744821 s
+direct forward+jacobian median      0.901555 s
+jacobian increment median           0.159105 s
+session first-use elapsed time      3.109521 s
+session reused elapsed time         2.835175 s
+lazy final evaluation when requested 1.297817 s
+iterations                          3
+lazy final evaluation cached        true
 ```
 
 The slow-case result says the remaining zdisamar retrieval elapsed time is mostly

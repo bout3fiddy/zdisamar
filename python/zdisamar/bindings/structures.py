@@ -27,20 +27,6 @@ class CDiagnosticReport(ctypes.Structure):
     ]
 
 
-class CO2APrepareTrace(ctypes.Structure):
-    _fields_ = [
-        ("parse_json_ns", ctypes.c_uint64),
-        ("load_inputs_ns", ctypes.c_uint64),
-        ("build_scene_ns", ctypes.c_uint64),
-        ("optical_prepare_ns", ctypes.c_uint64),
-        ("weak_cutoff_grid_ns", ctypes.c_uint64),
-        ("solar_rewindow_ns", ctypes.c_uint64),
-        ("route_prepare_ns", ctypes.c_uint64),
-        ("native_prepare_ns", ctypes.c_uint64),
-        ("total_ns", ctypes.c_uint64),
-    ]
-
-
 class CAtmosphericBudgetRow(ctypes.Structure):
     _fields_ = [
         ("wavelength_nm", ctypes.c_double),

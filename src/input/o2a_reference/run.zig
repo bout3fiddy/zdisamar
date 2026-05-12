@@ -9,6 +9,7 @@ const ObservationModel = @import("../../input/ObservationModel.zig");
 const ReferenceDataModel = @import("../../input/ReferenceData.zig");
 const Scene = @import("../../input/Scene.zig").Scene;
 const SpectralGrid = @import("../../input/Spectrum.zig").SpectralGrid;
+const Trace = @import("../../forward_model/performance_trace.zig");
 const bundled_optics = @import("../../input/reference_data/bundled/assets.zig");
 const implementations = @import("../../forward_model/implementations/root.zig");
 const reference_assets = @import("../../input/reference_data/ingest/reference_assets.zig");
@@ -484,55 +485,55 @@ pub fn prepareResolvedVendorO2ACase(
     allocator: Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !PreparedRuntimeCase {
-    return prepareResolvedVendorO2ACaseWithTrace(allocator, resolved, null);
-}
-
-pub fn prepareResolvedVendorO2ACaseWithTrace(
-    allocator: Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    trace: ?*@import("support_types.zig").O2APrepareTrace,
-) !PreparedRuntimeCase {
-    const total_start = std.time.nanoTimestamp();
-    if (trace) |profile| profile.* = .{};
-
-    const load_start = std.time.nanoTimestamp();
-    var inputs = try loadResolvedVendorO2AInputs(allocator, resolved);
+    var inputs = inputs: {
+        const zone = Trace.staticZone(@src(), "prepare.load_inputs");
+        defer zone.end();
+        break :inputs try loadResolvedVendorO2AInputs(allocator, resolved);
+    };
     defer inputs.deinit(allocator);
-    if (trace) |profile| profile.load_inputs_ns = elapsedNs(load_start);
 
-    const scene_start = std.time.nanoTimestamp();
-    var scene = try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
+    var scene = scene: {
+        const zone = Trace.staticZone(@src(), "prepare.build_scene");
+        defer zone.end();
+        break :scene try buildResolvedVendorO2AScene(allocator, resolved, inputs.raw_solar_spectrum);
+    };
     errdefer scene.deinitOwned(allocator);
-    if (trace) |profile| profile.build_scene_ns = elapsedNs(scene_start);
 
     const reference = inputs.reference;
     inputs.reference = inputs.reference[0..0];
     errdefer allocator.free(reference);
 
-    const optical_start = std.time.nanoTimestamp();
-    var prepared = try OpticsPrepare.prepare(allocator, &scene, .{
-        .profile = &inputs.profile,
-        .spectroscopy_profile = &inputs.spectroscopy_profile,
-        .cross_sections = &inputs.cross_sections,
-        .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
-        .spectroscopy_lines = &inputs.line_list,
-        .lut = &inputs.lut,
-    });
+    var prepared = prepared: {
+        const zone = Trace.staticZone(@src(), "prepare.optical");
+        defer zone.end();
+        break :prepared try OpticsPrepare.prepare(allocator, &scene, .{
+            .profile = &inputs.profile,
+            .spectroscopy_profile = &inputs.spectroscopy_profile,
+            .cross_sections = &inputs.cross_sections,
+            .collision_induced_absorption = if (inputs.cia_table) |*table| table else null,
+            .spectroscopy_lines = &inputs.line_list,
+            .lut = &inputs.lut,
+        });
+    };
     errdefer prepared.deinit(allocator);
-    if (trace) |profile| profile.optical_prepare_ns = elapsedNs(optical_start);
 
-    const weak_cutoff_start = std.time.nanoTimestamp();
-    try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
-    if (trace) |profile| profile.weak_cutoff_grid_ns = elapsedNs(weak_cutoff_start);
+    {
+        const zone = Trace.staticZone(@src(), "prepare.weak_cutoff_grid");
+        defer zone.end();
+        try installVendorWeakCutoffGrid(allocator, &scene, &prepared);
+    }
 
-    const solar_rewindow_start = std.time.nanoTimestamp();
-    try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
-    if (trace) |profile| profile.solar_rewindow_ns = elapsedNs(solar_rewindow_start);
+    {
+        const zone = Trace.staticZone(@src(), "prepare.solar_rewindow");
+        defer zone.end();
+        try rewindowParitySolarSupportToMeasurementKernel(allocator, &scene, &prepared);
+    }
 
-    const route_start = std.time.nanoTimestamp();
-    const route = try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
-    if (trace) |profile| profile.route_prepare_ns = elapsedNs(route_start);
-    if (trace) |profile| profile.total_ns = elapsedNs(total_start);
+    const route = route: {
+        const zone = Trace.staticZone(@src(), "prepare.route");
+        defer zone.end();
+        break :route try prepareResolvedVendorO2ARoute(&scene, resolved.plan, resolved.rtm_controls);
+    };
 
     return .{
         .reference = reference,
@@ -540,10 +541,6 @@ pub fn prepareResolvedVendorO2ACaseWithTrace(
         .route = route,
         .prepared = prepared,
     };
-}
-
-fn elapsedNs(start: i128) u64 {
-    return @intCast(@max(std.time.nanoTimestamp() - start, 0));
 }
 
 fn installVendorWeakCutoffGrid(

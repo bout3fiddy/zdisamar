@@ -7,7 +7,6 @@ const support_types = @import("support_types.zig");
 pub const ReferenceData = support_types.ReferenceData;
 pub const ReferenceSample = support_types.ReferenceSample;
 pub const ResolvedVendorO2ACase = support_types.ResolvedVendorO2ACase;
-pub const O2APrepareTrace = support_types.O2APrepareTrace;
 pub const LineGasSpec = support_types.LineGasSpec;
 pub const RangeExtremum = support_types.RangeExtremum;
 pub const ComparisonMetrics = support_types.ComparisonMetrics;
@@ -37,20 +36,7 @@ pub fn prepareResolvedVendorO2ACase(
     allocator: std.mem.Allocator,
     resolved: *const ResolvedVendorO2ACase,
 ) !VendorO2APreparedCase {
-    var trace: O2APrepareTrace = .{};
-    return prepareResolvedVendorO2ACaseWithTrace(allocator, resolved, &trace);
-}
-
-pub fn prepareResolvedVendorO2ACaseWithTrace(
-    allocator: std.mem.Allocator,
-    resolved: *const ResolvedVendorO2ACase,
-    trace: *O2APrepareTrace,
-) !VendorO2APreparedCase {
-    const runtime_case = try runtime.prepareResolvedVendorO2ACaseWithTrace(
-        allocator,
-        resolved,
-        trace,
-    );
+    const runtime_case = try runtime.prepareResolvedVendorO2ACase(allocator, resolved);
     return .{
         .reference = runtime_case.reference,
         .scene = runtime_case.scene,

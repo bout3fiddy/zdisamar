@@ -9,17 +9,17 @@ The retained benchmark artifact is
 `validation/outputs/optimal_estimation/zdisamar_o2a_slow_forward_jacobian_benchmark.json`.
 The current slow retained case reports:
 
-- retrieval loop wall time: 4.134691 s
-- retrieval iteration forward model plus Jacobian: 4.133298 s
-- deferred final-state evaluation when requested: 0.987428 s
-- remaining retrieval work: 0.000490 s
+- retrieval loop wall time: 2.835175 s
+- retrieval iteration forward model plus Jacobian: 2.834102 s
+- deferred final-state evaluation when requested: 1.297817 s
+- remaining retrieval work: 0.000489 s
 
 The session cache trace shows that all retrieval iterations hit the persistent
 session caches:
 
-- wavelength plan: 4 hits, 0 misses
-- forward-miss list: 4 hits, 0 misses
-- profile spectroscopy cache: 4 hits, 0 misses
+- wavelength plan: 3 hits, 0 misses
+- forward-miss list: 3 hits, 0 misses
+- profile spectroscopy cache: 3 hits, 0 misses
 - cached forward-miss/profile spectroscopy count: 3736
 
 The lazy final-state evaluation also hits those caches once when requested. This
@@ -27,15 +27,14 @@ means the slow case is not repeatedly rebuilding the wavelength sampling plan,
 forward-miss list, or profile spectroscopy caches between OE iterations.
 
 The traced native Jacobian sweep is
-`validation/outputs/performance/o2a-jacobian-trace/summary.json`. For the
+`research/performance/tracing/output/o2a-jacobian-trace/summary.json`. For the
 two-state aerosol Jacobian variant, the dominant native costs remain:
 
-- forward wall time: 2.017445 s
-- LABOS RT layer build CPU time: 7.144270 s
-- LABOS orders CPU time: 2.904401 s
-- aerosol optical-depth weighting CPU time: 1.990068 s
-- aerosol layer-pressure weighting CPU time: 0.580569 s
-- result copy time: 0.000012 s
+- forward-only wall time: 2.437257 s
+- two-state aerosol Jacobian wall time: 3.063149 s
+- aerosol optical-depth-only Jacobian wall time: 2.845655 s
+- aerosol layer-pressure-only Jacobian wall time: 2.787352 s
+- result copy time: 0.000007 s for the two-state variant
 
 ## Conclusions
 
@@ -64,7 +63,7 @@ and would need careful parity coverage.
 A borrowed C result view for session-backed OE was tested to avoid cloning the
 native product before Python copies arrays. Sequential benchmark runs did not
 show a stable improvement, and the native trace reports result copy around
-0.000012 s for the two-state Jacobian variant. The borrowed-view path was
+0.000007 s for the two-state Jacobian variant. The borrowed-view path was
 removed rather than adding C ABI surface area for a non-bottleneck.
 
 ## Current Priority

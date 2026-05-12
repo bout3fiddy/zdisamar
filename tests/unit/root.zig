@@ -239,7 +239,6 @@ test "public root exposes the O2A forward lab surface" {
     try std.testing.expect(@hasDecl(zdisamar, "warmO2ASessionStorage"));
     try std.testing.expect(@hasDecl(zdisamar, "buildAtmosphericBudget"));
     try std.testing.expect(@hasDecl(zdisamar, "buildO2LineContributions"));
-    try std.testing.expect(@hasDecl(zdisamar, "disamar_reference"));
     try std.testing.expect(@hasDecl(zdisamar, "o2a"));
     try std.testing.expect(@hasDecl(zdisamar, "prepare"));
     try std.testing.expect(@hasDecl(zdisamar, "run"));

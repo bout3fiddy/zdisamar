@@ -3,6 +3,7 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #   "altair>=5.5",
+#   "matplotlib>=3.10",
 #   "polars>=1.35",
 #   "vl-convert-python>=1.7",
 # ]
@@ -14,7 +15,9 @@ from pathlib import Path
 from typing import Any, cast
 
 import altair as alt
+import matplotlib.pyplot as plt
 import polars as pl
+from matplotlib.ticker import MaxNLocator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -46,6 +49,11 @@ MODEL_LABELS = {
     "zdisamar": "zdisamar",
 }
 MODEL_COLORS = [PLOT.colors["blue"], PLOT.colors["orange"]]
+MODEL_MARKERS = {
+    "DISAMAR Fortran": "o",
+    "zdisamar": "x",
+}
+MONOSPACE_FONT = "Menlo"
 
 
 def require_data() -> pl.DataFrame:
@@ -139,106 +147,209 @@ def paired_difference_rows(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([aod, pressure])
 
 
-def retrieved_scatter_row(frame: pl.DataFrame) -> alt.HConcatChart:
-    data = retrieved_rows(frame)
-    charts = []
-    for parameter in data["parameter"].unique().to_list():
-        subset = data.filter(pl.col("parameter") == parameter)
-        truth_min = float(cast(float, subset["truth"].min()))
-        retrieved_min = float(cast(float, subset["retrieved"].min()))
-        truth_max = float(cast(float, subset["truth"].max()))
-        retrieved_max = float(cast(float, subset["retrieved"].max()))
-        min_value = min(truth_min, retrieved_min)
-        max_value = max(truth_max, retrieved_max)
-        pad = (max_value - min_value) * 0.04
-        line_rows = pl.DataFrame([{"line_min": min_value - pad, "line_max": max_value + pad}])
-        line = (
-            alt.Chart(line_rows)
-            .mark_line(color="black", strokeDash=[4, 3], strokeWidth=1)
-            .encode(
-                x="line_min:Q",
-                x2="line_max:Q",
-                y="line_min:Q",
-                y2="line_max:Q",
-            )
-        )
-        points = (
-            alt.Chart(subset)
-            .mark_circle(size=34, opacity=0.72)
-            .encode(
-                x=alt.X("truth:Q", title="True value"),
-                y=alt.Y("retrieved:Q", title="Retrieved value"),
-                color=alt.Color(
-                    "model_label:N",
-                    title="Model",
-                    scale=alt.Scale(range=MODEL_COLORS),
-                ),
-                tooltip=[
-                    "case:Q",
-                    "model_label:N",
-                    "parameter:N",
-                    alt.Tooltip("truth:Q", format=".6g"),
-                    alt.Tooltip("retrieved:Q", format=".6g"),
-                ],
-            )
-            .properties(title=str(parameter), width=340, height=300)
-        )
-        charts.append(points + line)
-    return alt.hconcat(*charts)
+def series_stats(series: pl.Series) -> dict[str, float]:
+    if series.is_empty():
+        return {"min": math.nan, "median": math.nan, "mean": math.nan, "max": math.nan}
+    return {
+        "min": float(cast(float, series.min())),
+        "median": float(cast(float, series.median())),
+        "mean": float(cast(float, series.mean())),
+        "max": float(cast(float, series.max())),
+    }
 
 
-def paired_difference_histogram_row(frame: pl.DataFrame) -> alt.HConcatChart:
+def paired_difference_stats(frame: pl.DataFrame) -> dict[str, dict[str, float]]:
     data = paired_difference_rows(frame)
-    charts = []
-    for parameter, x_title in (
-        ("Aerosol optical depth", "zdisamar retrieved - DISAMAR retrieved"),
-        (
-            "Aerosol mid pressure [hPa]",
-            "zdisamar retrieved - DISAMAR retrieved [hPa]",
+    return {
+        "aerosol_optical_depth": series_stats(
+            data.filter(pl.col("parameter") == "Aerosol optical depth")["difference"]
         ),
-    ):
-        subset = data.filter(pl.col("parameter") == parameter)
-        zero_line = (
-            alt.Chart(pl.DataFrame([{"zero": 0.0}]))
-            .mark_rule(color="black", strokeDash=[4, 3], strokeWidth=1)
-            .encode(x="zero:Q")
+        "aerosol_mid_pressure_hpa": series_stats(
+            data.filter(pl.col("parameter") == "Aerosol mid pressure [hPa]")["difference"]
+        ),
+    }
+
+
+def signed(value: float, precision: str) -> str:
+    if math.isnan(value):
+        return "nan"
+    return f"{value:+{precision}}"
+
+
+def difference_subtitle(stats: dict[str, float], precision: str, unit: str = "") -> str:
+    suffix = f" {unit}" if unit else ""
+    return (
+        f"median {signed(stats['median'], precision)}{suffix}; "
+        f"range {signed(stats['min'], precision)} to {signed(stats['max'], precision)}{suffix}"
+    )
+
+
+def set_matplotlib_style() -> None:
+    plt.rcParams.update(
+        {
+            "font.family": "monospace",
+            "font.monospace": [
+                MONOSPACE_FONT,
+                "Monaco",
+                "Consolas",
+                "Liberation Mono",
+                "DejaVu Sans Mono",
+                "monospace",
+            ],
+            "axes.grid": True,
+            "grid.color": PLOT.colors["grid"],
+            "grid.alpha": 0.25,
+        }
+    )
+
+
+def scatter_panel(
+    ax,
+    data: pl.DataFrame,
+    *,
+    parameter: str,
+    truth_field: str,
+    retrieved_field: str,
+    title: str,
+) -> None:
+    subset = data.filter(pl.col("parameter") == parameter)
+    for model_label, color in zip(MODEL_LABELS.values(), MODEL_COLORS, strict=True):
+        model_subset = subset.filter(pl.col("model_label") == model_label)
+        ax.scatter(
+            model_subset[truth_field].to_list(),
+            model_subset[retrieved_field].to_list(),
+            s=34,
+            alpha=0.78,
+            label=model_label,
+            color=color,
+            marker=MODEL_MARKERS[model_label],
         )
-        histogram = (
-            alt.Chart(subset)
-            .mark_bar(color=PLOT.colors["blue"], opacity=0.78)
-            .encode(
-                x=alt.X("difference:Q", bin=alt.Bin(maxbins=45), title=x_title),
-                y=alt.Y("count():Q", title="Count"),
-                tooltip=[
-                    "parameter:N",
-                    alt.Tooltip("count():Q", title="count"),
-                ],
-            )
-            .properties(title=parameter, width=340, height=220)
-        )
-        charts.append(histogram + zero_line)
-    return alt.hconcat(*charts)
+    truth_min = float(cast(float, subset[truth_field].min()))
+    retrieved_min = float(cast(float, subset[retrieved_field].min()))
+    truth_max = float(cast(float, subset[truth_field].max()))
+    retrieved_max = float(cast(float, subset[retrieved_field].max()))
+    min_value = min(truth_min, retrieved_min)
+    max_value = max(truth_max, retrieved_max)
+    pad = (max_value - min_value) * 0.04
+    lower = min_value - pad
+    upper = max_value + pad
+    ax.plot(
+        [lower, upper],
+        [lower, upper],
+        color="black",
+        linestyle=(0, (4, 3)),
+        linewidth=1,
+    )
+    ax.set_xlim(lower, upper)
+    ax.set_ylim(lower, upper)
+    ax.set_title(title, fontsize=20, pad=16)
+    ax.set_xlabel("True value", fontsize=15, labelpad=14)
+    ax.set_ylabel("Retrieved value", fontsize=15, labelpad=12, fontweight="bold")
+    ax.tick_params(labelsize=12, pad=6)
+
+
+def histogram_panel(
+    ax,
+    data: pl.DataFrame,
+    *,
+    parameter: str,
+    title: str,
+    subtitle: str,
+    xlabel: str,
+    bins: int = 45,
+) -> None:
+    subset = data.filter(pl.col("parameter") == parameter)
+    ax.hist(subset["difference"].to_list(), bins=bins, color=PLOT.colors["blue"], alpha=0.78)
+    ax.axvline(0.0, color="black", linestyle=(0, (4, 3)), linewidth=1)
+    ax.set_title(f"{title}\n{subtitle}", fontsize=16, pad=16)
+    ax.set_xlabel(xlabel, fontsize=15, labelpad=16, fontweight="bold")
+    ax.set_ylabel("Count", fontsize=15, labelpad=12, fontweight="bold")
+    ax.tick_params(labelsize=12, pad=6)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+    ax.minorticks_off()
+    ax.grid(True, which="major", axis="both", alpha=0.25)
 
 
 def save_retrieved_plot(frame: pl.DataFrame) -> None:
-    chart = (
-        alt.vconcat(
-            retrieved_scatter_row(frame),
-            paired_difference_histogram_row(frame),
-        )
-        .resolve_scale(x="independent", y="independent")
-        .properties(
-            title=alt.TitleParams(
-                text="Retrieved State Versus Truth",
-                subtitle=(
-                    "Top: each model retrieval against known synthetic truth. "
-                    "Bottom: paired retrieval difference per scene "
-                    "(zdisamar - DISAMAR Fortran)."
-                ),
-            )
-        )
+    set_matplotlib_style()
+    retrieved = retrieved_rows(frame)
+    scatter_data = retrieved.rename({"truth": "truth_value", "retrieved": "retrieved_value"})
+    differences = paired_difference_rows(frame)
+    difference_stats = paired_difference_stats(frame)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 11), dpi=180)
+    fig.suptitle("Retrieved State Versus Truth", fontsize=24, y=0.982)
+    fig.text(
+        0.5,
+        0.948,
+        (
+            "Top: each model retrieval against known synthetic truth. "
+            "\nBottom: paired retrieval difference per scene "
+            "(zdisamar - DISAMAR Fortran)."
+        ),
+        ha="center",
+        va="top",
+        fontsize=11,
+        family="monospace",
     )
-    chart.save(RETRIEVED_PLOT_PATH, ppi=160)
+    scatter_panel(
+        axes[0, 0],
+        scatter_data,
+        parameter="Aerosol mid pressure",
+        truth_field="truth_value",
+        retrieved_field="retrieved_value",
+        title="Aerosol mid pressure",
+    )
+    scatter_panel(
+        axes[0, 1],
+        scatter_data,
+        parameter="Aerosol optical depth",
+        truth_field="truth_value",
+        retrieved_field="retrieved_value",
+        title="Aerosol optical depth",
+    )
+    histogram_panel(
+        axes[1, 0],
+        differences,
+        parameter="Aerosol optical depth",
+        title="Aerosol optical depth",
+        subtitle=difference_subtitle(difference_stats["aerosol_optical_depth"], ".3e"),
+        xlabel="zdisamar retrieved - DISAMAR retrieved",
+    )
+    histogram_panel(
+        axes[1, 1],
+        differences,
+        parameter="Aerosol mid pressure [hPa]",
+        title="Aerosol mid pressure [hPa]",
+        subtitle=difference_subtitle(
+            difference_stats["aerosol_mid_pressure_hpa"],
+            ".4f",
+            "hPa",
+        ),
+        xlabel="zdisamar retrieved - DISAMAR retrieved [hPa]",
+    )
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    legend = fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.902),
+        ncols=2,
+        frameon=True,
+        fontsize=12,
+    )
+    legend.get_frame().set_edgecolor("#cccccc")
+    legend.get_frame().set_facecolor("white")
+    fig.subplots_adjust(
+        left=0.08,
+        right=0.985,
+        top=0.77,
+        bottom=0.085,
+        hspace=0.64,
+        wspace=0.32,
+    )
+    fig.savefig(RETRIEVED_PLOT_PATH, bbox_inches="tight")
+    plt.close(fig)
 
 
 def save_error_histograms(frame: pl.DataFrame) -> None:
@@ -338,8 +449,9 @@ def manifest(frame: pl.DataFrame) -> dict[str, Any]:
                 ok_subset["aerosol_mid_pressure_abs_error_hpa"].to_list()
             ),
         }
+    differences = paired_difference_stats(frame)
     return {
-        "source_data": stable_repo_path(DATA_PATH),
+        "source_data": DATA_PATH.relative_to(REPO_ROOT).as_posix(),
         "source_rows": frame.height,
         "source_ok_rows": ok.height,
         "plots": {
@@ -347,6 +459,7 @@ def manifest(frame: pl.DataFrame) -> dict[str, Any]:
             "error_histograms": stable_repo_path(ERROR_HISTOGRAM_PATH),
             "latency": stable_repo_path(LATENCY_PLOT_PATH),
         },
+        "paired_difference": differences,
         "by_model": by_model,
     }
 

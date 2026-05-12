@@ -4,7 +4,7 @@
 - `src/forward_model/` owns optical-property preparation, radiative transfer, instrument-grid calculation, and implementation bindings.
 - `src/output/` owns diagnostic reports and spectrum serialization.
 - `src/common/` is shared support code only.
-- `src/validation/disamar_reference/` owns the DISAMAR reference comparison helpers and CLI support.
+- `src/validation/` owns validation-only CLIs that consume the typed O2 A baseline.
 
 ## Rules
 

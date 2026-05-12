@@ -1,10 +1,11 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const disamar_reference = zdisamar.disamar_reference;
-const ReferenceData = disamar_reference.ReferenceData;
+const o2a = zdisamar.o2a;
+const ReferenceData = o2a.ReferenceData;
 
 test "DISAMAR reference O2A helper preserves weak-lane rows while retaining strong sidecars" {
-    var line_list = try disamar_reference.loadDisamarReferenceO2ASpectroscopyLineList(std.testing.allocator);
+    const input = zdisamar.defaultO2AInput();
+    var line_list = try o2a.loadResolvedO2ASpectroscopyLineList(std.testing.allocator, input.o2);
     defer line_list.deinit(std.testing.allocator);
 
     try line_list.buildStrongLineMatchIndex(std.testing.allocator);

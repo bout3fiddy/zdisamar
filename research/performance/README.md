@@ -24,8 +24,10 @@ uvx --from jupyterlab jupyter lab research/performance/o2a-calculation-demo.ipyn
 ## Current finding
 
 The forward run is dominated by the high-resolution radiance calculations needed
-before the 701 output wavelengths can be produced. The current retained trace is
-`prepare_o2a=0.177154 s` and `forward elapsed time=1.799918 s`.
+before the 701 output wavelengths can be produced. The current low-overhead
+forward harness reports `prepare_o2a=0.057692 s` and
+`forward elapsed time=1.328534 s`. The ztracy timeline run reports
+`forward elapsed time=2.443697 s` because instrumentation is enabled.
 
 The important count is not 701. Each output wavelength represents an instrument-weighted measurement, so the model first calculates radiance at 3,874 high-resolution wavelengths and then averages those values back to the 701 output wavelengths.
 
@@ -51,18 +53,13 @@ That product is the current per-spectrum elapsed time.
 
 ## Artifacts
 
-Tracked outputs live under `validation/outputs/`. Generated local data lives
-under `out/` and is intentionally gitignored.
+Performance trace outputs live under `research/performance/tracing/output/`.
+Generated local scratch data lives under `out/` and is intentionally gitignored.
 
 Current forward trace artifacts:
 
 ```text
-validation/outputs/performance/labos-bottleneck/summary.json
-validation/outputs/performance/labos-bottleneck/sections.csv
-validation/outputs/performance/labos-bottleneck/counters.csv
-validation/outputs/performance/labos-bottleneck/primitive_estimates.csv
-validation/outputs/performance/labos-bottleneck/labos_kernel_bench.txt
-validation/outputs/performance/labos-bottleneck/rollup.json
+research/performance/tracing/output/labos-bottleneck/summary.json
 ```
 
 Current retrieval artifacts:

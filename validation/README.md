@@ -72,9 +72,9 @@ The tracked validation plot compares reflectance-space quantities because those
 are the retrieval-facing parity signal. The retained threshold for every row in
 the bundle is `1e-13` max absolute residual.
 
-## YAML Runtime Coverage
+## Baseline Case
 
-- The live executable YAML surface is currently the retained O2A parity case at
-  `data/examples/vendor_o2a_parity.yaml`.
-- Validation-lane tests should stay aligned with the live YAML contract instead
-  of the broader historical canonical-config story.
+Validation lanes use the typed O2 A baseline exposed by `zdisamar.defaultO2AInput()`
+and mirrored in `validation/common/o2a_reference_case.py`. Keep Zig validation
+tests and Python validation scripts aligned with that case instead of introducing
+a second serialized validation input.

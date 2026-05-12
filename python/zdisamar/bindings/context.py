@@ -20,7 +20,6 @@ from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
     CInstrumentResponse,
-    CO2APrepareTrace,
     CRadiativeTransferDiagnostics,
     CSpectrum,
     O2LineContributionsRaw,
@@ -71,8 +70,6 @@ class Context:
         self._lib = configure(load_library(library_path))
         self._ctx = self._lib.zds_context_create()
         self._input: O2AInput | None = None
-        self._trace_prepare_python = False
-        self._last_prepare_python_trace: dict[str, float] = {}
         if not self._ctx:
             raise RuntimeError("failed to create zdisamar context")
 
@@ -87,11 +84,6 @@ class Context:
 
     def prepare_default_o2a(self) -> Context:
         return self.prepare_o2a(self.default_o2a_input())
-
-    def enable_prepare_trace(self) -> Context:
-        self._trace_prepare_python = True
-        self._check(self._lib.zds_enable_o2a_prepare_trace(self._ctx))
-        return self
 
     def default_o2a_input(self) -> O2AInput:
         size = ctypes.c_size_t()
@@ -108,30 +100,8 @@ class Context:
         return O2AInput.from_json(buffer.value[: size.value])
 
     def prepare_o2a(self, input: O2AInput) -> Context:
-        if not self._trace_prepare_python:
-            resolved = input.with_resolved_asset_resolver(reference_data.resolve_asset_path)
-            payload = resolved.to_json_bytes()
-            self._check(
-                self._lib.zds_prepare_o2a_json(
-                    self._ctx,
-                    ctypes.c_char_p(payload),
-                    len(payload),
-                )
-            )
-            self._input = copy.deepcopy(input)
-            self._last_prepare_python_trace = {}
-            return self
-
-        import time
-
-        total_start = time.perf_counter()
-        resolve_start = time.perf_counter()
         resolved = input.with_resolved_asset_resolver(reference_data.resolve_asset_path)
-        resolve_assets_s = time.perf_counter() - resolve_start
-        json_start = time.perf_counter()
         payload = resolved.to_json_bytes()
-        json_serialize_s = time.perf_counter() - json_start
-        native_start = time.perf_counter()
         self._check(
             self._lib.zds_prepare_o2a_json(
                 self._ctx,
@@ -139,37 +109,12 @@ class Context:
                 len(payload),
             )
         )
-        native_call_s = time.perf_counter() - native_start
-        copy_start = time.perf_counter()
         self._input = copy.deepcopy(input)
-        input_copy_s = time.perf_counter() - copy_start
-        self._last_prepare_python_trace = {
-            "resolve_assets_s": resolve_assets_s,
-            "json_serialize_s": json_serialize_s,
-            "native_call_s": native_call_s,
-            "input_copy_s": input_copy_s,
-            "python_total_s": time.perf_counter() - total_start,
-        }
         return self
 
     def warm_o2a_session(self) -> Context:
         self._check(self._lib.zds_warm_o2a_session(self._ctx))
         return self
-
-    def last_o2a_prepare_trace(self) -> dict[str, float]:
-        raw = CO2APrepareTrace()
-        self._check(self._lib.zds_last_o2a_prepare_trace(self._ctx, ctypes.byref(raw)))
-        return self._last_prepare_python_trace | {
-            "parse_json_s": raw.parse_json_ns / 1.0e9,
-            "load_inputs_s": raw.load_inputs_ns / 1.0e9,
-            "build_scene_s": raw.build_scene_ns / 1.0e9,
-            "optical_prepare_s": raw.optical_prepare_ns / 1.0e9,
-            "weak_cutoff_grid_s": raw.weak_cutoff_grid_ns / 1.0e9,
-            "solar_rewindow_s": raw.solar_rewindow_ns / 1.0e9,
-            "route_prepare_s": raw.route_prepare_ns / 1.0e9,
-            "native_prepare_s": raw.native_prepare_ns / 1.0e9,
-            "total_s": raw.total_ns / 1.0e9,
-        }
 
     def run(
         self,

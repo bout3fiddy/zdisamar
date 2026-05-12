@@ -30,12 +30,12 @@ validation/outputs/optimal_estimation/zdisamar_o2a_slow_forward_jacobian_benchma
 Current key numbers:
 
 ```text
-direct forward-only median       0.841938 s
-direct forward+jacobian median   1.010729 s
-non-session retrieval elapsed time       5.354143 s
-session reused retrieval elapsed time    4.098390 s
-iterations                       4
-same retrieved state             true
+direct forward-only median       0.744821 s
+direct forward+jacobian median   0.901555 s
+session reused retrieval elapsed time    2.835175 s
+lazy final evaluation when requested     1.297817 s
+iterations                       3
+lazy final evaluation cached     true
 ```
 
 Use this case for focused latency work before scaling up broad paired sweeps.

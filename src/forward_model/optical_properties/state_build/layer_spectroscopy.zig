@@ -4,12 +4,43 @@ const Context = @import("context.zig").PreparationContext;
 const Absorbers = @import("absorbers.zig");
 const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
+const Trace = @import("../../performance_trace.zig");
 const spline = @import("../../../common/math/interpolation/spline.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
 const max_spectroscopy_profile_nodes: usize = 256;
+const min_parallel_profile_cache_node_count: usize = 8;
+const profile_cache_node_chunk_size: usize = 2;
+
+const ProfileCacheValueQueue = struct {
+    mutex: std.Thread.Mutex = .{},
+    next_index: usize = 0,
+    len: usize,
+
+    fn next(self: *ProfileCacheValueQueue) ?struct { start: usize, end: usize } {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.next_index >= self.len) return null;
+        const start = self.next_index;
+        const end = @min(start + profile_cache_node_chunk_size, self.len);
+        self.next_index = end;
+        return .{ .start = start, .end = end };
+    }
+};
+
+const ProfileCacheValueWorker = struct {
+    cache: *ProfileSpectroscopyCache,
+    line_list: ReferenceData.SpectroscopyLineList,
+    context: *const Context,
+    wavelength_nm: f64,
+    prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
+    prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
+    wavelength_window: ?LineListEval.StrongLineWavelengthWindow,
+    queue: *ProfileCacheValueQueue,
+    worker_index: usize,
+};
 
 pub const ProfileSpectroscopyCache = struct {
     node_count: usize = 0,
@@ -63,30 +94,15 @@ pub const ProfileSpectroscopyCache = struct {
             LineListEval.prepareStrongLineWavelengthWindow(line_list, wavelength_nm)
         else
             null;
-        for (0..node_count) |index| {
-            const evaluation = if (prepared_states) |states|
-                LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
-                    line_list,
-                    wavelength_nm,
-                    context.spectroscopy_profile_temperatures_k[index],
-                    context.spectroscopy_profile_pressures_hpa[index],
-                    &states[index],
-                    if (prepared_weak_states) |weak_states| &weak_states[index] else null,
-                    &wavelength_window.?,
-                )
-            else
-                LineListEval.totalSigmaAt(
-                    line_list,
-                    wavelength_nm,
-                    context.spectroscopy_profile_temperatures_k[index],
-                    context.spectroscopy_profile_pressures_hpa[index],
-                );
-            cache.weak_values[index] = evaluation.weak_line_sigma_cm2_per_molecule;
-            cache.strong_values[index] = evaluation.strong_line_sigma_cm2_per_molecule;
-            cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;
-            cache.line_mixing_values[index] = evaluation.line_mixing_sigma_cm2_per_molecule;
-            cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
-        }
+        fillProfileSpectroscopyCacheValues(
+            &cache,
+            line_list,
+            context,
+            wavelength_nm,
+            prepared_states,
+            prepared_weak_states,
+            wavelength_window,
+        );
         const altitudes = cache.altitudes_km[0..node_count];
         spline.endpointSecantSecondDerivatives5(
             altitudes,
@@ -172,6 +188,144 @@ pub const ProfileSpectroscopyCache = struct {
     }
 };
 
+fn fillProfileSpectroscopyCacheValues(
+    cache: *ProfileSpectroscopyCache,
+    line_list: ReferenceData.SpectroscopyLineList,
+    context: *const Context,
+    wavelength_nm: f64,
+    prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
+    prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
+    wavelength_window: ?LineListEval.StrongLineWavelengthWindow,
+) void {
+    const worker_count = preferredProfileCacheWorkerCount(cache.node_count);
+    if (worker_count == 1) {
+        fillProfileSpectroscopyCacheValueRange(
+            cache,
+            line_list,
+            context,
+            wavelength_nm,
+            prepared_states,
+            prepared_weak_states,
+            wavelength_window,
+            0,
+            cache.node_count,
+        );
+        return;
+    }
+
+    var queue: ProfileCacheValueQueue = .{ .len = cache.node_count };
+    var worker_buffer: [Trace.max_workers]ProfileCacheValueWorker = undefined;
+    var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
+    const workers = worker_buffer[0..worker_count];
+    const threads = thread_buffer[0 .. worker_count - 1];
+    var started_thread_count: usize = 0;
+
+    for (0..worker_count) |worker_index| {
+        workers[worker_index] = .{
+            .cache = cache,
+            .line_list = line_list,
+            .context = context,
+            .wavelength_nm = wavelength_nm,
+            .prepared_states = prepared_states,
+            .prepared_weak_states = prepared_weak_states,
+            .wavelength_window = wavelength_window,
+            .queue = &queue,
+            .worker_index = worker_index,
+        };
+        if (worker_index + 1 < worker_count) {
+            threads[started_thread_count] = std.Thread.spawn(
+                .{},
+                profileCacheValueWorkerMain,
+                .{&workers[worker_index]},
+            ) catch {
+                profileCacheValueWorkerMain(&workers[worker_index]);
+                continue;
+            };
+            started_thread_count += 1;
+        } else {
+            profileCacheValueWorkerMain(&workers[worker_index]);
+        }
+    }
+    for (threads[0..started_thread_count]) |thread| thread.join();
+}
+
+fn profileCacheValueWorkerMain(worker: *ProfileCacheValueWorker) void {
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-profile-init-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-profile-init";
+    Trace.setThreadName(thread_name);
+
+    const worker_zone = Trace.staticZone(@src(), "optical_prepare.profile_cache_init_worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+
+    while (worker.queue.next()) |chunk| {
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_cache_init_chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
+
+            fillProfileSpectroscopyCacheValueRange(
+                worker.cache,
+                worker.line_list,
+                worker.context,
+                worker.wavelength_nm,
+                worker.prepared_states,
+                worker.prepared_weak_states,
+                worker.wavelength_window,
+                chunk.start,
+                chunk.end,
+            );
+        }
+    }
+}
+
+fn fillProfileSpectroscopyCacheValueRange(
+    cache: *ProfileSpectroscopyCache,
+    line_list: ReferenceData.SpectroscopyLineList,
+    context: *const Context,
+    wavelength_nm: f64,
+    prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
+    prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
+    wavelength_window: ?LineListEval.StrongLineWavelengthWindow,
+    start: usize,
+    end: usize,
+) void {
+    for (start..end) |index| {
+        const evaluation = if (prepared_states) |states|
+            LineListEval.totalSigmaWithPreparedStrongLineStateAndWindow(
+                line_list,
+                wavelength_nm,
+                context.spectroscopy_profile_temperatures_k[index],
+                context.spectroscopy_profile_pressures_hpa[index],
+                &states[index],
+                if (prepared_weak_states) |weak_states| &weak_states[index] else null,
+                &wavelength_window.?,
+            )
+        else
+            LineListEval.totalSigmaAt(
+                line_list,
+                wavelength_nm,
+                context.spectroscopy_profile_temperatures_k[index],
+                context.spectroscopy_profile_pressures_hpa[index],
+            );
+        cache.weak_values[index] = evaluation.weak_line_sigma_cm2_per_molecule;
+        cache.strong_values[index] = evaluation.strong_line_sigma_cm2_per_molecule;
+        cache.line_values[index] = evaluation.line_sigma_cm2_per_molecule;
+        cache.line_mixing_values[index] = evaluation.line_mixing_sigma_cm2_per_molecule;
+        cache.total_values[index] = evaluation.total_sigma_cm2_per_molecule;
+    }
+}
+
+fn preferredProfileCacheWorkerCount(node_count: usize) usize {
+    if (node_count < min_parallel_profile_cache_node_count) return 1;
+    const cpu_count = std.Thread.getCpuCount() catch 1;
+    return @min(Trace.max_workers, @min(cpu_count, @max(@as(usize, 1), node_count / min_parallel_profile_cache_node_count)));
+}
+
 fn sampleCachedEndpointSecant(
     x: []const f64,
     y: []const f64,
@@ -189,7 +343,7 @@ fn sampleCachedEndpointSecant(
 }
 
 pub fn continuumCarrierDensity(
-    absorbers: *Absorbers.AbsorberBuildState,
+    absorbers: *const Absorbers.AbsorberBuildState,
     context: *Context,
     write_index: usize,
     absorber_density_cm3: f64,
@@ -205,6 +359,63 @@ pub fn continuumCarrierDensity(
         return line_absorber.number_densities_cm3[write_index];
     }
     return absorber_density_cm3;
+}
+
+pub fn resolveCachedSingleLineEvaluation(
+    context: *const Context,
+    absorbers: *const Absorbers.AbsorberBuildState,
+    write_index: usize,
+    density: f64,
+    pressure: f64,
+    temperature: f64,
+    absorber_density_cm3: *f64,
+    profile_cache: *const ProfileSpectroscopyCache,
+) ReferenceData.SpectroscopyEvaluation {
+    const species = absorbers.active_line_species;
+    const absorber_mixing_ratio = if (species) |active_species|
+        Spectroscopy.speciesMixingRatioAtPressure(
+            context.scene,
+            active_species,
+            if (absorbers.single_active_line_absorber) |line_absorber|
+                line_absorber.volume_mixing_ratio_profile_ppmv
+            else
+                &.{},
+            pressure,
+            if (active_species == .o2) oxygen_volume_mixing_ratio else null,
+        ) orelse oxygen_volume_mixing_ratio
+    else
+        oxygen_volume_mixing_ratio;
+    absorber_density_cm3.* = density * absorber_mixing_ratio;
+
+    if (context.operational_o2_lut.enabled()) {
+        const sigma = context.operational_o2_lut.sigmaAt(context.midpoint_nm, temperature, pressure);
+        return .{
+            .weak_line_sigma_cm2_per_molecule = sigma,
+            .strong_line_sigma_cm2_per_molecule = 0.0,
+            .line_sigma_cm2_per_molecule = sigma,
+            .line_mixing_sigma_cm2_per_molecule = 0.0,
+            .total_sigma_cm2_per_molecule = sigma,
+            .d_sigma_d_temperature_cm2_per_molecule_per_k = context.operational_o2_lut.dSigmaDTemperatureAt(
+                context.midpoint_nm,
+                temperature,
+                pressure,
+            ),
+        };
+    }
+    if (absorbers.owned_lines) |line_list| {
+        if (profile_cache.evaluationAtAltitude(context.vertical_grid.sublayer_mid_altitudes_km[write_index])) |evaluation| {
+            return evaluation;
+        }
+        return line_list.evaluateAt(context.midpoint_nm, temperature, pressure);
+    }
+    return .{
+        .weak_line_sigma_cm2_per_molecule = 0.0,
+        .strong_line_sigma_cm2_per_molecule = 0.0,
+        .line_sigma_cm2_per_molecule = 0.0,
+        .line_mixing_sigma_cm2_per_molecule = 0.0,
+        .total_sigma_cm2_per_molecule = 0.0,
+        .d_sigma_d_temperature_cm2_per_molecule_per_k = 0.0,
+    };
 }
 
 pub fn resolveSpectroscopyEvaluation(

@@ -6,8 +6,9 @@ validation route.
 The current retained trace is:
 
 ```text
-prepare_o2a                    0.177154 s
-forward elapsed time                   1.799918 s
+low-overhead prepare_o2a              0.057692 s
+low-overhead forward elapsed time     1.328534 s
+ztracy forward elapsed time           2.443697 s
 high-resolution radiance samples  3,874
 LABOS Fourier terms             120,390
 LABOS layer visits            5,417,550
@@ -22,10 +23,7 @@ Fourier transport.
 Current retained evidence:
 
 ```text
-validation/outputs/performance/labos-bottleneck/summary.json
-validation/outputs/performance/labos-bottleneck/sections.csv
-validation/outputs/performance/labos-bottleneck/counters.csv
-validation/outputs/performance/labos-bottleneck/primitive_estimates.csv
+research/performance/tracing/output/labos-bottleneck/summary.json
 ```
 
 Read these notes in order:

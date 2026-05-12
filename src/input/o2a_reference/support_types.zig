@@ -12,16 +12,6 @@ pub const ReferenceSample = runtime.ReferenceSample;
 pub const ResolvedVendorO2ACase = runtime.ResolvedVendorO2ACase;
 pub const LineGasSpec = runtime.LineGasSpec;
 
-pub const O2APrepareTrace = struct {
-    load_inputs_ns: u64 = 0,
-    build_scene_ns: u64 = 0,
-    optical_prepare_ns: u64 = 0,
-    weak_cutoff_grid_ns: u64 = 0,
-    solar_rewindow_ns: u64 = 0,
-    route_prepare_ns: u64 = 0,
-    total_ns: u64 = 0,
-};
-
 pub const RangeExtremum = struct {
     wavelength_nm: f64,
     value: f64,

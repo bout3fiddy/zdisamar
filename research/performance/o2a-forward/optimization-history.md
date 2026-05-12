@@ -22,6 +22,7 @@ The main historical moves were:
 | Fourier tail reuse | Reuse Fourier basis work and stop tiny tails. | `2.266849 s -> 2.025331 s` |
 | Orders activity | Carry inactive-layer knowledge into scattering orders. | `2.025331 s -> 1.980342 s` |
 | Q-series and D-update refinements | Skip empty q-series work, avoid redundant matrix outputs, and combine the D update. | final historical checkpoint around `1.9 s` forward elapsed time |
+| Traced setup parallelism | Parallelize wavelength sampling, optical absorber setup, and layer accumulation in the trace harness. | `prepare_o2a 0.177154 s -> 0.044454 s`; trace forward `1.799918 s -> 1.538076 s` |
 
 These changes are mostly data-handling and exact arithmetic-shape changes. They
 do not change the retrieval math or the O2 A physical model.

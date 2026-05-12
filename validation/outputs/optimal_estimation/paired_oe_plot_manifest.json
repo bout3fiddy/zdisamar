@@ -47,6 +47,20 @@
       "rows": 100
     }
   },
+  "paired_difference": {
+    "aerosol_mid_pressure_hpa": {
+      "max": 0.08209633736930755,
+      "mean": -0.0020308749372316016,
+      "median": -0.0015951206247564187,
+      "min": -0.05218250124210044
+    },
+    "aerosol_optical_depth": {
+      "max": 5.422915587416366e-06,
+      "mean": -3.0250738684164944e-07,
+      "median": 1.6882701736609107e-08,
+      "min": -3.703240473043601e-05
+    }
+  },
   "plots": {
     "error_histograms": "validation/outputs/optimal_estimation/paired_oe_error_histograms.png",
     "latency": "validation/outputs/optimal_estimation/paired_oe_latency.png",

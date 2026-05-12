@@ -95,11 +95,18 @@ come from reducing repeated setup around that calculation:
 - validation and benchmark evidence is stored under
   [`validation/outputs/`](./validation/outputs/).
 
-The benchmark cases use `nstreamsSim = 20` and `nstreamsRetr = 20`. The DISAMAR
-baseline configuration also uses `aerosolLayerHeight = 0`.
-The Fortran `aerosolLayerHeight = 1` setting activates an older shortcut option;
-the benchmark references use the normal physical inverse problem with
-`aerosolLayerHeight = 0`.
+The benchmark cases use `nstreamsSim = 20` and `nstreamsRetr = 20`. Streams are
+the angular quadrature directions used by the multiple-scattering
+radiative-transfer solver; more streams resolve the angular radiation field more
+finely, but each forward-model call costs more. The production DISAMAR O2 A
+setup usually uses 16 streams, so these retained 20-stream timings are
+deliberately slower than a production-tuned Fortran run.
+
+The DISAMAR baseline configuration also keeps `aerosolLayerHeight = 0`. We do
+not use the Fortran `aerosolLayerHeight = 1` flag to speed the comparison up,
+because that flag activates an older shortcut path. The timings below therefore
+compare `zdisamar` against the normal physical inverse problem, not against a
+shortcut-accelerated DISAMAR run.
 
 ## Benchmarks
 
@@ -114,8 +121,9 @@ channel is an average over sharper oxygen absorption structure at higher
 spectral resolution:
 
 ```text
-prepare_o2a                    0.177154 s
-forward-model elapsed time     1.799918 s
+low-overhead prepare_o2a       0.057692 s
+low-overhead forward elapsed   1.328534 s
+ztracy forward elapsed         2.443697 s
 output wavelengths                  701
 high-resolution radiance samples  3,874
 LABOS Fourier terms             120,390
@@ -123,10 +131,11 @@ LABOS layer visits            5,417,550
 doubling steps                8,389,666
 ```
 
-The tracked evidence is
-[`validation/outputs/performance/labos-bottleneck/summary.json`](./validation/outputs/performance/labos-bottleneck/summary.json)
-and the accompanying CSV summaries in the same directory. The detailed
-performance notes live in
+The low-overhead evidence is
+[`research/performance/tracing/output/lauka-forward/forward-run/summary.json`](./research/performance/tracing/output/lauka-forward/forward-run/summary.json).
+The timeline trace summary is
+[`research/performance/tracing/output/labos-bottleneck/summary.json`](./research/performance/tracing/output/labos-bottleneck/summary.json).
+The detailed performance notes live in
 [`research/performance/o2a-forward/`](./research/performance/o2a-forward/).
 
 ### Retrieval
@@ -138,7 +147,17 @@ the two systems separately.
 
 ```text
 DISAMAR Fortran: 100/100 converged, median 1228.826 s, mean 1189.862 s
-zdisamar:        100/100 converged, median    3.834 s, mean    3.794 s
+zdisamar:        100/100 converged, median    3.624 s, mean    3.667 s
+```
+
+![Paired optimal-estimation retrieval comparison](./validation/outputs/optimal_estimation/paired_oe_retrieved_scatter.png)
+
+The lower row shows the paired retrieved-state difference for each scene,
+computed as `zdisamar` retrieved value minus DISAMAR Fortran retrieved value:
+
+```text
+aerosol optical depth:       median +1.688e-08, mean -3.025e-07, range -3.703e-05 to +5.423e-06
+aerosol mid pressure [hPa]:  median -0.0016,    mean -0.0020,    range -0.0522 to +0.0821
 ```
 
 The tracked summary is
@@ -196,7 +215,6 @@ optimization.
 | `src/forward_model/` | optical properties, radiative transfer, instrument-grid calculation, and implementations |
 | `src/output/` | diagnostic reports and spectrum serialization |
 | `src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
-| `src/validation/disamar_reference/` | DISAMAR reference comparison helpers and CLI support |
 | `data/` | tracked O2 A bundles and reference assets |
 | `tests/` | O2 A executable checks |
 | `validation/` | O2 A compatibility, benchmark, and reference evidence |

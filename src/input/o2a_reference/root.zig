@@ -11,18 +11,28 @@ pub const ReferenceData = metrics.ReferenceData;
 pub const ReferenceSample = metrics.ReferenceSample;
 pub const O2AInput = reference_types.ResolvedVendorO2ACase;
 pub const PreparedO2A = metrics.VendorO2APreparedCase;
-pub const O2APrepareTrace = metrics.O2APrepareTrace;
 pub const SessionStorage = InstrumentGrid.ProductStorage;
 pub const Output = InstrumentGrid.InstrumentGridProduct;
 pub const ReflectanceCase = metrics.VendorO2AReflectanceCase;
 pub const ComparisonMetrics = metrics.ComparisonMetrics;
 pub const TrendTolerances = metrics.TrendTolerances;
+pub const TrendState = metrics.TrendState;
+pub const AssessmentVerdict = metrics.AssessmentVerdict;
 pub const AssessmentOutcome = metrics.AssessmentOutcome;
 pub const RangeExtremum = metrics.RangeExtremum;
 
 pub const runResolvedVendorO2AReflectanceCase = metrics.runResolvedVendorO2AReflectanceCase;
 pub const prepareResolvedVendorO2ACase = metrics.prepareResolvedVendorO2ACase;
-pub const prepareResolvedVendorO2ACaseWithTrace = metrics.prepareResolvedVendorO2ACaseWithTrace;
+pub const meanVectorInRange = metrics.meanVectorInRange;
+pub const minVectorInRange = metrics.minVectorInRange;
+pub const maxVectorInRange = metrics.maxVectorInRange;
+pub const meanReferenceInRange = metrics.meanReferenceInRange;
+pub const minReferenceInRange = metrics.minReferenceInRange;
+pub const maxReferenceInRange = metrics.maxReferenceInRange;
+pub const interpolateVector = metrics.interpolateVector;
+pub const compareLowerIsBetter = metrics.compareLowerIsBetter;
+pub const compareHigherIsBetter = metrics.compareHigherIsBetter;
+pub const compareAbsoluteCeiling = metrics.compareAbsoluteCeiling;
 pub const computeComparisonMetrics = metrics.computeComparisonMetrics;
 pub const assessAgainstBaseline = metrics.assessAgainstBaseline;
 pub const loadResolvedO2ASpectroscopyLineList = metrics.loadResolvedO2ASpectroscopyLineList;
@@ -246,15 +256,6 @@ pub fn renderDefaultInputJson(allocator: Allocator) ![]u8 {
 pub fn prepareO2A(allocator: Allocator, input: *const O2AInput) !PreparedO2A {
     try validateInput(input);
     return metrics.prepareResolvedVendorO2ACase(allocator, input);
-}
-
-pub fn prepareO2AWithTrace(
-    allocator: Allocator,
-    input: *const O2AInput,
-    trace: *O2APrepareTrace,
-) !PreparedO2A {
-    try validateInput(input);
-    return metrics.prepareResolvedVendorO2ACaseWithTrace(allocator, input, trace);
 }
 
 pub fn runO2A(allocator: Allocator, prepared: *const PreparedO2A) !Output {

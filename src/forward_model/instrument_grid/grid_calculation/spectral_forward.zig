@@ -43,7 +43,6 @@ const ForwardSampleScratch = struct {
         scene: *const Scene,
         route: common.Route,
         prepared: *const OpticsPreparation.PreparedOpticalState,
-        trace: Trace.WorkerRef,
     ) !ForwardSampleScratch {
         const layer_count = Storage.resolvedTransportLayerCount(route, prepared);
         const pseudo_spherical_sample_count = Storage.resolvedPseudoSphericalSampleCount(scene, route, prepared);
@@ -68,9 +67,6 @@ const ForwardSampleScratch = struct {
         const support_carriers = try allocator.alloc(CarrierEval.SharedOpticalCarrier, support_cache_count);
         errdefer allocator.free(support_carriers);
 
-        var labos_workspace = labos.Workspace.init(allocator);
-        if (Trace.enabled) labos_workspace.trace = trace;
-
         return .{
             .layer_inputs = layer_inputs,
             .pseudo_spherical_layers = pseudo_spherical_layers,
@@ -81,7 +77,7 @@ const ForwardSampleScratch = struct {
             .pseudo_spherical_level_altitudes = pseudo_spherical_level_altitudes,
             .support_carrier_valid = support_carrier_valid,
             .support_carriers = support_carriers,
-            .labos_workspace = labos_workspace,
+            .labos_workspace = labos.Workspace.init(allocator),
         };
     }
 
@@ -138,7 +134,6 @@ const ForwardPrefetchWorker = struct {
     results: []ForwardIntegratedSample,
     queue: *ForwardPrefetchQueue,
     error_state: *ForwardPrefetchErrorState,
-    trace: Trace.RunRef = Trace.noRun(),
     worker_index: usize = 0,
 };
 
@@ -209,7 +204,6 @@ pub fn computeForwardSampleAtWavelength(
     const support_carriers = try allocator.alloc(CarrierEval.SharedOpticalCarrier, support_cache_count);
     defer allocator.free(support_carriers);
     var labos_workspace = labos.Workspace.init(allocator);
-    if (Trace.enabled) labos_workspace.trace = null;
     defer labos_workspace.deinit();
     return computeForwardSampleAtWavelengthWithScratch(
         allocator,
@@ -253,36 +247,40 @@ fn computeForwardSampleAtWavelengthWithScratch(
     profile_spectroscopy_cache: ?*const SpectroscopyState.ProfileNodeSpectroscopyCache,
     labos_workspace: *labos.Workspace,
 ) Error!ForwardIntegratedSample {
-    const trace = Trace.asWorker(labos_workspace.trace);
-    if (Trace.enabled) if (trace) |sink| sink.addCounter(.forward_samples, 1);
+    const sample_zone = Trace.deepStaticZone(@src(), "forward_sample");
+    defer sample_zone.end();
 
-    const input_start = Trace.begin();
-    const input = try ForwardInput.configuredForwardInput(
-        scene,
-        route,
-        prepared,
-        wavelength_nm,
-        layer_inputs,
-        pseudo_spherical_layers,
-        source_interfaces,
-        rtm_quadrature_levels,
-        pseudo_spherical_samples,
-        pseudo_spherical_level_starts,
-        pseudo_spherical_level_altitudes,
-        support_carrier_valid,
-        support_carriers,
-        profile_spectroscopy_cache,
-        if (Trace.enabled) trace else {},
-    );
-    if (Trace.enabled) if (trace) |sink| sink.addSection(.forward_input, Trace.elapsed(input_start));
+    Trace.plotU("forward_samples", 1);
+    const input = input: {
+        const zone = Trace.deepStaticZone(@src(), "forward_sample.configured_forward_input");
+        defer zone.end();
+        break :input try ForwardInput.configuredForwardInput(
+            scene,
+            route,
+            prepared,
+            wavelength_nm,
+            layer_inputs,
+            pseudo_spherical_layers,
+            source_interfaces,
+            rtm_quadrature_levels,
+            pseudo_spherical_samples,
+            pseudo_spherical_level_starts,
+            pseudo_spherical_level_altitudes,
+            support_carrier_valid,
+            support_carriers,
+            profile_spectroscopy_cache,
+        );
+    };
     var effective_route = route;
     effective_route.rtm_controls = input.rtm_controls;
-    const labos_start = Trace.begin();
-    const forward = if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
-        try execute_with_workspace(allocator, effective_route, input, labos_workspace)
-    else
-        try implementations.transport.executePrepared(allocator, effective_route, input);
-    if (Trace.enabled) if (trace) |sink| sink.addSection(.labos_execute, Trace.elapsed(labos_start));
+    const forward = forward: {
+        const zone = Trace.deepStaticZone(@src(), "forward_sample.labos_execute");
+        defer zone.end();
+        break :forward if (implementations.transport.executePreparedWithLabosWorkspace) |execute_with_workspace|
+            try execute_with_workspace(allocator, effective_route, input, labos_workspace)
+        else
+            try implementations.transport.executePrepared(allocator, effective_route, input);
+    };
     const radiance = radianceFromForward(scene, prepared, implementations, wavelength_nm, safe_span, 0.0, forward);
     return .{
         .radiance = radiance,
@@ -291,20 +289,27 @@ fn computeForwardSampleAtWavelengthWithScratch(
 }
 
 fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-forward-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-forward-worker";
+    Trace.setThreadName(thread_name);
+
+    const worker_zone = Trace.staticZone(@src(), "forward_prefetch.worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const trace_worker: Trace.WorkerRef = if (Trace.enabled) blk: {
-        if (Trace.asRun(worker.trace)) |trace| break :blk trace.worker(worker.worker_index);
-        break :blk null;
-    } else {};
 
     var scratch = ForwardSampleScratch.init(
         allocator,
         worker.scene,
         worker.route,
         worker.prepared,
-        trace_worker,
     ) catch |err| {
         worker.error_state.store(err);
         return;
@@ -312,35 +317,41 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     defer scratch.deinit(allocator);
 
     while (worker.queue.next()) |chunk| {
-        for (chunk.start..chunk.end) |index| {
-            const miss = worker.misses[index];
-            const profile_spectroscopy_cache = if (worker.profile_spectroscopy_caches.len == worker.misses.len)
-                &worker.profile_spectroscopy_caches[index]
-            else
-                null;
-            worker.results[index] = computeForwardSampleAtWavelengthWithScratch(
-                allocator,
-                worker.scene,
-                worker.route,
-                worker.prepared,
-                miss.wavelength_nm,
-                worker.safe_span,
-                worker.implementations,
-                scratch.layer_inputs,
-                scratch.pseudo_spherical_layers,
-                scratch.source_interfaces,
-                scratch.rtm_quadrature_levels,
-                scratch.pseudo_spherical_samples,
-                scratch.pseudo_spherical_level_starts,
-                scratch.pseudo_spherical_level_altitudes,
-                scratch.support_carrier_valid,
-                scratch.support_carriers,
-                profile_spectroscopy_cache,
-                &scratch.labos_workspace,
-            ) catch |err| {
-                worker.error_state.store(err);
-                return;
-            };
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "forward_prefetch.chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
+
+            for (chunk.start..chunk.end) |index| {
+                const miss = worker.misses[index];
+                const profile_spectroscopy_cache = if (worker.profile_spectroscopy_caches.len == worker.misses.len)
+                    &worker.profile_spectroscopy_caches[index]
+                else
+                    null;
+                worker.results[index] = computeForwardSampleAtWavelengthWithScratch(
+                    allocator,
+                    worker.scene,
+                    worker.route,
+                    worker.prepared,
+                    miss.wavelength_nm,
+                    worker.safe_span,
+                    worker.implementations,
+                    scratch.layer_inputs,
+                    scratch.pseudo_spherical_layers,
+                    scratch.source_interfaces,
+                    scratch.rtm_quadrature_levels,
+                    scratch.pseudo_spherical_samples,
+                    scratch.pseudo_spherical_level_starts,
+                    scratch.pseudo_spherical_level_altitudes,
+                    scratch.support_carrier_valid,
+                    scratch.support_carriers,
+                    profile_spectroscopy_cache,
+                    &scratch.labos_workspace,
+                ) catch |err| {
+                    worker.error_state.store(err);
+                    return;
+                };
+            }
         }
     }
 }
@@ -359,24 +370,12 @@ pub fn prefetchForwardSamples(
     if (misses.len == 0) return;
 
     const preferred_worker_count = preferredForwardWorkerCount(misses.len);
-    const trace_ref = implementations.trace;
-    const trace = Trace.asRun(trace_ref);
-    const worker_count = if (Trace.enabled and trace != null)
-        @min(preferred_worker_count, Trace.max_workers)
-    else
-        preferred_worker_count;
-    if (Trace.enabled) if (trace) |run| {
-        run.setWorkerCount(worker_count);
-        run.addCounter(.worker_count, @intCast(worker_count));
-        run.addCounter(.high_resolution_misses, @intCast(misses.len));
-    };
+    const worker_count = preferred_worker_count;
+    Trace.plotU("forward_worker_count", @intCast(worker_count));
+    Trace.plotU("high_resolution_misses", @intCast(misses.len));
 
     if (worker_count == 1) {
-        const trace_worker: Trace.WorkerRef = if (Trace.enabled) blk: {
-            if (trace) |run| break :blk run.worker(0);
-            break :blk null;
-        } else {};
-        var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared, trace_worker);
+        var scratch = try ForwardSampleScratch.init(allocator, scene, route, prepared);
         defer scratch.deinit(allocator);
         for (misses, results, 0..) |miss, *result, miss_index| {
             const profile_spectroscopy_cache = if (profile_spectroscopy_caches.len == misses.len)
@@ -427,7 +426,6 @@ pub fn prefetchForwardSamples(
             .results = results,
             .queue = &queue,
             .error_state = &error_state,
-            .trace = trace_ref,
             .worker_index = worker_index,
         };
         if (worker_index + 1 < worker_count) {

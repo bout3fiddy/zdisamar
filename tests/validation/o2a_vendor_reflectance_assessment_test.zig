@@ -1,6 +1,6 @@
 const std = @import("std");
 const zdisamar = @import("zdisamar");
-const disamar_reference = zdisamar.disamar_reference;
+const o2a = zdisamar.o2a;
 
 const BaselineAnchor = struct {
     version: u32,
@@ -8,13 +8,13 @@ const BaselineAnchor = struct {
     upstream_config: []const u8,
     reference_path: []const u8,
     zero_tolerance_abs: f64,
-    trend_tolerances: disamar_reference.TrendTolerances,
+    trend_tolerances: o2a.TrendTolerances,
     guidance: struct {
         allowed_to_fail: bool,
         summary: []const u8,
         expect_improvement_when_touched: []const []const u8,
     },
-    baseline: disamar_reference.ComparisonMetrics,
+    baseline: o2a.ComparisonMetrics,
 };
 
 const LoadedBaselineAnchor = struct {
@@ -48,7 +48,7 @@ fn loadBaselineAnchor(allocator: std.mem.Allocator) !LoadedBaselineAnchor {
     };
 }
 
-fn verdictLabel(verdict: disamar_reference.AssessmentVerdict) []const u8 {
+fn verdictLabel(verdict: o2a.AssessmentVerdict) []const u8 {
     return switch (verdict) {
         .exact_zero_pass => "pass_exact_zero",
         .baseline_pass => "pass_baseline_trend",
@@ -60,8 +60,8 @@ fn verdictLabel(verdict: disamar_reference.AssessmentVerdict) []const u8 {
 fn emitAssessment(
     allocator: std.mem.Allocator,
     anchor: BaselineAnchor,
-    current: disamar_reference.ComparisonMetrics,
-    outcome: disamar_reference.AssessmentOutcome,
+    current: o2a.ComparisonMetrics,
+    outcome: o2a.AssessmentOutcome,
 ) !void {
     const assessment = .{
         .scenario = anchor.scenario,
@@ -105,7 +105,7 @@ fn makeMetrics(
     max_abs_difference: f64,
     correlation: f64,
     exact_match_within_zero_tolerance: bool,
-) disamar_reference.ComparisonMetrics {
+) o2a.ComparisonMetrics {
     return .{
         .sample_count = 1,
         .nonzero_sample_count = if (exact_match_within_zero_tolerance) 0 else 1,
@@ -127,7 +127,7 @@ fn makeMetrics(
 
 test "o2a vendor assessment passes when metrics are flat versus baseline" {
     const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
-    const outcome = disamar_reference.assessAgainstBaseline(
+    const outcome = o2a.assessAgainstBaseline(
         baseline,
         baseline,
         .{
@@ -139,15 +139,15 @@ test "o2a vendor assessment passes when metrics are flat versus baseline" {
         true,
     );
 
-    try std.testing.expectEqual(disamar_reference.AssessmentVerdict.baseline_pass, outcome.verdict);
-    try std.testing.expectEqual(disamar_reference.TrendState.flat, outcome.trend.mean_abs_difference);
-    try std.testing.expectEqual(disamar_reference.TrendState.flat, outcome.trend.correlation);
+    try std.testing.expectEqual(o2a.AssessmentVerdict.baseline_pass, outcome.verdict);
+    try std.testing.expectEqual(o2a.TrendState.flat, outcome.trend.mean_abs_difference);
+    try std.testing.expectEqual(o2a.TrendState.flat, outcome.trend.correlation);
 }
 
 test "o2a vendor assessment passes when lower-is-better metrics improve" {
     const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
     const improved = makeMetrics(0.03, 0.04, 0.07, 0.991, false);
-    const outcome = disamar_reference.assessAgainstBaseline(
+    const outcome = o2a.assessAgainstBaseline(
         improved,
         baseline,
         .{
@@ -159,15 +159,15 @@ test "o2a vendor assessment passes when lower-is-better metrics improve" {
         true,
     );
 
-    try std.testing.expectEqual(disamar_reference.AssessmentVerdict.baseline_pass, outcome.verdict);
-    try std.testing.expectEqual(disamar_reference.TrendState.improved, outcome.trend.mean_abs_difference);
-    try std.testing.expectEqual(disamar_reference.TrendState.improved, outcome.trend.correlation);
+    try std.testing.expectEqual(o2a.AssessmentVerdict.baseline_pass, outcome.verdict);
+    try std.testing.expectEqual(o2a.TrendState.improved, outcome.trend.mean_abs_difference);
+    try std.testing.expectEqual(o2a.TrendState.improved, outcome.trend.correlation);
 }
 
 test "o2a vendor assessment fails when lower-is-better metrics regress" {
     const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
     const regressed = makeMetrics(0.05, 0.06, 0.09, 0.99, false);
-    const outcome = disamar_reference.assessAgainstBaseline(
+    const outcome = o2a.assessAgainstBaseline(
         regressed,
         baseline,
         .{
@@ -179,14 +179,14 @@ test "o2a vendor assessment fails when lower-is-better metrics regress" {
         true,
     );
 
-    try std.testing.expectEqual(disamar_reference.AssessmentVerdict.regression_fail, outcome.verdict);
-    try std.testing.expectEqual(disamar_reference.TrendState.regressed, outcome.trend.mean_abs_difference);
+    try std.testing.expectEqual(o2a.AssessmentVerdict.regression_fail, outcome.verdict);
+    try std.testing.expectEqual(o2a.TrendState.regressed, outcome.trend.mean_abs_difference);
 }
 
 test "o2a vendor assessment fails when higher-is-better metrics regress" {
     const baseline = makeMetrics(0.04, 0.05, 0.08, 0.99, false);
     const regressed = makeMetrics(0.04, 0.05, 0.08, 0.98, false);
-    const outcome = disamar_reference.assessAgainstBaseline(
+    const outcome = o2a.assessAgainstBaseline(
         regressed,
         baseline,
         .{
@@ -198,8 +198,8 @@ test "o2a vendor assessment fails when higher-is-better metrics regress" {
         true,
     );
 
-    try std.testing.expectEqual(disamar_reference.AssessmentVerdict.regression_fail, outcome.verdict);
-    try std.testing.expectEqual(disamar_reference.TrendState.regressed, outcome.trend.correlation);
+    try std.testing.expectEqual(o2a.AssessmentVerdict.regression_fail, outcome.verdict);
+    try std.testing.expectEqual(o2a.TrendState.regressed, outcome.trend.correlation);
 }
 
 test "o2a vendor assessment fails when morphology metrics regress" {
@@ -207,7 +207,7 @@ test "o2a vendor assessment fails when morphology metrics regress" {
     var regressed = baseline;
     regressed.mid_band_mean_difference = 0.02;
 
-    const outcome = disamar_reference.assessAgainstBaseline(
+    const outcome = o2a.assessAgainstBaseline(
         regressed,
         baseline,
         .{
@@ -219,11 +219,11 @@ test "o2a vendor assessment fails when morphology metrics regress" {
         true,
     );
 
-    try std.testing.expectEqual(disamar_reference.AssessmentVerdict.regression_fail, outcome.verdict);
-    try std.testing.expectEqual(disamar_reference.TrendState.regressed, outcome.trend.mid_band_mean_difference);
+    try std.testing.expectEqual(o2a.AssessmentVerdict.regression_fail, outcome.verdict);
+    try std.testing.expectEqual(o2a.TrendState.regressed, outcome.trend.mid_band_mean_difference);
 }
 
-test "yaml vendor trend assessment reports bounded drift against the stored vendor baseline" {
+test "typed baseline vendor trend assessment reports bounded drift against the stored vendor baseline" {
     var anchor = try loadBaselineAnchor(std.testing.allocator);
     defer anchor.deinit(std.testing.allocator);
 
@@ -232,21 +232,19 @@ test "yaml vendor trend assessment reports bounded drift against the stored vend
     try std.testing.expect(anchor.parsed.value.upstream_config.len != 0);
     try std.fs.cwd().access(anchor.parsed.value.reference_path, .{});
 
-    var loaded = try disamar_reference.loadDefaultResolvedCase(std.testing.allocator);
-    defer loaded.deinit();
-
-    var disamar_case = try disamar_reference.runResolvedVendorO2AReflectanceCase(
+    const input = zdisamar.defaultO2AInput();
+    var disamar_case = try o2a.runResolvedVendorO2AReflectanceCase(
         std.testing.allocator,
-        &loaded.resolved,
+        &input,
     );
     defer disamar_case.deinit(std.testing.allocator);
 
-    const current = disamar_reference.computeComparisonMetrics(
+    const current = o2a.computeComparisonMetrics(
         &disamar_case.product,
         disamar_case.reference,
         anchor.parsed.value.zero_tolerance_abs,
     );
-    const outcome = disamar_reference.assessAgainstBaseline(
+    const outcome = o2a.assessAgainstBaseline(
         current,
         anchor.parsed.value.baseline,
         anchor.parsed.value.trend_tolerances,

@@ -3,22 +3,26 @@
 Current retained trace source:
 
 ```text
-validation/outputs/performance/labos-bottleneck/
+research/performance/tracing/output/labos-bottleneck/
 ```
+
+The current ztracy JSON summary is intentionally coarse. It records the
+instrumented forward wall time, while the detailed child-zone costs live in the
+`.tracy` capture opened in Tracy profiler. The detailed operation counts below
+come from the last pre-ztracy retained trace and are still the useful shape of
+the remaining work.
 
 ## LABOS Fourier Transport
 
-LABOS transport costs `9.777328 s` of aggregate worker CPU. Of that,
-`9.351779 s` is inside the Fourier loop. This is expected: O2 A reflectance is
-azimuth dependent, so the model evaluates many Fourier terms before the tail is
-small enough.
+The forward route still expands one spectrum into `120,390` LABOS Fourier terms.
+This is expected: O2 A reflectance is azimuth dependent, so the model evaluates
+many Fourier terms before the tail is small enough.
 
 ## RT-Layer Construction
 
-RT-layer construction costs `6.783443 s`, the largest LABOS child. It visits
-`5,417,550` layer/Fourier combinations. Most visits are cheap skips, but the
-active subset still builds `1,284,366` phase matrices and runs `8,389,666`
-doubling steps.
+RT-layer construction visits `5,417,550` layer/Fourier combinations. Most visits
+are cheap skips, but the active subset still builds phase matrices and runs
+`8,389,666` doubling steps.
 
 ## Layer Doubling
 
@@ -44,9 +48,9 @@ known-trace D update        170.862 ns/call  0.582349 s CPU
 
 ## Scattering Orders
 
-Scattering orders cost `2.327972 s`. The loop performs `295,581,240`
-`dotGaussPair` calls, representing `2,955,812,400` multiply-add terms. The
-primitive is small; the count is large.
+The scattering-order loop performs `295,581,240` `dotGaussPair` calls,
+representing `2,955,812,400` multiply-add terms. The primitive is small; the
+count is large.
 
 ## Phase Matrices
 

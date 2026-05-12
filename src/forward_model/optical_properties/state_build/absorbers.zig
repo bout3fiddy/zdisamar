@@ -7,8 +7,37 @@ const Context = @import("context.zig").PreparationContext;
 const ProfileStateCache = @import("profile_state_cache.zig");
 const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
+const Trace = @import("../../performance_trace.zig");
 
 const Allocator = std.mem.Allocator;
+const min_parallel_profile_line_state_count: usize = 4;
+const profile_line_state_chunk_size: usize = 2;
+
+const ProfileLineStateQueue = struct {
+    mutex: std.Thread.Mutex = .{},
+    next_index: usize = 0,
+    len: usize,
+
+    fn next(self: *ProfileLineStateQueue) ?struct { start: usize, end: usize } {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.next_index >= self.len) return null;
+        const start = self.next_index;
+        const end = @min(start + profile_line_state_chunk_size, self.len);
+        self.next_index = end;
+        return .{ .start = start, .end = end };
+    }
+};
+
+const ProfileLineStateWorker = struct {
+    line_list: ReferenceData.SpectroscopyLineList,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+    weak_states: ?[]ReferenceData.WeakLinePreparedState,
+    strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    queue: *ProfileLineStateQueue,
+    worker_index: usize,
+};
 
 pub const AbsorberBuildState = struct {
     active_line_absorbers: []State.ActiveLineAbsorber = &.{},
@@ -151,23 +180,19 @@ pub fn build(
             }
         }
     }
-    if (!loaded_profile_states) {
-        if (state.profile_weak_line_states) |states| {
-            const line_list = state.owned_lines.?;
-            for (states, context.spectroscopy_profile_temperatures_k, context.spectroscopy_profile_pressures_hpa) |*slot, temperature_k, pressure_hpa| {
-                slot.* = try line_list.prepareWeakLineState(allocator, temperature_k, pressure_hpa);
-                state.profile_weak_line_state_count += 1;
-            }
-        }
-    }
-    if (!loaded_profile_states) {
-        if (state.profile_strong_line_states) |states| {
-            const line_list = state.owned_lines.?;
-            for (states, context.spectroscopy_profile_temperatures_k, context.spectroscopy_profile_pressures_hpa) |*slot, temperature_k, pressure_hpa| {
-                slot.* = (try line_list.prepareStrongLineState(allocator, temperature_k, pressure_hpa)).?;
-                state.profile_strong_line_state_count += 1;
-            }
-        }
+    if (!loaded_profile_states and (state.profile_weak_line_states != null or state.profile_strong_line_states != null)) {
+        const zone = Trace.staticZone(@src(), "optical_prepare.profile_line_states");
+        defer zone.end();
+        try prepareProfileLineStates(
+            allocator,
+            state.owned_lines.?,
+            context.spectroscopy_profile_temperatures_k,
+            context.spectroscopy_profile_pressures_hpa,
+            state.profile_weak_line_states,
+            state.profile_strong_line_states,
+        );
+        if (state.profile_weak_line_states) |states| state.profile_weak_line_state_count = states.len;
+        if (state.profile_strong_line_states) |states| state.profile_strong_line_state_count = states.len;
     }
     if (!loaded_profile_states) {
         if (state.profile_weak_line_states) |weak_states| {
@@ -211,6 +236,173 @@ pub fn build(
     );
 
     return state;
+}
+
+fn prepareProfileLineStates(
+    allocator: Allocator,
+    line_list: ReferenceData.SpectroscopyLineList,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+    weak_states: ?[]ReferenceData.WeakLinePreparedState,
+    strong_states: ?[]ReferenceData.StrongLinePreparedState,
+) !void {
+    if (temperatures_k.len != pressures_hpa.len) return error.InvalidRequest;
+
+    var weak_initialized: usize = 0;
+    errdefer if (weak_states) |states| {
+        for (states[0..weak_initialized]) |*state| state.deinit(allocator);
+    };
+    if (weak_states) |states| {
+        if (states.len != temperatures_k.len) return error.InvalidRequest;
+        const zone = Trace.staticZone(@src(), "optical_prepare.profile_weak_alloc");
+        defer zone.end();
+        for (states) |*slot| {
+            slot.* = try line_list.allocWeakLinePreparedState(allocator);
+            weak_initialized += 1;
+        }
+    }
+
+    var strong_initialized: usize = 0;
+    errdefer if (strong_states) |states| {
+        for (states[0..strong_initialized]) |*state| state.deinit(allocator);
+    };
+    if (strong_states) |states| {
+        if (states.len != temperatures_k.len) return error.InvalidRequest;
+        const zone = Trace.staticZone(@src(), "optical_prepare.profile_strong_alloc");
+        defer zone.end();
+        for (states) |*slot| {
+            slot.* = (try line_list.allocStrongLinePreparedState(allocator)).?;
+            strong_initialized += 1;
+        }
+    }
+
+    fillProfileLineStates(
+        line_list,
+        temperatures_k,
+        pressures_hpa,
+        weak_states,
+        strong_states,
+    );
+}
+
+fn fillProfileLineStates(
+    line_list: ReferenceData.SpectroscopyLineList,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+    weak_states: ?[]ReferenceData.WeakLinePreparedState,
+    strong_states: ?[]ReferenceData.StrongLinePreparedState,
+) void {
+    const worker_count = preferredProfileLineStateWorkerCount(temperatures_k.len);
+    if (worker_count == 1) {
+        fillProfileLineStateRange(
+            line_list,
+            temperatures_k,
+            pressures_hpa,
+            weak_states,
+            strong_states,
+            0,
+            temperatures_k.len,
+        );
+        return;
+    }
+
+    var queue: ProfileLineStateQueue = .{ .len = temperatures_k.len };
+    var worker_buffer: [Trace.max_workers]ProfileLineStateWorker = undefined;
+    var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
+    const workers = worker_buffer[0..worker_count];
+    const threads = thread_buffer[0 .. worker_count - 1];
+    var started_thread_count: usize = 0;
+
+    for (0..worker_count) |worker_index| {
+        workers[worker_index] = .{
+            .line_list = line_list,
+            .temperatures_k = temperatures_k,
+            .pressures_hpa = pressures_hpa,
+            .weak_states = weak_states,
+            .strong_states = strong_states,
+            .queue = &queue,
+            .worker_index = worker_index,
+        };
+        if (worker_index + 1 < worker_count) {
+            threads[started_thread_count] = std.Thread.spawn(
+                .{},
+                profileLineStateWorkerMain,
+                .{&workers[worker_index]},
+            ) catch {
+                profileLineStateWorkerMain(&workers[worker_index]);
+                continue;
+            };
+            started_thread_count += 1;
+        } else {
+            profileLineStateWorkerMain(&workers[worker_index]);
+        }
+    }
+    for (threads[0..started_thread_count]) |thread| thread.join();
+}
+
+fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-optics-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-optics-worker";
+    Trace.setThreadName(thread_name);
+
+    const worker_zone = Trace.staticZone(@src(), "optical_prepare.profile_line_state_worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+
+    while (worker.queue.next()) |chunk| {
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_line_state_chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
+
+            fillProfileLineStateRange(
+                worker.line_list,
+                worker.temperatures_k,
+                worker.pressures_hpa,
+                worker.weak_states,
+                worker.strong_states,
+                chunk.start,
+                chunk.end,
+            );
+        }
+    }
+}
+
+fn fillProfileLineStateRange(
+    line_list: ReferenceData.SpectroscopyLineList,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+    weak_states: ?[]ReferenceData.WeakLinePreparedState,
+    strong_states: ?[]ReferenceData.StrongLinePreparedState,
+    start: usize,
+    end: usize,
+) void {
+    for (start..end) |index| {
+        if (weak_states) |states| {
+            line_list.prepareWeakLineStateInto(
+                &states[index],
+                temperatures_k[index],
+                pressures_hpa[index],
+            );
+        }
+        if (strong_states) |states| {
+            line_list.prepareStrongLineStateInto(
+                &states[index],
+                temperatures_k[index],
+                pressures_hpa[index],
+            );
+        }
+    }
+}
+
+fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
+    if (profile_count < min_parallel_profile_line_state_count) return 1;
+    const cpu_count = std.Thread.getCpuCount() catch 1;
+    return @min(Trace.max_workers, @min(cpu_count, @max(@as(usize, 1), profile_count / min_parallel_profile_line_state_count)));
 }
 
 fn buildCrossSectionAbsorbers(

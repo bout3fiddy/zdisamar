@@ -16,3 +16,4 @@ Notes:
 - [01. Reuse the O2 A forward session](01-forward-session-reuse.md)
 - [02. Keep Jacobians state-vector sized](02-state-vector-jacobians.md)
 - [03. Isolate paired validation lanes](03-paired-validation-lanes.md)
+- [04. Defer final-state evaluation](04-lazy-final-evaluation.md)

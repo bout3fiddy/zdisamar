@@ -146,6 +146,22 @@ pub const SpectroscopyLineList = struct {
         return @import("line_list_ops.zig").prepareStrongLineState(self, allocator, temperature_k, pressure_hpa);
     }
 
+    pub fn allocStrongLinePreparedState(
+        self: SpectroscopyLineList,
+        allocator: Types.Allocator,
+    ) !?Types.StrongLinePreparedState {
+        return @import("line_list_ops.zig").allocStrongLinePreparedState(self, allocator);
+    }
+
+    pub fn prepareStrongLineStateInto(
+        self: SpectroscopyLineList,
+        prepared: *Types.StrongLinePreparedState,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) void {
+        return @import("line_list_ops.zig").prepareStrongLineStateInto(self, prepared, temperature_k, pressure_hpa);
+    }
+
     pub fn prepareWeakLineState(
         self: SpectroscopyLineList,
         allocator: Types.Allocator,
@@ -153,6 +169,22 @@ pub const SpectroscopyLineList = struct {
         pressure_hpa: f64,
     ) !Types.WeakLinePreparedState {
         return @import("line_list_ops.zig").prepareWeakLineState(self, allocator, temperature_k, pressure_hpa);
+    }
+
+    pub fn allocWeakLinePreparedState(
+        self: SpectroscopyLineList,
+        allocator: Types.Allocator,
+    ) !Types.WeakLinePreparedState {
+        return @import("line_list_ops.zig").allocWeakLinePreparedState(self, allocator);
+    }
+
+    pub fn prepareWeakLineStateInto(
+        self: SpectroscopyLineList,
+        prepared: *Types.WeakLinePreparedState,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) void {
+        return @import("line_list_ops.zig").prepareWeakLineStateInto(self, prepared, temperature_k, pressure_hpa);
     }
 
     pub fn evaluateAt(

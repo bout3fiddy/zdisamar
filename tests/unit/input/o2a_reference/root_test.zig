@@ -115,13 +115,10 @@ test "O2A route preparation rejects unsupported plan modes" {
     );
 }
 
-test "validation YAML resolves into the shared native O2A input type" {
-    var loaded = try zdisamar.disamar_reference.loadDefaultResolvedCase(std.testing.allocator);
-    defer loaded.deinit();
-
-    const input: zdisamar.O2AInput = loaded.resolved;
+test "default O2A validation baseline is the shared native input type" {
+    const input: zdisamar.O2AInput = zdisamar.defaultO2AInput();
     try zdisamar.o2a.validateInput(&input);
-    try std.testing.expectEqual(@as(u32, 21), input.spectral_grid.sample_count);
+    try std.testing.expectEqual(@as(u32, 701), input.spectral_grid.sample_count);
     try std.testing.expectEqualStrings(
         "data/reference_data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
         input.o2.line_list_asset.path,

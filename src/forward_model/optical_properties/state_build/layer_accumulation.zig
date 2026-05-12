@@ -8,11 +8,14 @@ const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
 const ParticleProfiles = @import("../shared/particle_profiles.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
+const Trace = @import("../../performance_trace.zig");
 const ClimatologyProfile = @import("../../../input/reference/climatology.zig").ClimatologyProfile;
 const spline = @import("../../../common/math/interpolation/spline.zig");
 const internal = @import("internal.zig");
 
 const Allocator = std.mem.Allocator;
+const min_parallel_parity_support_row_count: usize = 64;
+const parity_support_row_chunk_size: usize = 8;
 const oxygen_volume_mixing_ratio = Spectroscopy.default_o2_volume_mixing_ratio;
 const centimeters_per_kilometer = 1.0e5;
 const boltzmann_hpa_cm3_per_k = internal.boltzmann_hpa_cm3_per_k;
@@ -20,6 +23,54 @@ const max_collision_complex_profile_nodes: usize = 256;
 
 const pressureFromParitySupportBounds = internal.pressureFromParitySupportBounds;
 const paritySupportThermodynamicsFromProfile = internal.paritySupportThermodynamicsFromProfile;
+
+const ParitySupportRowErrorState = struct {
+    mutex: std.Thread.Mutex = .{},
+    err: ?anyerror = null,
+
+    fn store(self: *ParitySupportRowErrorState, err: anyerror) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.err == null) self.err = err;
+    }
+};
+
+const ParitySupportRowQueue = struct {
+    mutex: std.Thread.Mutex = .{},
+    next_index: usize = 0,
+    len: usize,
+
+    fn next(self: *ParitySupportRowQueue) ?struct { start: usize, end: usize } {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.next_index >= self.len) return null;
+        const start = self.next_index;
+        const end = @min(start + parity_support_row_chunk_size, self.len);
+        self.next_index = end;
+        return .{ .start = start, .end = end };
+    }
+};
+
+const ParitySupportRowWorker = struct {
+    allocator: Allocator,
+    context: *Context,
+    absorbers: *Absorbers.AbsorberBuildState,
+    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    aerosol_sublayer_distribution: []const f64,
+    cloud_sublayer_distribution: []const f64,
+    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+    aerosol_single_scatter_albedo: f64,
+    cloud_single_scatter_albedo: f64,
+    aerosol_extinction_scale: f64,
+    cloud_extinction_scale: f64,
+    aerosol_fraction: f64,
+    cloud_fraction: f64,
+    queue: *ParitySupportRowQueue,
+    error_state: *ParitySupportRowErrorState,
+    worker_index: usize,
+    totals: LayerAccumulation = .{},
+};
 
 fn collisionComplexPairDensityCm6(
     context: *const Context,
@@ -176,23 +227,43 @@ pub fn populate(
         null;
 
     if (usesDisamarParitySupportGrid(context)) {
-        try populateParitySupportRows(
-            allocator,
-            context,
-            absorbers,
-            profile_spectroscopy_cache_ptr,
-            &totals,
-            aerosol_sublayer_distribution,
-            cloud_sublayer_distribution,
-            aerosol_phase_coefficients,
-            cloud_phase_coefficients,
-            totals.aerosol_single_scatter_albedo,
-            totals.cloud_single_scatter_albedo,
-            aerosol_extinction_scale,
-            cloud_extinction_scale,
-            aerosol_fraction,
-            cloud_fraction,
-        );
+        if (canParallelPopulateParitySupportRows(context, absorbers, profile_spectroscopy_cache_ptr)) {
+            try populateParitySupportRowsParallel(
+                allocator,
+                context,
+                absorbers,
+                profile_spectroscopy_cache_ptr,
+                &totals,
+                aerosol_sublayer_distribution,
+                cloud_sublayer_distribution,
+                aerosol_phase_coefficients,
+                cloud_phase_coefficients,
+                totals.aerosol_single_scatter_albedo,
+                totals.cloud_single_scatter_albedo,
+                aerosol_extinction_scale,
+                cloud_extinction_scale,
+                aerosol_fraction,
+                cloud_fraction,
+            );
+        } else {
+            try populateParitySupportRows(
+                allocator,
+                context,
+                absorbers,
+                profile_spectroscopy_cache_ptr,
+                &totals,
+                aerosol_sublayer_distribution,
+                cloud_sublayer_distribution,
+                aerosol_phase_coefficients,
+                cloud_phase_coefficients,
+                totals.aerosol_single_scatter_albedo,
+                totals.cloud_single_scatter_albedo,
+                aerosol_extinction_scale,
+                cloud_extinction_scale,
+                aerosol_fraction,
+                cloud_fraction,
+            );
+        }
         for (context.layers, 0..) |*layer, index| {
             reduceParityLayer(
                 context,
@@ -247,42 +318,8 @@ fn populateParitySupportRows(
     aerosol_fraction: f64,
     cloud_fraction: f64,
 ) !void {
-    var current_layer_index: usize = 0;
-    var layer_boundary_index = if (context.layers.len > 1)
-        @as(usize, @intCast(context.layers[1].sublayer_start_index))
-    else
-        context.sublayers.len;
-
     for (0..context.sublayers.len) |write_index| {
-        while (write_index >= layer_boundary_index and current_layer_index + 1 < context.layers.len) {
-            current_layer_index += 1;
-            layer_boundary_index = if (current_layer_index + 1 < context.layers.len)
-                @as(usize, @intCast(context.layers[current_layer_index + 1].sublayer_start_index))
-            else
-                context.sublayers.len;
-        }
-
-        const layer_thickness_km = @max(
-            context.vertical_grid.layer_top_altitudes_km[current_layer_index] -
-                context.vertical_grid.layer_bottom_altitudes_km[current_layer_index],
-            1.0e-9,
-        );
-        var ignored_density_weight: f64 = 0.0;
-        var ignored_density_sum: f64 = 0.0;
-        var ignored_temperature_sum: f64 = 0.0;
-        var ignored_pressure_sum: f64 = 0.0;
-        var ignored_line_sigma_sum: f64 = 0.0;
-        var ignored_line_mixing_sum: f64 = 0.0;
-        var ignored_d_cross_section_sum: f64 = 0.0;
-        var ignored_gas_optical_depth: f64 = 0.0;
-        var ignored_gas_scattering_optical_depth: f64 = 0.0;
-        var ignored_cia_optical_depth: f64 = 0.0;
-        var ignored_aerosol_optical_depth: f64 = 0.0;
-        var ignored_aerosol_base_optical_depth: f64 = 0.0;
-        var ignored_cloud_optical_depth: f64 = 0.0;
-        var ignored_cloud_base_optical_depth: f64 = 0.0;
-        const layer_start_index = @as(usize, @intCast(context.layers[current_layer_index].sublayer_start_index));
-        try populateSublayer(
+        try populateParitySupportRow(
             allocator,
             context,
             absorbers,
@@ -298,26 +335,255 @@ fn populateParitySupportRows(
             cloud_extinction_scale,
             aerosol_fraction,
             cloud_fraction,
-            layer_thickness_km,
-            current_layer_index,
-            if (write_index >= layer_start_index) write_index - layer_start_index else 0,
             write_index,
-            &ignored_density_weight,
-            &ignored_density_sum,
-            &ignored_temperature_sum,
-            &ignored_pressure_sum,
-            &ignored_line_sigma_sum,
-            &ignored_line_mixing_sum,
-            &ignored_d_cross_section_sum,
-            &ignored_gas_optical_depth,
-            &ignored_gas_scattering_optical_depth,
-            &ignored_cia_optical_depth,
-            &ignored_aerosol_optical_depth,
-            &ignored_aerosol_base_optical_depth,
-            &ignored_cloud_optical_depth,
-            &ignored_cloud_base_optical_depth,
         );
     }
+}
+
+fn populateParitySupportRowsParallel(
+    allocator: Allocator,
+    context: *Context,
+    absorbers: *Absorbers.AbsorberBuildState,
+    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    totals: *LayerAccumulation,
+    aerosol_sublayer_distribution: []const f64,
+    cloud_sublayer_distribution: []const f64,
+    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+    aerosol_single_scatter_albedo: f64,
+    cloud_single_scatter_albedo: f64,
+    aerosol_extinction_scale: f64,
+    cloud_extinction_scale: f64,
+    aerosol_fraction: f64,
+    cloud_fraction: f64,
+) !void {
+    const worker_count = preferredParitySupportRowWorkerCount(context.sublayers.len);
+    if (worker_count == 1) {
+        return populateParitySupportRows(
+            allocator,
+            context,
+            absorbers,
+            profile_spectroscopy_cache,
+            totals,
+            aerosol_sublayer_distribution,
+            cloud_sublayer_distribution,
+            aerosol_phase_coefficients,
+            cloud_phase_coefficients,
+            aerosol_single_scatter_albedo,
+            cloud_single_scatter_albedo,
+            aerosol_extinction_scale,
+            cloud_extinction_scale,
+            aerosol_fraction,
+            cloud_fraction,
+        );
+    }
+
+    var error_state = ParitySupportRowErrorState{};
+    var queue: ParitySupportRowQueue = .{ .len = context.sublayers.len };
+    var worker_buffer: [Trace.max_workers]ParitySupportRowWorker = undefined;
+    var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
+    const workers = worker_buffer[0..worker_count];
+    const threads = thread_buffer[0 .. worker_count - 1];
+    var started_thread_count: usize = 0;
+
+    for (0..worker_count) |worker_index| {
+        workers[worker_index] = .{
+            .allocator = allocator,
+            .context = context,
+            .absorbers = absorbers,
+            .profile_spectroscopy_cache = profile_spectroscopy_cache,
+            .aerosol_sublayer_distribution = aerosol_sublayer_distribution,
+            .cloud_sublayer_distribution = cloud_sublayer_distribution,
+            .aerosol_phase_coefficients = aerosol_phase_coefficients,
+            .cloud_phase_coefficients = cloud_phase_coefficients,
+            .aerosol_single_scatter_albedo = aerosol_single_scatter_albedo,
+            .cloud_single_scatter_albedo = cloud_single_scatter_albedo,
+            .aerosol_extinction_scale = aerosol_extinction_scale,
+            .cloud_extinction_scale = cloud_extinction_scale,
+            .aerosol_fraction = aerosol_fraction,
+            .cloud_fraction = cloud_fraction,
+            .queue = &queue,
+            .error_state = &error_state,
+            .worker_index = worker_index,
+        };
+        if (worker_index + 1 < worker_count) {
+            threads[started_thread_count] = std.Thread.spawn(
+                .{},
+                paritySupportRowWorkerMain,
+                .{&workers[worker_index]},
+            ) catch {
+                paritySupportRowWorkerMain(&workers[worker_index]);
+                continue;
+            };
+            started_thread_count += 1;
+        } else {
+            paritySupportRowWorkerMain(&workers[worker_index]);
+        }
+    }
+    for (threads[0..started_thread_count]) |thread| thread.join();
+    if (error_state.err) |err| return err;
+
+    for (workers) |worker| {
+        mergeParitySupportTotals(totals, worker.totals);
+    }
+}
+
+fn paritySupportRowWorkerMain(worker: *ParitySupportRowWorker) void {
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-accum-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-accum-worker";
+    Trace.setThreadName(thread_name);
+
+    const worker_zone = Trace.staticZone(@src(), "optical_prepare.parity_rows_worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+
+    while (worker.queue.next()) |chunk| {
+        {
+            const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.parity_rows_chunk");
+            chunk_zone.value(@intCast(chunk.end - chunk.start));
+            defer chunk_zone.end();
+
+            for (chunk.start..chunk.end) |write_index| {
+                populateParitySupportRow(
+                    worker.allocator,
+                    worker.context,
+                    worker.absorbers,
+                    worker.profile_spectroscopy_cache,
+                    &worker.totals,
+                    worker.aerosol_sublayer_distribution,
+                    worker.cloud_sublayer_distribution,
+                    worker.aerosol_phase_coefficients,
+                    worker.cloud_phase_coefficients,
+                    worker.aerosol_single_scatter_albedo,
+                    worker.cloud_single_scatter_albedo,
+                    worker.aerosol_extinction_scale,
+                    worker.cloud_extinction_scale,
+                    worker.aerosol_fraction,
+                    worker.cloud_fraction,
+                    write_index,
+                ) catch |err| {
+                    worker.error_state.store(err);
+                    return;
+                };
+            }
+        }
+    }
+}
+
+fn populateParitySupportRow(
+    allocator: Allocator,
+    context: *Context,
+    absorbers: *Absorbers.AbsorberBuildState,
+    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+    totals: *LayerAccumulation,
+    aerosol_sublayer_distribution: []const f64,
+    cloud_sublayer_distribution: []const f64,
+    aerosol_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+    cloud_phase_coefficients: [PhaseFunctions.phase_coefficient_count]f64,
+    aerosol_single_scatter_albedo: f64,
+    cloud_single_scatter_albedo: f64,
+    aerosol_extinction_scale: f64,
+    cloud_extinction_scale: f64,
+    aerosol_fraction: f64,
+    cloud_fraction: f64,
+    write_index: usize,
+) !void {
+    const current_layer_index = layerIndexForSublayer(context, write_index);
+    const layer_thickness_km = @max(
+        context.vertical_grid.layer_top_altitudes_km[current_layer_index] -
+            context.vertical_grid.layer_bottom_altitudes_km[current_layer_index],
+        1.0e-9,
+    );
+    var ignored_density_weight: f64 = 0.0;
+    var ignored_density_sum: f64 = 0.0;
+    var ignored_temperature_sum: f64 = 0.0;
+    var ignored_pressure_sum: f64 = 0.0;
+    var ignored_line_sigma_sum: f64 = 0.0;
+    var ignored_line_mixing_sum: f64 = 0.0;
+    var ignored_d_cross_section_sum: f64 = 0.0;
+    var ignored_gas_optical_depth: f64 = 0.0;
+    var ignored_gas_scattering_optical_depth: f64 = 0.0;
+    var ignored_cia_optical_depth: f64 = 0.0;
+    var ignored_aerosol_optical_depth: f64 = 0.0;
+    var ignored_aerosol_base_optical_depth: f64 = 0.0;
+    var ignored_cloud_optical_depth: f64 = 0.0;
+    var ignored_cloud_base_optical_depth: f64 = 0.0;
+    const layer_start_index = @as(usize, @intCast(context.layers[current_layer_index].sublayer_start_index));
+    try populateSublayer(
+        allocator,
+        context,
+        absorbers,
+        profile_spectroscopy_cache,
+        totals,
+        aerosol_sublayer_distribution,
+        cloud_sublayer_distribution,
+        aerosol_phase_coefficients,
+        cloud_phase_coefficients,
+        aerosol_single_scatter_albedo,
+        cloud_single_scatter_albedo,
+        aerosol_extinction_scale,
+        cloud_extinction_scale,
+        aerosol_fraction,
+        cloud_fraction,
+        layer_thickness_km,
+        current_layer_index,
+        if (write_index >= layer_start_index) write_index - layer_start_index else 0,
+        write_index,
+        &ignored_density_weight,
+        &ignored_density_sum,
+        &ignored_temperature_sum,
+        &ignored_pressure_sum,
+        &ignored_line_sigma_sum,
+        &ignored_line_mixing_sum,
+        &ignored_d_cross_section_sum,
+        &ignored_gas_optical_depth,
+        &ignored_gas_scattering_optical_depth,
+        &ignored_cia_optical_depth,
+        &ignored_aerosol_optical_depth,
+        &ignored_aerosol_base_optical_depth,
+        &ignored_cloud_optical_depth,
+        &ignored_cloud_base_optical_depth,
+    );
+}
+
+fn canParallelPopulateParitySupportRows(
+    context: *const Context,
+    absorbers: *const Absorbers.AbsorberBuildState,
+    profile_spectroscopy_cache: ?*const LayerSpectroscopy.ProfileSpectroscopyCache,
+) bool {
+    return context.sublayers.len >= min_parallel_parity_support_row_count and
+        profile_spectroscopy_cache != null and
+        absorbers.owned_cross_section_absorbers.len == 0 and
+        absorbers.owned_line_absorbers.len == 0 and
+        absorbers.strong_line_states == null;
+}
+
+fn preferredParitySupportRowWorkerCount(row_count: usize) usize {
+    if (row_count < min_parallel_parity_support_row_count) return 1;
+    const cpu_count = std.Thread.getCpuCount() catch 1;
+    return @min(Trace.max_workers, @min(cpu_count, @max(@as(usize, 1), row_count / min_parallel_parity_support_row_count)));
+}
+
+fn layerIndexForSublayer(context: *const Context, write_index: usize) usize {
+    var layer_index: usize = 0;
+    while (layer_index + 1 < context.layers.len and
+        write_index >= @as(usize, @intCast(context.layers[layer_index + 1].sublayer_start_index)))
+    {
+        layer_index += 1;
+    }
+    return layer_index;
+}
+
+fn mergeParitySupportTotals(total: *LayerAccumulation, local: LayerAccumulation) void {
+    total.air_column_density_factor += local.air_column_density_factor;
+    total.oxygen_column_density_factor += local.oxygen_column_density_factor;
+    total.column_density_factor += local.column_density_factor;
+    total.cia_pair_path_factor_cm5 += local.cia_pair_path_factor_cm5;
+    total.total_d_optical_depth_d_temperature += local.total_d_optical_depth_d_temperature;
 }
 
 fn reduceParityLayer(
@@ -678,19 +944,33 @@ fn populateSublayer(
         cross_section_absorber.column_density_factor += absorber_density * sublayer_path_length_cm;
     }
 
-    const spectroscopy_eval = try LayerSpectroscopy.resolveSpectroscopyEvaluation(
-        allocator,
-        context,
-        absorbers,
-        write_index,
-        density,
-        pressure,
-        temperature,
-        oxygen_mixing_ratio,
-        sublayer_path_length_cm,
-        &absorber_density_cm3,
-        profile_spectroscopy_cache,
-    );
+    const spectroscopy_eval = if (absorbers.owned_line_absorbers.len == 0 and
+        absorbers.strong_line_states == null and
+        profile_spectroscopy_cache != null)
+        LayerSpectroscopy.resolveCachedSingleLineEvaluation(
+            context,
+            absorbers,
+            write_index,
+            density,
+            pressure,
+            temperature,
+            &absorber_density_cm3,
+            profile_spectroscopy_cache.?,
+        )
+    else
+        try LayerSpectroscopy.resolveSpectroscopyEvaluation(
+            allocator,
+            context,
+            absorbers,
+            write_index,
+            density,
+            pressure,
+            temperature,
+            oxygen_mixing_ratio,
+            sublayer_path_length_cm,
+            &absorber_density_cm3,
+            profile_spectroscopy_cache,
+        );
 
     const o2_density_cm3 = density * oxygen_mixing_ratio;
     const continuum_density_cm3 = LayerSpectroscopy.continuumCarrierDensity(

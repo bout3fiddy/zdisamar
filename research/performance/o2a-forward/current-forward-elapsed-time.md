@@ -3,54 +3,54 @@
 Current retained artifact:
 
 ```text
-validation/outputs/performance/labos-bottleneck/summary.json
+research/performance/tracing/output/lauka-forward/forward-run/summary.json
 ```
 
-Top-level timing:
+Top-level low-overhead timing from the Lauka forward wrapper:
 
 ```text
-prepare_o2a                      0.177154 s
-forward elapsed time             1.799918 s
-workers                                10
+prepare_o2a                      0.057692 s
+forward elapsed time             1.328534 s
 output wavelengths                     701
 high-resolution samples              3,874
 ```
 
-Elapsed-time split:
+The accompanying Lauka report records seven forward-only runs:
 
 ```text
-wavelength sampling         0.281548 s
-forward prefetch            1.508676 s
-final radiance integration  0.003147 s
-irradiance sampling         0.003423 s
+mean wall time              1.40 s
+peak RSS                    182 MB
+fixed cycles                165 M
+fixed instructions          106 M
 ```
 
-`forward_prefetch_wall` is the artifact field name for the expensive elapsed
-section. It calculates the
-high-resolution radiance samples before they are averaged back to the output
-grid.
-
-Worker CPU is larger than elapsed time because the high-resolution radiance samples
-run across workers:
+The timeline trace artifact is:
 
 ```text
-wavelength-specific optical input   4.055074 s aggregate CPU
-LABOS transport                     9.777328 s aggregate CPU
+research/performance/tracing/output/labos-bottleneck/summary.json
 ```
 
-Inside LABOS:
+That run is built with ztracy instrumentation enabled. Its current coarse
+summary is:
 
 ```text
-Fourier loop              9.351779 s
-RT-layer construction     6.783443 s
-layer doubling            4.777200 s
-scattering orders         2.327972 s
-phase matrix build        1.040362 s
-reflectance integral      0.198543 s
-PLM basis                 0.008432 s
+prepare_o2a                      0.045665 s
+forward elapsed time             2.443697 s
 ```
 
-The stable counts are:
+Use the ztracy capture for nested timing, thread overlap, and per-zone evidence.
+Use the Lauka wrapper or a non-ztracy harness run for elapsed-time comparisons.
+
+The stable route shape is unchanged:
+
+```text
+701 output wavelengths
+-> 3,874 high-resolution radiance samples
+-> 120,390 LABOS Fourier terms
+-> millions of layer, doubling, and orders operations
+```
+
+The last detailed pre-ztracy trace that retained operation counters reported:
 
 ```text
 LABOS Fourier terms      120,390
@@ -58,13 +58,4 @@ layer visits           5,417,550
 doubled layers         1,075,939
 doubling steps         8,389,666
 dotGaussPair calls   295,581,240
-```
-
-The concise model is:
-
-```text
-701 output wavelengths
--> 3,874 high-resolution radiance samples
--> 120,390 Fourier terms
--> millions of layer, doubling, and orders operations
 ```

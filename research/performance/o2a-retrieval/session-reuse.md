@@ -41,10 +41,18 @@ The session is not magic. It does not make a retrieval cheaper than one
 forward+jacobian call. It removes cold scene setup and lets repeated iterations
 reuse scene-invariant storage.
 
-Current slow-case benchmark:
+Historical session-reuse benchmark:
 
 ```text
 non-session retrieval elapsed time       5.354143 s
 session reused retrieval elapsed time    4.098390 s
 same retrieved state             true
+```
+
+Current slow-case benchmark after later Jacobian and lazy-final-evaluation work:
+
+```text
+session reused retrieval elapsed time    2.835175 s
+forward+jacobian time                    2.834102 s
+lazy final evaluation when requested     1.297817 s
 ```
