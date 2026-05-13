@@ -282,6 +282,34 @@ pub fn buildResolvedVendorO2AScene(
     resolved: *const ResolvedVendorO2ACase,
     raw_solar_spectrum: []const SolarSpectrumSample,
 ) !Scene {
+    var solar_spectrum = try retainSolarSupport(allocator, resolved, raw_solar_spectrum);
+    var solar_spectrum_owned = true;
+    errdefer if (solar_spectrum_owned) solar_spectrum.deinitOwned(allocator);
+
+    var absorber_set = try buildO2AbsorberSet(allocator, resolved);
+    var absorber_set_owned = true;
+    errdefer if (absorber_set_owned) absorber_set.deinitOwned(allocator);
+
+    var scene = sceneFromResolvedO2A(
+        resolved,
+        absorber_set,
+        solar_spectrum,
+        referenceSpectralResponse(resolved),
+    );
+    solar_spectrum_owned = false;
+    absorber_set_owned = false;
+    errdefer scene.deinitOwned(allocator);
+
+    attachResolvedIntervals(&scene, resolved);
+    try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
+    return scene;
+}
+
+fn retainSolarSupport(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+    raw_solar_spectrum: []const SolarSpectrumSample,
+) !InstrumentModel.OperationalSolarSpectrum {
     const solar_support_start_nm = resolved.spectral_grid.start_nm - (2.0 * resolved.observation.instrument_line_fwhm_nm);
     const solar_support_end_nm = resolved.spectral_grid.end_nm + (2.0 * resolved.observation.instrument_line_fwhm_nm);
     var retained_solar_count: usize = 0;
@@ -293,11 +321,9 @@ pub fn buildResolvedVendorO2AScene(
     if (retained_solar_count < 3) return error.InvalidData;
 
     const solar_wavelengths = try allocator.alloc(f64, retained_solar_count);
-    var solar_wavelengths_owned = true;
-    errdefer if (solar_wavelengths_owned) allocator.free(solar_wavelengths);
+    errdefer allocator.free(solar_wavelengths);
     const solar_irradiance = try allocator.alloc(f64, retained_solar_count);
-    var solar_irradiance_owned = true;
-    errdefer if (solar_irradiance_owned) allocator.free(solar_irradiance);
+    errdefer allocator.free(solar_irradiance);
     var solar_index: usize = 0;
     for (raw_solar_spectrum) |sample| {
         if (sample.wavelength_nm <= solar_support_start_nm) continue;
@@ -307,21 +333,27 @@ pub fn buildResolvedVendorO2AScene(
         solar_index += 1;
     }
 
+    return .{
+        .wavelengths_nm = solar_wavelengths,
+        .irradiance = solar_irradiance,
+    };
+}
+
+fn buildO2AbsorberSet(
+    allocator: Allocator,
+    resolved: *const ResolvedVendorO2ACase,
+) !AbsorberModel.AbsorberSet {
     const absorber_items = try allocator.alloc(AbsorberModel.Absorber, 1);
-    var absorber_items_owned = true;
-    errdefer if (absorber_items_owned) allocator.free(absorber_items);
+    errdefer allocator.free(absorber_items);
     const absorber_id = try allocator.dupe(u8, "o2");
-    var absorber_id_owned = true;
-    errdefer if (absorber_id_owned) allocator.free(absorber_id);
+    errdefer allocator.free(absorber_id);
     const absorber_species = try allocator.dupe(u8, "o2");
-    var absorber_species_owned = true;
-    errdefer if (absorber_species_owned) allocator.free(absorber_species);
+    errdefer allocator.free(absorber_species);
     const isotopes_sim = if (resolved.o2.isotopes_sim.len != 0)
         try allocator.dupe(u8, resolved.o2.isotopes_sim)
     else
         &.{};
-    var isotopes_sim_owned = isotopes_sim.len != 0;
-    errdefer if (isotopes_sim_owned) allocator.free(isotopes_sim);
+    errdefer if (isotopes_sim.len != 0) allocator.free(isotopes_sim);
 
     absorber_items[0] = .{
         .id = absorber_id,
@@ -340,7 +372,13 @@ pub fn buildResolvedVendorO2AScene(
         },
     };
 
-    const reference_response: Instrument.SpectralResponse = .{
+    return .{
+        .items = absorber_items,
+    };
+}
+
+fn referenceSpectralResponse(resolved: *const ResolvedVendorO2ACase) Instrument.SpectralResponse {
+    return .{
         .explicit = true,
         .slit_index = switch (resolved.observation.builtin_line_shape) {
             .gaussian => .gaussian_modulated,
@@ -353,8 +391,15 @@ pub fn buildResolvedVendorO2AScene(
         .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
         .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
     };
+}
 
-    var scene: Scene = .{
+fn sceneFromResolvedO2A(
+    resolved: *const ResolvedVendorO2ACase,
+    absorber_set: AbsorberModel.AbsorberSet,
+    solar_spectrum: InstrumentModel.OperationalSolarSpectrum,
+    reference_response: Instrument.SpectralResponse,
+) Scene {
+    return .{
         .id = resolved.scene_id,
         .surface = .{
             .albedo = resolved.surface_albedo,
@@ -384,9 +429,7 @@ pub fn buildResolvedVendorO2AScene(
             .has_aerosols = true,
         },
         .spectral_grid = resolved.spectral_grid,
-        .absorbers = .{
-            .items = absorber_items,
-        },
+        .absorbers = absorber_set,
         .observation_model = .{
             .instrument = .{ .custom = resolved.observation.instrument_name },
             .regime = resolved.observation.regime,
@@ -397,10 +440,7 @@ pub fn buildResolvedVendorO2AScene(
             .high_resolution_step_nm = resolved.observation.high_resolution_step_nm,
             .high_resolution_half_span_nm = resolved.observation.high_resolution_half_span_nm,
             .adaptive_reference_grid = resolved.observation.adaptive_reference_grid,
-            .operational_solar_spectrum = .{
-                .wavelengths_nm = solar_wavelengths,
-                .irradiance = solar_irradiance,
-            },
+            .operational_solar_spectrum = solar_spectrum,
             .measurement_pipeline = .{
                 .radiance = .{
                     .explicit = true,
@@ -414,14 +454,9 @@ pub fn buildResolvedVendorO2AScene(
         },
         .phase_function_truncation_threshold = resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold,
     };
-    solar_wavelengths_owned = false;
-    solar_irradiance_owned = false;
-    absorber_items_owned = false;
-    absorber_id_owned = false;
-    absorber_species_owned = false;
-    isotopes_sim_owned = false;
-    errdefer scene.deinitOwned(allocator);
+}
 
+fn attachResolvedIntervals(scene: *Scene, resolved: *const ResolvedVendorO2ACase) void {
     if (resolved.intervals.len != 0) {
         scene.atmosphere.interval_grid = .{
             .semantics = .explicit_pressure_bounds,
@@ -429,8 +464,6 @@ pub fn buildResolvedVendorO2AScene(
             .intervals = resolved.intervals,
         };
     }
-    try scene.observation_model.operational_solar_spectrum.prepareInterpolation(allocator);
-    return scene;
 }
 
 pub fn prepareResolvedVendorO2ARoute(

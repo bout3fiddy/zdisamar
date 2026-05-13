@@ -6,7 +6,8 @@ from typing import Any
 import altair as alt
 
 from . import fields
-from .axes import marker_rules, scaled_y, wavelength_x
+from .axes import marker_rules, scaled_y
+from .charts import wavelength_line_chart
 from .data import spectrum_frame
 from .properties import PLOT, PlotAccessor
 
@@ -68,17 +69,13 @@ def _quantity_chart(
     data = spectrum_frame(spectrum)
     title = fields.QUANTITY_LABELS[quantity]
     data, y_field, y = scaled_y(data, quantity, title, axis=_quantity_axis(quantity))
-    line = (
-        alt.Chart(data)
-        .mark_line(color=PLOT.colors["blue"], strokeWidth=PLOT.line_width)
-        .encode(
-            x=wavelength_x(),
-            y=y,
-            tooltip=[
-                alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip(f"{quantity}:Q", title=title, format=".8g"),
-            ],
-        )
+    line = wavelength_line_chart(
+        data,
+        y,
+        [
+            alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
+            alt.Tooltip(f"{quantity}:Q", title=title, format=".8g"),
+        ],
     )
     layers = [line, marker_rules(data)]
     if show_minimum and not data.empty:

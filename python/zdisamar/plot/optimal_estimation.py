@@ -6,6 +6,7 @@ from typing import Any
 import altair as alt
 
 from .axes import finite_padded_scale, scaled_y
+from .charts import wavelength_line_chart
 from .properties import PLOT, PlotAccessor
 
 STATE_LABELS = {
@@ -169,19 +170,15 @@ def _measurement_fit(result: Any):
 def _residual(result: Any):
     data = _fit_frame(result)
     data, _, y = scaled_y(data, "residual", "Measurement - retrieved reflectance")
-    return (
-        alt.Chart(data)
-        .mark_line(color=PLOT.colors["red"])
-        .encode(
-            x=alt.X("wavelength_nm:Q", title="Wavelength (nm)", scale=alt.Scale(zero=False)),
-            y=y,
-            tooltip=[
-                alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip("residual:Q", title="Residual", format=".8g"),
-            ],
-        )
-        .properties(**PLOT.chart("Final residual"))
-    )
+    return wavelength_line_chart(
+        data,
+        y,
+        [
+            alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
+            alt.Tooltip("residual:Q", title="Residual", format=".8g"),
+        ],
+        color=PLOT.colors["red"],
+    ).properties(**PLOT.chart("Final residual"))
 
 
 def _jacobian(result: Any):

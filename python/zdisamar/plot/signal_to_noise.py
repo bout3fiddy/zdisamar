@@ -6,6 +6,7 @@ import altair as alt
 
 from . import fields
 from .axes import finite_padded_scale, marker_rules, scaled_y, wavelength_x
+from .charts import wavelength_line_chart
 from .data import spectrum_frame
 from .properties import PLOT
 
@@ -13,17 +14,13 @@ from .properties import PLOT
 def snr(spectrum: Any, noise_table):
     data = _snr_frame(spectrum, noise_table)
     data, _, y = scaled_y(data, fields.SNR, fields.QUANTITY_LABELS[fields.SNR])
-    line = (
-        alt.Chart(data)
-        .mark_line(color=PLOT.colors["blue"], strokeWidth=PLOT.line_width)
-        .encode(
-            x=wavelength_x(),
-            y=y,
-            tooltip=[
-                alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip(f"{fields.SNR}:Q", title="SNR", format=".4g"),
-            ],
-        )
+    line = wavelength_line_chart(
+        data,
+        y,
+        [
+            alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
+            alt.Tooltip(f"{fields.SNR}:Q", title="SNR", format=".4g"),
+        ],
     )
     return alt.layer(line, marker_rules(data)).properties(**PLOT.chart("Signal-to-noise ratio"))
 
@@ -47,26 +44,22 @@ def noise_envelope(spectrum: Any, noise_table):
             y2="noise_hi:Q",
         )
     )
-    line = (
-        alt.Chart(data)
-        .mark_line(color=PLOT.colors["blue"], strokeWidth=PLOT.line_width)
-        .encode(
-            x=wavelength_x(),
-            y=alt.Y(
+    line = wavelength_line_chart(
+        data,
+        alt.Y(
+            f"{fields.SUN_NORMALIZED_RADIANCE}:Q",
+            title=fields.QUANTITY_LABELS[fields.SUN_NORMALIZED_RADIANCE],
+            scale=y_scale,
+        ),
+        [
+            alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
+            alt.Tooltip(
                 f"{fields.SUN_NORMALIZED_RADIANCE}:Q",
-                title=fields.QUANTITY_LABELS[fields.SUN_NORMALIZED_RADIANCE],
-                scale=y_scale,
+                title="Sun-normalized radiance",
+                format=".8g",
             ),
-            tooltip=[
-                alt.Tooltip(f"{fields.WAVELENGTH_NM}:Q", title="Wavelength (nm)", format=".4f"),
-                alt.Tooltip(
-                    f"{fields.SUN_NORMALIZED_RADIANCE}:Q",
-                    title="Sun-normalized radiance",
-                    format=".8g",
-                ),
-                alt.Tooltip(f"{fields.SNR}:Q", title="SNR", format=".4g"),
-            ],
-        )
+            alt.Tooltip(f"{fields.SNR}:Q", title="SNR", format=".4g"),
+        ],
     )
     return alt.layer(band, line, marker_rules(data)).properties(
         **PLOT.chart("Sun-normalized radiance noise envelope")

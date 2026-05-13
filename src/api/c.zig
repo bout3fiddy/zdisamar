@@ -199,28 +199,23 @@ const Context = struct {
     }
 
     fn clearAtmosphericBudgets(self: *Context) void {
-        for (self.atmospheric_budgets.items) |rows| allocator.free(rows);
-        self.atmospheric_budgets.clearAndFree(allocator);
+        clearStoredRows(ZdsAtmosphericBudgetRow, &self.atmospheric_budgets);
     }
 
     fn clearO2LineContributionTables(self: *Context) void {
-        for (self.o2_line_contribution_tables.items) |rows| allocator.free(rows);
-        self.o2_line_contribution_tables.clearAndFree(allocator);
+        clearStoredRows(ZdsO2LineContributionRow, &self.o2_line_contribution_tables);
     }
 
     fn clearInstrumentResponseTables(self: *Context) void {
-        for (self.instrument_response_tables.items) |rows| allocator.free(rows);
-        self.instrument_response_tables.clearAndFree(allocator);
+        clearStoredRows(ZdsInstrumentResponseRow, &self.instrument_response_tables);
     }
 
     fn clearO2O2CIATables(self: *Context) void {
-        for (self.o2_o2_cia_tables.items) |rows| allocator.free(rows);
-        self.o2_o2_cia_tables.clearAndFree(allocator);
+        clearStoredRows(ZdsO2O2CIARow, &self.o2_o2_cia_tables);
     }
 
     fn clearRadiativeTransferTables(self: *Context) void {
-        for (self.radiative_transfer_tables.items) |rows| allocator.free(rows);
-        self.radiative_transfer_tables.clearAndFree(allocator);
+        clearStoredRows(ZdsRadiativeTransferDiagnosticRow, &self.radiative_transfer_tables);
     }
 
     fn removeResult(self: *Context, result: *zdisamar.Output) bool {
@@ -234,54 +229,29 @@ const Context = struct {
     }
 
     fn removeAtmosphericBudget(self: *Context, rows_ptr: [*]const ZdsAtmosphericBudgetRow) ?[]ZdsAtmosphericBudgetRow {
-        for (self.atmospheric_budgets.items, 0..) |stored, index| {
-            if (stored.ptr == rows_ptr) {
-                return self.atmospheric_budgets.swapRemove(index);
-            }
-        }
-        return null;
+        return removeStoredRows(ZdsAtmosphericBudgetRow, &self.atmospheric_budgets, rows_ptr);
     }
 
     fn removeO2LineContributionTable(
         self: *Context,
         rows_ptr: [*]const ZdsO2LineContributionRow,
     ) ?[]ZdsO2LineContributionRow {
-        for (self.o2_line_contribution_tables.items, 0..) |stored, index| {
-            if (stored.ptr == rows_ptr) {
-                return self.o2_line_contribution_tables.swapRemove(index);
-            }
-        }
-        return null;
+        return removeStoredRows(ZdsO2LineContributionRow, &self.o2_line_contribution_tables, rows_ptr);
     }
 
     fn removeInstrumentResponseTable(self: *Context, rows_ptr: [*]const ZdsInstrumentResponseRow) ?[]ZdsInstrumentResponseRow {
-        for (self.instrument_response_tables.items, 0..) |stored, index| {
-            if (stored.ptr == rows_ptr) {
-                return self.instrument_response_tables.swapRemove(index);
-            }
-        }
-        return null;
+        return removeStoredRows(ZdsInstrumentResponseRow, &self.instrument_response_tables, rows_ptr);
     }
 
     fn removeO2O2CIATable(self: *Context, rows_ptr: [*]const ZdsO2O2CIARow) ?[]ZdsO2O2CIARow {
-        for (self.o2_o2_cia_tables.items, 0..) |stored, index| {
-            if (stored.ptr == rows_ptr) {
-                return self.o2_o2_cia_tables.swapRemove(index);
-            }
-        }
-        return null;
+        return removeStoredRows(ZdsO2O2CIARow, &self.o2_o2_cia_tables, rows_ptr);
     }
 
     fn removeRadiativeTransferTable(
         self: *Context,
         rows_ptr: [*]const ZdsRadiativeTransferDiagnosticRow,
     ) ?[]ZdsRadiativeTransferDiagnosticRow {
-        for (self.radiative_transfer_tables.items, 0..) |stored, index| {
-            if (stored.ptr == rows_ptr) {
-                return self.radiative_transfer_tables.swapRemove(index);
-            }
-        }
-        return null;
+        return removeStoredRows(ZdsRadiativeTransferDiagnosticRow, &self.radiative_transfer_tables, rows_ptr);
     }
 
     fn ownsResult(self: *const Context, result: *const zdisamar.Output) bool {
@@ -304,6 +274,71 @@ const Context = struct {
         @memcpy(self.last_error[0..n], message[0..n]);
     }
 };
+
+const PreparedWavelengthRequest = struct {
+    prepared: *zdisamar.PreparedO2A,
+    wavelengths: []const f64,
+};
+
+fn clearStoredRows(comptime Row: type, list: *std.ArrayList([]Row)) void {
+    for (list.items) |rows| allocator.free(rows);
+    list.clearAndFree(allocator);
+}
+
+fn removeStoredRows(comptime Row: type, list: *std.ArrayList([]Row), rows_ptr: [*]const Row) ?[]Row {
+    for (list.items, 0..) |stored, index| {
+        if (stored.ptr == rows_ptr) {
+            return list.swapRemove(index);
+        }
+    }
+    return null;
+}
+
+fn checkedWavelengthRequest(
+    resolved: *Context,
+    wavelengths_ptr: ?[*]const f64,
+    wavelength_count: usize,
+) ?PreparedWavelengthRequest {
+    const wavelengths = wavelengths_ptr orelse {
+        resolved.setError("null wavelengths");
+        return null;
+    };
+    if (wavelength_count == 0) {
+        resolved.setError("empty wavelengths");
+        return null;
+    }
+    if (resolved.prepared == null) {
+        resolved.setError("not prepared");
+        return null;
+    }
+    return .{
+        .prepared = &resolved.prepared.?,
+        .wavelengths = wavelengths[0..wavelength_count],
+    };
+}
+
+fn storeCopiedRows(
+    comptime NativeRow: type,
+    comptime ApiRow: type,
+    resolved: *Context,
+    list: *std.ArrayList([]ApiRow),
+    native_rows: []const NativeRow,
+    comptime copyRow: fn (NativeRow) ApiRow,
+) ?[]ApiRow {
+    const rows = allocator.alloc(ApiRow, native_rows.len) catch |err| {
+        resolved.setError(@errorName(err));
+        return null;
+    };
+    errdefer allocator.free(rows);
+    for (native_rows, rows) |native, *row| row.* = copyRow(native);
+
+    list.append(allocator, rows) catch |err| {
+        allocator.free(rows);
+        resolved.setError(@errorName(err));
+        return null;
+    };
+    return rows;
+}
 
 export fn zds_context_create() ?*Context {
     const ctx = allocator.create(Context) catch return null;
@@ -562,43 +597,28 @@ export fn zds_atmospheric_budget(
         resolved.setError("null atmospheric budget");
         return @intFromEnum(ZdsStatus.failure);
     };
-    const wavelengths = wavelengths_ptr orelse {
-        resolved.setError("null wavelengths");
+    const request = checkedWavelengthRequest(resolved, wavelengths_ptr, wavelength_count) orelse
         return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelengths");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    if (resolved.prepared == null) {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    const prepared = &resolved.prepared.?;
 
     const native_rows = zdisamar.buildAtmosphericBudget(
         allocator,
-        &prepared.scene,
-        &prepared.prepared,
-        wavelengths[0..wavelength_count],
+        &request.prepared.scene,
+        &request.prepared.prepared,
+        request.wavelengths,
     ) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
     defer allocator.free(native_rows);
 
-    const rows = allocator.alloc(ZdsAtmosphericBudgetRow, native_rows.len) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer allocator.free(rows);
-    for (native_rows, rows) |native, *row| row.* = copyAtmosphericBudgetRow(native);
-
-    resolved.atmospheric_budgets.append(allocator, rows) catch |err| {
-        allocator.free(rows);
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
+    const rows = storeCopiedRows(
+        zdisamar.AtmosphericBudgetRow,
+        ZdsAtmosphericBudgetRow,
+        resolved,
+        &resolved.atmospheric_budgets,
+        native_rows,
+        copyAtmosphericBudgetRow,
+    ) orelse return @intFromEnum(ZdsStatus.failure);
     resolved_out.* = .{
         .len = rows.len,
         .rows = rows.ptr,
@@ -619,28 +639,17 @@ export fn zds_o2_line_contributions(
         resolved.setError("null O2 line contribution table");
         return @intFromEnum(ZdsStatus.failure);
     };
-    const wavelengths = wavelengths_ptr orelse {
-        resolved.setError("null wavelengths");
+    const request = checkedWavelengthRequest(resolved, wavelengths_ptr, wavelength_count) orelse
         return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelengths");
-        return @intFromEnum(ZdsStatus.failure);
-    }
     if (max_rows == 0) {
         resolved.setError("invalid row limit");
         return @intFromEnum(ZdsStatus.failure);
     }
-    if (resolved.prepared == null) {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    const prepared = &resolved.prepared.?;
 
     var native_table = zdisamar.buildO2LineContributions(
         allocator,
-        &prepared.prepared,
-        wavelengths[0..wavelength_count],
+        &request.prepared.prepared,
+        request.wavelengths,
         max_rows,
     ) catch |err| {
         resolved.setError(@errorName(err));
@@ -648,18 +657,14 @@ export fn zds_o2_line_contributions(
     };
     defer native_table.deinit(allocator);
 
-    const rows = allocator.alloc(ZdsO2LineContributionRow, native_table.rows.len) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer allocator.free(rows);
-    for (native_table.rows, rows) |native, *row| row.* = copyO2LineContributionRow(native);
-
-    resolved.o2_line_contribution_tables.append(allocator, rows) catch |err| {
-        allocator.free(rows);
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
+    const rows = storeCopiedRows(
+        zdisamar.O2LineContributionRow,
+        ZdsO2LineContributionRow,
+        resolved,
+        &resolved.o2_line_contribution_tables,
+        native_table.rows,
+        copyO2LineContributionRow,
+    ) orelse return @intFromEnum(ZdsStatus.failure);
     resolved_out.* = .{
         .len = rows.len,
         .total_row_count = native_table.total_row_count,
@@ -682,25 +687,14 @@ export fn zds_instrument_response_sampling(
         resolved.setError("null instrument response table");
         return @intFromEnum(ZdsStatus.failure);
     };
-    const wavelengths = wavelengths_ptr orelse {
-        resolved.setError("null wavelengths");
+    const request = checkedWavelengthRequest(resolved, wavelengths_ptr, wavelength_count) orelse
         return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelengths");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    if (resolved.prepared == null) {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    const prepared = &resolved.prepared.?;
 
     const native_rows = zdisamar.buildInstrumentResponse(
         allocator,
-        &prepared.scene,
-        &prepared.prepared,
-        wavelengths[0..wavelength_count],
+        &request.prepared.scene,
+        &request.prepared.prepared,
+        request.wavelengths,
         channel_mask,
     ) catch |err| {
         resolved.setError(@errorName(err));
@@ -708,18 +702,14 @@ export fn zds_instrument_response_sampling(
     };
     defer allocator.free(native_rows);
 
-    const rows = allocator.alloc(ZdsInstrumentResponseRow, native_rows.len) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer allocator.free(rows);
-    for (native_rows, rows) |native, *row| row.* = copyInstrumentResponseRow(native);
-
-    resolved.instrument_response_tables.append(allocator, rows) catch |err| {
-        allocator.free(rows);
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
+    const rows = storeCopiedRows(
+        zdisamar.InstrumentResponseRow,
+        ZdsInstrumentResponseRow,
+        resolved,
+        &resolved.instrument_response_tables,
+        native_rows,
+        copyInstrumentResponseRow,
+    ) orelse return @intFromEnum(ZdsStatus.failure);
     resolved_out.* = .{
         .len = rows.len,
         .rows = rows.ptr,
@@ -739,43 +729,28 @@ export fn zds_o2_o2_cia_diagnostics(
         resolved.setError("null O2-O2 CIA table");
         return @intFromEnum(ZdsStatus.failure);
     };
-    const wavelengths = wavelengths_ptr orelse {
-        resolved.setError("null wavelengths");
+    const request = checkedWavelengthRequest(resolved, wavelengths_ptr, wavelength_count) orelse
         return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelengths");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    if (resolved.prepared == null) {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    const prepared = &resolved.prepared.?;
 
     const native_rows = zdisamar.buildO2O2CIADiagnostics(
         allocator,
-        &prepared.scene,
-        &prepared.prepared,
-        wavelengths[0..wavelength_count],
+        &request.prepared.scene,
+        &request.prepared.prepared,
+        request.wavelengths,
     ) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
     defer allocator.free(native_rows);
 
-    const rows = allocator.alloc(ZdsO2O2CIARow, native_rows.len) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer allocator.free(rows);
-    for (native_rows, rows) |native, *row| row.* = copyO2O2CIARow(native);
-
-    resolved.o2_o2_cia_tables.append(allocator, rows) catch |err| {
-        allocator.free(rows);
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
+    const rows = storeCopiedRows(
+        zdisamar.O2O2CIARow,
+        ZdsO2O2CIARow,
+        resolved,
+        &resolved.o2_o2_cia_tables,
+        native_rows,
+        copyO2O2CIARow,
+    ) orelse return @intFromEnum(ZdsStatus.failure);
     resolved_out.* = .{
         .len = rows.len,
         .rows = rows.ptr,
@@ -796,19 +771,8 @@ export fn zds_radiative_transfer_diagnostics(
         resolved.setError("null radiative-transfer table");
         return @intFromEnum(ZdsStatus.failure);
     };
-    const wavelengths = wavelengths_ptr orelse {
-        resolved.setError("null wavelengths");
+    const request = checkedWavelengthRequest(resolved, wavelengths_ptr, wavelength_count) orelse
         return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelengths");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    if (resolved.prepared == null) {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    const prepared = &resolved.prepared.?;
     const spectrum_view = spectrumView(resolved, spectrum) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
@@ -816,10 +780,10 @@ export fn zds_radiative_transfer_diagnostics(
 
     const native_rows = zdisamar.buildRadiativeTransferDiagnostics(
         allocator,
-        &prepared.scene,
-        &prepared.prepared,
-        prepared.route,
-        wavelengths[0..wavelength_count],
+        &request.prepared.scene,
+        &request.prepared.prepared,
+        request.prepared.route,
+        request.wavelengths,
         spectrum_view,
     ) catch |err| {
         resolved.setError(@errorName(err));
@@ -827,18 +791,14 @@ export fn zds_radiative_transfer_diagnostics(
     };
     defer allocator.free(native_rows);
 
-    const rows = allocator.alloc(ZdsRadiativeTransferDiagnosticRow, native_rows.len) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer allocator.free(rows);
-    for (native_rows, rows) |native, *row| row.* = copyRadiativeTransferDiagnosticRow(native);
-
-    resolved.radiative_transfer_tables.append(allocator, rows) catch |err| {
-        allocator.free(rows);
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
+    const rows = storeCopiedRows(
+        zdisamar.RadiativeTransferDiagnosticRow,
+        ZdsRadiativeTransferDiagnosticRow,
+        resolved,
+        &resolved.radiative_transfer_tables,
+        native_rows,
+        copyRadiativeTransferDiagnosticRow,
+    ) orelse return @intFromEnum(ZdsStatus.failure);
     resolved_out.* = .{
         .len = rows.len,
         .rows = rows.ptr,

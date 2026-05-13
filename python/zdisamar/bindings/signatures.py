@@ -1,6 +1,7 @@
 """ctypes function signatures for the native zdisamar C ABI."""
 
 import ctypes
+from typing import Any
 
 from .structures import (
     CAtmosphericBudget,
@@ -13,113 +14,146 @@ from .structures import (
 )
 
 
+def bind(lib: ctypes.CDLL, name: str, argtypes: list[Any], restype: Any) -> None:
+    function = getattr(lib, name)
+    function.argtypes = argtypes
+    function.restype = restype
+
+
 def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
-    lib.zds_context_create.argtypes = []
-    lib.zds_context_create.restype = ctypes.c_void_p
-    lib.zds_context_destroy.argtypes = [ctypes.c_void_p]
-    lib.zds_context_destroy.restype = None
-    lib.zds_prepare_default_o2a.argtypes = [ctypes.c_void_p]
-    lib.zds_prepare_default_o2a.restype = ctypes.c_int
-    lib.zds_prepare_o2a_json.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_size_t,
-    ]
-    lib.zds_prepare_o2a_json.restype = ctypes.c_int
-    lib.zds_warm_o2a_session.argtypes = [ctypes.c_void_p]
-    lib.zds_warm_o2a_session.restype = ctypes.c_int
-    lib.zds_default_o2a_input_json.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_size_t,
-        ctypes.POINTER(ctypes.c_size_t),
-    ]
-    lib.zds_default_o2a_input_json.restype = ctypes.c_int
-    lib.zds_run_spectrum.argtypes = [ctypes.c_void_p, ctypes.POINTER(CSpectrum)]
-    lib.zds_run_spectrum.restype = ctypes.c_int
-    lib.zds_run_spectrum_jacobian.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(CSpectrum),
-    ]
-    lib.zds_run_spectrum_jacobian.restype = ctypes.c_int
-    lib.zds_run_spectrum_jacobian_for_states.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(CSpectrum),
-        ctypes.POINTER(ctypes.c_uint8),
-        ctypes.c_size_t,
-    ]
-    lib.zds_run_spectrum_jacobian_for_states.restype = ctypes.c_int
-    lib.zds_spectrum_report.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(CSpectrum),
-        ctypes.POINTER(CDiagnosticReport),
-    ]
-    lib.zds_spectrum_report.restype = ctypes.c_int
-    lib.zds_atmospheric_budget.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_size_t,
-        ctypes.POINTER(CAtmosphericBudget),
-    ]
-    lib.zds_atmospheric_budget.restype = ctypes.c_int
-    lib.zds_o2_line_contributions.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_size_t,
-        ctypes.c_size_t,
-        ctypes.POINTER(O2LineContributionsRaw),
-    ]
-    lib.zds_o2_line_contributions.restype = ctypes.c_int
-    lib.zds_instrument_response_sampling.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_size_t,
-        ctypes.c_uint32,
-        ctypes.POINTER(CInstrumentResponse),
-    ]
-    lib.zds_instrument_response_sampling.restype = ctypes.c_int
-    lib.zds_o2_o2_cia_diagnostics.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_size_t,
-        ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw),
-    ]
-    lib.zds_o2_o2_cia_diagnostics.restype = ctypes.c_int
-    lib.zds_radiative_transfer_diagnostics.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_size_t,
-        ctypes.POINTER(CSpectrum),
-        ctypes.POINTER(CRadiativeTransferDiagnostics),
-    ]
-    lib.zds_radiative_transfer_diagnostics.restype = ctypes.c_int
-    lib.zds_spectrum_free.argtypes = [ctypes.c_void_p, ctypes.POINTER(CSpectrum)]
-    lib.zds_spectrum_free.restype = None
-    lib.zds_atmospheric_budget_free.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(CAtmosphericBudget),
-    ]
-    lib.zds_atmospheric_budget_free.restype = None
-    lib.zds_o2_line_contributions_free.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(O2LineContributionsRaw),
-    ]
-    lib.zds_o2_line_contributions_free.restype = None
-    lib.zds_instrument_response_free.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(CInstrumentResponse),
-    ]
-    lib.zds_instrument_response_free.restype = None
-    lib.zds_o2_o2_cia_diagnostics_free.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw),
-    ]
-    lib.zds_o2_o2_cia_diagnostics_free.restype = None
-    lib.zds_radiative_transfer_diagnostics_free.argtypes = [
-        ctypes.c_void_p,
-        ctypes.POINTER(CRadiativeTransferDiagnostics),
-    ]
-    lib.zds_radiative_transfer_diagnostics_free.restype = None
-    lib.zds_last_error.argtypes = [ctypes.c_void_p]
-    lib.zds_last_error.restype = ctypes.c_char_p
+    bind(lib, "zds_context_create", [], ctypes.c_void_p)
+    bind(lib, "zds_context_destroy", [ctypes.c_void_p], None)
+    bind(lib, "zds_prepare_default_o2a", [ctypes.c_void_p], ctypes.c_int)
+    bind(
+        lib,
+        "zds_prepare_o2a_json",
+        [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t],
+        ctypes.c_int,
+    )
+    bind(lib, "zds_warm_o2a_session", [ctypes.c_void_p], ctypes.c_int)
+    bind(
+        lib,
+        "zds_default_o2a_input_json",
+        [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+        ],
+        ctypes.c_int,
+    )
+    bind(lib, "zds_run_spectrum", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], ctypes.c_int)
+    bind(
+        lib,
+        "zds_run_spectrum_jacobian",
+        [ctypes.c_void_p, ctypes.POINTER(CSpectrum)],
+        ctypes.c_int,
+    )
+    bind(
+        lib,
+        "zds_run_spectrum_jacobian_for_states",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(CSpectrum),
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+        ],
+        ctypes.c_int,
+    )
+    bind(
+        lib,
+        "zds_spectrum_report",
+        [ctypes.c_void_p, ctypes.POINTER(CSpectrum), ctypes.POINTER(CDiagnosticReport)],
+        ctypes.c_int,
+    )
+    bind(
+        lib,
+        "zds_atmospheric_budget",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_size_t,
+            ctypes.POINTER(CAtmosphericBudget),
+        ],
+        ctypes.c_int,
+    )
+    bind(
+        lib,
+        "zds_o2_line_contributions",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.POINTER(O2LineContributionsRaw),
+        ],
+        ctypes.c_int,
+    )
+    bind(
+        lib,
+        "zds_instrument_response_sampling",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+            ctypes.POINTER(CInstrumentResponse),
+        ],
+        ctypes.c_int,
+    )
+    bind(
+        lib,
+        "zds_o2_o2_cia_diagnostics",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_size_t,
+            ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw),
+        ],
+        ctypes.c_int,
+    )
+    bind(
+        lib,
+        "zds_radiative_transfer_diagnostics",
+        [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_size_t,
+            ctypes.POINTER(CSpectrum),
+            ctypes.POINTER(CRadiativeTransferDiagnostics),
+        ],
+        ctypes.c_int,
+    )
+    bind(lib, "zds_spectrum_free", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], None)
+    bind(
+        lib,
+        "zds_atmospheric_budget_free",
+        [ctypes.c_void_p, ctypes.POINTER(CAtmosphericBudget)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_o2_line_contributions_free",
+        [ctypes.c_void_p, ctypes.POINTER(O2LineContributionsRaw)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_instrument_response_free",
+        [ctypes.c_void_p, ctypes.POINTER(CInstrumentResponse)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_o2_o2_cia_diagnostics_free",
+        [ctypes.c_void_p, ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw)],
+        None,
+    )
+    bind(
+        lib,
+        "zds_radiative_transfer_diagnostics_free",
+        [ctypes.c_void_p, ctypes.POINTER(CRadiativeTransferDiagnostics)],
+        None,
+    )
+    bind(lib, "zds_last_error", [ctypes.c_void_p], ctypes.c_char_p)
     return lib
