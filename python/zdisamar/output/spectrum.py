@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..bindings.structures import CSpectrum
-from ..input.o2a import O2AInput
+from ..input.wavelength_band.o2a import O2AInput
 
 JACOBIAN_STATE_NAMES = (
     "surface_albedo",

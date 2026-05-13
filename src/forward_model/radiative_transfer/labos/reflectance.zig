@@ -734,17 +734,16 @@ pub fn resolvedPhaseCoefficientMax(input: common.ForwardInput) usize {
 }
 
 pub fn resolvedFourierMax(input: common.ForwardInput, controls: common.RadiativeTransferControls) usize {
-    _ = controls;
     if (input.layers.len == 0) return 0;
     // PARITY:
     //   Near-nadir and near-normal geometries collapse to the scalar Fourier
     //   term in the vendor path.
     if ((1.0 - input.muv) < 1.0e-5 or (1.0 - input.mu0) < 1.0e-5) return 0;
-    if (input.rtm_quadrature.isValidFor(input.layers.len)) {
-        return maxFourierIndexQuadrature(input.rtm_quadrature);
-    }
-    if (input.source_interfaces.len == input.layers.len + 1) {
-        return maxFourierIndexInterfaces(input.source_interfaces);
-    }
-    return maxFourierIndex(input.layers);
+    const resolved_max = if (input.rtm_quadrature.isValidFor(input.layers.len))
+        maxFourierIndexQuadrature(input.rtm_quadrature)
+    else if (input.source_interfaces.len == input.layers.len + 1)
+        maxFourierIndexInterfaces(input.source_interfaces)
+    else
+        maxFourierIndex(input.layers);
+    return controls.performance_thresholds.cappedFourierMax(resolved_max);
 }

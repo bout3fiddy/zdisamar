@@ -1,6 +1,6 @@
-"""Compatibility exports for typed O2 A input objects."""
+"""Compatibility exports for typed input objects."""
 
-from .input.o2a import (
+from .input import (
     Aerosol,
     AerosolPlacement,
     Atmosphere,
@@ -10,6 +10,7 @@ from .input.o2a import (
     O2LineByLine,
     OxygenCollisionInducedAbsorption,
     RadiativeTransferControls,
+    RadiativeTransferPerformanceThresholds,
     ReferenceAsset,
     ReferenceAssets,
     SpectralGrid,
@@ -27,6 +28,7 @@ __all__ = [
     "O2LineByLine",
     "OxygenCollisionInducedAbsorption",
     "RadiativeTransferControls",
+    "RadiativeTransferPerformanceThresholds",
     "ReferenceAsset",
     "ReferenceAssets",
     "SpectralGrid",

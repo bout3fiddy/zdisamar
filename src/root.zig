@@ -26,6 +26,7 @@ pub const O2LineContributionTable = o2_line_contributions.O2LineContributionTabl
 pub const O2O2CIARow = o2_o2_cia.O2O2CIARow;
 pub const RadiativeTransferDiagnosticRow = radiative_transfer_diagnostics.RadiativeTransferDiagnosticRow;
 pub const RadiativeTransferSpectrumView = radiative_transfer_diagnostics.SpectrumView;
+pub const RadiativeTransferPerformanceThresholds = @import("forward_model/radiative_transfer/root.zig").RadiativeTransferPerformanceThresholds;
 pub const RadiativeTransferControls = @import("forward_model/radiative_transfer/root.zig").RadiativeTransferControls;
 pub const RadiativeTransferJacobian = @import("forward_model/radiative_transfer/root.zig").Jacobian;
 pub const PreparedInput = struct {

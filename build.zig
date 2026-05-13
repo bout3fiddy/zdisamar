@@ -364,6 +364,37 @@ pub fn build(b: *std.Build) void {
     );
     o2a_plots_step.dependOn(&o2a_plot_bundle_cmd.step);
 
+    const o2a_fast_mode_spectra_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "validation/spectra/plot_fast_mode.py",
+    });
+    o2a_fast_mode_spectra_cmd.step.dependOn(&c_api_install.step);
+    const o2a_fast_mode_spectra_step = b.step(
+        "validation-o2a-fast-mode-spectra",
+        "Generate retained O2A fast-mode spectra diagnostics",
+    );
+    o2a_fast_mode_spectra_step.dependOn(&o2a_fast_mode_spectra_cmd.step);
+
+    const o2a_fast_mode_oe_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "validation/optimal_estimation/plot_fast_mode.py",
+    });
+    o2a_fast_mode_oe_cmd.step.dependOn(&c_api_install.step);
+    const o2a_fast_mode_oe_step = b.step(
+        "validation-o2a-fast-mode-optimal-estimation",
+        "Generate retained O2A fast-mode optimal-estimation diagnostics",
+    );
+    o2a_fast_mode_oe_step.dependOn(&o2a_fast_mode_oe_cmd.step);
+
+    const o2a_fast_mode_plots_step = b.step(
+        "validation-o2a-fast-mode-plots",
+        "Generate retained O2A fast-mode spectra and optimal-estimation diagnostics",
+    );
+    o2a_fast_mode_plots_step.dependOn(&o2a_fast_mode_spectra_cmd.step);
+    o2a_fast_mode_plots_step.dependOn(&o2a_fast_mode_oe_cmd.step);
+
     const o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
         "uv",
         "run",

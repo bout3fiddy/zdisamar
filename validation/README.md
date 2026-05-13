@@ -27,6 +27,11 @@ The validation tree is split by target:
   residuals used by the plot.
 - `outputs/spectra/comparison_metrics.json` and `outputs/spectra/bundle_manifest.json`:
   metadata for the tracked plot refresh.
+- `outputs/spectra/o2a_fast_mode_spectra.png`,
+  `outputs/spectra/o2a_fast_mode_spectra_data.csv`, and
+  `outputs/spectra/o2a_fast_mode_spectra_metrics.json`: retained comparison of
+  reference settings against the O2 A fast-mode preset over several scene
+  geometries.
 - `spectra/data/reference/o2a_with_cia_disamar_reference.csv`: retained DISAMAR reference spectrum
   still consumed by older forward validation tests.
 - `spectra/data/reference/o2a_vendor_forward_reflectance_baseline.json`: retained focused validation
@@ -42,6 +47,16 @@ The validation tree is split by target:
   summary.
 - `outputs/optimal_estimation/zdisamar_o2a_two_state_benchmark.json`: timing benchmark from the
   optimal-estimation validation run.
+- `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png`,
+  `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_runs.csv`,
+  and
+  `outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`:
+  retained fast-mode sweep comparison between zdisamar reference-threshold
+  retrievals and zdisamar fast-mode retrievals, with posterior one-sigma error
+  bars, fast-minus-reference retrieval deltas, and timing panels.
+- `outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png`: paired-style
+  retrieved-state plot comparing zdisamar reference retrievals against zdisamar
+  fast-mode retrievals on the fast-mode sweep scenes.
 - `optimal_estimation/paired_disamar_zdisamar_sweep.py`: paired DISAMAR/zdisamar optimal-estimation
   sweep generator. It renders each DISAMAR case from
   `optimal_estimation/data/reference/baseline_config.in` and writes large
@@ -49,6 +64,9 @@ The validation tree is split by target:
   `out/validation/optimal_estimation/paired_disamar_zdisamar/`.
 - `optimal_estimation/plot_paired_disamar_zdisamar.py`: Altair plot generator for the paired
   retrieval parquet.
+- `outputs/optimal_estimation/paired_oe_latency.png`: paired latency plot. When
+  the fast-mode sweep comparison has been regenerated, this plot also includes
+  `zdisamar-fast` as a third model using the fast-mode sweep rows.
 - `outputs/optimal_estimation/paired_oe_*.png` and
   `outputs/optimal_estimation/paired_oe_plot_manifest.json`: tracked paired-retrieval plot outputs.
 
@@ -59,6 +77,7 @@ The validation tree is split by target:
 - `zig build test-validation-o2a-vendor`
 - `zig build test-validation-o2a-optimal-estimation`
 - `zig build o2a-plot-bundle`
+- `zig build validation-o2a-fast-mode-plots`
 - `uv run validation/optimal_estimation/paired_disamar_zdisamar_sweep.py`
 - `uv run validation/optimal_estimation/plot_paired_disamar_zdisamar.py`
 

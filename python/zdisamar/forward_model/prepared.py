@@ -6,7 +6,7 @@ from typing import Any
 
 from ..bindings.context import Context, LibraryPath
 from ..bindings.structures import CSpectrum
-from ..input.o2a import O2AInput
+from ..input.wavelength_band.o2a import O2AInput
 from ..output.spectrum import Spectrum
 from ..output.tables import (
     AtmosphericBudget,

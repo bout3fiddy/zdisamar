@@ -1,10 +1,10 @@
 Benchmark 1 (7 runs): /Users/swadhinnanda/Projects/git/zdisamar-tracy-forward-model/zig-out/bin/labos-bottleneck-trace --output-dir /Users/swadhinnanda/Projects/git/zdisamar-tracy-forward-model/research/performance/tracing/output/lauka-forward/forward-run
   measurement                          mean ± σ            min … max           outliers
-  wall_time                          1.40s  ± 15.2ms                              1.38s  … 1.43s                                     0 ( 0%)        
-  peak_rss                            182MB ± 7.99KB                               182MB …  182MB                                    0 ( 0%)        
-  fixed_cycles                        165M  ± 17.0M                                133M  …  187M                                     0 ( 0%)        
-  fixed_instructions                  106M  ± 11.3M                               84.4M  …  121M                                     0 ( 0%)        
-  arm_l1d_cache_refill               35.4K  ± 3.89K                               28.1K  … 40.6K                                     0 ( 0%)        
-  arm_l1d_cache                       150K  ± 30.1K                                109K  …  190K                                     0 ( 0%)        
-  arm_br_mis_pred                    4.91K  ±  797                                3.66K  … 5.92K                                     0 ( 0%)        
-  arm_br_pred                        98.1K  ± 19.8K                               70.6K  …  120K                                     0 ( 0%)        
+  wall_time                          1.40s  ± 15.2ms                              1.38s  … 1.43s                                     0 ( 0%)
+  peak_rss                            182MB ± 7.99KB                               182MB …  182MB                                    0 ( 0%)
+  fixed_cycles                        165M  ± 17.0M                                133M  …  187M                                     0 ( 0%)
+  fixed_instructions                  106M  ± 11.3M                               84.4M  …  121M                                     0 ( 0%)
+  arm_l1d_cache_refill               35.4K  ± 3.89K                               28.1K  … 40.6K                                     0 ( 0%)
+  arm_l1d_cache                       150K  ± 30.1K                                109K  …  190K                                     0 ( 0%)
+  arm_br_mis_pred                    4.91K  ±  797                                3.66K  … 5.92K                                     0 ( 0%)
+  arm_br_pred                        98.1K  ± 19.8K                               70.6K  …  120K                                     0 ( 0%)

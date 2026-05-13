@@ -17,9 +17,11 @@ test "labos semi-analytical surface albedo tangent matches local finite differen
         .scattering = .multiple,
         .n_streams = 4,
         .integrate_source_function = false,
-        .threshold_conv_first = 1.0e-12,
-        .threshold_conv_mult = 1.0e-12,
-        .num_orders_max = 8,
+        .performance_thresholds = .{
+            .threshold_conv_first = 1.0e-12,
+            .threshold_conv_mult = 1.0e-12,
+            .num_orders_max = 8,
+        },
     };
     const route: common.Route = .{
         .family = .labos,
@@ -151,9 +153,11 @@ test "labos rejects non-integrated pressure tangent without layer pressure jacob
         .scattering = .multiple,
         .n_streams = 4,
         .integrate_source_function = false,
-        .threshold_conv_first = 1.0e-12,
-        .threshold_conv_mult = 1.0e-12,
-        .num_orders_max = 8,
+        .performance_thresholds = .{
+            .threshold_conv_first = 1.0e-12,
+            .threshold_conv_mult = 1.0e-12,
+            .num_orders_max = 8,
+        },
     };
     const route: common.Route = .{
         .family = .labos,
@@ -191,9 +195,11 @@ test "labos synthetic single-layer route returns surface albedo tangent" {
         .scattering = .multiple,
         .n_streams = 4,
         .integrate_source_function = false,
-        .threshold_conv_first = 1.0e-12,
-        .threshold_conv_mult = 1.0e-12,
-        .num_orders_max = 8,
+        .performance_thresholds = .{
+            .threshold_conv_first = 1.0e-12,
+            .threshold_conv_mult = 1.0e-12,
+            .num_orders_max = 8,
+        },
     };
     const route: common.Route = .{
         .family = .labos,
@@ -237,9 +243,11 @@ test "labos rejects non-integrated pseudo-spherical jacobian tangent" {
         .n_streams = 4,
         .integrate_source_function = false,
         .use_spherical_correction = true,
-        .threshold_conv_first = 1.0e-12,
-        .threshold_conv_mult = 1.0e-12,
-        .num_orders_max = 8,
+        .performance_thresholds = .{
+            .threshold_conv_first = 1.0e-12,
+            .threshold_conv_mult = 1.0e-12,
+            .num_orders_max = 8,
+        },
     };
     const route: common.Route = .{
         .family = .labos,
@@ -277,9 +285,11 @@ test "labos non-integrated aerosol layer pressure tangent follows layer jacobian
         .scattering = .multiple,
         .n_streams = 4,
         .integrate_source_function = false,
-        .threshold_conv_first = 1.0e-12,
-        .threshold_conv_mult = 1.0e-12,
-        .num_orders_max = 8,
+        .performance_thresholds = .{
+            .threshold_conv_first = 1.0e-12,
+            .threshold_conv_mult = 1.0e-12,
+            .num_orders_max = 8,
+        },
     };
     const route: common.Route = .{
         .family = .labos,
@@ -390,8 +400,10 @@ test "multiple scattering drops the first below-threshold order" {
         &rt,
         .{
             .scattering = .single,
-            .threshold_conv_first = 1.0e-12,
-            .threshold_conv_mult = 1.0,
+            .performance_thresholds = .{
+                .threshold_conv_first = 1.0e-12,
+                .threshold_conv_mult = 1.0,
+            },
         },
         20,
     );
@@ -404,8 +416,10 @@ test "multiple scattering drops the first below-threshold order" {
         &rt,
         .{
             .scattering = .multiple,
-            .threshold_conv_first = 1.0e-12,
-            .threshold_conv_mult = 1.0,
+            .performance_thresholds = .{
+                .threshold_conv_first = 1.0e-12,
+                .threshold_conv_mult = 1.0,
+            },
         },
         20,
     );
@@ -418,8 +432,10 @@ test "multiple scattering drops the first below-threshold order" {
         &rt,
         .{
             .scattering = .multiple,
-            .threshold_conv_first = 1.0e-12,
-            .threshold_conv_mult = 1.0,
+            .performance_thresholds = .{
+                .threshold_conv_first = 1.0e-12,
+                .threshold_conv_mult = 1.0,
+            },
         },
         20,
     );

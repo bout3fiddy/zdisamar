@@ -7,6 +7,13 @@ test "default O2A input renders and parses as strict JSON" {
     try std.testing.expectEqual(@as(u16, 20), input.rtm_controls.n_streams);
     try std.testing.expect(input.rtm_controls.use_spherical_correction);
     try std.testing.expect(input.rtm_controls.integrate_source_function);
+    try std.testing.expectEqual(@as(u16, 0), input.rtm_controls.performance_thresholds.num_orders_max);
+    try std.testing.expectEqual(@as(?u16, null), input.rtm_controls.performance_thresholds.fourier_order_cap);
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 3.0e-14),
+        input.rtm_controls.performance_thresholds.fourier_tail_reflectance_epsilon,
+        0.0,
+    );
 
     const json = try zdisamar.renderDefaultO2AInputJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
