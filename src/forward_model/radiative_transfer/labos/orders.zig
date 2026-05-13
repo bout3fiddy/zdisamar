@@ -577,7 +577,7 @@ fn ordersScatInternal(
             if (val > max_value) max_value = val;
         }
     }
-    if (controls.scattering != .multiple or max_value < controls.threshold_conv_first) {
+    if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) {
         Trace.plotU("orders_initial_returns", 1);
         return .{
             .ud = ud_view,
@@ -672,7 +672,7 @@ fn ordersScatInternal(
             }
         }
 
-        if (max_value < controls.threshold_conv_mult or num_orders >= num_orders_max) {
+        if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) {
             // PARITY:
             //   `LabosModule::ordersScat` exits the scattering-order loop as
             //   soon as the current order falls below `thresholdConv_mult`.
@@ -1062,7 +1062,7 @@ pub fn ordersScatTangent(
             if (val > max_value) max_value = val;
         }
     }
-    if (controls.scattering != .multiple or max_value < controls.threshold_conv_first) return result;
+    if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) return result;
 
     var num_orders: usize = 1;
     while (true) {
@@ -1183,7 +1183,7 @@ pub fn ordersScatTangent(
             }
         }
 
-        if (max_value < controls.threshold_conv_mult or num_orders >= num_orders_max) break;
+        if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) break;
 
         accumulateOrderContribution(false, base_ud, base_ud_sum_local, base_orde, base_local, start_level, end_level, nmutot);
         accumulateOrderContribution(false, result.ud, result.ud_sum_local, tangent_orde, tangent_local, start_level, end_level, nmutot);

@@ -11,8 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-from validation.common import o2a_retrieval_baseline as baseline  # noqa: E402
-from validation.common.o2a_measurement_noise import (  # noqa: E402
+from validation.o2a import baseline  # noqa: E402
+from validation.o2a.measurement_noise import (  # noqa: E402
     components_from_spectrum,
     instrument_mapped_s5_reference_radiance,
 )

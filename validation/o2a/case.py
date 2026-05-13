@@ -14,6 +14,9 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
     relative_azimuth_deg = 0.0 if jacobian_reference_layer else 120.0
     aerosol_interval_divisions = 2 if jacobian_reference_layer else 6
     lower_interval_divisions = 4 if jacobian_reference_layer else 8
+    performance_thresholds = zd.RadiativeTransferPerformanceThresholds.o2a_default()
+    if jacobian_reference_layer:
+        performance_thresholds.phase_function_truncation_threshold = 1.0e-6
 
     return zd.O2AInput(
         metadata={
@@ -155,16 +158,10 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
             scattering="multiple",
             n_streams=20,
             use_adding=False,
-            num_orders_max=0,
-            fourier_floor_scalar=2,
-            threshold_conv_first=1.5e-7,
-            threshold_conv_mult=1.5e-9,
-            threshold_doubl=1.0e-6,
-            threshold_mul=1.0e-8,
+            performance_thresholds=performance_thresholds,
             use_spherical_correction=True,
             integrate_source_function=True,
             renorm_phase_function=True,
-            phase_function_truncation_threshold=1.0e-6 if jacobian_reference_layer else 1.0e-8,
             stokes_dimension=1,
         ),
         outputs=[],

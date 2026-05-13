@@ -1,48 +1,47 @@
 {
   "iterations": [
     {
-      "forward_model_and_jacobian_s": 0.18454262500745244,
+      "forward_model_and_jacobian_s": 0.19104974999208935,
       "index": 1,
-      "solver_update_s": 0.00021374999778345227,
-      "total_iteration_s": 0.18476062499394175
+      "solver_update_s": 0.0002302499779034406,
+      "total_iteration_s": 0.19128441700013354
     },
     {
-      "forward_model_and_jacobian_s": 0.1923015419888543,
+      "forward_model_and_jacobian_s": 0.20055595898884349,
       "index": 2,
-      "solver_update_s": 0.00016375000996049494,
-      "total_iteration_s": 0.19247095800528768
+      "solver_update_s": 0.00017295900033786893,
+      "total_iteration_s": 0.20073537499411032
     },
     {
-      "forward_model_and_jacobian_s": 0.19103362500027288,
+      "forward_model_and_jacobian_s": 0.20671579201007262,
       "index": 3,
-      "solver_update_s": 0.00015704199904575944,
-      "total_iteration_s": 0.19119470899750013
+      "solver_update_s": 0.0001502920058555901,
+      "total_iteration_s": 0.2068697499926202
     },
     {
-      "forward_model_and_jacobian_s": 0.19073258400021587,
+      "forward_model_and_jacobian_s": 0.19904129198403098,
       "index": 4,
-      "solver_update_s": 0.0001494169991929084,
-      "total_iteration_s": 0.19088549999287352
+      "solver_update_s": 0.00014683298650197685,
+      "total_iteration_s": 0.19919179199496284
     }
   ],
   "phases_s": {
-    "boundary_contiguity_check_s": 0.00012162499479018152,
-    "build_case_s": 2.6124995201826096e-05,
-    "build_measurement_s": 0.4422622499987483,
-    "build_pressure_altitude_profile_s": 0.04103200000827201,
-    "build_state_vector_s": 1.3248510410048766,
-    "build_summary_s": 1.9208004232496023e-05,
-    "load_reference_s": 7.579200610052794e-05,
-    "retrieval_s": 0.7596857500029728,
-    "session_create_s": 0.271140374999959,
-    "total_s": 2.8405261669977335,
-    "write_summary_s": 0.0003347080055391416
+    "build_case_s": 2.029098686762154e-05,
+    "build_measurement_s": 0.44530299998587,
+    "build_pressure_altitude_profile_s": 0.04206208299729042,
+    "build_state_vector_s": 1.270900247618556e-05,
+    "build_summary_s": 6.608400144614279e-05,
+    "load_reference_s": 5.8125006034970284e-05,
+    "retrieval_s": 0.7984853750094771,
+    "session_create_s": 0.2698435419879388,
+    "total_s": 1.5574426249950193,
+    "write_summary_s": 0.00031924998620525
   },
   "retrieval": {
-    "first_use_retrieval_s": 1.0308261250029318,
-    "forward_model_and_jacobian_s": 0.7586103759967955,
+    "first_use_retrieval_s": 1.068328916997416,
+    "forward_model_and_jacobian_s": 0.7973627929750364,
     "iterations": 4,
-    "retrieval_s": 0.7596857500029728,
-    "setup_s": 0.271140374999959
+    "retrieval_s": 0.7984853750094771,
+    "setup_s": 0.2698435419879388
   }
 }

@@ -119,6 +119,7 @@ pub const forward_model = struct {
 
         pub const phase_coefficient_count = root.phase_coefficient_count;
         pub const ScatteringMode = root.ScatteringMode;
+        pub const RadiativeTransferPerformanceThresholds = root.RadiativeTransferPerformanceThresholds;
         pub const RadiativeTransferControls = root.RadiativeTransferControls;
         pub const TransportFamily = root.TransportFamily;
         pub const ImplementationClass = root.ImplementationClass;

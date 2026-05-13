@@ -12,21 +12,73 @@ pub const ScatteringMode = enum(u2) {
     multiple = 2,
 };
 
+pub const RadiativeTransferPerformanceThresholds = struct {
+    num_orders_max: u16 = 0,
+    fourier_floor_scalar: u16 = 2,
+    fourier_order_cap: ?u16 = null,
+    fourier_tail_reflectance_epsilon: f64 = 3.0e-14,
+    threshold_conv_first: f64 = 1.0e-6,
+    threshold_conv_mult: f64 = 1.0e-4,
+    threshold_doubl: f64 = 0.1,
+    threshold_mul: f64 = 1.0e-12,
+    phase_function_truncation_threshold: f64 = phase_functions.vendor_hg_truncation_threshold,
+
+    pub fn validate(self: RadiativeTransferPerformanceThresholds) PrepareError!void {
+        if (self.fourier_tail_reflectance_epsilon <= 0.0 or
+            self.threshold_conv_first <= 0.0 or
+            self.threshold_conv_mult <= 0.0 or
+            self.threshold_doubl <= 0.0 or
+            self.threshold_mul <= 0.0 or
+            self.phase_function_truncation_threshold <= 0.0 or
+            !std.math.isFinite(self.fourier_tail_reflectance_epsilon) or
+            !std.math.isFinite(self.threshold_conv_first) or
+            !std.math.isFinite(self.threshold_conv_mult) or
+            !std.math.isFinite(self.threshold_doubl) or
+            !std.math.isFinite(self.threshold_mul) or
+            !std.math.isFinite(self.phase_function_truncation_threshold))
+        {
+            return error.UnsupportedRadiativeTransferControls;
+        }
+    }
+
+    pub fn resolvedNumOrdersMax(
+        self: RadiativeTransferPerformanceThresholds,
+        scattering_optical_depth: f64,
+    ) u16 {
+        if (self.num_orders_max != 0) return self.num_orders_max;
+        const heuristic = @max(scattering_optical_depth, 0.0) + 15.0;
+        return @intFromFloat(std.math.clamp(heuristic, 1.0, @as(f64, std.math.maxInt(u16))));
+    }
+
+    pub fn cappedFourierMax(
+        self: RadiativeTransferPerformanceThresholds,
+        resolved_fourier_max: usize,
+    ) usize {
+        return if (self.fourier_order_cap) |cap| @min(resolved_fourier_max, @as(usize, cap)) else resolved_fourier_max;
+    }
+
+    pub const o2a_default = RadiativeTransferPerformanceThresholds{
+        .num_orders_max = 0,
+        .fourier_floor_scalar = 2,
+        .fourier_order_cap = null,
+        .fourier_tail_reflectance_epsilon = 3.0e-14,
+        .threshold_conv_first = 1.5e-7,
+        .threshold_conv_mult = 1.5e-9,
+        .threshold_doubl = 1.0e-6,
+        .threshold_mul = 1.0e-8,
+        .phase_function_truncation_threshold = 1.0e-8,
+    };
+};
+
 // Resolved radiative transfer controls compiled from canonical configuration.
 pub const RadiativeTransferControls = struct {
     scattering: ScatteringMode = .multiple,
     n_streams: u16 = 16,
     use_adding: bool = false,
-    num_orders_max: u16 = 0,
-    fourier_floor_scalar: u16 = 2,
-    threshold_conv_first: f64 = 1.0e-6,
-    threshold_conv_mult: f64 = 1.0e-4,
-    threshold_doubl: f64 = 0.1,
-    threshold_mul: f64 = 1.0e-12,
+    performance_thresholds: RadiativeTransferPerformanceThresholds = .{},
     use_spherical_correction: bool = false,
     integrate_source_function: bool = true,
     renorm_phase_function: bool = true,
-    phase_function_truncation_threshold: f64 = phase_functions.vendor_hg_truncation_threshold,
     stokes_dimension: u8 = 1,
 
     pub fn nGauss(self: RadiativeTransferControls) u16 {
@@ -47,21 +99,11 @@ pub const RadiativeTransferControls = struct {
         if (self.stokes_dimension != 1 and execution_mode == .scalar) {
             return error.UnsupportedRadiativeTransferControls;
         }
-        if (self.threshold_conv_first <= 0.0 or
-            self.threshold_conv_mult <= 0.0 or
-            self.threshold_doubl <= 0.0 or
-            self.threshold_mul <= 0.0 or
-            self.phase_function_truncation_threshold <= 0.0 or
-            !std.math.isFinite(self.phase_function_truncation_threshold))
-        {
-            return error.UnsupportedRadiativeTransferControls;
-        }
+        try self.performance_thresholds.validate();
     }
 
     pub fn resolvedNumOrdersMax(self: RadiativeTransferControls, scattering_optical_depth: f64) u16 {
-        if (self.num_orders_max != 0) return self.num_orders_max;
-        const heuristic = @max(scattering_optical_depth, 0.0) + 15.0;
-        return @intFromFloat(std.math.clamp(heuristic, 1.0, @as(f64, std.math.maxInt(u16))));
+        return self.performance_thresholds.resolvedNumOrdersMax(scattering_optical_depth);
     }
 
     pub fn nDirections(self: RadiativeTransferControls) u16 {
@@ -76,16 +118,10 @@ pub const RadiativeTransferControls = struct {
         .scattering = .multiple,
         .n_streams = 16,
         .use_adding = false,
-        .num_orders_max = 0,
-        .fourier_floor_scalar = 2,
-        .threshold_conv_first = 1.0e-6,
-        .threshold_conv_mult = 1.0e-4,
-        .threshold_doubl = 0.1,
-        .threshold_mul = 1.0e-12,
+        .performance_thresholds = .{},
         .use_spherical_correction = false,
         .integrate_source_function = true,
         .renorm_phase_function = true,
-        .phase_function_truncation_threshold = phase_functions.vendor_hg_truncation_threshold,
         .stokes_dimension = 1,
     };
 };

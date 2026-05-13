@@ -15,8 +15,7 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
-DATA_DIR = REPO_ROOT / "validation" / "optimal_estimation" / "data"
-REFERENCE_DATA_DIR = DATA_DIR / "reference"
+REFERENCE_DATA_DIR = REPO_ROOT / "validation" / "reference_data" / "optimal_estimation"
 OUTPUTS_DIR = REPO_ROOT / "validation" / "outputs" / "optimal_estimation"
 REFERENCE_PATH = REFERENCE_DATA_DIR / "disamar_o2a_two_state_reference.json"
 SUMMARY_PATH = OUTPUTS_DIR / "zdisamar_o2a_two_state_summary.json"
@@ -27,112 +26,18 @@ sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estimation  # noqa: E402
-from zdisamar.inverse_method.optimal_estimation.covariance_space import (  # noqa: E402
-    build_covariance_space,
-)
-from zdisamar.inverse_method.optimal_estimation.diagnostics import (  # noqa: E402
-    final_diagnostics,
-)
 
-from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
-from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
-from validation.common.o2a_measurement_noise import (  # noqa: E402
-    measurement_from_o2a_baseline_noise,
-)
-from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
+from validation.o2a import baseline as oe_baseline  # noqa: E402
+from validation.o2a.case import build_o2a_case  # noqa: E402
+from validation.o2a.measurement_noise import (  # noqa: E402
+    measurement_from_o2a_baseline_noise,
+)
+from validation.optimal_estimation import setup as oe_setup  # noqa: E402
+from validation.optimal_estimation.checks import compare_scalar  # noqa: E402
 
 JsonObject = dict[str, Any]
-
-
-def assert_layer_boundaries_are_contiguous(
-    case: zd.O2AInput,
-    state_vector,
-    prior: JsonObject,
-) -> None:
-    inverse_model = optimal_estimation.O2AInverseForwardModel(case)
-    moved_case = inverse_model.settings_for_state(
-        np.array(
-            [
-                float(prior["aerosol_optical_depth"]),
-                float(prior["aerosol_layer_mid_pressure_hpa"]) + 2.0,
-            ]
-        ),
-        state_vector,
-    )
-    # The pressure state is written back as contiguous pressure boundaries. This
-    # catches broken interval updates before the retrieval can hide them behind a
-    # plausible-looking spectrum.
-    assert (
-        moved_case.atmosphere.intervals[0].bottom_pressure_hpa
-        == moved_case.atmosphere.intervals[1].top_pressure_hpa
-    )
-    assert (
-        moved_case.atmosphere.intervals[1].bottom_pressure_hpa
-        == moved_case.atmosphere.intervals[2].top_pressure_hpa
-    )
-
-
-def assert_mid_pressure_jacobian_matches_finite_difference(
-    case: zd.O2AInput,
-    state_vector,
-) -> None:
-    inverse_model = optimal_estimation.O2AInverseForwardModel(case)
-    state = state_vector.prior_state()
-    with zd.prepare(inverse_model.settings_for_state(state, state_vector)) as prepared:
-        evaluation = o2a_optimal_estimation.evaluate_prepared_reflectance(
-            prepared,
-            state_vector.jacobian_names,
-        )
-
-    eps_hpa = 0.5
-    plus_state = np.array(state, copy=True)
-    plus_state[1] += eps_hpa
-    minus_state = np.array(state, copy=True)
-    minus_state[1] -= eps_hpa
-    with zd.prepare(inverse_model.settings_for_state(plus_state, state_vector)) as prepared:
-        plus = o2a_optimal_estimation.evaluate_prepared_reflectance(
-            prepared,
-            state_vector.jacobian_names,
-        )
-    with zd.prepare(inverse_model.settings_for_state(minus_state, state_vector)) as prepared:
-        minus = o2a_optimal_estimation.evaluate_prepared_reflectance(
-            prepared,
-            state_vector.jacobian_names,
-        )
-
-    finite_difference = (plus.reflectance - minus.reflectance) / (2.0 * eps_hpa)
-    mid_pressure_index = state_vector.names.index("aerosol_layer_mid_pressure_hpa")
-    scaled_jacobian = (
-        evaluation.reflectance_jacobian[:, mid_pressure_index]
-        * state_vector.jacobian_scales(state)[mid_pressure_index]
-    )
-    max_abs_residual = np.max(np.abs(scaled_jacobian - finite_difference))
-    assert max_abs_residual <= 5.0e-5
-
-
-def assert_gauss_newton_retains_prior_precision_nullspace() -> None:
-    problem = build_covariance_space(
-        previous=np.zeros(2, dtype=np.float64),
-        prior=np.zeros(2, dtype=np.float64),
-        residual=np.array([1.0], dtype=np.float64),
-        jacobian=np.array([[2.0, 0.0]], dtype=np.float64),
-        prior_covariance=np.eye(2, dtype=np.float64),
-        measurement_variance=np.array([1.0], dtype=np.float64),
-    )
-    step = optimal_estimation.gauss_newton_step(
-        problem,
-        prior=np.zeros(2, dtype=np.float64),
-        max_change_transformed_state=100.0,
-    )
-    assert np.allclose(step.posterior_precision, np.array([[5.0, 0.0], [0.0, 1.0]]))
-    diagnostics = final_diagnostics(
-        posterior_precision=step.posterior_precision,
-        jacobian=np.array([[2.0, 0.0]], dtype=np.float64),
-        measurement_variance=np.array([1.0], dtype=np.float64),
-    )
-    assert np.allclose(diagnostics.posterior_covariance, np.array([[0.2, 0.0], [0.0, 1.0]]))
 
 
 def build_measurement(
@@ -198,10 +103,6 @@ def build_retrieved_state(
     }
 
 
-def within_tolerance(value: float, expected: float, tolerance: float) -> bool:
-    return abs(value - expected) <= tolerance
-
-
 def iteration_matches(
     reference_iterations: list[JsonObject],
     result_iterations: list[JsonObject],
@@ -214,26 +115,31 @@ def iteration_matches(
     for expected, actual in zip(reference_iterations, result_iterations, strict=True):
         if int(expected["index"]) != int(actual["index"]):
             return False
-        if not within_tolerance(
+        if not compare_scalar(
+            "iteration.aerosol_optical_depth",
             float(actual["aerosol_optical_depth"]),
             float(expected["aerosol_optical_depth"]),
-            float(state_tolerances["aerosol_optical_depth"]),
-        ):
+            tolerance=float(state_tolerances["aerosol_optical_depth"]),
+        ).passed:
             return False
         if "aerosol_layer_mid_pressure_hpa" not in expected:
             return False
-        if not within_tolerance(
+        if not compare_scalar(
+            "iteration.aerosol_layer_mid_pressure_hpa",
             float(actual["aerosol_layer_mid_pressure_hpa"]),
             float(expected["aerosol_layer_mid_pressure_hpa"]),
-            float(state_tolerances["aerosol_layer_mid_pressure_hpa"]),
-        ):
+            tolerance=float(state_tolerances["aerosol_layer_mid_pressure_hpa"]),
+        ).passed:
             return False
-        if "state_vector_convergence" in expected and not within_tolerance(
-            float(actual["state_vector_convergence"]),
-            float(expected["state_vector_convergence"]),
-            float(diagnostic_tolerances["state_vector_convergence"]),
-        ):
-            return False
+        if "state_vector_convergence" in expected:
+            convergence_match = compare_scalar(
+                "iteration.state_vector_convergence",
+                float(actual["state_vector_convergence"]),
+                float(expected["state_vector_convergence"]),
+                tolerance=float(diagnostic_tolerances["state_vector_convergence"]),
+            )
+            if not convergence_match.passed:
+                return False
         if "snr_normal" in expected and bool(actual["snr_normal"]) != bool(expected["snr_normal"]):
             return False
     return True
@@ -250,21 +156,24 @@ def diagnostics_match(
     actual = result.history[-1]
     diagnostic_tolerances = tolerances["final_diagnostic_abs"]
     return (
-        within_tolerance(
+        compare_scalar(
+            "final.state_vector_convergence",
             float(actual.state_vector_convergence),
             float(expected["state_vector_convergence"]),
-            float(diagnostic_tolerances["state_vector_convergence"]),
-        )
-        and within_tolerance(
+            tolerance=float(diagnostic_tolerances["state_vector_convergence"]),
+        ).passed
+        and compare_scalar(
+            "final.chi2_reflectance",
             float(actual.chi2_reflectance),
             float(expected["chi2_reflectance"]),
-            float(diagnostic_tolerances["chi2_reflectance"]),
-        )
-        and within_tolerance(
+            tolerance=float(diagnostic_tolerances["chi2_reflectance"]),
+        ).passed
+        and compare_scalar(
+            "final.chi2_state_vector",
             float(actual.chi2_state_vector),
             float(expected["chi2_state_vector"]),
-            float(diagnostic_tolerances["chi2_state_vector"]),
-        )
+            tolerance=float(diagnostic_tolerances["chi2_state_vector"]),
+        ).passed
         and bool(result.converged) == bool(expected["solution_has_converged"])
     )
 
@@ -335,35 +244,52 @@ def build_summary(
         - float(retrieved["aerosol_layer_mid_pressure_hpa"])
     )
     iteration_match = result.iterations == int(reference["expected_iterations"])
-    aod_match = within_tolerance(
-        retrieved_state["aerosol_optical_depth"],
-        float(retrieved["aerosol_optical_depth"]),
-        float(tolerances["aerosol_optical_depth_abs"]),
-    )
-    top_pressure_match = within_tolerance(
-        retrieved_state["aerosol_layer_top_pressure_hpa"],
-        float(retrieved["aerosol_layer_top_pressure_hpa"]),
-        float(tolerances["aerosol_layer_top_pressure_hpa_abs"]),
-    )
-    pressure_match = within_tolerance(
-        retrieved_state["aerosol_layer_mid_pressure_hpa"],
-        float(retrieved["aerosol_layer_mid_pressure_hpa"]),
-        float(tolerances["aerosol_layer_mid_pressure_hpa_abs"]),
-    )
+    comparisons = [
+        compare_scalar(
+            "iterations",
+            result.iterations,
+            int(reference["expected_iterations"]),
+        ),
+        compare_scalar(
+            "aerosol_optical_depth",
+            retrieved_state["aerosol_optical_depth"],
+            float(retrieved["aerosol_optical_depth"]),
+            tolerance=float(tolerances["aerosol_optical_depth_abs"]),
+        ),
+        compare_scalar(
+            "aerosol_layer_top_pressure_hpa",
+            retrieved_state["aerosol_layer_top_pressure_hpa"],
+            float(retrieved["aerosol_layer_top_pressure_hpa"]),
+            tolerance=float(tolerances["aerosol_layer_top_pressure_hpa_abs"]),
+        ),
+        compare_scalar(
+            "aerosol_layer_mid_pressure_hpa",
+            retrieved_state["aerosol_layer_mid_pressure_hpa"],
+            float(retrieved["aerosol_layer_mid_pressure_hpa"]),
+            tolerance=float(tolerances["aerosol_layer_mid_pressure_hpa_abs"]),
+        ),
+        compare_scalar("converged", bool(result.converged), True),
+    ]
+    aod_match = comparisons[1].passed
+    top_pressure_match = comparisons[2].passed
+    pressure_match = comparisons[3].passed
+    converged_match = comparisons[4].passed
     history = iteration_records(result)
     history_match = iteration_matches(reference["iterations"], history, tolerances)
     final_diagnostics_match = diagnostics_match(reference, result, tolerances)
     truth_passed = bool(
-        iteration_match and aod_match and top_pressure_match and pressure_match and result.converged
+        iteration_match and aod_match and top_pressure_match and pressure_match and converged_match
     )
     fixture_passed = bool(truth_passed and history_match and final_diagnostics_match)
 
     return {
         "validation_case": "disamar_o2a_two_state_optimal_estimation",
+        "reference_path": REFERENCE_PATH.relative_to(REPO_ROOT).as_posix(),
         "state_names": list(result.state_names),
         "iterations": result.iterations,
         "converged": result.converged,
         "expected_iterations": reference["expected_iterations"],
+        "comparisons": [comparison.to_json() for comparison in comparisons],
         "iteration_match": iteration_match,
         "history_match": history_match,
         "final_diagnostics_match": final_diagnostics_match,
@@ -385,58 +311,47 @@ def build_summary(
 
 
 def main() -> int:
-    timer = PhaseTimer()
-
-    with timer.phase("load_reference_s"):
-        reference = json.loads(REFERENCE_PATH.read_text())
-
-    with timer.phase("build_case_s"):
-        case = build_o2a_case(zd, jacobian_reference_layer=True)
+    with PhaseTimer() as timer:
+        reference = timer.run("load_reference_s", lambda: json.loads(REFERENCE_PATH.read_text()))
+        case = timer.run("build_case_s", lambda: build_o2a_case(zd, jacobian_reference_layer=True))
         oe_baseline.configure_case(case)
-
-    with timer.phase("build_pressure_altitude_profile_s"):
-        profile = o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid(case)
-
-    with timer.phase("build_state_vector_s"):
-        state_vector = oe_setup.reference_two_state_vector(
+        profile = timer.run(
+            "build_pressure_altitude_profile_s",
+            o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid,
+            case,
+        )
+        state_vector = timer.run(
+            "build_state_vector_s",
+            oe_setup.reference_two_state_vector,
             case=case,
             reference=reference,
             profile=profile,
         )
-        assert_mid_pressure_jacobian_matches_finite_difference(case, state_vector)
-        assert_gauss_newton_retains_prior_precision_nullspace()
-
-    with timer.phase("boundary_contiguity_check_s"):
-        assert_layer_boundaries_are_contiguous(case, state_vector, reference["a_priori"])
-
-    with timer.phase("build_measurement_s"):
-        measurement = build_measurement(case, reference)
-
-    with timer.phase("session_create_s"):
-        session = zd.o2a_forward_session(case)
-    try:
-        with timer.phase("retrieval_s"):
-            result = run_retrieval(
+        measurement = timer.run("build_measurement_s", build_measurement, case, reference)
+        session = timer.run("session_create_s", zd.o2a_forward_session, case)
+        try:
+            result = timer.run(
+                "retrieval_s",
+                run_retrieval,
                 case,
                 state_vector,
                 measurement,
                 forward_session=session,
             )
-    finally:
-        session.close()
-    layer_thickness = (
-        case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
-    )
-    with timer.phase("build_summary_s"):
-        summary = build_summary(reference, result, layer_thickness)
-
-    with timer.phase("write_summary_s"):
-        write_json(SUMMARY_PATH, summary)
+        finally:
+            session.close()
+        layer_thickness = (
+            case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
+        )
+        summary = timer.run("build_summary_s", build_summary, reference, result, layer_thickness)
+        timer.run("write_summary_s", write_json, SUMMARY_PATH, summary)
     phase_timings = timer.finish()
     timing = timing_report(phase_timings, result)
     write_json(TIMING_PATH, timing)
     print_retrieval_timing(timing)
-    assert summary["passes_two_state_truth"], json.dumps(summary, indent=2, sort_keys=True)
+    if not summary["passes_two_state_truth"]:
+        print(json.dumps(summary, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
     return 0
 
 

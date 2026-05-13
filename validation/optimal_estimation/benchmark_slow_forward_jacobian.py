@@ -6,7 +6,6 @@
 # ]
 # ///
 
-import copy
 import dataclasses
 import statistics
 import sys
@@ -26,34 +25,41 @@ import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
-from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
-from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
-from validation.common.o2a_measurement_noise import (  # noqa: E402
+from validation.common.paths import stable_repo_path, write_json  # noqa: E402
+from validation.o2a import baseline as oe_baseline  # noqa: E402
+from validation.o2a.case import build_o2a_case  # noqa: E402
+from validation.o2a.measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
 )
-from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
-from validation.common.paths import stable_repo_path, write_json  # noqa: E402
+from validation.optimal_estimation import reference_cases as oe_cases  # noqa: E402
+from validation.optimal_estimation import setup as oe_setup  # noqa: E402
 
 PROBE_RUNS = 5
+SLOW_CASE_INDEX = 71
+
+
+def slow_case_row() -> dict[str, Any]:
+    return oe_cases.case_rows(count=SLOW_CASE_INDEX)[SLOW_CASE_INDEX - 1]
 
 
 def build_case() -> zd.O2AInput:
-    case = build_o2a_case(zd, jacobian_reference_layer=True)
-    oe_baseline.configure_case(case)
-    oe_baseline.configure_slow_validation_scene(case)
-    return case
+    base = build_o2a_case(zd, jacobian_reference_layer=True)
+    oe_baseline.configure_case(base)
+    return oe_setup.build_scene(
+        base,
+        index=SLOW_CASE_INDEX,
+        id_prefix="o2a_oe_slow_forward_jacobian_validation",
+        scene=oe_cases.scene_from_row(slow_case_row()),
+    )
 
 
 def build_state_vector(
     case: zd.O2AInput,
     profile: optimal_estimation.PressureAltitudeProfile,
 ) -> optimal_estimation.StateVector:
-    scene = oe_baseline.SLOW_VALIDATION_SCENE
+    initial = oe_cases.initial_from_row(slow_case_row())
     return oe_setup.aerosol_two_state_vector(
-        initial={
-            "aerosol_optical_depth": scene["initial_aerosol_optical_depth"],
-            "aerosol_mid_pressure_hpa": scene["initial_aerosol_mid_pressure_hpa"],
-        },
+        initial=initial,
         profile=profile,
         surface_pressure_hpa=case.surface.pressure_hpa,
         interval_index_1based=case.aerosol.placement.interval_index_1based,
@@ -348,11 +354,10 @@ def main() -> int:
 
     report = {
         "validation_case": "zdisamar_o2a_slow_forward_jacobian_latency",
-        "source": (
-            "Slow retained scene from out/validation/optimal_estimation/"
-            "paired_disamar_zdisamar/paired_retrieval_runs.parquet case 71."
-        ),
-        "scene": copy.deepcopy(oe_baseline.SLOW_VALIDATION_SCENE),
+        "source": "Slow retained scene from shared DISAMAR OE reference sweep case 71.",
+        "reference_cases": oe_cases.manifest_path(),
+        "reference_case": SLOW_CASE_INDEX,
+        "scene": slow_case_row(),
         "measurement_build_s": measurement_s,
         "session": {
             "setup_s": session_setup_s,

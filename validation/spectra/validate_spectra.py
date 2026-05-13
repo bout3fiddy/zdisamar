@@ -2,7 +2,8 @@
 # /// script
 # requires-python = ">=3.14"
 # dependencies = [
-#   "matplotlib>=3.10",
+#   "altair>=5.5",
+#   "vl-convert-python>=1.7",
 #   "numpy>=2.2",
 #   "pandas>=2.2",
 # ]
@@ -13,46 +14,26 @@ import sys
 from pathlib import Path
 from typing import TypedDict
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
+import altair as alt  # noqa: E402
 
-import matplotlib.pyplot as plt  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(REPO_ROOT), str(REPO_ROOT / "python")]
+
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-from matplotlib.ticker import ScalarFormatter  # noqa: E402
 from numpy.typing import NDArray  # noqa: E402
+from zdisamar.plot.properties import PLOT  # noqa: E402
 
-from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
-from validation.common.o2a_reference_case import build_o2a_jacobian_case  # noqa: E402
 from validation.common.paths import PYTHON_ROOT, stable_repo_path, write_json  # noqa: E402
-from validation.common.residuals import residual_blowup_regions, residual_metrics  # noqa: E402
-
-plt.rcParams.update(
-    {
-        "axes.edgecolor": "black",
-        "axes.linewidth": 0.8,
-        "figure.facecolor": "white",
-        "font.family": "monospace",
-        "font.monospace": [
-            "DejaVu Sans Mono",
-            "Menlo",
-            "Monaco",
-            "Courier New",
-            "monospace",
-        ],
-        "grid.color": "#b0b0b0",
-        "grid.linewidth": 0.65,
-        "mathtext.fontset": "dejavusans",
-        "savefig.facecolor": "white",
-    }
-)
+from validation.o2a import baseline as oe_baseline  # noqa: E402
+from validation.o2a.case import build_o2a_jacobian_case  # noqa: E402
+from validation.spectra.residuals import residual_blowup_regions, residual_metrics  # noqa: E402
 
 LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
 LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
 VALIDATION_DIR = REPO_ROOT / "validation"
 SPECTRA_DIR = VALIDATION_DIR / "spectra"
-VALIDATION_DATA_DIR = SPECTRA_DIR / "data"
-REFERENCE_DATA_DIR = VALIDATION_DATA_DIR / "reference"
+REFERENCE_DATA_DIR = VALIDATION_DIR / "reference_data" / "spectra"
 OUTPUTS_DIR = VALIDATION_DIR / "outputs" / "spectra"
 
 FORWARD_REFERENCE_PATH = REFERENCE_DATA_DIR / "o2a_jacobian_retrieval_instrument_forward.csv"
@@ -65,7 +46,7 @@ DATA_PATH = OUTPUTS_DIR / "o2a_validation_data.csv"
 METRICS_PATH = OUTPUTS_DIR / "comparison_metrics.json"
 MANIFEST_PATH = OUTPUTS_DIR / "bundle_manifest.json"
 
-CANONICAL_COMMAND = "zig build o2a-plot-bundle"
+CANONICAL_COMMAND = "uv run validation/spectra/validate_spectra.py"
 REFLECTANCE_THRESHOLD = 1.0e-13
 THRESHOLD_EDGE_EXCLUSION_COUNT = 1
 STATE_NAMES = (
@@ -83,10 +64,6 @@ BLOWUP_REGION_LIMITS = {
     "dR/d aerosol optical depth": 3,
     "dR/d aerosol layer mid pressure": 2,
 }
-MATPLOTLIB_BLUE = "#1f77b4"
-MATPLOTLIB_ORANGE = "#ff7f0e"
-MATPLOTLIB_RED = "#d62728"
-MATPLOTLIB_GRID = "#b0b0b0"
 
 type FloatArray = NDArray[np.float64]
 type ResidualRegion = dict[str, float]
@@ -267,104 +244,14 @@ def build_validation_rows(
     return pd.DataFrame.from_records(records), metrics
 
 
-def sci_formatter() -> ScalarFormatter:
-    formatter = ScalarFormatter(useMathText=True)
-    formatter.set_powerlimits((-2, 2))
-    return formatter
-
-
-def apply_axis_style(axis) -> None:
-    axis.grid(True, color=MATPLOTLIB_GRID, linewidth=0.65, alpha=0.32)
-    axis.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2), useMathText=True)
-    axis.yaxis.set_major_formatter(sci_formatter())
-    axis.tick_params(axis="both", colors="black", direction="out", length=4.0, width=0.8)
-    for spine in axis.spines.values():
-        spine.set_visible(True)
-        spine.set_color("black")
-        spine.set_linewidth(0.8)
-
-
-def mark_residual_blowup_regions(
-    value_axis, residual_axis, regions: list[dict[str, float]]
-) -> None:
-    for region in regions:
-        for axis in (value_axis, residual_axis):
-            axis.axvspan(
-                region["start_nm"],
-                region["end_nm"],
-                color=MATPLOTLIB_RED,
-                alpha=0.08,
-                linewidth=0.0,
-                zorder=0,
-            )
-            axis.axvline(
-                region["peak_nm"],
-                color=MATPLOTLIB_RED,
-                linewidth=0.75,
-                alpha=0.50,
-                linestyle=":",
-                zorder=1,
-            )
-        value_axis.plot(
-            [region["peak_nm"]],
-            [0.985],
-            marker="v",
-            markersize=4.0,
-            color=MATPLOTLIB_RED,
-            alpha=0.78,
-            transform=value_axis.get_xaxis_transform(),
-            clip_on=False,
-            zorder=6,
-        )
-
-
 def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
+    PLOT.prepare()
     series_order = list(dict.fromkeys(data["series"]))
-    fig, axes = plt.subplots(
-        len(series_order),
-        2,
-        figsize=(16.5, 13.0),
-        sharex=True,
-        constrained_layout=True,
-        gridspec_kw={"width_ratios": [1.25, 1.0]},
-    )
-    fig.suptitle("O2A validation against DISAMAR reference", fontsize=16, fontweight="normal")
-
+    rows = []
     for row_index, series in enumerate(series_order):
         row_data = data[data["series"] == series]
-        reference = row_data[row_data["kind"] == "reference"]
         zdisamar = row_data[row_data["kind"] == "zdisamar"]
         y_label = str(zdisamar["y_label"].iloc[0])
-
-        value_axis = axes[row_index, 0]
-        residual_axis = axes[row_index, 1]
-        value_axis.plot(
-            reference["wavelength_nm"],
-            reference["value"],
-            label="reference",
-            color=MATPLOTLIB_BLUE,
-            linewidth=1.9,
-            zorder=2,
-        )
-        value_axis.plot(
-            zdisamar["wavelength_nm"],
-            zdisamar["value"],
-            label="zdisamar",
-            color=MATPLOTLIB_ORANGE,
-            linestyle="--",
-            linewidth=1.35,
-            zorder=4,
-        )
-        residual_axis.plot(
-            zdisamar["wavelength_nm"],
-            zdisamar["residual"],
-            color="#111111",
-            linewidth=1.15,
-            zorder=3,
-        )
-        residual_axis.axhline(
-            0.0, color="black", linewidth=0.75, linestyle="--", alpha=0.55, zorder=1
-        )
         blowup_regions = residual_blowup_regions(
             zdisamar["wavelength_nm"].to_numpy(dtype=np.float64),
             zdisamar["residual"].to_numpy(dtype=np.float64),
@@ -374,28 +261,97 @@ def create_validation_plot(data: pd.DataFrame, output_path: Path) -> None:
             min_wavelength_nm=755.0,
             max_wavelength_nm=776.0,
         )
-        mark_residual_blowup_regions(value_axis, residual_axis, blowup_regions)
-
-        value_axis.set_ylabel(y_label, labelpad=12)
-        residual_axis.set_ylabel("zdisamar - reference", labelpad=12)
-        apply_axis_style(value_axis)
-        apply_axis_style(residual_axis)
-        value_axis.set_xlim(oe_baseline.WAVELENGTH_START_NM, oe_baseline.WAVELENGTH_END_NM)
-        residual_axis.set_xlim(oe_baseline.WAVELENGTH_START_NM, oe_baseline.WAVELENGTH_END_NM)
-
-    axes[-1, 0].set_xlabel("Wavelength (nm)")
-    axes[-1, 1].set_xlabel("Wavelength (nm)")
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    legend = fig.legend(
-        handles, labels, loc="upper right", bbox_to_anchor=(0.995, 0.995), frameon=True
+        regions = pd.DataFrame.from_records(blowup_regions)
+        series_title = series if row_index == 0 else f"{series}"
+        x = alt.X(
+            "wavelength_nm:Q",
+            title="Wavelength (nm)",
+            scale=alt.Scale(
+                domain=[oe_baseline.WAVELENGTH_START_NM, oe_baseline.WAVELENGTH_END_NM],
+                zero=False,
+            ),
+        )
+        region_rect = (
+            alt.Chart(regions)
+            .mark_rect(color=PLOT.colors["red"], opacity=0.08)
+            .encode(x="start_nm:Q", x2="end_nm:Q")
+            if not regions.empty
+            else alt.Chart(pd.DataFrame({"start_nm": []})).mark_rect()
+        )
+        peak_rules = (
+            alt.Chart(regions)
+            .mark_rule(color=PLOT.colors["red"], opacity=0.50, strokeDash=[1, 3])
+            .encode(x="peak_nm:Q")
+            if not regions.empty
+            else alt.Chart(pd.DataFrame({"peak_nm": []})).mark_rule()
+        )
+        values = (
+            alt.layer(
+                region_rect,
+                peak_rules,
+                alt.Chart(row_data)
+                .mark_line()
+                .encode(
+                    x=x,
+                    y=alt.Y(
+                        "value:Q",
+                        title=y_label.replace("\n", " "),
+                        axis=alt.Axis(format=".4g"),
+                        scale=alt.Scale(zero=False),
+                    ),
+                    color=alt.Color(
+                        "kind:N",
+                        title=None,
+                        scale=alt.Scale(
+                            domain=["reference", "zdisamar"],
+                            range=[PLOT.colors["blue"], PLOT.colors["orange"]],
+                        ),
+                    ),
+                    strokeDash=alt.StrokeDash(
+                        "kind:N",
+                        title=None,
+                        scale=alt.Scale(domain=["reference", "zdisamar"], range=[[1, 0], [5, 4]]),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
+                        alt.Tooltip("kind:N", title="Series"),
+                        alt.Tooltip("value:Q", title="Value", format=".8g"),
+                    ],
+                ),
+            )
+            .properties(width=620, height=190, title=series_title)
+            .resolve_scale(color="independent", strokeDash="independent")
+        )
+        residual_zero = (
+            alt.Chart(pd.DataFrame({"zero": [0.0]}))
+            .mark_rule(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=0.75)
+            .encode(y="zero:Q")
+        )
+        residual = alt.layer(
+            region_rect,
+            peak_rules,
+            residual_zero,
+            alt.Chart(zdisamar)
+            .mark_line(color=PLOT.colors["black"], strokeWidth=1.15)
+            .encode(
+                x=x,
+                y=alt.Y(
+                    "residual:Q",
+                    title="zdisamar - reference",
+                    axis=alt.Axis(format=".3e"),
+                    scale=alt.Scale(zero=False),
+                ),
+                tooltip=[
+                    alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
+                    alt.Tooltip("residual:Q", title="Residual", format=".8g"),
+                ],
+            ),
+        ).properties(width=500, height=190, title="Residual")
+        rows.append(alt.hconcat(values, residual, spacing=28))
+    chart = alt.vconcat(*rows, spacing=18).properties(
+        title="O2A validation against DISAMAR reference"
     )
-    legend.get_frame().set_facecolor("white")
-    legend.get_frame().set_edgecolor("#cccccc")
-    legend.get_frame().set_linewidth(0.8)
-    fig.align_ylabels(axes[:, 0])
-    fig.align_ylabels(axes[:, 1])
-    fig.savefig(output_path, dpi=180)
-    plt.close(fig)
+    PLOT.save(chart, output_path)
 
 
 def write_metrics(metrics: list[MetricRow], output_path: Path) -> None:
@@ -460,7 +416,7 @@ def build_bundle(
     library_path: Path = LIBRARY_PATH,
 ) -> list[MetricRow]:
     if output_dir != SPECTRA_DIR:
-        raise ValueError("plot_validation is intentionally hardwired to validation/spectra/")
+        raise ValueError("validate_spectra is intentionally hardwired to validation/spectra/")
     zd = import_zdisamar()
     case = build_o2a_jacobian_case(zd)
     oe_baseline.configure_case(case)
@@ -477,15 +433,47 @@ def build_bundle(
     return metrics
 
 
-def main() -> None:
+def validate_outputs(metrics: list[MetricRow]) -> list[str]:
+    failures: list[str] = []
+    for path in (PLOT_PATH, DATA_PATH, METRICS_PATH, MANIFEST_PATH):
+        if not path.exists():
+            failures.append(f"missing generated output: {stable_repo_path(path)}")
+    if len(metrics) != 3:
+        failures.append(f"expected 3 validation series, got {len(metrics)}")
+    if [metric["series"] for metric in metrics] != [
+        "forward reflectance",
+        "dR/d aerosol optical depth",
+        "dR/d aerosol layer mid pressure",
+    ]:
+        failures.append("unexpected validation series order")
+    for metric in metrics:
+        if float(metric["max_abs_residual"]) > REFLECTANCE_THRESHOLD:
+            failures.append(
+                f"{metric['series']} max_abs_residual "
+                f"{float(metric['max_abs_residual']):.3e} exceeds "
+                f"{REFLECTANCE_THRESHOLD:.3e}"
+            )
+    for path in (METRICS_PATH, MANIFEST_PATH):
+        if "/Users/" in path.read_text():
+            failures.append(f"absolute user path leaked into {stable_repo_path(path)}")
+    return failures
+
+
+def main() -> int:
     metrics = build_bundle()
+    failures = validate_outputs(metrics)
+    if failures:
+        for failure in failures:
+            print(failure, file=sys.stderr)
+        return 1
     worst = max(metrics, key=lambda row: float(row["max_abs_residual"]))
     print(
         "o2a_validation="
         f"{stable_repo_path(PLOT_PATH)} max_abs={float(worst['max_abs_residual']):.3e} "
         f"series={worst['series']}"
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

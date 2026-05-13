@@ -126,7 +126,7 @@ def assert_optimal_estimation_grid_mismatch_rejected() -> None:
 def assert_lazy_final_evaluation_preserves_session_library_path() -> None:
     import numpy as np
     from zdisamar.forward_model.prepared import O2AForwardSession
-    from zdisamar.input.o2a import O2AInput
+    from zdisamar.input.wavelength_band.o2a import O2AInput
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_module
     from zdisamar.inverse_method.optimal_estimation.forward_evaluation import ForwardEvaluation
     from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
@@ -223,7 +223,7 @@ def assert_optimal_estimation_result_compatibility() -> None:
 
 def assert_session_library_path_mismatch_rejected() -> None:
     from zdisamar.forward_model.prepared import O2AForwardSession
-    from zdisamar.input.o2a import O2AInput
+    from zdisamar.input.wavelength_band.o2a import O2AInput
     from zdisamar.inverse_method.optimal_estimation import O2AInverseForwardModel
 
     class SuppliedSession:
@@ -310,6 +310,48 @@ def assert_reference_data_and_native_table() -> None:
             os.chdir(tmpdir)
             case = zd.o2a_disamar_reference_input()
             assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
+            thresholds = case.radiative_transfer.performance_thresholds
+            assert math.isclose(thresholds.fourier_tail_reflectance_epsilon, 3.0e-14)
+            fast_thresholds = zd.RadiativeTransferPerformanceThresholds.fast()
+            assert fast_thresholds.fourier_order_cap == 5
+            assert math.isclose(fast_thresholds.fourier_tail_reflectance_epsilon, 1.0e-11)
+            assert math.isclose(fast_thresholds.threshold_doubl, 3.0e-5)
+            assert math.isclose(fast_thresholds.threshold_mul, thresholds.threshold_mul)
+            validation_thresholds = copy.deepcopy(thresholds)
+            validation_thresholds.phase_function_truncation_threshold = 1.0e-6
+            validation_fast_thresholds = validation_thresholds.with_fast_mode()
+            assert validation_fast_thresholds.fourier_order_cap == fast_thresholds.fourier_order_cap
+            assert math.isclose(
+                validation_fast_thresholds.fourier_tail_reflectance_epsilon,
+                fast_thresholds.fourier_tail_reflectance_epsilon,
+            )
+            assert math.isclose(
+                validation_fast_thresholds.threshold_doubl,
+                fast_thresholds.threshold_doubl,
+            )
+            assert math.isclose(
+                validation_fast_thresholds.phase_function_truncation_threshold,
+                validation_thresholds.phase_function_truncation_threshold,
+            )
+            fast_case = case.with_fast_mode()
+            assert fast_case is not case
+            assert fast_case.radiative_transfer.performance_thresholds.fourier_order_cap == 5
+            assert math.isclose(
+                fast_case.radiative_transfer.performance_thresholds.threshold_doubl,
+                3.0e-5,
+            )
+            assert fast_case.instrument_response.adaptive_reference_grid["points_per_fwhm"] == 28
+            assert (
+                fast_case.instrument_response.adaptive_reference_grid["strong_line_min_divisions"]
+                == 6
+            )
+            assert (
+                fast_case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"]
+                == 22
+            )
+            assert (
+                case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
+            )
             mutable_case = copy.deepcopy(case)
             with zd.o2a_forward_session() as session:
                 session.prepare(mutable_case)

@@ -471,7 +471,7 @@ pub fn calcRTlayersIntoWithBasis(
         var b_start = b;
         var ndouble: usize = 0;
 
-        if (controls.scattering == .multiple and a_eff * b > controls.threshold_doubl) {
+        if (controls.scattering == .multiple and a_eff * b > controls.performance_thresholds.threshold_doubl) {
             // DECISION:
             //   Trigger doubling only when the scaled optical thickness crosses
             //   the configured threshold.
@@ -480,7 +480,7 @@ pub fn calcRTlayersIntoWithBasis(
             for (0..60) |_| {
                 bd /= 2.0;
                 ndouble += 1;
-                if (a_eff * bd < controls.threshold_doubl) break;
+                if (a_eff * bd < controls.performance_thresholds.threshold_doubl) break;
             }
             b_start = bd;
         }
@@ -527,7 +527,7 @@ pub fn calcRTlayersIntoWithBasis(
             {
                 const zone = Trace.deepStaticZone(@src(), "labos.rt_layer.doubling");
                 defer zone.end();
-                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.threshold_mul, geo, b_start, &R, &T, &E);
+                doDouble(ndouble, geo.nmutot, geo.n_gauss, controls.performance_thresholds.threshold_mul, geo, b_start, &R, &T, &E);
             }
         }
 

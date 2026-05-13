@@ -412,7 +412,7 @@ pub fn buildResolvedVendorO2AScene(
                 },
             },
         },
-        .phase_function_truncation_threshold = resolved.rtm_controls.phase_function_truncation_threshold,
+        .phase_function_truncation_threshold = resolved.rtm_controls.performance_thresholds.phase_function_truncation_threshold,
     };
     solar_wavelengths_owned = false;
     solar_irradiance_owned = false;

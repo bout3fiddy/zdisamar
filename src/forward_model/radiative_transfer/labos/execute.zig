@@ -31,9 +31,6 @@ const resolvedFourierMax = reflectance_mod.resolvedFourierMax;
 const resolvedPhaseCoefficientMax = reflectance_mod.resolvedPhaseCoefficientMax;
 const totalScatteringOpticalDepth = reflectance_mod.totalScatteringOpticalDepth;
 
-// O2 A validation keeps reflectance max_abs below 1e-13 here; 1e-13 is too loose.
-const fourier_tail_reflectance_epsilon: f64 = 3.0e-14;
-
 const LabosComputation = struct {
     reflectance: f64,
     jacobian: jacobian.Vector = jacobian.zero(),
@@ -470,7 +467,9 @@ fn layerResolvedLabosWithWorkspace(
                 };
                 aerosol_layer_mid_pressure_tangent += weighted_pressure_tangent_refl_fc;
             }
-            if (i_fourier >= controls.fourier_floor_scalar and @abs(refl_fc) <= fourier_tail_reflectance_epsilon) {
+            if (i_fourier >= controls.performance_thresholds.fourier_floor_scalar and
+                @abs(refl_fc) <= controls.performance_thresholds.fourier_tail_reflectance_epsilon)
+            {
                 Trace.plotU("fourier_tail_breaks", 1);
                 stop_fourier_loop = true;
             }

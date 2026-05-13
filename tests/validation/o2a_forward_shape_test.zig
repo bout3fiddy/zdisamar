@@ -6,7 +6,7 @@ const meanVectorInRange = o2a.meanVectorInRange;
 const minVectorInRange = o2a.minVectorInRange;
 
 test "tracked O2A DISAMAR reflectance jacobian fixture exposes the requested state columns" {
-    const simulation_reflectance = try readFixture("validation/spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv");
+    const simulation_reflectance = try readFixture("validation/reference_data/spectra/o2a_jacobian_simulation_instrument_reflectance.csv");
     defer std.testing.allocator.free(simulation_reflectance);
 
     try expectJacobianFixtureShape(simulation_reflectance, 301);

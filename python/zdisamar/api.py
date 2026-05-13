@@ -12,7 +12,7 @@ from .forward_model.prepared import (
     prepare,
     prepare_default_o2a,
 )
-from .input.o2a import O2AInput
+from .input.wavelength_band.o2a import O2AInput
 from .output.spectrum import DiagnosticReport, Spectrum
 from .output.tables import (
     AtmosphericBudget,

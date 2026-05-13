@@ -258,10 +258,12 @@ zig build test
 ```
 
 Regenerate the tracked O2 A comparison bundle after changing the O2 A
-forward-model or Jacobian validation outputs:
+forward-model or Jacobian validation outputs. These Python validation scripts
+load the native library from `./zig-out/lib/`, so run `zig build` first on a
+clean checkout:
 
 ```bash
-zig build o2a-plot-bundle
+uv run validation/spectra/validate_spectra.py
 ```
 
 For temporary Zig caches, use the ephemeral wrapper:

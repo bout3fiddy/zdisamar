@@ -7,7 +7,7 @@ import numpy as np
 from zdisamar import reference_data
 from zdisamar.inverse_method import optimal_estimation
 
-from validation.common import o2a_retrieval_baseline as baseline
+from validation.o2a import baseline
 
 S5_REFERENCE_RADIANCE_PATH = "noise/o2a_s5_reference_radiance_755_775.csv"
 MIN_REFLECTANCE_NOISE = 1.0e-12

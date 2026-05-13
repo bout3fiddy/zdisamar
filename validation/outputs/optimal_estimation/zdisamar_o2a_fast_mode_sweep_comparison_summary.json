@@ -1,0 +1,127 @@
+{
+  "by_mode": {
+    "fast": {
+      "aerosol_mid_pressure_abs_error_hpa": {
+        "max": 5.552768793248333,
+        "max_abs": 5.552768793248333,
+        "mean": 0.8375196644122718,
+        "median": 0.3801670894284257,
+        "min": 0.0557769395466039
+      },
+      "aerosol_optical_depth_abs_error": {
+        "max": 0.007392208479315376,
+        "max_abs": 0.007392208479315376,
+        "mean": 0.0009437450691768234,
+        "median": 0.0005603416043729048,
+        "min": 7.398999939400852e-07
+      },
+      "converged": 100,
+      "forward_model_and_jacobian_s": {
+        "max": 1.2495586250151973,
+        "max_abs": 1.2495586250151973,
+        "mean": 1.0543906832396168,
+        "median": 1.102358957999968,
+        "min": 0.6281288760364987
+      },
+      "retrieval_s": {
+        "max": 1.4751974579994567,
+        "max_abs": 1.4751974579994567,
+        "mean": 1.2806732891197317,
+        "median": 1.329009833483724,
+        "min": 0.8507113750092685
+      },
+      "rows": 100
+    },
+    "reference": {
+      "aerosol_mid_pressure_abs_error_hpa": {
+        "max": 0.2717610167638327,
+        "max_abs": 0.2717610167638327,
+        "mean": 0.010103954819589376,
+        "median": 0.001949585629546391,
+        "min": 5.000921538567127e-05
+      },
+      "aerosol_optical_depth_abs_error": {
+        "max": 0.00015211993683739156,
+        "max_abs": 0.00015211993683739156,
+        "mean": 6.510944546724157e-06,
+        "median": 8.036384095688742e-07,
+        "min": 1.5021187405039882e-08
+      },
+      "converged": 100,
+      "forward_model_and_jacobian_s": {
+        "max": 2.9837108749779873,
+        "max_abs": 2.9837108749779873,
+        "mean": 2.310568971551547,
+        "median": 2.4116961664840346,
+        "min": 0.9969470410142094
+      },
+      "retrieval_s": {
+        "max": 3.25996799999848,
+        "max_abs": 3.25996799999848,
+        "mean": 2.5872768753702986,
+        "median": 2.68763577050413,
+        "min": 1.271954875002848
+      },
+      "rows": 100
+    }
+  },
+  "canonical_command": "uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py",
+  "fast_minus_reference": {
+    "aerosol_mid_pressure_delta_hpa": {
+      "max": 2.006511020511084,
+      "max_abs": 5.54210599736723,
+      "mean": -0.7309152611802011,
+      "median": -0.3717589517973465,
+      "min": -5.54210599736723
+    },
+    "aerosol_optical_depth_delta": {
+      "max": 0.006085467386966581,
+      "max_abs": 0.007394244518419413,
+      "mean": 0.0002515596731877463,
+      "median": 0.00030215650919528103,
+      "min": -0.007394244518419413
+    },
+    "forward_jacobian_speedup_s": {
+      "max": 1.73415224996279,
+      "max_abs": 1.73415224996279,
+      "mean": 1.2561782883119303,
+      "median": 1.3408699160063406,
+      "min": 0.35542970802634954
+    },
+    "retrieval_speedup_s": {
+      "max": 1.7847705419990234,
+      "max_abs": 1.7847705419990234,
+      "mean": 1.306603586250567,
+      "median": 1.3919125000102213,
+      "min": 0.40504916600184515
+    }
+  },
+  "fast_mode": {
+    "method": "O2AInput.with_fast_mode()",
+    "note": "Reference rows and fast rows use the same deterministic zdisamar O2 A optimal-estimation sweep cases, measurement vectors, priors, and initial states. Fast rows apply O2AInput.with_fast_mode().",
+    "overrides": {
+      "adaptive_reference_grid": {
+        "points_per_fwhm": 28,
+        "strong_line_max_divisions": 22,
+        "strong_line_min_divisions": 6
+      },
+      "radiative_transfer": {
+        "fourier_order_cap": 5,
+        "fourier_tail_reflectance_epsilon": 1e-11,
+        "threshold_doubl": 3e-05
+      }
+    }
+  },
+  "outputs": {
+    "paired_latency": "validation/outputs/optimal_estimation/paired_oe_latency.png",
+    "paired_style_retrieved_scatter": "validation/outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png",
+    "plot": "validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison.png",
+    "runs_csv": "validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_runs.csv",
+    "summary_json": "validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json"
+  },
+  "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
+  "run_count": 100,
+  "scene_sample_count": 500,
+  "schema_version": 1,
+  "seed": 20260507
+}

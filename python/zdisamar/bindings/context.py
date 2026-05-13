@@ -5,7 +5,7 @@ import ctypes
 import os
 
 from .. import reference_data
-from ..input.o2a import O2AInput
+from ..input.wavelength_band.o2a import O2AInput
 from ..output.spectrum import JACOBIAN_STATE_NAMES, DiagnosticReport, Spectrum
 from ..output.tables import (
     AtmosphericBudget,

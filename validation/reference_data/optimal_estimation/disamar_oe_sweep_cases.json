@@ -1,0 +1,8 @@
+{
+  "case_id": "disamar_o2a_optimal_estimation_shared_sweep_cases",
+  "description": "Shared deterministic O2 A optimal-estimation scene set used by DISAMAR/zdisamar paired retrieval validation, zdisamar normal-mode sweep validation, and zdisamar fast-mode sweep validation.",
+  "run_count": 100,
+  "scene_sample_count": 500,
+  "schema_version": 1,
+  "seed": 20260507
+}

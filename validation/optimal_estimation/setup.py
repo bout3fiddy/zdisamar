@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 from zdisamar.inverse_method import optimal_estimation
 
-from validation.common import o2a_retrieval_baseline as oe_baseline
+from validation.o2a import baseline as oe_baseline
 
 
 def uniform_lhs(rng: np.random.Generator, low: float, high: float, count: int) -> np.ndarray:

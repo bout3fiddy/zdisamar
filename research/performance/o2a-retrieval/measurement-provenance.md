@@ -34,5 +34,4 @@ Regenerate the paired sweep and plots with:
 
 ```sh
 uv run validation/optimal_estimation/paired_disamar_zdisamar_sweep.py
-uv run validation/optimal_estimation/plot_paired_disamar_zdisamar.py
 ```

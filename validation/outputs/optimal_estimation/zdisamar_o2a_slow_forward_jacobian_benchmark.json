@@ -1,29 +1,32 @@
 {
   "direct_prepared_call_probe": {
     "forward_and_jacobian_s": {
-      "max": 0.9117252500000177,
-      "mean": 0.8972277917986503,
-      "median": 0.9015547500021057,
-      "min": 0.871913291994133
+      "max": 0.9770140000036918,
+      "mean": 0.9741498584044166,
+      "median": 0.9736944170144852,
+      "min": 0.9711126249749213
     },
     "forward_only_s": {
-      "max": 0.7470700830017449,
-      "mean": 0.744750283198664,
-      "median": 0.7448207499983255,
-      "min": 0.7424496659950819
+      "max": 0.8289485839777626,
+      "mean": 0.8270519836049062,
+      "median": 0.8273906670219731,
+      "min": 0.8248060420155525
     },
     "jacobian_increment_s": {
-      "max": 0.1669045000016922,
-      "mean": 0.15247750859998632,
-      "median": 0.15910508400702383,
-      "min": 0.1248432089923881
+      "max": 0.15167254098923877,
+      "mean": 0.14709787479951048,
+      "median": 0.14723279202007689,
+      "min": 0.14350108304643072
     },
     "probe_runs": 5
   },
-  "measurement_build_s": 1.0296402500098338,
+  "measurement_build_s": 1.1165063329972327,
+  "reference_case": 71,
+  "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
   "scene": {
     "aerosol_mid_pressure_hpa": 329.192074869615,
     "aerosol_optical_depth": 1.9681905891962788,
+    "case": 71,
     "initial_aerosol_mid_pressure_hpa": 354.192074869615,
     "initial_aerosol_optical_depth": 1.7420077184927254,
     "relative_azimuth_deg": 7.0232796692031245,
@@ -36,190 +39,190 @@
     "final_evaluation_trace": [
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 4.758300201501697e-05,
-          "native_forward_s": 1.0056658329995116,
-          "radiance_to_reflectance_jacobian_s": 0.00011050001194234937
+          "copy_outputs_s": 4.499999340623617e-05,
+          "native_forward_s": 0.9784009169961791,
+          "radiance_to_reflectance_jacobian_s": 9.737498476170003e-05
         },
         "index": 4,
-        "prepare_total_s": 0.014474416006123647,
-        "scale_jacobian_s": 0.00028087499958928674,
-        "settings_for_state_s": 5.683398921974003e-05,
-        "total_evaluate_s": 1.0206510410062037
+        "prepare_total_s": 0.014550208987202495,
+        "scale_jacobian_s": 0.0002958750119432807,
+        "settings_for_state_s": 5.558400880545378e-05,
+        "total_evaluate_s": 0.993458874989301
       }
     ],
     "final_evaluation_trace_summary": {
       "copy_outputs_s": {
-        "max": 4.758300201501697e-05,
-        "mean": 4.758300201501697e-05,
-        "median": 4.758300201501697e-05,
-        "min": 4.758300201501697e-05
+        "max": 4.499999340623617e-05,
+        "mean": 4.499999340623617e-05,
+        "median": 4.499999340623617e-05,
+        "min": 4.499999340623617e-05
       },
       "iterations": 1,
       "native_forward_s": {
-        "max": 1.0056658329995116,
-        "mean": 1.0056658329995116,
-        "median": 1.0056658329995116,
-        "min": 1.0056658329995116
+        "max": 0.9784009169961791,
+        "mean": 0.9784009169961791,
+        "median": 0.9784009169961791,
+        "min": 0.9784009169961791
       },
       "prepare_total_s": {
-        "max": 0.014474416006123647,
-        "mean": 0.014474416006123647,
-        "median": 0.014474416006123647,
-        "min": 0.014474416006123647
+        "max": 0.014550208987202495,
+        "mean": 0.014550208987202495,
+        "median": 0.014550208987202495,
+        "min": 0.014550208987202495
       },
       "radiance_to_reflectance_jacobian_s": {
-        "max": 0.00011050001194234937,
-        "mean": 0.00011050001194234937,
-        "median": 0.00011050001194234937,
-        "min": 0.00011050001194234937
+        "max": 9.737498476170003e-05,
+        "mean": 9.737498476170003e-05,
+        "median": 9.737498476170003e-05,
+        "min": 9.737498476170003e-05
       },
       "scale_jacobian_s": {
-        "max": 0.00028087499958928674,
-        "mean": 0.00028087499958928674,
-        "median": 0.00028087499958928674,
-        "min": 0.00028087499958928674
+        "max": 0.0002958750119432807,
+        "mean": 0.0002958750119432807,
+        "median": 0.0002958750119432807,
+        "min": 0.0002958750119432807
       },
       "settings_for_state_s": {
-        "max": 5.683398921974003e-05,
-        "mean": 5.683398921974003e-05,
-        "median": 5.683398921974003e-05,
-        "min": 5.683398921974003e-05
+        "max": 5.558400880545378e-05,
+        "mean": 5.558400880545378e-05,
+        "median": 5.558400880545378e-05,
+        "min": 5.558400880545378e-05
       },
       "total_evaluate_s": {
-        "max": 1.0206510410062037,
-        "mean": 1.0206510410062037,
-        "median": 1.0206510410062037,
-        "min": 1.0206510410062037
+        "max": 0.993458874989301,
+        "mean": 0.993458874989301,
+        "median": 0.993458874989301,
+        "min": 0.993458874989301
       }
     },
-    "first_use_retrieval_s": 3.1095210009953007,
+    "first_use_retrieval_s": 3.229626084008487,
     "reused_retrieval": {
       "converged": true,
       "final_evaluation_in_retrieval_s": 0.0,
       "final_evaluation_mode": "lazy",
-      "forward_model_and_jacobian_s": 2.834101709013339,
+      "forward_model_and_jacobian_s": 2.959116250014631,
       "iterations": 3,
       "iterations_detail": [
         {
-          "forward_model_and_jacobian_s": 0.8925226249994012,
+          "forward_model_and_jacobian_s": 0.9800452080089599,
           "index": 1,
-          "solver_update_s": 0.0002562079898780212,
-          "total_iteration_s": 0.8927840420074062
+          "solver_update_s": 0.00024200000916607678,
+          "total_iteration_s": 0.9802914580213837
         },
         {
-          "forward_model_and_jacobian_s": 0.9039025000092806,
+          "forward_model_and_jacobian_s": 0.9874905000033323,
           "index": 2,
-          "solver_update_s": 0.00016187499568331987,
-          "total_iteration_s": 0.9040701250050915
+          "solver_update_s": 0.00015104099293239415,
+          "total_iteration_s": 0.9876463749969844
         },
         {
-          "forward_model_and_jacobian_s": 1.0376765840046573,
+          "forward_model_and_jacobian_s": 0.9915805420023389,
           "index": 3,
-          "solver_update_s": 0.0001659159897826612,
-          "total_iteration_s": 1.0378465419926215
+          "solver_update_s": 0.00014395901234820485,
+          "total_iteration_s": 0.991728332999628
         }
       ],
       "lazy_final_evaluation_cached": true,
-      "lazy_final_evaluation_s": 1.2978166660032002,
-      "lazy_final_evaluation_trace_s": 1.0206510410062037,
-      "other_retrieval_s": 0.0004890840064035729,
-      "retrieval_plus_lazy_final_evaluation_s": 4.132991457998287,
+      "lazy_final_evaluation_s": 1.2689324999810196,
+      "lazy_final_evaluation_trace_s": 0.993458874989301,
+      "other_retrieval_s": 0.00043295897194184363,
+      "retrieval_plus_lazy_final_evaluation_s": 4.229018708982039,
       "retrieved": {
         "aerosol_layer_mid_pressure_hpa": 329.19089154066546,
         "aerosol_optical_depth": 1.9681945906310179
       },
-      "solver_update_s": 0.0005839989753440022,
+      "solver_update_s": 0.0005370000144466758,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 2.8351747919950867
+      "wall_s": 2.9600862090010196
     },
     "reused_retrieval_iteration_trace": [
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 0.00010641699191182852,
-          "native_forward_s": 0.8769498750043567,
-          "radiance_to_reflectance_jacobian_s": 0.00010941601067315787
+          "copy_outputs_s": 0.00012454201350919902,
+          "native_forward_s": 0.9642977500043344,
+          "radiance_to_reflectance_jacobian_s": 0.00010708300396800041
         },
         "index": 1,
-        "prepare_total_s": 0.014606708995415829,
-        "scale_jacobian_s": 0.0006622499931836501,
-        "settings_for_state_s": 6.299999949987978e-05,
-        "total_evaluate_s": 0.8925182920065708
+        "prepare_total_s": 0.015158207999775186,
+        "scale_jacobian_s": 0.0002735000161919743,
+        "settings_for_state_s": 5.9165991842746735e-05,
+        "total_evaluate_s": 0.9800413750053849
       },
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 5.037500523030758e-05,
-          "native_forward_s": 0.8873627090069931,
-          "radiance_to_reflectance_jacobian_s": 0.00011799999629147351
+          "copy_outputs_s": 4.3459003791213036e-05,
+          "native_forward_s": 0.9723693330015521,
+          "radiance_to_reflectance_jacobian_s": 0.00010266699246130884
         },
         "index": 2,
-        "prepare_total_s": 0.015999750001356006,
-        "scale_jacobian_s": 0.0002800830116029829,
-        "settings_for_state_s": 6.566599768120795e-05,
-        "total_evaluate_s": 0.9038974589930149
+        "prepare_total_s": 0.0146401250094641,
+        "scale_jacobian_s": 0.00024962497991509736,
+        "settings_for_state_s": 6.250001024454832e-05,
+        "total_evaluate_s": 0.987486041005468
       },
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 5.43750065844506e-05,
-          "native_forward_s": 1.021655999997165,
-          "radiance_to_reflectance_jacobian_s": 0.00011887498840223998
+          "copy_outputs_s": 4.029198316857219e-05,
+          "native_forward_s": 0.9765703750017565,
+          "radiance_to_reflectance_jacobian_s": 9.620800847187638e-05
         },
         "index": 3,
-        "prepare_total_s": 0.015468249999685213,
-        "scale_jacobian_s": 0.0002922080020653084,
-        "settings_for_state_s": 6.287501309998333e-05,
-        "total_evaluate_s": 1.0376718750048894
+        "prepare_total_s": 0.014554499997757375,
+        "scale_jacobian_s": 0.000245749979512766,
+        "settings_for_state_s": 5.5832992075011134e-05,
+        "total_evaluate_s": 0.9915774999826681
       }
     ],
     "reused_retrieval_iteration_trace_summary": {
       "copy_outputs_s": {
-        "max": 0.00010641699191182852,
-        "mean": 7.038900124219556e-05,
-        "median": 5.43750065844506e-05,
-        "min": 5.037500523030758e-05
+        "max": 0.00012454201350919902,
+        "mean": 6.943100015632808e-05,
+        "median": 4.3459003791213036e-05,
+        "min": 4.029198316857219e-05
       },
       "iterations": 3,
       "native_forward_s": {
-        "max": 1.021655999997165,
-        "mean": 0.928656194669505,
-        "median": 0.8873627090069931,
-        "min": 0.8769498750043567
+        "max": 0.9765703750017565,
+        "mean": 0.9710791526692143,
+        "median": 0.9723693330015521,
+        "min": 0.9642977500043344
       },
       "prepare_total_s": {
-        "max": 0.015999750001356006,
-        "mean": 0.01535823633215235,
-        "median": 0.015468249999685213,
-        "min": 0.014606708995415829
+        "max": 0.015158207999775186,
+        "mean": 0.014784277668998888,
+        "median": 0.0146401250094641,
+        "min": 0.014554499997757375
       },
       "radiance_to_reflectance_jacobian_s": {
-        "max": 0.00011887498840223998,
-        "mean": 0.00011543033178895712,
-        "median": 0.00011799999629147351,
-        "min": 0.00010941601067315787
+        "max": 0.00010708300396800041,
+        "mean": 0.00010198600163372855,
+        "median": 0.00010266699246130884,
+        "min": 9.620800847187638e-05
       },
       "scale_jacobian_s": {
-        "max": 0.0006622499931836501,
-        "mean": 0.0004115136689506471,
-        "median": 0.0002922080020653084,
-        "min": 0.0002800830116029829
+        "max": 0.0002735000161919743,
+        "mean": 0.0002562916585399459,
+        "median": 0.00024962497991509736,
+        "min": 0.000245749979512766
       },
       "settings_for_state_s": {
-        "max": 6.566599768120795e-05,
-        "mean": 6.38470034270237e-05,
-        "median": 6.299999949987978e-05,
-        "min": 6.287501309998333e-05
+        "max": 6.250001024454832e-05,
+        "mean": 5.91663313874354e-05,
+        "median": 5.9165991842746735e-05,
+        "min": 5.5832992075011134e-05
       },
       "total_evaluate_s": {
-        "max": 1.0376718750048894,
-        "mean": 0.944695875334825,
-        "median": 0.9038974589930149,
-        "min": 0.8925182920065708
+        "max": 0.9915774999826681,
+        "mean": 0.9863683053311737,
+        "median": 0.987486041005468,
+        "min": 0.9800413750053849
       }
     },
-    "setup_s": 0.274346209000214
+    "setup_s": 0.26953987500746734
   },
-  "source": "Slow retained scene from out/validation/optimal_estimation/paired_disamar_zdisamar/paired_retrieval_runs.parquet case 71.",
+  "source": "Slow retained scene from shared DISAMAR OE reference sweep case 71.",
   "validation_case": "zdisamar_o2a_slow_forward_jacobian_latency"
 }

@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const BuiltinLineShapeKind = InstrumentModel.BuiltinLineShapeKind;
 pub const AbsorberSpecies = AbsorberModel.AbsorberSpecies;
 pub const Route = transport_common.Route;
+pub const RadiativeTransferPerformanceThresholds = transport_common.RadiativeTransferPerformanceThresholds;
 pub const RadiativeTransferControls = transport_common.RadiativeTransferControls;
 
 pub const ReferenceSample = struct {
