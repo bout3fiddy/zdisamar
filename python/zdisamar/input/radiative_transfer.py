@@ -40,7 +40,7 @@ Threshold guide:
   evaluations directly, but it is cruder than the tail threshold.  The O2 A
   fast preset uses `5`; in the retained four-scene spectra sweep this was the
   main contributor to the speedup while keeping the worst reflectance residual
-  below `5e-5` when combined with the layer-doubling override.
+  below `5e-4` when combined with the layer-doubling override.
 
 - `num_orders_max`: the hard cap on multiple-scattering order iterations inside
   each Fourier term.  `0` keeps the optical-depth-derived default; any explicit
@@ -67,7 +67,7 @@ Threshold guide:
   positive; the O2 A default is `1e-6`.  Relaxing it can save layer-doubling
   work, but this is a stronger approximation.  The O2 A fast preset uses
   `3e-5`; by itself this was not fast enough, but in combination with the
-  Fourier-order cap it kept the retained spectra sweep below the `1e-4`
+  Fourier-order cap it kept the retained spectra sweep below the `5e-4`
   reflectance-residual envelope.
 
 - `threshold_mul`: suppresses matrix products when the product of known matrix
