@@ -15,12 +15,14 @@ class Geometry:
 
     @property
     def solar_mu0(self) -> float:
+
         from ..quantities import solar_mu0
 
         return solar_mu0(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Geometry:
+
         return cls(
             model=str(data["model"]),
             solar_zenith_deg=to_float(data["solar_zenith_deg"]),
@@ -29,6 +31,7 @@ class Geometry:
         )
 
     def to_dict(self) -> dict[str, float | str]:
+
         return {
             "model": self.model,
             "solar_zenith_deg": self.solar_zenith_deg,

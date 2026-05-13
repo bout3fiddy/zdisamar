@@ -18,22 +18,28 @@ STATE_LABELS = {
 
 class OptimalEstimationPlot(PlotAccessor):
     def __init__(self, result: Any):
+
         super().__init__(result)
 
     def convergence(self, save: str | Path | None = None):
+
         return self._finish(_convergence(self._target), save=save)
 
     def measurement_fit(self, save: str | Path | None = None):
+
         return self._finish(_measurement_fit(self._target), save=save)
 
     def residual(self, save: str | Path | None = None):
+
         return self._finish(_residual(self._target), save=save)
 
     def jacobian(self, save: str | Path | None = None):
+
         return self._finish(_jacobian(self._target), save=save)
 
 
 def _history_frame(result: Any):
+
     import pandas as pd
 
     return pd.DataFrame(
@@ -49,6 +55,7 @@ def _history_frame(result: Any):
 
 
 def _fit_frame(result: Any):
+
     import pandas as pd
 
     from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
@@ -62,6 +69,7 @@ def _fit_frame(result: Any):
         expected_name="measurement",
         actual_name="final evaluation",
     )
+
     return pd.DataFrame(
         {
             "wavelength_nm": wavelength_nm,
@@ -73,6 +81,7 @@ def _fit_frame(result: Any):
 
 
 def jacobian_frame(result: Any):
+
     import pandas as pd
 
     from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
@@ -87,6 +96,7 @@ def jacobian_frame(result: Any):
         actual_name="final evaluation",
     )
     columns = []
+
     for index, state_name in enumerate(result.state_names):
         values = evaluation.reflectance_jacobian[:, index]
         columns.append(
@@ -98,16 +108,19 @@ def jacobian_frame(result: Any):
                 }
             )
         )
+
     return pd.concat(columns, ignore_index=True)
 
 
 def _convergence(result: Any):
+
     data = _history_frame(result)
     data, _, y = scaled_y(
         data,
         "state_vector_convergence",
         "State-vector convergence",
     )
+
     return (
         alt.Chart(data)
         .mark_line(point=True, color=PLOT.colors["orange"])
@@ -130,6 +143,7 @@ def _convergence(result: Any):
 
 
 def _measurement_fit(result: Any):
+
     data = _fit_frame(result)
     long = data.melt(
         id_vars=["wavelength_nm"],
@@ -143,6 +157,7 @@ def _measurement_fit(result: Any):
             "retrieved_model": "Retrieved model",
         }.get(value, str(value))
     )
+
     return (
         alt.Chart(long)
         .mark_line()
@@ -168,8 +183,10 @@ def _measurement_fit(result: Any):
 
 
 def _residual(result: Any):
+
     data = _fit_frame(result)
     data, _, y = scaled_y(data, "residual", "Measurement - retrieved reflectance")
+
     return wavelength_line_chart(
         data,
         y,
@@ -182,8 +199,10 @@ def _residual(result: Any):
 
 
 def _jacobian(result: Any):
+
     data = jacobian_frame(result)
     data, _, y = scaled_y(data, "reflectance_jacobian", "Reflectance jacobian")
+
     return (
         alt.Chart(data)
         .mark_line()
@@ -206,16 +225,21 @@ def _jacobian(result: Any):
 
 
 def _require_measurement(result: Any):
+
     if result.measurement is None:
         raise RuntimeError("optimal-estimation result does not include a measurement")
+
     return result.measurement
 
 
 def _require_final_evaluation(result: Any):
+
     if result.final_evaluation is None:
         raise RuntimeError("optimal-estimation result does not include a final forward evaluation")
+
     return result.final_evaluation
 
 
 def _state_label(state_name: str) -> str:
+
     return STATE_LABELS.get(state_name, state_name.replace("_", " "))

@@ -18,6 +18,7 @@ class AerosolPlacement:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AerosolPlacement:
+
         return cls(
             semantics=str(data["semantics"]),
             interval_index_1based=int(data["interval_index_1based"]),
@@ -28,6 +29,7 @@ class AerosolPlacement:
         )
 
     def to_dict(self) -> dict[str, float | int | str]:
+
         return {
             "semantics": self.semantics,
             "interval_index_1based": self.interval_index_1based,
@@ -51,6 +53,7 @@ class Aerosol:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Aerosol:
+
         return cls(
             optical_depth_550_nm=to_float(data["optical_depth"]),
             single_scatter_albedo=to_float(data["single_scatter_albedo"]),
@@ -63,6 +66,7 @@ class Aerosol:
         )
 
     def to_dict(self) -> dict[str, float | dict[str, float | int | str]]:
+
         return {
             "optical_depth": self.optical_depth_550_nm,
             "single_scatter_albedo": self.single_scatter_albedo,

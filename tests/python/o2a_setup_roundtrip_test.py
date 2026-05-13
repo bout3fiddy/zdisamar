@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def parse_args() -> argparse.Namespace:
+
     parser = argparse.ArgumentParser(
         description=(
             "Verify that the typed Python O2 A setup matches the default DISAMAR parity entrypoint."
@@ -23,10 +24,12 @@ def parse_args() -> argparse.Namespace:
         default="out/ci/python_o2a_setup_roundtrip.json",
         help="JSON report path. Defaults to out/ci/python_o2a_setup_roundtrip.json.",
     )
+
     return parser.parse_args()
 
 
 def spectrum_arrays(spectrum: Any) -> dict[str, np.ndarray]:
+
     return {
         "wavelength_nm": spectrum.wavelength_nm.copy(),
         "radiance": spectrum.radiance.copy(),
@@ -36,6 +39,7 @@ def spectrum_arrays(spectrum: Any) -> dict[str, np.ndarray]:
 
 
 def run_roundtrip(library_path: str | None) -> dict[str, Any]:
+
     import zdisamar as zd
 
     tolerance = 1.0e-12
@@ -46,6 +50,7 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
     input_s = time.perf_counter() - input_start_s
 
     typed_prepare_start_s = time.perf_counter()
+
     with zd.prepare(case, library_path=library_path) as prepared:
         typed_prepare_s = time.perf_counter() - typed_prepare_start_s
         typed_forward_start_s = time.perf_counter()
@@ -56,6 +61,7 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
         typed_spectrum.close()
 
     default_prepare_start_s = time.perf_counter()
+
     with zd.prepare_default_o2a(library_path) as prepared:
         default_prepare_s = time.perf_counter() - default_prepare_start_s
         default_forward_start_s = time.perf_counter()
@@ -69,6 +75,7 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
     perturbed_case.aerosol.optical_depth_550_nm *= 1.05
 
     session_create_start_s = time.perf_counter()
+
     with zd.o2a_forward_session(library_path=library_path) as session:
         session_create_s = time.perf_counter() - session_create_start_s
 
@@ -103,6 +110,7 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
         compact_session_jacobian = compact_session_spectrum.radiance_jacobian.copy()
         compact_session_spectrum.close()
         empty_jacobian_state_selection_rejected = False
+
         try:
             session.forward_model(jacobian=True, jacobian_state_names=())
         except ValueError:
@@ -248,6 +256,7 @@ def run_roundtrip(library_path: str | None) -> dict[str, Any]:
 
 
 def main() -> int:
+
     args = parse_args()
     output_path = Path(args.output)
     summary = run_roundtrip(args.library)
@@ -279,6 +288,7 @@ def main() -> int:
     print(f"json: {output_path}")
     excluded = {"tolerance", "typed_sample_count", "default_sample_count"}
     passed = all(value for key, value in checks.items() if key not in excluded)
+
     return 0 if passed else 1
 
 

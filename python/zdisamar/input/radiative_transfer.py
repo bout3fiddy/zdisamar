@@ -103,6 +103,7 @@ class RadiativeTransferPerformanceThresholds:
 
     @classmethod
     def o2a_default(cls) -> RadiativeTransferPerformanceThresholds:
+
         return cls(
             num_orders_max=0,
             fourier_floor_scalar=2,
@@ -118,10 +119,12 @@ class RadiativeTransferPerformanceThresholds:
     @classmethod
     def fast(cls) -> RadiativeTransferPerformanceThresholds:
         """Return the validated O2 A speed/accuracy threshold bundle."""
+
         thresholds = cls.o2a_default()
         thresholds.fourier_order_cap = 5
         thresholds.fourier_tail_reflectance_epsilon = 1.0e-11
         thresholds.threshold_doubl = 3.0e-5
+
         return thresholds
 
     def with_fast_mode(self) -> RadiativeTransferPerformanceThresholds:
@@ -138,10 +141,12 @@ class RadiativeTransferPerformanceThresholds:
         thresholds.fourier_order_cap = fast.fourier_order_cap
         thresholds.fourier_tail_reflectance_epsilon = fast.fourier_tail_reflectance_epsilon
         thresholds.threshold_doubl = fast.threshold_doubl
+
         return thresholds
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RadiativeTransferPerformanceThresholds:
+
         return cls(
             num_orders_max=int(data["num_orders_max"]),
             fourier_floor_scalar=int(data["fourier_floor_scalar"]),
@@ -159,6 +164,7 @@ class RadiativeTransferPerformanceThresholds:
         )
 
     def to_dict(self) -> dict[str, float | int | None]:
+
         return {
             "num_orders_max": self.num_orders_max,
             "fourier_floor_scalar": self.fourier_floor_scalar,
@@ -185,6 +191,7 @@ class RadiativeTransferControls:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RadiativeTransferControls:
+
         return cls(
             scattering=str(data["scattering"]),
             n_streams=int(data["n_streams"]),
@@ -199,6 +206,7 @@ class RadiativeTransferControls:
         )
 
     def to_dict(self) -> dict[str, object]:
+
         return {
             "scattering": self.scattering,
             "n_streams": self.n_streams,

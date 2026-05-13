@@ -72,6 +72,7 @@ class SceneResult:
 
 
 def scene_specs() -> list[SceneSpec]:
+
     return [
         SceneSpec(
             label="baseline",
@@ -125,6 +126,7 @@ def scene_specs() -> list[SceneSpec]:
 
 
 def make_case(base: Any, spec: SceneSpec, index: int) -> Any:
+
     return oe_setup.build_scene(
         base,
         index=index,
@@ -134,11 +136,14 @@ def make_case(base: Any, spec: SceneSpec, index: int) -> Any:
 
 
 def with_fast_thresholds(case: Any) -> Any:
+
     return copy.deepcopy(case).with_fast_mode()
 
 
 def evaluate_spectrum(case: Any) -> SpectrumRun:
+
     start = time.perf_counter()
+
     with (
         zd.prepare(case, library_path=str(LIBRARY_PATH)) as prepared,
         prepared.forward_model() as spectrum,
@@ -147,6 +152,7 @@ def evaluate_spectrum(case: Any) -> SpectrumRun:
         reflectance = spectrum.reflectance.copy()
         radiance = spectrum.radiance.copy()
         irradiance = spectrum.irradiance.copy()
+
     return SpectrumRun(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
@@ -157,16 +163,20 @@ def evaluate_spectrum(case: Any) -> SpectrumRun:
 
 
 def run_cases() -> list[SceneResult]:
+
     base = build_o2a_case(zd)
     oe_baseline.configure_case(base)
     results = []
+
     for index, spec in enumerate(scene_specs(), start=1):
         reference_case = make_case(base, spec, index)
         fast_case = with_fast_thresholds(reference_case)
         reference = evaluate_spectrum(reference_case)
         fast = evaluate_spectrum(fast_case)
+
         if not np.array_equal(reference.wavelength_nm, fast.wavelength_nm):
             raise ValueError(f"wavelength grid changed for scene {spec.label}")
+
         noise = components_from_spectrum(
             wavelength_nm=reference.wavelength_nm,
             radiance=reference.radiance,
@@ -182,16 +192,20 @@ def run_cases() -> list[SceneResult]:
                 noise=noise,
             )
         )
+
     return results
 
 
 def residual_over_noise(residual: np.ndarray, noise: np.ndarray) -> np.ndarray:
+
     return residual / np.maximum(noise, np.finfo(np.float64).tiny)
 
 
 def fast_mode_overrides() -> dict[str, dict[str, float | int | None]]:
+
     fast = zd.RadiativeTransferPerformanceThresholds.fast()
     adaptive_grid: dict[str, float | int | None] = dict(zd.O2AInput.FAST_ADAPTIVE_REFERENCE_GRID)
+
     return {
         "radiative_transfer": {
             "fourier_order_cap": fast.fourier_order_cap,
@@ -203,8 +217,10 @@ def fast_mode_overrides() -> dict[str, dict[str, float | int | None]]:
 
 
 def result_records(results: list[SceneResult]) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+
     records: list[dict[str, Any]] = []
     metrics: list[dict[str, Any]] = []
+
     for result in results:
         residual = result.fast.reflectance - result.reference.reflectance
         normalized = residual_over_noise(residual, result.noise)
@@ -223,6 +239,7 @@ def result_records(results: list[SceneResult]) -> tuple[pd.DataFrame, list[dict[
                 "scene_parameters": result.scene,
             }
         )
+
         for wavelength, reference, fast, value_residual, noise, normalized_value in zip(
             result.reference.wavelength_nm,
             result.reference.reflectance,
@@ -243,10 +260,12 @@ def result_records(results: list[SceneResult]) -> tuple[pd.DataFrame, list[dict[
                     "fast_minus_reference_over_noise": float(normalized_value),
                 }
             )
+
     return pd.DataFrame.from_records(records), metrics
 
 
 def describe_scene(scene: dict[str, float]) -> str:
+
     return (
         f"SZA {scene['solar_zenith_deg']:.1f}, VZA {scene['viewing_zenith_deg']:.1f}, "
         f"RAA {scene['relative_azimuth_deg']:.1f}, "
@@ -259,9 +278,11 @@ def create_plot(
     metrics: list[dict[str, Any]],
     output_path: Path,
 ) -> None:
+
     PLOT.prepare()
     metric_by_scene = {str(metric["scene"]): metric for metric in metrics}
     rows = []
+
     for result in results:
         residual = result.fast.reflectance - result.reference.reflectance
         normalized = residual_over_noise(residual, result.noise)
@@ -386,6 +407,7 @@ def create_plot(
             )
         )
         rows.append(alt.hconcat(values, residual_chart, spacing=28))
+
     chart = alt.vconcat(*rows, spacing=18).properties(
         title="O2A Fast-Mode Spectra: Reference Thresholds vs Fast Thresholds"
     )
@@ -393,6 +415,7 @@ def create_plot(
 
 
 def write_metrics(metrics: list[dict[str, Any]], output_path: Path) -> None:
+
     payload = {
         "schema_version": 1,
         "canonical_command": CANONICAL_COMMAND,
@@ -416,20 +439,25 @@ def write_metrics(metrics: list[dict[str, Any]], output_path: Path) -> None:
 
 
 def validate_metrics(metrics: list[dict[str, Any]]) -> None:
+
     failures = []
+
     for metric in metrics:
         residual = float(metric["max_abs_residual"])
+
         if residual > FAST_MODE_REFLECTANCE_THRESHOLD:
             failures.append(
                 f"{metric['scene']} max_abs_residual {residual:.3e} exceeds "
                 f"{FAST_MODE_REFLECTANCE_THRESHOLD:.3e}"
             )
+
     if failures:
         details = "; ".join(failures)
         raise SystemExit(f"fast-mode spectra validation failed: {details}")
 
 
 def main() -> None:
+
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     results = run_cases()
     data, metrics = result_records(results)

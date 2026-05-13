@@ -8,6 +8,7 @@ from .shared import optional_float
 
 
 def _asset_or_none(asset: ReferenceAsset | None) -> dict[str, str] | None:
+
     return None if asset is None else asset.to_dict()
 
 
@@ -23,6 +24,7 @@ class O2LineByLine:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> O2LineByLine:
+
         return cls(
             line_list_asset=ReferenceAsset.from_dict(data["line_list_asset"]),
             line_mixing_asset=ReferenceAsset.from_dict(data["line_mixing_asset"]),
@@ -34,6 +36,7 @@ class O2LineByLine:
         )
 
     def to_dict(self) -> dict[str, object]:
+
         return {
             "line_list_asset": self.line_list_asset.to_dict(),
             "line_mixing_asset": self.line_mixing_asset.to_dict(),
@@ -52,7 +55,9 @@ class OxygenCollisionInducedAbsorption:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> OxygenCollisionInducedAbsorption:
+
         cross_section_asset = data.get("cia_asset")
+
         return cls(
             enabled=bool(data["enabled"]),
             cross_section_asset=(
@@ -63,6 +68,7 @@ class OxygenCollisionInducedAbsorption:
         )
 
     def to_dict(self) -> dict[str, bool | dict[str, str] | None]:
+
         return {
             "enabled": self.enabled,
             "cia_asset": _asset_or_none(self.cross_section_asset),

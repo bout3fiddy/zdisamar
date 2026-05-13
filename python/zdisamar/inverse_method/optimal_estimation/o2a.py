@@ -56,14 +56,17 @@ class O2AInverseForwardModel:
         forward_session: O2AForwardSession | None = None,
         use_forward_session: bool = True,
     ):
+
         if forward_session is not None and not use_forward_session:
             raise ValueError("forward_session requires use_forward_session=True")
+
         if (
             forward_session is not None
             and library_path is not None
             and library_path != forward_session.library_path
         ):
             raise ValueError("library_path must match the supplied forward_session library_path")
+
         self._template = copy.deepcopy(template)
         self._library_path = (
             library_path
@@ -78,8 +81,10 @@ class O2AInverseForwardModel:
         state: np.ndarray,
         state_vector: StateVector,
     ) -> O2AInput:
+
         settings = copy.deepcopy(self._template)
         state_vector.write_to(settings, state)
+
         return settings
 
     def evaluate(
@@ -87,15 +92,19 @@ class O2AInverseForwardModel:
         state: np.ndarray,
         state_vector: StateVector,
     ) -> ForwardEvaluation:
+
         if self._forward_session is not None:
             prepared = self._forward_session.prepare(self.settings_for_state(state, state_vector))
             evaluation = evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+
             return scale_reflectance_jacobian(evaluation, state_vector.jacobian_scales(state))
+
         with prepare(
             self.settings_for_state(state, state_vector),
             library_path=self._library_path,
         ) as prepared:
             evaluation = evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
+
             return scale_reflectance_jacobian(evaluation, state_vector.jacobian_scales(state))
 
 
@@ -118,12 +127,14 @@ def disamar_oe(
                 library_path=inverse_model._library_path,
                 forward_session=session,
             )
+
             return _disamar_oe(
                 inverse_model=session_model,
                 measurement=measurement,
                 state_vector=state_vector,
                 controls=controls,
             )
+
     return _disamar_oe(
         inverse_model=inverse_model,
         measurement=measurement,
@@ -139,6 +150,7 @@ def _disamar_oe(
     state_vector: StateVector,
     controls: RetrievalControls | None = None,
 ) -> Result:
+
     final_evaluate_state = _lazy_final_evaluator(inverse_model, state_vector)
     result = retrieve(
         lambda state: inverse_model.evaluate(state, state_vector),
@@ -147,12 +159,14 @@ def _disamar_oe(
         controls=controls or RetrievalControls.from_disamar_retrieval_specs(),
     )
     result = replace(result, measurement=measurement)
+
     if type(inverse_model) is not O2AInverseForwardModel:
         return replace(
             result,
             final_evaluation=final_evaluate_state(np.array(result.state, copy=True)),
             _final_evaluation_factory=None,
         )
+
     return attach_final_evaluation(
         result,
         final_evaluate_state,
@@ -163,11 +177,13 @@ def _lazy_final_evaluator(
     inverse_model: O2AInverseForwardModel,
     state_vector: StateVector,
 ) -> Callable[[np.ndarray], ForwardEvaluation]:
+
     if type(inverse_model) is not O2AInverseForwardModel:
         return lambda state: inverse_model.evaluate(state, state_vector)
 
     template = inverse_model._template
     library_path = inverse_model._library_path
+
     if not inverse_model._use_forward_session:
         return lambda state: O2AInverseForwardModel(
             template,
@@ -176,12 +192,14 @@ def _lazy_final_evaluator(
         ).evaluate(state, state_vector)
 
     def evaluate_with_fresh_session(state: np.ndarray) -> ForwardEvaluation:
+
         with o2a_forward_session(template, library_path=library_path) as session:
             session_model = O2AInverseForwardModel(
                 template,
                 library_path=library_path,
                 forward_session=session,
             )
+
             return session_model.evaluate(state, state_vector)
 
     return evaluate_with_fresh_session
@@ -203,7 +221,9 @@ def attach_final_evaluation(
             final_evaluation=result.last_evaluation,
             _final_evaluation_factory=None,
         )
+
     final_state = np.array(result.state, copy=True)
+
     return replace(
         result,
         final_evaluation=None,
@@ -235,8 +255,10 @@ def evaluate_prepared_reflectance(
         irradiance,
         prepared.input.geometry.solar_mu0,
     )
+
     if available_state_names != state_names:
         raise ValueError("Native Jacobian state selection did not preserve requested state order")
+
     return ForwardEvaluation(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
@@ -252,6 +274,7 @@ def scale_reflectance_jacobian(
 
     if evaluation.reflectance_jacobian.shape[1] != scales.size:
         raise ValueError("Jacobian scale count does not match state vector dimension")
+
     return ForwardEvaluation(
         wavelength_nm=evaluation.wavelength_nm,
         reflectance=evaluation.reflectance,
@@ -269,6 +292,7 @@ def measurement_from_prepared(
     with prepared.forward_model() as spectrum:
         wavelength_nm = spectrum.wavelength_nm.copy()
         reflectance = spectrum.reflectance.copy()
+
     return Measurement(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
@@ -277,11 +301,13 @@ def measurement_from_prepared(
 
 
 def pressure_altitude_profile_from_prepared(prepared: PreparedO2ABase) -> PressureAltitudeProfile:
+
     budget = prepared.atmospheric_budget(
         np.array([prepared.input.spectral_grid.start_nm], dtype=np.float64)
     )
     table = budget.table
     levels_by_pressure: dict[float, float] = {}
+
     for row in table:
         levels_by_pressure[round(float(row["top_pressure_hpa"]), 12)] = float(
             row["top_altitude_km"]
@@ -289,7 +315,9 @@ def pressure_altitude_profile_from_prepared(prepared: PreparedO2ABase) -> Pressu
         levels_by_pressure[round(float(row["bottom_pressure_hpa"]), 12)] = float(
             row["bottom_altitude_km"]
         )
+
     levels = sorted((altitude, pressure) for pressure, altitude in levels_by_pressure.items())
+
     return PressureAltitudeProfile(
         altitude_km=np.array([altitude for altitude, _pressure in levels]),
         pressure_hpa=np.array([pressure for _altitude, pressure in levels]),
@@ -317,14 +345,19 @@ def measurement_from_sun_normalized_radiance_noise(
 
     source_wavelength = np.asarray(wavelength_nm, dtype=np.float64)
     source_noise = np.asarray(sun_normalized_radiance_noise, dtype=np.float64)
+
     if source_wavelength.ndim != 1 or source_noise.ndim != 1:
         raise ValueError("noise wavelength and values must be one-dimensional")
+
     if source_wavelength.size != source_noise.size:
         raise ValueError("noise wavelength and values must have the same length")
+
     if source_wavelength.size == 0:
         raise ValueError("noise reference must contain at least one sample")
+
     if not np.all(np.isfinite(source_wavelength)) or not np.all(np.isfinite(source_noise)):
         raise ValueError("noise wavelength and values must be finite")
+
     if np.any(source_noise <= 0.0):
         raise ValueError("sun-normalized radiance noise must be positive")
 
@@ -345,6 +378,7 @@ def measurement_from_sun_normalized_radiance_noise(
         reflectance_noise,
         prepared.input.geometry.solar_mu0,
     )
+
     return Measurement(
         wavelength_nm=measurement_wavelength,
         reflectance=reflectance,

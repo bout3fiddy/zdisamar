@@ -31,6 +31,7 @@ IRRADIANCE_SNR_MAX = 5000.0
 
 def configure_case(case) -> None:
     """Apply the retrieval baseline to a mutable zdisamar O2 A case."""
+
     case.spectral_grid.start_nm = WAVELENGTH_START_NM
     case.spectral_grid.end_nm = WAVELENGTH_END_NM
     case.spectral_grid.sample_count = SAMPLE_COUNT
@@ -48,6 +49,7 @@ def configure_case(case) -> None:
         STRONG_LINE_MAX_DIVISIONS
     )
     case.radiative_transfer.n_streams = ZDISAMAR_N_STREAMS
+
     for interval in case.atmosphere.intervals:
         if interval.index_1based == 1:
             interval.altitude_divisions = UPPER_ALTITUDE_DIVISIONS

@@ -47,8 +47,10 @@ def reflectance_jacobian_from_radiance_jacobian(
 
     jacobian = np.asarray(radiance_jacobian, dtype=np.float64)
     scale = float(mu0) * np.asarray(irradiance, dtype=np.float64) / np.pi
+
     if jacobian.ndim == 1:
         return jacobian / scale
+
     return jacobian / scale[..., None]
 
 

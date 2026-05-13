@@ -25,6 +25,7 @@ def final_diagnostics(
     averaging_kernel = (
         posterior_covariance @ jacobian.T @ np.diag(1.0 / measurement_variance) @ jacobian
     )
+
     return FinalDiagnostics(
         posterior_covariance=posterior_covariance,
         averaging_kernel=averaging_kernel,

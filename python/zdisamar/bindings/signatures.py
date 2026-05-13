@@ -15,12 +15,14 @@ from .structures import (
 
 
 def bind(lib: ctypes.CDLL, name: str, argtypes: list[Any], restype: Any) -> None:
+
     function = getattr(lib, name)
     function.argtypes = argtypes
     function.restype = restype
 
 
 def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
+
     bind(lib, "zds_context_create", [], ctypes.c_void_p)
     bind(lib, "zds_context_destroy", [ctypes.c_void_p], None)
     bind(lib, "zds_prepare_default_o2a", [ctypes.c_void_p], ctypes.c_int)
@@ -156,4 +158,5 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         None,
     )
     bind(lib, "zds_last_error", [ctypes.c_void_p], ctypes.c_char_p)
+
     return lib

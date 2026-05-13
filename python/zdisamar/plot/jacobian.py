@@ -10,6 +10,7 @@ from .properties import PLOT
 
 
 def reflectance_jacobian(spectrum: Any, state: str):
+
     data, y_field, y_title = jacobian_frame(spectrum, state)
     data, _, y = scaled_y(data, y_field, y_title)
     line = (
@@ -24,21 +25,27 @@ def reflectance_jacobian(spectrum: Any, state: str):
             ],
         )
     )
+
     return alt.layer(line, marker_rules(data)).properties(**PLOT.chart(f"{y_title}: {state}"))
 
 
 def jacobian_frame(spectrum: Any, state: str):
+
     import pandas as pd
 
     names = spectrum.jacobian_state_names
+
     if state not in names:
         raise ValueError(f"unknown Jacobian state: {state}")
+
     index = names.index(state)
     wavelength_nm = spectrum.wavelength_nm.copy()
+
     try:
         reflectance_jacobian = spectrum.reflectance_jacobian(state).copy()
     except RuntimeError:
         radiance_jacobian = spectrum.radiance_jacobian[:, index].copy()
+
         return (
             pd.DataFrame(
                 {
@@ -49,6 +56,7 @@ def jacobian_frame(spectrum: Any, state: str):
             fields.RADIANCE_JACOBIAN,
             "dL / dx",
         )
+
     return (
         pd.DataFrame(
             {

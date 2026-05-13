@@ -45,38 +45,50 @@ class PlotProperties:
     }
 
     def __init__(self) -> None:
+
         self._registered = False
         self._enabled = False
 
     def prepare(self) -> None:
+
         if self._enabled:
             return
+
         if not self._registered:
             alt.themes.register(self.theme_name, cast(Any, self._theme))
             self._registered = True
+
         alt.themes.enable(cast(Any, self.theme_name))
         self._enabled = True
 
     def chart(self, title: str) -> dict[str, object]:
+
         return {"width": self.width, "height": self.height, "title": title}
 
     def theme(self):
+
         return self._theme()
 
     def finish(self, chart, *, save: str | Path | None = None):
+
         if save is not None:
             self.save(chart, save)
+
         return chart
 
     def save(self, chart, path: str | Path) -> None:
+
         output = Path(path)
+
         if output.suffix == "":
             output = output.with_suffix(".png")
+
         output.parent.mkdir(parents=True, exist_ok=True)
         kwargs = {"scale_factor": self.png_scale_factor} if output.suffix.lower() == ".png" else {}
         chart.save(output, **kwargs)
 
     def _theme(self):
+
         return {
             "config": {
                 "background": "white",
@@ -139,15 +151,19 @@ class PlotAccessor:
     """Shared plot accessor behavior backed by the single plot policy object."""
 
     def __init__(self, target: Any):
+
         PLOT.prepare()
         self._target = target
 
     @property
     def properties(self) -> PlotProperties:
+
         return PLOT
 
     def _chart_properties(self, title: str) -> dict[str, object]:
+
         return PLOT.chart(title)
 
     def _finish(self, chart, *, save: str | Path | None = None):
+
         return PLOT.finish(chart, save=save)

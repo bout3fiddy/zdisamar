@@ -15,6 +15,7 @@ def wavelength_line_chart(
     *,
     color: str | None = None,
 ) -> alt.Chart:
+
     return (
         alt.Chart(data)
         .mark_line(color=color or PLOT.colors["blue"], strokeWidth=PLOT.line_width)

@@ -50,6 +50,7 @@ def gauss_newton_step(
     change = float(np.max(np.abs(dx_trans_new - dx_trans)))
     max_change = max(max_change_transformed_state, float(np.max(np.abs(dx_trans))))
     snr_normal = True
+
     if change > 1.01 * max_change:
         # This is step-size safeguarding, not Levenberg-Marquardt curvature
         # damping.  Scaling the residual and singular values lowers the
@@ -61,11 +62,13 @@ def gauss_newton_step(
         factor_total = 1.0
         factor = 0.75
         reduced_w = np.array(singular_values, copy=True)
+
         for _ in range(10):
             factor_total *= factor
             reduced_d_r = factor_total * d_r_trans
             reduced_w = factor_total * singular_values
             dx_trans_new = _transformed_state(reduced_w, reduced_d_r, dx_trans)
+
             if float(np.max(np.abs(dx_trans_new - dx_trans))) < max_change:
                 singular_values = reduced_w
                 break
@@ -79,6 +82,7 @@ def gauss_newton_step(
     posterior_precision_white = np.eye(state_count, dtype=np.float64)
     posterior_precision_white += v @ np.diag(singular_values**2) @ vt
     posterior_precision = problem.sqrt_inv_sa.T @ posterior_precision_white @ problem.sqrt_inv_sa
+
     return StepResult(
         state=state,
         posterior_precision=posterior_precision,

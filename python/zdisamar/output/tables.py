@@ -27,42 +27,55 @@ class NativeTable:
     _raw_type: ClassVar[type[Any]]
 
     def __init__(self, owner: Any, raw: Any):
+
         self._owner: Any | None = owner
         self._raw: Any = raw
         self._table_cache: Any | None = None
 
     def _require_open(self) -> None:
+
         if self._owner is None or self._owner._ctx is None:
             raise RuntimeError(self._closed_message)
 
     @property
     def row_count(self) -> int:
+
         return int(self._raw.len)
 
     @property
     def table(self) -> Any:
+
         return self._table().copy()
 
     def column(self, name: str) -> Any:
+
         if name not in self.columns:
             raise KeyError(name)
+
         return self._table()[name].copy()
 
     def to_rows(self) -> list[dict[str, object]]:
+
         rows: list[dict[str, object]] = []
+
         for row in self._table():
             item = {name: row[name].item() for name in self.columns}
+
             for label_name, (source_name, labels) in self.label_columns.items():
                 item[label_name] = labels.get(int(item[source_name]), "unknown")
+
             rows.append(item)
+
         return rows
 
     def to_pandas(self) -> Any:
+
         import pandas as pd
 
         return pd.DataFrame.from_records(self.to_rows())
 
     def close(self) -> None:
+
         if self._owner is not None:
             getattr(self._owner, self._free_method)(self._raw)
             self._owner = None
@@ -70,13 +83,17 @@ class NativeTable:
             self._table_cache = None
 
     def __enter__(self):
+
         return self
 
     def __exit__(self, *_exc: object) -> None:
+
         self.close()
 
     def _table(self) -> Any:
+
         self._require_open()
+
         if self._table_cache is None:
             import numpy as np
 
@@ -84,10 +101,12 @@ class NativeTable:
                 self._raw.rows,
                 shape=(self._raw.len,),
             ).copy()
+
         return self._table_cache
 
 
 def field_names(structure: type[Any]) -> tuple[str, ...]:
+
     return tuple(str(field[0]) for field in structure._fields_)
 
 
@@ -117,6 +136,7 @@ class AtmosphericBudget(NativeTable):
 
     @property
     def plot(self):
+
         from ..plot.atmosphere import BudgetPlot
 
         return BudgetPlot(self)
@@ -146,10 +166,12 @@ class O2LineContributions(NativeTable):
 
     @property
     def total_row_count(self) -> int:
+
         return int(self._raw.total_row_count)
 
     @property
     def truncated(self) -> bool:
+
         return bool(self._raw.truncated)
 
 
@@ -177,6 +199,7 @@ class InstrumentResponseTable(NativeTable):
 
     @property
     def plot(self):
+
         from ..plot.instrument_response import InstrumentResponsePlot
 
         return InstrumentResponsePlot(self)
@@ -192,6 +215,7 @@ class OxygenCollisionInducedAbsorptionDiagnosticTable(NativeTable):
 
     @property
     def plot(self):
+
         from ..plot.collision_induced_absorption import CollisionInducedAbsorptionPlot
 
         return CollisionInducedAbsorptionPlot(self)

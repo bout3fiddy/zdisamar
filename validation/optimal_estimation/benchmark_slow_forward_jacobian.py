@@ -39,12 +39,15 @@ SLOW_CASE_INDEX = 71
 
 
 def slow_case_row() -> dict[str, Any]:
+
     return oe_cases.case_rows(count=SLOW_CASE_INDEX)[SLOW_CASE_INDEX - 1]
 
 
 def build_case() -> zd.O2AInput:
+
     base = build_o2a_case(zd, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
+
     return oe_setup.build_scene(
         base,
         index=SLOW_CASE_INDEX,
@@ -57,7 +60,9 @@ def build_state_vector(
     case: zd.O2AInput,
     profile: optimal_estimation.PressureAltitudeProfile,
 ) -> optimal_estimation.StateVector:
+
     initial = oe_cases.initial_from_row(slow_case_row())
+
     return oe_setup.aerosol_two_state_vector(
         initial=initial,
         profile=profile,
@@ -73,12 +78,15 @@ def run_retrieval(
     forward_session: zd.O2AForwardSession | None = None,
     trace_records: list[dict[str, Any]] | None = None,
 ) -> optimal_estimation.Result:
+
     inverse_model = o2a_oe.O2AInverseForwardModel(case, forward_session=forward_session)
+
     if trace_records is not None:
         cast(Any, inverse_model).evaluate = tracing_evaluate(
             inverse_model,
             trace_records,
         )
+
     return o2a_oe.disamar_oe(
         inverse_model=inverse_model,
         measurement=measurement,
@@ -91,10 +99,12 @@ def tracing_evaluate(
     model: o2a_oe.O2AInverseForwardModel,
     trace_records: list[dict[str, Any]],
 ):
+
     def evaluate(
         state,
         state_vector: optimal_estimation.StateVector,
     ) -> optimal_estimation.ForwardEvaluation:
+
         total_start = time.perf_counter()
         settings_start = time.perf_counter()
         settings = model.settings_for_state(state, state_vector)
@@ -128,6 +138,7 @@ def tracing_evaluate(
                 "total_evaluate_s": time.perf_counter() - total_start,
             }
         )
+
         return scaled
 
     return evaluate
@@ -139,9 +150,11 @@ def evaluate_final_state_with_trace(
     state,
     trace_records: list[dict[str, Any]],
 ) -> optimal_estimation.ForwardEvaluation:
+
     with zd.o2a_forward_session(case) as session:
         model = o2a_oe.O2AInverseForwardModel(case, forward_session=session)
         cast(Any, model).evaluate = tracing_evaluate(model, trace_records)
+
         return model.evaluate(state, state_vector)
 
 
@@ -149,7 +162,9 @@ def evaluate_prepared_reflectance_timed(
     prepared,
     state_names: tuple[str, ...],
 ) -> tuple[optimal_estimation.ForwardEvaluation, dict[str, float]]:
+
     run_start = time.perf_counter()
+
     with prepared.forward_model(jacobian=True, jacobian_state_names=state_names) as spectrum:
         native_forward_s = time.perf_counter() - run_start
         copy_start = time.perf_counter()
@@ -167,13 +182,16 @@ def evaluate_prepared_reflectance_timed(
         prepared.input.geometry.solar_mu0,
     )
     conversion_s = time.perf_counter() - conversion_start
+
     if available_state_names != state_names:
         raise ValueError("Native Jacobian state selection did not preserve requested state order")
+
     evaluation = optimal_estimation.ForwardEvaluation(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
         reflectance_jacobian=reflectance_jacobian_all,
     )
+
     return evaluation, {
         "native_forward_s": native_forward_s,
         "copy_outputs_s": copy_outputs_s,
@@ -182,8 +200,10 @@ def evaluate_prepared_reflectance_timed(
 
 
 def retrieval_record(result: optimal_estimation.Result, wall_s: float) -> dict[str, Any]:
+
     forward_s = sum(timing.forward_model_and_jacobian_s for timing in result.timing)
     solver_s = sum(timing.solver_update_s for timing in result.timing)
+
     return {
         "wall_s": wall_s,
         "forward_model_and_jacobian_s": forward_s,
@@ -214,9 +234,11 @@ def add_final_evaluation_accounting(
     lazy_final_evaluation_s: float,
     lazy_final_evaluation_cached: bool,
 ) -> dict[str, Any]:
+
     traced_final_evaluation_s = sum(
         float(item["total_evaluate_s"]) for item in final_evaluation_trace
     )
+
     return record | {
         "final_evaluation_mode": "lazy",
         "final_evaluation_in_retrieval_s": 0.0,
@@ -228,8 +250,10 @@ def add_final_evaluation_accounting(
 
 
 def time_call(callable_object) -> float:
+
     start = time.perf_counter()
     callable_object()
+
     return time.perf_counter() - start
 
 
@@ -238,15 +262,18 @@ def probe_prepared_calls(
     case: zd.O2AInput,
     state_vector: optimal_estimation.StateVector,
 ) -> dict[str, Any]:
+
     inverse_model = optimal_estimation.O2AInverseForwardModel(case, forward_session=session)
     state_case = inverse_model.settings_for_state(state_vector.prior_state(), state_vector)
     prepared = session.prepare(state_case)
 
     def forward_only() -> None:
+
         with prepared.forward_model() as spectrum:
             _ = spectrum.reflectance.copy()
 
     def forward_and_jacobian() -> None:
+
         evaluation = o2a_oe.evaluate_prepared_reflectance(prepared, state_vector.jacobian_names)
         _ = o2a_oe.scale_reflectance_jacobian(
             evaluation,
@@ -255,6 +282,7 @@ def probe_prepared_calls(
 
     forward_only_s = [time_call(forward_only) for _ in range(PROBE_RUNS)]
     forward_and_jacobian_s = [time_call(forward_and_jacobian) for _ in range(PROBE_RUNS)]
+
     return {
         "probe_runs": PROBE_RUNS,
         "forward_only_s": stats(forward_only_s),
@@ -266,6 +294,7 @@ def probe_prepared_calls(
 
 
 def stats(values: list[float]) -> dict[str, float]:
+
     return {
         "min": min(values),
         "median": statistics.median(values),
@@ -275,6 +304,7 @@ def stats(values: list[float]) -> dict[str, float]:
 
 
 def trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
+
     if not trace_records:
         return {
             "iterations": 0,
@@ -282,12 +312,17 @@ def trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     def phase(path: tuple[str, ...]) -> dict[str, float]:
+
         values = []
+
         for record in trace_records:
             value: Any = record
+
             for key in path:
                 value = value[key]
+
             values.append(float(value))
+
         return stats(values)
 
     return {
@@ -305,18 +340,22 @@ def trace_summary(trace_records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def main() -> int:
+
     case = build_case()
     profile = o2a_oe.pressure_altitude_profile_from_prepared_grid(case)
     state_vector = build_state_vector(case, profile)
 
     measurement_start = time.perf_counter()
+
     with zd.prepare(case) as prepared:
         measurement = measurement_from_o2a_baseline_noise(prepared)
+
     measurement_s = time.perf_counter() - measurement_start
 
     session_setup_start = time.perf_counter()
     session = zd.o2a_forward_session(case)
     session_setup_s = time.perf_counter() - session_setup_start
+
     try:
         iteration_trace: list[dict[str, Any]] = []
         session_start = time.perf_counter()
@@ -329,6 +368,7 @@ def main() -> int:
         )
         session_reused_s = time.perf_counter() - session_start
         retrieval_iteration_trace = iteration_trace[: session_result.iterations]
+
         if object.__getattribute__(session_result, "_final_evaluation_factory") is not None:
             final_state = np.array(session_result.state, copy=True)
             session_result = dataclasses.replace(
@@ -341,6 +381,7 @@ def main() -> int:
                     iteration_trace,
                 ),
             )
+
         lazy_final_start = time.perf_counter()
         _ = session_result.final_evaluation
         lazy_final_evaluation_s = time.perf_counter() - lazy_final_start
@@ -396,6 +437,7 @@ def main() -> int:
         f"{prepared_probe['forward_and_jacobian_s']['median']:.6f} s forward+jacobian"
     )
     print(f"  JSON: {stable_repo_path(BENCHMARK_PATH)}")
+
     return 0
 
 

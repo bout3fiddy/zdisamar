@@ -17,10 +17,12 @@ from ..spectroscopy import O2LineByLine, OxygenCollisionInducedAbsorption
 
 
 def _object_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
+
     return dict(data[key])
 
 
 def _object_list(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
+
     return [dict(item) for item in data.get(key, [])]
 
 
@@ -50,6 +52,7 @@ class O2AInput:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> O2AInput:
+
         return cls(
             metadata=_object_dict(data, "metadata"),
             plan=_object_dict(data, "plan"),
@@ -73,9 +76,11 @@ class O2AInput:
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> O2AInput:
+
         return cls.from_dict(json.loads(raw))
 
     def to_dict(self) -> dict[str, Any]:
+
         return {
             "metadata": self.metadata,
             "plan": self.plan,
@@ -99,6 +104,7 @@ class O2AInput:
         }
 
     def to_json_bytes(self) -> bytes:
+
         return json.dumps(json_value(self.to_dict()), sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
         )
@@ -119,13 +125,17 @@ class O2AInput:
             **fast.instrument_response.adaptive_reference_grid,
             **self.FAST_ADAPTIVE_REFERENCE_GRID,
         }
+
         return fast
 
     def with_resolved_asset_paths(self, base: str | Path) -> O2AInput:
+
         root = Path(base)
+
         return self.with_resolved_asset_resolver(lambda path: (root / path).resolve())
 
     def with_resolved_asset_resolver(self, resolver) -> O2AInput:
+
         resolved = deepcopy(self)
         resolved.reference_assets.atmosphere_profile = (
             resolved.reference_assets.atmosphere_profile.with_resolved_path(resolver)
@@ -148,10 +158,12 @@ class O2AInput:
         resolved.o2_lines.strong_lines_asset = (
             resolved.o2_lines.strong_lines_asset.with_resolved_path(resolver)
         )
+
         if resolved.collision_induced_absorption.cross_section_asset is not None:
             resolved.collision_induced_absorption.cross_section_asset = (
                 resolved.collision_induced_absorption.cross_section_asset.with_resolved_path(
                     resolver
                 )
             )
+
         return resolved

@@ -77,11 +77,14 @@ LATENCY_MODE_COLORS = {
 
 
 def with_fast_thresholds(case: Any) -> Any:
+
     return copy.deepcopy(case).with_fast_mode()
 
 
 def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
+
     start = time.perf_counter()
+
     with zd.o2a_forward_session(case) as session:
         result = o2a_oe.disamar_oe(
             inverse_model=o2a_oe.O2AInverseForwardModel(
@@ -92,19 +95,24 @@ def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
             state_vector=state_vector,
             controls=oe_setup.retrieval_controls(),
         )
+
     return result, time.perf_counter() - start
 
 
 def posterior_sigma(result: Any, state_name: str) -> float:
+
     index = result.state_names.index(state_name)
     variance = float(result.posterior_covariance[index, index])
+
     return math.sqrt(max(variance, 0.0))
 
 
 def build_rows() -> list[dict[str, Any]]:
+
     base = build_o2a_case(zd, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
     rows: list[dict[str, Any]] = []
+
     for row in oe_cases.case_rows(count=RUN_COUNT):
         index = int(row["case"])
         truth = oe_cases.scene_from_row(row)
@@ -115,9 +123,11 @@ def build_rows() -> list[dict[str, Any]]:
             scene=truth,
         )
         initial = oe_cases.initial_from_row(row)
+
         with zd.prepare(reference_case) as prepared:
             measurement = measurement_from_o2a_baseline_noise(prepared)
             profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+
         state_vector = oe_setup.aerosol_two_state_vector(
             initial=initial,
             profile=profile,
@@ -182,14 +192,18 @@ def build_rows() -> list[dict[str, Any]]:
                     "surface_albedo": truth["surface_albedo"],
                 }
             )
+
         print(f"{index:03d}/{RUN_COUNT} reference+fast complete", flush=True)
+
     return rows
 
 
 def paired_delta_frame(data: pd.DataFrame) -> pd.DataFrame:
+
     reference = data[data["mode"] == "reference"].set_index("scene")
     fast = data[data["mode"] == "fast"].set_index("scene")
     rows = []
+
     for scene in sorted(reference.index):
         ref = reference.loc[scene]
         fst = fast.loc[scene]
@@ -219,10 +233,12 @@ def paired_delta_frame(data: pd.DataFrame) -> pd.DataFrame:
                 ),
             }
         )
+
     return pd.DataFrame.from_records(rows)
 
 
 def stats(values: pd.Series) -> dict[str, float]:
+
     if values.empty:
         return {
             "min": math.nan,
@@ -231,6 +247,7 @@ def stats(values: pd.Series) -> dict[str, float]:
             "max": math.nan,
             "max_abs": math.nan,
         }
+
     return {
         "min": float(values.min()),
         "median": float(values.median()),
@@ -241,6 +258,7 @@ def stats(values: pd.Series) -> dict[str, float]:
 
 
 def stats_from_values(values: list[float]) -> dict[str, float]:
+
     if not values:
         return {
             "min": math.nan,
@@ -249,13 +267,17 @@ def stats_from_values(values: list[float]) -> dict[str, float]:
             "max": math.nan,
             "max_abs": math.nan,
         }
+
     series = pd.Series(values, dtype=np.float64)
+
     return stats(series)
 
 
 def fast_mode_overrides() -> dict[str, dict[str, float | int | None]]:
+
     fast = zd.RadiativeTransferPerformanceThresholds.fast()
     adaptive_grid: dict[str, float | int | None] = dict(zd.O2AInput.FAST_ADAPTIVE_REFERENCE_GRID)
+
     return {
         "radiative_transfer": {
             "fourier_order_cap": fast.fourier_order_cap,
@@ -267,8 +289,10 @@ def fast_mode_overrides() -> dict[str, dict[str, float | int | None]]:
 
 
 def build_summary(data: pd.DataFrame) -> dict[str, Any]:
+
     delta = paired_delta_frame(data)
     by_mode = {}
+
     for mode in MODE_LABELS:
         subset = data[data["mode"] == mode]
         by_mode[mode] = {
@@ -281,6 +305,7 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
                 subset["aerosol_mid_pressure_error_hpa"].abs()
             ),
         }
+
     return {
         "schema_version": 1,
         "canonical_command": CANONICAL_COMMAND,
@@ -315,33 +340,44 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
 
 
 def validate_summary(summary: dict[str, Any]) -> None:
+
     failures = []
+
     for mode in MODE_LABELS:
         payload = summary["by_mode"][mode]
+
         if int(payload["rows"]) != RUN_COUNT:
             failures.append(f"{mode} rows={payload['rows']} expected={RUN_COUNT}")
+
         if int(payload["converged"]) != RUN_COUNT:
             failures.append(f"{mode} converged={payload['converged']} expected={RUN_COUNT}")
+
     delta = summary["fast_minus_reference"]
     aod_delta = float(delta["aerosol_optical_depth_delta"]["max_abs"])
+
     if aod_delta > FAST_REFERENCE_MAX_ABS_AOD_DELTA:
         failures.append(
             f"fast-reference AOD max_abs_delta={aod_delta:.3e} "
             f"exceeds {FAST_REFERENCE_MAX_ABS_AOD_DELTA:.3e}"
         )
+
     pressure_delta = float(delta["aerosol_mid_pressure_delta_hpa"]["max_abs"])
+
     if pressure_delta > FAST_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA:
         failures.append(
             f"fast-reference pressure max_abs_delta={pressure_delta:.3e}hPa "
             f"exceeds {FAST_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA:.3e}hPa"
         )
+
     if failures:
         details = "; ".join(failures)
         raise SystemExit(f"fast-mode optimal-estimation validation failed: {details}")
 
 
 def fast_retrieved_rows(data: pd.DataFrame) -> pd.DataFrame:
+
     records = []
+
     for _, row in data.iterrows():
         records.append(
             {
@@ -363,11 +399,14 @@ def fast_retrieved_rows(data: pd.DataFrame) -> pd.DataFrame:
                 "retrieved": float(row["retrieved_aerosol_optical_depth"]),
             }
         )
+
     return pd.DataFrame.from_records(records)
 
 
 def fast_difference_rows(data: pd.DataFrame) -> pd.DataFrame:
+
     delta = paired_delta_frame(data)
+
     return pd.DataFrame.from_records(
         [
             {
@@ -389,14 +428,18 @@ def fast_difference_rows(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def signed(value: float, precision: str) -> str:
+
     if math.isnan(value):
         return "nan"
+
     return f"{value:+{precision}}"
 
 
 def difference_subtitle(values: pd.Series, precision: str, unit: str = "") -> str:
+
     stats_payload = stats(values)
     suffix = f" {unit}" if unit else ""
+
     return (
         f"median {signed(stats_payload['median'], precision)}{suffix}; "
         f"range {signed(stats_payload['min'], precision)} "
@@ -405,6 +448,7 @@ def difference_subtitle(values: pd.Series, precision: str, unit: str = "") -> st
 
 
 def _mode_color() -> alt.Color:
+
     return alt.Color(
         "mode_label:N",
         title=None,
@@ -416,6 +460,7 @@ def _mode_color() -> alt.Color:
 
 
 def _identity_line(lower: float, upper: float):
+
     return (
         alt.Chart(pd.DataFrame({"x": [lower, upper], "y": [lower, upper]}))
         .mark_line(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=0.9)
@@ -424,13 +469,16 @@ def _identity_line(lower: float, upper: float):
 
 
 def _extent(values: list[float]) -> tuple[float, float]:
+
     lower = float(min(values))
     upper = float(max(values))
     padding = float(max((upper - lower) * 0.05, np.finfo(np.float64).eps))
+
     return lower - padding, upper + padding
 
 
 def scatter_chart(data: pd.DataFrame, *, parameter: str, title: str):
+
     subset = data[data["parameter"] == parameter]
     lower, upper = _extent(
         subset["truth"].astype(float).to_list() + subset["retrieved"].astype(float).to_list()
@@ -455,6 +503,7 @@ def scatter_chart(data: pd.DataFrame, *, parameter: str, title: str):
             ],
         )
     )
+
     return alt.layer(_identity_line(lower, upper), points).properties(
         width=530, height=330, title=title
     )
@@ -468,6 +517,7 @@ def histogram_chart(
     subtitle: str,
     xlabel: str,
 ):
+
     subset = data[data["parameter"] == parameter]
     histogram = (
         alt.Chart(subset)
@@ -486,6 +536,7 @@ def histogram_chart(
         .mark_rule(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=1)
         .encode(x="zero:Q")
     )
+
     return alt.layer(histogram, zero).properties(
         width=530,
         height=300,
@@ -497,6 +548,7 @@ def create_paired_style_retrieved_fast_scatter(
     data: pd.DataFrame,
     output_path: Path,
 ) -> None:
+
     PLOT.prepare()
     retrieved = fast_retrieved_rows(data)
     differences = fast_difference_rows(data)
@@ -548,12 +600,15 @@ def create_paired_style_retrieved_fast_scatter(
 
 
 def paired_manifest_latency_stats() -> dict[str, dict[str, float]]:
+
     if not PAIRED_MANIFEST_PATH.exists():
         return {}
+
     import json
 
     payload = json.loads(PAIRED_MANIFEST_PATH.read_text())
     by_model = payload.get("by_model", {})
+
     return {
         "disamar_fortran": by_model.get("disamar_fortran", {}).get("retrieval_s", {}),
         "zdisamar": by_model.get("zdisamar", {}).get("retrieval_s", {}),
@@ -561,16 +616,20 @@ def paired_manifest_latency_stats() -> dict[str, dict[str, float]]:
 
 
 def create_latency_plot_with_fast(data: pd.DataFrame, output_path: Path) -> None:
+
     PLOT.prepare()
     stats_by_model = paired_manifest_latency_stats()
     stats_by_model["zdisamar_fast"] = stats_from_values(
         data[data["mode"] == "fast"]["retrieval_s"].to_list()
     )
     rows = []
+
     for model in ("disamar_fortran", "zdisamar", "zdisamar_fast"):
         payload = stats_by_model.get(model, {})
+
         if not payload:
             continue
+
         rows.append(
             {
                 "model": model,
@@ -581,6 +640,7 @@ def create_latency_plot_with_fast(data: pd.DataFrame, output_path: Path) -> None
                 "maximum": float(payload["max"]),
             }
         )
+
     frame = pd.DataFrame.from_records(rows)
     color = alt.Color(
         "model_label:N",
@@ -637,6 +697,7 @@ def create_latency_plot_with_fast(data: pd.DataFrame, output_path: Path) -> None
 
 
 def mode_subset(data: pd.DataFrame, mode: str) -> pd.DataFrame:
+
     return data[data["mode"] == mode].sort_values("scene")
 
 
@@ -650,6 +711,7 @@ def truth_chart(
     xlabel: str,
     ylabel: str,
 ):
+
     frame = data.copy()
     frame["lower"] = frame[retrieved_column] - frame[sigma_column]
     frame["upper"] = frame[retrieved_column] + frame[sigma_column]
@@ -681,6 +743,7 @@ def truth_chart(
             ],
         )
     )
+
     return alt.layer(_identity_line(lower, upper), error, points).properties(
         width=560, height=290, title=title
     )
@@ -694,6 +757,7 @@ def delta_chart(
     title: str,
     ylabel: str,
 ):
+
     frame = delta.copy()
     frame["lower"] = frame[value_column] - frame[sigma_column]
     frame["upper"] = frame[value_column] + frame[sigma_column]
@@ -724,6 +788,7 @@ def delta_chart(
             ],
         )
     )
+
     return alt.layer(zero, error, points).properties(width=560, height=250, title=title)
 
 
@@ -734,6 +799,7 @@ def timing_chart(
     title: str,
     ylabel: str,
 ):
+
     return (
         alt.Chart(data)
         .mark_bar(opacity=0.82)
@@ -753,6 +819,7 @@ def timing_chart(
 
 
 def create_plot(data: pd.DataFrame, output_path: Path) -> None:
+
     PLOT.prepare()
     delta = paired_delta_frame(data)
     chart = alt.vconcat(
@@ -824,6 +891,7 @@ def create_plot(data: pd.DataFrame, output_path: Path) -> None:
 
 
 def main() -> None:
+
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     rows = build_rows()
     data = pd.DataFrame.from_records(rows)

@@ -10,6 +10,7 @@ from typing import Any, cast
 
 
 def assert_import_laziness() -> None:
+
     import zdisamar as zd
 
     assert "numpy" not in sys.modules
@@ -29,6 +30,7 @@ def assert_import_laziness() -> None:
 
 
 def assert_plot_package_boundary() -> None:
+
     assert importlib.util.find_spec("zdisamar.plot") is not None
     assert "zdisamar.plot" not in sys.modules
 
@@ -41,6 +43,7 @@ def assert_plot_package_boundary() -> None:
 
 
 def assert_quantity_conversions() -> None:
+
     import numpy as np
     from zdisamar.quantities import (
         reflectance_from_radiance,
@@ -72,6 +75,7 @@ def assert_quantity_conversions() -> None:
 
 
 def assert_plot_jacobian_uses_shared_conversion() -> None:
+
     import numpy as np
     from zdisamar.plot.jacobian import jacobian_frame
     from zdisamar.quantities import reflectance_jacobian_from_radiance_jacobian
@@ -83,7 +87,9 @@ def assert_plot_jacobian_uses_shared_conversion() -> None:
         radiance_jacobian = np.array([[0.2], [0.3]], dtype=np.float64)
 
         def reflectance_jacobian(self, state: str):
+
             assert state == "aerosol_optical_depth"
+
             return reflectance_jacobian_from_radiance_jacobian(
                 self.radiance_jacobian[:, 0],
                 self.irradiance,
@@ -103,6 +109,7 @@ def assert_plot_jacobian_uses_shared_conversion() -> None:
 
 
 def assert_optimal_estimation_grid_mismatch_rejected() -> None:
+
     import numpy as np
     from zdisamar.inverse_method.optimal_estimation import (
         WavelengthGridMismatchError,
@@ -120,10 +127,12 @@ def assert_optimal_estimation_grid_mismatch_rejected() -> None:
         )
     except WavelengthGridMismatchError:
         return
+
     raise AssertionError("optimal-estimation wavelength grid mismatch was accepted")
 
 
 def assert_lazy_final_evaluation_preserves_session_library_path() -> None:
+
     import numpy as np
     from zdisamar.forward_model.prepared import O2AForwardSession
     from zdisamar.input.wavelength_band.o2a import O2AInput
@@ -138,21 +147,27 @@ def assert_lazy_final_evaluation_preserves_session_library_path() -> None:
     class SuppliedSession:
         @property
         def library_path(self) -> Path:
+
             return custom_library_path
 
     class FreshSession:
         @property
         def library_path(self) -> Path:
+
             return custom_library_path
 
         def __enter__(self):
+
             return self
 
         def __exit__(self, *_exc: object) -> None:
+
             return None
 
     def fake_o2a_forward_session(_template: object, library_path: object = None) -> FreshSession:
+
         calls.append(library_path)
+
         return FreshSession()
 
     def fake_evaluate(
@@ -160,13 +175,16 @@ def assert_lazy_final_evaluation_preserves_session_library_path() -> None:
         state: np.ndarray,
         state_vector: StateVector,
     ) -> ForwardEvaluation:
+
         _ = (state, state_vector)
         assert self._library_path == custom_library_path
         assert self._forward_session is not None
+
         return sentinel
 
     original_session = o2a_module.o2a_forward_session
     original_evaluate = o2a_module.O2AInverseForwardModel.evaluate
+
     try:
         cast(Any, o2a_module).o2a_forward_session = fake_o2a_forward_session
         cast(Any, o2a_module.O2AInverseForwardModel).evaluate = fake_evaluate
@@ -183,6 +201,7 @@ def assert_lazy_final_evaluation_preserves_session_library_path() -> None:
 
 
 def assert_optimal_estimation_result_compatibility() -> None:
+
     from dataclasses import fields
 
     import numpy as np
@@ -222,6 +241,7 @@ def assert_optimal_estimation_result_compatibility() -> None:
 
 
 def assert_session_library_path_mismatch_rejected() -> None:
+
     from zdisamar.forward_model.prepared import O2AForwardSession
     from zdisamar.input.wavelength_band.o2a import O2AInput
     from zdisamar.inverse_method.optimal_estimation import O2AInverseForwardModel
@@ -229,11 +249,13 @@ def assert_session_library_path_mismatch_rejected() -> None:
     class SuppliedSession:
         @property
         def library_path(self) -> Path:
+
             return Path("/tmp/custom/libzdisamar-a.dylib")
 
     class DefaultLibrarySession:
         @property
         def library_path(self) -> None:
+
             return None
 
     try:
@@ -255,10 +277,12 @@ def assert_session_library_path_mismatch_rejected() -> None:
         )
     except ValueError:
         return
+
     raise AssertionError("explicit library_path with default-library session was accepted")
 
 
 def assert_subclass_final_evaluation_is_preserved_eagerly() -> None:
+
     import numpy as np
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_module
     from zdisamar.inverse_method.optimal_estimation.forward_evaluation import ForwardEvaluation
@@ -270,12 +294,15 @@ def assert_subclass_final_evaluation_is_preserved_eagerly() -> None:
 
     class CustomModel:
         def evaluate(self, state: np.ndarray, state_vector: StateVector) -> ForwardEvaluation:
+
             nonlocal calls
             _ = (state, state_vector)
             calls += 1
+
             return sentinel
 
     def fake_retrieve(*_args: object, **_kwargs: object) -> Result:
+
         return Result(
             state_names=(),
             state=np.array([1.0], dtype=np.float64),
@@ -287,6 +314,7 @@ def assert_subclass_final_evaluation_is_preserved_eagerly() -> None:
         )
 
     original_retrieve = o2a_module.retrieve
+
     try:
         cast(Any, o2a_module).retrieve = fake_retrieve
         result = o2a_module._disamar_oe(
@@ -301,11 +329,13 @@ def assert_subclass_final_evaluation_is_preserved_eagerly() -> None:
 
 
 def assert_reference_data_and_native_table() -> None:
+
     import numpy as np
     import zdisamar as zd
 
     with tempfile.TemporaryDirectory() as tmpdir:
         old_cwd = Path.cwd()
+
         try:
             os.chdir(tmpdir)
             case = zd.o2a_disamar_reference_input()
@@ -353,14 +383,17 @@ def assert_reference_data_and_native_table() -> None:
                 case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
             )
             mutable_case = copy.deepcopy(case)
+
             with zd.o2a_forward_session() as session:
                 session.prepare(mutable_case)
                 mutable_case.geometry.solar_zenith_deg = 0.0
+
                 with session.forward_model() as spectrum:
                     assert spectrum.input is not None
                     assert (
                         spectrum.input.geometry.solar_zenith_deg == case.geometry.solar_zenith_deg
                     )
+
             with (
                 zd.prepare(case) as prepared,
                 prepared.atmosphere.budget(np.array([760.76], dtype=np.float64)) as budget,
@@ -377,6 +410,7 @@ def assert_reference_data_and_native_table() -> None:
                 rows = budget.to_rows()
                 assert len(rows) == budget.row_count
                 assert "support_row_kind_label" in rows[0]
+
                 with prepared.forward_model() as spectrum:
                     output = Path(tmpdir) / "reflectance"
                     chart = spectrum.plot.reflectance(save=output)
@@ -387,6 +421,7 @@ def assert_reference_data_and_native_table() -> None:
 
 
 def main() -> int:
+
     assert_import_laziness()
     assert_plot_package_boundary()
     assert_quantity_conversions()
@@ -398,6 +433,7 @@ def main() -> int:
     assert_subclass_final_evaluation_is_preserved_eagerly()
     assert_reference_data_and_native_table()
     print("python_package_refactor=ok")
+
     return 0
 
 

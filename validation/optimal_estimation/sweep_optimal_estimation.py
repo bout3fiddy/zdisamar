@@ -44,14 +44,17 @@ def retrieve_scene(
     truth: dict[str, float],
     initial: dict[str, float],
 ):
+
     with zd.prepare(case) as prepared:
         measurement = measurement_from_o2a_baseline_noise(prepared)
         profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+
     state_vector = oe_setup.aerosol_two_state_vector(
         initial=initial,
         profile=profile,
         surface_pressure_hpa=truth["surface_pressure_hpa"],
     )
+
     with zd.o2a_forward_session(case) as session:
         return o2a_oe.disamar_oe(
             inverse_model=o2a_oe.O2AInverseForwardModel(
@@ -65,12 +68,15 @@ def retrieve_scene(
 
 
 def percentile(values: list[float], q: float) -> float:
+
     if not values:
         return math.nan
+
     return float(np.percentile(np.asarray(values, dtype=np.float64), q))
 
 
 def stats(values: list[float]) -> dict[str, float]:
+
     return {
         "min": min(values) if values else math.nan,
         "median": statistics.median(values) if values else math.nan,
@@ -81,16 +87,19 @@ def stats(values: list[float]) -> dict[str, float]:
 
 
 def run_sweep() -> dict[str, Any]:
+
     base = build_o2a_case(zd, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
     rows: list[dict[str, Any]] = []
     start = time.perf_counter()
+
     for row in oe_cases.case_rows(count=RUN_COUNT):
         index = int(row["case"])
         truth = oe_cases.scene_from_row(row)
         case = oe_setup.build_scene(base, index=index, id_prefix="o2a_oe_sweep", scene=truth)
         initial = oe_cases.initial_from_row(row)
         run_start = time.perf_counter()
+
         try:
             result = retrieve_scene(case, truth, initial)
             retrieval_s = time.perf_counter() - run_start
@@ -105,6 +114,7 @@ def run_sweep() -> dict[str, Any]:
             retrieved_mid_pressure = math.nan
             status = "error"
             error = str(exc)
+
         row = {
             "index": index,
             "status": status,
@@ -196,33 +206,43 @@ def run_sweep() -> dict[str, Any]:
         )[:10],
     }
     write_outputs(rows, summary)
+
     return summary
 
 
 def write_outputs(rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
+
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
     with CSV_PATH.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
+
     write_json(SUMMARY_PATH, summary)
 
 
 def validate_sweep_success(summary: dict[str, Any]) -> list[str]:
+
     run_count = int(summary["run_count"])
     ok_count = int(summary["ok_count"])
     converged_count = int(summary["converged_count"])
     failures = []
+
     if ok_count != run_count:
         failures.append(f"{run_count - ok_count} retrievals returned error rows")
+
     if converged_count != run_count:
         failures.append(f"{run_count - converged_count} retrievals did not converge")
+
     return failures
 
 
 def main() -> int:
+
     if RUN_COUNT <= 0:
         raise ValueError("RUN_COUNT must be positive")
+
     summary = run_sweep()
     print("\nSweep summary:")
     print(f"  runs: {summary['run_count']}")
@@ -237,9 +257,12 @@ def main() -> int:
     print(f"  CSV: {stable_repo_path(CSV_PATH)}")
     print(f"  JSON: {stable_repo_path(SUMMARY_PATH)}")
     failures = validate_sweep_success(summary)
+
     if failures:
         print("; ".join(failures), file=sys.stderr)
+
         return 1
+
     return 0
 
 

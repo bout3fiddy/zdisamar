@@ -99,19 +99,23 @@ def retrieve_zdisamar(
     scene: dict[str, float],
     initial: dict[str, float],
 ) -> dict[str, Any]:
+
     base = build_o2a_case(zd, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
     case = oe_setup.build_scene(base, index=index, id_prefix="paired_oe", scene=scene, id_width=4)
     start = time.perf_counter()
+
     try:
         with zd.prepare(case) as prepared:
             measurement = measurement_from_o2a_baseline_noise(prepared)
             profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+
         state_vector = oe_setup.aerosol_two_state_vector(
             initial=initial,
             profile=profile,
             surface_pressure_hpa=scene["surface_pressure_hpa"],
         )
+
         with zd.o2a_forward_session(case) as session:
             result = o2a_oe.disamar_oe(
                 inverse_model=o2a_oe.O2AInverseForwardModel(
@@ -122,8 +126,10 @@ def retrieve_zdisamar(
                 state_vector=state_vector,
                 controls=oe_setup.retrieval_controls(),
             )
+
         retrieved_aod = result.value("aerosol_optical_depth")
         retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
+
         return {
             "model": "zdisamar",
             "status": "ok",
@@ -148,18 +154,22 @@ def retrieve_zdisamar(
 
 
 def config_line(key: str, values: str) -> str:
+
     return f"{key:<32} {values}\n"
 
 
 def render_disamar_config(scene: dict[str, float], initial: dict[str, float]) -> str:
+
     truth_top, truth_bottom = oe_setup.layer_bounds(scene["aerosol_mid_pressure_hpa"])
     initial_top, initial_bottom = oe_setup.layer_bounds(initial["aerosol_mid_pressure_hpa"])
     lines = DISAMAR_TEMPLATE.read_text().splitlines(keepends=True)
     rendered: list[str] = []
     section = ""
     subsection = ""
+
     for line in lines:
         stripped = line.strip()
+
         if stripped.startswith("SECTION "):
             section = stripped.split(maxsplit=2)[1]
             subsection = ""
@@ -167,6 +177,7 @@ def render_disamar_config(scene: dict[str, float], initial: dict[str, float]) ->
             subsection = stripped.split(maxsplit=2)[1]
 
         key = stripped.split(maxsplit=1)[0] if stripped and not stripped.startswith("#") else ""
+
         if section == "GENERAL" and key == "simulationOnly":
             rendered.append(config_line(key, "0"))
         elif section == "INSTRUMENT" and key == "wavelength_start":
@@ -243,16 +254,22 @@ def render_disamar_config(scene: dict[str, float], initial: dict[str, float]) ->
             rendered.append(config_line(key, f"2 {oe_baseline.AEROSOL_ASYMMETRY_FACTOR:.10f}"))
         else:
             rendered.append(line)
+
     return "".join(rendered)
 
 
 def parse_scalar(text: str, name: str, default: ScalarValue = math.nan) -> ScalarValue:
+
     match = re.search(rf"^{re.escape(name)}\s*=\s*(.+?)\s*$", text, re.MULTILINE)
+
     if not match:
         return default
+
     value = match.group(1).strip()
+
     if value.lower() in {"true", "false"}:
         return value.lower() == "true"
+
     try:
         return int(value)
     except ValueError:
@@ -263,27 +280,37 @@ def parse_scalar(text: str, name: str, default: ScalarValue = math.nan) -> Scala
 
 
 def parse_array(text: str, name: str) -> list[float]:
+
     begin = re.search(rf"BeginArray\({re.escape(name)},\s*float64\)", text)
+
     if not begin:
         raise ValueError(f"missing DISAMAR asciiHDF array {name}")
+
     end = text.find("EndArray", begin.end())
+
     if end == -1:
         raise ValueError(f"unterminated DISAMAR asciiHDF array {name}")
+
     body = text[begin.end() : end]
     size_match = re.search(r"Size\s*=([^\n]+)\n", body)
+
     if not size_match:
         raise ValueError(f"missing Size for DISAMAR asciiHDF array {name}")
+
     declared_size = [int(token) for token in re.findall(r"\d+", size_match.group(1))]
     expected_count = math.prod(declared_size)
     values_text = body[size_match.end() :]
     values: list[float] = []
+
     for token in FLOAT_TOKEN_PATTERN.findall(values_text):
         values.append(float(token.replace("D", "E").replace("d", "E")))
+
     if len(values) != expected_count:
         raise ValueError(
             f"DISAMAR asciiHDF array {name} declared {expected_count} values "
             f"but parsed {len(values)}"
         )
+
     return values
 
 
@@ -293,14 +320,18 @@ def retrieve_disamar_fortran(
     scene: dict[str, float],
     initial: dict[str, float],
 ) -> dict[str, Any]:
+
     case_dir = FORTRAN_CASES_DIR / f"case_{index:04d}"
+
     if case_dir.exists():
         shutil.rmtree(case_dir)
+
     case_dir.mkdir(parents=True)
     (case_dir / "Config.in").write_text(render_disamar_config(scene, initial))
     (case_dir / "RefSpec").symlink_to(DISAMAR_REFSPEC, target_is_directory=True)
     start = time.perf_counter()
     log_path = case_dir / "disamar.stdout.log"
+
     try:
         with log_path.open("w") as log_file:
             subprocess.run(
@@ -311,12 +342,14 @@ def retrieve_disamar_fortran(
                 check=True,
                 timeout=DISAMAR_CASE_TIMEOUT_S,
             )
+
         retrieval_s = time.perf_counter() - start
         ascii_hdf = (case_dir / "disamar.asciiHDF").read_text()
         aod = parse_array(ascii_hdf, "aerosol_tau")
         top_pressure = parse_array(ascii_hdf, "fit_interval_top_pressure")
         base_pressure = parse_array(ascii_hdf, "fit_interval_base_pressure")
         retrieved_mid_pressure = 0.5 * (top_pressure[2] + base_pressure[2])
+
         return {
             "model": "disamar_fortran",
             "status": "ok",
@@ -341,6 +374,7 @@ def retrieve_disamar_fortran(
 
 
 def row_path(index: int, model: str) -> Path:
+
     return ROWS_DIR / model / f"case_{index:04d}.parquet"
 
 
@@ -350,6 +384,7 @@ def add_common_fields(
     initial: dict[str, float],
     result: dict[str, Any],
 ) -> dict[str, Any]:
+
     row = {
         "case": index,
         **scene,
@@ -365,39 +400,49 @@ def add_common_fields(
     )
     row["aerosol_optical_depth_abs_error"] = abs(row["aerosol_optical_depth_error"])
     row["aerosol_mid_pressure_abs_error_hpa"] = abs(row["aerosol_mid_pressure_error_hpa"])
+
     return row
 
 
 def case_initial(index: int, scene: dict[str, float]) -> dict[str, float]:
+
     return oe_cases.initial_state(index, scene)
 
 
 def run_model_case(task: tuple[str, int, dict[str, float]]) -> dict[str, Any]:
+
     model, index, scene = task
     initial = case_initial(index, scene)
+
     if model == "zdisamar":
         result = retrieve_zdisamar(index=index, scene=scene, initial=initial)
     elif model == "disamar_fortran":
         result = retrieve_disamar_fortran(index=index, scene=scene, initial=initial)
     else:
         raise ValueError(f"unknown model {model}")
+
     return add_common_fields(index, scene, initial, result)
 
 
 def run_case(index: int, scene: dict[str, float]) -> list[dict[str, Any]]:
+
     initial = case_initial(index, scene)
     rows: list[dict[str, Any]] = []
+
     for result in (
         retrieve_zdisamar(index=index, scene=scene, initial=initial),
         retrieve_disamar_fortran(index=index, scene=scene, initial=initial),
     ):
         rows.append(add_common_fields(index, scene, initial, result))
+
     return rows
 
 
 def model_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+
     frame = pl.DataFrame(rows)
     summaries: dict[str, Any] = {}
+
     for model in sorted(frame["model"].unique().to_list()):
         subset = frame.filter(pl.col("model") == model)
         ok = subset.filter(pl.col("status") == "ok")
@@ -425,42 +470,55 @@ def model_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 else math.nan
             ),
         }
+
     return summaries
 
 
 def scene_rows() -> list[dict[str, Any]]:
+
     return oe_cases.case_rows(count=RUN_COUNT)
 
 
 def write_row(row: dict[str, Any]) -> None:
+
     path = row_path(int(row["case"]), str(row["model"]))
     path.parent.mkdir(parents=True, exist_ok=True)
     pl.DataFrame([row]).write_parquet(path)
 
 
 def load_completed_rows() -> list[dict[str, Any]]:
+
     paths = sorted(ROWS_DIR.glob("*/*.parquet"))
+
     if not paths:
         return []
+
     return pl.concat([pl.read_parquet(path) for path in paths], how="diagonal_relaxed").to_dicts()
 
 
 def bootstrap_row_shards() -> None:
+
     if any(ROWS_DIR.glob("*/*.parquet")) or not PARQUET_PATH.exists():
         return
+
     frame = pl.read_parquet(PARQUET_PATH)
+
     if frame.is_empty():
         return
+
     for row in frame.to_dicts():
         if "aerosol_optical_depth_error" not in row:
             row["aerosol_optical_depth_error"] = (
                 row["retrieved_aerosol_optical_depth"] - row["aerosol_optical_depth"]
             )
+
         if "aerosol_mid_pressure_error_hpa" not in row:
             row["aerosol_mid_pressure_error_hpa"] = (
                 row["retrieved_aerosol_mid_pressure_hpa"] - row["aerosol_mid_pressure_hpa"]
             )
+
         write_row(row)
+
     print(
         f"seeded {frame.height} resumable row shard(s) from {stable_repo_path(PARQUET_PATH)}",
         flush=True,
@@ -468,6 +526,7 @@ def bootstrap_row_shards() -> None:
 
 
 def run_model(model: str, scenes: list[dict[str, float]], workers: int) -> None:
+
     indexed_scenes = list(enumerate(scenes, start=1))
     run_model_indexed(model, indexed_scenes, workers)
 
@@ -477,21 +536,26 @@ def run_model_indexed(
     indexed_scenes: list[tuple[int, dict[str, float]]],
     workers: int,
 ) -> None:
+
     pending: list[tuple[str, int, dict[str, float]]] = []
+
     for index, scene in indexed_scenes:
         if not row_path(index, model).exists():
             pending.append((model, index, scene))
 
     if not pending:
         print(f"{model}: all {len(indexed_scenes)} rows already exist", flush=True)
+
         return
 
     print(
         f"{model}: running {len(pending)} missing rows with {workers} worker(s)",
         flush=True,
     )
+
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(run_model_case, task) for task in pending]
+
         for future in as_completed(futures):
             row = future.result()
             write_row(row)
@@ -506,11 +570,14 @@ def run_model_indexed(
 
 
 def write_merged_outputs(start: float) -> dict[str, Any]:
+
     rows = load_completed_rows()
+
     if rows:
         frame = pl.DataFrame(rows)
         frame = frame.sort(["case", "model"])
         frame.write_parquet(PARQUET_PATH)
+
     summary = {
         "run_count": RUN_COUNT,
         "rng_seed": RNG_SEED,
@@ -531,34 +598,42 @@ def write_merged_outputs(start: float) -> dict[str, Any]:
         "model_summary": model_summary(rows) if rows else {},
     }
     write_json(SUMMARY_PATH, summary)
+
     return summary
 
 
 def paired_frame() -> pl.DataFrame:
+
     if not PARQUET_PATH.exists():
         raise SystemExit(
             f"missing paired retrieval parquet: {stable_repo_path(PARQUET_PATH)}; "
             "run this script to generate the paired retrieval rows first"
         )
+
     frame = pl.read_parquet(PARQUET_PATH)
+
     if frame.is_empty():
         raise SystemExit(f"paired retrieval parquet is empty: {stable_repo_path(PARQUET_PATH)}")
+
     if "aerosol_optical_depth_error" not in frame.columns:
         frame = frame.with_columns(
             (pl.col("retrieved_aerosol_optical_depth") - pl.col("aerosol_optical_depth")).alias(
                 "aerosol_optical_depth_error"
             ),
         )
+
     if "aerosol_mid_pressure_error_hpa" not in frame.columns:
         frame = frame.with_columns(
             (
                 pl.col("retrieved_aerosol_mid_pressure_hpa") - pl.col("aerosol_mid_pressure_hpa")
             ).alias("aerosol_mid_pressure_error_hpa"),
         )
+
     return frame.with_columns(pl.col("model").replace(MODEL_LABELS).alias("model_label"))
 
 
 def paired_difference_rows(frame: pl.DataFrame) -> pl.DataFrame:
+
     ok = frame.filter(pl.col("status") == "ok")
     wide = ok.pivot(
         "model",
@@ -584,13 +659,17 @@ def paired_difference_rows(frame: pl.DataFrame) -> pl.DataFrame:
             - pl.col("retrieved_aerosol_mid_pressure_hpa_disamar_fortran")
         ).alias("difference"),
     )
+
     return pl.concat([aod, pressure])
 
 
 def plot_stats(values: list[float]) -> dict[str, float]:
+
     if not values:
         return {"min": math.nan, "median": math.nan, "mean": math.nan, "max": math.nan}
+
     series = pl.Series(values)
+
     return {
         "min": float(cast(float, series.min())),
         "median": float(cast(float, series.median())),
@@ -600,7 +679,9 @@ def plot_stats(values: list[float]) -> dict[str, float]:
 
 
 def paired_difference_stats(frame: pl.DataFrame) -> dict[str, dict[str, float]]:
+
     data = paired_difference_rows(frame)
+
     return {
         "aerosol_optical_depth": plot_stats(
             data.filter(pl.col("parameter") == "Aerosol optical depth")["difference"].to_list()
@@ -612,13 +693,17 @@ def paired_difference_stats(frame: pl.DataFrame) -> dict[str, dict[str, float]]:
 
 
 def signed(value: float, precision: str) -> str:
+
     if math.isnan(value):
         return "nan"
+
     return f"{value:+{precision}}"
 
 
 def difference_subtitle(stats_payload: dict[str, float], precision: str, unit: str = "") -> str:
+
     suffix = f" {unit}" if unit else ""
+
     return (
         f"median {signed(stats_payload['median'], precision)}{suffix}; "
         f"range {signed(stats_payload['min'], precision)} "
@@ -627,6 +712,7 @@ def difference_subtitle(stats_payload: dict[str, float], precision: str, unit: s
 
 
 def _model_color() -> alt.Color:
+
     return alt.Color(
         "model_label:N",
         title=None,
@@ -638,13 +724,16 @@ def _model_color() -> alt.Color:
 
 
 def _extent(values: list[float]) -> tuple[float, float]:
+
     lower = float(min(values))
     upper = float(max(values))
     padding = max((upper - lower) * 0.04, 1.0e-12)
+
     return lower - padding, upper + padding
 
 
 def _identity_line(lower: float, upper: float):
+
     return (
         alt.Chart(pd.DataFrame({"x": [lower, upper], "y": [lower, upper]}))
         .mark_line(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=1)
@@ -660,6 +749,7 @@ def scatter_chart(
     retrieved_field: str,
     title: str,
 ):
+
     subset = rows.filter(pl.col("parameter") == parameter)
     data = pd.DataFrame(subset.to_dicts())
     lower, upper = _extent(
@@ -692,6 +782,7 @@ def scatter_chart(
             ],
         )
     )
+
     return alt.layer(_identity_line(lower, upper), points).properties(
         width=530, height=330, title=title
     )
@@ -705,6 +796,7 @@ def histogram_chart(
     subtitle: str,
     xlabel: str,
 ):
+
     subset = rows.filter(pl.col("parameter") == parameter)
     data = pd.DataFrame(subset.to_dicts())
     histogram = (
@@ -724,6 +816,7 @@ def histogram_chart(
         .mark_rule(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=1)
         .encode(x="zero:Q")
     )
+
     return alt.layer(histogram, zero).properties(
         width=530,
         height=300,
@@ -732,6 +825,7 @@ def histogram_chart(
 
 
 def save_retrieved_plot(frame: pl.DataFrame) -> None:
+
     PLOT.prepare()
     ok = frame.filter(pl.col("status") == "ok")
     aod = ok.select(
@@ -804,10 +898,12 @@ def save_retrieved_plot(frame: pl.DataFrame) -> None:
 
 
 def save_error_histograms(frame: pl.DataFrame) -> None:
+
     PLOT.prepare()
     ok = frame.filter(pl.col("status") == "ok")
     data = pd.DataFrame(ok.to_dicts())
     charts = []
+
     for column, title, xlabel in (
         ("aerosol_optical_depth_error", "Aerosol optical depth", "Retrieved AOD - true AOD"),
         (
@@ -830,18 +926,23 @@ def save_error_histograms(frame: pl.DataFrame) -> None:
             )
             .properties(width=520, height=320, title=title)
         )
+
     chart = alt.hconcat(*charts, spacing=32).properties(title="Retrieval Error Histograms")
     PLOT.save(chart, ERROR_HISTOGRAM_PATH)
 
 
 def save_latency_plot(frame: pl.DataFrame) -> None:
+
     PLOT.prepare()
     ok = frame.filter(pl.col("status") == "ok")
     rows: list[dict[str, float | str]] = []
+
     for model in ("disamar_fortran", "zdisamar"):
         model_rows = ok.filter(pl.col("model") == model)
+
         if model_rows.is_empty():
             continue
+
         stats_payload = plot_stats(model_rows["retrieval_s"].to_list())
         rows.append(
             {
@@ -853,7 +954,9 @@ def save_latency_plot(frame: pl.DataFrame) -> None:
                 "maximum": stats_payload["max"],
             }
         )
+
     fast_stats = fast_mode_latency_stats()
+
     if fast_stats:
         rows.append(
             {
@@ -865,6 +968,7 @@ def save_latency_plot(frame: pl.DataFrame) -> None:
                 "maximum": fast_stats["max"],
             }
         )
+
     data = pd.DataFrame.from_records(rows)
     color = alt.Color(
         "model_label:N",
@@ -918,12 +1022,16 @@ def save_latency_plot(frame: pl.DataFrame) -> None:
 
 
 def fast_mode_latency_stats() -> dict[str, float] | None:
+
     if not FAST_MODE_SUMMARY_PATH.exists():
         return None
+
     payload = json.loads(FAST_MODE_SUMMARY_PATH.read_text())
     stats_payload = payload.get("by_mode", {}).get("fast", {}).get("retrieval_s")
+
     if not isinstance(stats_payload, dict):
         return None
+
     return {
         "min": float(stats_payload["min"]),
         "median": float(stats_payload["median"]),
@@ -933,8 +1041,10 @@ def fast_mode_latency_stats() -> dict[str, float] | None:
 
 
 def paired_plot_manifest(frame: pl.DataFrame) -> dict[str, Any]:
+
     ok = frame.filter(pl.col("status") == "ok")
     by_model: dict[str, Any] = {}
+
     for model in sorted(frame["model"].unique().to_list()):
         subset = frame.filter(pl.col("model") == model)
         ok_subset = subset.filter(pl.col("status") == "ok")
@@ -948,6 +1058,7 @@ def paired_plot_manifest(frame: pl.DataFrame) -> dict[str, Any]:
                 ok_subset["aerosol_mid_pressure_abs_error_hpa"].to_list()
             ),
         }
+
     return {
         "source_data": PARQUET_PATH.relative_to(REPO_ROOT).as_posix(),
         "source_rows": frame.height,
@@ -964,6 +1075,7 @@ def paired_plot_manifest(frame: pl.DataFrame) -> dict[str, Any]:
 
 
 def write_paired_plot_outputs() -> None:
+
     TRACKED_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     frame = paired_frame()
     save_retrieved_plot(frame)
@@ -973,8 +1085,10 @@ def write_paired_plot_outputs() -> None:
 
 
 def main() -> None:
+
     if not DISAMAR_EXE.exists():
         raise SystemExit(f"missing DISAMAR executable: {stable_repo_path(DISAMAR_EXE)}")
+
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     start = time.perf_counter()
     scenes_with_initial = scene_rows()
@@ -983,6 +1097,7 @@ def main() -> None:
     scenes = [oe_cases.scene_from_row(row) for row in scenes_with_initial]
 
     indexed_scenes = list(enumerate(scenes, start=1))
+
     for batch_start in range(0, len(indexed_scenes), BATCH_SIZE):
         batch = indexed_scenes[batch_start : batch_start + BATCH_SIZE]
         batch_label = f"{batch[0][0]:04d}-{batch[-1][0]:04d}" if batch else f"{batch_start + 1:04d}"
@@ -999,8 +1114,10 @@ def main() -> None:
     print(f"  rows: {stable_repo_path(PARQUET_PATH)}")
     print(f"  summary: {stable_repo_path(SUMMARY_PATH)}")
     print(f"  wall_s: {summary['wall_s']:.3f}")
+
     for model, payload in summary["model_summary"].items():
         print(f"  {model}: {payload}")
+
     write_paired_plot_outputs()
     print(f"  plots: {stable_repo_path(MANIFEST_PATH)}")
 

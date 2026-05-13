@@ -45,6 +45,12 @@ repos:
         language: pygrep
         files: '\.(py|ipynb)$'
 
+      - id: python-control-spacing
+        name: python control-flow spacing
+        entry: uv run scripts/linting/check-python-control-spacing.py
+        language: system
+        files: '\.py$'
+
       - id: basedpyright
         name: basedpyright
         entry: uv run --group dev basedpyright

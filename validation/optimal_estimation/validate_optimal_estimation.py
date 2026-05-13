@@ -48,7 +48,9 @@ def build_measurement(
     # only sees this spectrum plus retained O2 A baseline covariance, so a wrong
     # retrieval trajectory cannot be excused by regenerating the target at each
     # state.
+
     _ = reference
+
     with zd.prepare(case) as prepared:
         return measurement_from_o2a_baseline_noise(prepared)
 
@@ -59,10 +61,12 @@ def run_retrieval(
     measurement: optimal_estimation.Measurement,
     forward_session: zd.O2AForwardSession | None = None,
 ) -> optimal_estimation.Result:
+
     inverse_model = optimal_estimation.O2AInverseForwardModel(
         case,
         forward_session=forward_session,
     )
+
     return optimal_estimation.disamar_oe(
         inverse_model=inverse_model,
         measurement=measurement,
@@ -74,6 +78,7 @@ def run_retrieval(
 def iteration_records(
     result: optimal_estimation.Result,
 ) -> list[dict[str, float | int | bool | None]]:
+
     return [
         {
             "index": iteration.index,
@@ -92,9 +97,11 @@ def build_retrieved_state(
     result: optimal_estimation.Result,
     layer_thickness: float,
 ) -> dict[str, float]:
+
     mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
     top_pressure = mid_pressure - 0.5 * layer_thickness
     bottom_pressure = mid_pressure + 0.5 * layer_thickness
+
     return {
         "aerosol_optical_depth": result.value("aerosol_optical_depth"),
         "aerosol_layer_top_pressure_hpa": top_pressure,
@@ -108,13 +115,17 @@ def iteration_matches(
     result_iterations: list[JsonObject],
     tolerances: JsonObject,
 ) -> bool:
+
     if len(reference_iterations) != len(result_iterations):
         return False
+
     state_tolerances = tolerances["iteration_state_abs"]
     diagnostic_tolerances = tolerances.get("iteration_diagnostic_abs", {})
+
     for expected, actual in zip(reference_iterations, result_iterations, strict=True):
         if int(expected["index"]) != int(actual["index"]):
             return False
+
         if not compare_scalar(
             "iteration.aerosol_optical_depth",
             float(actual["aerosol_optical_depth"]),
@@ -122,8 +133,10 @@ def iteration_matches(
             tolerance=float(state_tolerances["aerosol_optical_depth"]),
         ).passed:
             return False
+
         if "aerosol_layer_mid_pressure_hpa" not in expected:
             return False
+
         if not compare_scalar(
             "iteration.aerosol_layer_mid_pressure_hpa",
             float(actual["aerosol_layer_mid_pressure_hpa"]),
@@ -131,6 +144,7 @@ def iteration_matches(
             tolerance=float(state_tolerances["aerosol_layer_mid_pressure_hpa"]),
         ).passed:
             return False
+
         if "state_vector_convergence" in expected:
             convergence_match = compare_scalar(
                 "iteration.state_vector_convergence",
@@ -138,10 +152,13 @@ def iteration_matches(
                 float(expected["state_vector_convergence"]),
                 tolerance=float(diagnostic_tolerances["state_vector_convergence"]),
             )
+
             if not convergence_match.passed:
                 return False
+
         if "snr_normal" in expected and bool(actual["snr_normal"]) != bool(expected["snr_normal"]):
             return False
+
     return True
 
 
@@ -150,11 +167,14 @@ def diagnostics_match(
     result: optimal_estimation.Result,
     tolerances: JsonObject,
 ) -> bool:
+
     if "disamar" not in reference or not result.history:
         return True
+
     expected = reference["disamar"]
     actual = result.history[-1]
     diagnostic_tolerances = tolerances["final_diagnostic_abs"]
+
     return (
         compare_scalar(
             "final.state_vector_convergence",
@@ -182,9 +202,11 @@ def timing_report(
     phase_timings: dict[str, float],
     result: optimal_estimation.Result,
 ) -> JsonObject:
+
     forward_model_and_jacobian_s = sum(
         timing.forward_model_and_jacobian_s for timing in result.timing
     )
+
     return {
         "phases_s": phase_timings,
         "retrieval": {
@@ -208,6 +230,7 @@ def timing_report(
 
 
 def print_retrieval_timing(report: JsonObject) -> None:
+
     retrieval = report["retrieval"]
     print("Fast session-backed retrieval timing:")
     print(
@@ -229,6 +252,7 @@ def build_summary(
     result: optimal_estimation.Result,
     layer_thickness: float,
 ) -> JsonObject:
+
     retrieved = reference.get("truth", reference["retrieved"])
     tolerances = reference["tolerances"]
     retrieved_state = build_retrieved_state(result, layer_thickness)
@@ -311,6 +335,7 @@ def build_summary(
 
 
 def main() -> int:
+
     with PhaseTimer() as timer:
         reference = timer.run("load_reference_s", lambda: json.loads(REFERENCE_PATH.read_text()))
         case = timer.run("build_case_s", lambda: build_o2a_case(zd, jacobian_reference_layer=True))
@@ -329,6 +354,7 @@ def main() -> int:
         )
         measurement = timer.run("build_measurement_s", build_measurement, case, reference)
         session = timer.run("session_create_s", zd.o2a_forward_session, case)
+
         try:
             result = timer.run(
                 "retrieval_s",
@@ -340,18 +366,23 @@ def main() -> int:
             )
         finally:
             session.close()
+
         layer_thickness = (
             case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
         )
         summary = timer.run("build_summary_s", build_summary, reference, result, layer_thickness)
         timer.run("write_summary_s", write_json, SUMMARY_PATH, summary)
+
     phase_timings = timer.finish()
     timing = timing_report(phase_timings, result)
     write_json(TIMING_PATH, timing)
     print_retrieval_timing(timing)
+
     if not summary["passes_two_state_truth"]:
         print(json.dumps(summary, indent=2, sort_keys=True), file=sys.stderr)
+
         return 1
+
     return 0
 
 

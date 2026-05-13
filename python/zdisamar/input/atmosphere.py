@@ -20,6 +20,7 @@ class VerticalInterval:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VerticalInterval:
+
         return cls(
             index_1based=int(data["index_1based"]),
             top_pressure_hpa=to_float(data["top_pressure_hpa"]),
@@ -32,6 +33,7 @@ class VerticalInterval:
         )
 
     def to_dict(self) -> dict[str, float | int]:
+
         return {
             "index_1based": self.index_1based,
             "top_pressure_hpa": self.top_pressure_hpa,
@@ -53,6 +55,7 @@ class Atmosphere:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Atmosphere:
+
         return cls(
             layer_count=int(data["layer_count"]),
             sublayer_divisions=int(data["sublayer_divisions"]),

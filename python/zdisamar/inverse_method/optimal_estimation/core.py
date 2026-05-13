@@ -137,10 +137,13 @@ def retrieve(
         x = iteration_update.state
         history.append(iteration_update.history_entry)
         iteration_timer.stop_solver()
+
         if controls.collect_timing:
             timing.append(iteration_timer.finish())
+
         final_posterior_precision = iteration_update.posterior_precision
         final_jacobian = iteration_update.jacobian
+
         if iteration_update.converged:
             converged = True
             break
@@ -174,7 +177,9 @@ def evaluate_iteration(
     # The expensive part of optimal estimation is here: every iteration asks
     # the forward model for both F(x_i) and K_i. `prior` is not used to generate
     # this spectrum unless the caller deliberately chose `initial == prior`.
+
     evaluation = iteration_timer.forward(lambda state=previous: forward_model(state))
+
     return IterationForward(previous=previous, evaluation=evaluation)
 
 
@@ -183,6 +188,7 @@ def prepare_iteration_evaluation(
     measured: MeasurementArrays,
     state_count: int,
 ) -> IterationEvaluation:
+
     evaluation = iteration_forward.evaluation
     require_matching_wavelength_grid(
         measured.wavelength_nm,
@@ -192,8 +198,10 @@ def prepare_iteration_evaluation(
     )
     reflectance = np.asarray(evaluation.reflectance, dtype=np.float64)
     jacobian = np.asarray(evaluation.reflectance_jacobian, dtype=np.float64)
+
     if jacobian.shape != (measured.wavelength_nm.size, state_count):
         raise ValueError("forward evaluation Jacobian shape does not match retrieval state")
+
     return IterationEvaluation(
         previous=iteration_forward.previous,
         evaluation=evaluation,
@@ -215,6 +223,7 @@ def solve_iteration(
     # The retrieval loop owns the expensive model evaluation and bookkeeping,
     # while the covariance-space and Gauss-Newton modules own the math that can
     # be swapped for LM or other inverse-method experiments.
+
     covariance_space = build_covariance_space_from_workspace(
         workspace=workspace,
         previous=iteration_evaluation.previous,
@@ -237,6 +246,7 @@ def solve_iteration(
     # signal-to-noise step. Without the second condition an artificially reduced
     # spectral signal could make a too-large proposed move look harmless.
     converged = state_conv < controls.state_vector_convergence_threshold and step.snr_normal
+
     return IterationUpdate(
         state=state,
         history_entry=Iteration(
@@ -259,9 +269,11 @@ def final_posterior_products(
     jacobian: np.ndarray,
     measurement_variance: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
+
     diagnostics = final_diagnostics(
         posterior_precision=posterior_precision,
         jacobian=jacobian,
         measurement_variance=measurement_variance,
     )
+
     return diagnostics.posterior_covariance, diagnostics.averaging_kernel

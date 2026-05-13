@@ -4,10 +4,12 @@ O2A_REFERENCE_CSV = "data/reference_data/validation/o2a_with_cia_disamar_referen
 
 
 def asset(zd, id: str, path: str, format: str):
+
     return zd.ReferenceAsset(id=id, path=path, format=format)
 
 
 def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
+
     aerosol_top_pressure_hpa = 875.0 if jacobian_reference_layer else 500.0
     aerosol_bottom_pressure_hpa = 925.0 if jacobian_reference_layer else 520.0
     viewing_zenith_deg = 0.0 if jacobian_reference_layer else 30.0
@@ -15,6 +17,7 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
     aerosol_interval_divisions = 2 if jacobian_reference_layer else 6
     lower_interval_divisions = 4 if jacobian_reference_layer else 8
     performance_thresholds = zd.RadiativeTransferPerformanceThresholds.o2a_default()
+
     if jacobian_reference_layer:
         performance_thresholds.phase_function_truncation_threshold = 1.0e-6
 
@@ -174,10 +177,12 @@ def build_o2a_case(zd, *, jacobian_reference_layer: bool = False):
 
 
 def build_o2a_jacobian_case(zd):
+
     case = build_o2a_case(zd, jacobian_reference_layer=True)
     case.metadata["id"] = "disamar_reference_o2a_jacobian_validation"
     case.metadata["storage"] = "disamar-reference-o2a-jacobian-validation"
     case.metadata["description"] = "Hardcoded DISAMAR O2 A Jacobian validation case."
     case.scene_id = "o2a_disamar_reference_jacobian_validation"
     case.instrument_response.instrument_name = "disamar-o2a-jacobian-validation"
+
     return case

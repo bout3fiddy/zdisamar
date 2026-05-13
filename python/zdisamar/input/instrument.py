@@ -14,6 +14,7 @@ class SpectralGrid:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SpectralGrid:
+
         return cls(
             start_nm=to_float(data["start_nm"]),
             end_nm=to_float(data["end_nm"]),
@@ -21,6 +22,7 @@ class SpectralGrid:
         )
 
     def to_dict(self) -> dict[str, float | int]:
+
         return {
             "start_nm": self.start_nm,
             "end_nm": self.end_nm,
@@ -43,6 +45,7 @@ class InstrumentResponse:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InstrumentResponse:
+
         return cls(
             instrument_name=str(data["instrument_name"]),
             regime=str(data["regime"]),
@@ -59,6 +62,7 @@ class InstrumentResponse:
         )
 
     def to_dict(self) -> dict[str, float | str | dict[str, int]]:
+
         return {
             "instrument_name": self.instrument_name,
             "regime": self.regime,
