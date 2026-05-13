@@ -77,16 +77,19 @@ WAVELENGTH_STEP_NM = oe_baseline.WAVELENGTH_STEP_NM
 DISAMAR_PRESSURE_PRIOR_VARIANCE = 150.0**2
 DISAMAR_CASE_TIMEOUT_S = 5400.0
 FLOAT_TOKEN_PATTERN = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EDed][+-]?\d+)?")
-MODEL_LABELS = {
+PAIRED_MODEL_LABELS = {
     "disamar_fortran": "DISAMAR Fortran",
     "zdisamar": "zdisamar",
+}
+MODEL_LABELS = {
+    **PAIRED_MODEL_LABELS,
     "zdisamar_fast": "zdisamar-fast",
 }
-MODEL_COLORS = [PLOT.colors["blue"], PLOT.colors["orange"], PLOT.colors["red"]]
+PAIRED_MODEL_COLORS = [PLOT.colors["blue"], PLOT.colors["orange"]]
+MODEL_COLORS = [*PAIRED_MODEL_COLORS, PLOT.colors["red"]]
 MODEL_MARKERS = {
     "DISAMAR Fortran": "circle",
     "zdisamar": "cross",
-    "zdisamar-fast": "square",
 }
 
 
@@ -627,7 +630,10 @@ def _model_color() -> alt.Color:
     return alt.Color(
         "model_label:N",
         title=None,
-        scale=alt.Scale(domain=list(MODEL_LABELS.values()), range=MODEL_COLORS),
+        scale=alt.Scale(
+            domain=list(PAIRED_MODEL_LABELS.values()),
+            range=PAIRED_MODEL_COLORS,
+        ),
     )
 
 
