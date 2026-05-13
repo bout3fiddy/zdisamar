@@ -1,6 +1,6 @@
 """Functional RTM execution helpers."""
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from ..bindings.handles import RtmHandle
@@ -9,7 +9,7 @@ from .session_cache import SessionCache
 
 
 @contextmanager
-def _temporary_cache(case: O2AInput) -> Iterator[SessionCache]:
+def _temporary_cache(case: O2AInput) -> Generator[SessionCache]:
 
     cache = SessionCache()
 

@@ -1,6 +1,6 @@
 """JSON-compatible timing helpers for validation scripts."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from time import perf_counter
 from typing import ParamSpec, TypeVar
@@ -24,7 +24,7 @@ class PhaseTimer:
         self.finish()
 
     @contextmanager
-    def phase(self, name: str) -> Iterator[None]:
+    def phase(self, name: str) -> Generator[None]:
 
         start = perf_counter()
 
