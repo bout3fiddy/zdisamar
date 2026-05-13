@@ -3,7 +3,7 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #   "altair>=5.5",
-#   "matplotlib>=3.10",
+#   "vl-convert-python>=1.7",
 #   "numpy>=2.2",
 #   "pandas>=2.2",
 # ]
@@ -18,10 +18,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
+import altair as alt
 import numpy as np
 import pandas as pd
-from matplotlib.ticker import MaxNLocator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -31,20 +30,14 @@ import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
 
-from validation.common import o2a_oe_reference_cases as oe_cases  # noqa: E402
-from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
-from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
-from validation.common.o2a_measurement_noise import (  # noqa: E402
+from validation.common.paths import stable_repo_path, write_json  # noqa: E402
+from validation.o2a import baseline as oe_baseline  # noqa: E402
+from validation.o2a.case import build_o2a_case  # noqa: E402
+from validation.o2a.measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
 )
-from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
-from validation.common.paths import stable_repo_path, write_json  # noqa: E402
-from validation.common.plot_style import (  # noqa: E402
-    prepare_matplotlib,
-    save_figure,
-    style_axis,
-    style_legend,
-)
+from validation.optimal_estimation import reference_cases as oe_cases  # noqa: E402
+from validation.optimal_estimation import setup as oe_setup  # noqa: E402
 
 OUTPUTS_DIR = REPO_ROOT / "validation" / "outputs" / "optimal_estimation"
 PLOT_PATH = OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison.png"
@@ -383,148 +376,147 @@ def difference_subtitle(values: pd.Series, precision: str, unit: str = "") -> st
     )
 
 
-def scatter_panel(
-    axis,
-    data: pd.DataFrame,
-    *,
-    parameter: str,
-    title: str,
-) -> None:
-    subset = data[data["parameter"] == parameter]
-    for mode in MODE_LABELS:
-        mode_subset = subset[subset["mode"] == mode]
-        axis.scatter(
-            mode_subset["truth"],
-            mode_subset["retrieved"],
-            s=34,
-            alpha=0.78,
-            label=MODE_LABELS[mode],
-            color=MODE_COLORS[mode],
-            marker=MODE_MARKERS[mode],
-        )
-    min_value = float(min(subset["truth"].min(), subset["retrieved"].min()))
-    max_value = float(max(subset["truth"].max(), subset["retrieved"].max()))
-    padding = max((max_value - min_value) * 0.04, np.finfo(np.float64).eps)
-    lower = min_value - padding
-    upper = max_value + padding
-    axis.plot(
-        [lower, upper],
-        [lower, upper],
-        color="black",
-        linestyle=(0, (4, 3)),
-        linewidth=1,
+def _mode_color() -> alt.Color:
+    return alt.Color(
+        "mode_label:N",
+        title=None,
+        scale=alt.Scale(
+            domain=list(MODE_LABELS.values()),
+            range=[MODE_COLORS["reference"], MODE_COLORS["fast"]],
+        ),
     )
-    axis.set_xlim(lower, upper)
-    axis.set_ylim(lower, upper)
-    axis.set_title(title, fontsize=20, pad=16)
-    axis.set_xlabel("True value", fontsize=15, labelpad=14)
-    axis.set_ylabel("Retrieved value", fontsize=15, labelpad=12, fontweight="bold")
-    axis.tick_params(labelsize=12, pad=6)
-    style_axis(axis)
 
 
-def histogram_panel(
-    axis,
+def _identity_line(lower: float, upper: float):
+    return (
+        alt.Chart(pd.DataFrame({"x": [lower, upper], "y": [lower, upper]}))
+        .mark_line(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=0.9)
+        .encode(x="x:Q", y="y:Q")
+    )
+
+
+def _extent(values: list[float]) -> tuple[float, float]:
+    lower = float(min(values))
+    upper = float(max(values))
+    padding = float(max((upper - lower) * 0.05, np.finfo(np.float64).eps))
+    return lower - padding, upper + padding
+
+
+def scatter_chart(data: pd.DataFrame, *, parameter: str, title: str):
+    subset = data[data["parameter"] == parameter]
+    lower, upper = _extent(
+        subset["truth"].astype(float).to_list() + subset["retrieved"].astype(float).to_list()
+    )
+    points = (
+        alt.Chart(subset)
+        .mark_point(filled=True, size=48, opacity=0.78)
+        .encode(
+            x=alt.X("truth:Q", title="True value", scale=alt.Scale(domain=[lower, upper])),
+            y=alt.Y(
+                "retrieved:Q",
+                title="Retrieved value",
+                scale=alt.Scale(domain=[lower, upper]),
+            ),
+            color=_mode_color(),
+            shape=alt.Shape("mode_label:N", title=None),
+            tooltip=[
+                alt.Tooltip("scene:O", title="Scene"),
+                alt.Tooltip("mode_label:N", title="Mode"),
+                alt.Tooltip("truth:Q", title="Truth", format=".6g"),
+                alt.Tooltip("retrieved:Q", title="Retrieved", format=".6g"),
+            ],
+        )
+    )
+    return alt.layer(_identity_line(lower, upper), points).properties(
+        width=530, height=330, title=title
+    )
+
+
+def histogram_chart(
     data: pd.DataFrame,
     *,
     parameter: str,
     title: str,
     subtitle: str,
     xlabel: str,
-    bins: int = 45,
-) -> None:
+):
     subset = data[data["parameter"] == parameter]
-    axis.hist(
-        subset["difference"],
-        bins=min(bins, max(len(subset), 1)),
-        color=PLOT.colors["blue"],
-        alpha=0.78,
+    histogram = (
+        alt.Chart(subset)
+        .mark_bar(color=PLOT.colors["blue"], opacity=0.78)
+        .encode(
+            x=alt.X("difference:Q", bin=alt.Bin(maxbins=45), title=xlabel),
+            y=alt.Y("count():Q", title="Count"),
+            tooltip=[
+                alt.Tooltip("count():Q", title="Count"),
+                alt.Tooltip("difference:Q", title="Difference", format=".6g"),
+            ],
+        )
     )
-    axis.axvline(0.0, color="black", linestyle=(0, (4, 3)), linewidth=1)
-    axis.set_title(f"{title}\n{subtitle}", fontsize=16, pad=16)
-    axis.set_xlabel(xlabel, fontsize=13, labelpad=14, fontweight="bold")
-    axis.set_ylabel("Count", fontsize=15, labelpad=12, fontweight="bold")
-    axis.tick_params(labelsize=12, pad=6)
-    axis.xaxis.set_major_locator(MaxNLocator(nbins=5))
-    axis.yaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
-    axis.minorticks_off()
-    style_axis(axis)
+    zero = (
+        alt.Chart(pd.DataFrame({"zero": [0.0]}))
+        .mark_rule(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=1)
+        .encode(x="zero:Q")
+    )
+    return alt.layer(histogram, zero).properties(
+        width=530,
+        height=300,
+        title={"text": title, "subtitle": subtitle},
+    )
 
 
 def create_paired_style_retrieved_fast_scatter(
     data: pd.DataFrame,
     output_path: Path,
 ) -> None:
-    prepare_matplotlib()
+    PLOT.prepare()
     retrieved = fast_retrieved_rows(data)
     differences = fast_difference_rows(data)
-    fig, axes = plt.subplots(2, 2, figsize=(14, 11), dpi=180)
-    fig.suptitle("Retrieved State Versus Truth", fontsize=24, y=0.982)
-    fig.text(
-        0.5,
-        0.948,
-        (
-            "Top: zdisamar reference and zdisamar fast retrievals against known "
-            "synthetic truth.\nBottom: paired retrieval difference per scene "
-            "(zdisamar fast - zdisamar reference)."
+    top = alt.hconcat(
+        scatter_chart(
+            retrieved,
+            parameter="Aerosol mid pressure",
+            title="Aerosol mid pressure",
         ),
-        ha="center",
-        va="top",
-        fontsize=11,
-        family="monospace",
-    )
-    scatter_panel(
-        axes[0, 0],
-        retrieved,
-        parameter="Aerosol mid pressure",
-        title="Aerosol mid pressure",
-    )
-    scatter_panel(
-        axes[0, 1],
-        retrieved,
-        parameter="Aerosol optical depth",
-        title="Aerosol optical depth",
+        scatter_chart(
+            retrieved,
+            parameter="Aerosol optical depth",
+            title="Aerosol optical depth",
+        ),
+        spacing=32,
     )
     aod_diff = differences[differences["parameter"] == "Aerosol optical depth"]["difference"]
     pressure_diff = differences[differences["parameter"] == "Aerosol mid pressure [hPa]"][
         "difference"
     ]
-    histogram_panel(
-        axes[1, 0],
-        differences,
-        parameter="Aerosol optical depth",
-        title="Aerosol optical depth",
-        subtitle=difference_subtitle(aod_diff, ".3e"),
-        xlabel="zdisamar fast - zdisamar reference",
+    bottom = alt.hconcat(
+        histogram_chart(
+            differences,
+            parameter="Aerosol optical depth",
+            title="Aerosol optical depth",
+            subtitle=difference_subtitle(aod_diff, ".3e"),
+            xlabel="zdisamar fast - zdisamar reference",
+        ),
+        histogram_chart(
+            differences,
+            parameter="Aerosol mid pressure [hPa]",
+            title="Aerosol mid pressure [hPa]",
+            subtitle=difference_subtitle(pressure_diff, ".4f", "hPa"),
+            xlabel="zdisamar fast - zdisamar reference [hPa]",
+        ),
+        spacing=32,
     )
-    histogram_panel(
-        axes[1, 1],
-        differences,
-        parameter="Aerosol mid pressure [hPa]",
-        title="Aerosol mid pressure [hPa]",
-        subtitle=difference_subtitle(pressure_diff, ".4f", "hPa"),
-        xlabel="zdisamar fast - zdisamar reference [hPa]",
+    chart = alt.vconcat(top, bottom, spacing=42).properties(
+        title={
+            "text": "Retrieved State Versus Truth",
+            "subtitle": (
+                "Top: zdisamar reference and zdisamar fast retrievals against known "
+                "synthetic truth. Bottom: paired retrieval difference per scene "
+                "(zdisamar fast - zdisamar reference)."
+            ),
+        }
     )
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    legend = fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 0.902),
-        ncols=2,
-        frameon=True,
-        fontsize=12,
-    )
-    style_legend(legend)
-    fig.subplots_adjust(
-        left=0.08,
-        right=0.985,
-        top=0.77,
-        bottom=0.115,
-        hspace=0.64,
-        wspace=0.32,
-    )
-    save_figure(fig, output_path)
+    PLOT.save(chart, output_path)
 
 
 def paired_manifest_latency_stats() -> dict[str, dict[str, float]]:
@@ -541,71 +533,86 @@ def paired_manifest_latency_stats() -> dict[str, dict[str, float]]:
 
 
 def create_latency_plot_with_fast(data: pd.DataFrame, output_path: Path) -> None:
-    prepare_matplotlib()
+    PLOT.prepare()
     stats_by_model = paired_manifest_latency_stats()
     stats_by_model["zdisamar_fast"] = stats_from_values(
         data[data["mode"] == "fast"]["retrieval_s"].to_list()
     )
-
-    fig, axis = plt.subplots(figsize=(7.8, 5.2), dpi=180)
-    x_positions = {
-        "disamar_fortran": 1,
-        "zdisamar": 2,
-        "zdisamar_fast": 3,
-    }
-    for model, x_position in x_positions.items():
+    rows = []
+    for model in ("disamar_fortran", "zdisamar", "zdisamar_fast"):
         payload = stats_by_model.get(model, {})
         if not payload:
             continue
-        color = LATENCY_MODE_COLORS[model]
-        minimum = float(payload["min"])
-        median = float(payload["median"])
-        mean = float(payload["mean"])
-        maximum = float(payload["max"])
-        axis.vlines(x_position, minimum, maximum, color=color, linewidth=6, alpha=0.26)
-        axis.scatter(
-            [x_position],
-            [median],
-            marker="_",
-            s=520,
-            color=color,
-            linewidths=2.6,
-            label=f"{LATENCY_MODE_LABELS[model]} median",
+        rows.append(
+            {
+                "model": model,
+                "model_label": LATENCY_MODE_LABELS[model],
+                "minimum": float(payload["min"]),
+                "median": float(payload["median"]),
+                "mean": float(payload["mean"]),
+                "maximum": float(payload["max"]),
+            }
         )
-        axis.scatter(
-            [x_position],
-            [mean],
-            marker="o",
-            s=32,
-            color=color,
-            edgecolor="white",
-            linewidth=0.8,
-            zorder=3,
-        )
-    axis.set_yscale("log")
-    axis.set_xticks(list(x_positions.values()))
-    axis.set_xticklabels([LATENCY_MODE_LABELS[model] for model in x_positions])
-    axis.set_ylabel("Retrieval wall time [s]")
-    axis.set_title("Optimal Estimation Retrieval Latency", fontsize=16, pad=14)
-    axis.text(
-        0.5,
-        0.97,
-        "Line spans min-max; horizontal tick is median; dot is mean.",
-        transform=axis.transAxes,
-        ha="center",
-        va="top",
-        fontsize=8.8,
+    frame = pd.DataFrame.from_records(rows)
+    color = alt.Color(
+        "model_label:N",
+        title=None,
+        scale=alt.Scale(
+            domain=[LATENCY_MODE_LABELS[key] for key in LATENCY_MODE_LABELS],
+            range=[LATENCY_MODE_COLORS[key] for key in LATENCY_MODE_LABELS],
+        ),
     )
-    style_axis(axis)
-    save_figure(fig, output_path, dpi=180)
+    span = (
+        alt.Chart(frame)
+        .mark_rule(size=8, opacity=0.26)
+        .encode(
+            x=alt.X("model_label:N", title=None),
+            y=alt.Y(
+                "minimum:Q",
+                title="Retrieval wall time [s]",
+                scale=alt.Scale(type="log"),
+            ),
+            y2="maximum:Q",
+            color=color,
+        )
+    )
+    median = (
+        alt.Chart(frame)
+        .mark_tick(thickness=2.6, size=46)
+        .encode(x="model_label:N", y="median:Q", color=color)
+    )
+    mean = (
+        alt.Chart(frame)
+        .mark_point(filled=True, size=44)
+        .encode(
+            x="model_label:N",
+            y="mean:Q",
+            color=color,
+            tooltip=[
+                alt.Tooltip("model_label:N", title="Model"),
+                alt.Tooltip("minimum:Q", title="Min", format=".4g"),
+                alt.Tooltip("median:Q", title="Median", format=".4g"),
+                alt.Tooltip("mean:Q", title="Mean", format=".4g"),
+                alt.Tooltip("maximum:Q", title="Max", format=".4g"),
+            ],
+        )
+    )
+    chart = alt.layer(span, median, mean).properties(
+        width=620,
+        height=410,
+        title={
+            "text": "Optimal Estimation Retrieval Latency",
+            "subtitle": "Line spans min-max; horizontal tick is median; dot is mean.",
+        },
+    )
+    PLOT.save(chart, output_path)
 
 
 def mode_subset(data: pd.DataFrame, mode: str) -> pd.DataFrame:
     return data[data["mode"] == mode].sort_values("scene")
 
 
-def truth_panel(
-    axis,
+def truth_chart(
     data: pd.DataFrame,
     *,
     truth_column: str,
@@ -614,193 +621,178 @@ def truth_panel(
     title: str,
     xlabel: str,
     ylabel: str,
-) -> None:
+):
+    frame = data.copy()
+    frame["lower"] = frame[retrieved_column] - frame[sigma_column]
+    frame["upper"] = frame[retrieved_column] + frame[sigma_column]
     all_x = data[truth_column].to_numpy(dtype=np.float64)
     all_y = data[retrieved_column].to_numpy(dtype=np.float64)
     all_sigma = data[sigma_column].to_numpy(dtype=np.float64)
-    lower = float(np.min(np.concatenate([all_x, all_y - all_sigma])))
-    upper = float(np.max(np.concatenate([all_x, all_y + all_sigma])))
-    padding = max((upper - lower) * 0.05, np.finfo(np.float64).eps)
-    lower -= padding
-    upper += padding
-    axis.plot(
-        [lower, upper],
-        [lower, upper],
-        color="black",
-        linestyle=(0, (4, 3)),
-        linewidth=0.9,
-        alpha=0.72,
+    lower, upper = _extent(np.concatenate([all_x, all_y - all_sigma, all_y + all_sigma]).tolist())
+    x = alt.X(truth_column + ":Q", title=xlabel, scale=alt.Scale(domain=[lower, upper]))
+    y = alt.Y(retrieved_column + ":Q", title=ylabel, scale=alt.Scale(domain=[lower, upper]))
+    error = (
+        alt.Chart(frame)
+        .mark_rule(opacity=0.55)
+        .encode(x=x, y=alt.Y("lower:Q", title=ylabel), y2="upper:Q", color=_mode_color())
     )
-    for mode in MODE_LABELS:
-        subset = mode_subset(data, mode)
-        axis.errorbar(
-            subset[truth_column],
-            subset[retrieved_column],
-            yerr=subset[sigma_column],
-            fmt=MODE_MARKERS[mode],
-            color=MODE_COLORS[mode],
-            markersize=5.5,
-            elinewidth=0.85,
-            capsize=2.5,
-            alpha=0.86,
-            label=MODE_LABELS[mode],
+    points = (
+        alt.Chart(frame)
+        .mark_point(filled=True, size=46, opacity=0.86)
+        .encode(
+            x=x,
+            y=y,
+            color=_mode_color(),
+            shape=alt.Shape("mode_label:N", title=None),
+            tooltip=[
+                alt.Tooltip("scene:O", title="Scene"),
+                alt.Tooltip("mode_label:N", title="Mode"),
+                alt.Tooltip(truth_column + ":Q", title=xlabel, format=".6g"),
+                alt.Tooltip(retrieved_column + ":Q", title=ylabel, format=".6g"),
+                alt.Tooltip(sigma_column + ":Q", title="Posterior sigma", format=".6g"),
+            ],
         )
-    axis.set_xlim(lower, upper)
-    axis.set_ylim(lower, upper)
-    axis.set_title(title, fontsize=12.5, loc="left", pad=10)
-    axis.set_xlabel(xlabel)
-    axis.set_ylabel(ylabel)
-    style_axis(axis)
+    )
+    return alt.layer(_identity_line(lower, upper), error, points).properties(
+        width=560, height=290, title=title
+    )
 
 
-def delta_panel(
-    axis,
+def delta_chart(
     delta: pd.DataFrame,
     *,
     value_column: str,
     sigma_column: str,
     title: str,
     ylabel: str,
-) -> None:
-    axis.axhline(0.0, color="black", linewidth=0.8, linestyle=(0, (4, 3)), alpha=0.72)
-    axis.errorbar(
-        delta["scene"],
-        delta[value_column],
-        yerr=delta[sigma_column],
-        fmt="o",
-        color=PLOT.colors["red"],
-        markersize=5.5,
-        elinewidth=0.85,
-        capsize=2.8,
-        alpha=0.84,
+):
+    frame = delta.copy()
+    frame["lower"] = frame[value_column] - frame[sigma_column]
+    frame["upper"] = frame[value_column] + frame[sigma_column]
+    zero = (
+        alt.Chart(pd.DataFrame({"zero": [0.0]}))
+        .mark_rule(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=0.8)
+        .encode(y="zero:Q")
     )
-    axis.set_title(title, fontsize=12.5, loc="left", pad=10)
-    axis.set_xlabel("Scene")
-    axis.set_ylabel(ylabel)
-    axis.xaxis.set_major_locator(MaxNLocator(integer=True))
-    style_axis(axis, scientific_y=True)
+    error = (
+        alt.Chart(frame)
+        .mark_rule(color=PLOT.colors["red"], opacity=0.55)
+        .encode(
+            x=alt.X("scene:O", title="Scene"),
+            y=alt.Y("lower:Q", title=ylabel),
+            y2="upper:Q",
+        )
+    )
+    points = (
+        alt.Chart(frame)
+        .mark_point(filled=True, size=46, color=PLOT.colors["red"], opacity=0.84)
+        .encode(
+            x=alt.X("scene:O", title="Scene"),
+            y=alt.Y(value_column + ":Q", title=ylabel, axis=alt.Axis(format=".3e")),
+            tooltip=[
+                alt.Tooltip("scene:O", title="Scene"),
+                alt.Tooltip(value_column + ":Q", title=ylabel, format=".6g"),
+                alt.Tooltip(sigma_column + ":Q", title="Combined sigma", format=".6g"),
+            ],
+        )
+    )
+    return alt.layer(zero, error, points).properties(width=560, height=250, title=title)
 
 
-def timing_panel(
-    axis,
+def timing_chart(
     data: pd.DataFrame,
     *,
     value_column: str,
     title: str,
     ylabel: str,
-) -> None:
-    width = 0.34
-    scenes = sorted(data["scene"].unique())
-    offsets = {"reference": -0.5 * width, "fast": 0.5 * width}
-    for mode in MODE_LABELS:
-        subset = mode_subset(data, mode)
-        axis.bar(
-            subset["scene"] + offsets[mode],
-            subset[value_column],
-            width=width,
-            color=MODE_COLORS[mode],
-            alpha=0.82,
-            label=MODE_LABELS[mode],
+):
+    return (
+        alt.Chart(data)
+        .mark_bar(opacity=0.82)
+        .encode(
+            x=alt.X("scene:O", title="Scene"),
+            xOffset=alt.XOffset("mode_label:N"),
+            y=alt.Y(value_column + ":Q", title=ylabel),
+            color=_mode_color(),
+            tooltip=[
+                alt.Tooltip("scene:O", title="Scene"),
+                alt.Tooltip("mode_label:N", title="Mode"),
+                alt.Tooltip(value_column + ":Q", title=ylabel, format=".6g"),
+            ],
         )
-    axis.set_title(title, fontsize=12.5, loc="left", pad=10)
-    axis.set_xlabel("Scene")
-    axis.set_ylabel(ylabel)
-    axis.set_xticks(scenes)
-    style_axis(axis)
+        .properties(width=560, height=250, title=title)
+    )
 
 
 def create_plot(data: pd.DataFrame, output_path: Path) -> None:
-    prepare_matplotlib()
+    PLOT.prepare()
     delta = paired_delta_frame(data)
-    fig, axes = plt.subplots(3, 2, figsize=(16.4, 14.6), constrained_layout=False)
-    fig.suptitle(
-        "O2A Optimal-Estimation Sweep: zdisamar Reference vs zdisamar Fast",
-        fontsize=18,
-        fontweight="normal",
-        y=0.985,
-    )
-    fig.text(
-        0.5,
-        0.953,
-        (
-            "Each paired scene uses identical measurements, priors, and initial states; "
-            "fast mode applies the validated Fourier cap, Fourier-tail, layer-doubling, "
-            "and adaptive-grid settings.\n"
-            "Error bars are posterior 1-sigma for retrieved states and combined "
-            "posterior 1-sigma for fast-reference deltas."
+    chart = alt.vconcat(
+        alt.hconcat(
+            truth_chart(
+                data,
+                truth_column="truth_aerosol_optical_depth",
+                retrieved_column="retrieved_aerosol_optical_depth",
+                sigma_column="aerosol_optical_depth_sigma",
+                title="Retrieved aerosol optical depth",
+                xlabel="Truth AOD",
+                ylabel="Retrieved AOD",
+            ),
+            truth_chart(
+                data,
+                truth_column="truth_aerosol_mid_pressure_hpa",
+                retrieved_column="retrieved_aerosol_mid_pressure_hpa",
+                sigma_column="aerosol_mid_pressure_sigma_hpa",
+                title="Retrieved aerosol mid pressure",
+                xlabel="Truth pressure [hPa]",
+                ylabel="Retrieved pressure [hPa]",
+            ),
+            spacing=32,
         ),
-        ha="center",
-        va="top",
-        fontsize=10.2,
+        alt.hconcat(
+            delta_chart(
+                delta,
+                value_column="aerosol_optical_depth_delta",
+                sigma_column="aerosol_optical_depth_combined_sigma",
+                title="Fast - reference retrieved AOD",
+                ylabel="Delta AOD",
+            ),
+            delta_chart(
+                delta,
+                value_column="aerosol_mid_pressure_delta_hpa",
+                sigma_column="aerosol_mid_pressure_combined_sigma_hpa",
+                title="Fast - reference retrieved pressure",
+                ylabel="Delta pressure [hPa]",
+            ),
+            spacing=32,
+        ),
+        alt.hconcat(
+            timing_chart(
+                data,
+                value_column="retrieval_s",
+                title="Retrieval wall time",
+                ylabel="Wall time [s]",
+            ),
+            timing_chart(
+                data,
+                value_column="forward_model_and_jacobian_s",
+                title="Forward model + Jacobian time",
+                ylabel="Time [s]",
+            ),
+            spacing=32,
+        ),
+        spacing=34,
+    ).properties(
+        title={
+            "text": "O2A Optimal-Estimation Sweep: zdisamar Reference vs zdisamar Fast",
+            "subtitle": (
+                "Each paired scene uses identical measurements, priors, and initial states; "
+                "error bars are posterior 1-sigma for retrieved states and combined "
+                "posterior 1-sigma for fast-reference deltas."
+            ),
+        }
     )
-    truth_panel(
-        axes[0, 0],
-        data,
-        truth_column="truth_aerosol_optical_depth",
-        retrieved_column="retrieved_aerosol_optical_depth",
-        sigma_column="aerosol_optical_depth_sigma",
-        title="Retrieved aerosol optical depth",
-        xlabel="Truth AOD",
-        ylabel="Retrieved AOD",
-    )
-    truth_panel(
-        axes[0, 1],
-        data,
-        truth_column="truth_aerosol_mid_pressure_hpa",
-        retrieved_column="retrieved_aerosol_mid_pressure_hpa",
-        sigma_column="aerosol_mid_pressure_sigma_hpa",
-        title="Retrieved aerosol mid pressure",
-        xlabel="Truth pressure [hPa]",
-        ylabel="Retrieved pressure [hPa]",
-    )
-    delta_panel(
-        axes[1, 0],
-        delta,
-        value_column="aerosol_optical_depth_delta",
-        sigma_column="aerosol_optical_depth_combined_sigma",
-        title="Fast - reference retrieved AOD",
-        ylabel="Delta AOD",
-    )
-    delta_panel(
-        axes[1, 1],
-        delta,
-        value_column="aerosol_mid_pressure_delta_hpa",
-        sigma_column="aerosol_mid_pressure_combined_sigma_hpa",
-        title="Fast - reference retrieved pressure",
-        ylabel="Delta pressure [hPa]",
-    )
-    timing_panel(
-        axes[2, 0],
-        data,
-        value_column="retrieval_s",
-        title="Retrieval wall time",
-        ylabel="Wall time [s]",
-    )
-    timing_panel(
-        axes[2, 1],
-        data,
-        value_column="forward_model_and_jacobian_s",
-        title="Forward model + Jacobian time",
-        ylabel="Time [s]",
-    )
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    legend = fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 0.912),
-        ncols=2,
-    )
-    style_legend(legend)
-    fig.subplots_adjust(
-        left=0.075,
-        right=0.985,
-        top=0.825,
-        bottom=0.065,
-        hspace=0.62,
-        wspace=0.26,
-    )
-    save_figure(fig, output_path)
+    PLOT.save(chart, output_path)
 
 
 def main() -> None:

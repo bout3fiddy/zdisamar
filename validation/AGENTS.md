@@ -5,7 +5,10 @@
 - Keep code-level invariants, API behavior checks, and algorithm unit checks under `tests/`, not in validation experiments.
 - Keep disposable traces, scratch runs, and exploratory validation output under `out/`.
 - Keep spectra validation under `validation/spectra/` and inverse-method validation under `validation/optimal_estimation/`.
+- Keep shared O2 A validation setup under `validation/o2a/`; reserve
+  `validation/common/` for generic validation plumbing.
 - Keep validation-owned reference fixtures under `validation/reference_data/`.
+- Use Altair for validation plots. Do not add Matplotlib back to validation scripts.
 - Keep DISAMAR baseline retrieval configs on `aerosolLayerHeight 0`. `aerosolLayerHeight 1` activates a Fortran DISAMAR shortcut path, and these validation lanes are meant to compare zdisamar against the normal physical inverse problem instead.
 - Keep tracked benchmark outputs under `validation/outputs/`; these files are generated evidence and should only be refreshed by the validation scripts.
 - Invoke validation scripts directly with `uv run ...`; do not add one-off Python validation or plotting scripts to `zig build`.

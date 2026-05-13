@@ -3,7 +3,7 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #   "altair>=5.5",
-#   "matplotlib>=3.10",
+#   "vl-convert-python>=1.7",
 #   "numpy>=2.2",
 #   "pandas>=2.2",
 # ]
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
+import altair as alt
 import numpy as np
 import pandas as pd
 
@@ -29,18 +29,12 @@ sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 import zdisamar as zd  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
 
-from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
-from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
-from validation.common.o2a_measurement_noise import components_from_spectrum  # noqa: E402
-from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
-from validation.common.plot_style import (  # noqa: E402
-    prepare_matplotlib,
-    save_figure,
-    style_axis,
-    style_legend,
-)
-from validation.common.residuals import residual_metrics  # noqa: E402
+from validation.o2a import baseline as oe_baseline  # noqa: E402
+from validation.o2a.case import build_o2a_case  # noqa: E402
+from validation.o2a.measurement_noise import components_from_spectrum  # noqa: E402
+from validation.optimal_estimation import setup as oe_setup  # noqa: E402
+from validation.spectra.residuals import residual_metrics  # noqa: E402
 
 LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
 LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
@@ -264,95 +258,137 @@ def create_plot(
     metrics: list[dict[str, Any]],
     output_path: Path,
 ) -> None:
-    prepare_matplotlib()
-    fig, axes = plt.subplots(
-        len(results),
-        2,
-        figsize=(16.5, 13.8),
-        sharex=True,
-        constrained_layout=True,
-        gridspec_kw={"width_ratios": [1.22, 1.0]},
-    )
-    fig.suptitle(
-        "O2A Fast-Mode Spectra: Reference Thresholds vs Fast Thresholds",
-        fontsize=18,
-        fontweight="normal",
-    )
-
+    PLOT.prepare()
     metric_by_scene = {str(metric["scene"]): metric for metric in metrics}
-    for row_index, result in enumerate(results):
+    rows = []
+    for result in results:
         residual = result.fast.reflectance - result.reference.reflectance
         normalized = residual_over_noise(residual, result.noise)
         metric = metric_by_scene[result.label]
-        value_axis = axes[row_index, 0]
-        residual_axis = axes[row_index, 1]
-
-        value_axis.plot(
-            result.reference.wavelength_nm,
-            result.reference.reflectance,
-            label="reference thresholds",
-            color=PLOT.colors["blue"],
-            linewidth=1.85,
+        frame = pd.DataFrame(
+            {
+                "wavelength_nm": np.tile(result.reference.wavelength_nm, 2),
+                "reflectance": np.concatenate(
+                    [result.reference.reflectance, result.fast.reflectance]
+                ),
+                "mode": ["reference thresholds"] * len(result.reference.wavelength_nm)
+                + ["fast thresholds"] * len(result.fast.wavelength_nm),
+            }
         )
-        value_axis.plot(
-            result.fast.wavelength_nm,
-            result.fast.reflectance,
-            label="fast thresholds",
-            color=PLOT.colors["orange"],
-            linewidth=1.35,
-            linestyle="--",
+        residual_frame = pd.DataFrame(
+            {
+                "wavelength_nm": result.reference.wavelength_nm,
+                "fast_minus_reference": residual,
+                "fast_minus_reference_over_noise": normalized,
+            }
         )
-        residual_axis.plot(
-            result.reference.wavelength_nm,
-            residual,
-            color=PLOT.colors["black"],
-            linewidth=1.05,
-            label="fast - reference",
-        )
-        residual_axis.axhline(0.0, color="black", linewidth=0.75, linestyle=(0, (4, 3)))
-        residual_axis_2 = residual_axis.twinx()
-        residual_axis_2.plot(
-            result.reference.wavelength_nm,
-            normalized,
-            color=PLOT.colors["red"],
-            alpha=0.42,
-            linewidth=0.9,
-            label="residual / 1-sigma noise",
-        )
-        residual_axis_2.set_ylabel("residual / noise", color=PLOT.colors["red"], labelpad=10)
-        residual_axis_2.tick_params(axis="y", colors=PLOT.colors["red"], labelsize=9)
-        residual_axis_2.spines["right"].set_color(PLOT.colors["red"])
-        residual_axis_2.spines["right"].set_linewidth(0.8)
-
-        value_axis.set_title(
-            f"{result.label}: {describe_scene(result.scene)}",
-            loc="left",
-            fontsize=11.5,
-            pad=8,
-        )
-        residual_axis.set_title(
-            (
-                f"max |residual|={float(metric['max_abs_residual']):.2e}; "
-                f"max |residual/noise|={float(metric['max_abs_residual_over_noise']):.2e}; "
-                f"speedup={float(metric['forward_speedup_s']):+.3f}s"
+        x = alt.X(
+            "wavelength_nm:Q",
+            title="Wavelength [nm]",
+            scale=alt.Scale(
+                domain=[oe_baseline.WAVELENGTH_START_NM, oe_baseline.WAVELENGTH_END_NM],
+                zero=False,
             ),
-            loc="left",
-            fontsize=10.5,
-            pad=8,
         )
-        value_axis.set_ylabel("Reflectance", labelpad=12)
-        residual_axis.set_ylabel("Fast - reference", labelpad=12)
-        style_axis(value_axis)
-        style_axis(residual_axis, scientific_y=True)
-        value_axis.set_xlim(oe_baseline.WAVELENGTH_START_NM, oe_baseline.WAVELENGTH_END_NM)
-        residual_axis.set_xlim(oe_baseline.WAVELENGTH_START_NM, oe_baseline.WAVELENGTH_END_NM)
-
-    axes[-1, 0].set_xlabel("Wavelength [nm]")
-    axes[-1, 1].set_xlabel("Wavelength [nm]")
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    legend = fig.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.995, 0.995))
-    style_legend(legend)
-    save_figure(fig, output_path)
+        values = (
+            alt.Chart(frame)
+            .mark_line()
+            .encode(
+                x=x,
+                y=alt.Y("reflectance:Q", title="Reflectance", scale=alt.Scale(zero=False)),
+                color=alt.Color(
+                    "mode:N",
+                    title=None,
+                    scale=alt.Scale(
+                        domain=["reference thresholds", "fast thresholds"],
+                        range=[PLOT.colors["blue"], PLOT.colors["orange"]],
+                    ),
+                ),
+                strokeDash=alt.StrokeDash(
+                    "mode:N",
+                    title=None,
+                    scale=alt.Scale(
+                        domain=["reference thresholds", "fast thresholds"],
+                        range=[[1, 0], [5, 4]],
+                    ),
+                ),
+                tooltip=[
+                    alt.Tooltip("wavelength_nm:Q", title="Wavelength [nm]", format=".4f"),
+                    alt.Tooltip("mode:N", title="Mode"),
+                    alt.Tooltip("reflectance:Q", title="Reflectance", format=".8g"),
+                ],
+            )
+            .properties(
+                width=620,
+                height=190,
+                title=f"{result.label}: {describe_scene(result.scene)}",
+            )
+        )
+        zero = (
+            alt.Chart(pd.DataFrame({"zero": [0.0]}))
+            .mark_rule(color=PLOT.colors["black"], strokeDash=[4, 3], strokeWidth=0.75)
+            .encode(y="zero:Q")
+        )
+        raw_residual = (
+            alt.Chart(residual_frame)
+            .mark_line(color=PLOT.colors["black"], strokeWidth=1.05)
+            .encode(
+                x=x,
+                y=alt.Y(
+                    "fast_minus_reference:Q",
+                    title="Fast - reference",
+                    axis=alt.Axis(format=".3e"),
+                    scale=alt.Scale(zero=False),
+                ),
+                tooltip=[
+                    alt.Tooltip("wavelength_nm:Q", title="Wavelength [nm]", format=".4f"),
+                    alt.Tooltip(
+                        "fast_minus_reference:Q",
+                        title="Fast - reference",
+                        format=".8g",
+                    ),
+                ],
+            )
+        )
+        normalized_residual = (
+            alt.Chart(residual_frame)
+            .mark_line(color=PLOT.colors["red"], opacity=0.45, strokeWidth=0.9)
+            .encode(
+                x=x,
+                y=alt.Y(
+                    "fast_minus_reference_over_noise:Q",
+                    title="Residual / noise",
+                    axis=alt.Axis(format=".3g", orient="right"),
+                    scale=alt.Scale(zero=False),
+                ),
+                tooltip=[
+                    alt.Tooltip("wavelength_nm:Q", title="Wavelength [nm]", format=".4f"),
+                    alt.Tooltip(
+                        "fast_minus_reference_over_noise:Q",
+                        title="Residual / noise",
+                        format=".6g",
+                    ),
+                ],
+            )
+        )
+        residual_chart = (
+            alt.layer(zero, raw_residual, normalized_residual)
+            .resolve_scale(y="independent")
+            .properties(
+                width=500,
+                height=190,
+                title=(
+                    f"max |residual|={float(metric['max_abs_residual']):.2e}; "
+                    f"max |residual/noise|={float(metric['max_abs_residual_over_noise']):.2e}; "
+                    f"speedup={float(metric['forward_speedup_s']):+.3f}s"
+                ),
+            )
+        )
+        rows.append(alt.hconcat(values, residual_chart, spacing=28))
+    chart = alt.vconcat(*rows, spacing=18).properties(
+        title="O2A Fast-Mode Spectra: Reference Thresholds vs Fast Thresholds"
+    )
+    PLOT.save(chart, output_path)
 
 
 def write_metrics(metrics: list[dict[str, Any]], output_path: Path) -> None:

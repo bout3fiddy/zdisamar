@@ -3,8 +3,8 @@
 import json
 from typing import Any
 
-from validation.common import o2a_optimal_estimation_setup as oe_setup
 from validation.common.paths import VALIDATION_REFERENCE_DATA_ROOT, stable_repo_path
+from validation.optimal_estimation import setup as oe_setup
 
 MANIFEST_PATH = (
     VALIDATION_REFERENCE_DATA_ROOT / "optimal_estimation" / "disamar_oe_sweep_cases.json"

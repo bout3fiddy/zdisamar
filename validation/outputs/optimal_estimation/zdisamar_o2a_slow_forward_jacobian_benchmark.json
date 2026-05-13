@@ -1,26 +1,26 @@
 {
   "direct_prepared_call_probe": {
     "forward_and_jacobian_s": {
-      "max": 0.9711291669809725,
-      "mean": 0.9603169083944522,
-      "median": 0.9577935830166098,
-      "min": 0.9555003329878673
+      "max": 0.9770140000036918,
+      "mean": 0.9741498584044166,
+      "median": 0.9736944170144852,
+      "min": 0.9711126249749213
     },
     "forward_only_s": {
-      "max": 0.8154641250148416,
-      "mean": 0.8139616251981352,
-      "median": 0.8138570830051322,
-      "min": 0.8122157089819666
+      "max": 0.8289485839777626,
+      "mean": 0.8270519836049062,
+      "median": 0.8273906670219731,
+      "min": 0.8248060420155525
     },
     "jacobian_increment_s": {
-      "max": 0.1576796250010375,
-      "mean": 0.14635528319631702,
-      "median": 0.14393650001147762,
-      "min": 0.1403745839779731
+      "max": 0.15167254098923877,
+      "mean": 0.14709787479951048,
+      "median": 0.14723279202007689,
+      "min": 0.14350108304643072
     },
     "probe_runs": 5
   },
-  "measurement_build_s": 1.1058845420193393,
+  "measurement_build_s": 1.1165063329972327,
   "reference_case": 71,
   "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
   "scene": {
@@ -39,189 +39,189 @@
     "final_evaluation_trace": [
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 4.804201307706535e-05,
-          "native_forward_s": 0.9609122920082882,
-          "radiance_to_reflectance_jacobian_s": 9.629200212657452e-05
+          "copy_outputs_s": 4.499999340623617e-05,
+          "native_forward_s": 0.9784009169961791,
+          "radiance_to_reflectance_jacobian_s": 9.737498476170003e-05
         },
         "index": 4,
-        "prepare_total_s": 0.014131000003544614,
-        "scale_jacobian_s": 0.00025924999499693513,
-        "settings_for_state_s": 5.874998169019818e-05,
-        "total_evaluate_s": 0.975520999985747
+        "prepare_total_s": 0.014550208987202495,
+        "scale_jacobian_s": 0.0002958750119432807,
+        "settings_for_state_s": 5.558400880545378e-05,
+        "total_evaluate_s": 0.993458874989301
       }
     ],
     "final_evaluation_trace_summary": {
       "copy_outputs_s": {
-        "max": 4.804201307706535e-05,
-        "mean": 4.804201307706535e-05,
-        "median": 4.804201307706535e-05,
-        "min": 4.804201307706535e-05
+        "max": 4.499999340623617e-05,
+        "mean": 4.499999340623617e-05,
+        "median": 4.499999340623617e-05,
+        "min": 4.499999340623617e-05
       },
       "iterations": 1,
       "native_forward_s": {
-        "max": 0.9609122920082882,
-        "mean": 0.9609122920082882,
-        "median": 0.9609122920082882,
-        "min": 0.9609122920082882
+        "max": 0.9784009169961791,
+        "mean": 0.9784009169961791,
+        "median": 0.9784009169961791,
+        "min": 0.9784009169961791
       },
       "prepare_total_s": {
-        "max": 0.014131000003544614,
-        "mean": 0.014131000003544614,
-        "median": 0.014131000003544614,
-        "min": 0.014131000003544614
+        "max": 0.014550208987202495,
+        "mean": 0.014550208987202495,
+        "median": 0.014550208987202495,
+        "min": 0.014550208987202495
       },
       "radiance_to_reflectance_jacobian_s": {
-        "max": 9.629200212657452e-05,
-        "mean": 9.629200212657452e-05,
-        "median": 9.629200212657452e-05,
-        "min": 9.629200212657452e-05
+        "max": 9.737498476170003e-05,
+        "mean": 9.737498476170003e-05,
+        "median": 9.737498476170003e-05,
+        "min": 9.737498476170003e-05
       },
       "scale_jacobian_s": {
-        "max": 0.00025924999499693513,
-        "mean": 0.00025924999499693513,
-        "median": 0.00025924999499693513,
-        "min": 0.00025924999499693513
+        "max": 0.0002958750119432807,
+        "mean": 0.0002958750119432807,
+        "median": 0.0002958750119432807,
+        "min": 0.0002958750119432807
       },
       "settings_for_state_s": {
-        "max": 5.874998169019818e-05,
-        "mean": 5.874998169019818e-05,
-        "median": 5.874998169019818e-05,
-        "min": 5.874998169019818e-05
+        "max": 5.558400880545378e-05,
+        "mean": 5.558400880545378e-05,
+        "median": 5.558400880545378e-05,
+        "min": 5.558400880545378e-05
       },
       "total_evaluate_s": {
-        "max": 0.975520999985747,
-        "mean": 0.975520999985747,
-        "median": 0.975520999985747,
-        "min": 0.975520999985747
+        "max": 0.993458874989301,
+        "mean": 0.993458874989301,
+        "median": 0.993458874989301,
+        "min": 0.993458874989301
       }
     },
-    "first_use_retrieval_s": 3.176908666995587,
+    "first_use_retrieval_s": 3.229626084008487,
     "reused_retrieval": {
       "converged": true,
       "final_evaluation_in_retrieval_s": 0.0,
       "final_evaluation_mode": "lazy",
-      "forward_model_and_jacobian_s": 2.9074743329838384,
+      "forward_model_and_jacobian_s": 2.959116250014631,
       "iterations": 3,
       "iterations_detail": [
         {
-          "forward_model_and_jacobian_s": 0.9623983330093324,
+          "forward_model_and_jacobian_s": 0.9800452080089599,
           "index": 1,
-          "solver_update_s": 0.00018758399528451264,
-          "total_iteration_s": 0.9625904580170754
+          "solver_update_s": 0.00024200000916607678,
+          "total_iteration_s": 0.9802914580213837
         },
         {
-          "forward_model_and_jacobian_s": 0.9732213329989463,
+          "forward_model_and_jacobian_s": 0.9874905000033323,
           "index": 2,
-          "solver_update_s": 0.00015629100380465388,
-          "total_iteration_s": 0.9733827500022016
+          "solver_update_s": 0.00015104099293239415,
+          "total_iteration_s": 0.9876463749969844
         },
         {
-          "forward_model_and_jacobian_s": 0.9718546669755597,
+          "forward_model_and_jacobian_s": 0.9915805420023389,
           "index": 3,
-          "solver_update_s": 0.00015762500697746873,
-          "total_iteration_s": 0.9720161249861121
+          "solver_update_s": 0.00014395901234820485,
+          "total_iteration_s": 0.991728332999628
         }
       ],
       "lazy_final_evaluation_cached": true,
-      "lazy_final_evaluation_s": 1.2446103749971371,
-      "lazy_final_evaluation_trace_s": 0.975520999985747,
-      "other_retrieval_s": 0.0004431249981280416,
-      "retrieval_plus_lazy_final_evaluation_s": 4.15302933298517,
+      "lazy_final_evaluation_s": 1.2689324999810196,
+      "lazy_final_evaluation_trace_s": 0.993458874989301,
+      "other_retrieval_s": 0.00043295897194184363,
+      "retrieval_plus_lazy_final_evaluation_s": 4.229018708982039,
       "retrieved": {
         "aerosol_layer_mid_pressure_hpa": 329.19089154066546,
         "aerosol_optical_depth": 1.9681945906310179
       },
-      "solver_update_s": 0.0005015000060666353,
+      "solver_update_s": 0.0005370000144466758,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 2.908418957988033
+      "wall_s": 2.9600862090010196
     },
     "reused_retrieval_iteration_trace": [
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 9.745897841639817e-05,
-          "native_forward_s": 0.9470320830005221,
-          "radiance_to_reflectance_jacobian_s": 9.929199586622417e-05
+          "copy_outputs_s": 0.00012454201350919902,
+          "native_forward_s": 0.9642977500043344,
+          "radiance_to_reflectance_jacobian_s": 0.00010708300396800041
         },
         "index": 1,
-        "prepare_total_s": 0.013923207996413112,
-        "scale_jacobian_s": 0.0011617919954005629,
-        "settings_for_state_s": 6.291599129326642e-05,
-        "total_evaluate_s": 0.962394417001633
+        "prepare_total_s": 0.015158207999775186,
+        "scale_jacobian_s": 0.0002735000161919743,
+        "settings_for_state_s": 5.9165991842746735e-05,
+        "total_evaluate_s": 0.9800413750053849
       },
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 4.462499055080116e-05,
-          "native_forward_s": 0.9588212910166476,
-          "radiance_to_reflectance_jacobian_s": 0.00010479200864210725
+          "copy_outputs_s": 4.3459003791213036e-05,
+          "native_forward_s": 0.9723693330015521,
+          "radiance_to_reflectance_jacobian_s": 0.00010266699246130884
         },
         "index": 2,
-        "prepare_total_s": 0.013892707997001708,
-        "scale_jacobian_s": 0.0002578750136308372,
-        "settings_for_state_s": 7.624999852851033e-05,
-        "total_evaluate_s": 0.9732168329937849
+        "prepare_total_s": 0.0146401250094641,
+        "scale_jacobian_s": 0.00024962497991509736,
+        "settings_for_state_s": 6.250001024454832e-05,
+        "total_evaluate_s": 0.987486041005468
       },
       {
         "forward_evaluation_trace": {
-          "copy_outputs_s": 4.591699689626694e-05,
-          "native_forward_s": 0.957386291003786,
-          "radiance_to_reflectance_jacobian_s": 0.00010616600047796965
+          "copy_outputs_s": 4.029198316857219e-05,
+          "native_forward_s": 0.9765703750017565,
+          "radiance_to_reflectance_jacobian_s": 9.620800847187638e-05
         },
         "index": 3,
-        "prepare_total_s": 0.01397899998119101,
-        "scale_jacobian_s": 0.00025566600379534066,
-        "settings_for_state_s": 5.804098327644169e-05,
-        "total_evaluate_s": 0.9718506670033094
+        "prepare_total_s": 0.014554499997757375,
+        "scale_jacobian_s": 0.000245749979512766,
+        "settings_for_state_s": 5.5832992075011134e-05,
+        "total_evaluate_s": 0.9915774999826681
       }
     ],
     "reused_retrieval_iteration_trace_summary": {
       "copy_outputs_s": {
-        "max": 9.745897841639817e-05,
-        "mean": 6.266698862115543e-05,
-        "median": 4.591699689626694e-05,
-        "min": 4.462499055080116e-05
+        "max": 0.00012454201350919902,
+        "mean": 6.943100015632808e-05,
+        "median": 4.3459003791213036e-05,
+        "min": 4.029198316857219e-05
       },
       "iterations": 3,
       "native_forward_s": {
-        "max": 0.9588212910166476,
-        "mean": 0.954413221673652,
-        "median": 0.957386291003786,
-        "min": 0.9470320830005221
+        "max": 0.9765703750017565,
+        "mean": 0.9710791526692143,
+        "median": 0.9723693330015521,
+        "min": 0.9642977500043344
       },
       "prepare_total_s": {
-        "max": 0.01397899998119101,
-        "mean": 0.013931638658201942,
-        "median": 0.013923207996413112,
-        "min": 0.013892707997001708
+        "max": 0.015158207999775186,
+        "mean": 0.014784277668998888,
+        "median": 0.0146401250094641,
+        "min": 0.014554499997757375
       },
       "radiance_to_reflectance_jacobian_s": {
-        "max": 0.00010616600047796965,
-        "mean": 0.00010341666832876702,
-        "median": 0.00010479200864210725,
-        "min": 9.929199586622417e-05
+        "max": 0.00010708300396800041,
+        "mean": 0.00010198600163372855,
+        "median": 0.00010266699246130884,
+        "min": 9.620800847187638e-05
       },
       "scale_jacobian_s": {
-        "max": 0.0011617919954005629,
-        "mean": 0.0005584443376089135,
-        "median": 0.0002578750136308372,
-        "min": 0.00025566600379534066
+        "max": 0.0002735000161919743,
+        "mean": 0.0002562916585399459,
+        "median": 0.00024962497991509736,
+        "min": 0.000245749979512766
       },
       "settings_for_state_s": {
-        "max": 7.624999852851033e-05,
-        "mean": 6.573565769940615e-05,
-        "median": 6.291599129326642e-05,
-        "min": 5.804098327644169e-05
+        "max": 6.250001024454832e-05,
+        "mean": 5.91663313874354e-05,
+        "median": 5.9165991842746735e-05,
+        "min": 5.5832992075011134e-05
       },
       "total_evaluate_s": {
-        "max": 0.9732168329937849,
-        "mean": 0.9691539723329091,
-        "median": 0.9718506670033094,
-        "min": 0.962394417001633
+        "max": 0.9915774999826681,
+        "mean": 0.9863683053311737,
+        "median": 0.987486041005468,
+        "min": 0.9800413750053849
       }
     },
-    "setup_s": 0.26848970900755376
+    "setup_s": 0.26953987500746734
   },
   "source": "Slow retained scene from shared DISAMAR OE reference sweep case 71.",
   "validation_case": "zdisamar_o2a_slow_forward_jacobian_latency"

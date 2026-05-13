@@ -13,6 +13,9 @@ The validation tree is split by target:
 
 - `spectra/`: forward reflectance and reflectance-Jacobian parity evidence.
 - `optimal_estimation/`: inverse-method retrieval evidence.
+- `o2a/`: shared O2 A scene, baseline, and measurement-noise helpers used by
+  both spectra and inverse-method validation.
+- `common/`: generic validation plumbing such as paths and timers.
 - `reference_data/`: committed DISAMAR/reference fixtures and baselines.
 - `outputs/`: committed zdisamar benchmark outputs generated from those fixtures.
 
@@ -99,6 +102,6 @@ the bundle is `1e-13` max absolute residual.
 ## Baseline Case
 
 Validation lanes use the typed O2 A baseline exposed by `zdisamar.defaultO2AInput()`
-and mirrored in `validation/common/o2a_reference_case.py`. Keep Zig validation
+and mirrored in `validation/o2a/case.py`. Keep Zig validation
 tests and Python validation scripts aligned with that case instead of introducing
 a second serialized validation input.

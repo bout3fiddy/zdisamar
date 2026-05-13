@@ -25,14 +25,14 @@ import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
-from validation.common import o2a_oe_reference_cases as oe_cases  # noqa: E402
-from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
-from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
-from validation.common.o2a_measurement_noise import (  # noqa: E402
+from validation.common.paths import stable_repo_path, write_json  # noqa: E402
+from validation.o2a import baseline as oe_baseline  # noqa: E402
+from validation.o2a.case import build_o2a_case  # noqa: E402
+from validation.o2a.measurement_noise import (  # noqa: E402
     measurement_from_o2a_baseline_noise,
 )
-from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
-from validation.common.paths import stable_repo_path, write_json  # noqa: E402
+from validation.optimal_estimation import reference_cases as oe_cases  # noqa: E402
+from validation.optimal_estimation import setup as oe_setup  # noqa: E402
 
 PROBE_RUNS = 5
 SLOW_CASE_INDEX = 71
