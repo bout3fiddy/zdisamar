@@ -1,0 +1,82 @@
+{
+  "cache": {
+    "first_use_retrieval_s": 3.453297375002876,
+    "reused_retrieval": {
+      "converged": true,
+      "iterations": 3,
+      "iterations_detail": [
+        {
+          "index": 1,
+          "rtm_and_jacobian_s": 1.0491948339913506,
+          "solver_update_s": 0.00018462500884197652,
+          "total_iteration_s": 1.0493865410098806
+        },
+        {
+          "index": 2,
+          "rtm_and_jacobian_s": 1.0505746249982622,
+          "solver_update_s": 0.00017908299923874438,
+          "total_iteration_s": 1.0507619999989402
+        },
+        {
+          "index": 3,
+          "rtm_and_jacobian_s": 1.0422387500002515,
+          "solver_update_s": 0.00016145900008268654,
+          "total_iteration_s": 1.042405249987496
+        }
+      ],
+      "other_retrieval_s": 0.00043591600842773914,
+      "retrieval_plus_lazy_final_evaluation_s": 4.454839959013043,
+      "retrieved": {
+        "aerosol_layer_mid_pressure_hpa": 329.19089154066546,
+        "aerosol_optical_depth": 1.9681945906310179
+      },
+      "rtm_and_jacobian_s": 3.142008208989864,
+      "solver_update_s": 0.0005251670081634074,
+      "state_names": [
+        "aerosol_optical_depth",
+        "aerosol_layer_mid_pressure_hpa"
+      ],
+      "wall_s": 3.1429692920064554
+    },
+    "setup_s": 0.31032808299642056
+  },
+  "direct_rtm_call_probe": {
+    "jacobian_increment_s": {
+      "max": 0.11853749997681007,
+      "mean": 0.0016430001880507917,
+      "median": 0.08156070797122084,
+      "min": -0.34918345799087547
+    },
+    "probe_runs": 5,
+    "rtm_and_jacobian_s": {
+      "max": 0.9693489169876557,
+      "mean": 0.9647894667985384,
+      "median": 0.9637660839944147,
+      "min": 0.9602716250228696
+    },
+    "rtm_only_s": {
+      "max": 1.309455083013745,
+      "mean": 0.9631464666104875,
+      "median": 0.8857436670223251,
+      "min": 0.8447188330173958
+    }
+  },
+  "lazy_final_evaluation_s": 1.3118706670065876,
+  "measurement_build_s": 1.1898202080046758,
+  "reference_case": 71,
+  "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
+  "scene": {
+    "aerosol_mid_pressure_hpa": 329.192074869615,
+    "aerosol_optical_depth": 1.9681905891962788,
+    "case": 71,
+    "initial_aerosol_mid_pressure_hpa": 354.192074869615,
+    "initial_aerosol_optical_depth": 1.7420077184927254,
+    "relative_azimuth_deg": 7.0232796692031245,
+    "solar_zenith_deg": 53.76029607719826,
+    "surface_albedo": 0.19528921533381227,
+    "surface_pressure_hpa": 896.819424951348,
+    "viewing_zenith_deg": 45.71214389158657
+  },
+  "source": "Slow retained scene from shared DISAMAR OE reference sweep case 71.",
+  "validation_case": "zdisamar_o2a_slow_rtm_jacobian_latency"
+}

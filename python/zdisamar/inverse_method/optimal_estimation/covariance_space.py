@@ -49,6 +49,7 @@ def build_solver_workspace(
     measurement_variance_values = np.asarray(measurement_variance, dtype=np.float64)
     sqrt_sa = np.linalg.cholesky(prior_covariance_values)
     sqrt_inv_sa = np.linalg.inv(sqrt_sa)
+
     return SolverWorkspace(
         prior=prior_values,
         prior_covariance=prior_covariance_values,
@@ -89,6 +90,7 @@ def build_covariance_space(
         prior_covariance=prior_covariance,
         measurement_variance=measurement_variance,
     )
+
     return build_covariance_space_from_workspace(
         workspace=workspace,
         previous=previous,
@@ -104,12 +106,13 @@ def build_covariance_space_from_workspace(
     residual: np.ndarray,
     jacobian: np.ndarray,
 ) -> CovarianceSpace:
-    """Return the normalized linear problem using cached covariance transforms."""
+    """Return the normalized linear problem using precomputed covariance transforms."""
 
     # dx is measured from the a-priori state, not the previous iteration delta,
     # because optimal estimation regularizes absolute distance from x_a.  Using x_i - x_{i-1}
     # here would remove the prior penalty from the linearized update.
     dx = previous - workspace.prior
+
     return CovarianceSpace(
         dx_white=workspace.sqrt_inv_sa @ dx,
         d_r_white=workspace.sqrt_inv_se @ residual,

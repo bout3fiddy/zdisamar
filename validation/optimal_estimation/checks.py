@@ -14,6 +14,7 @@ class ScalarComparison:
     difference: float | None
 
     def to_json(self) -> dict[str, Any]:
+
         return {
             "name": self.name,
             "actual": self.actual,
@@ -31,12 +32,14 @@ def compare_scalar(
     *,
     tolerance: float | None = None,
 ) -> ScalarComparison:
+
     if isinstance(actual, bool) or isinstance(expected, bool):
         passed = bool(actual) == bool(expected)
         difference = None
     else:
         difference = float(actual) - float(expected)
         passed = abs(difference) <= float(tolerance or 0.0)
+
     return ScalarComparison(
         name=name,
         actual=actual,

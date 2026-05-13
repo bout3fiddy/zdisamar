@@ -10,7 +10,7 @@
 
 - Inline `test` blocks under `src/` are not allowed. Add tests under `tests/unit/`, mirroring the source path.
 - Tests that need non-public symbols should use `src/internal.zig`; keep that access surface named after the current tree.
-- Prefer the public flow input -> forward model -> output. Do not move product wiring into `src/common/`.
+- Prefer the public flow input -> RTM -> output. Do not move product wiring into `src/common/`.
 - Comments explain why, not what. Keep comments near non-obvious DISAMAR semantics, unit conversions, sign conventions, ordering, and intentional divergences.
-- File I/O and text parsing belong in input, output, validation, CLI, or scripts, not in forward-model routines.
+- File I/O and text parsing belong in input, output, validation, CLI, or scripts, not in RTM routines.
 - Every new input/config field must be consumed, rejected with a typed error, or explicitly documented as inert with focused test coverage.

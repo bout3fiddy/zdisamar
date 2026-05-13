@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .forward_evaluation import ForwardEvaluation
+from .rtm_evaluation import RtmEvaluation
 from .state_vector import StateName
 
 
@@ -68,7 +68,7 @@ class IterationTiming:
     """Wall-clock timing for the two expensive phases of one retrieval update."""
 
     index: int
-    forward_model_and_jacobian_s: float
+    rtm_and_jacobian_s: float
     solver_update_s: float
     total_iteration_s: float
 
@@ -86,34 +86,46 @@ class Result:
     averaging_kernel: np.ndarray
     timing: tuple[IterationTiming, ...] = ()
     measurement: Measurement | None = None
-    final_evaluation: ForwardEvaluation | None = None
+    final_evaluation: RtmEvaluation | None = None
     last_evaluated_state: np.ndarray | None = None
-    last_evaluation: ForwardEvaluation | None = None
-    _final_evaluation_factory: Callable[[], ForwardEvaluation] | None = field(
+    last_evaluation: RtmEvaluation | None = None
+    _final_evaluation_factory: Callable[[], RtmEvaluation] | None = field(
         default=None,
         repr=False,
         compare=False,
     )
 
     def __getattribute__(self, name: str):
+        """Evaluate the final spectrum only when a caller asks for it."""
+
         if name != "final_evaluation":
             return object.__getattribute__(self, name)
+
         evaluation = object.__getattribute__(self, name)
+
         if evaluation is not None:
             return evaluation
+
         factory = object.__getattribute__(self, "_final_evaluation_factory")
+
         if factory is None:
             return None
+
         evaluation = factory()
         object.__setattr__(self, "final_evaluation", evaluation)
         object.__setattr__(self, "_final_evaluation_factory", None)
+
         return evaluation
 
     def value(self, name: StateName) -> float:
+        """Return a named retrieval value without exposing array position."""
+
         return float(self.state[self.state_names.index(name)])
 
     @property
     def plot(self):
+        """Import plotting only when a caller asks for retrieval figures."""
+
         from ...plot.optimal_estimation import OptimalEstimationPlot
 
         return OptimalEstimationPlot(self)

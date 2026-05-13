@@ -11,12 +11,15 @@ from validation.o2a import baseline as oe_baseline
 
 
 def uniform_lhs(rng: np.random.Generator, low: float, high: float, count: int) -> np.ndarray:
+
     values = (np.arange(count, dtype=np.float64) + rng.random(count)) / count
     rng.shuffle(values)
+
     return low + values * (high - low)
 
 
 def sampled_scenes(count: int, seed: int) -> list[dict[str, float]]:
+
     rng = np.random.default_rng(seed)
     solar = uniform_lhs(rng, 25.0, 65.0, count)
     view = uniform_lhs(rng, 0.0, 50.0, count)
@@ -26,6 +29,7 @@ def sampled_scenes(count: int, seed: int) -> list[dict[str, float]]:
     aerosol_optical_depth = np.exp(uniform_lhs(rng, math.log(0.10), math.log(2.0), count))
     mid_fraction = uniform_lhs(rng, 0.18, 0.78, count)
     scenes: list[dict[str, float]] = []
+
     for index in range(count):
         mid_min = 225.0
         mid_max = surface_pressure[index] - 100.0
@@ -42,20 +46,26 @@ def sampled_scenes(count: int, seed: int) -> list[dict[str, float]]:
                 ),
             }
         )
+
     return scenes
 
 
 def initial_aod(truth: float, index: int) -> float:
+
     factor = 1.12 if index % 2 == 0 else 0.88
+
     return min(5.0, max(0.02, truth * factor + 0.01))
 
 
 def initial_mid_pressure(truth: float, surface_pressure: float, index: int) -> float:
+
     offset = [-25.0, -15.0, 15.0, 25.0][index % 4]
+
     return min(surface_pressure - 75.0, max(100.0, truth + offset))
 
 
 def initial_state(index: int, scene: dict[str, float]) -> dict[str, float]:
+
     return {
         "aerosol_optical_depth": initial_aod(scene["aerosol_optical_depth"], index),
         "aerosol_mid_pressure_hpa": initial_mid_pressure(
@@ -71,6 +81,7 @@ def layer_bounds(
     *,
     thickness_hpa: float = oe_baseline.LAYER_THICKNESS_HPA,
 ) -> tuple[float, float]:
+
     return (
         mid_pressure_hpa - 0.5 * thickness_hpa,
         mid_pressure_hpa + 0.5 * thickness_hpa,
@@ -83,12 +94,14 @@ def update_layer_pressures(
     *,
     thickness_hpa: float = oe_baseline.LAYER_THICKNESS_HPA,
 ) -> None:
+
     top_pressure, bottom_pressure = layer_bounds(
         mid_pressure_hpa,
         thickness_hpa=thickness_hpa,
     )
     case.aerosol.placement.top_pressure_hpa = top_pressure
     case.aerosol.placement.bottom_pressure_hpa = bottom_pressure
+
     for interval in case.atmosphere.intervals:
         if interval.index_1based == 1:
             interval.bottom_pressure_hpa = top_pressure
@@ -108,6 +121,7 @@ def build_scene(
     scene: dict[str, float],
     id_width: int = 3,
 ) -> Any:
+
     case = copy.deepcopy(base)
     scene_id = f"{id_prefix}_{index:0{id_width}d}"
     case.metadata["id"] = scene_id
@@ -122,10 +136,12 @@ def build_scene(
     case.aerosol.asymmetry_factor = oe_baseline.AEROSOL_ASYMMETRY_FACTOR
     case.aerosol.angstrom_exponent = oe_baseline.AEROSOL_ANGSTROM_EXPONENT
     update_layer_pressures(case, scene["aerosol_mid_pressure_hpa"])
+
     return case
 
 
 def retrieval_controls() -> optimal_estimation.RetrievalControls:
+
     return optimal_estimation.RetrievalControls(
         max_iterations=10,
         state_vector_convergence_threshold=1.0,
@@ -148,9 +164,11 @@ def aerosol_two_state_vector(
     mid_pressure_lower_hpa: float | None = 225.0,
     mid_pressure_upper_hpa: float | None = None,
 ) -> optimal_estimation.StateVector:
+
     upper = (
         surface_pressure_hpa - 100.0 if mid_pressure_upper_hpa is None else mid_pressure_upper_hpa
     )
+
     return optimal_estimation.StateVector(
         [
             optimal_estimation.AerosolOpticalDepth(
@@ -180,10 +198,12 @@ def reference_two_state_vector(
     reference: dict[str, Any],
     profile: optimal_estimation.PressureAltitudeProfile,
 ) -> optimal_estimation.StateVector:
+
     prior = reference["a_priori"]
     layer_thickness = (
         case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
     )
+
     return aerosol_two_state_vector(
         initial={
             "aerosol_optical_depth": float(prior["aerosol_optical_depth"]),

@@ -64,44 +64,61 @@ BRANCH_PREFIXES = ("b", "bl", "ret", "j", "call")
 
 
 def normalize_symbol(name: str) -> str:
+
     name = name.strip()
+
     if name.startswith("_"):
         name = name[1:]
+
     return name
 
 
 def split_sections(asm_text: str) -> dict[str, list[str]]:
+
     symbol_set = {symbol for symbols in SYMBOL_GROUPS.values() for symbol in symbols}
     sections: dict[str, list[str]] = {}
     current: str | None = None
+
     for line in asm_text.splitlines():
         label = LABEL_RE.match(line)
+
         if label:
             symbol = normalize_symbol(label.group(1))
             current = symbol if symbol in symbol_set else None
+
         if current is not None:
             sections.setdefault(current, []).append(line)
+
     return sections
 
 
 def parse_instruction(line: str) -> str | None:
+
     if ":" not in line:
         return None
+
     _, body = line.split(":", 1)
     parts = body.split()
+
     while parts and re.fullmatch(r"[0-9a-fA-F]{2,8}", parts[0]):
         parts.pop(0)
+
     if not parts:
         return None
+
     mnemonic = parts[0].lower()
+
     if not re.match(r"[a-z.][a-z0-9_.]*$", mnemonic):
         return None
+
     return mnemonic
 
 
 def instruction_mix(lines: list[str]) -> dict[str, int]:
+
     mnemonics = [mnemonic for line in lines if (mnemonic := parse_instruction(line))]
     counts = Counter(mnemonics)
+
     return {
         "instructions": len(mnemonics),
         "fp_arithmetic": sum(
@@ -120,15 +137,20 @@ def instruction_mix(lines: list[str]) -> dict[str, int]:
 
 
 def read_timings(path: Path) -> list[dict[str, str]]:
+
     rows: list[dict[str, str]] = []
+
     with path.open(newline="") as handle:
         filtered = (line for line in handle if not line.startswith("#"))
+
         for row in csv.DictReader(filtered):
             rows.append(row)
+
     return rows
 
 
 def render_table(headers: list[str], rows: list[list[str]]) -> str:
+
     widths = [
         max(len(headers[idx]), *(len(row[idx]) for row in rows)) for idx in range(len(headers))
     ]
@@ -136,16 +158,20 @@ def render_table(headers: list[str], rows: list[list[str]]) -> str:
         "| " + " | ".join(header.ljust(widths[idx]) for idx, header in enumerate(headers)) + " |",
         "| " + " | ".join("-" * width for width in widths) + " |",
     ]
+
     for row in rows:
         out.append(
             "| " + " | ".join(value.ljust(widths[idx]) for idx, value in enumerate(row)) + " |"
         )
+
     return "\n".join(out)
 
 
 def main() -> int:
+
     if len(sys.argv) != 2:
         print("usage: summarize_codegen.py <outputs-dir>", file=sys.stderr)
+
         return 2
 
     out_dir = Path(sys.argv[1])
@@ -154,12 +180,15 @@ def main() -> int:
     sections = split_sections(asm_text)
 
     mixes: dict[str, dict[str, int]] = {}
+
     for group, symbols in SYMBOL_GROUPS.items():
         lines: list[str] = []
+
         for symbol in symbols:
             if symbol in sections:
                 lines.extend(sections[symbol])
                 lines.append("")
+
         (out_dir / f"{group}.asm").write_text("\n".join(lines).rstrip() + "\n")
         mixes[group] = instruction_mix(lines)
 
@@ -190,6 +219,7 @@ def main() -> int:
     )
     total_static_instructions = sum(mixes[symbol]["instructions"] for _, symbol in PRIMITIVES)
     instruction_cost_rows = []
+
     for operation, symbol in PRIMITIVES:
         ns_per_call = float(timing_by_operation[operation]["ns_per_call"])
         static_instructions = mixes[symbol]["instructions"]
@@ -281,6 +311,7 @@ def main() -> int:
     )
     (out_dir / "codegen-summary.md").write_text(summary)
     print(f"wrote {out_dir / 'codegen-summary.md'}")
+
     return 0
 
 

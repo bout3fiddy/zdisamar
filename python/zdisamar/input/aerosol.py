@@ -2,13 +2,14 @@
 
 import math
 from dataclasses import dataclass
-from typing import Any
 
-from .shared import to_float
+from .shared import object_dict, to_float, to_int
 
 
 @dataclass
 class AerosolPlacement:
+    """Pressure-layer placement used when aerosol moves with the fit interval."""
+
     semantics: str
     interval_index_1based: int
     top_pressure_hpa: float
@@ -17,10 +18,11 @@ class AerosolPlacement:
     bottom_altitude_km: float = math.nan
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AerosolPlacement:
+    def from_dict(cls, data: dict[str, object]) -> AerosolPlacement:
+
         return cls(
             semantics=str(data["semantics"]),
-            interval_index_1based=int(data["interval_index_1based"]),
+            interval_index_1based=to_int(data["interval_index_1based"]),
             top_pressure_hpa=to_float(data["top_pressure_hpa"]),
             bottom_pressure_hpa=to_float(data["bottom_pressure_hpa"]),
             top_altitude_km=to_float(data.get("top_altitude_km", math.nan)),
@@ -28,6 +30,7 @@ class AerosolPlacement:
         )
 
     def to_dict(self) -> dict[str, float | int | str]:
+
         return {
             "semantics": self.semantics,
             "interval_index_1based": self.interval_index_1based,
@@ -40,6 +43,8 @@ class AerosolPlacement:
 
 @dataclass
 class Aerosol:
+    """Single aerosol layer and its optical properties for the O2 A scene."""
+
     optical_depth_550_nm: float
     single_scatter_albedo: float
     asymmetry_factor: float
@@ -50,7 +55,8 @@ class Aerosol:
     placement: AerosolPlacement
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Aerosol:
+    def from_dict(cls, data: dict[str, object]) -> Aerosol:
+
         return cls(
             optical_depth_550_nm=to_float(data["optical_depth"]),
             single_scatter_albedo=to_float(data["single_scatter_albedo"]),
@@ -59,10 +65,11 @@ class Aerosol:
             reference_wavelength_nm=to_float(data["reference_wavelength_nm"]),
             layer_center_km=to_float(data["layer_center_km"]),
             layer_width_km=to_float(data["layer_width_km"]),
-            placement=AerosolPlacement.from_dict(data["placement"]),
+            placement=AerosolPlacement.from_dict(object_dict(data["placement"])),
         )
 
     def to_dict(self) -> dict[str, float | dict[str, float | int | str]]:
+
         return {
             "optical_depth": self.optical_depth_550_nm,
             "single_scatter_albedo": self.single_scatter_albedo,

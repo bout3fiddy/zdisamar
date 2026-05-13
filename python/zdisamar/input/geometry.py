@@ -1,13 +1,14 @@
 """Viewing-geometry and surface input objects."""
 
 from dataclasses import dataclass
-from typing import Any
 
 from .shared import to_float
 
 
 @dataclass
 class Geometry:
+    """Solar and viewing geometry for the O2 A radiance calculation."""
+
     model: str
     solar_zenith_deg: float
     viewing_zenith_deg: float
@@ -15,12 +16,15 @@ class Geometry:
 
     @property
     def solar_mu0(self) -> float:
-        from ..quantities import solar_mu0
+        """Return cos(solar zenith), used in reflectance conversion."""
 
-        return solar_mu0(self)
+        from ..rtm.geometry import solar_zenith_cosine
+
+        return solar_zenith_cosine(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Geometry:
+    def from_dict(cls, data: dict[str, object]) -> Geometry:
+
         return cls(
             model=str(data["model"]),
             solar_zenith_deg=to_float(data["solar_zenith_deg"]),
@@ -29,6 +33,7 @@ class Geometry:
         )
 
     def to_dict(self) -> dict[str, float | str]:
+
         return {
             "model": self.model,
             "solar_zenith_deg": self.solar_zenith_deg,
@@ -39,5 +44,7 @@ class Geometry:
 
 @dataclass
 class Surface:
+    """Lambertian surface parameters used by the current O2 A model."""
+
     albedo: float
     pressure_hpa: float

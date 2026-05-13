@@ -33,16 +33,20 @@ def _endpoint_slope_spline_second_derivatives(x: np.ndarray, y: np.ndarray) -> n
     matrix[-1, -2] = widths[-1]
     matrix[-1, -1] = 2.0 * widths[-1]
     rhs[-1] = 0.0
+
     return np.linalg.solve(matrix, rhs)
 
 
 def _cubic_spline_interpolate(
     x: np.ndarray, y: np.ndarray, second: np.ndarray, value: float
 ) -> float:
+    """Evaluate the pressure-altitude spline without adding a SciPy dependency."""
+
     lower_index = int(np.searchsorted(x, value, side="right") - 1)
     lower_index = max(0, min(lower_index, len(x) - 2))
     upper_index = lower_index + 1
     width = x[upper_index] - x[lower_index]
+
     if width <= 0.0:
         raise ValueError("spline coordinates must be strictly increasing")
 
@@ -51,6 +55,7 @@ def _cubic_spline_interpolate(
     interpolated = upper_weight * y[lower_index] + lower_weight * y[upper_index]
     curvature = (upper_weight**3 - upper_weight) * second[lower_index]
     curvature += (lower_weight**3 - lower_weight) * second[upper_index]
+
     return float(interpolated + curvature * width * width / 6.0)
 
 
@@ -64,16 +69,22 @@ class PressureAltitudeProfile:
     _pressure_by_altitude_second: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+
         altitude = np.asarray(self.altitude_km, dtype=np.float64)
         pressure = np.asarray(self.pressure_hpa, dtype=np.float64)
+
         if altitude.ndim != 1 or pressure.ndim != 1 or len(altitude) != len(pressure):
             raise ValueError("pressure-altitude profile arrays must be one-dimensional peers")
+
         if len(altitude) < 2:
             raise ValueError("pressure-altitude profile must contain at least two rows")
+
         if np.any(~np.isfinite(altitude)) or np.any(~np.isfinite(pressure)):
             raise ValueError("pressure-altitude profile values must be finite")
+
         if np.any(np.diff(altitude) <= 0.0):
             raise ValueError("altitude grid must be strictly increasing")
+
         if np.any(pressure <= 0.0) or np.any(np.diff(pressure) >= 0.0):
             raise ValueError("pressure grid must be positive and strictly decreasing")
 
@@ -89,15 +100,21 @@ class PressureAltitudeProfile:
 
     @classmethod
     def from_csv(cls, path: Path) -> PressureAltitudeProfile:
+        """Read a pressure-altitude table into the validated profile object."""
+
         altitudes: list[float] = []
         pressures: list[float] = []
+
         with path.open(newline="") as handle:
             reader = csv.DictReader(handle)
+
             for row in reader:
                 altitudes.append(float(row["altitude_km"]))
                 pressures.append(float(row["pressure_hpa"]))
+
         if len(altitudes) < 2:
             raise ValueError("pressure-altitude profile must contain at least two rows")
+
         return cls(
             altitude_km=np.asarray(altitudes, dtype=np.float64),
             pressure_hpa=np.asarray(pressures, dtype=np.float64),
@@ -108,16 +125,20 @@ class PressureAltitudeProfile:
 
         if not math.isfinite(altitude_km):
             raise ValueError("altitude must be finite")
+
         lower = float(self.altitude_km[0])
         upper = float(self.altitude_km[-1])
+
         if altitude_km < lower or altitude_km > upper:
             raise ValueError("altitude is outside the pressure-altitude profile")
+
         log_pressure = _cubic_spline_interpolate(
             self.altitude_km,
             self._log_pressure_hpa,
             self._pressure_by_altitude_second,
             altitude_km,
         )
+
         return float(math.exp(log_pressure))
 
     def altitude_at_pressure(self, pressure_hpa: float) -> float:
@@ -125,20 +146,27 @@ class PressureAltitudeProfile:
 
         if not math.isfinite(pressure_hpa):
             raise ValueError("pressure must be finite")
+
         lower_pressure = float(self.pressure_hpa[-1])
         upper_pressure = float(self.pressure_hpa[0])
+
         if pressure_hpa < lower_pressure or pressure_hpa > upper_pressure:
             raise ValueError("pressure is outside the pressure-altitude profile")
 
         lower_altitude = float(self.altitude_km[0])
         upper_altitude = float(self.altitude_km[-1])
+
         for _ in range(80):
+            # Bisection keeps the inverse tied to pressure_at_altitude instead
+            # of introducing a second pressure-altitude approximation.
             mid_altitude = 0.5 * (lower_altitude + upper_altitude)
             mid_pressure = self.pressure_at_altitude(mid_altitude)
+
             if mid_pressure > pressure_hpa:
                 lower_altitude = mid_altitude
             else:
                 upper_altitude = mid_altitude
+
         return 0.5 * (lower_altitude + upper_altitude)
 
     def altitude_derivative_at_pressure(self, pressure_hpa: float) -> float:
@@ -147,9 +175,12 @@ class PressureAltitudeProfile:
         step_hpa = max(abs(pressure_hpa) * 1.0e-4, 1.0e-3)
         lower_pressure = max(float(self.pressure_hpa[-1]), pressure_hpa - step_hpa)
         upper_pressure = min(float(self.pressure_hpa[0]), pressure_hpa + step_hpa)
+
         if upper_pressure <= lower_pressure:
             raise ValueError("pressure derivative stencil is outside the profile")
+
         altitude_span = self.altitude_at_pressure(upper_pressure) - self.altitude_at_pressure(
             lower_pressure
         )
+
         return altitude_span / (upper_pressure - lower_pressure)

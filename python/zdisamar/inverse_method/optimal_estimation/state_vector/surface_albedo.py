@@ -17,4 +17,5 @@ class SurfaceAlbedo:
     name: str = SURFACE_ALBEDO
 
     def write_to(self, target, value: float) -> None:
+
         target.surface.albedo = value

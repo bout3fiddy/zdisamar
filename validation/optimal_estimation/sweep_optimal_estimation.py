@@ -24,8 +24,9 @@ CSV_PATH = OUTPUTS_DIR / "zdisamar_o2a_sweep_runs.csv"
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-import zdisamar as zd  # noqa: E402
+from zdisamar import rtm  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
+from zdisamar.wavelength_bands import o2a  # noqa: E402
 
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 from validation.o2a import baseline as oe_baseline  # noqa: E402
@@ -40,37 +41,40 @@ RUN_COUNT = 5
 
 
 def retrieve_scene(
-    case: zd.O2AInput,
+    case: o2a.O2ACase,
     truth: dict[str, float],
     initial: dict[str, float],
 ):
-    with zd.prepare(case) as prepared:
-        measurement = measurement_from_o2a_baseline_noise(prepared)
-        profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+
+    measurement = measurement_from_o2a_baseline_noise(case)
+    profile = o2a_oe.pressure_altitude_profile_from_case(case)
+
     state_vector = oe_setup.aerosol_two_state_vector(
         initial=initial,
         profile=profile,
         surface_pressure_hpa=truth["surface_pressure_hpa"],
     )
-    with zd.o2a_forward_session(case) as session:
+
+    with rtm.SessionCache(case) as cache:
         return o2a_oe.disamar_oe(
-            inverse_model=o2a_oe.O2AInverseForwardModel(
-                case,
-                forward_session=session,
-            ),
+            case=case,
             measurement=measurement,
             state_vector=state_vector,
             controls=oe_setup.retrieval_controls(),
+            cache=cache,
         )
 
 
 def percentile(values: list[float], q: float) -> float:
+
     if not values:
         return math.nan
+
     return float(np.percentile(np.asarray(values, dtype=np.float64), q))
 
 
 def stats(values: list[float]) -> dict[str, float]:
+
     return {
         "min": min(values) if values else math.nan,
         "median": statistics.median(values) if values else math.nan,
@@ -81,16 +85,19 @@ def stats(values: list[float]) -> dict[str, float]:
 
 
 def run_sweep() -> dict[str, Any]:
-    base = build_o2a_case(zd, jacobian_reference_layer=True)
+
+    base = build_o2a_case(o2a, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
     rows: list[dict[str, Any]] = []
     start = time.perf_counter()
+
     for row in oe_cases.case_rows(count=RUN_COUNT):
         index = int(row["case"])
         truth = oe_cases.scene_from_row(row)
         case = oe_setup.build_scene(base, index=index, id_prefix="o2a_oe_sweep", scene=truth)
         initial = oe_cases.initial_from_row(row)
         run_start = time.perf_counter()
+
         try:
             result = retrieve_scene(case, truth, initial)
             retrieval_s = time.perf_counter() - run_start
@@ -105,6 +112,7 @@ def run_sweep() -> dict[str, Any]:
             retrieved_mid_pressure = math.nan
             status = "error"
             error = str(exc)
+
         row = {
             "index": index,
             "status": status,
@@ -121,10 +129,8 @@ def run_sweep() -> dict[str, Any]:
             "converged": bool(result.converged) if result is not None else False,
             "iterations": int(result.iterations) if result is not None else 0,
             "retrieval_s": retrieval_s,
-            "forward_model_and_jacobian_s": (
-                sum(t.forward_model_and_jacobian_s for t in result.timing)
-                if result is not None
-                else math.nan
+            "rtm_and_jacobian_s": (
+                sum(t.rtm_and_jacobian_s for t in result.timing) if result is not None else math.nan
             ),
             "final_state_vector_convergence": (
                 result.history[-1].state_vector_convergence
@@ -180,9 +186,7 @@ def run_sweep() -> dict[str, Any]:
             "aerosol_mid_pressure_abs_error_hpa": stats(
                 [float(row["aerosol_mid_pressure_abs_error_hpa"]) for row in ok_rows]
             ),
-            "forward_model_and_jacobian_s": stats(
-                [float(row["forward_model_and_jacobian_s"]) for row in ok_rows]
-            ),
+            "rtm_and_jacobian_s": stats([float(row["rtm_and_jacobian_s"]) for row in ok_rows]),
         },
         "worst_aod_abs_error_runs": sorted(
             ok_rows,
@@ -196,33 +200,43 @@ def run_sweep() -> dict[str, Any]:
         )[:10],
     }
     write_outputs(rows, summary)
+
     return summary
 
 
 def write_outputs(rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
+
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
     with CSV_PATH.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
+
     write_json(SUMMARY_PATH, summary)
 
 
 def validate_sweep_success(summary: dict[str, Any]) -> list[str]:
+
     run_count = int(summary["run_count"])
     ok_count = int(summary["ok_count"])
     converged_count = int(summary["converged_count"])
     failures = []
+
     if ok_count != run_count:
         failures.append(f"{run_count - ok_count} retrievals returned error rows")
+
     if converged_count != run_count:
         failures.append(f"{run_count - converged_count} retrievals did not converge")
+
     return failures
 
 
 def main() -> int:
+
     if RUN_COUNT <= 0:
         raise ValueError("RUN_COUNT must be positive")
+
     summary = run_sweep()
     print("\nSweep summary:")
     print(f"  runs: {summary['run_count']}")
@@ -237,9 +251,12 @@ def main() -> int:
     print(f"  CSV: {stable_repo_path(CSV_PATH)}")
     print(f"  JSON: {stable_repo_path(SUMMARY_PATH)}")
     failures = validate_sweep_success(summary)
+
     if failures:
         print("; ".join(failures), file=sys.stderr)
+
         return 1
+
     return 0
 
 

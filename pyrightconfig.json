@@ -3,5 +3,6 @@
   "pythonVersion": "3.14",
   "typeCheckingMode": "standard",
   "reportImportCycles": "none",
-  "reportMissingTypeStubs": "none"
+  "reportMissingTypeStubs": "none",
+  "reportExplicitAny": "error"
 }

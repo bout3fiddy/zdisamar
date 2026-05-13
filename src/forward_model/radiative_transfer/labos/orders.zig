@@ -343,6 +343,41 @@ fn rtLayerHasSignal(rt: *const basis.LayerRT, nmutot: usize) bool {
     return false;
 }
 
+fn refreshActiveLayerMask(rt: []const basis.LayerRT, rt_active: []bool, nmutot: usize) void {
+    for (rt, rt_active) |*layer_rt, *active| {
+        active.* = rtLayerHasSignal(layer_rt, nmutot);
+    }
+}
+
+fn copyTransportedOrderIntoOutput(
+    ud: []basis.UDField,
+    ud_orde: []const basis.UDField,
+    start_level: usize,
+    end_level: usize,
+) void {
+    for (start_level..end_level + 1) |ilevel| {
+        ud[ilevel].U = ud_orde[ilevel].U;
+        ud[ilevel].D = ud_orde[ilevel].D;
+    }
+}
+
+fn maxOutgoingUpward(
+    ud_orde: []const basis.UDField,
+    end_level: usize,
+    n_gauss: usize,
+    nmutot: usize,
+) f64 {
+    var max_value: f64 = 0.0;
+    for (0..2) |imu0| {
+        const end_u = ud_orde[end_level].U.col[imu0].data;
+        for (n_gauss..nmutot) |imu| {
+            const val = @abs(end_u[imu]);
+            if (val > max_value) max_value = val;
+        }
+    }
+    return max_value;
+}
+
 fn initializeOrdersBuffers(
     comptime track_sum_local: bool,
     ud: []basis.UDField,
@@ -498,9 +533,7 @@ fn ordersScatInternal(
     Trace.plotU("orders_calls", 1);
 
     if (!rt_active_ready) {
-        for (rt[0..nlevel], rt_active_view) |*layer_rt, *active| {
-            active.* = rtLayerHasSignal(layer_rt, nmutot);
-        }
+        refreshActiveLayerMask(rt[0..nlevel], rt_active_view, nmutot);
     }
 
     {
@@ -564,19 +597,9 @@ fn ordersScatInternal(
         transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
     }
 
-    for (start_level..end_level + 1) |ilevel| {
-        ud_view[ilevel].U = ud_orde_view[ilevel].U;
-        ud_view[ilevel].D = ud_orde_view[ilevel].D;
-    }
+    copyTransportedOrderIntoOutput(ud_view, ud_orde_view, start_level, end_level);
 
-    var max_value: f64 = 0.0;
-    for (0..2) |imu0| {
-        const end_u = ud_orde_view[end_level].U.col[imu0].data;
-        for (n_gauss..nmutot) |imu| {
-            const val = @abs(end_u[imu]);
-            if (val > max_value) max_value = val;
-        }
-    }
+    var max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
     if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) {
         Trace.plotU("orders_initial_returns", 1);
         return .{
@@ -663,14 +686,7 @@ fn ordersScatInternal(
             transportToOtherLevels(start_level, end_level, nmutot, atten, ud_local_view, ud_orde_view);
         }
 
-        max_value = 0.0;
-        for (0..2) |imu0| {
-            const end_u = ud_orde_view[end_level].U.col[imu0].data;
-            for (n_gauss..nmutot) |imu| {
-                const val = @abs(end_u[imu]);
-                if (val > max_value) max_value = val;
-            }
-        }
+        max_value = maxOutgoingUpward(ud_orde_view, end_level, n_gauss, nmutot);
 
         if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) {
             // PARITY:
@@ -976,9 +992,7 @@ pub fn ordersScatTangent(
     initializeOrdersBuffers(false, base_ud, base_ud_sum_local, base_orde, base_local, nmutot);
     initializeOrdersBuffers(false, result.ud, result.ud_sum_local, tangent_orde, tangent_local, nmutot);
 
-    for (rt[0..nlevel], rt_active) |*layer_rt, *active| {
-        active.* = rtLayerHasSignal(layer_rt, nmutot);
-    }
+    refreshActiveLayerMask(rt[0..nlevel], rt_active, nmutot);
 
     for (start_level..end_level + 1) |ilevel| {
         const e_data = &base_ud[ilevel].E.data;
@@ -1047,21 +1061,10 @@ pub fn ordersScatTangent(
     transportToOtherLevels(start_level, end_level, nmutot, atten, base_local, base_orde);
     transportToOtherLevelsTangent(start_level, end_level, nmutot, atten, atten_tangent, base_local, tangent_local, base_orde, tangent_orde);
 
-    for (start_level..end_level + 1) |ilevel| {
-        base_ud[ilevel].U = base_orde[ilevel].U;
-        base_ud[ilevel].D = base_orde[ilevel].D;
-        result.ud[ilevel].U = tangent_orde[ilevel].U;
-        result.ud[ilevel].D = tangent_orde[ilevel].D;
-    }
+    copyTransportedOrderIntoOutput(base_ud, base_orde, start_level, end_level);
+    copyTransportedOrderIntoOutput(result.ud, tangent_orde, start_level, end_level);
 
-    var max_value: f64 = 0.0;
-    for (0..2) |imu0| {
-        const end_u = base_orde[end_level].U.col[imu0].data;
-        for (n_gauss..nmutot) |imu| {
-            const val = @abs(end_u[imu]);
-            if (val > max_value) max_value = val;
-        }
-    }
+    var max_value = maxOutgoingUpward(base_orde, end_level, n_gauss, nmutot);
     if (controls.scattering != .multiple or max_value < controls.performance_thresholds.threshold_conv_first) return result;
 
     var num_orders: usize = 1;
@@ -1174,14 +1177,7 @@ pub fn ordersScatTangent(
         transportToOtherLevels(start_level, end_level, nmutot, atten, base_local, base_orde);
         transportToOtherLevelsTangent(start_level, end_level, nmutot, atten, atten_tangent, base_local, tangent_local, base_orde, tangent_orde);
 
-        max_value = 0.0;
-        for (0..2) |imu0| {
-            const end_u = base_orde[end_level].U.col[imu0].data;
-            for (n_gauss..nmutot) |imu| {
-                const val = @abs(end_u[imu]);
-                if (val > max_value) max_value = val;
-            }
-        }
+        max_value = maxOutgoingUpward(base_orde, end_level, n_gauss, nmutot);
 
         if (max_value < controls.performance_thresholds.threshold_conv_mult or num_orders >= num_orders_max) break;
 

@@ -19,6 +19,85 @@ const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
 const profile_cache_build_chunk_size: usize = 8;
 
+const SimulationSetup = struct {
+    sample_count: usize,
+    resolved_axis: grid.ResolvedAxis,
+    radiance_calibration: calibration.Calibration,
+    irradiance_calibration: calibration.Calibration,
+    radiance_slit_kernel: [5]f64,
+    irradiance_slit_kernel: [5]f64,
+    uses_integrated_radiance_sampling: bool,
+    uses_integrated_irradiance_sampling: bool,
+    safe_span: f64,
+    plan_key: u64,
+};
+
+const ResolvedSimulationPlan = struct {
+    wavelength_sampling: []const WavelengthSampling.WavelengthSampling = &.{},
+    forward_misses: []const SpectralEval.ForwardCacheMiss = &.{},
+    profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache = &.{},
+    owned_wavelength_sampling: []WavelengthSampling.WavelengthSampling = &.{},
+    owned_forward_misses: []SpectralEval.ForwardCacheMiss = &.{},
+
+    fn deinit(self: *ResolvedSimulationPlan, allocator: Allocator) void {
+        allocator.free(self.owned_wavelength_sampling);
+        allocator.free(self.owned_forward_misses);
+        self.* = undefined;
+    }
+};
+
+const RunningSummary = struct {
+    radiance_sum: f64,
+    irradiance_sum: f64,
+    reflectance_sum: f64,
+    noise_sum: f64,
+    jacobian_sum: jacobian.Vector,
+
+    fn init() RunningSummary {
+        return .{
+            .radiance_sum = 0.0,
+            .irradiance_sum = 0.0,
+            .reflectance_sum = 0.0,
+            .noise_sum = 0.0,
+            .jacobian_sum = jacobian.zero(),
+        };
+    }
+
+    fn addReflectanceSample(self: *RunningSummary, radiance: f64, irradiance: f64, reflectance: f64) void {
+        self.radiance_sum += radiance;
+        self.irradiance_sum += irradiance;
+        self.reflectance_sum += reflectance;
+    }
+
+    fn addNoiseSigma(self: *RunningSummary, values: []const f64) void {
+        for (values) |value| self.noise_sum += value;
+    }
+
+    fn addJacobianRow(self: *RunningSummary, values: jacobian.Vector) void {
+        jacobian.addScaled(&self.jacobian_sum, values, 1.0);
+    }
+
+    fn toInstrumentGridSummary(
+        self: RunningSummary,
+        sample_count: usize,
+        wavelengths: []const f64,
+        has_noise_sigma: bool,
+        mean_jacobian: ?jacobian.Vector,
+    ) Types.InstrumentGridSummary {
+        const denominator = @as(f64, @floatFromInt(sample_count));
+        return .{
+            .sample_count = @intCast(sample_count),
+            .wavelength_start_nm = wavelengths[0],
+            .wavelength_end_nm = wavelengths[sample_count - 1],
+            .mean_radiance = self.radiance_sum / denominator,
+            .mean_irradiance = self.irradiance_sum / denominator,
+            .mean_reflectance = self.reflectance_sum / denominator,
+            .mean_noise_sigma = if (has_noise_sigma) self.noise_sum / denominator else 0.0,
+            .mean_jacobian = mean_jacobian,
+        };
+    }
+};
+
 const ProfileCacheBuildQueue = struct {
     mutex: std.Thread.Mutex = .{},
     next_index: usize = 0,
@@ -208,6 +287,79 @@ pub fn simulateInternal(
     const simulate_zone = Trace.staticZone(@src(), "simulate.product");
     defer simulate_zone.end();
 
+    const setup = try buildSimulationSetup(scene, prepared, implementations, buffers);
+    var simulation_plan = try resolveSimulationPlan(
+        allocator,
+        scene,
+        prepared,
+        implementations,
+        setup,
+        wavelength_plan_storage,
+    );
+    defer simulation_plan.deinit(allocator);
+    try prefetchSimulationPlan(
+        allocator,
+        scene,
+        route,
+        prepared,
+        implementations,
+        setup,
+        simulation_plan,
+        evaluation_cache,
+    );
+
+    var summary = RunningSummary.init();
+    const transport_layer_count = try validateTransportBuffers(route, prepared, buffers);
+    try fillRadianceSamples(
+        allocator,
+        scene,
+        route,
+        prepared,
+        implementations,
+        setup,
+        simulation_plan.wavelength_sampling,
+        transport_layer_count,
+        buffers,
+        evaluation_cache,
+    );
+    try fillIrradianceSamples(
+        scene,
+        prepared,
+        setup,
+        simulation_plan.wavelength_sampling,
+        buffers,
+        evaluation_cache,
+    );
+    try applyRingCorrection(scene, buffers);
+    assembleReflectance(scene, setup.sample_count, buffers, &summary);
+    const radiance_noise_sigma = try materializeNoiseSamples(
+        scene,
+        implementations,
+        setup.sample_count,
+        buffers,
+        &summary,
+    );
+    const mean_jacobian = try processJacobianSamples(
+        scene,
+        prepared,
+        setup,
+        buffers,
+        &summary,
+    );
+    return summary.toInstrumentGridSummary(
+        setup.sample_count,
+        buffers.wavelengths,
+        radiance_noise_sigma != null,
+        mean_jacobian,
+    );
+}
+
+fn buildSimulationSetup(
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+    buffers: Storage.Buffers,
+) Storage.Error!SimulationSetup {
     try scene.validate();
     const sample_count: usize = @intCast(scene.spectral_grid.sample_count);
     try Storage.validateBuffers(sample_count, buffers);
@@ -233,17 +385,38 @@ pub fn simulateInternal(
     const safe_span = if (span_nm <= 0.0) 1.0 else span_nm;
     Trace.plotU("output_wavelengths", @intCast(sample_count));
     const plan_key = wavelengthPlanKey(scene, prepared, implementations);
-    var owned_wavelength_sampling: []WavelengthSampling.WavelengthSampling = &.{};
-    defer allocator.free(owned_wavelength_sampling);
-    var owned_forward_misses: []SpectralEval.ForwardCacheMiss = &.{};
-    defer allocator.free(owned_forward_misses);
 
-    const wavelength_sampling: []const WavelengthSampling.WavelengthSampling = blk: {
+    return .{
+        .sample_count = sample_count,
+        .resolved_axis = resolved_axis,
+        .radiance_calibration = radiance_calibration,
+        .irradiance_calibration = irradiance_calibration,
+        .radiance_slit_kernel = radiance_slit_kernel,
+        .irradiance_slit_kernel = irradiance_slit_kernel,
+        .uses_integrated_radiance_sampling = uses_integrated_radiance_sampling,
+        .uses_integrated_irradiance_sampling = uses_integrated_irradiance_sampling,
+        .safe_span = safe_span,
+        .plan_key = plan_key,
+    };
+}
+
+fn resolveSimulationPlan(
+    allocator: Allocator,
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+    setup: SimulationSetup,
+    wavelength_plan_storage: ?*Storage.SummaryStorage,
+) Storage.Error!ResolvedSimulationPlan {
+    var plan: ResolvedSimulationPlan = .{};
+    errdefer plan.deinit(allocator);
+
+    plan.wavelength_sampling = blk: {
         const zone = Trace.staticZone(@src(), "simulate.wavelength_sampling");
         defer zone.end();
 
         if (wavelength_plan_storage) |storage| {
-            if (storage.wavelength_plan_valid and storage.wavelength_plan_key == plan_key) {
+            if (storage.wavelength_plan_valid and storage.wavelength_plan_key == setup.plan_key) {
                 break :blk storage.wavelength_sampling;
             }
             storage.invalidateWavelengthPlan(allocator);
@@ -251,27 +424,27 @@ pub fn simulateInternal(
                 allocator,
                 scene,
                 prepared,
-                &resolved_axis,
-                radiance_calibration,
-                irradiance_calibration,
+                &setup.resolved_axis,
+                setup.radiance_calibration,
+                setup.irradiance_calibration,
                 implementations,
             );
-            storage.wavelength_plan_key = plan_key;
+            storage.wavelength_plan_key = setup.plan_key;
             storage.wavelength_plan_valid = true;
             break :blk storage.wavelength_sampling;
         }
-        owned_wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
+        plan.owned_wavelength_sampling = try WavelengthSampling.buildWavelengthSampling(
             allocator,
             scene,
             prepared,
-            &resolved_axis,
-            radiance_calibration,
-            irradiance_calibration,
+            &setup.resolved_axis,
+            setup.radiance_calibration,
+            setup.irradiance_calibration,
             implementations,
         );
-        break :blk owned_wavelength_sampling;
+        break :blk plan.owned_wavelength_sampling;
     };
-    const forward_misses: []const SpectralEval.ForwardCacheMiss = blk: {
+    plan.forward_misses = blk: {
         const zone = Trace.staticZone(@src(), "simulate.forward_miss_collection");
         defer zone.end();
 
@@ -279,30 +452,43 @@ pub fn simulateInternal(
             if (!storage.forward_misses_valid) {
                 storage.forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
                     allocator,
-                    wavelength_sampling,
+                    plan.wavelength_sampling,
                 );
                 storage.forward_misses_valid = true;
             }
             break :blk storage.forward_misses;
         }
-        owned_forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
+        plan.owned_forward_misses = try WavelengthSampling.collectUniqueForwardMisses(
             allocator,
-            wavelength_sampling,
+            plan.wavelength_sampling,
         );
-        break :blk owned_forward_misses;
+        break :blk plan.owned_forward_misses;
     };
-    const profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache = blk: {
+    plan.profile_spectroscopy_caches = blk: {
         const zone = Trace.staticZone(@src(), "simulate.profile_spectroscopy_cache");
         defer zone.end();
 
         if (wavelength_plan_storage) |storage| {
-            break :blk try ensureProfileSpectroscopyCaches(allocator, storage, prepared, forward_misses);
+            break :blk try ensureProfileSpectroscopyCaches(allocator, storage, prepared, plan.forward_misses);
         }
         break :blk &.{};
     };
+    return plan;
+}
+
+fn prefetchSimulationPlan(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+    setup: SimulationSetup,
+    simulation_plan: ResolvedSimulationPlan,
+    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+) Storage.Error!void {
     {
         const zone = Trace.staticZone(@src(), "simulate.forward_prefetch_wall");
-        zone.value(@intCast(forward_misses.len));
+        zone.value(@intCast(simulation_plan.forward_misses.len));
         defer zone.end();
         try SpectralEval.prefetchForwardSamples(
             allocator,
@@ -310,18 +496,19 @@ pub fn simulateInternal(
             route,
             prepared,
             implementations,
-            safe_span,
-            forward_misses,
-            profile_spectroscopy_caches,
+            setup.safe_span,
+            simulation_plan.forward_misses,
+            simulation_plan.profile_spectroscopy_caches,
             evaluation_cache,
         );
     }
+}
 
-    var radiance_sum: f64 = 0.0;
-    var irradiance_sum: f64 = 0.0;
-    var reflectance_sum: f64 = 0.0;
-    var noise_sum: f64 = 0.0;
-    var jacobian_sum = jacobian.zero();
+fn validateTransportBuffers(
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    buffers: Storage.Buffers,
+) Storage.Error!usize {
     const transport_layer_count = Storage.resolvedTransportLayerCount(route, prepared);
     if (buffers.layer_inputs.len < transport_layer_count or
         buffers.source_interfaces.len < transport_layer_count + 1 or
@@ -330,7 +517,21 @@ pub fn simulateInternal(
     {
         return error.ShapeMismatch;
     }
+    return transport_layer_count;
+}
 
+fn fillRadianceSamples(
+    allocator: Allocator,
+    scene: *const Scene,
+    route: common.Route,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    implementations: Types.Implementations,
+    setup: SimulationSetup,
+    wavelength_sampling: []const WavelengthSampling.WavelengthSampling,
+    transport_layer_count: usize,
+    buffers: Storage.Buffers,
+    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+) Storage.Error!void {
     {
         const zone = Trace.staticZone(@src(), "simulate.radiance_cache_integration");
         defer zone.end();
@@ -344,7 +545,7 @@ pub fn simulateInternal(
                 route,
                 prepared,
                 plan.radiance_wavelength_nm,
-                safe_span,
+                setup.safe_span,
                 implementations,
                 buffers.layer_inputs[0..transport_layer_count],
                 buffers.pseudo_spherical_layers,
@@ -360,7 +561,7 @@ pub fn simulateInternal(
             if (buffers.jacobian) |jacobian_buffer| writeJacobianRow(jacobian_buffer, index, integrated.jacobian);
         }
     }
-    if (uses_integrated_radiance_sampling) {
+    if (setup.uses_integrated_radiance_sampling) {
         // DECISION:
         //   Integrated sampling bypasses slit convolution because the
         //   instrument already performed the spectral integration.
@@ -368,7 +569,7 @@ pub fn simulateInternal(
     } else {
         const zone = Trace.staticZone(@src(), "simulate.radiance_convolution");
         defer zone.end();
-        try convolution.apply(buffers.scratch, radiance_slit_kernel[0..], buffers.radiance);
+        try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.radiance);
     }
     {
         const zone = Trace.staticZone(@src(), "simulate.radiance_postprocess");
@@ -376,13 +577,23 @@ pub fn simulateInternal(
         try Postprocess.applyChannelCorrections(
             scene,
             .radiance,
-            radiance_calibration,
+            setup.radiance_calibration,
             prepared.depolarization_factor,
             buffers.wavelengths,
             buffers.radiance,
             buffers.scratch_aux,
         );
     }
+}
+
+fn fillIrradianceSamples(
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    setup: SimulationSetup,
+    wavelength_sampling: []const WavelengthSampling.WavelengthSampling,
+    buffers: Storage.Buffers,
+    evaluation_cache: *SpectralEval.SpectralEvaluationCache,
+) Storage.Error!void {
     {
         const zone = Trace.staticZone(@src(), "simulate.irradiance_sampling");
         defer zone.end();
@@ -391,18 +602,18 @@ pub fn simulateInternal(
                 scene,
                 prepared,
                 plan.irradiance_wavelength_nm,
-                safe_span,
+                setup.safe_span,
                 evaluation_cache,
                 &plan.irradiance_integration,
             );
         }
     }
-    if (uses_integrated_irradiance_sampling) {
+    if (setup.uses_integrated_irradiance_sampling) {
         @memcpy(buffers.irradiance, buffers.scratch);
     } else {
         const zone = Trace.staticZone(@src(), "simulate.irradiance_convolution");
         defer zone.end();
-        try convolution.apply(buffers.scratch, irradiance_slit_kernel[0..], buffers.irradiance);
+        try convolution.apply(buffers.scratch, setup.irradiance_slit_kernel[0..], buffers.irradiance);
     }
     {
         const zone = Trace.staticZone(@src(), "simulate.irradiance_postprocess");
@@ -410,13 +621,16 @@ pub fn simulateInternal(
         try Postprocess.applyChannelCorrections(
             scene,
             .irradiance,
-            irradiance_calibration,
+            setup.irradiance_calibration,
             prepared.depolarization_factor,
             buffers.wavelengths,
             buffers.irradiance,
             buffers.scratch_aux,
         );
     }
+}
+
+fn applyRingCorrection(scene: *const Scene, buffers: Storage.Buffers) Storage.Error!void {
     {
         const zone = Trace.staticZone(@src(), "simulate.ring_correction");
         defer zone.end();
@@ -428,6 +642,14 @@ pub fn simulateInternal(
             buffers.scratch_aux,
         );
     }
+}
+
+fn assembleReflectance(
+    scene: *const Scene,
+    sample_count: usize,
+    buffers: Storage.Buffers,
+    summary: *RunningSummary,
+) void {
     {
         const zone = Trace.staticZone(@src(), "simulate.reflectance_assembly");
         defer zone.end();
@@ -435,13 +657,23 @@ pub fn simulateInternal(
         for (0..sample_count) |index| {
             buffers.reflectance[index] = (buffers.radiance[index] * std.math.pi) /
                 @max(buffers.irradiance[index] * solar_cosine, 1e-9);
-            radiance_sum += buffers.radiance[index];
-            irradiance_sum += buffers.irradiance[index];
-            reflectance_sum += buffers.reflectance[index];
+            summary.addReflectanceSample(
+                buffers.radiance[index],
+                buffers.irradiance[index],
+                buffers.reflectance[index],
+            );
         }
     }
+}
 
-    const radiance_noise_sigma = noise: {
+fn materializeNoiseSamples(
+    scene: *const Scene,
+    implementations: Types.Implementations,
+    sample_count: usize,
+    buffers: Storage.Buffers,
+    summary: *RunningSummary,
+) Storage.Error!?[]f64 {
+    return noise: {
         const zone = Trace.staticZone(@src(), "simulate.noise_sigma");
         defer zone.end();
         const sigma = if (buffers.radiance_noise_sigma) |value|
@@ -496,20 +728,27 @@ pub fn simulateInternal(
         }
 
         if (sigma) |values| {
-            for (values) |value| noise_sum += value;
+            summary.addNoiseSigma(values);
         }
         break :noise sigma;
     };
+}
 
-    var mean_jacobian: ?jacobian.Vector = null;
+fn processJacobianSamples(
+    scene: *const Scene,
+    prepared: *const OpticsPreparation.PreparedOpticalState,
+    setup: SimulationSetup,
+    buffers: Storage.Buffers,
+    summary: *RunningSummary,
+) Storage.Error!?jacobian.Vector {
     if (buffers.jacobian) |jacobian_buffer| {
         {
             const zone = Trace.staticZone(@src(), "simulate.jacobian_processing");
             defer zone.end();
-            if (!uses_integrated_radiance_sampling) {
+            if (!setup.uses_integrated_radiance_sampling) {
                 for (0..jacobian.state_count) |state_index| {
                     copyJacobianColumnToScratch(jacobian_buffer, state_index, buffers.scratch);
-                    try convolution.apply(buffers.scratch, radiance_slit_kernel[0..], buffers.scratch_aux);
+                    try convolution.apply(buffers.scratch, setup.radiance_slit_kernel[0..], buffers.scratch_aux);
                     copyScratchToJacobianColumn(buffers.scratch_aux, jacobian_buffer, state_index);
                 }
             }
@@ -518,7 +757,7 @@ pub fn simulateInternal(
                 try Postprocess.applyChannelJacobianCorrections(
                     scene,
                     .radiance,
-                    radiance_calibration,
+                    setup.radiance_calibration,
                     prepared.depolarization_factor,
                     buffers.wavelengths,
                     buffers.scratch,
@@ -529,25 +768,13 @@ pub fn simulateInternal(
             // DECISION:
             //   Ring synthesis uses the irradiance-only basis from the current
             //   forward model, so it does not change the routed radiance Jacobian.
-            for (0..sample_count) |index| {
-                jacobian.addScaled(&jacobian_sum, readJacobianRow(jacobian_buffer, index), 1.0);
+            for (0..setup.sample_count) |index| {
+                summary.addJacobianRow(readJacobianRow(jacobian_buffer, index));
             }
-            mean_jacobian = jacobian.scale(jacobian_sum, 1.0 / @as(f64, @floatFromInt(sample_count)));
+            return jacobian.scale(summary.jacobian_sum, 1.0 / @as(f64, @floatFromInt(setup.sample_count)));
         }
     }
-    return .{
-        .sample_count = @intCast(sample_count),
-        .wavelength_start_nm = buffers.wavelengths[0],
-        .wavelength_end_nm = buffers.wavelengths[sample_count - 1],
-        .mean_radiance = radiance_sum / @as(f64, @floatFromInt(sample_count)),
-        .mean_irradiance = irradiance_sum / @as(f64, @floatFromInt(sample_count)),
-        .mean_reflectance = reflectance_sum / @as(f64, @floatFromInt(sample_count)),
-        .mean_noise_sigma = if (radiance_noise_sigma != null)
-            noise_sum / @as(f64, @floatFromInt(sample_count))
-        else
-            0.0,
-        .mean_jacobian = mean_jacobian,
-    };
+    return null;
 }
 
 fn wavelengthPlanKey(

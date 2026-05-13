@@ -1,7 +1,7 @@
 # zdisamar
 
-`zdisamar` is a Zig implementation of the oxygen A-band forward model used in
-DISAMAR aerosol-layer-height retrieval studies. It calculates
+`zdisamar` is a Zig implementation of the oxygen A-band radiative-transfer
+model used in DISAMAR aerosol-layer-height retrieval studies. It calculates
 top-of-atmosphere reflectance and reflectance derivatives for scenes in which
 oxygen absorption, aerosol scattering, surface reflection, and instrument
 spectral response all affect the measured spectrum.
@@ -43,7 +43,7 @@ This makes the band useful for aerosol-layer-height and cloud-height retrievals.
 The oxygen absorption signal is also sensitive to surface brightness, geometry,
 aerosol optical thickness, and the balance between atmospheric and surface
 contributions to the measured reflectance. Aerosols scatter less strongly than
-clouds, so aerosol retrievals need a detailed forward model.
+clouds, so aerosol retrievals need a detailed RTM.
 
 ![Aerosol scene and oxygen A-band reflectance](./docs/assets/o2a-aerosol-spectrum-context.png)
 
@@ -58,7 +58,7 @@ travels deeper into the atmosphere passes through more oxygen and therefore has
 deeper absorption-band structure. If photons meet an aerosol or cloud layer
 higher in the atmosphere, they scatter back toward the instrument earlier and
 travel through less oxygen. The absorption profile then carries information
-about where the scattering happened. A forward model makes this usable: for a
+about where the scattering happened. An RTM makes this usable: for a
 given atmosphere, surface, viewing geometry, and instrument response, it
 calculates the reflectance spectrum and the derivatives needed by the retrieval
 to update the atmospheric state.
@@ -79,14 +79,14 @@ breadth also makes focused O2 A benchmarking difficult: a single aerosol-height
 case still passes through general setup, broad configuration handling, and
 general numerical routines built for a much wider set of retrieval problems.
 
-Both implementations target the same O2 A retrieval forward model: line-by-line
+Both implementations target the same O2 A retrieval RTM: line-by-line
 oxygen absorption, multiple scattering, instrument-grid convolution, and
 reflectance derivatives for optimal estimation. The performance improvements
 come from reducing repeated setup around that calculation:
 
-- scene, spectroscopy, geometry, and reference data are prepared once and reused
-  across repeated forward-model calls;
-- optimal-estimation retrievals call the forward model several times while the
+- scene, spectroscopy, geometry, and reference data are loaded once and reused
+  across repeated RTM calls;
+- optimal-estimation retrievals call the RTM several times while the
   scene, instrument grid, spectroscopy, and many optical inputs stay the same.
   Each iteration reuses that O2 A calculation state in memory;
 - retrieval Jacobians are calculated for the active state-vector columns;
@@ -98,7 +98,7 @@ come from reducing repeated setup around that calculation:
 The benchmark cases use `nstreamsSim = 20` and `nstreamsRetr = 20`. Streams are
 the angular quadrature directions used by the multiple-scattering
 radiative-transfer solver; more streams resolve the angular radiation field more
-finely, but each forward-model call costs more. The production DISAMAR O2 A
+finely, but each RTM call costs more. The production DISAMAR O2 A
 setup usually uses 16 streams, so these retained 20-stream timings are
 deliberately slower than a production-tuned Fortran run.
 
@@ -110,12 +110,12 @@ shortcut-accelerated DISAMAR run.
 
 ## Benchmarks
 
-The benchmark evidence covers forward-model timing and
+The benchmark evidence covers RTM timing and
 optimal-estimation retrieval timing.
 
-### Forward Model
+### RTM
 
-The forward-model benchmark calculates one O2 A spectrum over 755-776 nm. The
+The RTM benchmark calculates one O2 A spectrum over 755-776 nm. The
 reported spectrum has 701 instrument-grid wavelengths, but each instrument
 channel is an average over sharper oxygen absorption structure at higher
 spectral resolution:
@@ -189,13 +189,13 @@ counts are in
 
 ## Production Status And Next Work
 
-The stable implementation today is the O2 A forward model: typed inputs, bundled
+The stable implementation today is the O2 A RTM: typed inputs, bundled
 reference data, the Zig library and CLI helpers, Python wrapper demos, spectra
 validation, and benchmark artifacts.
 
 The optimal-estimation retrieval code currently supports the aerosol-only
 two-state retrieval case used by the benchmark evidence. The stable API remains
-centered on the forward model.
+centered on the RTM.
 
 The next work is to reduce the cost of repeated reflectance and derivative
 calculations during retrievals, while preserving the full O2 A result, and to
@@ -212,7 +212,7 @@ optimization.
 | Path | Purpose |
 | --- | --- |
 | `src/input/` | atmosphere, geometry, surface, spectroscopy, instrument, and reference-data inputs |
-| `src/forward_model/` | optical properties, radiative transfer, instrument-grid calculation, and implementations |
+| `src/forward_model/` | RTM internals: optical properties, radiative transfer, instrument-grid calculation, and implementations |
 | `src/output/` | diagnostic reports and spectrum serialization |
 | `src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
 | `data/` | tracked O2 A bundles and reference assets |
@@ -257,10 +257,8 @@ Run the full verification baseline:
 zig build test
 ```
 
-Regenerate the tracked O2 A comparison bundle after changing the O2 A
-forward-model or Jacobian validation outputs. These Python validation scripts
-load the native library from `./zig-out/lib/`, so run `zig build` first on a
-clean checkout:
+Regenerate the tracked O2 A comparison bundle after changing the O2 A RTM or
+Jacobian validation outputs:
 
 ```bash
 uv run validation/spectra/validate_spectra.py
@@ -282,7 +280,7 @@ To reclaim space from prior runs:
 ## Recommended Reading
 
 - [`docs/disamar-overview.md`](./docs/disamar-overview.md)
-- [`docs/o2a-forward.md`](./docs/o2a-forward.md)
+- [`docs/o2a-rtm.md`](./docs/o2a-rtm.md)
 - [`docs/reference-data-and-bundles.md`](./docs/reference-data-and-bundles.md)
 - [`research/performance/README.md`](./research/performance/README.md)
 - [`validation/README.md`](./validation/README.md)

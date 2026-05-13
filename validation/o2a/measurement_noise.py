@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from functools import cache
 
 import numpy as np
-from zdisamar import reference_data
+from zdisamar import reference_data, rtm
 from zdisamar.inverse_method import optimal_estimation
 
 from validation.o2a import baseline
@@ -24,26 +24,29 @@ class O2ANoiseComponents:
     reflectance_noise: np.ndarray
 
     def snr_table(self) -> tuple[list[float], list[float]]:
+
         return (
             self.wavelength_nm.astype(float).tolist(),
             self.reflectance_snr.astype(float).tolist(),
         )
 
 
-def measurement_from_o2a_baseline_noise(prepared) -> optimal_estimation.Measurement:
+def measurement_from_o2a_baseline_noise(case) -> optimal_estimation.Measurement:
     """Build a reflectance measurement with retained O2 A baseline SNR semantics."""
 
-    with prepared.forward_model() as spectrum:
-        wavelength_nm = spectrum.wavelength_nm.copy()
-        radiance = spectrum.radiance.copy()
-        irradiance = spectrum.irradiance.copy()
-        reflectance = spectrum.reflectance.copy()
+    spectrum = rtm.spectrum(case)
+    wavelength_nm = spectrum.wavelength_nm.copy()
+    radiance = spectrum.radiance.copy()
+    irradiance = spectrum.irradiance.copy()
+    reflectance = spectrum.reflectance.copy()
+
     noise = components_from_spectrum(
         wavelength_nm=wavelength_nm,
         radiance=radiance,
         irradiance=irradiance,
         reflectance=reflectance,
     )
+
     return optimal_estimation.Measurement(
         wavelength_nm=wavelength_nm,
         reflectance=reflectance,
@@ -64,6 +67,7 @@ def components_from_spectrum(
     radiance_values = _positive_array("radiance", radiance, wavelength.size)
     irradiance_values = _positive_array("irradiance", irradiance, wavelength.size)
     reflectance_values = _one_dimensional_array("reflectance", reflectance)
+
     if reflectance_values.size != wavelength.size:
         raise ValueError("reflectance must match wavelength_nm length")
 
@@ -97,6 +101,7 @@ def components_from_spectrum(
         np.abs(reflectance_values) / reflectance_snr,
         MIN_REFLECTANCE_NOISE,
     )
+
     return O2ANoiseComponents(
         wavelength_nm=wavelength,
         radiance_snr=radiance_snr,
@@ -116,18 +121,21 @@ def instrument_mapped_s5_reference_radiance(
     half_span_nm = 3.0 * baseline.INSTRUMENT_LINE_FWHM_NM
     lower = reference_wavelength[0] + half_span_nm
     upper = reference_wavelength[-1] - half_span_nm
+
     if np.min(target) < lower or np.max(target) > upper:
         raise ValueError(
             "wavelength_nm extends beyond the S5 reference support needed for instrument mapping"
         )
 
     mapped = np.empty(target.shape, dtype=np.float64)
+
     for index, wavelength in enumerate(target):
         mapped[index] = _integrate_reference_radiance(
             wavelength,
             reference_wavelength,
             reference_radiance,
         )
+
     return mapped
 
 
@@ -136,24 +144,31 @@ def _integrate_reference_radiance(
     reference_wavelength: np.ndarray,
     reference_radiance: np.ndarray,
 ) -> float:
+
     half_span_nm = 3.0 * baseline.INSTRUMENT_LINE_FWHM_NM
     lower = wavelength_nm - half_span_nm
     upper = wavelength_nm + half_span_nm
     mask = (reference_wavelength >= lower) & (reference_wavelength <= upper)
+
     if not np.any(mask):
         raise ValueError("no S5 reference samples available for instrument mapping")
+
     offsets = reference_wavelength[mask] - wavelength_nm
     weights = _flat_top_n4_weights(offsets, baseline.INSTRUMENT_LINE_FWHM_NM)
+
     return float(np.sum(weights * reference_radiance[mask]) / np.sum(weights))
 
 
 def _flat_top_n4_weights(offset_nm: np.ndarray, fwhm_nm: float) -> np.ndarray:
+
     width_nm = fwhm_nm / 1.681793
+
     return np.power(2.0, -2.0 * np.power(offset_nm / width_nm, 4.0))
 
 
 @cache
 def _load_s5_reference_radiance() -> tuple[np.ndarray, np.ndarray]:
+
     data = np.genfromtxt(
         reference_data.path(S5_REFERENCE_RADIANCE_PATH),
         delimiter=",",
@@ -161,30 +176,43 @@ def _load_s5_reference_radiance() -> tuple[np.ndarray, np.ndarray]:
     )
     wavelength = np.asarray(data["wavelength_nm"], dtype=np.float64)
     radiance = np.asarray(data["reference_radiance_photons_cm2_s_sr_nm"], dtype=np.float64)
+
     if wavelength.ndim != 1 or radiance.ndim != 1 or wavelength.size == 0:
         raise ValueError("S5 reference radiance asset must contain one-dimensional arrays")
+
     if wavelength.size != radiance.size:
         raise ValueError("S5 reference wavelength and radiance columns must match")
+
     if not np.all(np.diff(wavelength) > 0.0):
         raise ValueError("S5 reference wavelengths must be strictly increasing")
+
     if np.any(radiance <= 0.0):
         raise ValueError("S5 reference radiance values must be positive")
+
     return wavelength, radiance
 
 
 def _one_dimensional_array(name: str, values) -> np.ndarray:
+
     array = np.asarray(values, dtype=np.float64)
+
     if array.ndim != 1 or array.size == 0:
         raise ValueError(f"{name} must be a non-empty one-dimensional array")
+
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must contain finite values")
+
     return array
 
 
 def _positive_array(name: str, values, expected_size: int) -> np.ndarray:
+
     array = _one_dimensional_array(name, values)
+
     if array.size != expected_size:
         raise ValueError(f"{name} must match wavelength_nm length")
+
     if np.any(array <= 0.0):
         raise ValueError(f"{name} must contain positive values")
+
     return array

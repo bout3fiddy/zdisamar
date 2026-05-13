@@ -19,6 +19,7 @@ from validation.o2a.measurement_noise import (  # noqa: E402
 
 
 def main() -> int:
+
     wavelength_nm = np.array([758.0, 760.0, 762.0, 770.0], dtype=np.float64)
     reference_radiance = instrument_mapped_s5_reference_radiance(wavelength_nm)
     reflectance = np.full(wavelength_nm.shape, 0.2, dtype=np.float64)
@@ -52,6 +53,7 @@ def main() -> int:
     )
     assert np.all(brighter_signal.reflectance_snr < brighter_signal.radiance_snr)
     assert np.all(brighter_signal.reflectance_noise > 0.0)
+
     return 0
 
 

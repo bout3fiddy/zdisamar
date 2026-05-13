@@ -28,14 +28,14 @@ Threshold guide:
   speedup by itself.
 
 - `fourier_floor_scalar`: the earliest Fourier order where the Fourier-tail
-  stop may trigger.  It must fit in the native unsigned 16-bit field; the O2 A
+  stop may trigger.  It must fit in the model's 16-bit field; the O2 A
   default is `2`.  Keeping this above the low orders protects the dominant
   angular structure in the reflectance field.  Lowering it would risk pruning
   physically important low-order azimuthal terms; we have not validated that as
   a safe speed knob.
 
 - `fourier_order_cap`: a hard maximum Fourier order, or `None` for the
-  geometry-derived limit.  When set, it must fit in the native unsigned 16-bit
+  geometry-derived limit.  When set, it must fit in the model's 16-bit
   field.  It is useful for experiments because it skips whole Fourier-order
   evaluations directly, but it is cruder than the tail threshold.  The O2 A
   fast preset uses `5`; in the retained four-scene spectra sweep this was the
@@ -44,7 +44,7 @@ Threshold guide:
 
 - `num_orders_max`: the hard cap on multiple-scattering order iterations inside
   each Fourier term.  `0` keeps the optical-depth-derived default; any explicit
-  cap must fit in the native unsigned 16-bit field.  Lowering it limits
+  cap must fit in the model's 16-bit field.  Lowering it limits
   repeated scattering work but can omit real multiple-scattering energy in
   optically thicker scenes.  Prefer the convergence thresholds below before
   forcing this cap.
@@ -84,13 +84,14 @@ Threshold guide:
 """
 
 from dataclasses import dataclass, replace
-from typing import Any
 
-from .shared import to_float
+from .shared import object_dict, to_bool, to_float, to_int
 
 
 @dataclass
 class RadiativeTransferPerformanceThresholds:
+    """Accuracy and speed thresholds for the LABOS radiative-transfer solve."""
+
     num_orders_max: int
     fourier_floor_scalar: int
     fourier_order_cap: int | None
@@ -103,6 +104,8 @@ class RadiativeTransferPerformanceThresholds:
 
     @classmethod
     def o2a_default(cls) -> RadiativeTransferPerformanceThresholds:
+        """Use the reference-grade O2 A thresholds unless fast mode is requested."""
+
         return cls(
             num_orders_max=0,
             fourier_floor_scalar=2,
@@ -118,10 +121,12 @@ class RadiativeTransferPerformanceThresholds:
     @classmethod
     def fast(cls) -> RadiativeTransferPerformanceThresholds:
         """Return the validated O2 A speed/accuracy threshold bundle."""
+
         thresholds = cls.o2a_default()
         thresholds.fourier_order_cap = 5
         thresholds.fourier_tail_reflectance_epsilon = 1.0e-11
         thresholds.threshold_doubl = 3.0e-5
+
         return thresholds
 
     def with_fast_mode(self) -> RadiativeTransferPerformanceThresholds:
@@ -138,15 +143,17 @@ class RadiativeTransferPerformanceThresholds:
         thresholds.fourier_order_cap = fast.fourier_order_cap
         thresholds.fourier_tail_reflectance_epsilon = fast.fourier_tail_reflectance_epsilon
         thresholds.threshold_doubl = fast.threshold_doubl
+
         return thresholds
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RadiativeTransferPerformanceThresholds:
+    def from_dict(cls, data: dict[str, object]) -> RadiativeTransferPerformanceThresholds:
+
         return cls(
-            num_orders_max=int(data["num_orders_max"]),
-            fourier_floor_scalar=int(data["fourier_floor_scalar"]),
+            num_orders_max=to_int(data["num_orders_max"]),
+            fourier_floor_scalar=to_int(data["fourier_floor_scalar"]),
             fourier_order_cap=(
-                None if data.get("fourier_order_cap") is None else int(data["fourier_order_cap"])
+                None if data.get("fourier_order_cap") is None else to_int(data["fourier_order_cap"])
             ),
             fourier_tail_reflectance_epsilon=to_float(data["fourier_tail_reflectance_epsilon"]),
             threshold_conv_first=to_float(data["threshold_conv_first"]),
@@ -159,6 +166,7 @@ class RadiativeTransferPerformanceThresholds:
         )
 
     def to_dict(self) -> dict[str, float | int | None]:
+
         return {
             "num_orders_max": self.num_orders_max,
             "fourier_floor_scalar": self.fourier_floor_scalar,
@@ -174,6 +182,8 @@ class RadiativeTransferPerformanceThresholds:
 
 @dataclass
 class RadiativeTransferControls:
+    """Radiative-transfer settings for one O2 A scene."""
+
     scattering: str
     n_streams: int
     use_adding: bool
@@ -184,21 +194,23 @@ class RadiativeTransferControls:
     stokes_dimension: int
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RadiativeTransferControls:
+    def from_dict(cls, data: dict[str, object]) -> RadiativeTransferControls:
+
         return cls(
             scattering=str(data["scattering"]),
-            n_streams=int(data["n_streams"]),
-            use_adding=bool(data["use_adding"]),
+            n_streams=to_int(data["n_streams"]),
+            use_adding=to_bool(data["use_adding"]),
             performance_thresholds=RadiativeTransferPerformanceThresholds.from_dict(
-                data["performance_thresholds"]
+                object_dict(data["performance_thresholds"])
             ),
-            use_spherical_correction=bool(data["use_spherical_correction"]),
-            integrate_source_function=bool(data["integrate_source_function"]),
-            renorm_phase_function=bool(data["renorm_phase_function"]),
-            stokes_dimension=int(data["stokes_dimension"]),
+            use_spherical_correction=to_bool(data["use_spherical_correction"]),
+            integrate_source_function=to_bool(data["integrate_source_function"]),
+            renorm_phase_function=to_bool(data["renorm_phase_function"]),
+            stokes_dimension=to_int(data["stokes_dimension"]),
         )
 
     def to_dict(self) -> dict[str, object]:
+
         return {
             "scattering": self.scattering,
             "n_streams": self.n_streams,

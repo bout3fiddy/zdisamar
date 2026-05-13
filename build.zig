@@ -347,6 +347,21 @@ pub fn build(b: *std.Build) void {
     const fmt_check_step = b.step("fmt-check", "Verify Zig formatting without rewriting files");
     fmt_check_step.dependOn(&fmt_check_cmd.step);
 
+    const sync_python_package_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "python",
+        "scripts/sync-python-package.py",
+        "--binding",
+    });
+    sync_python_package_cmd.addFileArg(c_api_lib.getEmittedBin());
+    sync_python_package_cmd.step.dependOn(&c_api_install.step);
+    const sync_python_package_step = b.step(
+        "sync-python-package",
+        "Copy Zig bindings and reference data into the Python package tree",
+    );
+    sync_python_package_step.dependOn(&sync_python_package_cmd.step);
+
     const python_o2a_setup_roundtrip_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
@@ -354,10 +369,8 @@ pub fn build(b: *std.Build) void {
         "tests/python/o2a_setup_roundtrip_test.py",
         "--output",
         "out/ci/python_o2a_setup_roundtrip.json",
-        "--library",
     });
-    python_o2a_setup_roundtrip_cmd.addFileArg(c_api_lib.getEmittedBin());
-    python_o2a_setup_roundtrip_cmd.step.dependOn(&c_api_install.step);
+    python_o2a_setup_roundtrip_cmd.step.dependOn(&sync_python_package_cmd.step);
     const python_o2a_setup_roundtrip_step = b.step(
         "python-o2a-setup-roundtrip",
         "Verify typed Python O2A setup against the default parity entrypoint",
@@ -378,6 +391,7 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(no_inline_src_tests_step);
     check_step.dependOn(&lib.step);
     check_step.dependOn(&c_api_lib.step);
+    check_step.dependOn(&sync_python_package_cmd.step);
     check_step.dependOn(&plot_spectrum_exe.step);
     check_step.dependOn(&unit_tests.step);
     check_step.dependOn(&internal_tests.step);

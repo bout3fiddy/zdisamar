@@ -22,7 +22,7 @@ validation/outputs/optimal_estimation/
 The current slow-case latency benchmark is:
 
 ```text
-validation/outputs/optimal_estimation/zdisamar_o2a_slow_forward_jacobian_benchmark.json
+validation/outputs/optimal_estimation/zdisamar_o2a_slow_rtm_jacobian_benchmark.json
 ```
 
 The paired scene ranges follow the geometry, aerosol, meteorology, and surface

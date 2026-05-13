@@ -1,7 +1,7 @@
 {
   "passes_reflectance_threshold": true,
   "reference_paths": {
-    "forward": "validation/reference_data/spectra/o2a_jacobian_retrieval_instrument_forward.csv",
+    "radiance": "validation/reference_data/spectra/o2a_jacobian_retrieval_instrument_forward.csv",
     "reflectance_jacobian": "validation/reference_data/spectra/o2a_jacobian_simulation_instrument_reflectance.csv"
   },
   "reflectance_threshold": 1e-13,
@@ -29,7 +29,7 @@
       "max_abs_wavelength_nm": 769.6,
       "mean_signed": 2.5032233810868e-16,
       "rmse": 3.4902589085657994e-15,
-      "series": "forward reflectance",
+      "series": "RTM reflectance",
       "threshold_excluded_edge_samples_per_side": 1
     },
     {

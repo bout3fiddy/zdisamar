@@ -7,14 +7,14 @@ aerosol optical depth
 aerosol layer mid pressure
 ```
 
-The forward model should therefore return a two-column reflectance Jacobian for
+The RTM should therefore return a two-column reflectance Jacobian for
 this retrieval. If surface albedo is not in the state vector, the retrieval path
 must not request the surface-albedo Jacobian column.
 
 The relevant Python call is:
 
 ```python
-prepared.forward_model(jacobian=True, jacobian_state_names=state_names)
+cache.spectrum(jacobian=True, jacobian_state_names=state_names)
 ```
 
 `state_names` comes from the actual `StateVector`. The C ABI maps those names to

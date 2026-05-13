@@ -1,4 +1,4 @@
-"""ctypes structures for the native zdisamar C ABI."""
+"""Result layouts returned by the zdisamar library."""
 
 import ctypes
 

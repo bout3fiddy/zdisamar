@@ -1,10 +1,10 @@
 # Open Questions
 
-## Forward plus Jacobian Wall
+## RTM Plus Jacobian Wall
 
-The slow retained case still spends about one second per forward+jacobian
+The slow retained case still spends about one second per RTM+jacobian
 iteration even with session reuse. The session helps, but repeated
-forward+jacobian work remains the retrieval elapsed time.
+RTM+jacobian work remains the retrieval elapsed time.
 
 ## Jacobian Internals
 

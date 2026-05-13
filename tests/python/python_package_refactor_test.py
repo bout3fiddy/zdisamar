@@ -4,31 +4,30 @@ import math
 import os
 import sys
 import tempfile
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 
 def assert_import_laziness() -> None:
+
     import zdisamar as zd
 
     assert "numpy" not in sys.modules
     assert "pandas" not in sys.modules
     assert "altair" not in sys.modules
-    assert "inverse_method" not in zd.__all__
-    assert "DiagnosticTable" not in zd.__all__
-    assert "O2LineDiagnostics" not in zd.__all__
-    assert "PerturbationDiagnostics" not in zd.__all__
-    assert "RadiativeTransferDiagnosticTable" not in zd.__all__
+    assert zd.__all__ == ["reference_data", "rtm", "wavelength_bands"]
+    assert not hasattr(zd, "prepare")
+    assert not hasattr(zd, "forward")
+    assert not hasattr(zd, "O2AInput")
 
     import zdisamar.api as api
 
-    assert "O2LineContributions" not in api.__all__
-    assert "O2LineDiagnostics" not in api.__all__
-    assert "RadiativeTransferDiagnosticTable" not in api.__all__
+    assert api.__all__ == ["reference_data", "rtm", "wavelength_bands"]
 
 
 def assert_plot_package_boundary() -> None:
+
     assert importlib.util.find_spec("zdisamar.plot") is not None
     assert "zdisamar.plot" not in sys.modules
 
@@ -40,41 +39,41 @@ def assert_plot_package_boundary() -> None:
     assert "blue" in PLOT.colors
 
 
-def assert_quantity_conversions() -> None:
-    import numpy as np
-    from zdisamar.quantities import (
-        reflectance_from_radiance,
-        reflectance_jacobian_from_radiance_jacobian,
-        reflectance_noise_from_sun_normalized_radiance_noise,
-        solar_mu0_from_zenith_deg,
-        sun_normalized_radiance,
-    )
+def assert_rtm_conversions() -> None:
 
-    mu0 = solar_mu0_from_zenith_deg(60.0)
+    import numpy as np
+    from zdisamar import rtm
+
+    mu0 = rtm.solar_zenith_cosine_from_degrees(60.0)
     radiance = np.array([2.0, 3.0], dtype=np.float64)
     irradiance = np.array([10.0, 12.0], dtype=np.float64)
-    assert np.allclose(sun_normalized_radiance(radiance, irradiance), radiance / irradiance)
+    assert np.allclose(rtm.sun_normalized_radiance(radiance, irradiance), radiance / irradiance)
     assert np.allclose(
-        reflectance_from_radiance(radiance, irradiance, mu0),
+        rtm.reflectance_from_radiance(radiance, irradiance, mu0),
         radiance * math.pi / (mu0 * irradiance),
     )
 
     radiance_jacobian = np.array([[0.2, 0.4], [0.3, 0.6]], dtype=np.float64)
     expected = radiance_jacobian / ((mu0 * irradiance / math.pi)[:, None])
     assert np.allclose(
-        reflectance_jacobian_from_radiance_jacobian(radiance_jacobian, irradiance, mu0),
+        rtm.reflectance_jacobian_from_radiance_jacobian(
+            radiance_jacobian,
+            irradiance,
+            mu0,
+        ),
         expected,
     )
     assert np.allclose(
-        reflectance_noise_from_sun_normalized_radiance_noise(np.array([1.0]), mu0),
+        rtm.reflectance_noise_from_sun_normalized_radiance_noise(np.array([1.0]), mu0),
         np.array([math.pi / mu0]),
     )
 
 
-def assert_plot_jacobian_uses_shared_conversion() -> None:
+def assert_plot_jacobian_uses_rtm_conversion() -> None:
+
     import numpy as np
+    from zdisamar import rtm
     from zdisamar.plot.jacobian import jacobian_frame
-    from zdisamar.quantities import reflectance_jacobian_from_radiance_jacobian
 
     class Spectrum:
         jacobian_state_names = ("aerosol_optical_depth",)
@@ -83,8 +82,10 @@ def assert_plot_jacobian_uses_shared_conversion() -> None:
         radiance_jacobian = np.array([[0.2], [0.3]], dtype=np.float64)
 
         def reflectance_jacobian(self, state: str):
+
             assert state == "aerosol_optical_depth"
-            return reflectance_jacobian_from_radiance_jacobian(
+
+            return rtm.reflectance_jacobian_from_radiance_jacobian(
                 self.radiance_jacobian[:, 0],
                 self.irradiance,
                 0.5,
@@ -94,7 +95,7 @@ def assert_plot_jacobian_uses_shared_conversion() -> None:
     assert field == "reflectance_jacobian"
     assert np.allclose(
         frame[field].to_numpy(dtype=float),
-        reflectance_jacobian_from_radiance_jacobian(
+        rtm.reflectance_jacobian_from_radiance_jacobian(
             Spectrum.radiance_jacobian[:, 0],
             Spectrum.irradiance,
             0.5,
@@ -103,6 +104,7 @@ def assert_plot_jacobian_uses_shared_conversion() -> None:
 
 
 def assert_optimal_estimation_grid_mismatch_rejected() -> None:
+
     import numpy as np
     from zdisamar.inverse_method.optimal_estimation import (
         WavelengthGridMismatchError,
@@ -120,77 +122,18 @@ def assert_optimal_estimation_grid_mismatch_rejected() -> None:
         )
     except WavelengthGridMismatchError:
         return
+
     raise AssertionError("optimal-estimation wavelength grid mismatch was accepted")
 
 
-def assert_lazy_final_evaluation_preserves_session_library_path() -> None:
-    import numpy as np
-    from zdisamar.forward_model.prepared import O2AForwardSession
-    from zdisamar.input.wavelength_band.o2a import O2AInput
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_module
-    from zdisamar.inverse_method.optimal_estimation.forward_evaluation import ForwardEvaluation
-    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
-
-    custom_library_path = Path("/tmp/custom/libzdisamar.dylib")
-    sentinel = cast(ForwardEvaluation, object())
-    calls: list[object] = []
-
-    class SuppliedSession:
-        @property
-        def library_path(self) -> Path:
-            return custom_library_path
-
-    class FreshSession:
-        @property
-        def library_path(self) -> Path:
-            return custom_library_path
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_exc: object) -> None:
-            return None
-
-    def fake_o2a_forward_session(_template: object, library_path: object = None) -> FreshSession:
-        calls.append(library_path)
-        return FreshSession()
-
-    def fake_evaluate(
-        self: Any,
-        state: np.ndarray,
-        state_vector: StateVector,
-    ) -> ForwardEvaluation:
-        _ = (state, state_vector)
-        assert self._library_path == custom_library_path
-        assert self._forward_session is not None
-        return sentinel
-
-    original_session = o2a_module.o2a_forward_session
-    original_evaluate = o2a_module.O2AInverseForwardModel.evaluate
-    try:
-        cast(Any, o2a_module).o2a_forward_session = fake_o2a_forward_session
-        cast(Any, o2a_module.O2AInverseForwardModel).evaluate = fake_evaluate
-        model = o2a_module.O2AInverseForwardModel(
-            template=cast(O2AInput, {}),
-            forward_session=cast(O2AForwardSession, SuppliedSession()),
-        )
-        evaluator = o2a_module._lazy_final_evaluator(model, cast(StateVector, object()))
-        assert evaluator(np.array([1.0])) is sentinel
-        assert calls == [custom_library_path]
-    finally:
-        cast(Any, o2a_module).o2a_forward_session = original_session
-        cast(Any, o2a_module.O2AInverseForwardModel).evaluate = original_evaluate
-
-
-def assert_optimal_estimation_result_compatibility() -> None:
-    from dataclasses import fields
+def assert_optimal_estimation_result_dataclass() -> None:
 
     import numpy as np
-    from zdisamar.inverse_method.optimal_estimation.forward_evaluation import ForwardEvaluation
     from zdisamar.inverse_method.optimal_estimation.retrieval import Result
+    from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 
-    first = cast(ForwardEvaluation, object())
-    second = cast(ForwardEvaluation, object())
+    first = cast(RtmEvaluation, object())
+    second = cast(RtmEvaluation, object())
     result = Result(
         state_names=(),
         state=np.array([], dtype=np.float64),
@@ -206,113 +149,56 @@ def assert_optimal_estimation_result_compatibility() -> None:
     assert replace(result, final_evaluation=None).final_evaluation is None
     assert "final_evaluation" in {field.name for field in fields(result)}
 
-    positional = Result(
-        (),
-        np.array([], dtype=np.float64),
-        0,
-        True,
-        (),
-        np.empty((0, 0), dtype=np.float64),
-        np.empty((0, 0), dtype=np.float64),
-        (),
-        None,
-        first,
-    )
-    assert positional.final_evaluation is first
 
+def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
 
-def assert_session_library_path_mismatch_rejected() -> None:
-    from zdisamar.forward_model.prepared import O2AForwardSession
-    from zdisamar.input.wavelength_band.o2a import O2AInput
-    from zdisamar.inverse_method.optimal_estimation import O2AInverseForwardModel
-
-    class SuppliedSession:
-        @property
-        def library_path(self) -> Path:
-            return Path("/tmp/custom/libzdisamar-a.dylib")
-
-    class DefaultLibrarySession:
-        @property
-        def library_path(self) -> None:
-            return None
-
-    try:
-        O2AInverseForwardModel(
-            template=cast(O2AInput, {}),
-            library_path=Path("/tmp/custom/libzdisamar-b.dylib"),
-            forward_session=cast(O2AForwardSession, SuppliedSession()),
-        )
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("mismatched forward_session and library_path were accepted")
-
-    try:
-        O2AInverseForwardModel(
-            template=cast(O2AInput, {}),
-            library_path=Path("/tmp/custom/libzdisamar-b.dylib"),
-            forward_session=cast(O2AForwardSession, DefaultLibrarySession()),
-        )
-    except ValueError:
-        return
-    raise AssertionError("explicit library_path with default-library session was accepted")
-
-
-def assert_subclass_final_evaluation_is_preserved_eagerly() -> None:
     import numpy as np
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_module
-    from zdisamar.inverse_method.optimal_estimation.forward_evaluation import ForwardEvaluation
+    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import Result
-    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 
-    sentinel = cast(ForwardEvaluation, object())
+    sentinel = cast(RtmEvaluation, object())
     calls = 0
+    result = Result(
+        state_names=("aerosol_optical_depth",),
+        state=np.array([1.0], dtype=np.float64),
+        iterations=1,
+        converged=True,
+        history=(),
+        posterior_covariance=np.eye(1, dtype=np.float64),
+        averaging_kernel=np.eye(1, dtype=np.float64),
+        last_evaluated_state=np.array([1.0], dtype=np.float64),
+        last_evaluation=sentinel,
+    )
 
-    class CustomModel:
-        def evaluate(self, state: np.ndarray, state_vector: StateVector) -> ForwardEvaluation:
-            nonlocal calls
-            _ = (state, state_vector)
-            calls += 1
-            return sentinel
+    def evaluate_state(_state):
 
-    def fake_retrieve(*_args: object, **_kwargs: object) -> Result:
-        return Result(
-            state_names=(),
-            state=np.array([1.0], dtype=np.float64),
-            iterations=0,
-            converged=True,
-            history=(),
-            posterior_covariance=np.empty((0, 0), dtype=np.float64),
-            averaging_kernel=np.empty((0, 0), dtype=np.float64),
-        )
+        nonlocal calls
+        calls += 1
 
-    original_retrieve = o2a_module.retrieve
-    try:
-        cast(Any, o2a_module).retrieve = fake_retrieve
-        result = o2a_module._disamar_oe(
-            inverse_model=cast(o2a_module.O2AInverseForwardModel, CustomModel()),
-            measurement=cast(Any, object()),
-            state_vector=cast(StateVector, object()),
-        )
-        assert result.final_evaluation is sentinel
-        assert calls == 1
-    finally:
-        cast(Any, o2a_module).retrieve = original_retrieve
+        return cast(RtmEvaluation, object())
+
+    attached = o2a_oe.attach_final_evaluation(result, evaluate_state)
+    assert attached.final_evaluation is sentinel
+    assert calls == 0
 
 
-def assert_reference_data_and_native_table() -> None:
+def assert_reference_data_and_rtm_tables() -> None:
+
     import numpy as np
-    import zdisamar as zd
+    from zdisamar import rtm
+    from zdisamar.wavelength_bands import o2a
 
     with tempfile.TemporaryDirectory() as tmpdir:
         old_cwd = Path.cwd()
+
         try:
             os.chdir(tmpdir)
-            case = zd.o2a_disamar_reference_input()
+            case = o2a.reference_case()
             assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
             thresholds = case.radiative_transfer.performance_thresholds
             assert math.isclose(thresholds.fourier_tail_reflectance_epsilon, 3.0e-14)
-            fast_thresholds = zd.RadiativeTransferPerformanceThresholds.fast()
+            fast_thresholds = o2a.RadiativeTransferPerformanceThresholds.fast()
             assert fast_thresholds.fourier_order_cap == 5
             assert math.isclose(fast_thresholds.fourier_tail_reflectance_epsilon, 1.0e-11)
             assert math.isclose(fast_thresholds.threshold_doubl, 3.0e-5)
@@ -353,51 +239,46 @@ def assert_reference_data_and_native_table() -> None:
                 case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
             )
             mutable_case = copy.deepcopy(case)
-            with zd.o2a_forward_session() as session:
-                session.prepare(mutable_case)
+
+            with rtm.SessionCache() as cache:
+                cache.load(mutable_case)
                 mutable_case.geometry.solar_zenith_deg = 0.0
-                with session.forward_model() as spectrum:
-                    assert spectrum.input is not None
-                    assert (
-                        spectrum.input.geometry.solar_zenith_deg == case.geometry.solar_zenith_deg
-                    )
-            with (
-                zd.prepare(case) as prepared,
-                prepared.atmosphere.budget(np.array([760.76], dtype=np.float64)) as budget,
-            ):
-                assert not hasattr(prepared, "o2_lines")
-                assert not hasattr(prepared, "radiative_transfer")
-                assert not hasattr(prepared, "perturbations")
-                assert budget.row_count > 0
-                assert budget.column("wavelength_nm").size == budget.row_count
-                first_table = budget.table
-                first_wavelength = float(first_table["wavelength_nm"][0])
-                first_table["wavelength_nm"][0] = -1.0
-                assert float(budget.column("wavelength_nm")[0]) == first_wavelength
-                rows = budget.to_rows()
-                assert len(rows) == budget.row_count
-                assert "support_row_kind_label" in rows[0]
-                with prepared.forward_model() as spectrum:
-                    output = Path(tmpdir) / "reflectance"
-                    chart = spectrum.plot.reflectance(save=output)
-                    assert chart is not None
-                    assert output.with_suffix(".png").exists()
+                spectrum = cache.spectrum()
+                assert spectrum.case is not None
+                assert spectrum.case.geometry.solar_zenith_deg == case.geometry.solar_zenith_deg
+
+            budget = rtm.atmospheric_budget(case, np.array([760.76], dtype=np.float64))
+            assert budget.row_count > 0
+            assert budget.column("wavelength_nm").size == budget.row_count
+            first_table = budget.table
+            first_wavelength = float(first_table["wavelength_nm"][0])
+            first_table["wavelength_nm"][0] = -1.0
+            assert float(budget.column("wavelength_nm")[0]) == first_wavelength
+            rows = budget.to_rows()
+            assert len(rows) == budget.row_count
+            assert "support_row_kind_label" in rows[0]
+
+            spectrum = rtm.spectrum(case)
+            output = Path(tmpdir) / "reflectance"
+            chart = spectrum.plot.reflectance(save=output)
+            assert chart is not None
+            assert output.with_suffix(".png").exists()
         finally:
             os.chdir(old_cwd)
 
 
 def main() -> int:
+
     assert_import_laziness()
     assert_plot_package_boundary()
-    assert_quantity_conversions()
-    assert_plot_jacobian_uses_shared_conversion()
+    assert_rtm_conversions()
+    assert_plot_jacobian_uses_rtm_conversion()
     assert_optimal_estimation_grid_mismatch_rejected()
-    assert_lazy_final_evaluation_preserves_session_library_path()
-    assert_optimal_estimation_result_compatibility()
-    assert_session_library_path_mismatch_rejected()
-    assert_subclass_final_evaluation_is_preserved_eagerly()
-    assert_reference_data_and_native_table()
+    assert_optimal_estimation_result_dataclass()
+    assert_final_evaluation_reuses_last_rtm_evaluation()
+    assert_reference_data_and_rtm_tables()
     print("python_package_refactor=ok")
+
     return 0
 
 
