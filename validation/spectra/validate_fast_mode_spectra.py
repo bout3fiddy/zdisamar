@@ -9,7 +9,7 @@
 # ]
 # ///
 
-"""Generate retained O2 A fast-mode spectra diagnostics."""
+"""Validate retained O2 A fast-mode spectra outputs."""
 
 import copy
 import sys
@@ -49,7 +49,7 @@ PLOT_PATH = OUTPUTS_DIR / "o2a_fast_mode_spectra.png"
 DATA_PATH = OUTPUTS_DIR / "o2a_fast_mode_spectra_data.csv"
 METRICS_PATH = OUTPUTS_DIR / "o2a_fast_mode_spectra_metrics.json"
 
-CANONICAL_COMMAND = "zig build validation-o2a-fast-mode-spectra"
+CANONICAL_COMMAND = "uv run validation/spectra/validate_fast_mode_spectra.py"
 
 
 @dataclass(frozen=True)

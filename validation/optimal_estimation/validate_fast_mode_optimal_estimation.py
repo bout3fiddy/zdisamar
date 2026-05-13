@@ -9,7 +9,7 @@
 # ]
 # ///
 
-"""Generate retained O2 A fast-mode optimal-estimation diagnostics."""
+"""Validate O2 A fast-mode optimal-estimation outputs."""
 
 import copy
 import math
@@ -31,6 +31,7 @@ import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
 
+from validation.common import o2a_oe_reference_cases as oe_cases  # noqa: E402
 from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
@@ -53,10 +54,8 @@ PAIRED_MANIFEST_PATH = OUTPUTS_DIR / "paired_oe_plot_manifest.json"
 DATA_PATH = OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison_runs.csv"
 SUMMARY_PATH = OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison_summary.json"
 
-CANONICAL_COMMAND = "zig build validation-o2a-fast-mode-optimal-estimation"
-RUN_COUNT = 100
-SCENE_SAMPLE_COUNT = 500
-RNG_SEED = 20260507
+CANONICAL_COMMAND = "uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py"
+RUN_COUNT = oe_cases.run_count()
 
 MODE_LABELS = {
     "reference": "zdisamar reference",
@@ -111,15 +110,16 @@ def build_rows() -> list[dict[str, Any]]:
     base = build_o2a_case(zd, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
     rows: list[dict[str, Any]] = []
-    scenes = oe_setup.sampled_scenes(SCENE_SAMPLE_COUNT, RNG_SEED)[:RUN_COUNT]
-    for index, truth in enumerate(scenes, start=1):
+    for row in oe_cases.case_rows(count=RUN_COUNT):
+        index = int(row["case"])
+        truth = oe_cases.scene_from_row(row)
         reference_case = oe_setup.build_scene(
             base,
             index=index,
             id_prefix="o2a_fast_mode_oe",
             scene=truth,
         )
-        initial = oe_setup.initial_state(index, truth)
+        initial = oe_cases.initial_from_row(row)
         with zd.prepare(reference_case) as prepared:
             measurement = measurement_from_o2a_baseline_noise(prepared)
             profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
@@ -290,8 +290,9 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
         "schema_version": 1,
         "canonical_command": CANONICAL_COMMAND,
         "run_count": RUN_COUNT,
-        "scene_sample_count": SCENE_SAMPLE_COUNT,
-        "seed": RNG_SEED,
+        "reference_cases": oe_cases.manifest_path(),
+        "scene_sample_count": oe_cases.scene_sample_count(),
+        "seed": oe_cases.seed(),
         "fast_mode": {
             "method": "O2AInput.with_fast_mode()",
             "overrides": fast_mode_overrides(),

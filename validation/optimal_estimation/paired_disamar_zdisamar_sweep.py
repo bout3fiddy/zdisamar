@@ -2,6 +2,8 @@
 # /// script
 # requires-python = ">=3.14"
 # dependencies = [
+#   "altair>=5.5",
+#   "matplotlib>=3.10",
 #   "numpy>=2.2",
 #   "polars>=1.35",
 # ]
@@ -18,7 +20,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
 
+import matplotlib.pyplot as plt
 import polars as pl
+from matplotlib.ticker import MaxNLocator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -29,16 +33,23 @@ SCENES_PATH = OUTPUT_ROOT / "paired_retrieval_scenes.parquet"
 PARQUET_PATH = OUTPUT_ROOT / "paired_retrieval_runs.parquet"
 SUMMARY_PATH = OUTPUT_ROOT / "paired_retrieval_summary.json"
 DISAMAR_TEMPLATE = (
-    REPO_ROOT / "validation" / "optimal_estimation" / "data" / "reference" / "baseline_config.in"
+    REPO_ROOT / "validation" / "reference_data" / "optimal_estimation" / "baseline_config.in"
 )
 DISAMAR_EXE = REPO_ROOT / "vendor" / "disamar-fortran" / "src" / "Disamar.exe"
 DISAMAR_REFSPEC = REPO_ROOT / "vendor" / "disamar-fortran" / "RefSpec"
+TRACKED_OUTPUTS_DIR = REPO_ROOT / "validation" / "outputs" / "optimal_estimation"
+RETRIEVED_PLOT_PATH = TRACKED_OUTPUTS_DIR / "paired_oe_retrieved_scatter.png"
+ERROR_HISTOGRAM_PATH = TRACKED_OUTPUTS_DIR / "paired_oe_error_histograms.png"
+LATENCY_PLOT_PATH = TRACKED_OUTPUTS_DIR / "paired_oe_latency.png"
+MANIFEST_PATH = TRACKED_OUTPUTS_DIR / "paired_oe_plot_manifest.json"
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
 import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
+from zdisamar.plot.properties import PLOT  # noqa: E402
 
+from validation.common import o2a_oe_reference_cases as oe_cases  # noqa: E402
 from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
@@ -49,10 +60,10 @@ from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 
 type ScalarValue = bool | int | float | str
 
-RUN_COUNT = 100
-SCENE_SAMPLE_COUNT = 500
+RUN_COUNT = oe_cases.run_count()
+SCENE_SAMPLE_COUNT = oe_cases.scene_sample_count()
 BATCH_SIZE = 10
-RNG_SEED = 20260507
+RNG_SEED = oe_cases.seed()
 DISAMAR_WORKERS = max(1, min(BATCH_SIZE, os.cpu_count() or 2))
 ZDISAMAR_WORKERS = 1
 WAVELENGTH_START_NM = oe_baseline.WAVELENGTH_START_NM
@@ -61,6 +72,15 @@ WAVELENGTH_STEP_NM = oe_baseline.WAVELENGTH_STEP_NM
 DISAMAR_PRESSURE_PRIOR_VARIANCE = 150.0**2
 DISAMAR_CASE_TIMEOUT_S = 5400.0
 FLOAT_TOKEN_PATTERN = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EDed][+-]?\d+)?")
+MODEL_LABELS = {
+    "disamar_fortran": "DISAMAR Fortran",
+    "zdisamar": "zdisamar",
+}
+MODEL_COLORS = [PLOT.colors["blue"], PLOT.colors["orange"]]
+MODEL_MARKERS = {
+    "DISAMAR Fortran": "o",
+    "zdisamar": "x",
+}
 
 
 def retrieve_zdisamar(
@@ -339,7 +359,7 @@ def add_common_fields(
 
 
 def case_initial(index: int, scene: dict[str, float]) -> dict[str, float]:
-    return oe_setup.initial_state(index, scene)
+    return oe_cases.initial_state(index, scene)
 
 
 def run_model_case(task: tuple[str, int, dict[str, float]]) -> dict[str, Any]:
@@ -399,19 +419,7 @@ def model_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def scene_rows() -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    scenes = oe_setup.sampled_scenes(SCENE_SAMPLE_COUNT, RNG_SEED)[:RUN_COUNT]
-    for index, scene in enumerate(scenes, start=1):
-        initial = case_initial(index, scene)
-        rows.append(
-            {
-                "case": index,
-                **scene,
-                "initial_aerosol_optical_depth": initial["aerosol_optical_depth"],
-                "initial_aerosol_mid_pressure_hpa": initial["aerosol_mid_pressure_hpa"],
-            }
-        )
-    return rows
+    return oe_cases.case_rows(count=RUN_COUNT)
 
 
 def write_row(row: dict[str, Any]) -> None:
@@ -497,6 +505,7 @@ def write_merged_outputs(start: float) -> dict[str, Any]:
         "run_count": RUN_COUNT,
         "rng_seed": RNG_SEED,
         "scene_sample_count": SCENE_SAMPLE_COUNT,
+        "reference_cases": oe_cases.manifest_path(),
         "wall_s": time.perf_counter() - start,
         "scenes_path": stable_repo_path(SCENES_PATH),
         "rows_path": stable_repo_path(PARQUET_PATH),
@@ -515,6 +524,363 @@ def write_merged_outputs(start: float) -> dict[str, Any]:
     return summary
 
 
+def paired_frame() -> pl.DataFrame:
+    if not PARQUET_PATH.exists():
+        raise SystemExit(
+            f"missing paired retrieval parquet: {stable_repo_path(PARQUET_PATH)}; "
+            "run this script to generate the paired retrieval rows first"
+        )
+    frame = pl.read_parquet(PARQUET_PATH)
+    if frame.is_empty():
+        raise SystemExit(f"paired retrieval parquet is empty: {stable_repo_path(PARQUET_PATH)}")
+    if "aerosol_optical_depth_error" not in frame.columns:
+        frame = frame.with_columns(
+            (pl.col("retrieved_aerosol_optical_depth") - pl.col("aerosol_optical_depth")).alias(
+                "aerosol_optical_depth_error"
+            ),
+        )
+    if "aerosol_mid_pressure_error_hpa" not in frame.columns:
+        frame = frame.with_columns(
+            (
+                pl.col("retrieved_aerosol_mid_pressure_hpa") - pl.col("aerosol_mid_pressure_hpa")
+            ).alias("aerosol_mid_pressure_error_hpa"),
+        )
+    return frame.with_columns(pl.col("model").replace(MODEL_LABELS).alias("model_label"))
+
+
+def paired_difference_rows(frame: pl.DataFrame) -> pl.DataFrame:
+    ok = frame.filter(pl.col("status") == "ok")
+    wide = ok.pivot(
+        "model",
+        index="case",
+        values=[
+            "retrieved_aerosol_optical_depth",
+            "retrieved_aerosol_mid_pressure_hpa",
+        ],
+    )
+    aod = wide.select(
+        "case",
+        pl.lit("Aerosol optical depth").alias("parameter"),
+        (
+            pl.col("retrieved_aerosol_optical_depth_zdisamar")
+            - pl.col("retrieved_aerosol_optical_depth_disamar_fortran")
+        ).alias("difference"),
+    )
+    pressure = wide.select(
+        "case",
+        pl.lit("Aerosol mid pressure [hPa]").alias("parameter"),
+        (
+            pl.col("retrieved_aerosol_mid_pressure_hpa_zdisamar")
+            - pl.col("retrieved_aerosol_mid_pressure_hpa_disamar_fortran")
+        ).alias("difference"),
+    )
+    return pl.concat([aod, pressure])
+
+
+def plot_stats(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {"min": math.nan, "median": math.nan, "mean": math.nan, "max": math.nan}
+    series = pl.Series(values)
+    return {
+        "min": float(cast(float, series.min())),
+        "median": float(cast(float, series.median())),
+        "mean": float(cast(float, series.mean())),
+        "max": float(cast(float, series.max())),
+    }
+
+
+def paired_difference_stats(frame: pl.DataFrame) -> dict[str, dict[str, float]]:
+    data = paired_difference_rows(frame)
+    return {
+        "aerosol_optical_depth": plot_stats(
+            data.filter(pl.col("parameter") == "Aerosol optical depth")["difference"].to_list()
+        ),
+        "aerosol_mid_pressure_hpa": plot_stats(
+            data.filter(pl.col("parameter") == "Aerosol mid pressure [hPa]")["difference"].to_list()
+        ),
+    }
+
+
+def signed(value: float, precision: str) -> str:
+    if math.isnan(value):
+        return "nan"
+    return f"{value:+{precision}}"
+
+
+def difference_subtitle(stats_payload: dict[str, float], precision: str, unit: str = "") -> str:
+    suffix = f" {unit}" if unit else ""
+    return (
+        f"median {signed(stats_payload['median'], precision)}{suffix}; "
+        f"range {signed(stats_payload['min'], precision)} "
+        f"to {signed(stats_payload['max'], precision)}{suffix}"
+    )
+
+
+def prepare_plot_style() -> None:
+    PLOT.prepare()
+    plt.rcParams.update(
+        {
+            "font.family": "monospace",
+            "axes.grid": True,
+            "grid.color": PLOT.colors["grid"],
+            "grid.alpha": 0.25,
+        }
+    )
+
+
+def scatter_panel(
+    axis,
+    rows: pl.DataFrame,
+    *,
+    parameter: str,
+    truth_field: str,
+    retrieved_field: str,
+    title: str,
+) -> None:
+    subset = rows.filter(pl.col("parameter") == parameter)
+    for model_label, color in zip(MODEL_LABELS.values(), MODEL_COLORS, strict=True):
+        model_subset = subset.filter(pl.col("model_label") == model_label)
+        axis.scatter(
+            model_subset[truth_field].to_list(),
+            model_subset[retrieved_field].to_list(),
+            s=34,
+            alpha=0.78,
+            label=model_label,
+            color=color,
+            marker=MODEL_MARKERS[model_label],
+        )
+    truth_min = float(cast(float, subset[truth_field].min()))
+    retrieved_min = float(cast(float, subset[retrieved_field].min()))
+    truth_max = float(cast(float, subset[truth_field].max()))
+    retrieved_max = float(cast(float, subset[retrieved_field].max()))
+    lower = min(truth_min, retrieved_min)
+    upper = max(truth_max, retrieved_max)
+    padding = max((upper - lower) * 0.04, 1.0e-12)
+    lower -= padding
+    upper += padding
+    axis.plot([lower, upper], [lower, upper], color="black", linestyle=(0, (4, 3)), linewidth=1)
+    axis.set_xlim(lower, upper)
+    axis.set_ylim(lower, upper)
+    axis.set_title(title, fontsize=20, pad=16)
+    axis.set_xlabel("True value", fontsize=15, labelpad=14)
+    axis.set_ylabel("Retrieved value", fontsize=15, labelpad=12, fontweight="bold")
+    axis.tick_params(labelsize=12, pad=6)
+
+
+def histogram_panel(
+    axis,
+    rows: pl.DataFrame,
+    *,
+    parameter: str,
+    title: str,
+    subtitle: str,
+    xlabel: str,
+) -> None:
+    subset = rows.filter(pl.col("parameter") == parameter)
+    axis.hist(
+        subset["difference"].to_list(),
+        bins=min(45, max(subset.height, 1)),
+        color=PLOT.colors["blue"],
+        alpha=0.78,
+    )
+    axis.axvline(0.0, color="black", linestyle=(0, (4, 3)), linewidth=1)
+    axis.set_title(f"{title}\n{subtitle}", fontsize=16, pad=16)
+    axis.set_xlabel(xlabel, fontsize=13, labelpad=14, fontweight="bold")
+    axis.set_ylabel("Count", fontsize=15, labelpad=12, fontweight="bold")
+    axis.tick_params(labelsize=12, pad=6)
+    axis.xaxis.set_major_locator(MaxNLocator(nbins=5))
+    axis.yaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+
+
+def save_retrieved_plot(frame: pl.DataFrame) -> None:
+    prepare_plot_style()
+    ok = frame.filter(pl.col("status") == "ok")
+    aod = ok.select(
+        "case",
+        "model_label",
+        pl.lit("Aerosol optical depth").alias("parameter"),
+        pl.col("aerosol_optical_depth").alias("truth"),
+        pl.col("retrieved_aerosol_optical_depth").alias("retrieved"),
+    )
+    pressure = ok.select(
+        "case",
+        "model_label",
+        pl.lit("Aerosol mid pressure").alias("parameter"),
+        pl.col("aerosol_mid_pressure_hpa").alias("truth"),
+        pl.col("retrieved_aerosol_mid_pressure_hpa").alias("retrieved"),
+    )
+    retrieved = pl.concat([aod, pressure]).rename(
+        {"truth": "truth_value", "retrieved": "retrieved_value"}
+    )
+    differences = paired_difference_rows(frame)
+    difference_stats = paired_difference_stats(frame)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 11), dpi=180)
+    fig.suptitle("Retrieved State Versus Truth", fontsize=24, y=0.982)
+    fig.text(
+        0.5,
+        0.948,
+        (
+            "Top: each model retrieval against known synthetic truth.\n"
+            "Bottom: paired retrieval difference per scene "
+            "(zdisamar - DISAMAR Fortran)."
+        ),
+        ha="center",
+        va="top",
+        fontsize=11,
+        family="monospace",
+    )
+    scatter_panel(
+        axes[0, 0],
+        retrieved,
+        parameter="Aerosol mid pressure",
+        truth_field="truth_value",
+        retrieved_field="retrieved_value",
+        title="Aerosol mid pressure",
+    )
+    scatter_panel(
+        axes[0, 1],
+        retrieved,
+        parameter="Aerosol optical depth",
+        truth_field="truth_value",
+        retrieved_field="retrieved_value",
+        title="Aerosol optical depth",
+    )
+    histogram_panel(
+        axes[1, 0],
+        differences,
+        parameter="Aerosol optical depth",
+        title="Aerosol optical depth",
+        subtitle=difference_subtitle(difference_stats["aerosol_optical_depth"], ".3e"),
+        xlabel="zdisamar retrieved - DISAMAR retrieved",
+    )
+    histogram_panel(
+        axes[1, 1],
+        differences,
+        parameter="Aerosol mid pressure [hPa]",
+        title="Aerosol mid pressure [hPa]",
+        subtitle=difference_subtitle(
+            difference_stats["aerosol_mid_pressure_hpa"],
+            ".4f",
+            "hPa",
+        ),
+        xlabel="zdisamar retrieved - DISAMAR retrieved [hPa]",
+    )
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    legend = fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.902),
+        ncols=2,
+        frameon=True,
+        fontsize=12,
+    )
+    legend.get_frame().set_edgecolor("#cccccc")
+    legend.get_frame().set_facecolor("white")
+    fig.subplots_adjust(
+        left=0.08,
+        right=0.985,
+        top=0.77,
+        bottom=0.085,
+        hspace=0.64,
+        wspace=0.32,
+    )
+    fig.savefig(RETRIEVED_PLOT_PATH, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_error_histograms(frame: pl.DataFrame) -> None:
+    prepare_plot_style()
+    ok = frame.filter(pl.col("status") == "ok")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), dpi=180)
+    for axis, column, title, xlabel in (
+        (
+            axes[0],
+            "aerosol_optical_depth_error",
+            "Aerosol optical depth",
+            "Retrieved AOD - true AOD",
+        ),
+        (
+            axes[1],
+            "aerosol_mid_pressure_error_hpa",
+            "Aerosol mid pressure",
+            "Retrieved mid pressure - true mid pressure [hPa]",
+        ),
+    ):
+        for model_label, color in zip(MODEL_LABELS.values(), MODEL_COLORS, strict=True):
+            values = ok.filter(pl.col("model_label") == model_label)[column].to_list()
+            axis.hist(values, bins=35, alpha=0.58, label=model_label, color=color)
+        axis.set_title(title)
+        axis.set_xlabel(xlabel)
+        axis.set_ylabel("Count")
+        axis.xaxis.set_major_locator(MaxNLocator(nbins=5))
+    axes[0].legend()
+    fig.suptitle("Retrieval Error Histograms", fontsize=15)
+    fig.subplots_adjust(left=0.08, right=0.985, top=0.84, bottom=0.16, wspace=0.28)
+    fig.savefig(ERROR_HISTOGRAM_PATH, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_latency_plot(frame: pl.DataFrame) -> None:
+    prepare_plot_style()
+    ok = frame.filter(pl.col("status") == "ok")
+    labels = list(MODEL_LABELS.values())
+    values = [
+        ok.filter(pl.col("model_label") == model_label)["retrieval_s"].to_list()
+        for model_label in labels
+    ]
+    fig, axis = plt.subplots(figsize=(7.8, 5.2), dpi=180)
+    box = axis.boxplot(values, labels=labels, patch_artist=True, showmeans=True)
+    for patch, color in zip(box["boxes"], MODEL_COLORS, strict=True):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.42)
+    axis.set_yscale("log")
+    axis.set_ylabel("Retrieval wall time [s]")
+    axis.set_title("Optimal Estimation Retrieval Latency", fontsize=16, pad=14)
+    fig.savefig(LATENCY_PLOT_PATH, bbox_inches="tight")
+    plt.close(fig)
+
+
+def paired_plot_manifest(frame: pl.DataFrame) -> dict[str, Any]:
+    ok = frame.filter(pl.col("status") == "ok")
+    by_model: dict[str, Any] = {}
+    for model in sorted(frame["model"].unique().to_list()):
+        subset = frame.filter(pl.col("model") == model)
+        ok_subset = subset.filter(pl.col("status") == "ok")
+        by_model[str(model)] = {
+            "rows": subset.height,
+            "ok": ok_subset.height,
+            "converged": int(ok_subset["converged"].sum()) if ok_subset.height else 0,
+            "retrieval_s": plot_stats(ok_subset["retrieval_s"].to_list()),
+            "aod_abs_error": plot_stats(ok_subset["aerosol_optical_depth_abs_error"].to_list()),
+            "mid_pressure_abs_error_hpa": plot_stats(
+                ok_subset["aerosol_mid_pressure_abs_error_hpa"].to_list()
+            ),
+        }
+    return {
+        "source_data": PARQUET_PATH.relative_to(REPO_ROOT).as_posix(),
+        "source_rows": frame.height,
+        "source_ok_rows": ok.height,
+        "reference_cases": oe_cases.manifest_path(),
+        "plots": {
+            "retrieved_scatter": stable_repo_path(RETRIEVED_PLOT_PATH),
+            "error_histograms": stable_repo_path(ERROR_HISTOGRAM_PATH),
+            "latency": stable_repo_path(LATENCY_PLOT_PATH),
+        },
+        "paired_difference": paired_difference_stats(frame),
+        "by_model": by_model,
+    }
+
+
+def write_paired_plot_outputs() -> None:
+    TRACKED_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    frame = paired_frame()
+    save_retrieved_plot(frame)
+    save_error_histograms(frame)
+    save_latency_plot(frame)
+    write_json(MANIFEST_PATH, paired_plot_manifest(frame))
+
+
 def main() -> None:
     if not DISAMAR_EXE.exists():
         raise SystemExit(f"missing DISAMAR executable: {stable_repo_path(DISAMAR_EXE)}")
@@ -523,21 +889,7 @@ def main() -> None:
     scenes_with_initial = scene_rows()
     pl.DataFrame(scenes_with_initial).write_parquet(SCENES_PATH)
     bootstrap_row_shards()
-    scenes = [
-        {
-            key: float(row[key])
-            for key in (
-                "solar_zenith_deg",
-                "viewing_zenith_deg",
-                "relative_azimuth_deg",
-                "surface_pressure_hpa",
-                "surface_albedo",
-                "aerosol_optical_depth",
-                "aerosol_mid_pressure_hpa",
-            )
-        }
-        for row in scenes_with_initial
-    ]
+    scenes = [oe_cases.scene_from_row(row) for row in scenes_with_initial]
 
     indexed_scenes = list(enumerate(scenes, start=1))
     for batch_start in range(0, len(indexed_scenes), BATCH_SIZE):
@@ -558,6 +910,8 @@ def main() -> None:
     print(f"  wall_s: {summary['wall_s']:.3f}")
     for model, payload in summary["model_summary"].items():
         print(f"  {model}: {payload}")
+    write_paired_plot_outputs()
+    print(f"  plots: {stable_repo_path(MANIFEST_PATH)}")
 
 
 if __name__ == "__main__":

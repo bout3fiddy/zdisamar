@@ -27,6 +27,7 @@ sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 import zdisamar as zd  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 
+from validation.common import o2a_oe_reference_cases as oe_cases  # noqa: E402
 from validation.common import o2a_optimal_estimation_setup as oe_setup  # noqa: E402
 from validation.common import o2a_retrieval_baseline as oe_baseline  # noqa: E402
 from validation.common.o2a_measurement_noise import (  # noqa: E402
@@ -36,7 +37,6 @@ from validation.common.o2a_reference_case import build_o2a_case  # noqa: E402
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 
 RUN_COUNT = 5
-RNG_SEED = 20260507
 
 
 def retrieve_scene(
@@ -85,9 +85,11 @@ def run_sweep() -> dict[str, Any]:
     oe_baseline.configure_case(base)
     rows: list[dict[str, Any]] = []
     start = time.perf_counter()
-    for index, truth in enumerate(oe_setup.sampled_scenes(RUN_COUNT, RNG_SEED), start=1):
+    for row in oe_cases.case_rows(count=RUN_COUNT):
+        index = int(row["case"])
+        truth = oe_cases.scene_from_row(row)
         case = oe_setup.build_scene(base, index=index, id_prefix="o2a_oe_sweep", scene=truth)
-        initial = oe_setup.initial_state(index, truth)
+        initial = oe_cases.initial_from_row(row)
         run_start = time.perf_counter()
         try:
             result = retrieve_scene(case, truth, initial)
@@ -145,7 +147,9 @@ def run_sweep() -> dict[str, Any]:
     summary = {
         "case": f"o2a_aerosol_only_optimal_estimation_{RUN_COUNT}_scene_sweep",
         "paper_source": "https://doi.org/10.5194/amt-12-6619-2019",
-        "seed": RNG_SEED,
+        "reference_cases": oe_cases.manifest_path(),
+        "seed": oe_cases.seed(),
+        "scene_sample_count": oe_cases.scene_sample_count(),
         "parameter_ranges": {
             "solar_zenith_deg": [25.0, 65.0],
             "viewing_zenith_deg": [0.0, 50.0],
@@ -204,7 +208,7 @@ def write_outputs(rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
     write_json(SUMMARY_PATH, summary)
 
 
-def assert_sweep_success(summary: dict[str, Any]) -> None:
+def validate_sweep_success(summary: dict[str, Any]) -> list[str]:
     run_count = int(summary["run_count"])
     ok_count = int(summary["ok_count"])
     converged_count = int(summary["converged_count"])
@@ -213,8 +217,7 @@ def assert_sweep_success(summary: dict[str, Any]) -> None:
         failures.append(f"{run_count - ok_count} retrievals returned error rows")
     if converged_count != run_count:
         failures.append(f"{run_count - converged_count} retrievals did not converge")
-    if failures:
-        raise AssertionError("; ".join(failures))
+    return failures
 
 
 def main() -> int:
@@ -233,7 +236,10 @@ def main() -> int:
     )
     print(f"  CSV: {stable_repo_path(CSV_PATH)}")
     print(f"  JSON: {stable_repo_path(SUMMARY_PATH)}")
-    assert_sweep_success(summary)
+    failures = validate_sweep_success(summary)
+    if failures:
+        print("; ".join(failures), file=sys.stderr)
+        return 1
     return 0
 
 

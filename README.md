@@ -261,7 +261,7 @@ Regenerate the tracked O2 A comparison bundle after changing the O2 A
 forward-model or Jacobian validation outputs:
 
 ```bash
-zig build o2a-plot-bundle
+uv run validation/spectra/validate_spectra.py
 ```
 
 For temporary Zig caches, use the ephemeral wrapper:

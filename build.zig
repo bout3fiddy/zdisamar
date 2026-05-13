@@ -347,104 +347,6 @@ pub fn build(b: *std.Build) void {
     const fmt_check_step = b.step("fmt-check", "Verify Zig formatting without rewriting files");
     fmt_check_step.dependOn(&fmt_check_cmd.step);
 
-    const o2a_plot_bundle_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "validation/spectra/plot_validation.py",
-    });
-    o2a_plot_bundle_cmd.step.dependOn(&c_api_install.step);
-    const o2a_plot_bundle_step = b.step(
-        "o2a-plot-bundle",
-        "Generate the tracked O2A plot bundle under validation",
-    );
-    o2a_plot_bundle_step.dependOn(&o2a_plot_bundle_cmd.step);
-    const o2a_plots_step = b.step(
-        "o2a-plots",
-        "Run the O2A forward path and regenerate the tracked O2A comparison plots",
-    );
-    o2a_plots_step.dependOn(&o2a_plot_bundle_cmd.step);
-
-    const o2a_fast_mode_spectra_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "validation/spectra/plot_fast_mode.py",
-    });
-    o2a_fast_mode_spectra_cmd.step.dependOn(&c_api_install.step);
-    const o2a_fast_mode_spectra_step = b.step(
-        "validation-o2a-fast-mode-spectra",
-        "Generate retained O2A fast-mode spectra diagnostics",
-    );
-    o2a_fast_mode_spectra_step.dependOn(&o2a_fast_mode_spectra_cmd.step);
-
-    const o2a_fast_mode_oe_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "validation/optimal_estimation/plot_fast_mode.py",
-    });
-    o2a_fast_mode_oe_cmd.step.dependOn(&c_api_install.step);
-    const o2a_fast_mode_oe_step = b.step(
-        "validation-o2a-fast-mode-optimal-estimation",
-        "Generate retained O2A fast-mode optimal-estimation diagnostics",
-    );
-    o2a_fast_mode_oe_step.dependOn(&o2a_fast_mode_oe_cmd.step);
-
-    const o2a_fast_mode_plots_step = b.step(
-        "validation-o2a-fast-mode-plots",
-        "Generate retained O2A fast-mode spectra and optimal-estimation diagnostics",
-    );
-    o2a_fast_mode_plots_step.dependOn(&o2a_fast_mode_spectra_cmd.step);
-    o2a_fast_mode_plots_step.dependOn(&o2a_fast_mode_oe_cmd.step);
-
-    const o2a_plot_bundle_test_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "validation/spectra/plot_validation_test.py",
-    });
-    o2a_plot_bundle_test_cmd.step.dependOn(&c_api_install.step);
-    const o2a_plot_bundle_test_step = b.step(
-        "test-validation-o2a-plot-bundle",
-        "Run the O2A plot bundle harness smoke test",
-    );
-    o2a_plot_bundle_test_step.dependOn(&o2a_plot_bundle_test_cmd.step);
-
-    const o2a_optimal_estimation_validation_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "validation/optimal_estimation/validate_optimal_estimation.py",
-    });
-    o2a_optimal_estimation_validation_cmd.step.dependOn(&c_api_install.step);
-    const o2a_optimal_estimation_validation_step = b.step(
-        "test-validation-o2a-optimal-estimation",
-        "Run the DISAMAR reference two-state O2A optimal-estimation validation fixture",
-    );
-    o2a_optimal_estimation_validation_step.dependOn(&o2a_optimal_estimation_validation_cmd.step);
-
-    const o2a_optimal_estimation_sweep_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "validation/optimal_estimation/sweep_optimal_estimation.py",
-    });
-    o2a_optimal_estimation_sweep_cmd.step.dependOn(&c_api_install.step);
-    const o2a_optimal_estimation_sweep_step = b.step(
-        "validation-o2a-optimal-estimation-sweep",
-        "Run the aerosol-only O2A optimal-estimation scene sweep",
-    );
-    o2a_optimal_estimation_sweep_step.dependOn(&o2a_optimal_estimation_sweep_cmd.step);
-
-    const o2a_slow_forward_jacobian_benchmark_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "validation/optimal_estimation/benchmark_slow_forward_jacobian.py",
-    });
-    o2a_slow_forward_jacobian_benchmark_cmd.step.dependOn(&c_api_install.step);
-    const o2a_slow_forward_jacobian_benchmark_step = b.step(
-        "validation-o2a-slow-forward-jacobian-benchmark",
-        "Run the retained slow O2A optimal-estimation forward+jacobian latency benchmark",
-    );
-    o2a_slow_forward_jacobian_benchmark_step.dependOn(
-        &o2a_slow_forward_jacobian_benchmark_cmd.step,
-    );
-
     const python_o2a_setup_roundtrip_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
@@ -490,7 +392,6 @@ pub fn build(b: *std.Build) void {
     test_fast_step.dependOn(&run_internal_tests.step);
     test_fast_step.dependOn(validation_o2a.compile_step);
     test_fast_step.dependOn(validation_o2a_vendor_line_list.run_step);
-    test_fast_step.dependOn(o2a_optimal_estimation_validation_step);
 
     const test_transport_step = b.step("test-transport", "Run focused O2A exact transport verification");
     test_transport_step.dependOn(validation_o2a.compile_step);
@@ -503,6 +404,4 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(validation_o2a.run_step);
     test_step.dependOn(validation_o2a_vendor.run_step);
     test_step.dependOn(validation_o2a_vendor_line_list.run_step);
-    test_step.dependOn(o2a_plot_bundle_test_step);
-    test_step.dependOn(o2a_optimal_estimation_validation_step);
 }

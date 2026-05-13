@@ -1,5 +1,5 @@
 {
-  "canonical_command": "zig build validation-o2a-fast-mode-spectra",
+  "canonical_command": "uv run validation/spectra/validate_fast_mode_spectra.py",
   "fast_mode": {
     "method": "O2AInput.with_fast_mode()",
     "note": "Fast mode preserves each case's physical scene and output wavelength grid, then applies validated radiative-transfer and adaptive-reference-grid performance overrides.",
@@ -23,13 +23,13 @@
   },
   "scenes": [
     {
-      "fast_forward_s": 0.8561502500087954,
-      "forward_speedup_s": 1.0834044590010308,
+      "fast_forward_s": 0.516978083003778,
+      "forward_speedup_s": 0.49544062599306926,
       "max_abs_residual": 0.00022025475826664698,
       "max_abs_residual_over_noise": 0.5195311470498195,
       "max_abs_residual_wavelength_nm": 767.76,
       "median_abs_residual_over_noise": 0.050420092478728064,
-      "reference_forward_s": 1.9395547090098262,
+      "reference_forward_s": 1.0124187089968473,
       "rmse": 4.096606065364438e-05,
       "scene": "baseline",
       "scene_parameters": {
@@ -43,13 +43,13 @@
       }
     },
     {
-      "fast_forward_s": 0.7558022500015795,
-      "forward_speedup_s": 0.859399790992029,
+      "fast_forward_s": 0.478201457997784,
+      "forward_speedup_s": 0.33069062599679455,
       "max_abs_residual": 0.00040226264750597984,
       "max_abs_residual_over_noise": 0.7406995353889582,
       "max_abs_residual_wavelength_nm": 767.76,
       "median_abs_residual_over_noise": 0.06450811514929494,
-      "reference_forward_s": 1.6152020409936085,
+      "reference_forward_s": 0.8088920839945786,
       "rmse": 7.103503943774169e-05,
       "scene": "bright surface",
       "scene_parameters": {
@@ -63,13 +63,13 @@
       }
     },
     {
-      "fast_forward_s": 0.5913116250012536,
-      "forward_speedup_s": 0.8984156250080559,
+      "fast_forward_s": 0.5719716659805272,
+      "forward_speedup_s": 0.576797500019893,
       "max_abs_residual": 0.0004963098820243983,
       "max_abs_residual_over_noise": 1.5998557397433435,
       "max_abs_residual_wavelength_nm": 762.84,
       "median_abs_residual_over_noise": 0.13602020523780148,
-      "reference_forward_s": 1.4897272500093095,
+      "reference_forward_s": 1.1487691660004202,
       "rmse": 0.0001348988639629748,
       "scene": "oblique aerosol",
       "scene_parameters": {
@@ -83,13 +83,13 @@
       }
     },
     {
-      "fast_forward_s": 0.5872190419759136,
-      "forward_speedup_s": 0.5620823750214186,
+      "fast_forward_s": 0.5672674169763923,
+      "forward_speedup_s": 0.5650272080092691,
       "max_abs_residual": 0.0003442267781897379,
       "max_abs_residual_over_noise": 1.1014875904187627,
       "max_abs_residual_wavelength_nm": 768.0,
       "median_abs_residual_over_noise": 0.0937122036563114,
-      "reference_forward_s": 1.1493014169973321,
+      "reference_forward_s": 1.1322946249856614,
       "rmse": 9.200012152298011e-05,
       "scene": "low sun dark surface",
       "scene_parameters": {

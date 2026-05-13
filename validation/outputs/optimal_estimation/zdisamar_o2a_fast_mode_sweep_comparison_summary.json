@@ -17,18 +17,18 @@
       },
       "converged": 100,
       "forward_model_and_jacobian_s": {
-        "max": 1.4725354989932384,
-        "max_abs": 1.4725354989932384,
-        "mean": 1.0919165262716706,
-        "median": 1.1307885629939847,
-        "min": 0.6365345829981379
+        "max": 1.2750522929709405,
+        "max_abs": 1.2750522929709405,
+        "mean": 1.0600759474979713,
+        "median": 1.1020267704734579,
+        "min": 0.6312720829737373
       },
       "retrieval_s": {
-        "max": 1.7065097909944598,
-        "max_abs": 1.7065097909944598,
-        "mean": 1.3232611383797483,
-        "median": 1.3634883749909932,
-        "min": 0.8594513749994803
+        "max": 1.5038970839814283,
+        "max_abs": 1.5038970839814283,
+        "mean": 1.2877066100511,
+        "median": 1.3303005835041404,
+        "min": 0.855964957998367
       },
       "rows": 100
     },
@@ -49,23 +49,23 @@
       },
       "converged": 100,
       "forward_model_and_jacobian_s": {
-        "max": 3.3227840409672353,
-        "max_abs": 3.3227840409672353,
-        "mean": 2.3931648178890463,
-        "median": 2.469905520512839,
-        "min": 1.010329249984352
+        "max": 3.056769667979097,
+        "max_abs": 3.056769667979097,
+        "mean": 2.328458127057529,
+        "median": 2.423606854004902,
+        "min": 1.037043291988084
       },
       "retrieval_s": {
-        "max": 3.616882624977734,
-        "max_abs": 3.616882624977734,
-        "mean": 2.680245144139917,
-        "median": 2.7528829789807787,
-        "min": 1.288539667002624
+        "max": 3.339146124984836,
+        "max_abs": 3.339146124984836,
+        "mean": 2.606334394197911,
+        "median": 2.698727979499381,
+        "min": 1.3249817919859197
       },
       "rows": 100
     }
   },
-  "canonical_command": "zig build validation-o2a-fast-mode-optimal-estimation",
+  "canonical_command": "uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py",
   "fast_minus_reference": {
     "aerosol_mid_pressure_delta_hpa": {
       "max": 2.006511020511084,
@@ -82,18 +82,18 @@
       "min": -0.007394244518419413
     },
     "forward_jacobian_speedup_s": {
-      "max": 1.9769164999597706,
-      "max_abs": 1.9769164999597706,
-      "mean": 1.3012482916173758,
-      "median": 1.3590789595036767,
-      "min": 0.3589170829800423
+      "max": 1.7817173750081565,
+      "max_abs": 1.7817173750081565,
+      "mean": 1.2683821795595578,
+      "median": 1.343148250001832,
+      "min": 0.3704494169796817
     },
     "retrieval_speedup_s": {
-      "max": 2.0322643329855055,
-      "max_abs": 2.0322643329855055,
-      "mean": 1.3569840057601688,
-      "median": 1.4134696874971269,
-      "min": 0.4097712080110796
+      "max": 1.837751582992496,
+      "max_abs": 1.837751582992496,
+      "mean": 1.3186277841468108,
+      "median": 1.392624229993089,
+      "min": 0.42988174996571615
     }
   },
   "fast_mode": {
@@ -119,6 +119,7 @@
     "runs_csv": "validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_runs.csv",
     "summary_json": "validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json"
   },
+  "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
   "run_count": 100,
   "scene_sample_count": 500,
   "schema_version": 1,

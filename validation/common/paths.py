@@ -7,6 +7,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 VALIDATION_ROOT = REPO_ROOT / "validation"
+VALIDATION_REFERENCE_DATA_ROOT = VALIDATION_ROOT / "reference_data"
 OUT_VALIDATION_ROOT = REPO_ROOT / "out" / "validation"
 
 

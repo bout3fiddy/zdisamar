@@ -1,6 +1,0 @@
-DISAMAR O2 A Jacobian fixture generated from validation/optimal_estimation/data/reference/baseline_config.in.
-Rendered controls: simulationOnly=0, aerosolLayerHeight=1, fitAerosolTau=1, fitIntervalDP=1, fitSurfaceAlbedo=0, topPressureSim/Retr=925 875 0.3, wavelength_start=758.00, wavelength_end=770.00, wavelength_step=0.04, cloudTypeSim/Retr=none, createXsecPolyLUT=0.
-State vector order: aerosolTau, intervalDP.
-Layer convention: aerosol layer mid pressure 900 hPa with fixed 50 hPa thickness; DISAMAR top/base pressures are 875/925 hPa for numIntervalFit=2.
-Primary zdisamar eval file: validation/spectra/data/reference/o2a_jacobian_simulation_instrument_reflectance.csv, sourced from additionalOutput.out instrument-resolution derivative columns aerosolTau and intervalDP, converted from radiance derivatives to reflectance derivatives with mu0 * solar_irradiance / pi.
-Forward parity fixture: validation/spectra/data/reference/o2a_jacobian_retrieval_instrument_forward.csv, sourced from additionalOutput.out instrument-resolution solar irradiance and radiance for the same rendered baseline configuration.

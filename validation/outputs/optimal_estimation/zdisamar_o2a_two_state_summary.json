@@ -14,6 +14,48 @@
       0.9999969893468977
     ]
   ],
+  "comparisons": [
+    {
+      "actual": 4,
+      "difference": 0.0,
+      "expected": 4,
+      "name": "iterations",
+      "passed": true,
+      "tolerance": null
+    },
+    {
+      "actual": 0.2999999130130744,
+      "difference": -8.698692560704657e-08,
+      "expected": 0.3,
+      "name": "aerosol_optical_depth",
+      "passed": true,
+      "tolerance": 1e-07
+    },
+    {
+      "actual": 874.9998266708706,
+      "difference": -0.00017332912943857082,
+      "expected": 875.0,
+      "name": "aerosol_layer_top_pressure_hpa",
+      "passed": true,
+      "tolerance": 0.005
+    },
+    {
+      "actual": 899.9998266708706,
+      "difference": -0.00017332912943857082,
+      "expected": 900.0,
+      "name": "aerosol_layer_mid_pressure_hpa",
+      "passed": true,
+      "tolerance": 0.005
+    },
+    {
+      "actual": true,
+      "difference": null,
+      "expected": true,
+      "name": "converged",
+      "passed": true,
+      "tolerance": null
+    }
+  ],
   "converged": true,
   "expected_iterations": 4,
   "final_diagnostics_match": false,
@@ -106,6 +148,7 @@
       "state_vector_convergence": 0.00254999528262586
     }
   ],
+  "reference_path": "validation/reference_data/optimal_estimation/disamar_o2a_two_state_reference.json",
   "retrieved": {
     "aerosol_layer_bottom_pressure_hpa": 924.9998266708706,
     "aerosol_layer_mid_pressure_hpa": 899.9998266708706,

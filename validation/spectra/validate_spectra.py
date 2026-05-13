@@ -51,8 +51,7 @@ LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisam
 LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
 VALIDATION_DIR = REPO_ROOT / "validation"
 SPECTRA_DIR = VALIDATION_DIR / "spectra"
-VALIDATION_DATA_DIR = SPECTRA_DIR / "data"
-REFERENCE_DATA_DIR = VALIDATION_DATA_DIR / "reference"
+REFERENCE_DATA_DIR = VALIDATION_DIR / "reference_data" / "spectra"
 OUTPUTS_DIR = VALIDATION_DIR / "outputs" / "spectra"
 
 FORWARD_REFERENCE_PATH = REFERENCE_DATA_DIR / "o2a_jacobian_retrieval_instrument_forward.csv"
@@ -65,7 +64,7 @@ DATA_PATH = OUTPUTS_DIR / "o2a_validation_data.csv"
 METRICS_PATH = OUTPUTS_DIR / "comparison_metrics.json"
 MANIFEST_PATH = OUTPUTS_DIR / "bundle_manifest.json"
 
-CANONICAL_COMMAND = "zig build o2a-plot-bundle"
+CANONICAL_COMMAND = "uv run validation/spectra/validate_spectra.py"
 REFLECTANCE_THRESHOLD = 1.0e-13
 THRESHOLD_EDGE_EXCLUSION_COUNT = 1
 STATE_NAMES = (
@@ -460,7 +459,7 @@ def build_bundle(
     library_path: Path = LIBRARY_PATH,
 ) -> list[MetricRow]:
     if output_dir != SPECTRA_DIR:
-        raise ValueError("plot_validation is intentionally hardwired to validation/spectra/")
+        raise ValueError("validate_spectra is intentionally hardwired to validation/spectra/")
     zd = import_zdisamar()
     case = build_o2a_jacobian_case(zd)
     oe_baseline.configure_case(case)
@@ -477,15 +476,47 @@ def build_bundle(
     return metrics
 
 
-def main() -> None:
+def validate_outputs(metrics: list[MetricRow]) -> list[str]:
+    failures: list[str] = []
+    for path in (PLOT_PATH, DATA_PATH, METRICS_PATH, MANIFEST_PATH):
+        if not path.exists():
+            failures.append(f"missing generated output: {stable_repo_path(path)}")
+    if len(metrics) != 3:
+        failures.append(f"expected 3 validation series, got {len(metrics)}")
+    if [metric["series"] for metric in metrics] != [
+        "forward reflectance",
+        "dR/d aerosol optical depth",
+        "dR/d aerosol layer mid pressure",
+    ]:
+        failures.append("unexpected validation series order")
+    for metric in metrics:
+        if float(metric["max_abs_residual"]) > REFLECTANCE_THRESHOLD:
+            failures.append(
+                f"{metric['series']} max_abs_residual "
+                f"{float(metric['max_abs_residual']):.3e} exceeds "
+                f"{REFLECTANCE_THRESHOLD:.3e}"
+            )
+    for path in (METRICS_PATH, MANIFEST_PATH):
+        if "/Users/" in path.read_text():
+            failures.append(f"absolute user path leaked into {stable_repo_path(path)}")
+    return failures
+
+
+def main() -> int:
     metrics = build_bundle()
+    failures = validate_outputs(metrics)
+    if failures:
+        for failure in failures:
+            print(failure, file=sys.stderr)
+        return 1
     worst = max(metrics, key=lambda row: float(row["max_abs_residual"]))
     print(
         "o2a_validation="
         f"{stable_repo_path(PLOT_PATH)} max_abs={float(worst['max_abs_residual']):.3e} "
         f"series={worst['series']}"
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
