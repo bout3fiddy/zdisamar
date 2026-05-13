@@ -44,6 +44,7 @@ DATA_PATH = OUTPUTS_DIR / "o2a_fast_mode_spectra_data.csv"
 METRICS_PATH = OUTPUTS_DIR / "o2a_fast_mode_spectra_metrics.json"
 
 CANONICAL_COMMAND = "uv run validation/spectra/validate_fast_mode_spectra.py"
+FAST_MODE_REFLECTANCE_THRESHOLD = 5.0e-4
 
 
 @dataclass(frozen=True)
@@ -414,10 +415,25 @@ def write_metrics(metrics: list[dict[str, Any]], output_path: Path) -> None:
     write_json(output_path, payload)
 
 
+def validate_metrics(metrics: list[dict[str, Any]]) -> None:
+    failures = []
+    for metric in metrics:
+        residual = float(metric["max_abs_residual"])
+        if residual > FAST_MODE_REFLECTANCE_THRESHOLD:
+            failures.append(
+                f"{metric['scene']} max_abs_residual {residual:.3e} exceeds "
+                f"{FAST_MODE_REFLECTANCE_THRESHOLD:.3e}"
+            )
+    if failures:
+        details = "; ".join(failures)
+        raise SystemExit(f"fast-mode spectra validation failed: {details}")
+
+
 def main() -> None:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     results = run_cases()
     data, metrics = result_records(results)
+    validate_metrics(metrics)
     data.to_csv(DATA_PATH, index=False)
     create_plot(results, metrics, PLOT_PATH)
     write_metrics(metrics, METRICS_PATH)

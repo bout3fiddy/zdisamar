@@ -49,6 +49,8 @@ SUMMARY_PATH = OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison_summary.js
 
 CANONICAL_COMMAND = "uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py"
 RUN_COUNT = oe_cases.run_count()
+FAST_REFERENCE_MAX_ABS_AOD_DELTA = 1.0e-2
+FAST_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA = 10.0
 
 MODE_LABELS = {
     "reference": "zdisamar reference",
@@ -320,6 +322,19 @@ def validate_summary(summary: dict[str, Any]) -> None:
             failures.append(f"{mode} rows={payload['rows']} expected={RUN_COUNT}")
         if int(payload["converged"]) != RUN_COUNT:
             failures.append(f"{mode} converged={payload['converged']} expected={RUN_COUNT}")
+    delta = summary["fast_minus_reference"]
+    aod_delta = float(delta["aerosol_optical_depth_delta"]["max_abs"])
+    if aod_delta > FAST_REFERENCE_MAX_ABS_AOD_DELTA:
+        failures.append(
+            f"fast-reference AOD max_abs_delta={aod_delta:.3e} "
+            f"exceeds {FAST_REFERENCE_MAX_ABS_AOD_DELTA:.3e}"
+        )
+    pressure_delta = float(delta["aerosol_mid_pressure_delta_hpa"]["max_abs"])
+    if pressure_delta > FAST_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA:
+        failures.append(
+            f"fast-reference pressure max_abs_delta={pressure_delta:.3e}hPa "
+            f"exceeds {FAST_REFERENCE_MAX_ABS_PRESSURE_DELTA_HPA:.3e}hPa"
+        )
     if failures:
         details = "; ".join(failures)
         raise SystemExit(f"fast-mode optimal-estimation validation failed: {details}")
