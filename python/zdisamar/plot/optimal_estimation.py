@@ -17,6 +17,8 @@ STATE_LABELS = {
 
 
 class OptimalEstimationPlot(PlotAccessor):
+    """Plots that show why an OE retrieval state was accepted."""
+
     def __init__(self, result: Any):
 
         super().__init__(result)
@@ -81,6 +83,7 @@ def _fit_frame(result: Any):
 
 
 def jacobian_frame(result: Any):
+    """Put final reflectance Jacobians into one table for all states."""
 
     import pandas as pd
 
@@ -234,10 +237,14 @@ def _require_measurement(result: Any):
 
 def _require_final_evaluation(result: Any):
 
-    if result.final_evaluation is None:
+    # The final spectrum can be expensive. It is evaluated here only for plots
+    # that need residuals or Jacobians at the accepted retrieval state.
+    evaluation = result.final_evaluation
+
+    if evaluation is None:
         raise RuntimeError("optimal-estimation result does not include a final forward evaluation")
 
-    return result.final_evaluation
+    return evaluation
 
 
 def _state_label(state_name: str) -> str:

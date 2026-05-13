@@ -15,20 +15,23 @@ from ..output.tables import (
 )
 
 
+# Feedback: prepared.py seems to be doing quite a bit of heavy lifting. but also,
+# the name itself has very little meaning of its own.
 class AtmosphereDiagnostics:
-    """Prepared atmospheric diagnostic entrypoints."""
+    """Atmospheric diagnostics for a prepared O2 A case."""
 
     def __init__(self, prepared: Any):
 
         self._prepared = prepared
 
     def budget(self, wavelengths_nm) -> AtmosphericBudget:
+        """Inspect how optical depth is distributed through the atmosphere."""
 
         return self._prepared.atmospheric_budget(wavelengths_nm)
 
 
 class PreparedO2ABase:
-    """Shared prepared O2A wrapper behavior."""
+    """Shared behavior for an O2 A case that has already been prepared."""
 
     def __init__(self, ctx: Context, input: O2AInput, library_path: LibraryPath):
 
@@ -38,6 +41,7 @@ class PreparedO2ABase:
 
     @property
     def input(self) -> O2AInput:
+        """Return a copy of the scene so the prepared calculation stays fixed."""
 
         return copy.deepcopy(self._input)
 
@@ -59,6 +63,7 @@ class PreparedO2ABase:
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
     ) -> Spectrum:
+        """Evaluate the prepared O2 A case once."""
 
         return self._require_context().forward_model(
             jacobian=jacobian,
@@ -67,6 +72,7 @@ class PreparedO2ABase:
 
     @property
     def atmosphere(self) -> AtmosphereDiagnostics:
+        """Group atmospheric diagnostics under the prepared case."""
 
         self._require_context()
 
@@ -74,6 +80,7 @@ class PreparedO2ABase:
 
     @property
     def collision_induced_absorption(self):
+        """Group O2-O2 CIA diagnostics under the prepared case."""
 
         self._require_context()
         from ..output.diagnostics import OxygenCollisionInducedAbsorptionDiagnostics
@@ -82,6 +89,7 @@ class PreparedO2ABase:
 
     @property
     def instrument_response(self):
+        """Group instrument-response diagnostics under the prepared case."""
 
         self._require_context()
         from ..output.diagnostics import InstrumentResponseDiagnostics
@@ -109,6 +117,7 @@ class PreparedO2ABase:
         return self._require_context().collision_induced_absorption_diagnostics(wavelengths_nm)
 
     def close(self) -> None:
+        """Release the prepared O2 A calculation."""
 
         if self._ctx is not None:
             self._ctx.close()
@@ -124,7 +133,7 @@ class PreparedO2ABase:
 
 
 class PreparedDefaultO2A(PreparedO2ABase):
-    """Prepared default O2A input for research-facing forward-model calls."""
+    """Prepared packaged DISAMAR-family O2 A reference case."""
 
     def __init__(self, library_path: LibraryPath = None):
 
@@ -141,7 +150,7 @@ class PreparedDefaultO2A(PreparedO2ABase):
 
 
 class PreparedO2A(PreparedO2ABase):
-    """Prepared O2A input for research-facing forward-model calls."""
+    """Prepared user-supplied O2 A case."""
 
     def __init__(self, input: O2AInput, library_path: LibraryPath = None):
 
@@ -157,7 +166,7 @@ class PreparedO2A(PreparedO2ABase):
 
 
 class O2AForwardSession:
-    """Long-lived O2 A forward-model session for repeated scene evaluations."""
+    """Reusable O2 A calculation for retrievals and parameter sweeps."""
 
     def __init__(self, input: O2AInput | None = None, library_path: LibraryPath = None):
 
@@ -175,6 +184,7 @@ class O2AForwardSession:
 
     @property
     def input(self) -> O2AInput:
+        """Return the scene currently loaded into the reusable calculation."""
 
         if self._input is None:
             raise RuntimeError("O2 A session is not prepared")
@@ -194,6 +204,7 @@ class O2AForwardSession:
         return self._ctx
 
     def prepare(self, input: O2AInput) -> O2AForwardSession:
+        """Load a new O2 A scene while reusing expensive work arrays."""
 
         self._require_context().prepare_o2a(input)
         self._input = copy.deepcopy(input)
@@ -206,6 +217,7 @@ class O2AForwardSession:
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
     ) -> Spectrum:
+        """Evaluate the currently prepared scene without rebuilding work arrays."""
 
         if self._input is None:
             raise RuntimeError("O2 A session is not prepared")
@@ -216,6 +228,7 @@ class O2AForwardSession:
         )
 
     def close(self) -> None:
+        """Release the reusable O2 A calculation."""
 
         if self._ctx is not None:
             self._ctx.close()
@@ -237,6 +250,7 @@ class O2AForwardSession:
 def o2a_disamar_reference_input(
     library_path: LibraryPath = None,
 ) -> O2AInput:
+    """Return the packaged O2 A reference case as editable Python data."""
 
     with Context(library_path) as ctx:
         return ctx.default_o2a_input()
@@ -246,6 +260,7 @@ def prepare(
     input: O2AInput,
     library_path: LibraryPath = None,
 ) -> PreparedO2A:
+    """Prepare a supplied O2 A case for spectra and diagnostics."""
 
     return PreparedO2A(input, library_path)
 
@@ -254,6 +269,7 @@ def o2a_forward_session(
     input: O2AInput | None = None,
     library_path: LibraryPath = None,
 ) -> O2AForwardSession:
+    """Create a reusable O2 A calculation, optionally with an initial scene."""
 
     return O2AForwardSession(input, library_path)
 
@@ -261,11 +277,13 @@ def o2a_forward_session(
 def prepare_default_o2a(
     library_path: LibraryPath = None,
 ) -> PreparedDefaultO2A:
+    """Prepare the packaged O2 A reference case."""
 
     return PreparedDefaultO2A(library_path)
 
 
 def forward(library_path: LibraryPath = None, *, jacobian: bool = False) -> Spectrum:
+    """Run the packaged O2 A reference case in one call."""
 
     ctx = Context(library_path)
 

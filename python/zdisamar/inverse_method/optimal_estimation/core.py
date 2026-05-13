@@ -41,12 +41,16 @@ from .timing import IterationTimer, NoopIterationTimer
 
 @dataclass(frozen=True)
 class IterationForward:
+    """Forward-model result and the retrieval state that produced it."""
+
     previous: np.ndarray
     evaluation: ForwardEvaluation
 
 
 @dataclass(frozen=True)
 class IterationEvaluation:
+    """Reflectance, Jacobian, and residual used in one OE update."""
+
     previous: np.ndarray
     evaluation: ForwardEvaluation
     reflectance: np.ndarray
@@ -56,6 +60,8 @@ class IterationEvaluation:
 
 @dataclass(frozen=True)
 class IterationUpdate:
+    """Accepted retrieval state and diagnostics from one OE update."""
+
     state: np.ndarray
     history_entry: Iteration
     posterior_precision: np.ndarray
@@ -174,6 +180,8 @@ def evaluate_iteration(
     previous: np.ndarray,
     iteration_timer: IterationTimer | NoopIterationTimer,
 ) -> IterationForward:
+    """Evaluate F(x) and K(x) before the solver changes the state."""
+
     # The expensive part of optimal estimation is here: every iteration asks
     # the forward model for both F(x_i) and K_i. `prior` is not used to generate
     # this spectrum unless the caller deliberately chose `initial == prior`.
@@ -188,6 +196,7 @@ def prepare_iteration_evaluation(
     measured: MeasurementArrays,
     state_count: int,
 ) -> IterationEvaluation:
+    """Put one forward-model result into the measurement's reflectance grid."""
 
     evaluation = iteration_forward.evaluation
     require_matching_wavelength_grid(
@@ -220,6 +229,8 @@ def solve_iteration(
     iteration_index: int,
     state_count: int,
 ) -> IterationUpdate:
+    """Apply one bounded Gauss-Newton step and record why it was accepted."""
+
     # The retrieval loop owns the expensive model evaluation and bookkeeping,
     # while the covariance-space and Gauss-Newton modules own the math that can
     # be swapped for LM or other inverse-method experiments.
@@ -269,6 +280,7 @@ def final_posterior_products(
     jacobian: np.ndarray,
     measurement_variance: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Compute final covariance products from the last usable Jacobian."""
 
     diagnostics = final_diagnostics(
         posterior_precision=posterior_precision,

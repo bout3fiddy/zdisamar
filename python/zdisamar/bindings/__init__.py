@@ -1,4 +1,4 @@
-"""C ABI bindings for the native zdisamar library."""
+"""Connection to the zdisamar library."""
 
 from .library import load_library
 from .signatures import configure

@@ -40,6 +40,7 @@ def _endpoint_slope_spline_second_derivatives(x: np.ndarray, y: np.ndarray) -> n
 def _cubic_spline_interpolate(
     x: np.ndarray, y: np.ndarray, second: np.ndarray, value: float
 ) -> float:
+    """Evaluate the pressure-altitude spline without adding a SciPy dependency."""
 
     lower_index = int(np.searchsorted(x, value, side="right") - 1)
     lower_index = max(0, min(lower_index, len(x) - 2))
@@ -99,6 +100,7 @@ class PressureAltitudeProfile:
 
     @classmethod
     def from_csv(cls, path: Path) -> PressureAltitudeProfile:
+        """Read a pressure-altitude table into the validated profile object."""
 
         altitudes: list[float] = []
         pressures: list[float] = []
@@ -155,6 +157,8 @@ class PressureAltitudeProfile:
         upper_altitude = float(self.altitude_km[-1])
 
         for _ in range(80):
+            # Bisection keeps the inverse tied to pressure_at_altitude instead
+            # of introducing a second pressure-altitude approximation.
             mid_altitude = 0.5 * (lower_altitude + upper_altitude)
             mid_pressure = self.pressure_at_altitude(mid_altitude)
 

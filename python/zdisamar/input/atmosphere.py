@@ -9,6 +9,8 @@ from .shared import to_float
 
 @dataclass
 class VerticalInterval:
+    """One pressure interval from the DISAMAR-style atmospheric grid."""
+
     index_1based: int
     top_pressure_hpa: float
     bottom_pressure_hpa: float
@@ -48,6 +50,8 @@ class VerticalInterval:
 
 @dataclass
 class Atmosphere:
+    """Layer grid and fit interval used to build the O2 A atmosphere."""
+
     layer_count: int
     sublayer_divisions: int
     fit_interval_index_1based: int

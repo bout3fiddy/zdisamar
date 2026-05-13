@@ -21,6 +21,7 @@ class IterationTimer:
         self._solver_seconds = 0.0
 
     def forward(self, call: Callable[[], T]) -> T:
+        """Measure spectrum-and-Jacobian time separately from OE algebra."""
 
         start = time.perf_counter()
         value = call()
@@ -37,6 +38,7 @@ class IterationTimer:
         self._solver_seconds = time.perf_counter() - self._solver_start
 
     def finish(self) -> IterationTiming:
+        """Return the timing fields stored on the retrieval result."""
 
         return IterationTiming(
             index=self._index,
@@ -54,6 +56,7 @@ class NoopIterationTimer:
         self._index = index
 
     def forward(self, call: Callable[[], T]) -> T:
+        """Keep the same call shape when timing is disabled."""
 
         return call()
 

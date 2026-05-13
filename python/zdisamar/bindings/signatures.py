@@ -1,4 +1,4 @@
-"""ctypes function signatures for the native zdisamar C ABI."""
+"""Function declarations for the zdisamar library."""
 
 import ctypes
 from typing import Any
@@ -15,6 +15,7 @@ from .structures import (
 
 
 def bind(lib: ctypes.CDLL, name: str, argtypes: list[Any], restype: Any) -> None:
+    """Declare argument and result types before calling zdisamar."""
 
     function = getattr(lib, name)
     function.argtypes = argtypes
@@ -22,6 +23,7 @@ def bind(lib: ctypes.CDLL, name: str, argtypes: list[Any], restype: Any) -> None
 
 
 def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
+    """Collect the zdisamar library declarations in one place."""
 
     bind(lib, "zds_context_create", [], ctypes.c_void_p)
     bind(lib, "zds_context_destroy", [ctypes.c_void_p], None)

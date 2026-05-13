@@ -1,4 +1,4 @@
-"""Shared wrappers for native-owned diagnostic tables."""
+"""Shared wrappers for diagnostic tables returned by the O2 A model."""
 
 from collections.abc import Mapping
 from typing import Any, ClassVar
@@ -18,7 +18,7 @@ from ..bindings.structures import (
 
 
 class NativeTable:
-    """Common behavior for native-owned structured-array result tables."""
+    """Common behavior for diagnostic tables owned by the O2 A model."""
 
     columns: ClassVar[tuple[str, ...]]
     label_columns: ClassVar[Mapping[str, tuple[str, Mapping[int, str]]]] = {}
@@ -44,6 +44,7 @@ class NativeTable:
 
     @property
     def table(self) -> Any:
+        """Return a copy so analysis code cannot mutate the stored table."""
 
         return self._table().copy()
 
@@ -55,6 +56,7 @@ class NativeTable:
         return self._table()[name].copy()
 
     def to_rows(self) -> list[dict[str, object]]:
+        """Return rows with labels for coded model fields."""
 
         rows: list[dict[str, object]] = []
 
@@ -69,12 +71,14 @@ class NativeTable:
         return rows
 
     def to_pandas(self) -> Any:
+        """Create a DataFrame only when the caller needs pandas."""
 
         import pandas as pd
 
         return pd.DataFrame.from_records(self.to_rows())
 
     def close(self) -> None:
+        """Release table memory held by the zdisamar model."""
 
         if self._owner is not None:
             getattr(self._owner, self._free_method)(self._raw)
@@ -106,6 +110,7 @@ class NativeTable:
 
 
 def field_names(structure: type[Any]) -> tuple[str, ...]:
+    """Keep Python table columns in the same order as the model output."""
 
     return tuple(str(field[0]) for field in structure._fields_)
 
@@ -166,17 +171,19 @@ class O2LineContributions(NativeTable):
 
     @property
     def total_row_count(self) -> int:
+        """Report how many O2 line rows existed before the requested cap."""
 
         return int(self._raw.total_row_count)
 
     @property
     def truncated(self) -> bool:
+        """Show whether the line-contribution evidence was capped."""
 
         return bool(self._raw.truncated)
 
 
 class InstrumentResponseTable(NativeTable):
-    """Native instrument response support-weight table."""
+    """Instrument response support-weight table."""
 
     channel_labels = {
         0: "radiance",
@@ -206,7 +213,7 @@ class InstrumentResponseTable(NativeTable):
 
 
 class OxygenCollisionInducedAbsorptionDiagnosticTable(NativeTable):
-    """Native O2-O2 collision-induced absorption diagnostic table."""
+    """O2-O2 collision-induced absorption diagnostic table."""
 
     columns = field_names(OxygenCollisionInducedAbsorptionRow)
     _closed_message = "O2-O2 collision-induced absorption diagnostic table is closed"
@@ -222,7 +229,7 @@ class OxygenCollisionInducedAbsorptionDiagnosticTable(NativeTable):
 
 
 class RadiativeTransferDiagnosticTable(NativeTable):
-    """Native bounded radiative-transfer diagnostic table."""
+    """Bounded radiative-transfer diagnostic table."""
 
     columns = field_names(CRadiativeTransferDiagnosticRow)
     _closed_message = "radiative-transfer diagnostic table is closed"

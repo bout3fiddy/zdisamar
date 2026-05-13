@@ -1,4 +1,4 @@
-"""Native zdisamar shared-library discovery."""
+"""Find the zdisamar calculation library."""
 
 import ctypes
 import os
@@ -7,7 +7,10 @@ from importlib import resources
 from pathlib import Path
 
 
+# Feedback: this is a smell. things like 'zig-out' etc. are repo specific and should
+# not be a part of the python library.
 def load_library(path: str | os.PathLike[str] | None = None) -> ctypes.CDLL:
+    """Find the zdisamar library used for the O2 A calculation."""
 
     if path is not None:
         return ctypes.CDLL(os.fspath(path))
@@ -20,6 +23,8 @@ def load_library(path: str | os.PathLike[str] | None = None) -> ctypes.CDLL:
     packaged = resources.files("zdisamar").joinpath("native", library_name())
 
     if packaged.is_file():
+        # Wheels can store resources outside a normal source-tree layout, so
+        # ask importlib for a real file before handing the path to ctypes.
         with resources.as_file(packaged) as packaged_path:
             return ctypes.CDLL(str(packaged_path))
 
@@ -37,6 +42,7 @@ def load_library(path: str | os.PathLike[str] | None = None) -> ctypes.CDLL:
 
 
 def library_name() -> str:
+    """Use the zdisamar library filename for this operating system."""
 
     if sys.platform == "darwin":
         return "libzdisamar_c.dylib"

@@ -1,4 +1,4 @@
-"""Spectrum result wrappers for native O2A forward-model output."""
+"""Spectrum result wrappers for zdisamar O2 A model output."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -15,6 +15,8 @@ JACOBIAN_STATE_NAMES = (
 
 @dataclass(frozen=True)
 class DiagnosticReport:
+    """Small spectrum summary that remains valid after arrays are closed."""
+
     sample_count: int
     wavelength_start_nm: float
     wavelength_end_nm: float
@@ -24,7 +26,7 @@ class DiagnosticReport:
 
 
 class Spectrum:
-    """Bulk spectrum arrays returned by one native run."""
+    """Radiance, irradiance, reflectance, and Jacobians from one O2 A run."""
 
     def __init__(
         self,
@@ -41,6 +43,7 @@ class Spectrum:
         self._diagnostic_report: DiagnosticReport | None = None
 
     def _array(self, pointer: object) -> Any:
+        """Expose model-owned spectrum memory as an array while it is open."""
 
         self._require_open()
         import numpy as np
@@ -58,6 +61,7 @@ class Spectrum:
 
     @property
     def input(self) -> O2AInput | None:
+        """Return the O2 A scene associated with this spectrum."""
 
         owner = self._require_open()
 
@@ -95,12 +99,14 @@ class Spectrum:
 
     @property
     def sun_normalized_radiance(self) -> Any:
+        """Use the same radiance normalization as the validation analysis."""
 
         from ..quantities import sun_normalized_radiance
 
         return sun_normalized_radiance(self.radiance, self.irradiance)
 
     def reflectance_jacobian(self, state: str) -> Any:
+        """Return d(reflectance)/d(state) for one retrieval variable."""
 
         names = self.jacobian_state_names
 
@@ -124,13 +130,14 @@ class Spectrum:
 
     @property
     def jacobian_state_names(self) -> tuple[str, ...]:
+        """Name Jacobian columns so retrieval code can request them explicitly."""
 
         if self._raw.jacobian_state_count == 0:
             return ()
 
         if self._jacobian_state_names is not None:
             if len(self._jacobian_state_names) != self._raw.jacobian_state_count:
-                raise RuntimeError("spectrum Jacobian state metadata does not match native output")
+                raise RuntimeError("spectrum Jacobian state names do not match model output")
 
             return self._jacobian_state_names
 
@@ -138,6 +145,7 @@ class Spectrum:
 
     @property
     def radiance_jacobian(self) -> Any:
+        """Return d(radiance)/d(state) before reflectance scaling."""
 
         self._require_open()
 
@@ -155,6 +163,7 @@ class Spectrum:
 
     @property
     def plot(self):
+        """Import plotting only when a caller asks for spectrum figures."""
 
         from ..plot.spectrum import SpectrumPlot
 
@@ -162,6 +171,7 @@ class Spectrum:
 
     @property
     def diagnostic_report(self) -> DiagnosticReport:
+        """Ask for the compact spectrum summary only when needed."""
 
         owner = self._require_open()
 
@@ -176,6 +186,7 @@ class Spectrum:
         return report
 
     def close(self) -> None:
+        """Release spectrum arrays held by the zdisamar model."""
 
         if self._owner is not None:
             owner = self._owner

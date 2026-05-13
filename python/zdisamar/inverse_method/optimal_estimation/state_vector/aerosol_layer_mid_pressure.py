@@ -23,6 +23,7 @@ class AerosolLayerMidPressure:
     jacobian_name: str = AEROSOL_LAYER_MID_PRESSURE_HPA
 
     def write_to(self, target, value: float) -> None:
+        """Move the aerosol layer while preserving neighboring layer boundaries."""
 
         if not self.thickness_hpa > 0.0:
             raise ValueError("aerosol layer pressure thickness must be positive")
@@ -50,5 +51,6 @@ class AerosolLayerMidPressure:
             raise ValueError("aerosol fit interval is not present in the atmosphere")
 
     def jacobian_scale(self, value: float) -> float:
+        """Convert altitude sensitivity into pressure sensitivity."""
 
         return self.pressure_altitude_profile.altitude_derivative_at_pressure(value)

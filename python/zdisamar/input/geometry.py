@@ -8,6 +8,8 @@ from .shared import to_float
 
 @dataclass
 class Geometry:
+    """Solar and viewing geometry for the O2 A radiance calculation."""
+
     model: str
     solar_zenith_deg: float
     viewing_zenith_deg: float
@@ -15,6 +17,7 @@ class Geometry:
 
     @property
     def solar_mu0(self) -> float:
+        """Return cos(solar zenith), used in reflectance conversion."""
 
         from ..quantities import solar_mu0
 
@@ -42,5 +45,7 @@ class Geometry:
 
 @dataclass
 class Surface:
+    """Lambertian surface parameters used by the current O2 A model."""
+
     albedo: float
     pressure_hpa: float

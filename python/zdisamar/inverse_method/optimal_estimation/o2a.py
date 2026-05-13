@@ -28,6 +28,8 @@ from .state_vector import PressureAltitudeProfile, StateVector
 
 
 class PreparedForwardModel(Protocol):
+    """Prepared O2 A calculation used by the retrieval adapter."""
+
     @property
     def input(self) -> O2AInput: ...
 
@@ -42,11 +44,9 @@ class PreparedForwardModel(Protocol):
 class O2AInverseForwardModel:
     """Evaluates O2 A spectra at state-vector points.
 
-    The public contract is already the optimized inverse-model shape:
-    `evaluate(x, state_vector)` mutates model settings conceptually, then runs
-    the spectrum and Jacobian.  The current backend materializes that settings
-    target as a copied `O2AInput`; a future native mutable backend can replace
-    that implementation without changing the optimal-estimation loop.
+    Each retrieval state is written into a copied O2 A scene, then evaluated as
+    reflectance and reflectance Jacobians.  The retrieval solver only sees that
+    scientific relation; it does not need to know which scene fields were moved.
     """
 
     def __init__(
@@ -81,6 +81,7 @@ class O2AInverseForwardModel:
         state: np.ndarray,
         state_vector: StateVector,
     ) -> O2AInput:
+        """Create the O2 A scene for one retrieval state."""
 
         settings = copy.deepcopy(self._template)
         state_vector.write_to(settings, state)
@@ -92,6 +93,7 @@ class O2AInverseForwardModel:
         state: np.ndarray,
         state_vector: StateVector,
     ) -> ForwardEvaluation:
+        """Evaluate reflectance and reflectance Jacobians for one retrieval state."""
 
         if self._forward_session is not None:
             prepared = self._forward_session.prepare(self.settings_for_state(state, state_vector))
@@ -115,7 +117,12 @@ def disamar_oe(
     state_vector: StateVector,
     controls: RetrievalControls | None = None,
 ) -> Result:
-    """Retrieve O2 A state-vector parameters with the DISAMAR optimal estimation controls."""
+    """Retrieve O2 A state-vector parameters with DISAMAR-style controls.
+
+    The default path reuses one prepared O2 A calculation across all
+    iterations, so the reported timing reflects the physical spectrum and
+    Jacobian work rather than repeated setup.
+    """
 
     if inverse_model._forward_session is None and inverse_model._use_forward_session:
         with o2a_forward_session(
@@ -150,6 +157,7 @@ def _disamar_oe(
     state_vector: StateVector,
     controls: RetrievalControls | None = None,
 ) -> Result:
+    """Bind the O2 A forward relation to the generic OE solver."""
 
     final_evaluate_state = _lazy_final_evaluator(inverse_model, state_vector)
     result = retrieve(
@@ -177,6 +185,7 @@ def _lazy_final_evaluator(
     inverse_model: O2AInverseForwardModel,
     state_vector: StateVector,
 ) -> Callable[[np.ndarray], ForwardEvaluation]:
+    """Keep a way to evaluate the final retrieval state after the run ends."""
 
     if type(inverse_model) is not O2AInverseForwardModel:
         return lambda state: inverse_model.evaluate(state, state_vector)
@@ -209,7 +218,12 @@ def attach_final_evaluation(
     result: Result,
     evaluate_state: Callable[[np.ndarray], ForwardEvaluation],
 ) -> Result:
-    """Attach the final-state model product required by OE result plots."""
+    """Attach the final-state spectrum needed by OE result plots.
+
+    If the last iteration already evaluated the accepted state, reuse that
+    spectrum.  Otherwise store the final state and evaluate it only if a caller
+    asks for plots or residuals.
+    """
 
     if (
         result.last_evaluation is not None
@@ -270,7 +284,7 @@ def scale_reflectance_jacobian(
     evaluation: ForwardEvaluation,
     scales: np.ndarray,
 ) -> ForwardEvaluation:
-    """Convert backend Jacobian columns into state-vector coordinates."""
+    """Scale reflectance Jacobians into the retrieval variables."""
 
     if evaluation.reflectance_jacobian.shape[1] != scales.size:
         raise ValueError("Jacobian scale count does not match state vector dimension")
@@ -301,6 +315,7 @@ def measurement_from_prepared(
 
 
 def pressure_altitude_profile_from_prepared(prepared: PreparedO2ABase) -> PressureAltitudeProfile:
+    """Read the pressure-altitude relation from the prepared atmospheric grid."""
 
     budget = prepared.atmospheric_budget(
         np.array([prepared.input.spectral_grid.start_nm], dtype=np.float64)
@@ -329,7 +344,7 @@ def pressure_altitude_profile_from_prepared_grid(
     *,
     library_path: str | None = None,
 ) -> PressureAltitudeProfile:
-    """Use the prepared grid as the state-vector pressure/altitude contract."""
+    """Use the prepared grid as the pressure-altitude relation for retrieval."""
 
     with prepare(case, library_path=library_path) as prepared:
         return pressure_altitude_profile_from_prepared(prepared)

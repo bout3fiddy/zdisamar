@@ -8,6 +8,8 @@ from .shared import to_float
 
 @dataclass
 class SpectralGrid:
+    """Nominal output wavelength grid for the spectrum."""
+
     start_nm: float
     end_nm: float
     sample_count: int
@@ -32,6 +34,8 @@ class SpectralGrid:
 
 @dataclass
 class InstrumentResponse:
+    """Instrument line shape and high-resolution sampling settings."""
+
     instrument_name: str
     regime: str
     sampling: str

@@ -9,6 +9,8 @@ from .shared import to_float
 
 @dataclass
 class AerosolPlacement:
+    """Pressure-layer placement used when aerosol moves with the fit interval."""
+
     semantics: str
     interval_index_1based: int
     top_pressure_hpa: float
@@ -42,6 +44,8 @@ class AerosolPlacement:
 
 @dataclass
 class Aerosol:
+    """Single aerosol layer and its optical properties for the O2 A scene."""
+
     optical_depth_550_nm: float
     single_scatter_albedo: float
     asymmetry_factor: float

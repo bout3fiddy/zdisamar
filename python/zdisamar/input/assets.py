@@ -7,6 +7,8 @@ from pathlib import Path
 
 @dataclass
 class ReferenceAsset:
+    """Named reference-data file used by an O2 A scene."""
+
     id: str
     path: str
     format: str
@@ -25,6 +27,7 @@ class ReferenceAsset:
         return {"id": self.id, "path": self.path, "format": self.format}
 
     def with_resolved_path(self, resolver) -> ReferenceAsset:
+        """Resolve relative data paths only when preparing a calculation."""
 
         path = Path(self.path)
 
@@ -36,6 +39,8 @@ class ReferenceAsset:
 
 @dataclass
 class ReferenceAssets:
+    """Reference-data files required to reproduce one O2 A calculation."""
+
     atmosphere_profile: ReferenceAsset
     vendor_reference_csv: ReferenceAsset
     raw_solar_reference: ReferenceAsset

@@ -1,4 +1,4 @@
-"""Python wrapper for the native zdisamar O2A C ABI."""
+"""Python access to the zdisamar O2 A forward model."""
 
 from importlib import import_module
 
@@ -42,6 +42,8 @@ from .types import (
 def __getattr__(name: str):
 
     if name == "inverse_method":
+        # The inverse-method package pulls in numerical retrieval helpers.
+        # Keep it out of the import path for users who only run spectra.
         module = import_module(".inverse_method", __name__)
         globals()[name] = module
 

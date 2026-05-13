@@ -106,7 +106,7 @@ def build_covariance_space_from_workspace(
     residual: np.ndarray,
     jacobian: np.ndarray,
 ) -> CovarianceSpace:
-    """Return the normalized linear problem using cached covariance transforms."""
+    """Return the normalized linear problem using precomputed covariance transforms."""
 
     # dx is measured from the a-priori state, not the previous iteration delta,
     # because optimal estimation regularizes absolute distance from x_a.  Using x_i - x_{i-1}

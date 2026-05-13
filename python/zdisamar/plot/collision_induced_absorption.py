@@ -14,6 +14,8 @@ DEFAULT_PROFILE_WAVELENGTH_NM = 760.76
 
 
 class CollisionInducedAbsorptionPlot(PlotAccessor):
+    """Plots for O2-O2 collision-induced absorption by layer."""
+
     def __init__(self, table: Any):
 
         super().__init__(table)

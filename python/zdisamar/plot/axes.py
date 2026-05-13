@@ -24,6 +24,7 @@ def wavelength_x():
 
 
 def marker_rules(data):
+    """Draw fixed O2 A reference wavelengths only inside the plotted band."""
 
     import pandas as pd
 
@@ -93,6 +94,7 @@ def scaled_x(data, field: str, title: str, *, axis: alt.Axis | None = None):
 
 
 def finite_padded_scale(values):
+    """Pad finite y-ranges so flat or single-point plots remain readable."""
 
     finite = _finite_values(values)
 

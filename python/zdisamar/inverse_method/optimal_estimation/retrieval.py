@@ -96,6 +96,7 @@ class Result:
     )
 
     def __getattribute__(self, name: str):
+        """Evaluate the final spectrum only when a caller asks for it."""
 
         if name != "final_evaluation":
             return object.__getattribute__(self, name)
@@ -117,11 +118,13 @@ class Result:
         return evaluation
 
     def value(self, name: StateName) -> float:
+        """Return a named retrieval value without exposing array position."""
 
         return float(self.state[self.state_names.index(name)])
 
     @property
     def plot(self):
+        """Import plotting only when a caller asks for retrieval figures."""
 
         from ...plot.optimal_estimation import OptimalEstimationPlot
 

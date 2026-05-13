@@ -4,13 +4,14 @@ from typing import Any
 
 
 class OxygenCollisionInducedAbsorptionDiagnostics:
-    """O2-O2 collision-induced absorption diagnostics from the native core."""
+    """O2-O2 collision-induced absorption diagnostics from the O2 A model."""
 
     def __init__(self, prepared: Any):
 
         self._prepared = prepared
 
     def diagnostics(self, wavelengths_nm):
+        """Sample CIA optical-depth evidence at selected wavelengths."""
 
         return self._prepared.collision_induced_absorption_diagnostics(wavelengths_nm)
 
@@ -27,6 +28,7 @@ class InstrumentResponseDiagnostics:
         wavelengths_nm=None,
         channels: tuple[str, ...] = ("radiance", "irradiance"),
     ):
+        """Use the nominal spectrum grid when no diagnostic grid is supplied."""
 
         import numpy as np
 
@@ -41,6 +43,7 @@ class InstrumentResponseDiagnostics:
 
 
 def _nominal_wavelengths(case):
+    """Recreate the spectrum grid from the O2 A input."""
 
     import numpy as np
 

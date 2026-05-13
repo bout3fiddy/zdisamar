@@ -13,6 +13,8 @@ from .properties import PLOT, PlotAccessor
 
 
 class SpectrumPlot(PlotAccessor):
+    """Plots for the spectral quantities returned by one O2 A run."""
+
     def __init__(self, spectrum: Any):
 
         super().__init__(spectrum)
@@ -50,6 +52,7 @@ class SpectrumPlot(PlotAccessor):
         )
 
     def jacobian(self, state: str, save: str | Path | None = None):
+        """Plot reflectance Jacobians because OE works in reflectance space."""
 
         from .jacobian import reflectance_jacobian
 

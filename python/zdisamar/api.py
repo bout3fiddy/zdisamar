@@ -1,4 +1,4 @@
-"""Public exports for the Python O2A native wrapper."""
+"""Public exports for the Python O2 A forward-model wrapper."""
 
 from .bindings.context import Context
 from .forward_model.prepared import (

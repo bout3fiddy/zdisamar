@@ -10,6 +10,8 @@ from .properties import PLOT, PlotAccessor
 
 
 class InstrumentResponsePlot(PlotAccessor):
+    """Plots for instrument response support weights."""
+
     def __init__(self, response: Any):
 
         super().__init__(response)

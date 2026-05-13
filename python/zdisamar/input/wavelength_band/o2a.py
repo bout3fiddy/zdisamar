@@ -28,6 +28,8 @@ def _object_list(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
 
 @dataclass
 class O2AInput:
+    """Complete O2 A scene passed to the zdisamar forward model."""
+
     metadata: dict[str, Any]
     plan: dict[str, Any]
     reference_assets: ReferenceAssets
@@ -52,6 +54,7 @@ class O2AInput:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> O2AInput:
+        """Turn the validation-file shape into typed scene parts."""
 
         return cls(
             metadata=_object_dict(data, "metadata"),
@@ -76,10 +79,12 @@ class O2AInput:
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> O2AInput:
+        """Read an O2 A scene emitted by the zdisamar model."""
 
         return cls.from_dict(json.loads(raw))
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the O2 A scene shape expected by the zdisamar model."""
 
         return {
             "metadata": self.metadata,
@@ -104,6 +109,7 @@ class O2AInput:
         }
 
     def to_json_bytes(self) -> bytes:
+        """Encode the scene deterministically before the zdisamar model reads it."""
 
         return json.dumps(json_value(self.to_dict()), sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
@@ -129,12 +135,14 @@ class O2AInput:
         return fast
 
     def with_resolved_asset_paths(self, base: str | Path) -> O2AInput:
+        """Resolve relative reference-data files from one directory."""
 
         root = Path(base)
 
         return self.with_resolved_asset_resolver(lambda path: (root / path).resolve())
 
     def with_resolved_asset_resolver(self, resolver) -> O2AInput:
+        """Return a copy with every reference-data file path resolved."""
 
         resolved = deepcopy(self)
         resolved.reference_assets.atmosphere_profile = (

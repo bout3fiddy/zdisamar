@@ -14,6 +14,8 @@ DEFAULT_PROFILE_WAVELENGTH_NM = 760.76
 
 
 class BudgetPlot(PlotAccessor):
+    """Plots for atmospheric optical-depth budgets."""
+
     def __init__(self, budget: Any):
 
         super().__init__(budget)

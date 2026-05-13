@@ -32,6 +32,7 @@ def to_dataframe(obj: Any):
 
 
 def require_columns(frame, required: Sequence[str]) -> None:
+    """Fail early when a plot is missing its physical quantity columns."""
 
     missing = [name for name in required if name not in frame.columns]
 
@@ -40,6 +41,7 @@ def require_columns(frame, required: Sequence[str]) -> None:
 
 
 def spectrum_frame(spectrum: Any):
+    """Put spectrum-like objects into one plotting table shape."""
 
     frame = to_dataframe(spectrum)
     require_columns(frame, fields.SPECTRUM_FIELDS)
@@ -48,6 +50,7 @@ def spectrum_frame(spectrum: Any):
 
 
 def with_channel_labels(obj: Any):
+    """Add radiance/irradiance labels to instrument-response rows."""
 
     result = to_dataframe(obj)
 

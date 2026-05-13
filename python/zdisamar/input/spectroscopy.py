@@ -14,6 +14,8 @@ def _asset_or_none(asset: ReferenceAsset | None) -> dict[str, str] | None:
 
 @dataclass
 class O2LineByLine:
+    """Line-list and line-mixing inputs for O2 absorption."""
+
     line_list_asset: ReferenceAsset
     line_mixing_asset: ReferenceAsset
     strong_lines_asset: ReferenceAsset
@@ -50,6 +52,8 @@ class O2LineByLine:
 
 @dataclass
 class OxygenCollisionInducedAbsorption:
+    """O2-O2 collision-induced absorption settings for the scene."""
+
     enabled: bool
     cross_section_asset: ReferenceAsset | None
 

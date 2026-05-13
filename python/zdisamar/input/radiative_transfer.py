@@ -28,14 +28,14 @@ Threshold guide:
   speedup by itself.
 
 - `fourier_floor_scalar`: the earliest Fourier order where the Fourier-tail
-  stop may trigger.  It must fit in the native unsigned 16-bit field; the O2 A
+  stop may trigger.  It must fit in the model's 16-bit field; the O2 A
   default is `2`.  Keeping this above the low orders protects the dominant
   angular structure in the reflectance field.  Lowering it would risk pruning
   physically important low-order azimuthal terms; we have not validated that as
   a safe speed knob.
 
 - `fourier_order_cap`: a hard maximum Fourier order, or `None` for the
-  geometry-derived limit.  When set, it must fit in the native unsigned 16-bit
+  geometry-derived limit.  When set, it must fit in the model's 16-bit
   field.  It is useful for experiments because it skips whole Fourier-order
   evaluations directly, but it is cruder than the tail threshold.  The O2 A
   fast preset uses `5`; in the retained four-scene spectra sweep this was the
@@ -44,7 +44,7 @@ Threshold guide:
 
 - `num_orders_max`: the hard cap on multiple-scattering order iterations inside
   each Fourier term.  `0` keeps the optical-depth-derived default; any explicit
-  cap must fit in the native unsigned 16-bit field.  Lowering it limits
+  cap must fit in the model's 16-bit field.  Lowering it limits
   repeated scattering work but can omit real multiple-scattering energy in
   optically thicker scenes.  Prefer the convergence thresholds below before
   forcing this cap.
@@ -91,6 +91,8 @@ from .shared import to_float
 
 @dataclass
 class RadiativeTransferPerformanceThresholds:
+    """Accuracy and speed thresholds for the LABOS radiative-transfer solve."""
+
     num_orders_max: int
     fourier_floor_scalar: int
     fourier_order_cap: int | None
@@ -103,6 +105,7 @@ class RadiativeTransferPerformanceThresholds:
 
     @classmethod
     def o2a_default(cls) -> RadiativeTransferPerformanceThresholds:
+        """Use the reference-grade O2 A thresholds unless fast mode is requested."""
 
         return cls(
             num_orders_max=0,
@@ -180,6 +183,8 @@ class RadiativeTransferPerformanceThresholds:
 
 @dataclass
 class RadiativeTransferControls:
+    """Radiative-transfer settings for one O2 A scene."""
+
     scattering: str
     n_streams: int
     use_adding: bool

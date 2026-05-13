@@ -23,7 +23,7 @@ class StateVectorParameter(Protocol):
 
 
 class StateVector:
-    """Ordered retrieval coordinates plus covariance metadata."""
+    """Ordered retrieval variables plus prior covariance terms."""
 
     def __init__(self, parameters: Sequence[StateVectorParameter]):
 
@@ -39,22 +39,26 @@ class StateVector:
 
     @property
     def parameters(self) -> tuple[StateVectorParameter, ...]:
+        """Expose retrieval variables in solver order."""
 
         return self._parameters
 
     @property
     def names(self) -> tuple[StateName, ...]:
+        """Return retrieval variable names in solver order."""
 
         return tuple(parameter.name for parameter in self._parameters)
 
     @property
     def jacobian_names(self) -> tuple[StateName, ...]:
+        """Return the model Jacobian names used for each retrieval variable."""
 
         return tuple(
             getattr(parameter, "jacobian_name", parameter.name) for parameter in self._parameters
         )
 
     def jacobian_scales(self, state: np.ndarray) -> np.ndarray:
+        """Scale model Jacobians into the chosen retrieval variables."""
 
         if len(state) != len(self._parameters):
             raise ValueError("state length does not match state vector")
@@ -68,18 +72,22 @@ class StateVector:
         return np.asarray(scales, dtype=np.float64)
 
     def initial_state(self) -> np.ndarray:
+        """Return the starting retrieval state."""
 
         return np.array([parameter.initial for parameter in self._parameters], dtype=np.float64)
 
     def prior_state(self) -> np.ndarray:
+        """Return the prior retrieval state."""
 
         return np.array([parameter.prior for parameter in self._parameters], dtype=np.float64)
 
     def prior_covariance(self) -> np.ndarray:
+        """Return the diagonal prior covariance used by this OE solver."""
 
         return np.diag([parameter.variance for parameter in self._parameters]).astype(np.float64)
 
     def clip_to_bounds(self, state: np.ndarray) -> np.ndarray:
+        """Keep updated retrieval variables within their physical bounds."""
 
         bounded = np.array(state, copy=True)
 
@@ -93,6 +101,7 @@ class StateVector:
         return bounded
 
     def write_to(self, target: Any, state: np.ndarray) -> None:
+        """Write all retrieval variables into one O2 A scene."""
 
         if len(state) != len(self._parameters):
             raise ValueError("state length does not match state vector")

@@ -1,4 +1,4 @@
-"""Native context runtime for O2A forward-model calls."""
+"""Prepared O2 A calculation state and result allocation."""
 
 import copy
 import ctypes
@@ -30,6 +30,7 @@ LibraryPath = str | os.PathLike[str] | None
 
 
 def contiguous_wavelengths(wavelengths_nm):
+    """Prepare a one-dimensional wavelength grid for the zdisamar model."""
 
     import numpy as np
 
@@ -45,6 +46,7 @@ def contiguous_wavelengths(wavelengths_nm):
 
 
 def channel_mask(channels: tuple[str, ...]) -> int:
+    """Translate requested spectral channels into model channel selection."""
 
     masks = {"radiance": 1, "irradiance": 2}
     mask = 0
@@ -62,6 +64,7 @@ def channel_mask(channels: tuple[str, ...]) -> int:
 
 
 def jacobian_state_ids(state_names: tuple[str, ...]):
+    """Translate retrieval names into model Jacobian selectors."""
 
     ids = []
 
@@ -74,8 +77,10 @@ def jacobian_state_ids(state_names: tuple[str, ...]):
     return (ctypes.c_uint8 * len(ids))(*ids)
 
 
+# Feedback: The term 'context' can mean quite a few things so it isnt immediately obvious
+# what this object does.
 class Context:
-    """Native zdisamar context."""
+    """Own one prepared O2 A calculation and the results made from it."""
 
     def __init__(self, library_path: LibraryPath = None):
 
@@ -84,9 +89,10 @@ class Context:
         self._input: O2AInput | None = None
 
         if not self._ctx:
-            raise RuntimeError("failed to create zdisamar context")
+            raise RuntimeError("failed to start zdisamar calculation")
 
     def close(self) -> None:
+        """Release the prepared calculation and all result memory tied to it."""
 
         if self._ctx:
             self._lib.zds_context_destroy(self._ctx)
@@ -94,14 +100,17 @@ class Context:
 
     @property
     def input(self) -> O2AInput | None:
+        """Return the O2 A input used for the prepared calculation."""
 
         return None if self._input is None else copy.deepcopy(self._input)
 
     def prepare_default_o2a(self) -> Context:
+        """Prepare the packaged DISAMAR-family O2 A reference case."""
 
         return self.prepare_o2a(self.default_o2a_input())
 
     def default_o2a_input(self) -> O2AInput:
+        """Read the zdisamar model's packaged O2 A reference case."""
 
         size = ctypes.c_size_t()
         self._check(self._lib.zds_default_o2a_input_json(self._ctx, None, 0, ctypes.byref(size)))
@@ -118,6 +127,7 @@ class Context:
         return O2AInput.from_json(buffer.value[: size.value])
 
     def prepare_o2a(self, input: O2AInput) -> Context:
+        """Prepare one O2 A scene after resolving packaged data files."""
 
         resolved = input.with_resolved_asset_resolver(reference_data.resolve_asset_path)
         payload = resolved.to_json_bytes()
@@ -128,11 +138,14 @@ class Context:
                 len(payload),
             )
         )
+        # Store the user-facing scene, not the resolved file paths, so later
+        # diagnostics still describe the case the caller supplied.
         self._input = copy.deepcopy(input)
 
         return self
 
     def warm_o2a_session(self) -> Context:
+        """Build reusable O2 A work arrays before repeated scene evaluations."""
 
         self._check(self._lib.zds_warm_o2a_session(self._ctx))
 
@@ -144,6 +157,7 @@ class Context:
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
     ) -> Spectrum:
+        """Run the prepared O2 A scene and return spectral arrays."""
 
         raw = CSpectrum()
 
@@ -177,6 +191,7 @@ class Context:
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
     ) -> Spectrum:
+        """Use the public flow name: prepared O2 A input to spectrum."""
 
         return self.run(jacobian=jacobian, jacobian_state_names=jacobian_state_names)
 
@@ -197,6 +212,7 @@ class Context:
         )
 
     def atmospheric_budget(self, wavelengths_nm) -> AtmosphericBudget:
+        """Return layer optical-depth rows at selected wavelengths."""
 
         wavelengths = contiguous_wavelengths(wavelengths_nm)
         raw = CAtmosphericBudget()
@@ -212,6 +228,7 @@ class Context:
         return AtmosphericBudget(self, raw)
 
     def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
+        """Return line-by-line O2 evidence with an explicit row cap."""
 
         wavelengths = contiguous_wavelengths(wavelengths_nm)
 
@@ -236,6 +253,7 @@ class Context:
         wavelengths_nm,
         channels: tuple[str, ...] = ("radiance", "irradiance"),
     ) -> InstrumentResponseTable:
+        """Return high-resolution samples used for instrument convolution."""
 
         wavelengths = contiguous_wavelengths(wavelengths_nm)
         raw = CInstrumentResponse()
@@ -254,6 +272,7 @@ class Context:
     def collision_induced_absorption_diagnostics(
         self, wavelengths_nm
     ) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
+        """Return O2-O2 CIA rows on the atmospheric layer grid."""
 
         wavelengths = contiguous_wavelengths(wavelengths_nm)
         raw = OxygenCollisionInducedAbsorptionDiagnosticsRaw()
@@ -273,6 +292,7 @@ class Context:
         wavelengths_nm,
         spectrum: Spectrum | None = None,
     ) -> RadiativeTransferDiagnosticTable:
+        """Return bounded radiative-transfer evidence for selected wavelengths."""
 
         wavelengths = contiguous_wavelengths(wavelengths_nm)
         raw = CRadiativeTransferDiagnostics()
@@ -325,6 +345,8 @@ class Context:
         if status == 0:
             return
 
+        # zdisamar has the detailed physical or input error message; raise it
+        # here so callers do not need to decode integer statuses.
         message = self._lib.zds_last_error(self._ctx)
         raise RuntimeError((message or b"zdisamar error").decode("utf-8", errors="replace"))
 

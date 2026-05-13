@@ -7,6 +7,8 @@ import altair as alt
 
 
 class PlotProperties:
+    """One plotting style for spectra, diagnostics, and retrieval figures."""
+
     width = 1311
     height = 465
     theme_name = "zdisamar_validation"
@@ -50,6 +52,7 @@ class PlotProperties:
         self._enabled = False
 
     def prepare(self) -> None:
+        """Enable the zdisamar Altair theme before any chart is built."""
 
         if self._enabled:
             return
@@ -70,6 +73,7 @@ class PlotProperties:
         return self._theme()
 
     def finish(self, chart, *, save: str | Path | None = None):
+        """Return charts by default and write image files only when requested."""
 
         if save is not None:
             self.save(chart, save)
@@ -77,6 +81,7 @@ class PlotProperties:
         return chart
 
     def save(self, chart, path: str | Path) -> None:
+        """Use one high-resolution PNG setting for saved validation figures."""
 
         output = Path(path)
 
