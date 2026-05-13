@@ -312,6 +312,19 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def validate_summary(summary: dict[str, Any]) -> None:
+    failures = []
+    for mode in MODE_LABELS:
+        payload = summary["by_mode"][mode]
+        if int(payload["rows"]) != RUN_COUNT:
+            failures.append(f"{mode} rows={payload['rows']} expected={RUN_COUNT}")
+        if int(payload["converged"]) != RUN_COUNT:
+            failures.append(f"{mode} converged={payload['converged']} expected={RUN_COUNT}")
+    if failures:
+        details = "; ".join(failures)
+        raise SystemExit(f"fast-mode optimal-estimation validation failed: {details}")
+
+
 def fast_retrieved_rows(data: pd.DataFrame) -> pd.DataFrame:
     records = []
     for _, row in data.iterrows():
@@ -799,11 +812,12 @@ def main() -> None:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     rows = build_rows()
     data = pd.DataFrame.from_records(rows)
+    summary = build_summary(data)
+    validate_summary(summary)
     data.to_csv(DATA_PATH, index=False)
     create_plot(data, PLOT_PATH)
     create_paired_style_retrieved_fast_scatter(data, RETRIEVED_FAST_SCATTER_PATH)
     create_latency_plot_with_fast(data, PAIRED_LATENCY_PATH)
-    summary = build_summary(data)
     write_json(SUMMARY_PATH, summary)
     delta = summary["fast_minus_reference"]
     print(

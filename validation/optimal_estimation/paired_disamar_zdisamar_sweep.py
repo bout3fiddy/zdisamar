@@ -10,6 +10,7 @@
 # ]
 # ///
 
+import json
 import math
 import os
 import re
@@ -43,6 +44,9 @@ RETRIEVED_PLOT_PATH = TRACKED_OUTPUTS_DIR / "paired_oe_retrieved_scatter.png"
 ERROR_HISTOGRAM_PATH = TRACKED_OUTPUTS_DIR / "paired_oe_error_histograms.png"
 LATENCY_PLOT_PATH = TRACKED_OUTPUTS_DIR / "paired_oe_latency.png"
 MANIFEST_PATH = TRACKED_OUTPUTS_DIR / "paired_oe_plot_manifest.json"
+FAST_MODE_SUMMARY_PATH = (
+    TRACKED_OUTPUTS_DIR / "zdisamar_o2a_fast_mode_sweep_comparison_summary.json"
+)
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
@@ -76,11 +80,13 @@ FLOAT_TOKEN_PATTERN = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EDed][+-]?\d+
 MODEL_LABELS = {
     "disamar_fortran": "DISAMAR Fortran",
     "zdisamar": "zdisamar",
+    "zdisamar_fast": "zdisamar-fast",
 }
-MODEL_COLORS = [PLOT.colors["blue"], PLOT.colors["orange"]]
+MODEL_COLORS = [PLOT.colors["blue"], PLOT.colors["orange"], PLOT.colors["red"]]
 MODEL_MARKERS = {
     "DISAMAR Fortran": "circle",
     "zdisamar": "cross",
+    "zdisamar-fast": "square",
 }
 
 
@@ -825,26 +831,99 @@ def save_error_histograms(frame: pl.DataFrame) -> None:
 def save_latency_plot(frame: pl.DataFrame) -> None:
     PLOT.prepare()
     ok = frame.filter(pl.col("status") == "ok")
-    data = pd.DataFrame(ok.to_dicts())
-    chart = (
+    rows: list[dict[str, float | str]] = []
+    for model in ("disamar_fortran", "zdisamar"):
+        model_rows = ok.filter(pl.col("model") == model)
+        if model_rows.is_empty():
+            continue
+        stats_payload = plot_stats(model_rows["retrieval_s"].to_list())
+        rows.append(
+            {
+                "model": model,
+                "model_label": MODEL_LABELS[model],
+                "minimum": stats_payload["min"],
+                "median": stats_payload["median"],
+                "mean": stats_payload["mean"],
+                "maximum": stats_payload["max"],
+            }
+        )
+    fast_stats = fast_mode_latency_stats()
+    if fast_stats:
+        rows.append(
+            {
+                "model": "zdisamar_fast",
+                "model_label": MODEL_LABELS["zdisamar_fast"],
+                "minimum": fast_stats["min"],
+                "median": fast_stats["median"],
+                "mean": fast_stats["mean"],
+                "maximum": fast_stats["max"],
+            }
+        )
+    data = pd.DataFrame.from_records(rows)
+    color = alt.Color(
+        "model_label:N",
+        title=None,
+        scale=alt.Scale(domain=list(MODEL_LABELS.values()), range=MODEL_COLORS),
+    )
+    span = (
         alt.Chart(data)
-        .mark_boxplot(size=54, opacity=0.58)
+        .mark_rule(size=8, opacity=0.26)
         .encode(
             x=alt.X("model_label:N", title=None),
             y=alt.Y(
-                "retrieval_s:Q",
+                "minimum:Q",
                 title="Retrieval wall time [s]",
                 scale=alt.Scale(type="log"),
             ),
-            color=_model_color(),
+            y2="maximum:Q",
+            color=color,
+        )
+    )
+    median = (
+        alt.Chart(data)
+        .mark_tick(thickness=2.6, size=46)
+        .encode(x="model_label:N", y="median:Q", color=color)
+    )
+    mean = (
+        alt.Chart(data)
+        .mark_point(filled=True, size=44)
+        .encode(
+            x="model_label:N",
+            y="mean:Q",
+            color=color,
             tooltip=[
                 alt.Tooltip("model_label:N", title="Model"),
-                alt.Tooltip("retrieval_s:Q", title="Retrieval wall time [s]", format=".4g"),
+                alt.Tooltip("minimum:Q", title="Min", format=".4g"),
+                alt.Tooltip("median:Q", title="Median", format=".4g"),
+                alt.Tooltip("mean:Q", title="Mean", format=".4g"),
+                alt.Tooltip("maximum:Q", title="Max", format=".4g"),
             ],
         )
-        .properties(width=620, height=420, title="Optimal Estimation Retrieval Latency")
+    )
+    chart = alt.layer(span, median, mean).properties(
+        width=620,
+        height=420,
+        title={
+            "text": "Optimal Estimation Retrieval Latency",
+            "subtitle": "Line spans min-max; horizontal tick is median; dot is mean.",
+        },
     )
     PLOT.save(chart, LATENCY_PLOT_PATH)
+
+
+def fast_mode_latency_stats() -> dict[str, float] | None:
+    if not FAST_MODE_SUMMARY_PATH.exists():
+        return None
+    payload = json.loads(FAST_MODE_SUMMARY_PATH.read_text())
+    stats_payload = payload.get("by_mode", {}).get("fast", {}).get("retrieval_s")
+    if not isinstance(stats_payload, dict):
+        return None
+    return {
+        "min": float(stats_payload["min"]),
+        "median": float(stats_payload["median"]),
+        "mean": float(stats_payload["mean"]),
+        "max": float(stats_payload["max"]),
+    }
 
 
 def paired_plot_manifest(frame: pl.DataFrame) -> dict[str, Any]:

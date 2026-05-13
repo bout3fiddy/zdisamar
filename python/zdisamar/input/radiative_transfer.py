@@ -13,7 +13,7 @@ scene- or validation-family-specific thresholds are preserved while the fast
 override is applied.  The fast override currently combines the Fourier-tail
 threshold with a Fourier-order cap and a looser layer-doubling threshold.  In
 the retained spectra sweep, that preset is about `0.37 s` faster per spectrum
-on average while staying under roughly `5e-5` reflectance residual.
+on average while staying under roughly `5e-4` reflectance residual.
 The higher-level O2 A fast mode also applies O2 A adaptive-reference-grid
 settings; that combined preset is the user-facing speed mode.
 
