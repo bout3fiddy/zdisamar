@@ -1,6 +1,6 @@
 # Session Reuse
 
-The retrieval loop evaluates the forward model many times for the same scene.
+The retrieval loop evaluates the RTM many times for the same scene.
 For aerosol-only retrievals, most scene data do not change inside the loop:
 
 ```text
@@ -20,25 +20,29 @@ aerosol optical depth
 aerosol layer mid pressure
 ```
 
-The Python path passes a session into the inverse model:
+The Python path passes a session cache into the inverse method:
 
 ```python
-with zd.o2a_forward_session(case) as session:
+from zdisamar import rtm
+from zdisamar.inverse_method import optimal_estimation
+
+with rtm.SessionCache(case) as cache:
     result = o2a_oe.disamar_oe(
-        inverse_model=optimal_estimation.O2AInverseForwardModel(
-            case,
-            forward_session=session,
-        ),
+        case=case,
+        measurement=measurement,
+        state_vector=state_vector,
+        controls=optimal_estimation.RetrievalControls(),
+        cache=cache,
         ...
     )
 ```
 
-The inverse-model adapter calls `session.prepare(...)` for each state-vector
-point. That keeps the context and reusable session storage alive while the
-state-dependent aerosol values change.
+The inverse method calls `cache.load(...)` for each state-vector point. That
+keeps reusable RTM storage alive while the state-dependent aerosol values
+change.
 
 The session is not magic. It does not make a retrieval cheaper than one
-forward+jacobian call. It removes cold scene setup and lets repeated iterations
+RTM+jacobian call. It removes cold scene setup and lets repeated iterations
 reuse scene-invariant storage.
 
 Historical session-reuse benchmark:
@@ -52,7 +56,7 @@ same retrieved state             true
 Current slow-case benchmark after later Jacobian and lazy-final-evaluation work:
 
 ```text
-session reused retrieval elapsed time    2.835175 s
-forward+jacobian time                    2.834102 s
-lazy final evaluation when requested     1.297817 s
+session reused retrieval elapsed time    3.142969 s
+RTM+jacobian time                        3.142008 s
+lazy final evaluation when requested     1.311871 s
 ```

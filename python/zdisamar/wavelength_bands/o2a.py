@@ -1,12 +1,11 @@
-"""Compatibility exports for typed input objects."""
+"""O2 A wavelength-band case API."""
 
-from .input import (
+from ..input import (
     Aerosol,
     AerosolPlacement,
     Atmosphere,
     Geometry,
     InstrumentResponse,
-    O2AInput,
     O2LineByLine,
     OxygenCollisionInducedAbsorption,
     RadiativeTransferControls,
@@ -17,6 +16,15 @@ from .input import (
     Surface,
     VerticalInterval,
 )
+from ..input.wavelength_band.o2a import O2AInput as O2ACase
+from ..rtm.run import o2a_reference_case
+
+
+def reference_case() -> O2ACase:
+    """Return the packaged DISAMAR-family O2 A reference case."""
+
+    return o2a_reference_case()
+
 
 __all__ = [
     "Aerosol",
@@ -24,7 +32,7 @@ __all__ = [
     "Atmosphere",
     "Geometry",
     "InstrumentResponse",
-    "O2AInput",
+    "O2ACase",
     "O2LineByLine",
     "OxygenCollisionInducedAbsorption",
     "RadiativeTransferControls",
@@ -34,4 +42,5 @@ __all__ = [
     "SpectralGrid",
     "Surface",
     "VerticalInterval",
+    "reference_case",
 ]

@@ -5,7 +5,7 @@ The core solver knows only about the inverse problem
     y = F(x) + e
 
 and a callback that returns F(x) and K = dF/dx.  It deliberately has no O2 A
-settings knowledge; model mutation belongs to the inverse forward-model layer.
+settings knowledge; state-to-case mutation belongs to the wavelength-band layer.
 That separation keeps inverse-method experiments from spreading scene-specific
 write logic into the numerical solver.
 """
@@ -21,7 +21,6 @@ from .covariance_space import (
     build_solver_workspace,
 )
 from .diagnostics import final_diagnostics
-from .forward_evaluation import ForwardEvaluation
 from .gauss_newton import gauss_newton_step
 from .measurement import (
     MeasurementArrays,
@@ -35,16 +34,17 @@ from .retrieval import (
     Result,
     RetrievalControls,
 )
+from .rtm_evaluation import RtmEvaluation
 from .state_vector import StateVector
-from .timing import IterationTimer, NoopIterationTimer
+from .timing import IterationTimer
 
 
 @dataclass(frozen=True)
-class IterationForward:
-    """Forward-model result and the retrieval state that produced it."""
+class IterationRtm:
+    """RTM result and the retrieval state that produced it."""
 
     previous: np.ndarray
-    evaluation: ForwardEvaluation
+    evaluation: RtmEvaluation
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,7 @@ class IterationEvaluation:
     """Reflectance, Jacobian, and residual used in one OE update."""
 
     previous: np.ndarray
-    evaluation: ForwardEvaluation
+    evaluation: RtmEvaluation
     reflectance: np.ndarray
     jacobian: np.ndarray
     residual: np.ndarray
@@ -70,7 +70,7 @@ class IterationUpdate:
 
 
 def retrieve(
-    forward_model: Callable[[np.ndarray], ForwardEvaluation],
+    rtm_evaluator: Callable[[np.ndarray], RtmEvaluation],
     measurement: Measurement,
     state_vector: StateVector,
     *,
@@ -107,27 +107,23 @@ def retrieve(
     converged = False
     timing: list[IterationTiming] = []
     last_evaluated_state: np.ndarray | None = None
-    last_evaluation: ForwardEvaluation | None = None
+    last_evaluation: RtmEvaluation | None = None
     final_posterior_precision = workspace.inv_prior_covariance
     final_jacobian: np.ndarray | None = None
 
     for iteration_index in range(1, controls.max_iterations + 1):
-        iteration_timer = (
-            IterationTimer(iteration_index)
-            if controls.collect_timing
-            else NoopIterationTimer(iteration_index)
-        )
+        iteration_timer = IterationTimer(iteration_index, enabled=controls.collect_timing)
         previous = np.array(x, copy=True)
-        iteration_forward = evaluate_iteration(
-            forward_model,
+        iteration_rtm = evaluate_iteration(
+            rtm_evaluator,
             previous,
             iteration_timer,
         )
-        last_evaluated_state = np.array(iteration_forward.previous, copy=True)
-        last_evaluation = iteration_forward.evaluation
+        last_evaluated_state = np.array(iteration_rtm.previous, copy=True)
+        last_evaluation = iteration_rtm.evaluation
         iteration_timer.start_solver()
         iteration_evaluation = prepare_iteration_evaluation(
-            iteration_forward,
+            iteration_rtm,
             measured,
             state_count,
         )
@@ -176,43 +172,43 @@ def retrieve(
 
 
 def evaluate_iteration(
-    forward_model: Callable[[np.ndarray], ForwardEvaluation],
+    rtm_evaluator: Callable[[np.ndarray], RtmEvaluation],
     previous: np.ndarray,
-    iteration_timer: IterationTimer | NoopIterationTimer,
-) -> IterationForward:
+    iteration_timer: IterationTimer,
+) -> IterationRtm:
     """Evaluate F(x) and K(x) before the solver changes the state."""
 
-    # The expensive part of optimal estimation is here: every iteration asks
-    # the forward model for both F(x_i) and K_i. `prior` is not used to generate
-    # this spectrum unless the caller deliberately chose `initial == prior`.
+    # The expensive part of optimal estimation is here: every iteration asks the
+    # RTM for both F(x_i) and K_i. `prior` is not used to generate this spectrum
+    # unless the caller deliberately chose `initial == prior`.
 
-    evaluation = iteration_timer.forward(lambda state=previous: forward_model(state))
+    evaluation = iteration_timer.rtm(lambda state=previous: rtm_evaluator(state))
 
-    return IterationForward(previous=previous, evaluation=evaluation)
+    return IterationRtm(previous=previous, evaluation=evaluation)
 
 
 def prepare_iteration_evaluation(
-    iteration_forward: IterationForward,
+    iteration_rtm: IterationRtm,
     measured: MeasurementArrays,
     state_count: int,
 ) -> IterationEvaluation:
-    """Put one forward-model result into the measurement's reflectance grid."""
+    """Put one RTM result into the measurement's reflectance grid."""
 
-    evaluation = iteration_forward.evaluation
+    evaluation = iteration_rtm.evaluation
     require_matching_wavelength_grid(
         measured.wavelength_nm,
         evaluation.wavelength_nm,
         expected_name="measurement",
-        actual_name="forward evaluation",
+        actual_name="RTM evaluation",
     )
     reflectance = np.asarray(evaluation.reflectance, dtype=np.float64)
     jacobian = np.asarray(evaluation.reflectance_jacobian, dtype=np.float64)
 
     if jacobian.shape != (measured.wavelength_nm.size, state_count):
-        raise ValueError("forward evaluation Jacobian shape does not match retrieval state")
+        raise ValueError("RTM evaluation Jacobian shape does not match retrieval state")
 
     return IterationEvaluation(
-        previous=iteration_forward.previous,
+        previous=iteration_rtm.previous,
         evaluation=evaluation,
         reflectance=reflectance,
         jacobian=jacobian,
@@ -253,6 +249,7 @@ def solve_iteration(
     )
     chi2_state = float(dx_iter @ workspace.inv_prior_covariance @ dx_iter)
     state_conv = float(dx_iter @ step.posterior_precision @ dx_iter / state_count)
+
     # Convergence requires both a small accepted state movement and a normal
     # signal-to-noise step. Without the second condition an artificially reduced
     # spectral signal could make a too-large proposed move look harmless.

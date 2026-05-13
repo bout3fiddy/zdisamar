@@ -1,7 +1,6 @@
 """O2-O2 collision-induced absorption plot accessor."""
 
 from pathlib import Path
-from typing import Any
 
 import altair as alt
 
@@ -16,7 +15,7 @@ DEFAULT_PROFILE_WAVELENGTH_NM = 760.76
 class CollisionInducedAbsorptionPlot(PlotAccessor):
     """Plots for O2-O2 collision-induced absorption by layer."""
 
-    def __init__(self, table: Any):
+    def __init__(self, table):
 
         super().__init__(table)
 
@@ -33,7 +32,7 @@ class CollisionInducedAbsorptionPlot(PlotAccessor):
 
 
 def _optical_depth_profile(
-    table: Any,
+    table,
     *,
     wavelength_nm: float | None,
 ):
@@ -74,7 +73,7 @@ def _optical_depth_profile(
     )
 
 
-def _profile_wavelength(table: Any, wavelength_nm: float | None) -> float | None:
+def _profile_wavelength(table, wavelength_nm: float | None) -> float | None:
 
     if wavelength_nm is not None:
         return wavelength_nm

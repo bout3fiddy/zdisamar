@@ -1,7 +1,6 @@
 """Function declarations for the zdisamar library."""
 
 import ctypes
-from typing import Any
 
 from .structures import (
     CAtmosphericBudget,
@@ -14,7 +13,7 @@ from .structures import (
 )
 
 
-def bind(lib: ctypes.CDLL, name: str, argtypes: list[Any], restype: Any) -> None:
+def bind(lib: ctypes.CDLL, name: str, argtypes: list[object], restype: object) -> None:
     """Declare argument and result types before calling zdisamar."""
 
     function = getattr(lib, name)

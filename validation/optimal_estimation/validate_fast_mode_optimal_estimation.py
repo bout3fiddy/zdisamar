@@ -26,9 +26,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-import zdisamar as zd  # noqa: E402
+from zdisamar import rtm  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
+from zdisamar.wavelength_bands import o2a  # noqa: E402
 
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 from validation.o2a import baseline as oe_baseline  # noqa: E402
@@ -85,15 +86,13 @@ def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
 
     start = time.perf_counter()
 
-    with zd.o2a_forward_session(case) as session:
+    with rtm.SessionCache(case) as cache:
         result = o2a_oe.disamar_oe(
-            inverse_model=o2a_oe.O2AInverseForwardModel(
-                case,
-                forward_session=session,
-            ),
+            case=case,
             measurement=measurement,
             state_vector=state_vector,
             controls=oe_setup.retrieval_controls(),
+            cache=cache,
         )
 
     return result, time.perf_counter() - start
@@ -109,7 +108,7 @@ def posterior_sigma(result: Any, state_name: str) -> float:
 
 def build_rows() -> list[dict[str, Any]]:
 
-    base = build_o2a_case(zd, jacobian_reference_layer=True)
+    base = build_o2a_case(o2a, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
     rows: list[dict[str, Any]] = []
 
@@ -124,9 +123,8 @@ def build_rows() -> list[dict[str, Any]]:
         )
         initial = oe_cases.initial_from_row(row)
 
-        with zd.prepare(reference_case) as prepared:
-            measurement = measurement_from_o2a_baseline_noise(prepared)
-            profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+        measurement = measurement_from_o2a_baseline_noise(reference_case)
+        profile = o2a_oe.pressure_altitude_profile_from_case(reference_case)
 
         state_vector = oe_setup.aerosol_two_state_vector(
             initial=initial,
@@ -151,8 +149,8 @@ def build_rows() -> list[dict[str, Any]]:
                     "converged": bool(result.converged),
                     "iterations": int(result.iterations),
                     "retrieval_s": retrieval_s,
-                    "forward_model_and_jacobian_s": sum(
-                        timing.forward_model_and_jacobian_s for timing in result.timing
+                    "rtm_and_jacobian_s": sum(
+                        timing.rtm_and_jacobian_s for timing in result.timing
                     ),
                     "solver_update_s": sum(timing.solver_update_s for timing in result.timing),
                     "truth_aerosol_optical_depth": truth["aerosol_optical_depth"],
@@ -227,9 +225,8 @@ def paired_delta_frame(data: pd.DataFrame) -> pd.DataFrame:
                     + float(fst["aerosol_mid_pressure_sigma_hpa"]) ** 2
                 ),
                 "retrieval_speedup_s": float(ref["retrieval_s"]) - float(fst["retrieval_s"]),
-                "forward_jacobian_speedup_s": (
-                    float(ref["forward_model_and_jacobian_s"])
-                    - float(fst["forward_model_and_jacobian_s"])
+                "rtm_jacobian_speedup_s": (
+                    float(ref["rtm_and_jacobian_s"]) - float(fst["rtm_and_jacobian_s"])
                 ),
             }
         )
@@ -275,8 +272,8 @@ def stats_from_values(values: list[float]) -> dict[str, float]:
 
 def fast_mode_overrides() -> dict[str, dict[str, float | int | None]]:
 
-    fast = zd.RadiativeTransferPerformanceThresholds.fast()
-    adaptive_grid: dict[str, float | int | None] = dict(zd.O2AInput.FAST_ADAPTIVE_REFERENCE_GRID)
+    fast = o2a.RadiativeTransferPerformanceThresholds.fast()
+    adaptive_grid: dict[str, float | int | None] = dict(o2a.O2ACase.FAST_ADAPTIVE_REFERENCE_GRID)
 
     return {
         "radiative_transfer": {
@@ -299,7 +296,7 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
             "rows": int(len(subset)),
             "converged": int(subset["converged"].sum()),
             "retrieval_s": stats(subset["retrieval_s"]),
-            "forward_model_and_jacobian_s": stats(subset["forward_model_and_jacobian_s"]),
+            "rtm_and_jacobian_s": stats(subset["rtm_and_jacobian_s"]),
             "aerosol_optical_depth_abs_error": stats(subset["aerosol_optical_depth_error"].abs()),
             "aerosol_mid_pressure_abs_error_hpa": stats(
                 subset["aerosol_mid_pressure_error_hpa"].abs()
@@ -334,7 +331,7 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
             "aerosol_optical_depth_delta": stats(delta["aerosol_optical_depth_delta"]),
             "aerosol_mid_pressure_delta_hpa": stats(delta["aerosol_mid_pressure_delta_hpa"]),
             "retrieval_speedup_s": stats(delta["retrieval_speedup_s"]),
-            "forward_jacobian_speedup_s": stats(delta["forward_jacobian_speedup_s"]),
+            "rtm_jacobian_speedup_s": stats(delta["rtm_jacobian_speedup_s"]),
         },
     }
 
@@ -870,8 +867,8 @@ def create_plot(data: pd.DataFrame, output_path: Path) -> None:
             ),
             timing_chart(
                 data,
-                value_column="forward_model_and_jacobian_s",
-                title="Forward model + Jacobian time",
+                value_column="rtm_and_jacobian_s",
+                title="RTM + Jacobian time",
                 ylabel="Time [s]",
             ),
             spacing=32,

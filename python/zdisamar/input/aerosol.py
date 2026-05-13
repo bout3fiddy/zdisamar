@@ -2,9 +2,8 @@
 
 import math
 from dataclasses import dataclass
-from typing import Any
 
-from .shared import to_float
+from .shared import object_dict, to_float, to_int
 
 
 @dataclass
@@ -19,11 +18,11 @@ class AerosolPlacement:
     bottom_altitude_km: float = math.nan
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AerosolPlacement:
+    def from_dict(cls, data: dict[str, object]) -> AerosolPlacement:
 
         return cls(
             semantics=str(data["semantics"]),
-            interval_index_1based=int(data["interval_index_1based"]),
+            interval_index_1based=to_int(data["interval_index_1based"]),
             top_pressure_hpa=to_float(data["top_pressure_hpa"]),
             bottom_pressure_hpa=to_float(data["bottom_pressure_hpa"]),
             top_altitude_km=to_float(data.get("top_altitude_km", math.nan)),
@@ -56,7 +55,7 @@ class Aerosol:
     placement: AerosolPlacement
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Aerosol:
+    def from_dict(cls, data: dict[str, object]) -> Aerosol:
 
         return cls(
             optical_depth_550_nm=to_float(data["optical_depth"]),
@@ -66,7 +65,7 @@ class Aerosol:
             reference_wavelength_nm=to_float(data["reference_wavelength_nm"]),
             layer_center_km=to_float(data["layer_center_km"]),
             layer_width_km=to_float(data["layer_width_km"]),
-            placement=AerosolPlacement.from_dict(data["placement"]),
+            placement=AerosolPlacement.from_dict(object_dict(data["placement"])),
         )
 
     def to_dict(self) -> dict[str, float | dict[str, float | int | str]]:

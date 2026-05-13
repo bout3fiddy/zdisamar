@@ -22,7 +22,7 @@ Each bundle root includes a `bundle_manifest.json` with:
 Cross-section bundles may include CSV samples, fixed-width HITRAN-style
 line lists, strong-line sidecars, relaxation-matrix subsets, and bounded
 collision-induced absorption tables. Reference-data ingestion normalizes those
-assets into typed `ReferenceData` structures before the forward model consumes
+assets into typed `ReferenceData` structures before the RTM consumes
 them.
 
 ## Acquisition Notes
@@ -34,4 +34,4 @@ they describe. O2 A parity evidence lives under `validation/`.
 
 The typed loaders in `src/input/reference_data/ingest/` consume these tracked
 assets and validate their digests against the bundle manifests before preparing
-them for the forward model.
+them for the RTM.

@@ -1,14 +1,12 @@
 """Shared profile-table transforms for vertical diagnostic plots."""
 
-from typing import Any, cast
-
 from . import fields
 from .data import require_columns, to_dataframe
 
 
-def nearest_wavelength_value(obj: Any, wavelength_nm: float) -> float:
+def nearest_wavelength_value(obj, wavelength_nm: float) -> float:
 
-    result = cast(Any, to_dataframe(obj))
+    result = to_dataframe(obj)
     require_columns(result, [fields.WAVELENGTH_NM])
     unique_wavelengths = result[fields.WAVELENGTH_NM].drop_duplicates()
     index = (unique_wavelengths - float(wavelength_nm)).abs().idxmin()
@@ -17,7 +15,7 @@ def nearest_wavelength_value(obj: Any, wavelength_nm: float) -> float:
 
 
 def active_profile_rows(
-    obj: Any,
+    obj,
     *,
     value: str,
     vertical_axis: str,
@@ -27,7 +25,7 @@ def active_profile_rows(
     import numpy as np
 
     required = [fields.WAVELENGTH_NM, vertical_axis, value]
-    result = cast(Any, to_dataframe(obj))
+    result = to_dataframe(obj)
     require_columns(result, required)
     result = result.copy()
 
@@ -35,8 +33,8 @@ def active_profile_rows(
         selected = nearest_wavelength_value(result, wavelength_nm)
         result = result[result[fields.WAVELENGTH_NM] == selected].copy()
 
-    finite = np.isfinite(result[vertical_axis].to_numpy(dtype=float)) & np.isfinite(
-        result[value].to_numpy(dtype=float)
+    finite = np.isfinite(np.asarray(result[vertical_axis], dtype=float)) & np.isfinite(
+        np.asarray(result[value], dtype=float)
     )
     result = result.loc[finite].copy()
 
@@ -58,7 +56,7 @@ def active_profile_rows(
 
 
 def interval_profile_rows(
-    obj: Any,
+    obj,
     *,
     value: str,
     vertical_axis: str,
@@ -78,11 +76,11 @@ def interval_profile_rows(
     if denominator is not None:
         required.append(denominator)
 
-    result = cast(
-        Any,
-        active_profile_rows(
-            obj, value=value, vertical_axis=vertical_axis, wavelength_nm=wavelength_nm
-        ),
+    result = active_profile_rows(
+        obj,
+        value=value,
+        vertical_axis=vertical_axis,
+        wavelength_nm=wavelength_nm,
     )
     require_columns(result, required)
 

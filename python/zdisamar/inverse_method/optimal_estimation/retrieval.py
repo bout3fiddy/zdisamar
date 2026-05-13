@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .forward_evaluation import ForwardEvaluation
+from .rtm_evaluation import RtmEvaluation
 from .state_vector import StateName
 
 
@@ -68,7 +68,7 @@ class IterationTiming:
     """Wall-clock timing for the two expensive phases of one retrieval update."""
 
     index: int
-    forward_model_and_jacobian_s: float
+    rtm_and_jacobian_s: float
     solver_update_s: float
     total_iteration_s: float
 
@@ -86,10 +86,10 @@ class Result:
     averaging_kernel: np.ndarray
     timing: tuple[IterationTiming, ...] = ()
     measurement: Measurement | None = None
-    final_evaluation: ForwardEvaluation | None = None
+    final_evaluation: RtmEvaluation | None = None
     last_evaluated_state: np.ndarray | None = None
-    last_evaluation: ForwardEvaluation | None = None
-    _final_evaluation_factory: Callable[[], ForwardEvaluation] | None = field(
+    last_evaluation: RtmEvaluation | None = None
+    _final_evaluation_factory: Callable[[], RtmEvaluation] | None = field(
         default=None,
         repr=False,
         compare=False,

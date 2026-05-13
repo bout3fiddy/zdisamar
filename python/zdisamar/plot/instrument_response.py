@@ -1,9 +1,9 @@
 """Instrument-response plot accessor."""
 
 from pathlib import Path
-from typing import Any, cast
 
 import altair as alt
+import numpy as np
 
 from .data import with_channel_labels
 from .properties import PLOT, PlotAccessor
@@ -12,7 +12,7 @@ from .properties import PLOT, PlotAccessor
 class InstrumentResponsePlot(PlotAccessor):
     """Plots for instrument response support weights."""
 
-    def __init__(self, response: Any):
+    def __init__(self, response):
 
         super().__init__(response)
 
@@ -21,9 +21,9 @@ class InstrumentResponsePlot(PlotAccessor):
         return self._finish(_curve(self._target), save=save)
 
 
-def _curve(response: Any):
+def _curve(response):
 
-    data = cast(Any, with_channel_labels(response))
+    data = with_channel_labels(response)
     required = [
         "nominal_wavelength_nm",
         "channel_label",
@@ -42,10 +42,13 @@ def _curve(response: Any):
     if data.empty:
         raise ValueError("no radiance instrument response rows")
 
-    nearest = (data["nominal_wavelength_nm"] - 760.76).abs().idxmin()
-    selected = float(data.loc[nearest, "nominal_wavelength_nm"])
-    data = data[data["nominal_wavelength_nm"] == selected].sort_values("offset_nm").copy()
-    max_weight = float(data["weight"].max())
+    nominal_wavelengths = np.asarray(data["nominal_wavelength_nm"], dtype=float)
+    nearest = int(np.argmin(np.abs(nominal_wavelengths - 760.76)))
+    selected = float(nominal_wavelengths[nearest])
+    selected_rows = np.asarray(data["nominal_wavelength_nm"], dtype=float) == selected
+    data = data.loc[selected_rows].copy()
+    data = data.sort_values(by=["offset_nm"]).copy()
+    max_weight = float(np.max(np.asarray(data["weight"], dtype=float)))
 
     if max_weight <= 0.0:
         raise ValueError("instrument response weights are not positive")
@@ -56,8 +59,9 @@ def _curve(response: Any):
     if plot_data.empty:
         plot_data = data
 
-    x_min = float(plot_data["offset_nm"].min())
-    x_max = float(plot_data["offset_nm"].max())
+    offsets = np.asarray(plot_data["offset_nm"], dtype=float)
+    x_min = float(np.min(offsets))
+    x_max = float(np.max(offsets))
     x_pad = max((x_max - x_min) * 0.04, 0.01)
     title = f"Instrument spectral response function (ISRF), {selected:.5f} nm"
 

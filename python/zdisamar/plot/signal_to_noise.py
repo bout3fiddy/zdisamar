@@ -1,7 +1,5 @@
 """Signal-to-noise plots."""
 
-from typing import Any, cast
-
 import altair as alt
 
 from . import fields
@@ -11,7 +9,7 @@ from .data import spectrum_frame
 from .properties import PLOT
 
 
-def snr(spectrum: Any, noise_table):
+def snr(spectrum, noise_table):
 
     data = _snr_frame(spectrum, noise_table)
     data, _, y = scaled_y(data, fields.SNR, fields.QUANTITY_LABELS[fields.SNR])
@@ -27,7 +25,7 @@ def snr(spectrum: Any, noise_table):
     return alt.layer(line, marker_rules(data)).properties(**PLOT.chart("Signal-to-noise ratio"))
 
 
-def noise_envelope(spectrum: Any, noise_table):
+def noise_envelope(spectrum, noise_table):
 
     data = _snr_frame(spectrum, noise_table)
     signal = data[fields.SUN_NORMALIZED_RADIANCE].to_numpy(dtype=float)
@@ -70,7 +68,7 @@ def noise_envelope(spectrum: Any, noise_table):
     )
 
 
-def _snr_frame(spectrum: Any, noise_table):
+def _snr_frame(spectrum, noise_table):
 
     import numpy as np
 
@@ -105,9 +103,7 @@ def _noise_arrays(noise_table):
             np.asarray(noise_table[1], dtype=float),
         )
 
-    table = cast(Any, noise_table)
-
     return (
-        np.asarray(table.snr_wavelengths_nm, dtype=float),
-        np.asarray(table.snr_values, dtype=float),
+        np.asarray(getattr(noise_table, "snr_wavelengths_nm"), dtype=float),  # noqa: B009
+        np.asarray(getattr(noise_table, "snr_values"), dtype=float),  # noqa: B009
     )

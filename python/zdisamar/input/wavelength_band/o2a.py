@@ -4,7 +4,6 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from ..aerosol import Aerosol
 from ..assets import ReferenceAssets
@@ -12,26 +11,26 @@ from ..atmosphere import Atmosphere
 from ..geometry import Geometry, Surface
 from ..instrument import InstrumentResponse, SpectralGrid
 from ..radiative_transfer import RadiativeTransferControls
-from ..shared import json_value, to_float
+from ..shared import json_value, object_dict, object_dict_list, to_float
 from ..spectroscopy import O2LineByLine, OxygenCollisionInducedAbsorption
 
 
-def _object_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
+def _object_dict(data: dict[str, object], key: str) -> dict[str, object]:
 
-    return dict(data[key])
+    return object_dict(data[key])
 
 
-def _object_list(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
+def _object_list(data: dict[str, object], key: str) -> list[dict[str, object]]:
 
-    return [dict(item) for item in data.get(key, [])]
+    return object_dict_list(data.get(key, []))
 
 
 @dataclass
 class O2AInput:
-    """Complete O2 A scene passed to the zdisamar forward model."""
+    """Complete O2 A wavelength-band case passed to the zdisamar RTM."""
 
-    metadata: dict[str, Any]
-    plan: dict[str, Any]
+    metadata: dict[str, object]
+    plan: dict[str, object]
     reference_assets: ReferenceAssets
     scene_id: str
     spectral_grid: SpectralGrid
@@ -43,8 +42,8 @@ class O2AInput:
     o2_lines: O2LineByLine
     collision_induced_absorption: OxygenCollisionInducedAbsorption
     radiative_transfer: RadiativeTransferControls
-    outputs: list[dict[str, Any]]
-    validation: dict[str, Any]
+    outputs: list[dict[str, object]]
+    validation: dict[str, object]
 
     FAST_ADAPTIVE_REFERENCE_GRID = {
         "points_per_fwhm": 28,
@@ -53,26 +52,30 @@ class O2AInput:
     }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> O2AInput:
+    def from_dict(cls, data: dict[str, object]) -> O2AInput:
         """Turn the validation-file shape into typed scene parts."""
 
         return cls(
             metadata=_object_dict(data, "metadata"),
             plan=_object_dict(data, "plan"),
-            reference_assets=ReferenceAssets.from_dict(data["inputs"]),
+            reference_assets=ReferenceAssets.from_dict(object_dict(data["inputs"])),
             scene_id=str(data["scene_id"]),
-            spectral_grid=SpectralGrid.from_dict(data["spectral_grid"]),
+            spectral_grid=SpectralGrid.from_dict(object_dict(data["spectral_grid"])),
             atmosphere=Atmosphere.from_dict(data),
             surface=Surface(
                 albedo=to_float(data["surface_albedo"]),
                 pressure_hpa=to_float(data["surface_pressure_hpa"]),
             ),
-            geometry=Geometry.from_dict(data["geometry"]),
-            aerosol=Aerosol.from_dict(data["aerosol"]),
-            instrument_response=InstrumentResponse.from_dict(data["observation"]),
-            o2_lines=O2LineByLine.from_dict(data["o2"]),
-            collision_induced_absorption=OxygenCollisionInducedAbsorption.from_dict(data["o2o2"]),
-            radiative_transfer=RadiativeTransferControls.from_dict(data["rtm_controls"]),
+            geometry=Geometry.from_dict(object_dict(data["geometry"])),
+            aerosol=Aerosol.from_dict(object_dict(data["aerosol"])),
+            instrument_response=InstrumentResponse.from_dict(object_dict(data["observation"])),
+            o2_lines=O2LineByLine.from_dict(object_dict(data["o2"])),
+            collision_induced_absorption=OxygenCollisionInducedAbsorption.from_dict(
+                object_dict(data["o2o2"])
+            ),
+            radiative_transfer=RadiativeTransferControls.from_dict(
+                object_dict(data["rtm_controls"])
+            ),
             outputs=_object_list(data, "outputs"),
             validation=_object_dict(data, "validation"),
         )
@@ -83,7 +86,7 @@ class O2AInput:
 
         return cls.from_dict(json.loads(raw))
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         """Return the O2 A scene shape expected by the zdisamar model."""
 
         return {

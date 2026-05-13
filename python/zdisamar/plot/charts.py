@@ -1,7 +1,5 @@
 """Shared Altair chart grammar."""
 
-from typing import Any
-
 import altair as alt
 
 from .axes import wavelength_x
@@ -9,9 +7,9 @@ from .properties import PLOT
 
 
 def wavelength_line_chart(
-    data: Any,
+    data,
     y: alt.Y,
-    tooltip: list[Any],
+    tooltip,
     *,
     color: str | None = None,
 ) -> alt.Chart:

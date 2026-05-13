@@ -6,13 +6,13 @@ O2 A optimal-estimation path.
 ## Evidence
 
 The retained benchmark artifact is
-`validation/outputs/optimal_estimation/zdisamar_o2a_slow_forward_jacobian_benchmark.json`.
+`validation/outputs/optimal_estimation/zdisamar_o2a_slow_rtm_jacobian_benchmark.json`.
 The current slow retained case reports:
 
-- retrieval loop wall time: 2.835175 s
-- retrieval iteration forward model plus Jacobian: 2.834102 s
-- deferred final-state evaluation when requested: 1.297817 s
-- remaining retrieval work: 0.000489 s
+- retrieval loop wall time: 3.142969 s
+- retrieval iteration RTM plus Jacobian: 3.142008 s
+- deferred final-state evaluation when requested: 1.311871 s
+- remaining retrieval work: 0.000436 s
 
 The session cache trace shows that all retrieval iterations hit the persistent
 session caches:
@@ -30,7 +30,7 @@ The traced native Jacobian sweep is
 `research/performance/tracing/output/o2a-jacobian-trace/summary.json`. For the
 two-state aerosol Jacobian variant, the dominant native costs remain:
 
-- forward-only wall time: 2.437257 s
+- RTM-only wall time: 2.437257 s
 - two-state aerosol Jacobian wall time: 3.063149 s
 - aerosol optical-depth-only Jacobian wall time: 2.845655 s
 - aerosol layer-pressure-only Jacobian wall time: 2.787352 s
@@ -43,10 +43,10 @@ solver update, output copying, reflectance-Jacobian conversion, wavelength-plan
 construction, or spectroscopy-cache construction. Those costs are small or
 already cached.
 
-The large repeated work is the physical forward model and Jacobian itself. In
-the current algorithm each accepted state requires a full forward-plus-Jacobian
-evaluation. After convergence, exact final-state plots need a final-state
-forward-plus-Jacobian evaluation because the plotting surface uses final
+The large repeated work is the physical RTM and Jacobian itself. In the current
+algorithm each accepted state requires a full RTM-plus-Jacobian evaluation.
+After convergence, exact final-state plots need a final-state RTM-plus-Jacobian
+evaluation because the plotting surface uses final
 reflectance, residuals, and final reflectance Jacobians. That work is now lazy:
 retrieval callers that only need the state and diagnostics return before this
 extra native evaluation, while plot consumers still compute the exact final
@@ -54,8 +54,8 @@ state product on demand.
 
 The remaining inter-iteration prepare cost is measurable but small: repeated
 prepare is about 15 ms per evaluation in the slow benchmark, mostly optical
-prepare. Caching or mutating prepared optical state may be worth revisiting
-later, but it is around one to two percent of a slow forward-plus-Jacobian call
+setup. Caching or mutating optical state may be worth revisiting later, but it
+is around one to two percent of a slow RTM-plus-Jacobian call
 and would need careful parity coverage.
 
 ## Rejected Direction
@@ -71,6 +71,6 @@ removed rather than adding C ABI surface area for a non-bottleneck.
 Further speedups should target native LABOS work:
 
 1. reduce repeated RT layer build work across nearby aerosol states,
-2. reduce orders work inside the forward samples,
+2. reduce orders work inside the RTM samples,
 3. reduce aerosol optical-depth and layer-pressure Jacobian weighting work,
-4. only then revisit prepared-optical-state mutation or caching.
+4. only then revisit optical-state mutation or caching.

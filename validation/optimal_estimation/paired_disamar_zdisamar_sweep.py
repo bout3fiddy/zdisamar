@@ -50,9 +50,10 @@ FAST_MODE_SUMMARY_PATH = (
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-import zdisamar as zd  # noqa: E402
+from zdisamar import rtm  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
+from zdisamar.wavelength_bands import o2a  # noqa: E402
 
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 from validation.o2a import baseline as oe_baseline  # noqa: E402
@@ -100,15 +101,14 @@ def retrieve_zdisamar(
     initial: dict[str, float],
 ) -> dict[str, Any]:
 
-    base = build_o2a_case(zd, jacobian_reference_layer=True)
+    base = build_o2a_case(o2a, jacobian_reference_layer=True)
     oe_baseline.configure_case(base)
     case = oe_setup.build_scene(base, index=index, id_prefix="paired_oe", scene=scene, id_width=4)
     start = time.perf_counter()
 
     try:
-        with zd.prepare(case) as prepared:
-            measurement = measurement_from_o2a_baseline_noise(prepared)
-            profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+        measurement = measurement_from_o2a_baseline_noise(case)
+        profile = o2a_oe.pressure_altitude_profile_from_case(case)
 
         state_vector = oe_setup.aerosol_two_state_vector(
             initial=initial,
@@ -116,15 +116,13 @@ def retrieve_zdisamar(
             surface_pressure_hpa=scene["surface_pressure_hpa"],
         )
 
-        with zd.o2a_forward_session(case) as session:
+        with rtm.SessionCache(case) as cache:
             result = o2a_oe.disamar_oe(
-                inverse_model=o2a_oe.O2AInverseForwardModel(
-                    case,
-                    forward_session=session,
-                ),
+                case=case,
                 measurement=measurement,
                 state_vector=state_vector,
                 controls=oe_setup.retrieval_controls(),
+                cache=cache,
             )
 
         retrieved_aod = result.value("aerosol_optical_depth")

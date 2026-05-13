@@ -2,16 +2,17 @@
 
 from .core import retrieve
 from .diagnostics import FinalDiagnostics, final_diagnostics
-from .forward_evaluation import ForwardEvaluation
 from .gauss_newton import gauss_newton_step
 from .measurement import WavelengthGridMismatchError
 from .o2a import (
-    O2AInverseForwardModel,
     attach_final_evaluation,
+    case_for_state,
     disamar_oe,
-    evaluate_prepared_reflectance,
-    measurement_from_prepared,
+    evaluate_reflectance,
+    evaluate_state,
+    measurement_from_case,
     measurement_from_sun_normalized_radiance_noise,
+    pressure_altitude_profile_from_case,
 )
 from .retrieval import (
     Iteration,
@@ -19,6 +20,7 @@ from .retrieval import (
     Result,
     RetrievalControls,
 )
+from .rtm_evaluation import RtmEvaluation
 from .state_vector import (
     AEROSOL_LAYER_MID_PRESSURE_HPA,
     AEROSOL_OPTICAL_DEPTH,
@@ -38,10 +40,9 @@ __all__ = [
     "AerosolLayerMidPressure",
     "AerosolOpticalDepth",
     "FinalDiagnostics",
-    "ForwardEvaluation",
+    "RtmEvaluation",
     "Iteration",
     "Measurement",
-    "O2AInverseForwardModel",
     "PressureAltitudeProfile",
     "RetrievalControls",
     "Result",
@@ -50,11 +51,14 @@ __all__ = [
     "SurfaceAlbedo",
     "WavelengthGridMismatchError",
     "attach_final_evaluation",
+    "case_for_state",
     "disamar_oe",
-    "evaluate_prepared_reflectance",
+    "evaluate_reflectance",
+    "evaluate_state",
     "final_diagnostics",
     "gauss_newton_step",
-    "measurement_from_prepared",
+    "measurement_from_case",
     "measurement_from_sun_normalized_radiance_noise",
+    "pressure_altitude_profile_from_case",
     "retrieve",
 ]

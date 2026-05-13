@@ -26,8 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOT = REPO_ROOT / "python"
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-import zdisamar as zd  # noqa: E402
+from zdisamar import rtm  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
+from zdisamar.wavelength_bands import o2a  # noqa: E402
 
 from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 from validation.o2a import baseline as oe_baseline  # noqa: E402
@@ -36,8 +37,6 @@ from validation.o2a.measurement_noise import components_from_spectrum  # noqa: E
 from validation.optimal_estimation import setup as oe_setup  # noqa: E402
 from validation.spectra.residuals import residual_metrics  # noqa: E402
 
-LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
-LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
 OUTPUTS_DIR = REPO_ROOT / "validation" / "outputs" / "spectra"
 PLOT_PATH = OUTPUTS_DIR / "o2a_fast_mode_spectra.png"
 DATA_PATH = OUTPUTS_DIR / "o2a_fast_mode_spectra_data.csv"
@@ -143,15 +142,11 @@ def with_fast_thresholds(case: Any) -> Any:
 def evaluate_spectrum(case: Any) -> SpectrumRun:
 
     start = time.perf_counter()
-
-    with (
-        zd.prepare(case, library_path=str(LIBRARY_PATH)) as prepared,
-        prepared.forward_model() as spectrum,
-    ):
-        wavelength_nm = spectrum.wavelength_nm.copy()
-        reflectance = spectrum.reflectance.copy()
-        radiance = spectrum.radiance.copy()
-        irradiance = spectrum.irradiance.copy()
+    spectrum = rtm.spectrum(case)
+    wavelength_nm = spectrum.wavelength_nm.copy()
+    reflectance = spectrum.reflectance.copy()
+    radiance = spectrum.radiance.copy()
+    irradiance = spectrum.irradiance.copy()
 
     return SpectrumRun(
         wavelength_nm=wavelength_nm,
@@ -164,7 +159,7 @@ def evaluate_spectrum(case: Any) -> SpectrumRun:
 
 def run_cases() -> list[SceneResult]:
 
-    base = build_o2a_case(zd)
+    base = build_o2a_case(o2a)
     oe_baseline.configure_case(base)
     results = []
 
@@ -203,8 +198,8 @@ def residual_over_noise(residual: np.ndarray, noise: np.ndarray) -> np.ndarray:
 
 def fast_mode_overrides() -> dict[str, dict[str, float | int | None]]:
 
-    fast = zd.RadiativeTransferPerformanceThresholds.fast()
-    adaptive_grid: dict[str, float | int | None] = dict(zd.O2AInput.FAST_ADAPTIVE_REFERENCE_GRID)
+    fast = o2a.RadiativeTransferPerformanceThresholds.fast()
+    adaptive_grid: dict[str, float | int | None] = dict(o2a.O2ACase.FAST_ADAPTIVE_REFERENCE_GRID)
 
     return {
         "radiative_transfer": {
@@ -233,9 +228,9 @@ def result_records(results: list[SceneResult]) -> tuple[pd.DataFrame, list[dict[
                 "rmse": residual_metric["rmse"],
                 "max_abs_residual_over_noise": float(np.max(np.abs(normalized))),
                 "median_abs_residual_over_noise": float(np.median(np.abs(normalized))),
-                "reference_forward_s": result.reference.elapsed_s,
-                "fast_forward_s": result.fast.elapsed_s,
-                "forward_speedup_s": result.reference.elapsed_s - result.fast.elapsed_s,
+                "reference_rtm_s": result.reference.elapsed_s,
+                "fast_rtm_s": result.fast.elapsed_s,
+                "rtm_speedup_s": result.reference.elapsed_s - result.fast.elapsed_s,
                 "scene_parameters": result.scene,
             }
         )
@@ -402,7 +397,7 @@ def create_plot(
                 title=(
                     f"max |residual|={float(metric['max_abs_residual']):.2e}; "
                     f"max |residual/noise|={float(metric['max_abs_residual_over_noise']):.2e}; "
-                    f"speedup={float(metric['forward_speedup_s']):+.3f}s"
+                    f"speedup={float(metric['rtm_speedup_s']):+.3f}s"
                 ),
             )
         )
@@ -420,7 +415,7 @@ def write_metrics(metrics: list[dict[str, Any]], output_path: Path) -> None:
         "schema_version": 1,
         "canonical_command": CANONICAL_COMMAND,
         "fast_mode": {
-            "method": "O2AInput.with_fast_mode()",
+            "method": "O2ACase.with_fast_mode()",
             "overrides": fast_mode_overrides(),
             "note": (
                 "Fast mode preserves each case's physical scene and output wavelength grid, "

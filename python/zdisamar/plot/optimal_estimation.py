@@ -1,7 +1,6 @@
 """Optimal-estimation result plot accessor."""
 
 from pathlib import Path
-from typing import Any
 
 import altair as alt
 
@@ -19,7 +18,7 @@ STATE_LABELS = {
 class OptimalEstimationPlot(PlotAccessor):
     """Plots that show why an OE retrieval state was accepted."""
 
-    def __init__(self, result: Any):
+    def __init__(self, result):
 
         super().__init__(result)
 
@@ -40,7 +39,7 @@ class OptimalEstimationPlot(PlotAccessor):
         return self._finish(_jacobian(self._target), save=save)
 
 
-def _history_frame(result: Any):
+def _history_frame(result):
 
     import pandas as pd
 
@@ -56,7 +55,7 @@ def _history_frame(result: Any):
     )
 
 
-def _fit_frame(result: Any):
+def _fit_frame(result):
 
     import pandas as pd
 
@@ -82,7 +81,7 @@ def _fit_frame(result: Any):
     )
 
 
-def jacobian_frame(result: Any):
+def jacobian_frame(result):
     """Put final reflectance Jacobians into one table for all states."""
 
     import pandas as pd
@@ -115,7 +114,7 @@ def jacobian_frame(result: Any):
     return pd.concat(columns, ignore_index=True)
 
 
-def _convergence(result: Any):
+def _convergence(result):
 
     data = _history_frame(result)
     data, _, y = scaled_y(
@@ -145,7 +144,7 @@ def _convergence(result: Any):
     )
 
 
-def _measurement_fit(result: Any):
+def _measurement_fit(result):
 
     data = _fit_frame(result)
     long = data.melt(
@@ -185,7 +184,7 @@ def _measurement_fit(result: Any):
     )
 
 
-def _residual(result: Any):
+def _residual(result):
 
     data = _fit_frame(result)
     data, _, y = scaled_y(data, "residual", "Measurement - retrieved reflectance")
@@ -201,7 +200,7 @@ def _residual(result: Any):
     ).properties(**PLOT.chart("Final residual"))
 
 
-def _jacobian(result: Any):
+def _jacobian(result):
 
     data = jacobian_frame(result)
     data, _, y = scaled_y(data, "reflectance_jacobian", "Reflectance jacobian")
@@ -227,7 +226,7 @@ def _jacobian(result: Any):
     )
 
 
-def _require_measurement(result: Any):
+def _require_measurement(result):
 
     if result.measurement is None:
         raise RuntimeError("optimal-estimation result does not include a measurement")
@@ -235,7 +234,7 @@ def _require_measurement(result: Any):
     return result.measurement
 
 
-def _require_final_evaluation(result: Any):
+def _require_final_evaluation(result):
 
     # The final spectrum can be expensive. It is evaluated here only for plots
     # that need residuals or Jacobians at the accepted retrieval state.

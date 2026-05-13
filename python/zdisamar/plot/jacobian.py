@@ -1,7 +1,5 @@
 """Reflectance-Jacobian plots."""
 
-from typing import Any
-
 import altair as alt
 
 from . import fields
@@ -9,7 +7,7 @@ from .axes import marker_rules, scaled_y, wavelength_x
 from .properties import PLOT
 
 
-def reflectance_jacobian(spectrum: Any, state: str):
+def reflectance_jacobian(spectrum, state: str):
 
     data, y_field, y_title = jacobian_frame(spectrum, state)
     data, _, y = scaled_y(data, y_field, y_title)
@@ -29,7 +27,7 @@ def reflectance_jacobian(spectrum: Any, state: str):
     return alt.layer(line, marker_rules(data)).properties(**PLOT.chart(f"{y_title}: {state}"))
 
 
-def jacobian_frame(spectrum: Any, state: str):
+def jacobian_frame(spectrum, state: str):
 
     import pandas as pd
 

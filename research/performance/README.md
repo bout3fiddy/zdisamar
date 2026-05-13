@@ -56,7 +56,7 @@ That product is the current per-spectrum elapsed time.
 Performance trace outputs live under `research/performance/tracing/output/`.
 Generated local scratch data lives under `out/` and is intentionally gitignored.
 
-Current forward trace artifacts:
+Current RTM trace artifacts:
 
 ```text
 research/performance/tracing/output/labos-bottleneck/summary.json
@@ -69,7 +69,7 @@ validation/outputs/optimal_estimation/paired_oe_plot_manifest.json
 validation/outputs/optimal_estimation/paired_oe_retrieved_scatter.png
 validation/outputs/optimal_estimation/paired_oe_error_histograms.png
 validation/outputs/optimal_estimation/paired_oe_latency.png
-validation/outputs/optimal_estimation/zdisamar_o2a_slow_forward_jacobian_benchmark.json
+validation/outputs/optimal_estimation/zdisamar_o2a_slow_rtm_jacobian_benchmark.json
 ```
 
 Local generated retrieval data:

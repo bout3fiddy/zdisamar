@@ -1,7 +1,6 @@
 """Plot styling and save policy."""
 
 from pathlib import Path
-from typing import Any, cast
 
 import altair as alt
 
@@ -58,10 +57,10 @@ class PlotProperties:
             return
 
         if not self._registered:
-            alt.themes.register(self.theme_name, cast(Any, self._theme))
+            alt.themes.register(self.theme_name, self._theme)  # pyright: ignore[reportArgumentType]
             self._registered = True
 
-        alt.themes.enable(cast(Any, self.theme_name))
+        alt.themes.enable(self.theme_name)  # pyright: ignore[reportArgumentType]
         self._enabled = True
 
     def chart(self, title: str) -> dict[str, object]:
@@ -155,7 +154,7 @@ PLOT = PlotProperties()
 class PlotAccessor:
     """Shared plot accessor behavior backed by the single plot policy object."""
 
-    def __init__(self, target: Any):
+    def __init__(self, target):
 
         PLOT.prepare()
         self._target = target

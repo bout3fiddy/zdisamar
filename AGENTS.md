@@ -1,8 +1,8 @@
 # Repo Notes
 
-- `zdisamar` is an O2 A forward-model lab. Treat DISAMAR as the reference family used for validation, not as the codebase architecture.
+- `zdisamar` is an O2 A RTM lab. Treat DISAMAR as the reference family used for validation, not as the codebase architecture.
 - Do not set DISAMAR `aerosolLayerHeight` to `1` in baseline validation or retrieval configs. That flag enters a Fortran DISAMAR shortcut path; zdisamar compares against the normal physical inverse problem, not that shortcut.
-- Keep the public flow simple: input -> forward model -> output.
+- Keep the public flow simple: input -> RTM -> output.
 - Keep routines under `src/forward_model/` free of file I/O, CLI wiring, text parsing, and hidden global state.
 - Keep scientific assets under `data/reference_data/`; loaders and parsers live under `src/input/reference_data/`.
 - Do not reintroduce old framework scaffolding or string-keyed mutation APIs.

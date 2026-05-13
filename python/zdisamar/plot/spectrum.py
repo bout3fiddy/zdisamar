@@ -1,7 +1,6 @@
 """Spectrum plot accessors."""
 
 from pathlib import Path
-from typing import Any
 
 import altair as alt
 
@@ -15,7 +14,7 @@ from .properties import PLOT, PlotAccessor
 class SpectrumPlot(PlotAccessor):
     """Plots for the spectral quantities returned by one O2 A run."""
 
-    def __init__(self, spectrum: Any):
+    def __init__(self, spectrum):
 
         super().__init__(spectrum)
 
@@ -72,7 +71,7 @@ class SpectrumPlot(PlotAccessor):
 
 
 def _quantity_chart(
-    spectrum: Any,
+    spectrum,
     quantity: str,
     *,
     show_minimum: bool,

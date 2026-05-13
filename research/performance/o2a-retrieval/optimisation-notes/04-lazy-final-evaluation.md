@@ -10,11 +10,11 @@ Source links:
 
 - DISAMAR
   - No direct Fortran analogue is used here. This is a zdisamar Python result
-    lifecycle optimization around the in-process forward model.
+    lifecycle optimization around the in-process RTM.
 - zdisamar
   - [Result final-evaluation property](https://github.com/bout3fiddy/zdisamar/blob/e044099dc56f5df3841b74f209dfb4bb06a695822/python/zdisamar/inverse_method/optimal_estimation/retrieval.py#L26-L57): exposes the final evaluation lazily and caches the result.
   - [Final-evaluation attachment](https://github.com/bout3fiddy/zdisamar/blob/e044099dc56f5df3841b74f209dfb4bb06a695822/python/zdisamar/inverse_method/optimal_estimation/o2a.py#L140-L177): installs the final-state evaluation factory when the retrieval result does not already contain that product.
-  - [Slow benchmark accounting](https://github.com/bout3fiddy/zdisamar/blob/e044099dc56f5df3841b74f209dfb4bb06a695822/validation/optimal_estimation/benchmark_slow_forward_jacobian.py#L330-L369): records retrieval-only time, lazy-final time, and retrieval plus lazy-final time separately.
+  - `validation/optimal_estimation/benchmark_slow_rtm_jacobian.py`: records retrieval-only time, lazy-final time, and retrieval plus lazy-final time separately.
 
 The final-state spectrum is needed for plotting residuals and Jacobians at the
 converged state. It is not needed to return the converged state vector and
@@ -23,13 +23,13 @@ iteration diagnostics.
 ```python
 # Eager route: retrieval pays for final products before returning.
 result = solve_state_vector()
-result.final_evaluation = evaluate_forward_and_jacobian(result.state)
+result.final_evaluation = evaluate_rtm_and_jacobian(result.state)
 return result
 
 # Lazy route: retrieval returns immediately; plot consumers pay later.
 result = solve_state_vector()
 result.attach_final_evaluation(
-    lambda: evaluate_forward_and_jacobian(result.state)
+    lambda: evaluate_rtm_and_jacobian(result.state)
 )
 return result
 ```
@@ -37,9 +37,9 @@ return result
 The current retained slow-case artifact reports:
 
 ```text
-retrieval loop wall time            2.835175 s
-forward+jacobian time               2.834102 s
-lazy final evaluation on demand      1.297817 s
+retrieval loop wall time            3.142969 s
+RTM+jacobian time                    3.142008 s
+lazy final evaluation on demand      1.311871 s
 lazy final evaluation cached        true
 ```
 

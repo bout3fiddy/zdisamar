@@ -1,6 +1,3 @@
-"""Connection to the zdisamar library."""
+"""Internal ctypes binding declarations."""
 
-from .library import load_library
-from .signatures import configure
-
-__all__ = ["configure", "load_library"]
+__all__: list[str] = []

@@ -1,7 +1,7 @@
 """Generic state-vector composition."""
 
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Protocol
 
 import numpy as np
 
@@ -18,7 +18,7 @@ class StateVectorParameter(Protocol):
     lower: float | None
     upper: float | None
 
-    def write_to(self, target: Any, value: float) -> None:
+    def write_to(self, target: object, value: float) -> None:
         """Write one scalar state value into the inverse-model settings target."""
 
 
@@ -100,7 +100,7 @@ class StateVector:
 
         return bounded
 
-    def write_to(self, target: Any, state: np.ndarray) -> None:
+    def write_to(self, target: object, state: np.ndarray) -> None:
         """Write all retrieval variables into one O2 A scene."""
 
         if len(state) != len(self._parameters):

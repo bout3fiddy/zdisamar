@@ -80,7 +80,10 @@ Operational products often need more than the default bundle set. In the present
 - external high-resolution solar spectra,
 - O2 and O2-O2 `ln(T)` / `ln(p)` coefficient cubes.
 
-Those replacements do not invalidate the bundle model. They override a bounded set of scientific surfaces while the rest of the prepared state still comes from tracked reference data. This makes it possible to represent operational runs without turning the entire codebase into a mission-specific file reader.
+Those replacements do not invalidate the bundle model. They override a bounded
+set of scientific surfaces while the rest of the resolved RTM state still comes
+from tracked reference data. This makes it possible to represent operational
+runs without turning the entire codebase into a mission-specific file reader.
 
 ## Provenance And Dataset Identity
 
@@ -109,5 +112,5 @@ To follow the reference-data path:
 1. read `src/input/reference_data/ingest/reference_assets.zig`,
 2. read `src/input/ReferenceData.zig`,
 3. read `src/input/reference_data/bundled/load.zig`,
-4. read `src/forward_model/optical_properties/root.zig`,
+4. read the optical-property construction code in the Zig numerical tree,
 5. inspect `data/reference_data/*/bundle_manifest.json` for representative datasets.

@@ -23,9 +23,10 @@ TIMING_PATH = OUTPUTS_DIR / "zdisamar_o2a_two_state_benchmark.json"
 
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-import zdisamar as zd  # noqa: E402
+from zdisamar import rtm  # noqa: E402
 from zdisamar.inverse_method import optimal_estimation  # noqa: E402
 from zdisamar.inverse_method.optimal_estimation import o2a as o2a_optimal_estimation  # noqa: E402
+from zdisamar.wavelength_bands import o2a  # noqa: E402
 
 from validation.common.paths import write_json  # noqa: E402
 from validation.common.timing import PhaseTimer  # noqa: E402
@@ -41,7 +42,7 @@ JsonObject = dict[str, Any]
 
 
 def build_measurement(
-    case: zd.O2AInput,
+    case: o2a.O2ACase,
     reference: JsonObject,
 ) -> optimal_estimation.Measurement:
     # The measurement is simulated once from the truth scene. The inverse pass
@@ -51,27 +52,22 @@ def build_measurement(
 
     _ = reference
 
-    with zd.prepare(case) as prepared:
-        return measurement_from_o2a_baseline_noise(prepared)
+    return measurement_from_o2a_baseline_noise(case)
 
 
 def run_retrieval(
-    case: zd.O2AInput,
+    case: o2a.O2ACase,
     state_vector,
     measurement: optimal_estimation.Measurement,
-    forward_session: zd.O2AForwardSession | None = None,
+    cache: rtm.SessionCache | None = None,
 ) -> optimal_estimation.Result:
 
-    inverse_model = optimal_estimation.O2AInverseForwardModel(
-        case,
-        forward_session=forward_session,
-    )
-
     return optimal_estimation.disamar_oe(
-        inverse_model=inverse_model,
+        case=case,
         measurement=measurement,
         state_vector=state_vector,
         controls=oe_setup.retrieval_controls(),
+        cache=cache,
     )
 
 
@@ -203,9 +199,7 @@ def timing_report(
     result: optimal_estimation.Result,
 ) -> JsonObject:
 
-    forward_model_and_jacobian_s = sum(
-        timing.forward_model_and_jacobian_s for timing in result.timing
-    )
+    rtm_and_jacobian_s = sum(timing.rtm_and_jacobian_s for timing in result.timing)
 
     return {
         "phases_s": phase_timings,
@@ -214,13 +208,13 @@ def timing_report(
             "retrieval_s": phase_timings["retrieval_s"],
             "first_use_retrieval_s": phase_timings["session_create_s"]
             + phase_timings["retrieval_s"],
-            "forward_model_and_jacobian_s": forward_model_and_jacobian_s,
+            "rtm_and_jacobian_s": rtm_and_jacobian_s,
             "iterations": result.iterations,
         },
         "iterations": [
             {
                 "index": timing.index,
-                "forward_model_and_jacobian_s": timing.forward_model_and_jacobian_s,
+                "rtm_and_jacobian_s": timing.rtm_and_jacobian_s,
                 "solver_update_s": timing.solver_update_s,
                 "total_iteration_s": timing.total_iteration_s,
             }
@@ -236,7 +230,7 @@ def print_retrieval_timing(report: JsonObject) -> None:
     print(
         "  Retrieval loop: "
         f"{retrieval['retrieval_s']:.6f} s total, "
-        f"{retrieval['forward_model_and_jacobian_s']:.6f} s forward+jacobian, "
+        f"{retrieval['rtm_and_jacobian_s']:.6f} s RTM+jacobian, "
         f"{retrieval['iterations']} iterations"
     )
     print(
@@ -338,11 +332,11 @@ def main() -> int:
 
     with PhaseTimer() as timer:
         reference = timer.run("load_reference_s", lambda: json.loads(REFERENCE_PATH.read_text()))
-        case = timer.run("build_case_s", lambda: build_o2a_case(zd, jacobian_reference_layer=True))
+        case = timer.run("build_case_s", lambda: build_o2a_case(o2a, jacobian_reference_layer=True))
         oe_baseline.configure_case(case)
         profile = timer.run(
             "build_pressure_altitude_profile_s",
-            o2a_optimal_estimation.pressure_altitude_profile_from_prepared_grid,
+            o2a_optimal_estimation.pressure_altitude_profile_from_case,
             case,
         )
         state_vector = timer.run(
@@ -353,7 +347,7 @@ def main() -> int:
             profile=profile,
         )
         measurement = timer.run("build_measurement_s", build_measurement, case, reference)
-        session = timer.run("session_create_s", zd.o2a_forward_session, case)
+        cache = timer.run("session_create_s", rtm.SessionCache, case)
 
         try:
             result = timer.run(
@@ -362,10 +356,10 @@ def main() -> int:
                 case,
                 state_vector,
                 measurement,
-                forward_session=session,
+                cache=cache,
             )
         finally:
-            session.close()
+            cache.close()
 
         layer_thickness = (
             case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa

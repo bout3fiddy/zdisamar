@@ -10,7 +10,7 @@ ZDISAMAR_WORKERS = 1
 ```
 
 `ZDISAMAR_WORKERS = 1` means one retrieval process at a time. Each retrieval is
-still free to use the forward model's internal CPU parallelism. Earlier
+still free to use the RTM's internal CPU parallelism. Earlier
 multi-worker sweeps overcommitted the machine because each process also tried to
 use the available cores.
 
@@ -36,16 +36,16 @@ Slow retained zdisamar case:
 
 ```text
 source case                          paired sweep case 71
-measurement build                   1.029640 s
-direct forward-only median          0.744821 s
-direct forward+jacobian median      0.901555 s
-jacobian increment median           0.159105 s
-session first-use elapsed time      3.109521 s
-session reused elapsed time         2.835175 s
-lazy final evaluation when requested 1.297817 s
+measurement build                   1.189820 s
+direct RTM-only median              0.885744 s
+direct RTM+jacobian median          0.963766 s
+jacobian increment median           0.081561 s
+session first-use elapsed time      3.453297 s
+session reused elapsed time         3.142969 s
+lazy final evaluation when requested 1.311871 s
 iterations                          3
 lazy final evaluation cached        true
 ```
 
 The slow-case result says the remaining zdisamar retrieval elapsed time is mostly
-repeated forward+jacobian work. The solver update itself is millisecond-scale.
+repeated RTM+jacobian work. The solver update itself is millisecond-scale.

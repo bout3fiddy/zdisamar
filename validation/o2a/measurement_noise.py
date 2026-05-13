@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from functools import cache
 
 import numpy as np
-from zdisamar import reference_data
+from zdisamar import reference_data, rtm
 from zdisamar.inverse_method import optimal_estimation
 
 from validation.o2a import baseline
@@ -31,14 +31,14 @@ class O2ANoiseComponents:
         )
 
 
-def measurement_from_o2a_baseline_noise(prepared) -> optimal_estimation.Measurement:
+def measurement_from_o2a_baseline_noise(case) -> optimal_estimation.Measurement:
     """Build a reflectance measurement with retained O2 A baseline SNR semantics."""
 
-    with prepared.forward_model() as spectrum:
-        wavelength_nm = spectrum.wavelength_nm.copy()
-        radiance = spectrum.radiance.copy()
-        irradiance = spectrum.irradiance.copy()
-        reflectance = spectrum.reflectance.copy()
+    spectrum = rtm.spectrum(case)
+    wavelength_nm = spectrum.wavelength_nm.copy()
+    radiance = spectrum.radiance.copy()
+    irradiance = spectrum.irradiance.copy()
+    reflectance = spectrum.reflectance.copy()
 
     noise = components_from_spectrum(
         wavelength_nm=wavelength_nm,

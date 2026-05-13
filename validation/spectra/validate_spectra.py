@@ -22,21 +22,21 @@ sys.path[:0] = [str(REPO_ROOT), str(REPO_ROOT / "python")]
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from numpy.typing import NDArray  # noqa: E402
+from zdisamar import rtm  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
+from zdisamar.wavelength_bands import o2a  # noqa: E402
 
-from validation.common.paths import PYTHON_ROOT, stable_repo_path, write_json  # noqa: E402
+from validation.common.paths import stable_repo_path, write_json  # noqa: E402
 from validation.o2a import baseline as oe_baseline  # noqa: E402
 from validation.o2a.case import build_o2a_jacobian_case  # noqa: E402
 from validation.spectra.residuals import residual_blowup_regions, residual_metrics  # noqa: E402
 
-LIBRARY_NAME = "libzdisamar_c.dylib" if sys.platform == "darwin" else "libzdisamar_c.so"
-LIBRARY_PATH = REPO_ROOT / "zig-out" / "lib" / LIBRARY_NAME
 VALIDATION_DIR = REPO_ROOT / "validation"
 SPECTRA_DIR = VALIDATION_DIR / "spectra"
 REFERENCE_DATA_DIR = VALIDATION_DIR / "reference_data" / "spectra"
 OUTPUTS_DIR = VALIDATION_DIR / "outputs" / "spectra"
 
-FORWARD_REFERENCE_PATH = REFERENCE_DATA_DIR / "o2a_jacobian_retrieval_instrument_forward.csv"
+RADIANCE_REFERENCE_PATH = REFERENCE_DATA_DIR / "o2a_jacobian_retrieval_instrument_forward.csv"
 REFLECTANCE_JACOBIAN_REFERENCE_PATH = (
     REFERENCE_DATA_DIR / "o2a_jacobian_simulation_instrument_reflectance.csv"
 )
@@ -60,7 +60,7 @@ REFERENCE_COLUMNS = {
 BLOWUP_REGION_FRACTION = 0.40
 BLOWUP_REGION_PADDING_NM = 0.04
 BLOWUP_REGION_LIMITS = {
-    "forward reflectance": 3,
+    "RTM reflectance": 3,
     "dR/d aerosol optical depth": 3,
     "dR/d aerosol layer mid pressure": 2,
 }
@@ -88,27 +88,15 @@ class MetricRow(TypedDict):
     marked_residual_blowup_regions_nm: list[ResidualRegion]
 
 
-def import_zdisamar():
+def run_zdisamar_validation(case) -> dict[str, np.ndarray]:
 
-    sys.path.insert(0, str(PYTHON_ROOT))
-    import zdisamar as zd
-
-    return zd
-
-
-def run_zdisamar_validation(case, library_path: Path) -> dict[str, np.ndarray]:
-
-    zd = import_zdisamar()
-
-    with zd.prepare(case, library_path=str(library_path)) as prepared:
-        spectrum = prepared.forward_model(jacobian=True, jacobian_state_names=STATE_NAMES)
-        wavelength_nm = spectrum.wavelength_nm.copy()
-        reflectance = spectrum.reflectance.copy()
-        state_names = spectrum.jacobian_state_names
-        reflectance_jacobian = np.column_stack(
-            [spectrum.reflectance_jacobian(state_name) for state_name in STATE_NAMES]
-        )
-        spectrum.close()
+    spectrum = rtm.spectrum(case, jacobian=True, jacobian_state_names=STATE_NAMES)
+    wavelength_nm = spectrum.wavelength_nm.copy()
+    reflectance = spectrum.reflectance.copy()
+    state_names = spectrum.jacobian_state_names
+    reflectance_jacobian = np.column_stack(
+        [spectrum.reflectance_jacobian(state_name) for state_name in STATE_NAMES]
+    )
 
     if tuple(state_names) != STATE_NAMES:
         raise RuntimeError(f"unexpected Jacobian states: {state_names}")
@@ -120,13 +108,11 @@ def run_zdisamar_validation(case, library_path: Path) -> dict[str, np.ndarray]:
     }
 
 
-def mid_pressure_jacobian_scale(case, library_path: Path) -> float:
+def mid_pressure_jacobian_scale(case) -> float:
 
-    zd = import_zdisamar()
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
 
-    with zd.prepare(case, library_path=str(library_path)) as prepared:
-        profile = o2a_oe.pressure_altitude_profile_from_prepared(prepared)
+    profile = o2a_oe.pressure_altitude_profile_from_case(case)
 
     aerosol_mid_pressure_hpa = 0.5 * (
         case.aerosol.placement.top_pressure_hpa + case.aerosol.placement.bottom_pressure_hpa
@@ -139,20 +125,20 @@ def build_validation_rows(
     case, current: dict[str, np.ndarray], pressure_jacobian_scale: float
 ) -> tuple[pd.DataFrame, list[MetricRow]]:
 
-    forward_reference = pd.read_csv(FORWARD_REFERENCE_PATH)
+    radiance_reference = pd.read_csv(RADIANCE_REFERENCE_PATH)
     jacobian_reference = pd.read_csv(REFLECTANCE_JACOBIAN_REFERENCE_PATH)
     wavelength_nm = current["wavelength_nm"]
     mu0 = math.cos(math.radians(case.geometry.solar_zenith_deg))
 
     rows: list[ValidationSeries] = [
         {
-            "series": "forward reflectance",
+            "series": "RTM reflectance",
             "y_label": "Reflectance",
             "zdisamar": current["reflectance"],
             "reference": np.interp(
                 wavelength_nm,
-                forward_reference["wavelength_nm"],
-                forward_reference["sun_normalized_radiance"],
+                radiance_reference["wavelength_nm"],
+                radiance_reference["sun_normalized_radiance"],
             )
             * np.pi
             / mu0,
@@ -390,7 +376,7 @@ def write_metrics(metrics: list[MetricRow], output_path: Path) -> None:
         ),
         "series": metrics,
         "reference_paths": {
-            "forward": stable_repo_path(FORWARD_REFERENCE_PATH),
+            "radiance": stable_repo_path(RADIANCE_REFERENCE_PATH),
             "reflectance_jacobian": stable_repo_path(REFLECTANCE_JACOBIAN_REFERENCE_PATH),
         },
     }
@@ -411,7 +397,7 @@ def write_manifest(output_path: Path) -> None:
         "tracked_output_dir": stable_repo_path(SPECTRA_DIR),
         "tracked_outputs": [stable_repo_path(path) for path in tracked_outputs],
         "reference_paths": [
-            stable_repo_path(FORWARD_REFERENCE_PATH),
+            stable_repo_path(RADIANCE_REFERENCE_PATH),
             stable_repo_path(REFLECTANCE_JACOBIAN_REFERENCE_PATH),
         ],
         "policy": {
@@ -430,17 +416,15 @@ def write_manifest(output_path: Path) -> None:
 
 def build_bundle(
     output_dir: Path = SPECTRA_DIR,
-    library_path: Path = LIBRARY_PATH,
 ) -> list[MetricRow]:
 
     if output_dir != SPECTRA_DIR:
         raise ValueError("validate_spectra is intentionally hardwired to validation/spectra/")
 
-    zd = import_zdisamar()
-    case = build_o2a_jacobian_case(zd)
+    case = build_o2a_jacobian_case(o2a)
     oe_baseline.configure_case(case)
-    pressure_jacobian_scale = mid_pressure_jacobian_scale(case, library_path)
-    current = run_zdisamar_validation(case, library_path)
+    pressure_jacobian_scale = mid_pressure_jacobian_scale(case)
+    current = run_zdisamar_validation(case)
     data, metrics = build_validation_rows(case, current, pressure_jacobian_scale)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -465,7 +449,7 @@ def validate_outputs(metrics: list[MetricRow]) -> list[str]:
         failures.append(f"expected 3 validation series, got {len(metrics)}")
 
     if [metric["series"] for metric in metrics] != [
-        "forward reflectance",
+        "RTM reflectance",
         "dR/d aerosol optical depth",
         "dR/d aerosol layer mid pressure",
     ]:

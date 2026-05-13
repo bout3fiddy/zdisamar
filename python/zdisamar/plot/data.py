@@ -1,12 +1,11 @@
 """Data normalization helpers for plotting objects and tables."""
 
 from collections.abc import Sequence
-from typing import Any
 
 from . import fields
 
 
-def to_dataframe(obj: Any):
+def to_dataframe(obj):
     """Convert supported zdisamar plotting inputs to a Pandas data frame."""
 
     import pandas as pd
@@ -40,7 +39,7 @@ def require_columns(frame, required: Sequence[str]) -> None:
         raise ValueError(f"missing required plotting columns: {', '.join(missing)}")
 
 
-def spectrum_frame(spectrum: Any):
+def spectrum_frame(spectrum):
     """Put spectrum-like objects into one plotting table shape."""
 
     frame = to_dataframe(spectrum)
@@ -49,7 +48,7 @@ def spectrum_frame(spectrum: Any):
     return frame
 
 
-def with_channel_labels(obj: Any):
+def with_channel_labels(obj):
     """Add radiance/irradiance labels to instrument-response rows."""
 
     result = to_dataframe(obj)
@@ -67,12 +66,12 @@ def with_channel_labels(obj: Any):
     return result
 
 
-def _looks_like_spectrum(obj: Any) -> bool:
+def _looks_like_spectrum(obj) -> bool:
 
     return all(hasattr(obj, name) for name in fields.SPECTRUM_FIELDS)
 
 
-def _copy_array(value: Any):
+def _copy_array(value):
 
     try:
         return value.copy()

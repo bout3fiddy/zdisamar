@@ -15,6 +15,8 @@ __pycache__/
 .venv/
 *.py[cod]
 *.bundle
+python/zdisamar/bindings/libzdisamar_c.*
+python/zdisamar/reference_data/assets/
 
 # Regenerable primitive-codegen disassembly blobs
 research/performance/where-is-the-bottleneck/primitive-codegen/outputs/*.asm

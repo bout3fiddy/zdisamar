@@ -15,12 +15,10 @@ def root() -> Path:
     if packaged.is_dir():
         return Path(_RESOURCE_STACK.enter_context(resources.as_file(packaged)))
 
-    source_tree = Path(__file__).resolve().parents[3] / "data" / "reference_data"
-
-    if source_tree.is_dir():
-        return source_tree
-
-    raise FileNotFoundError("zdisamar reference-data assets are not available")
+    raise FileNotFoundError(
+        "zdisamar reference-data assets are not packaged; run `zig build` before "
+        "using the source checkout or install a built wheel"
+    )
 
 
 def path(relative: str | Path) -> Path:

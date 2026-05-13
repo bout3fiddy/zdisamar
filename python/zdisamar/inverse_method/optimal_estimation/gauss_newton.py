@@ -56,7 +56,7 @@ def gauss_newton_step(
         # damping.  Scaling the residual and singular values lowers the
         # effective spectral signal while preserving the same covariance
         # geometry, which prevents a single very informative spectrum mismatch
-        # from launching the next forward-model call far outside the local
+        # from launching the next RTM call far outside the local
         # linearization.
         snr_normal = False
         factor_total = 1.0
@@ -73,7 +73,7 @@ def gauss_newton_step(
                 singular_values = reduced_w
                 break
 
-    # The solve happened in normalized SVD coordinates; the forward model needs
+    # The solve happened in normalized SVD coordinates; the RTM needs
     # physical state units.  Multiplying by S_a^1/2 makes the accepted move mean
     # "this many prior standard deviations" before returning to AOD and hPa.
     dx_new = problem.sqrt_sa @ v @ dx_trans_new

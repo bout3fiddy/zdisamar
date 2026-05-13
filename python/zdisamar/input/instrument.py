@@ -1,9 +1,8 @@
 """Instrument-response input objects."""
 
 from dataclasses import dataclass
-from typing import Any
 
-from .shared import to_float
+from .shared import int_dict, to_float, to_int
 
 
 @dataclass
@@ -15,12 +14,12 @@ class SpectralGrid:
     sample_count: int
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SpectralGrid:
+    def from_dict(cls, data: dict[str, object]) -> SpectralGrid:
 
         return cls(
             start_nm=to_float(data["start_nm"]),
             end_nm=to_float(data["end_nm"]),
-            sample_count=int(data["sample_count"]),
+            sample_count=to_int(data["sample_count"]),
         )
 
     def to_dict(self) -> dict[str, float | int]:
@@ -48,7 +47,7 @@ class InstrumentResponse:
     solar_reference_asset_id: str
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> InstrumentResponse:
+    def from_dict(cls, data: dict[str, object]) -> InstrumentResponse:
 
         return cls(
             instrument_name=str(data["instrument_name"]),
@@ -59,9 +58,7 @@ class InstrumentResponse:
             builtin_line_shape=str(data["builtin_line_shape"]),
             high_resolution_step_nm=to_float(data["high_resolution_step_nm"]),
             high_resolution_half_span_nm=to_float(data["high_resolution_half_span_nm"]),
-            adaptive_reference_grid={
-                key: int(value) for key, value in data["adaptive_reference_grid"].items()
-            },
+            adaptive_reference_grid=int_dict(data["adaptive_reference_grid"]),
             solar_reference_asset_id=str(data["solar_reference_asset_id"]),
         )
 

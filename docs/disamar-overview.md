@@ -14,7 +14,7 @@ In other words, DISAMAR should be understood as a mature scientific framework wi
 
 ## Historical Note
 
-The model family was developed first in Fortran and has been used for instrument-definition studies, algorithm development, and operational Earth-observation processing. The documentation in this repository is about the current implementation in `zdisamar`: a typed forward model that preserves the scientific identity of DISAMAR while making state ownership and provenance explicit.
+The model family was developed first in Fortran and has been used for instrument-definition studies, algorithm development, and operational Earth-observation processing. The documentation in this repository is about the current implementation in `zdisamar`: a typed RTM that preserves the scientific identity of DISAMAR while making state ownership and provenance explicit.
 
 ## Scientific Pedigree
 
@@ -22,7 +22,9 @@ Several aspects of the literature matter directly for this repository.
 
 ### Broad spectral and algorithmic range
 
-The 2022 GMD model description presents DISAMAR as both a forward model and a retrieval system. That context matters even while this repository's retained public surface is centered on the O2 A forward model.
+The 2022 GMD model description presents DISAMAR as both a radiative-transfer
+model and a retrieval system. That context matters even while this repository's
+retained public runtime is centered on O2 A RTM execution.
 
 ### Operational oxygen A-band work
 
@@ -56,36 +58,52 @@ In the current Zig tree, the LABOS-labeled path identifies the layer-based order
 
 ### Optimal estimation
 
-Optimal estimation, usually in the Rodgers sense, combines a forward model, a prior state, and error statistics to solve an inverse problem. In DISAMAR-class retrievals this means the code must provide Jacobians, state-vector handling, consistent measurement-error treatment, posterior covariance, and averaging-kernel diagnostics.
+Optimal estimation, usually in the Rodgers sense, combines an RTM, a prior
+state, and error statistics to solve an inverse problem. In DISAMAR-class
+retrievals this means the code must provide Jacobians, state-vector handling,
+consistent measurement-error treatment, posterior covariance, and
+averaging-kernel diagnostics.
 
-The O2 A forward-model surface does not expose retrieval execution yet. Optimal estimation remains important terminology for future retrieval-facing work.
+The RTM runtime is separate from inverse-method execution. Optimal estimation remains important terminology for future retrieval-facing work.
 
 ### DOAS
 
 DOAS, differential optical absorption spectroscopy, fits narrow-band differential absorption structures after broad spectral structure has been removed or parameterized. It is useful when the retrieval target is the fine spectral signature of trace-gas absorption rather than the full absolute radiance field.
 
-The O2 A forward-model surface does not expose DOAS retrieval execution yet.
+The RTM runtime is separate from DOAS retrieval execution.
 
 ### DISMAS
 
-DISMAS is the direct intensity fitting strategy described in the DISAMAR literature. Instead of isolating only differential structure, it works directly on the measured spectrum and therefore depends strongly on the quality of the forward model, sampling model, and derivative information.
+DISMAS is the direct intensity fitting strategy described in the DISAMAR
+literature. Instead of isolating only differential structure, it works directly
+on the measured spectrum and therefore depends strongly on the quality of the
+RTM, sampling model, and derivative information.
 
-The O2 A forward-model surface does not expose DISMAS retrieval execution yet.
+The RTM runtime is separate from DISMAS retrieval execution.
 
 ## Why This Matters For `zdisamar`
 
-The current implementation is organized around the retained O2 A forward model.
+The current implementation is organized around O2 A wavelength-band cases, RTM
+execution, and inverse methods.
 
 - `src/input/` carries the typed scene and observation description.
-- `src/root.zig` carries the public `Input -> forward model -> Output` surface.
+- `python/zdisamar/wavelength_bands/` carries wavelength-band case surfaces.
+- `python/zdisamar/rtm/` carries packaged RTM execution helpers.
 - `src/input/reference_data/` carries the scientific input surfaces needed to prepare execution without letting file I/O leak into numerical routines.
-- `src/forward_model/` and `src/common/` carry numerical routines for optical-property preparation, radiative transfer, interpolation, quadrature, spectra, and linear algebra.
+- the Zig numerical tree carries optical-property construction, radiative
+  transfer, interpolation, quadrature, spectra, and linear algebra.
 
-The important point is that DISAMAR in this repository is the scientific model family behind the forward model, not a claim that the rest of the system should inherit every trait of an earlier application layout.
+The important point is that DISAMAR in this repository is the scientific model
+family behind the RTM and inverse-method choices, not a claim that the rest of
+the system should inherit every trait of an earlier application layout.
 
 ## Operational Role
 
-The acronym itself signals one historical purpose: instrument specifications and retrieval-method analysis. That heritage remains visible in current usage. DISAMAR-related work appears in the literature both as a retrieval forward model and as part of the scientific infrastructure around operational satellite products, especially in the Sentinel-5P/TROPOMI context used by European Earth-observation programmes.
+The acronym itself signals one historical purpose: instrument specifications
+and retrieval-method analysis. That heritage remains visible in current usage.
+DISAMAR-related work appears in the literature as part of the scientific
+infrastructure around operational satellite products, especially in the
+Sentinel-5P/TROPOMI context used by European Earth-observation programmes.
 
 For the present codebase, that means the implementation has to satisfy three conditions at once:
 
@@ -97,5 +115,5 @@ For the present codebase, that means the implementation has to satisfy three con
 
 After this overview:
 
-1. Read [O2A Forward](./o2a-forward.md) for the retained public runtime path.
+1. Read [O2 A RTM](./o2a-rtm.md) for the retained public runtime path.
 2. Read [Reference Data And Bundles](./reference-data-and-bundles.md) for the data-loading boundary.
