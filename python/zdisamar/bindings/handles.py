@@ -362,6 +362,7 @@ class RtmHandle:
         )
 
     def _copied_rows(self, raw, free):
+
         import numpy as np
 
         try:

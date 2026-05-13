@@ -142,10 +142,12 @@ def probe_rtm_calls(
     state_case = o2a_oe.case_for_state(case, state_vector.prior_state(), state_vector)
 
     def radiance_reflectance_only() -> None:
+
         spectrum = rtm.spectrum(state_case, cache=cache)
         _ = spectrum.reflectance.copy()
 
     def radiance_reflectance_and_jacobian() -> None:
+
         evaluation = o2a_oe.evaluate_reflectance(
             state_case,
             state_vector.jacobian_names,

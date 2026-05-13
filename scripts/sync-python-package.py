@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 def library_filename() -> str:
+
     if sys.platform == "darwin":
         return "libzdisamar_c.dylib"
 
@@ -18,6 +19,7 @@ def library_filename() -> str:
 
 
 def parse_args() -> argparse.Namespace:
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--binding",
@@ -30,6 +32,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def copy_tree(source: Path, destination: Path) -> None:
+
     if destination.exists():
         shutil.rmtree(destination)
 
@@ -37,6 +40,7 @@ def copy_tree(source: Path, destination: Path) -> None:
 
 
 def main() -> int:
+
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
     package_root = repo_root / "python" / "zdisamar"

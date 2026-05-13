@@ -39,7 +39,7 @@ def gauss_newton_step(
     """
 
     # Kwhite carries the observation sensitivity after both covariance
-    # penalties have been normalized.  Its singular vectors are therefore the
+    # penalties have been normalized. Its singular vectors are therefore the
     # directions where the measurement can actually constrain the state.
     u, singular_values, vt = np.linalg.svd(problem.k_white, full_matrices=False)
     v = vt.T

@@ -1,6 +1,7 @@
 """Generic state-vector composition."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
@@ -22,10 +23,15 @@ class StateVectorParameter(Protocol):
         """Write one scalar state value into the inverse-model settings target."""
 
 
+@dataclass(frozen=True)
 class StateVector:
     """Ordered retrieval variables plus prior covariance terms."""
 
-    def __init__(self, parameters: Sequence[StateVectorParameter]):
+    parameters: Sequence[StateVectorParameter]
+
+    def __post_init__(self) -> None:
+
+        parameters = tuple(self.parameters)
 
         if not parameters:
             raise ValueError("state vector must contain at least one parameter")
@@ -35,37 +41,31 @@ class StateVector:
         if len(set(names)) != len(names):
             raise ValueError("state vector parameter names must be unique")
 
-        self._parameters = tuple(parameters)
-
-    @property
-    def parameters(self) -> tuple[StateVectorParameter, ...]:
-        """Expose retrieval variables in solver order."""
-
-        return self._parameters
+        object.__setattr__(self, "parameters", parameters)
 
     @property
     def names(self) -> tuple[StateName, ...]:
         """Return retrieval variable names in solver order."""
 
-        return tuple(parameter.name for parameter in self._parameters)
+        return tuple(parameter.name for parameter in self.parameters)
 
     @property
     def jacobian_names(self) -> tuple[StateName, ...]:
         """Return the model Jacobian names used for each retrieval variable."""
 
         return tuple(
-            getattr(parameter, "jacobian_name", parameter.name) for parameter in self._parameters
+            getattr(parameter, "jacobian_name", parameter.name) for parameter in self.parameters
         )
 
     def jacobian_scales(self, state: np.ndarray) -> np.ndarray:
         """Scale model Jacobians into the chosen retrieval variables."""
 
-        if len(state) != len(self._parameters):
+        if len(state) != len(self.parameters):
             raise ValueError("state length does not match state vector")
 
         scales: list[float] = []
 
-        for parameter, value in zip(self._parameters, state, strict=True):
+        for parameter, value in zip(self.parameters, state, strict=True):
             scale = getattr(parameter, "jacobian_scale", None)
             scales.append(1.0 if scale is None else float(scale(float(value))))
 
@@ -74,24 +74,24 @@ class StateVector:
     def initial_state(self) -> np.ndarray:
         """Return the starting retrieval state."""
 
-        return np.array([parameter.initial for parameter in self._parameters], dtype=np.float64)
+        return np.array([parameter.initial for parameter in self.parameters], dtype=np.float64)
 
     def prior_state(self) -> np.ndarray:
         """Return the prior retrieval state."""
 
-        return np.array([parameter.prior for parameter in self._parameters], dtype=np.float64)
+        return np.array([parameter.prior for parameter in self.parameters], dtype=np.float64)
 
     def prior_covariance(self) -> np.ndarray:
         """Return the diagonal prior covariance used by this OE solver."""
 
-        return np.diag([parameter.variance for parameter in self._parameters]).astype(np.float64)
+        return np.diag([parameter.variance for parameter in self.parameters]).astype(np.float64)
 
     def clip_to_bounds(self, state: np.ndarray) -> np.ndarray:
         """Keep updated retrieval variables within their physical bounds."""
 
         bounded = np.array(state, copy=True)
 
-        for index, parameter in enumerate(self._parameters):
+        for index, parameter in enumerate(self.parameters):
             if parameter.lower is not None:
                 bounded[index] = max(float(parameter.lower), bounded[index])
 
@@ -103,8 +103,8 @@ class StateVector:
     def write_to(self, target: object, state: np.ndarray) -> None:
         """Write all retrieval variables into one O2 A scene."""
 
-        if len(state) != len(self._parameters):
+        if len(state) != len(self.parameters):
             raise ValueError("state length does not match state vector")
 
-        for parameter, value in zip(self._parameters, state, strict=True):
+        for parameter, value in zip(self.parameters, state, strict=True):
             parameter.write_to(target, float(value))

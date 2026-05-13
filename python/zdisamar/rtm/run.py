@@ -10,6 +10,7 @@ from .session_cache import SessionCache
 
 @contextmanager
 def _temporary_cache(case: O2AInput) -> Iterator[SessionCache]:
+
     cache = SessionCache()
 
     try:
@@ -52,6 +53,7 @@ def atmospheric_budget(
 
     if cache is not None:
         cache.load(case)
+
         return cache.atmospheric_budget(wavelengths_nm)
 
     with _temporary_cache(case) as temporary:
@@ -71,6 +73,7 @@ def instrument_response(
 
     if cache is not None:
         cache.load(case)
+
         return cache.instrument_response(grid, channels=channels)
 
     with _temporary_cache(case) as temporary:
@@ -87,6 +90,7 @@ def collision_induced_absorption(
 
     if cache is not None:
         cache.load(case)
+
         return cache.collision_induced_absorption(wavelengths_nm)
 
     with _temporary_cache(case) as temporary:
@@ -104,6 +108,7 @@ def o2_line_contributions(
 
     if cache is not None:
         cache.load(case)
+
         return cache._handle.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
 
     with _temporary_cache(case) as temporary:
