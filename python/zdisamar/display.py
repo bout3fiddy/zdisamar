@@ -8,6 +8,7 @@ class NotebookDisplay:
 
         if cycle:
             printer.text(f"{type(self).__name__}(...)")
+
             return
 
         printer.text(repr(self))

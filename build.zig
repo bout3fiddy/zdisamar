@@ -47,7 +47,11 @@ fn addTestStep(
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const runtime_optimize: std.builtin.OptimizeMode = .ReleaseFast;
+    const runtime_optimize = b.option(
+        std.builtin.OptimizeMode,
+        "runtime-optimize",
+        "Optimization mode for installed runtime artifacts",
+    ) orelse .ReleaseFast;
     const enable_ztracy = b.option(
         bool,
         "enable-ztracy",
