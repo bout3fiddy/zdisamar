@@ -45,7 +45,7 @@ pub use reference_data::{
     CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
     CrossSectionTable, MiePhasePoint, MiePhaseTable, RelaxationMatrix, SpectroscopyEvaluation,
     SpectroscopyLine, SpectroscopyLineList, SpectroscopyRuntimeControls, SpectroscopyStrongLine,
-    SpectroscopyStrongLineSet, weighted_mean_samples,
+    SpectroscopyStrongLineSet, solar_irradiance_at_wavelength, weighted_mean_samples,
 };
 pub use scene::{DerivativeMode, Scene, WavelengthBounds};
 pub use spectrum::SpectralGrid;

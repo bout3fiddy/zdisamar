@@ -1,13 +1,22 @@
 use zdisamar::input::{
-    AirmassFactorLut, AirmassFactorPoint, ClimatologyPoint, ClimatologyProfile,
+    AirmassFactorLut, AirmassFactorPoint, Binding, ClimatologyPoint, ClimatologyProfile,
     CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
-    CrossSectionTable, SpectroscopyLine, SpectroscopyLineList, SpectroscopyRuntimeControls,
+    CrossSectionTable, ObservationModel, OperationalSolarSpectrum, Scene, SpectroscopyLine,
+    SpectroscopyLineList, SpectroscopyRuntimeControls, solar_irradiance_at_wavelength,
     weighted_mean_samples,
 };
 
 fn assert_close(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() < 1.0e-12,
+        "{actual} != {expected}"
+    );
+}
+
+fn assert_rel_close(actual: f64, expected: f64) {
+    let tolerance = expected.abs().max(1.0) * 1.0e-12;
+    assert!(
+        (actual - expected).abs() <= tolerance,
         "{actual} != {expected}"
     );
 }
@@ -136,4 +145,38 @@ fn spectroscopy_runtime_controls_report_threshold_strength() {
         .has_strong_line_sidecars()
     );
     assert_close(weighted_mean_samples(&[1.0, 3.0], &[1.0, 3.0]), 2.5);
+}
+
+#[test]
+fn solar_irradiance_uses_operational_bundle_and_continuum_sources() {
+    let operational_scene = Scene {
+        observation_model: ObservationModel {
+            operational_solar_spectrum: OperationalSolarSpectrum {
+                wavelengths_nm: vec![760.0, 761.0],
+                irradiance: vec![2.0e14, 3.0e14],
+                spline_second_derivatives: Vec::new(),
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    assert_rel_close(
+        solar_irradiance_at_wavelength(&operational_scene, 760.5),
+        2.5e14,
+    );
+
+    let bundled_scene = Scene {
+        observation_model: ObservationModel {
+            solar_spectrum_source: Binding::BundleDefault,
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    assert_rel_close(
+        solar_irradiance_at_wavelength(&bundled_scene, 758.0),
+        4.879049767e14,
+    );
+
+    let continuum = solar_irradiance_at_wavelength(&Scene::default(), 760.0);
+    assert_rel_close(continuum, 4.87401e14);
 }
