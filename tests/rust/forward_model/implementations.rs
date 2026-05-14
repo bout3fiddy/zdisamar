@@ -1,8 +1,15 @@
 use zdisamar::{
-    forward_model::implementations::noise,
+    forward_model::{
+        implementations::{noise, surface, transport},
+        radiative_transfer::{
+            DerivativeSemantics, DispatchRequest, ExecutionMode, ForwardResult,
+            ImplementationClass, ScatteringMode, TransportFamily,
+        },
+    },
     input::{
         InstrumentId, MeasurementPipeline, NoiseControls, NoiseModelKind, ObservationModel,
         OperationalReferenceGrid, Scene, SpectralChannel, SpectralChannelControls, SpectralGrid,
+        Surface, SurfaceKind,
     },
 };
 
@@ -39,6 +46,91 @@ fn noise_provider_resolution_matches_builtin_ids() {
         &scene,
         SpectralChannel::Radiance
     ));
+}
+
+#[test]
+fn surface_provider_keeps_lambertian_directional_factor_isotropic() {
+    let provider = surface::resolve("builtin.lambertian_surface").unwrap();
+    assert_eq!(provider.id, "builtin.lambertian_surface");
+    assert!(surface::resolve("unknown.surface").is_none());
+
+    let mut scene = Scene {
+        surface: Surface {
+            kind: SurfaceKind::Lambertian,
+            albedo: 0.2,
+            ..Surface::default()
+        },
+        ..Scene::default()
+    };
+    let forward = ForwardResult {
+        family: TransportFamily::Labos,
+        regime: zdisamar::input::ObservationRegime::Nadir,
+        execution_mode: ExecutionMode::Scalar,
+        derivative_mode: zdisamar::input::DerivativeMode::None,
+        toa_reflectance_factor: 0.3,
+        jacobian: None,
+    };
+
+    assert_eq!(
+        (provider.brdf_factor)(surface::EvaluationContext {
+            scene: &scene,
+            wavelength_nm: 760.0,
+            safe_span: 1.0,
+            phase: 0.0,
+            forward,
+        }),
+        1.0
+    );
+
+    scene.surface.kind = SurfaceKind::WavelDependent;
+    assert_eq!(
+        (provider.brdf_factor)(surface::EvaluationContext {
+            scene: &scene,
+            wavelength_nm: 761.0,
+            safe_span: 1.0,
+            phase: 0.1,
+            forward,
+        }),
+        1.0
+    );
+}
+
+#[test]
+fn transport_provider_prepares_labos_route_and_metadata() {
+    let provider = transport::resolve("builtin.dispatcher").unwrap();
+    assert_eq!(provider.id, "builtin.dispatcher");
+    assert!(transport::resolve("unknown.transport").is_none());
+
+    let route = (provider.prepare_route)(DispatchRequest::default()).unwrap();
+    assert_eq!(route.family, TransportFamily::Labos);
+    assert_eq!(
+        (provider.classification_for_route)(route),
+        ImplementationClass::Baseline
+    );
+    assert_eq!(
+        (provider.provenance_label_for_route)(route),
+        "baseline_labos"
+    );
+    assert_eq!(
+        (provider.derivative_semantics_for_route)(route),
+        DerivativeSemantics::None
+    );
+
+    let unsupported = DispatchRequest {
+        execution_mode: ExecutionMode::Polarized,
+        ..DispatchRequest::default()
+    };
+    assert!((provider.prepare_route)(unsupported).is_err());
+
+    let unsupported = DispatchRequest {
+        rtm_controls: zdisamar::forward_model::radiative_transfer::RadiativeTransferControls {
+            scattering: ScatteringMode::Single,
+            use_adding: true,
+            ..Default::default()
+        },
+        ..DispatchRequest::default()
+    };
+    assert!((provider.prepare_route)(unsupported).is_err());
 }
 
 #[test]
