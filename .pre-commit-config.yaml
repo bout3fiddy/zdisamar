@@ -73,3 +73,17 @@ repos:
         entry: zig fmt --check
         language: system
         files: '\.(zig|zon)$'
+
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --check
+        language: system
+        files: '^(rust_src/|tests/rust/|Cargo\.toml|Cargo\.lock)'
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        files: '^(rust_src/|tests/rust/|Cargo\.toml|Cargo\.lock)'
+        pass_filenames: false

@@ -1,0 +1,18 @@
+[package]
+name = "zdisamar-rust-port"
+version = "0.0.1"
+edition = "2024"
+
+[lib]
+name = "zdisamar"
+path = "rust_src/lib.rs"
+
+[[test]]
+name = "common_units"
+path = "tests/rust/common/units.rs"
+
+[[test]]
+name = "common_lut_controls"
+path = "tests/rust/common/lut_controls.rs"
+
+[dependencies]
