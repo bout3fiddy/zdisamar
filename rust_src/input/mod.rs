@@ -1,7 +1,9 @@
+pub mod aerosol;
 pub mod atmosphere;
 pub mod atmospheric_types;
 pub mod bands;
 pub mod binding;
+pub mod cloud;
 pub mod geometry;
 pub mod measurement;
 pub mod spectrum;
