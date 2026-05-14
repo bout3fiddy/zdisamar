@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from ..display import NotebookDisplay
 from ..input.wavelength_band.o2a import O2AInput
 
 JACOBIAN_STATE_NAMES = (
@@ -71,7 +72,7 @@ class ReflectanceJacobian:
 
 
 @dataclass(frozen=True)
-class Spectrum:
+class Spectrum(NotebookDisplay):
     """Copied RTM spectrum arrays."""
 
     axis: SpectralAxis
@@ -82,6 +83,21 @@ class Spectrum:
     diagnostic_report: DiagnosticReport | None = None
     radiance_jacobian_quantity: RadianceJacobian | None = None
     reflectance_jacobian_quantity: ReflectanceJacobian | None = None
+
+    def __repr__(self) -> str:
+
+        wavelength_range = _value_range(self.wavelength_nm, "nm")
+        reflectance_range = _value_range(self.reflectance)
+        jacobian = "yes" if self.radiance_jacobian_quantity is not None else "no"
+
+        return (
+            "Spectrum(\n"
+            f"  samples={self.wavelength_nm.size},\n"
+            f"  wavelength={wavelength_range},\n"
+            f"  reflectance={reflectance_range},\n"
+            f"  jacobian={jacobian},\n"
+            ")"
+        )
 
     @property
     def input(self) -> O2AInput | None:
@@ -178,3 +194,13 @@ class Spectrum:
         from ..plot.spectrum import SpectrumPlot
 
         return SpectrumPlot(self)
+
+
+def _value_range(values: NDArray[np.float64], unit: str = "") -> str:
+
+    if values.size == 0:
+        return "empty"
+
+    suffix = f" {unit}" if unit else ""
+
+    return f"{float(np.nanmin(values)):.6g}..{float(np.nanmax(values)):.6g}{suffix}"

@@ -44,6 +44,20 @@ def main() -> int:
             assert Path(library._name).name == library_filename()
             assert reference_data.path("cross_sections/o2o2_bira_o2a.dat").is_file()
 
+            reference_case = o2a.reference_case()
+            case_repr = repr(reference_case)
+            assert "O2AInput(" in case_repr
+            assert "spectral_grid=755-776 nm (701 samples)" in case_repr
+            assert "ReferenceAsset(" not in case_repr
+
+            reference_spectrum = rtm.spectrum(reference_case)
+            assert int(reference_spectrum.wavelength_nm.size) == 701
+            spectrum_repr = repr(reference_spectrum)
+            assert "Spectrum(" in spectrum_repr
+            assert "samples=701" in spectrum_repr
+            assert "array(" not in spectrum_repr
+            assert reference_spectrum.plot.reflectance() is not None
+
             case = o2a.reference_case().with_fast_mode()
             assert int(case.spectral_grid.sample_count) > 0
             wavelengths = np.array([760.76], dtype=np.float64)

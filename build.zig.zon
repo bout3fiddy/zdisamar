@@ -1,7 +1,7 @@
 .{
     .fingerprint = 0xb7ba7ca9daf98fd4,
     .name = .zdisamar,
-    .version = "0.0.2",
+    .version = "0.0.3",
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .ztracy = .{

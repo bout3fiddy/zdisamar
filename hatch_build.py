@@ -1,5 +1,6 @@
 """Hatch build hook for zdisamar native wheels."""
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,13 @@ class NativeWheelHook(BuildHookInterface):
         if self.target_name != "wheel":
             return
 
-        subprocess.run(["zig", "build", "sync-python-package"], cwd=self.root, check=True)
+        command = ["zig", "build", "sync-python-package"]
+        zig_target = os.environ.get("ZDISAMAR_ZIG_TARGET")
+
+        if zig_target:
+            command.append(f"-Dtarget={zig_target}")
+
+        subprocess.run(command, cwd=self.root, check=True)
         library = synced_library_path(self.root)
         build_data["force_include"][str(library)] = f"zdisamar/bindings/{library.name}"
         build_data["tag"] = f"py3-none-{platform_tag(self.build_config)}"
