@@ -27,4 +27,8 @@ path = "tests/rust/input/binding.rs"
 name = "input_geometry"
 path = "tests/rust/input/geometry.rs"
 
+[[test]]
+name = "input_surface"
+path = "tests/rust/input/surface.rs"
+
 [dependencies]
