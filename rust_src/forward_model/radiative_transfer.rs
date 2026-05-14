@@ -8,6 +8,8 @@ use crate::{
     input::{DerivativeMode, ObservationRegime},
 };
 
+pub mod labos;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     UnsupportedExecutionMode,
