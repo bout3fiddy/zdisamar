@@ -63,4 +63,8 @@ path = "tests/rust/input/scene.rs"
 name = "forward_model_radiative_transfer"
 path = "tests/rust/forward_model/radiative_transfer.rs"
 
+[[test]]
+name = "forward_model_spectral_math"
+path = "tests/rust/forward_model/instrument_grid/spectral_math.rs"
+
 [dependencies]
