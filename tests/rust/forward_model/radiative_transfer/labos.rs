@@ -1,5 +1,12 @@
-use zdisamar::forward_model::radiative_transfer::labos::{
-    Geometry, MAX_EXTRA, MAX_GAUSS, MAX_N2, MAX_NMUTOT, Mat, Vec as LabosVec, Vec2, matrix,
+use zdisamar::forward_model::{
+    jacobian::{self, State},
+    radiative_transfer::{
+        LayerInput, PseudoSphericalGrid, PseudoSphericalSample,
+        labos::{
+            Geometry, MAX_EXTRA, MAX_GAUSS, MAX_N2, MAX_NMUTOT, Mat, Vec as LabosVec, Vec2,
+            attenuation, matrix,
+        },
+    },
 };
 
 fn assert_close(left: f64, right: f64) {
@@ -109,6 +116,132 @@ fn labos_qseries_solves_gauss_block_and_preserves_weak_products() {
     assert_close(series.get(0, 2), 0.375);
     assert_close(series.get(2, 0), 0.5);
     assert_close(series.get(2, 2), 0.75);
+}
+
+#[test]
+fn labos_attenuation_builds_symmetric_level_transmittance() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let layers = vec![
+        LayerInput {
+            optical_depth: 0.1,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            optical_depth: 0.2,
+            ..LayerInput::default()
+        },
+    ];
+    let u = geometry.u[0];
+
+    let atten = attenuation::fill_attenuation(&layers, &geometry, false);
+    assert_close(atten.get(0, 0, 0), 1.0);
+    assert_close(atten.get(0, 0, 1), (-0.1 / u).exp());
+    assert_close(atten.get(0, 0, 2), (-(0.1 + 0.2) / u).exp());
+    assert_close(atten.get(0, 2, 0), atten.get(0, 0, 2));
+
+    let dynamic = attenuation::fill_attenuation_dynamic(&layers, &geometry, false);
+    assert_close(dynamic.get(0, 0, 2), atten.get(0, 0, 2));
+}
+
+#[test]
+fn labos_attenuation_uses_pseudo_spherical_top_level_direction_cosines() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let layers = vec![
+        LayerInput {
+            optical_depth: 0.1,
+            view_mu: 0.5,
+            solar_mu: 0.7,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            optical_depth: 0.2,
+            view_mu: 0.4,
+            solar_mu: 0.6,
+            ..LayerInput::default()
+        },
+    ];
+
+    let atten = attenuation::fill_attenuation(&layers, &geometry, true);
+    let view_idx = geometry.view_idx();
+    let solar_idx = geometry.n_gauss + 1;
+    assert_close(
+        atten.get(view_idx, 2, 0),
+        (-0.2_f64 / 0.4).exp() * (-0.1_f64 / 0.5).exp(),
+    );
+    assert_close(
+        atten.get(solar_idx, 2, 0),
+        (-0.2_f64 / 0.6).exp() * (-0.1_f64 / 0.7).exp(),
+    );
+}
+
+#[test]
+fn labos_dynamic_attenuation_uses_explicit_pseudo_spherical_grid_when_valid() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let layers = vec![
+        LayerInput {
+            optical_depth: 0.1,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            optical_depth: 0.2,
+            ..LayerInput::default()
+        },
+    ];
+    let grid = PseudoSphericalGrid {
+        samples: vec![
+            PseudoSphericalSample {
+                altitude_km: 1.0,
+                thickness_km: 1.0,
+                optical_depth: 0.05,
+            },
+            PseudoSphericalSample {
+                altitude_km: 3.0,
+                thickness_km: 1.0,
+                optical_depth: 0.07,
+            },
+        ],
+        level_sample_starts: vec![0, 1, 2],
+        level_altitudes_km: vec![0.5, 2.5, 3.5],
+    };
+
+    let dynamic = attenuation::fill_attenuation_dynamic_with_grid(&layers, &grid, &geometry, true);
+    assert_close(dynamic.get(0, 2, 2), 1.0);
+    assert!(dynamic.get(0, 2, 0) < 1.0);
+    assert!(dynamic.get(0, 2, 0) > 0.0);
+}
+
+#[test]
+fn labos_tangent_attenuation_tracks_optical_depth_jacobian() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let mut layer0 = LayerInput {
+        optical_depth: 0.1,
+        ..LayerInput::default()
+    };
+    let mut layer1 = LayerInput {
+        optical_depth: 0.2,
+        ..LayerInput::default()
+    };
+    jacobian::set(
+        &mut layer0.optical_depth_jacobian,
+        State::AerosolOpticalDepth,
+        0.01,
+    );
+    jacobian::set(
+        &mut layer1.optical_depth_jacobian,
+        State::AerosolOpticalDepth,
+        0.02,
+    );
+    let layers = vec![layer0, layer1];
+    let u = geometry.u[0];
+
+    let tangent = attenuation::fill_attenuation_tangent_dynamic(
+        &layers,
+        State::AerosolOpticalDepth,
+        &geometry,
+    );
+    let base = (-(0.1 + 0.2) / u).exp();
+    assert_close(tangent.get(0, 0, 2), base * (-(0.01 + 0.02) / u));
+    assert_close(tangent.get(0, 2, 0), tangent.get(0, 0, 2));
 }
 
 #[test]

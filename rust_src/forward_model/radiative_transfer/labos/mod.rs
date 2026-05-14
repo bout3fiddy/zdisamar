@@ -1,3 +1,4 @@
+pub mod attenuation;
 pub mod matrix;
 pub mod types;
 
