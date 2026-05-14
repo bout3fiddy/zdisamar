@@ -100,9 +100,8 @@ def main() -> int:
             manifest = json.load(response)
 
         package = manifest[version][target]
-        archive_path = archive.with_suffix(
-            ".zip" if package["tarball"].endswith(".zip") else ".tar.xz"
-        )
+        archive_extension = ".zip" if package["tarball"].endswith(".zip") else ".tar.xz"
+        archive_path = archive.parent / f"{archive.name}{archive_extension}"
         download(package["tarball"], archive_path, package["shasum"])
         unpacked = unpack(archive_path, install_root.parent)
         unpacked.rename(install_root)
