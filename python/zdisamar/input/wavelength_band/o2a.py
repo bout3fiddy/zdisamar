@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
+from ...display import NotebookDisplay
 from ..aerosol import Aerosol
 from ..assets import ReferenceAssets
 from ..atmosphere import Atmosphere
@@ -27,7 +28,7 @@ def _object_list(data: dict[str, object], key: str) -> list[dict[str, object]]:
 
 
 @dataclass
-class O2AInput:
+class O2AInput(NotebookDisplay):
     """Complete O2 A wavelength-band case passed to the zdisamar RTM."""
 
     metadata: dict[str, object]
@@ -51,6 +52,39 @@ class O2AInput:
         "strong_line_min_divisions": 6,
         "strong_line_max_divisions": 22,
     }
+
+    def __repr__(self) -> str:
+
+        return (
+            "O2AInput(\n"
+            f"  scene_id={self.scene_id!r},\n"
+            "  spectral_grid="
+            f"{self.spectral_grid.start_nm:g}-{self.spectral_grid.end_nm:g} nm "
+            f"({self.spectral_grid.sample_count} samples),\n"
+            "  atmosphere="
+            f"{self.atmosphere.layer_count} layers, "
+            f"{self.atmosphere.sublayer_divisions} sublayers, "
+            f"fit interval {self.atmosphere.fit_interval_index_1based},\n"
+            "  surface="
+            f"albedo {self.surface.albedo:g}, pressure {self.surface.pressure_hpa:g} hPa,\n"
+            "  geometry="
+            f"solar {self.geometry.solar_zenith_deg:g} deg, "
+            f"viewing {self.geometry.viewing_zenith_deg:g} deg, "
+            f"relative azimuth {self.geometry.relative_azimuth_deg:g} deg,\n"
+            "  aerosol="
+            f"optical depth {self.aerosol.optical_depth_550_nm:g} at 550 nm, "
+            f"center {self.aerosol.layer_center_km:g} km, "
+            f"width {self.aerosol.layer_width_km:g} km,\n"
+            "  instrument="
+            f"{self.instrument_response.instrument_name!r}, "
+            f"FWHM {self.instrument_response.instrument_line_fwhm_nm:g} nm, "
+            f"step {self.instrument_response.high_resolution_step_nm:g} nm,\n"
+            "  radiative_transfer="
+            f"{self.radiative_transfer.scattering!r}, "
+            f"{self.radiative_transfer.n_streams} streams, "
+            f"integrated_source={self.radiative_transfer.integrate_source_function},\n"
+            ")"
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Self:
