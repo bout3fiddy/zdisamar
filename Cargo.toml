@@ -24,8 +24,16 @@ name = "input_binding"
 path = "tests/rust/input/binding.rs"
 
 [[test]]
+name = "input_bands"
+path = "tests/rust/input/bands.rs"
+
+[[test]]
 name = "input_geometry"
 path = "tests/rust/input/geometry.rs"
+
+[[test]]
+name = "input_measurement"
+path = "tests/rust/input/measurement.rs"
 
 [[test]]
 name = "input_surface"
