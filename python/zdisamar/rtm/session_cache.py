@@ -1,6 +1,7 @@
 """Reusable RTM work-array cache."""
 
 from dataclasses import dataclass, field
+from typing import Self
 
 from ..bindings.handles import RtmHandle
 from ..input.wavelength_band.o2a import O2AInput
@@ -79,7 +80,7 @@ class SessionCache:
 
         self._handle.close()
 
-    def __enter__(self) -> SessionCache:
+    def __enter__(self) -> Self:
 
         return self
 

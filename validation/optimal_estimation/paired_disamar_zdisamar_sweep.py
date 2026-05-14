@@ -64,7 +64,7 @@ from validation.o2a.measurement_noise import (  # noqa: E402
 from validation.optimal_estimation import reference_cases as oe_cases  # noqa: E402
 from validation.optimal_estimation import setup as oe_setup  # noqa: E402
 
-type ScalarValue = bool | int | float | str
+ScalarValue = bool | int | float | str
 
 RUN_COUNT = oe_cases.run_count()
 SCENE_SAMPLE_COUNT = oe_cases.scene_sample_count()

@@ -2,7 +2,10 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
+
+import numpy as np
+from numpy.typing import NDArray
 
 from ..bindings.structures import (
     CAtmosphericBudgetRow,
@@ -11,11 +14,6 @@ from ..bindings.structures import (
     O2LineContributionRow,
     OxygenCollisionInducedAbsorptionRow,
 )
-
-if TYPE_CHECKING:
-    import numpy as np
-    import pandas as pd
-    from numpy.typing import NDArray
 
 
 def field_names(structure: type[object]) -> tuple[str, ...]:
@@ -68,7 +66,7 @@ class RtmTable:
 
         return rows
 
-    def to_pandas(self) -> pd.DataFrame:
+    def to_pandas(self):
         """Create a DataFrame only when the caller needs pandas."""
 
         import pandas as pd

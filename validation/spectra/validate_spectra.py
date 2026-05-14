@@ -65,8 +65,8 @@ BLOWUP_REGION_LIMITS = {
     "dR/d aerosol layer mid pressure": 2,
 }
 
-type FloatArray = NDArray[np.float64]
-type ResidualRegion = dict[str, float]
+FloatArray = NDArray[np.float64]
+ResidualRegion = dict[str, float]
 
 
 class ValidationSeries(TypedDict):

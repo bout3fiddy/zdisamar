@@ -1,13 +1,11 @@
 """Dataclass outputs for RTM spectra."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+
+import numpy as np
+from numpy.typing import NDArray
 
 from ..input.wavelength_band.o2a import O2AInput
-
-if TYPE_CHECKING:
-    import numpy as np
-    from numpy.typing import NDArray
 
 JACOBIAN_STATE_NAMES = (
     "surface_albedo",

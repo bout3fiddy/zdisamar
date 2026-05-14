@@ -1,6 +1,7 @@
 """Viewing-geometry and surface input objects."""
 
 from dataclasses import dataclass
+from typing import Self
 
 from .shared import to_float
 
@@ -23,7 +24,7 @@ class Geometry:
         return solar_zenith_cosine(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> Geometry:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             model=str(data["model"]),

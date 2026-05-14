@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass
+from typing import Self
 
 from .shared import object_dict_list, to_float, to_int
 
@@ -20,7 +21,7 @@ class VerticalInterval:
     bottom_pressure_variance_hpa2: float = 0.0
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> VerticalInterval:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             index_1based=to_int(data["index_1based"]),
@@ -57,7 +58,7 @@ class Atmosphere:
     intervals: list[VerticalInterval]
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> Atmosphere:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             layer_count=to_int(data["layer_count"]),

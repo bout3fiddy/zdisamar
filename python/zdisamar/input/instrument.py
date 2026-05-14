@@ -1,6 +1,7 @@
 """Instrument-response input objects."""
 
 from dataclasses import dataclass
+from typing import Self
 
 from .shared import int_dict, to_float, to_int
 
@@ -14,7 +15,7 @@ class SpectralGrid:
     sample_count: int
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> SpectralGrid:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             start_nm=to_float(data["start_nm"]),
@@ -47,7 +48,7 @@ class InstrumentResponse:
     solar_reference_asset_id: str
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> InstrumentResponse:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             instrument_name=str(data["instrument_name"]),

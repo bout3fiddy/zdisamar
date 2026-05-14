@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Self
 
 import numpy as np
 
@@ -34,7 +35,7 @@ class RetrievalControls:
     collect_timing: bool = False
 
     @classmethod
-    def from_disamar_retrieval_specs(cls) -> RetrievalControls:
+    def from_disamar_retrieval_specs(cls) -> Self:
         """Return controls from the current DISAMAR `retrieval_specs` fixture."""
 
         return cls(

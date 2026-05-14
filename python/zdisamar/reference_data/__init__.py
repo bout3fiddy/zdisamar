@@ -10,7 +10,7 @@ _RESOURCE_STACK = ExitStack()
 def root() -> Path:
     """Return the directory containing packaged reference-data assets."""
 
-    packaged = resources.files(__package__).joinpath("assets")
+    packaged = resources.files("zdisamar.reference_data").joinpath("assets")
 
     if packaged.is_dir():
         return Path(_RESOURCE_STACK.enter_context(resources.as_file(packaged)))
