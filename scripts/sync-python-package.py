@@ -39,6 +39,13 @@ def copy_tree(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination)
 
 
+def remove_stale_bindings(bindings_dir: Path) -> None:
+
+    for stale in [*bindings_dir.glob("libzdisamar_c.*"), bindings_dir / "zdisamar_c.dll"]:
+        if stale.exists():
+            stale.unlink()
+
+
 def main() -> int:
 
     args = parse_args()
@@ -51,6 +58,7 @@ def main() -> int:
 
     bindings_dir = package_root / "bindings"
     bindings_dir.mkdir(parents=True, exist_ok=True)
+    remove_stale_bindings(bindings_dir)
     shutil.copy2(library_source, bindings_dir / library_filename())
     copy_tree(repo_root / "data" / "reference_data", package_root / "reference_data" / "assets")
 
