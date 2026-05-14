@@ -40,6 +40,10 @@ name = "input_geometry"
 path = "tests/rust/input/geometry.rs"
 
 [[test]]
+name = "input_instrument"
+path = "tests/rust/input/instrument.rs"
+
+[[test]]
 name = "input_measurement"
 path = "tests/rust/input/measurement.rs"
 
