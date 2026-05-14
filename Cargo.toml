@@ -59,4 +59,8 @@ path = "tests/rust/input/reference_data.rs"
 name = "input_scene"
 path = "tests/rust/input/scene.rs"
 
+[[test]]
+name = "forward_model_radiative_transfer"
+path = "tests/rust/forward_model/radiative_transfer.rs"
+
 [dependencies]
