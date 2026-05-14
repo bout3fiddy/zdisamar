@@ -67,5 +67,9 @@ path = "tests/rust/input/surface.rs"
 name = "input_spectrum"
 path = "tests/rust/input/spectrum.rs"
 
+[[test]]
+name = "forward_model_spectral_math"
+path = "tests/rust/forward_model/spectral_math.rs"
+
 [dependencies]
 wyhash = "0.6.0"
