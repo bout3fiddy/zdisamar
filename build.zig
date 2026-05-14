@@ -350,6 +350,9 @@ pub fn build(b: *std.Build) void {
     const sync_python_package_cmd = b.addSystemCommand(&.{
         "uv",
         "run",
+        "--no-project",
+        "--python",
+        "3.14",
         "python",
         "scripts/sync-python-package.py",
         "--binding",

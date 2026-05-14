@@ -1,0 +1,10 @@
+zdisamar is an independent implementation of the O2 A radiative-transfer
+problem used in DISAMAR-family validation studies. The Fortran DISAMAR project
+is a scientific reference for validation; this repository does not include
+DISAMAR source code.
+
+The software source in this repository is licensed under the MIT License. The
+tracked reference-data assets under data/reference_data/ are small scientific
+datasets and derived subsets used for reproducible examples and validation.
+Their provenance is documented in data/README.md and in the bundle manifests
+stored next to the assets.
