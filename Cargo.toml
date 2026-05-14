@@ -55,4 +55,8 @@ path = "tests/rust/input/absorber.rs"
 name = "input_reference_data"
 path = "tests/rust/input/reference_data.rs"
 
+[[test]]
+name = "input_scene"
+path = "tests/rust/input/scene.rs"
+
 [dependencies]

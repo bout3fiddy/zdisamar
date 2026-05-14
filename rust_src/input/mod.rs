@@ -10,6 +10,7 @@ pub mod instrument;
 pub mod measurement;
 pub mod observation_model;
 pub mod reference_data;
+pub mod scene;
 pub mod spectrum;
 pub mod surface;
 
@@ -46,5 +47,6 @@ pub use reference_data::{
     SpectroscopyLine, SpectroscopyLineList, SpectroscopyRuntimeControls, SpectroscopyStrongLine,
     SpectroscopyStrongLineSet, weighted_mean_samples,
 };
+pub use scene::{DerivativeMode, Scene, WavelengthBounds};
 pub use spectrum::SpectralGrid;
 pub use surface::{Parameter, Surface, SurfaceKind};
