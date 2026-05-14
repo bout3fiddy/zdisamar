@@ -57,6 +57,11 @@ class NativeWheelHook(BuildHookInterface):
         if zig_target:
             command.append(f"-Dtarget={zig_target}")
 
+        runtime_optimize = os.environ.get("ZDISAMAR_ZIG_RUNTIME_OPTIMIZE")
+
+        if runtime_optimize:
+            command.append(f"-Druntime-optimize={runtime_optimize}")
+
         subprocess.run(command, cwd=self.root, check=True)
         library = synced_library_path(self.root)
         build_data["force_include"][str(library)] = f"zdisamar/bindings/{library.name}"

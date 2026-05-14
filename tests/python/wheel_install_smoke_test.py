@@ -52,6 +52,12 @@ def main() -> int:
 
             reference_spectrum = rtm.spectrum(reference_case)
             assert int(reference_spectrum.wavelength_nm.size) == 701
+            assert np.all(np.isfinite(reference_spectrum.reflectance))
+            assert int(np.count_nonzero(reference_spectrum.reflectance)) == 701
+            reflectance_min = float(np.min(reference_spectrum.reflectance))
+            reflectance_max = float(np.max(reference_spectrum.reflectance))
+            assert 0.005 < reflectance_min < 0.008
+            assert 0.22 < reflectance_max < 0.24
             spectrum_repr = repr(reference_spectrum)
             assert "Spectrum(" in spectrum_repr
             assert "samples=701" in spectrum_repr
