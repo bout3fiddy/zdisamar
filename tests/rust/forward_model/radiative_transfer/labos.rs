@@ -1,10 +1,12 @@
 use zdisamar::forward_model::{
     jacobian::{self, State},
+    optical_properties::shared::phase_functions,
     radiative_transfer::{
         LayerInput, PseudoSphericalGrid, PseudoSphericalSample,
         labos::{
-            Geometry, MAX_EXTRA, MAX_GAUSS, MAX_N2, MAX_NMUTOT, Mat, Vec as LabosVec, Vec2,
-            attenuation, matrix,
+            FourierPlmBasis, Geometry, MAX_EXTRA, MAX_GAUSS, MAX_N2, MAX_NMUTOT, Mat,
+            Vec as LabosVec, Vec2, attenuation, fill_zplus_zmin,
+            fill_zplus_zmin_from_basis_limited, fill_zplus_zmin_row_from_basis_limited, matrix,
         },
     },
 };
@@ -281,5 +283,111 @@ fn labos_geometry_precomputes_same_and_different_mu_denominators() {
     assert_close(
         geometry.dmu_min[cross_idx],
         0.25 / (geometry.u[1] - geometry.u[0]),
+    );
+}
+
+#[test]
+fn labos_fourier_plm_basis_starts_with_weighted_ordinates() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+
+    let zero_fourier = FourierPlmBasis::init(0, 2, &geometry);
+    for imu in 0..geometry.nmutot {
+        assert_close(zero_fourier.plus[0][imu], geometry.w[imu]);
+        assert_close(zero_fourier.minus[0][imu], geometry.w[imu]);
+    }
+
+    let first_fourier = FourierPlmBasis::init(1, 1, &geometry);
+    for imu in 0..geometry.nmutot {
+        let expected = (1.0 - geometry.u[imu] * geometry.u[imu]).max(0.0).sqrt() / 2.0_f64.sqrt()
+            * geometry.w[imu];
+        assert_close(first_fourier.plus[1][imu], expected);
+        assert_close(first_fourier.minus[1][imu], expected);
+    }
+}
+
+#[test]
+fn labos_phase_kernel_zero_fourier_is_weight_outer_product() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let coefficients = phase_functions::zero_phase_coefficients();
+    let basis = FourierPlmBasis::init(0, 0, &geometry);
+
+    let kernel = fill_zplus_zmin_from_basis_limited(0, &coefficients, 0, &geometry, &basis);
+    for i in 0..geometry.nmutot {
+        for j in 0..geometry.nmutot {
+            let expected = geometry.w[i] * geometry.w[j];
+            assert_close(kernel.zplus.get(i, j), expected);
+            assert_close(kernel.zmin.get(i, j), expected);
+        }
+    }
+}
+
+#[test]
+fn labos_phase_kernel_row_matches_full_kernel_row() {
+    let geometry = Geometry::init(3, 0.8, 0.6).unwrap();
+    let mut coefficients = phase_functions::zero_phase_coefficients();
+    coefficients[1] = 0.4;
+    coefficients[2] = 0.15;
+    let basis = FourierPlmBasis::init(0, 2, &geometry);
+    let row_index = 2;
+
+    let kernel = fill_zplus_zmin_from_basis_limited(0, &coefficients, 2, &geometry, &basis);
+    let row =
+        fill_zplus_zmin_row_from_basis_limited(0, &coefficients, 2, &geometry, &basis, row_index);
+
+    assert_eq!(row.n, geometry.nmutot);
+    for j in 0..geometry.nmutot {
+        assert_close(row.zplus[j], kernel.zplus.get(row_index, j));
+        assert_close(row.zmin[j], kernel.zmin.get(row_index, j));
+    }
+}
+
+#[test]
+fn labos_phase_kernel_can_extend_past_cached_basis() {
+    let geometry = Geometry::init(3, 0.8, 0.6).unwrap();
+    let mut coefficients = phase_functions::zero_phase_coefficients();
+    coefficients[1] = 0.2;
+    coefficients[2] = 0.1;
+
+    let partial_basis = FourierPlmBasis::init(0, 1, &geometry);
+    let partial_kernel =
+        fill_zplus_zmin_from_basis_limited(0, &coefficients, 2, &geometry, &partial_basis);
+    let full_kernel = fill_zplus_zmin(0, &coefficients, &geometry);
+
+    for i in 0..geometry.nmutot {
+        for j in 0..geometry.nmutot {
+            assert_close(partial_kernel.zplus.get(i, j), full_kernel.zplus.get(i, j));
+            assert_close(partial_kernel.zmin.get(i, j), full_kernel.zmin.get(i, j));
+        }
+    }
+}
+
+#[test]
+fn labos_phase_kernel_is_zero_when_fourier_order_exceeds_phase_terms() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let coefficients = phase_functions::zero_phase_coefficients();
+    let basis = FourierPlmBasis::init(3, 0, &geometry);
+
+    let kernel = fill_zplus_zmin_from_basis_limited(3, &coefficients, 0, &geometry, &basis);
+    let row = fill_zplus_zmin_row_from_basis_limited(3, &coefficients, 0, &geometry, &basis, 0);
+
+    assert!(
+        kernel.zplus.data[..geometry.nmutot * geometry.nmutot]
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert!(
+        kernel.zmin.data[..geometry.nmutot * geometry.nmutot]
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert!(
+        row.zplus[..geometry.nmutot]
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert!(
+        row.zmin[..geometry.nmutot]
+            .iter()
+            .all(|value| *value == 0.0)
     );
 }
