@@ -2,6 +2,7 @@
 """Install Zig on GitHub-hosted runners without a JavaScript action."""
 
 import hashlib
+import inspect
 import json
 import os
 import shutil
@@ -59,7 +60,12 @@ def unpack(archive: Path, destination: Path) -> Path:
     else:
         with tarfile.open(archive) as bundle:
             roots = {member.name.split("/", 1)[0] for member in bundle.getmembers()}
-            bundle.extractall(destination)
+            supports_filter = "filter" in inspect.signature(bundle.extractall).parameters
+
+            if supports_filter:
+                bundle.extractall(destination, filter="data")
+            else:
+                bundle.extractall(destination)
 
     if len(roots) != 1:
         raise SystemExit(f"expected one Zig archive root, found {sorted(roots)}")
