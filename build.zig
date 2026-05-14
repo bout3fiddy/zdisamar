@@ -348,9 +348,7 @@ pub fn build(b: *std.Build) void {
     fmt_check_step.dependOn(&fmt_check_cmd.step);
 
     const sync_python_package_cmd = b.addSystemCommand(&.{
-        "uv",
-        "run",
-        "python",
+        "python3",
         "scripts/sync-python-package.py",
         "--binding",
     });
