@@ -1,6 +1,9 @@
 use zdisamar::{
     common::errors,
-    input::instrument::{BuiltinLineShapeKind, Id, InstrumentLineShape, InstrumentLineShapeTable},
+    input::instrument::{
+        AdaptiveReferenceGrid, BuiltinLineShapeKind, Id, InstrumentLineShape,
+        InstrumentLineShapeTable, OperationalReferenceGrid, OperationalSolarSpectrum,
+    },
 };
 
 #[test]
@@ -85,4 +88,90 @@ fn line_shape_table_selects_nearest_nominal_and_normalizes_rows() {
     );
     assert_eq!(offsets, [-0.1, 0.0, 0.1]);
     assert_eq!(weights, [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0]);
+}
+
+#[test]
+fn operational_reference_grid_validates_monotonic_weighted_grid() {
+    let grid = OperationalReferenceGrid {
+        wavelengths_nm: vec![760.0, 760.2, 760.5],
+        weights: vec![1.0, 3.0, 2.0],
+    };
+    assert_eq!(grid.validate(), Ok(()));
+    assert!((grid.effective_spacing_nm() - (1.15 / 4.5)).abs() < 1.0e-14);
+
+    assert_eq!(
+        OperationalReferenceGrid {
+            wavelengths_nm: Vec::new(),
+            weights: vec![1.0],
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+}
+
+#[test]
+fn adaptive_reference_grid_requires_complete_division_controls() {
+    assert_eq!(AdaptiveReferenceGrid::default().validate(), Ok(()));
+    assert_eq!(
+        AdaptiveReferenceGrid {
+            points_per_fwhm: 4,
+            strong_line_min_divisions: 2,
+            strong_line_max_divisions: 8,
+        }
+        .validate(),
+        Ok(())
+    );
+    assert_eq!(
+        AdaptiveReferenceGrid {
+            points_per_fwhm: 4,
+            strong_line_min_divisions: 9,
+            strong_line_max_divisions: 8,
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+}
+
+#[test]
+fn solar_spectrum_validates_and_interpolates_linearly_when_unprepared() {
+    let solar = OperationalSolarSpectrum {
+        wavelengths_nm: vec![760.0, 761.0, 763.0],
+        irradiance: vec![10.0, 20.0, 60.0],
+        spline_second_derivatives: Vec::new(),
+    };
+    assert_eq!(solar.validate(), Ok(()));
+    assert_eq!(solar.interpolate_irradiance_linear(762.0), 40.0);
+    assert_eq!(solar.interpolate_irradiance(759.0), 10.0);
+    assert_eq!(solar.interpolate_irradiance(764.0), 60.0);
+    assert!(solar.covers_range(760.0, 763.0));
+    assert!(!solar.covers_range(759.9, 763.0));
+
+    assert_eq!(
+        OperationalSolarSpectrum {
+            wavelengths_nm: vec![760.0, 760.0],
+            irradiance: vec![1.0, 2.0],
+            spline_second_derivatives: Vec::new(),
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+}
+
+#[test]
+fn solar_spectrum_prepares_disamar_style_spline_and_corrects_measured_values() {
+    let mut solar = OperationalSolarSpectrum {
+        wavelengths_nm: vec![760.0, 761.0, 762.0, 763.0],
+        irradiance: vec![10.0, 20.0, 30.0, 40.0],
+        spline_second_derivatives: Vec::new(),
+    };
+    assert_eq!(solar.prepare_interpolation(), Ok(()));
+    assert_eq!(solar.spline_second_derivatives, vec![0.0; 4]);
+    assert_eq!(solar.interpolate_irradiance(761.5), 25.0);
+    let prepared_clone = solar.clone_prepared().unwrap();
+    assert_eq!(prepared_clone.spline_second_derivatives, vec![0.0; 4]);
+
+    let corrected = solar
+        .correct_measured_spectrum_onto(&[760.0, 761.0], &[2.0, 4.0], &[761.0, 762.0])
+        .unwrap();
+    assert_eq!(corrected, vec![4.0, 6.0]);
 }
