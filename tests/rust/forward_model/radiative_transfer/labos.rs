@@ -2,19 +2,23 @@ use zdisamar::forward_model::{
     jacobian::{self, State},
     optical_properties::shared::phase_functions,
     radiative_transfer::{
-        LayerInput, PseudoSphericalGrid, PseudoSphericalSample, RadiativeTransferControls,
-        ScatteringMode,
+        ForwardInput, LayerInput, PseudoSphericalGrid, PseudoSphericalSample,
+        RadiativeTransferControls, RadiativeTransferPerformanceThresholds, RtmQuadratureGrid,
+        ScatteringMode, SourceInterfaceInput,
         labos::{
             DynamicAttenArray, FourierPlmBasis, Geometry, LayerRt, MAX_EXTRA, MAX_GAUSS, MAX_N2,
             MAX_NMUTOT, MAX_PHASE_COEF, Mat, OrdersWorkspace, PhaseKernel, Vec as LabosVec, Vec2,
-            accumulate_order_contribution, attenuation, calc_rt_layers,
-            calc_rt_layers_into_with_basis, dot_gauss, dot_gauss_pair,
-            fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
-            fill_zplus_zmin, fill_zplus_zmin_from_basis_limited,
-            fill_zplus_zmin_row_from_basis_limited, matrix, max_outgoing_upward, orders_scat,
-            orders_scat_into_with_active_local_sum, orders_scat_tangent, refresh_active_layer_mask,
-            renormalize_zero_fourier_phase_kernel, transport_to_other_levels,
-            transport_to_other_levels_tangent, zero_fourier_integral, zero_ud_field, zero_ud_local,
+            accumulate_order_contribution, attenuation, calc_integrated_reflectance,
+            calc_integrated_reflectance_with_basis, calc_reflectance, calc_reflectance_tangent,
+            calc_rt_layers, calc_rt_layers_into_with_basis, dot_gauss, dot_gauss_pair,
+            fill_adjacent_layer_phase_max_indices, fill_layer_effective_scattering_suffixes,
+            fill_layer_phase_max_indices, fill_surface, fill_zplus_zmin,
+            fill_zplus_zmin_from_basis_limited, fill_zplus_zmin_row_from_basis_limited, matrix,
+            max_outgoing_upward, orders_scat, orders_scat_into_with_active_local_sum,
+            orders_scat_tangent, refresh_active_layer_mask, renormalize_zero_fourier_phase_kernel,
+            resolved_fourier_max, resolved_phase_coefficient_max, total_scattering_optical_depth,
+            transport_to_other_levels, transport_to_other_levels_tangent, zero_fourier_integral,
+            zero_ud_field, zero_ud_local,
         },
     },
 };
@@ -820,4 +824,149 @@ fn labos_orders_scat_tangent_tracks_initial_source_and_transport_derivatives() {
     );
     assert_close(result.ud[0].d.col[0].get(0), 0.6 * 1.0 + 4.0 * 0.2);
     assert_close(result.ud[0].e.get(0), 0.0);
+}
+
+#[test]
+fn labos_reflectance_reads_solar_column_at_requested_level() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let mut ud = vec![zero_ud_field(geometry.nmutot); 2];
+    ud[1].u.col[1].set(geometry.view_idx(), 1.23);
+
+    assert_close(calc_reflectance(&ud, 1, &geometry), 1.23);
+    assert_close(calc_reflectance_tangent(&ud, 1, &geometry), 1.23);
+}
+
+#[test]
+fn labos_reflectance_source_phase_indices_follow_adjacent_layers() {
+    let mut source_indices = [99usize; 3];
+    fill_adjacent_layer_phase_max_indices(&mut source_indices, &[1, 3]);
+    assert_eq!(source_indices, [1, 3, 3]);
+
+    let mut empty_source_indices = [99usize; 1];
+    fill_adjacent_layer_phase_max_indices(&mut empty_source_indices, &[]);
+    assert_eq!(empty_source_indices, [0]);
+}
+
+#[test]
+fn labos_reflectance_resolved_phase_and_fourier_limits_follow_inputs() {
+    let mut coefficients = phase_functions::zero_phase_coefficients();
+    coefficients[4] = 0.2;
+    let mut input = ForwardInput {
+        mu0: 0.8,
+        muv: 0.6,
+        layers: vec![LayerInput {
+            phase_coefficients: coefficients,
+            ..LayerInput::default()
+        }],
+        ..ForwardInput::default()
+    };
+    let controls = RadiativeTransferControls {
+        performance_thresholds: RadiativeTransferPerformanceThresholds {
+            fourier_order_cap: Some(2),
+            ..RadiativeTransferPerformanceThresholds::default()
+        },
+        ..RadiativeTransferControls::default()
+    };
+
+    assert_eq!(resolved_phase_coefficient_max(&input), 4);
+    assert_eq!(resolved_fourier_max(&input, controls), 2);
+
+    input.muv = 1.0;
+    assert_eq!(resolved_fourier_max(&input, controls), 0);
+}
+
+#[test]
+fn labos_reflectance_integrates_source_interface_and_direct_term() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let view_idx = geometry.view_idx();
+    let solar_idx = geometry.n_gauss + 1;
+    let mut ud = vec![zero_ud_field(geometry.nmutot); 1];
+    ud[0].e.set(view_idx, 2.0);
+    ud[0].e.set(solar_idx, 3.0);
+    ud[0].u.col[1].set(view_idx, 4.0);
+    let source_interface = SourceInterfaceInput {
+        source_weight: 2.0,
+        phase_coefficients_above: phase_functions::zero_phase_coefficients(),
+        ..SourceInterfaceInput::default()
+    };
+
+    let reflectance = calc_integrated_reflectance(
+        &[],
+        &[source_interface],
+        &RtmQuadratureGrid::default(),
+        &ud,
+        0,
+        0,
+        &geometry,
+    );
+
+    let pmin_direct = (0.25 / geometry.muv) / geometry.mu0;
+    let expected_source = 2.0 * 2.0 * pmin_direct * 3.0;
+    let expected_direct = 2.0 * 4.0;
+    assert_close(reflectance, expected_source + expected_direct);
+}
+
+#[test]
+fn labos_reflectance_can_reuse_cached_layer_phase_rows() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let view_idx = geometry.view_idx();
+    let solar_idx = geometry.n_gauss + 1;
+    let layers = vec![LayerInput {
+        scattering_optical_depth: 0.5,
+        phase_coefficients: phase_functions::zero_phase_coefficients(),
+        ..LayerInput::default()
+    }];
+    let mut ud = vec![zero_ud_field(geometry.nmutot); 1];
+    ud[0].e.set(view_idx, 2.0);
+    ud[0].e.set(solar_idx, 3.0);
+    ud[0].u.col[1].set(view_idx, 4.0);
+    let basis = FourierPlmBasis::init(0, 0, &geometry);
+    let mut cache = vec![
+        PhaseKernel {
+            zplus: Mat::zero(geometry.nmutot),
+            zmin: Mat::zero(geometry.nmutot),
+        };
+        2
+    ];
+    cache[1].zmin.set(view_idx, solar_idx, 2.0);
+    let valid = [false, true];
+
+    let reflectance = calc_integrated_reflectance_with_basis(
+        &layers,
+        &[],
+        &RtmQuadratureGrid::default(),
+        &ud,
+        0,
+        0,
+        &geometry,
+        &basis,
+        None,
+        Some(&cache),
+        Some(&valid),
+    );
+
+    let pmin_direct = (0.25 * 2.0 / geometry.muv) / geometry.mu0;
+    let expected_source = 0.5 * 2.0 * pmin_direct * 3.0;
+    let expected_direct = 2.0 * 4.0;
+    assert_close(reflectance, expected_source + expected_direct);
+}
+
+#[test]
+fn labos_reflectance_sums_only_positive_scattering_optical_depth() {
+    let layers = vec![
+        LayerInput {
+            scattering_optical_depth: 0.25,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            scattering_optical_depth: -0.5,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            scattering_optical_depth: 0.75,
+            ..LayerInput::default()
+        },
+    ];
+
+    assert_close(total_scattering_optical_depth(&layers), 1.0);
 }
