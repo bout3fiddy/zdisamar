@@ -5,6 +5,11 @@ use zdisamar::{
             postprocess::{
                 apply_channel_corrections, correction_reference_signal, materialize_channel_sigma,
             },
+            simulate::{
+                RunningSummary, assemble_reflectance, build_simulation_setup,
+                copy_jacobian_column_to_scratch, copy_scratch_to_jacobian_column,
+                read_jacobian_row, write_jacobian_row,
+            },
             spectral_eval::{
                 cached_irradiance_at_wavelength, integrate_irradiance_at_nominal,
                 preferred_forward_worker_count,
@@ -525,6 +530,61 @@ fn summary_storage_reuses_buffers_and_shapes_optional_outputs() {
 
     storage.spectral_cache().irradiance.insert(1, 2.0);
     assert_eq!(storage.spectral_cache().irradiance.len(), 0);
+}
+
+#[test]
+fn simulation_setup_summary_and_jacobian_helpers_match_grid_layout() {
+    let route = zdisamar::forward_model::radiative_transfer::prepare_route(
+        zdisamar::forward_model::radiative_transfer::DispatchRequest {
+            derivative_mode: DerivativeMode::SemiAnalytical,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 761.0,
+            sample_count: 2,
+        },
+        atmosphere: zdisamar::input::Atmosphere {
+            layer_count: 1,
+            ..Default::default()
+        },
+        ..Scene::default()
+    };
+    let mut storage = SummaryStorage::default();
+    let mut buffers = storage.buffers(
+        &scene,
+        route,
+        zdisamar::forward_model::implementations::exact(),
+    );
+    let setup = build_simulation_setup(
+        &scene,
+        zdisamar::forward_model::implementations::exact(),
+        &buffers,
+    )
+    .unwrap();
+    assert_eq!(setup.sample_count, 2);
+    assert_close(setup.safe_span, 1.0);
+
+    buffers.wavelengths.copy_from_slice(&[760.0, 761.0]);
+    buffers.radiance.copy_from_slice(&[2.0, 4.0]);
+    buffers.irradiance.copy_from_slice(&[10.0, 20.0]);
+    let mut summary = RunningSummary::default();
+    assemble_reflectance(&scene, 2, &mut buffers, &mut summary);
+    assert_close(buffers.reflectance[0], 2.0 * std::f64::consts::PI / 10.0);
+    assert_close(summary.radiance_sum, 6.0);
+
+    let jacobian_buffer = buffers.jacobian.as_deref_mut().unwrap();
+    write_jacobian_row(jacobian_buffer, 0, [1.0, 2.0, 3.0]);
+    write_jacobian_row(jacobian_buffer, 1, [4.0, 5.0, 6.0]);
+    assert_eq!(read_jacobian_row(jacobian_buffer, 1), [4.0, 5.0, 6.0]);
+    copy_jacobian_column_to_scratch(jacobian_buffer, 1, buffers.scratch);
+    assert_eq!(buffers.scratch, &[2.0, 5.0]);
+    buffers.scratch.copy_from_slice(&[7.0, 8.0]);
+    copy_scratch_to_jacobian_column(buffers.scratch, jacobian_buffer, 2);
+    assert_eq!(read_jacobian_row(jacobian_buffer, 0), [1.0, 2.0, 7.0]);
 }
 
 #[test]

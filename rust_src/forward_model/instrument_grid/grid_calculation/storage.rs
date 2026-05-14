@@ -156,15 +156,31 @@ impl SummaryStorage {
                 [..layer_count + 1],
             pseudo_spherical_level_altitudes: &mut self.pseudo_spherical_level_altitudes
                 [..layer_count + 1],
-            jacobian: wants_jacobian
-                .then_some(&mut self.jacobian[..sample_count * jacobian::STATE_COUNT]),
-            noise_sigma: wants_noise.then_some(&mut self.noise_sigma[..sample_count]),
-            radiance_noise_sigma: wants_noise
-                .then_some(&mut self.radiance_noise_sigma[..sample_count]),
-            irradiance_noise_sigma: wants_noise
-                .then_some(&mut self.irradiance_noise_sigma[..sample_count]),
-            reflectance_noise_sigma: wants_noise
-                .then_some(&mut self.reflectance_noise_sigma[..sample_count]),
+            jacobian: if wants_jacobian {
+                Some(&mut self.jacobian[..sample_count * jacobian::STATE_COUNT])
+            } else {
+                None
+            },
+            noise_sigma: if wants_noise {
+                Some(&mut self.noise_sigma[..sample_count])
+            } else {
+                None
+            },
+            radiance_noise_sigma: if wants_noise {
+                Some(&mut self.radiance_noise_sigma[..sample_count])
+            } else {
+                None
+            },
+            irradiance_noise_sigma: if wants_noise {
+                Some(&mut self.irradiance_noise_sigma[..sample_count])
+            } else {
+                None
+            },
+            reflectance_noise_sigma: if wants_noise {
+                Some(&mut self.reflectance_noise_sigma[..sample_count])
+            } else {
+                None
+            },
         }
     }
 }
