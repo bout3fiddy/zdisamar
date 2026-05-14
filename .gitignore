@@ -7,6 +7,7 @@
 .zig-cache-int/
 zig-cache/
 zig-out/
+target/
 out/
 __pycache__/
 .pytest_cache/
