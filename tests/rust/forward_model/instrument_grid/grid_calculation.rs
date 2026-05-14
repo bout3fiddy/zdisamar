@@ -2,6 +2,9 @@ use zdisamar::{
     forward_model::{
         instrument_grid::grid_calculation::{
             cache::SpectralEvaluationCache,
+            postprocess::{
+                apply_channel_corrections, correction_reference_signal, materialize_channel_sigma,
+            },
             spectral_forward::{
                 ForwardIntegratedSample, MIN_PARALLEL_FORWARD_MISS_COUNT, radiance_from_forward,
                 radiance_jacobian_from_forward,
@@ -17,8 +20,9 @@ use zdisamar::{
         radiative_transfer::{ExecutionMode, ForwardResult, TransportFamily},
     },
     input::{
-        Binding, DerivativeMode, Geometry, MeasurementPipeline, ObservationModel,
-        ObservationRegime, Scene, SpectralChannelControls, SpectralGrid, SpectralResponse,
+        Binding, DerivativeMode, Geometry, MeasurementPipeline, NoiseControls, NoiseModelKind,
+        ObservationModel, ObservationRegime, Scene, SimpleOffsets, SpectralChannel,
+        SpectralChannelControls, SpectralGrid, SpectralResponse,
     },
 };
 
@@ -209,6 +213,104 @@ fn wavelength_sampling_collects_unique_radiance_integration_misses() {
     assert_eq!(misses.len(), 4);
     assert_close(misses[0].wavelength_nm, 759.9);
     assert_close(misses[3].wavelength_nm, 760.2);
+}
+
+#[test]
+fn postprocess_materializes_or_zeros_channel_sigma() {
+    let scene = Scene {
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance: SpectralChannelControls {
+                    explicit: true,
+                    noise: NoiseControls {
+                        enabled: true,
+                        model: NoiseModelKind::ShotNoise,
+                        electrons_per_count: 4.0,
+                        ..NoiseControls::default()
+                    },
+                    ..SpectralChannelControls::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    let bindings = zdisamar::forward_model::implementations::exact();
+    let mut sigma = [0.0; 2];
+    materialize_channel_sigma(
+        bindings,
+        &scene,
+        SpectralChannel::Radiance,
+        &[760.0, 761.0],
+        &[16.0, 64.0],
+        &mut sigma,
+    )
+    .unwrap();
+    assert_close(sigma[0], 2.0);
+    assert_close(sigma[1], 4.0);
+
+    materialize_channel_sigma(
+        bindings,
+        &scene,
+        SpectralChannel::Irradiance,
+        &[760.0, 761.0],
+        &[16.0, 64.0],
+        &mut sigma,
+    )
+    .unwrap();
+    assert_eq!(sigma, [0.0, 0.0]);
+}
+
+#[test]
+fn postprocess_applies_channel_corrections_and_reference_selection() {
+    let scene = Scene {
+        observation_model: ObservationModel {
+            reference_radiance: vec![8.0, 10.0],
+            measurement_pipeline: MeasurementPipeline {
+                radiance: SpectralChannelControls {
+                    explicit: true,
+                    simple_offsets: SimpleOffsets {
+                        multiplicative_percent: 10.0,
+                        additive_percent_of_first: 5.0,
+                    },
+                    use_polarization_scrambler: false,
+                    noise: NoiseControls {
+                        reference_signal: vec![1.0, 2.0],
+                        ..NoiseControls::default()
+                    },
+                    ..SpectralChannelControls::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    assert_eq!(
+        correction_reference_signal(&scene, SpectralChannel::Radiance, 2).unwrap(),
+        &[1.0, 2.0]
+    );
+
+    let mut signal = [10.0, 20.0];
+    let mut scratch = [0.0; 2];
+    apply_channel_corrections(
+        &scene,
+        SpectralChannel::Radiance,
+        calibration::Calibration {
+            gain: 2.0,
+            offset: 1.0,
+            ..calibration::Calibration::default()
+        },
+        0.02,
+        &[760.0, 761.0],
+        &mut signal,
+        &mut scratch,
+    )
+    .unwrap();
+
+    assert!(signal[0] > 23.0);
+    assert!(signal[1] > signal[0]);
 }
 
 #[test]
