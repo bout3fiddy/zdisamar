@@ -32,8 +32,10 @@ def main() -> int:
             from zdisamar.wavelength_bands import o2a
 
             package_file = Path(zdisamar.__file__).resolve()
+
             if args.forbid_path is not None:
                 forbidden = args.forbid_path.resolve()
+
                 if package_file.is_relative_to(forbidden):
                     raise AssertionError(f"zdisamar imported from source tree: {package_file}")
 
