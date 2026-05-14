@@ -1,3 +1,4 @@
+pub mod implementations;
 pub mod instrument_grid;
 pub mod jacobian;
 pub mod method;
