@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"${repo_root}/scripts/build-macos-wheel.sh" "${wheel_dir}"
+"${repo_root}/scripts/build-wheel.sh" "${wheel_dir}"
 wheel_path="$(find "${wheel_dir}" -maxdepth 1 -name 'zdisamar-*.whl' -print -quit)"
 
 if [[ -z "${wheel_path}" ]]; then
