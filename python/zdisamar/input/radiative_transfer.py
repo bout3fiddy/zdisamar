@@ -84,6 +84,7 @@ Threshold guide:
 """
 
 from dataclasses import dataclass, replace
+from typing import Self
 
 from .shared import object_dict, to_bool, to_float, to_int
 
@@ -103,7 +104,7 @@ class RadiativeTransferPerformanceThresholds:
     phase_function_truncation_threshold: float = 1.0e-8
 
     @classmethod
-    def o2a_default(cls) -> RadiativeTransferPerformanceThresholds:
+    def o2a_default(cls) -> Self:
         """Use the reference-grade O2 A thresholds unless fast mode is requested."""
 
         return cls(
@@ -119,7 +120,7 @@ class RadiativeTransferPerformanceThresholds:
         )
 
     @classmethod
-    def fast(cls) -> RadiativeTransferPerformanceThresholds:
+    def fast(cls) -> Self:
         """Return the validated O2 A speed/accuracy threshold bundle."""
 
         thresholds = cls.o2a_default()
@@ -129,7 +130,7 @@ class RadiativeTransferPerformanceThresholds:
 
         return thresholds
 
-    def with_fast_mode(self) -> RadiativeTransferPerformanceThresholds:
+    def with_fast_mode(self) -> Self:
         """Return a copy with the validated fast-mode overrides applied.
 
         This preserves case-specific threshold choices, such as a validation
@@ -147,7 +148,7 @@ class RadiativeTransferPerformanceThresholds:
         return thresholds
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> RadiativeTransferPerformanceThresholds:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             num_orders_max=to_int(data["num_orders_max"]),
@@ -194,7 +195,7 @@ class RadiativeTransferControls:
     stokes_dimension: int
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> RadiativeTransferControls:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             scattering=str(data["scattering"]),

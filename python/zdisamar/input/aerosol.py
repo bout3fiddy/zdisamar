@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass
+from typing import Self
 
 from .shared import object_dict, to_float, to_int
 
@@ -18,7 +19,7 @@ class AerosolPlacement:
     bottom_altitude_km: float = math.nan
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> AerosolPlacement:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             semantics=str(data["semantics"]),
@@ -55,7 +56,7 @@ class Aerosol:
     placement: AerosolPlacement
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> Aerosol:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             optical_depth_550_nm=to_float(data["optical_depth"]),

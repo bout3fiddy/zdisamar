@@ -3,6 +3,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
 
 @dataclass
@@ -14,7 +15,7 @@ class ReferenceAsset:
     format: str
 
     @classmethod
-    def from_dict(cls, data: dict) -> ReferenceAsset:
+    def from_dict(cls, data: dict) -> Self:
 
         return cls(
             id=str(data["id"]),
@@ -26,7 +27,7 @@ class ReferenceAsset:
 
         return {"id": self.id, "path": self.path, "format": self.format}
 
-    def with_resolved_path(self, resolver) -> ReferenceAsset:
+    def with_resolved_path(self, resolver) -> Self:
         """Resolve relative data paths only when preparing a calculation."""
 
         path = Path(self.path)
@@ -34,7 +35,7 @@ class ReferenceAsset:
         if path.is_absolute():
             return deepcopy(self)
 
-        return ReferenceAsset(id=self.id, path=str(resolver(path)), format=self.format)
+        return type(self)(id=self.id, path=str(resolver(path)), format=self.format)
 
 
 @dataclass
@@ -47,7 +48,7 @@ class ReferenceAssets:
     airmass_factor_lut: ReferenceAsset
 
     @classmethod
-    def from_dict(cls, data: dict) -> ReferenceAssets:
+    def from_dict(cls, data: dict) -> Self:
 
         return cls(
             atmosphere_profile=ReferenceAsset.from_dict(data["atmosphere_profile"]),

@@ -1,6 +1,7 @@
 """O2 spectroscopy input objects."""
 
 from dataclasses import dataclass
+from typing import Self
 
 from .assets import ReferenceAsset
 from .shared import int_list, object_dict, optional_float, to_bool
@@ -24,7 +25,7 @@ class O2LineByLine:
     cutoff_sim_cm1: float | None
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> O2LineByLine:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         return cls(
             line_list_asset=ReferenceAsset.from_dict(object_dict(data["line_list_asset"])),
@@ -57,7 +58,7 @@ class OxygenCollisionInducedAbsorption:
     cross_section_asset: ReferenceAsset | None
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> OxygenCollisionInducedAbsorption:
+    def from_dict(cls, data: dict[str, object]) -> Self:
 
         cross_section_asset = data.get("cia_asset")
 

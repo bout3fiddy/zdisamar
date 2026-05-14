@@ -2,6 +2,7 @@
 
 import copy
 import ctypes
+from typing import Self
 
 from .. import reference_data
 from ..input.wavelength_band.o2a import O2AInput
@@ -382,7 +383,7 @@ class RtmHandle:
         message = self._lib.zds_last_error(self._ctx)
         raise RuntimeError((message or b"zdisamar error").decode("utf-8", errors="replace"))
 
-    def __enter__(self) -> RtmHandle:
+    def __enter__(self) -> Self:
 
         return self
 

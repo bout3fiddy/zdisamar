@@ -26,6 +26,7 @@ def main() -> int:
         try:
             os.chdir(tmpdir)
 
+            import numpy as np
             import zdisamar
             from zdisamar import reference_data, rtm
             from zdisamar.bindings.loader import library_filename, load_library
@@ -44,8 +45,11 @@ def main() -> int:
             assert reference_data.path("cross_sections/o2o2_bira_o2a.dat").is_file()
 
             case = o2a.reference_case().with_fast_mode()
-            spectrum = rtm.spectrum(case)
-            assert int(spectrum.wavelength_nm.size) == int(case.spectral_grid.sample_count)
+            assert int(case.spectral_grid.sample_count) > 0
+            wavelengths = np.array([760.76], dtype=np.float64)
+            budget = rtm.atmospheric_budget(case, wavelengths)
+            assert budget.row_count > 0
+            assert int(budget.column("wavelength_nm").size) == budget.row_count
         finally:
             os.chdir(old_cwd)
 

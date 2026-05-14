@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
 from ..aerosol import Aerosol
 from ..assets import ReferenceAssets
@@ -52,7 +53,7 @@ class O2AInput:
     }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> O2AInput:
+    def from_dict(cls, data: dict[str, object]) -> Self:
         """Turn the validation-file shape into typed scene parts."""
 
         return cls(
@@ -81,7 +82,7 @@ class O2AInput:
         )
 
     @classmethod
-    def from_json(cls, raw: str | bytes) -> O2AInput:
+    def from_json(cls, raw: str | bytes) -> Self:
         """Read an O2 A scene emitted by the zdisamar model."""
 
         return cls.from_dict(json.loads(raw))
@@ -118,7 +119,7 @@ class O2AInput:
             "utf-8"
         )
 
-    def with_fast_mode(self) -> O2AInput:
+    def with_fast_mode(self) -> Self:
         """Return a copy with the validated O2 A fast-mode preset applied.
 
         The preset combines radiative-transfer performance thresholds with a
@@ -137,14 +138,14 @@ class O2AInput:
 
         return fast
 
-    def with_resolved_asset_paths(self, base: str | Path) -> O2AInput:
+    def with_resolved_asset_paths(self, base: str | Path) -> Self:
         """Resolve relative reference-data files from one directory."""
 
         root = Path(base)
 
         return self.with_resolved_asset_resolver(lambda path: (root / path).resolve())
 
-    def with_resolved_asset_resolver(self, resolver) -> O2AInput:
+    def with_resolved_asset_resolver(self, resolver) -> Self:
         """Return a copy with every reference-data file path resolved."""
 
         resolved = deepcopy(self)

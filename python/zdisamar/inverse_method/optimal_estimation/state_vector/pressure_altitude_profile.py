@@ -4,6 +4,7 @@ import csv
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Self
 
 import numpy as np
 
@@ -99,7 +100,7 @@ class PressureAltitudeProfile:
         )
 
     @classmethod
-    def from_csv(cls, path: Path) -> PressureAltitudeProfile:
+    def from_csv(cls, path: Path) -> Self:
         """Read a pressure-altitude table into the validated profile object."""
 
         altitudes: list[float] = []

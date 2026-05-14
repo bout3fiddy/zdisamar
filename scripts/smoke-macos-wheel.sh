@@ -18,9 +18,15 @@ if [[ -z "${wheel_path}" ]]; then
     exit 1
 fi
 
-uv venv --python 3.14 "${venv_dir}/venv"
-uv pip install --python "${venv_dir}/venv/bin/python" "${wheel_path}"
+read -r -a python_versions <<< "${ZDISAMAR_SMOKE_PYTHONS:-3.11 3.12 3.13 3.14}"
 
-cd /tmp
-"${venv_dir}/venv/bin/python" "${repo_root}/tests/python/wheel_install_smoke_test.py" \
-    --forbid-path "${repo_root}"
+for python_version in "${python_versions[@]}"; do
+    python_path="${venv_dir}/venv-${python_version}/bin/python"
+
+    uv venv --python "${python_version}" "${venv_dir}/venv-${python_version}"
+    uv pip install --python "${python_path}" "${wheel_path}"
+
+    cd /tmp
+    "${python_path}" "${repo_root}/tests/python/wheel_install_smoke_test.py" \
+        --forbid-path "${repo_root}"
+done
