@@ -5,12 +5,15 @@ use zdisamar::forward_model::{
         LayerInput, PseudoSphericalGrid, PseudoSphericalSample, RadiativeTransferControls,
         ScatteringMode,
         labos::{
-            FourierPlmBasis, Geometry, LayerRt, MAX_EXTRA, MAX_GAUSS, MAX_N2, MAX_NMUTOT,
-            MAX_PHASE_COEF, Mat, PhaseKernel, Vec as LabosVec, Vec2, attenuation, calc_rt_layers,
-            calc_rt_layers_into_with_basis, fill_layer_effective_scattering_suffixes,
-            fill_layer_phase_max_indices, fill_surface, fill_zplus_zmin,
-            fill_zplus_zmin_from_basis_limited, fill_zplus_zmin_row_from_basis_limited, matrix,
-            renormalize_zero_fourier_phase_kernel, zero_fourier_integral,
+            DynamicAttenArray, FourierPlmBasis, Geometry, LayerRt, MAX_EXTRA, MAX_GAUSS, MAX_N2,
+            MAX_NMUTOT, MAX_PHASE_COEF, Mat, PhaseKernel, Vec as LabosVec, Vec2,
+            accumulate_order_contribution, attenuation, calc_rt_layers,
+            calc_rt_layers_into_with_basis, dot_gauss, dot_gauss_pair,
+            fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
+            fill_zplus_zmin, fill_zplus_zmin_from_basis_limited,
+            fill_zplus_zmin_row_from_basis_limited, matrix, max_outgoing_upward,
+            refresh_active_layer_mask, renormalize_zero_fourier_phase_kernel,
+            transport_to_other_levels, zero_fourier_integral, zero_ud_field, zero_ud_local,
         },
     },
 };
@@ -558,4 +561,90 @@ fn labos_layer_assembly_populates_optional_caches_and_activity_mask() {
     );
     assert!(rt[2].r.get(0, 0) > 0.0);
     assert_close(cache[2].zplus.get(0, 0), geometry.w[0] * geometry.w[0]);
+}
+
+#[test]
+fn labos_order_dot_helpers_use_only_gauss_columns() {
+    let mut mat = Mat::zero(4);
+    for i in 0..4 {
+        for j in 0..4 {
+            mat.set(i, j, 10.0 * i as f64 + j as f64 + 1.0);
+        }
+    }
+    let mut col0 = LabosVec::zero(4);
+    let mut col1 = LabosVec::zero(4);
+    col0.set(0, 2.0);
+    col0.set(1, 3.0);
+    col0.set(2, 100.0);
+    col1.set(0, 5.0);
+    col1.set(1, 7.0);
+    col1.set(2, 100.0);
+
+    assert_close(
+        matrix::smul(4, 2, 0.0, &Mat::identity(4), &mat).get(1, 3),
+        14.0,
+    );
+    assert_close(dot_gauss(&mat, 1, &col0, 2), 11.0 * 2.0 + 12.0 * 3.0);
+    let pair = dot_gauss_pair(&mat, 1, &col0, &col1, 2);
+    assert_close(pair.col0, 11.0 * 2.0 + 12.0 * 3.0);
+    assert_close(pair.col1, 11.0 * 5.0 + 12.0 * 7.0);
+}
+
+#[test]
+fn labos_order_transport_moves_local_sources_between_levels() {
+    let nmutot = 3;
+    let mut atten = DynamicAttenArray::new(3, 3);
+    for imu in 0..nmutot {
+        atten.set(imu, 0, 1, 0.5);
+        atten.set(imu, 1, 2, 0.25);
+        atten.set(imu, 2, 1, 0.4);
+        atten.set(imu, 1, 0, 0.3);
+    }
+
+    let mut local = vec![zero_ud_local(nmutot); 3];
+    local[0].u.col[0].set(0, 1.0);
+    local[1].u.col[0].set(0, 2.0);
+    local[2].u.col[0].set(0, 3.0);
+    local[1].d.col[0].set(0, 4.0);
+    local[0].d.col[0].set(0, 5.0);
+
+    let mut transported = vec![zero_ud_field(nmutot); 3];
+    transport_to_other_levels(0, 2, nmutot, &atten, &local, &mut transported);
+
+    assert_close(transported[1].u.col[0].get(0), 2.0 + 0.5 * 1.0);
+    assert_close(transported[2].u.col[0].get(0), 3.0 + 0.25 * (2.0 + 0.5));
+    assert_close(transported[1].d.col[0].get(0), 4.0);
+    assert_close(transported[0].d.col[0].get(0), 5.0 + 0.3 * 4.0);
+}
+
+#[test]
+fn labos_order_activity_and_accumulation_helpers_match_layer_signal_rules() {
+    let nmutot = 3;
+    let zero = LayerRt {
+        r: Mat::zero(nmutot),
+        t: Mat::zero(nmutot),
+    };
+    let mut nonzero = zero;
+    nonzero.t.set(1, 1, 0.2);
+    let mut active = [true, false];
+
+    refresh_active_layer_mask(&[zero, nonzero], &mut active, nmutot);
+    assert_eq!(active, [false, true]);
+
+    let mut ud = vec![zero_ud_field(nmutot); 2];
+    let mut sum_local = vec![zero_ud_local(nmutot); 2];
+    let mut orde = vec![zero_ud_field(nmutot); 2];
+    let mut local = vec![zero_ud_local(nmutot); 2];
+    orde[1].u.col[0].set(1, 1.5);
+    orde[1].d.col[1].set(1, 2.5);
+    local[1].u.col[0].set(1, 0.5);
+    local[1].d.col[1].set(1, 0.75);
+
+    accumulate_order_contribution(true, &mut ud, &mut sum_local, &orde, &local, 0, 1, nmutot);
+
+    assert_close(ud[1].u.col[0].get(1), 1.5);
+    assert_close(ud[1].d.col[1].get(1), 2.5);
+    assert_close(sum_local[1].u.col[0].get(1), 0.5);
+    assert_close(sum_local[1].d.col[1].get(1), 0.75);
+    assert_close(max_outgoing_upward(&ud, 1, 1, nmutot), 1.5);
 }
