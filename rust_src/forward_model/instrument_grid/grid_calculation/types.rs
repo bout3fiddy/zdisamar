@@ -1,7 +1,15 @@
-use crate::forward_model::jacobian::Vector;
+use crate::forward_model::{implementations, jacobian::Vector};
 
 pub const REFLECTANCE_EXPORT_NAME: &str = "reflectance";
 pub const FITTED_REFLECTANCE_EXPORT_NAME: &str = "fitted_reflectance";
+
+#[derive(Debug, Clone, Copy)]
+pub struct Implementations {
+    pub transport: implementations::transport::Implementation,
+    pub surface: implementations::surface::Implementation,
+    pub instrument: implementations::instrument::Implementation,
+    pub noise: implementations::noise::Implementation,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InstrumentGridSummary {

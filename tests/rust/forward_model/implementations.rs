@@ -7,8 +7,9 @@ use zdisamar::{
         },
     },
     input::{
-        BuiltinLineShapeKind, InstrumentId, MeasurementPipeline, NoiseControls, NoiseModelKind,
-        ObservationModel, OperationalReferenceGrid, Scene, SlitIndex, SpectralChannel,
+        BuiltinLineShapeKind, InstrumentId, InstrumentLineShape, IntegrationMode,
+        MeasurementPipeline, NoiseControls, NoiseModelKind, ObservationModel,
+        OperationalReferenceGrid, SamplingMode, Scene, SlitIndex, SpectralChannel,
         SpectralChannelControls, SpectralGrid, SpectralResponse, Surface, SurfaceKind,
     },
 };
@@ -130,6 +131,102 @@ fn instrument_calibration_and_response_helpers_match_builtin_rules() {
 }
 
 #[test]
+fn instrument_provider_builds_builtin_integration_kernels() {
+    let provider = instrument::resolve("builtin.generic_response").unwrap();
+    assert_eq!(provider.id, "builtin.generic_response");
+    assert!(instrument::resolve("unknown.instrument").is_none());
+
+    let default_scene = Scene::default();
+    assert!(!(provider.uses_integrated_sampling)(
+        &default_scene,
+        SpectralChannel::Radiance
+    ));
+
+    let operational_scene = Scene {
+        observation_model: ObservationModel {
+            sampling: SamplingMode::Operational,
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    assert!((provider.uses_integrated_sampling)(
+        &operational_scene,
+        SpectralChannel::Radiance
+    ));
+
+    let explicit_grid_scene = Scene {
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance: SpectralChannelControls {
+                    explicit: true,
+                    response: SpectralResponse {
+                        fwhm_nm: 0.4,
+                        integration_mode: IntegrationMode::ExplicitHrGrid,
+                        high_resolution_step_nm: 0.1,
+                        high_resolution_half_span_nm: 0.1,
+                        ..SpectralResponse::default()
+                    },
+                    ..SpectralChannelControls::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    let mut kernel = instrument::IntegrationKernel::default();
+    (provider.integration_for_wavelength)(
+        &explicit_grid_scene,
+        SpectralChannel::Radiance,
+        760.0,
+        &mut kernel,
+    );
+    assert!(kernel.enabled);
+    assert_eq!(kernel.sample_count, 3);
+    assert_close(kernel.offsets_nm[0], -0.1);
+    assert_close(kernel.offsets_nm[2], 0.1);
+    assert_close(kernel.weights[..kernel.sample_count].iter().sum(), 1.0);
+
+    let line_shape_scene = Scene {
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance: SpectralChannelControls {
+                    explicit: true,
+                    response: SpectralResponse {
+                        instrument_line_shape: InstrumentLineShape {
+                            sample_count: 2,
+                            offsets_nm: vec![-0.2, 0.2],
+                            weights: vec![2.0, 1.0],
+                        },
+                        ..SpectralResponse::default()
+                    },
+                    ..SpectralChannelControls::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    (provider.integration_for_wavelength)(
+        &line_shape_scene,
+        SpectralChannel::Radiance,
+        760.0,
+        &mut kernel,
+    );
+    assert!(kernel.enabled);
+    assert_eq!(kernel.sample_count, 2);
+    assert_close(kernel.weights[0], 2.0 / 3.0);
+    assert_close(kernel.weights[1], 1.0 / 3.0);
+
+    let default_slit = (provider.slit_kernel_for_scene)(&default_scene, SpectralChannel::Radiance);
+    assert_eq!(default_slit, [1.0, 4.0, 6.0, 4.0, 1.0]);
+    let normalized_slit =
+        (provider.slit_kernel_for_scene)(&explicit_grid_scene, SpectralChannel::Radiance);
+    assert_close(normalized_slit.iter().sum(), 1.0);
+}
+
+#[test]
 fn surface_provider_keeps_lambertian_directional_factor_isotropic() {
     let provider = surface::resolve("builtin.lambertian_surface").unwrap();
     assert_eq!(provider.id, "builtin.lambertian_surface");
@@ -221,6 +318,20 @@ fn transport_provider_prepares_labos_route_and_metadata() {
         ..DispatchRequest::default()
     };
     assert!((provider.prepare_route)(unsupported).is_err());
+}
+
+#[test]
+fn exact_bindings_collect_builtin_providers() {
+    let bindings = zdisamar::forward_model::implementations::exact();
+
+    assert_eq!(bindings.transport.id, "builtin.dispatcher");
+    assert_eq!(bindings.surface.id, "builtin.lambertian_surface");
+    assert_eq!(bindings.instrument.id, "builtin.generic_response");
+    assert_eq!(bindings.noise.id, "builtin.scene_noise");
+
+    let route = (bindings.transport.prepare_route)(DispatchRequest::default()).unwrap();
+    let forward = (bindings.transport.execute_prepared)(route, &ForwardInput::default()).unwrap();
+    assert_eq!(forward.family, TransportFamily::Labos);
 }
 
 #[test]
