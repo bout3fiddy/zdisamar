@@ -75,4 +75,8 @@ path = "tests/rust/forward_model/implementations.rs"
 name = "forward_model_instrument_grid"
 path = "tests/rust/forward_model/instrument_grid/grid_calculation.rs"
 
+[[test]]
+name = "output_json"
+path = "tests/rust/output/json.rs"
+
 [dependencies]
