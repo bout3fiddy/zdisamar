@@ -12,9 +12,9 @@ use zdisamar::forward_model::{
             fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
             fill_zplus_zmin, fill_zplus_zmin_from_basis_limited,
             fill_zplus_zmin_row_from_basis_limited, matrix, max_outgoing_upward, orders_scat,
-            orders_scat_into_with_active_local_sum, refresh_active_layer_mask,
+            orders_scat_into_with_active_local_sum, orders_scat_tangent, refresh_active_layer_mask,
             renormalize_zero_fourier_phase_kernel, transport_to_other_levels,
-            zero_fourier_integral, zero_ud_field, zero_ud_local,
+            transport_to_other_levels_tangent, zero_fourier_integral, zero_ud_field, zero_ud_local,
         },
     },
 };
@@ -619,6 +619,47 @@ fn labos_order_transport_moves_local_sources_between_levels() {
 }
 
 #[test]
+fn labos_order_tangent_transport_applies_product_rule_between_levels() {
+    let nmutot = 3;
+    let mut atten = DynamicAttenArray::new(nmutot, 3);
+    let mut atten_tangent = DynamicAttenArray {
+        data: vec![0.0; nmutot * 3 * 3],
+        nmutot,
+        nlevel: 3,
+    };
+    atten.set(0, 0, 1, 0.5);
+    atten_tangent.set(0, 0, 1, 0.05);
+    atten.set(0, 1, 0, 0.3);
+    atten_tangent.set(0, 1, 0, 0.07);
+
+    let mut base_orde = vec![zero_ud_field(nmutot); 3];
+    base_orde[0].u.col[0].set(0, 2.0);
+    base_orde[1].d.col[0].set(0, 3.0);
+    let mut tangent_local = vec![zero_ud_local(nmutot); 3];
+    tangent_local[0].u.col[0].set(0, 0.25);
+    tangent_local[1].u.col[0].set(0, 4.0);
+    tangent_local[0].d.col[0].set(0, 5.0);
+    let mut tangent_orde = vec![zero_ud_field(nmutot); 3];
+
+    transport_to_other_levels_tangent(
+        0,
+        1,
+        nmutot,
+        &atten,
+        &atten_tangent,
+        &base_orde,
+        &tangent_local,
+        &mut tangent_orde,
+    );
+
+    assert_close(
+        tangent_orde[1].u.col[0].get(0),
+        4.0 + 0.05 * 2.0 + 0.5 * 0.25,
+    );
+    assert_close(tangent_orde[0].d.col[0].get(0), 5.0 + 0.07 * 3.0);
+}
+
+#[test]
 fn labos_order_activity_and_accumulation_helpers_match_layer_signal_rules() {
     let nmutot = 3;
     let zero = LayerRt {
@@ -719,4 +760,64 @@ fn labos_orders_scat_uses_initial_surface_and_layer_sources() {
     assert_close(result.ud_sum_local[0].d.col[0].get(0), 4.0);
     assert_close(result.ud[1].u.col[0].get(0), 3.0 + 0.5 * (2.0 * 0.25));
     assert_close(result.ud[0].d.col[0].get(0), 4.0);
+}
+
+#[test]
+fn labos_orders_scat_tangent_tracks_initial_source_and_transport_derivatives() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let mut atten = DynamicAttenArray::new(geometry.nmutot, 2);
+    let mut atten_tangent = DynamicAttenArray {
+        data: vec![0.0; geometry.nmutot * 2 * 2],
+        nmutot: geometry.nmutot,
+        nlevel: 2,
+    };
+    for imu in 0..geometry.nmutot {
+        atten.set(imu, 0, 1, 0.5);
+        atten.set(imu, 1, 0, 0.25);
+    }
+    atten_tangent.set(0, 0, 1, 0.05);
+    atten_tangent.set(geometry.n_gauss, 1, 0, 0.1);
+    atten_tangent.set(geometry.n_gauss, 1, 1, 0.2);
+
+    let mut rt = vec![
+        LayerRt {
+            r: Mat::zero(geometry.nmutot),
+            t: Mat::zero(geometry.nmutot),
+        };
+        2
+    ];
+    let mut rt_tangent = rt.clone();
+    let view_col = geometry.n_gauss;
+    rt[0].r.set(0, view_col, 2.0);
+    rt[1].r.set(0, view_col, 3.0);
+    rt[1].t.set(0, view_col, 4.0);
+    rt_tangent[0].r.set(0, view_col, 0.5);
+    rt_tangent[1].r.set(0, view_col, 0.7);
+    rt_tangent[1].t.set(0, view_col, 0.6);
+
+    let controls = RadiativeTransferControls {
+        scattering: ScatteringMode::Single,
+        ..RadiativeTransferControls::default()
+    };
+    let result = orders_scat_tangent(
+        0,
+        1,
+        &geometry,
+        &atten,
+        &atten_tangent,
+        &rt,
+        &rt_tangent,
+        controls,
+        4,
+    );
+
+    let surface_du = 0.5 * 0.25 + 2.0 * 0.1;
+    let layer_du = 0.7 * 1.0 + 3.0 * 0.2;
+    assert_close(result.ud[0].u.col[0].get(0), surface_du);
+    assert_close(
+        result.ud[1].u.col[0].get(0),
+        layer_du + 0.05 * (2.0 * 0.25) + 0.5 * surface_du,
+    );
+    assert_close(result.ud[0].d.col[0].get(0), 0.6 * 1.0 + 4.0 * 0.2);
+    assert_close(result.ud[0].e.get(0), 0.0);
 }

@@ -132,6 +132,56 @@ pub fn transport_to_other_levels<A: AttenuationAccess>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn transport_to_other_levels_tangent<A: AttenuationAccess, B: AttenuationAccess>(
+    start_level: usize,
+    end_level: usize,
+    nmutot: usize,
+    atten: &A,
+    atten_tangent: &B,
+    ud_orde: &[UdField],
+    ud_local_tangent: &[UdLocal],
+    ud_orde_tangent: &mut [UdField],
+) {
+    ud_orde_tangent[start_level].u = ud_local_tangent[start_level].u;
+    for ilevel in start_level + 1..=end_level {
+        let local_du0 = ud_local_tangent[ilevel].u.col[0].data;
+        let local_du1 = ud_local_tangent[ilevel].u.col[1].data;
+        let prev_u0 = ud_orde[ilevel - 1].u.col[0].data;
+        let prev_u1 = ud_orde[ilevel - 1].u.col[1].data;
+        let prev_du0 = ud_orde_tangent[ilevel - 1].u.col[0].data;
+        let prev_du1 = ud_orde_tangent[ilevel - 1].u.col[1].data;
+        for imu in 0..nmutot {
+            let att = atten.get(imu, ilevel - 1, ilevel);
+            let datt = atten_tangent.get(imu, ilevel - 1, ilevel);
+            ud_orde_tangent[ilevel].u.col[0].data[imu] =
+                local_du0[imu] + datt * prev_u0[imu] + att * prev_du0[imu];
+            ud_orde_tangent[ilevel].u.col[1].data[imu] =
+                local_du1[imu] + datt * prev_u1[imu] + att * prev_du1[imu];
+        }
+    }
+
+    ud_orde_tangent[end_level].d = Vec2::zero(nmutot);
+    let mut ilevel = end_level;
+    while ilevel > start_level {
+        ilevel -= 1;
+        let local_dd0 = ud_local_tangent[ilevel].d.col[0].data;
+        let local_dd1 = ud_local_tangent[ilevel].d.col[1].data;
+        let prev_d0 = ud_orde[ilevel + 1].d.col[0].data;
+        let prev_d1 = ud_orde[ilevel + 1].d.col[1].data;
+        let prev_dd0 = ud_orde_tangent[ilevel + 1].d.col[0].data;
+        let prev_dd1 = ud_orde_tangent[ilevel + 1].d.col[1].data;
+        for imu in 0..nmutot {
+            let att = atten.get(imu, ilevel + 1, ilevel);
+            let datt = atten_tangent.get(imu, ilevel + 1, ilevel);
+            ud_orde_tangent[ilevel].d.col[0].data[imu] =
+                local_dd0[imu] + datt * prev_d0[imu] + att * prev_dd0[imu];
+            ud_orde_tangent[ilevel].d.col[1].data[imu] =
+                local_dd1[imu] + datt * prev_d1[imu] + att * prev_dd1[imu];
+        }
+    }
+}
+
 pub fn dot_gauss(mat: &Mat, row: usize, vec_col: &LabosVec, n_gauss: usize) -> f64 {
     let row_offset = row * mat.n;
     let mut sum = 0.0;
@@ -634,5 +684,311 @@ pub fn orders_scat<A: AttenuationAccess>(
         controls,
         num_orders_max,
     );
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn orders_scat_tangent<A: AttenuationAccess, B: AttenuationAccess>(
+    start_level: usize,
+    end_level: usize,
+    geo: &Geometry,
+    atten: &A,
+    atten_tangent: &B,
+    rt: &[LayerRt],
+    rt_tangent: &[LayerRt],
+    controls: RadiativeTransferControls,
+    num_orders_max: usize,
+) -> OrdersResult {
+    let nlevel = end_level + 1;
+    let nmutot = geo.nmutot;
+    let n_gauss = geo.n_gauss;
+
+    let mut result = zero_orders_result(nlevel, geo);
+    let mut base_ud = vec![zero_ud_field(nmutot); nlevel];
+    let mut base_ud_sum_local = vec![zero_ud_local(nmutot); nlevel];
+    let mut base_orde = vec![zero_ud_field(nmutot); nlevel];
+    let mut base_local = vec![zero_ud_local(nmutot); nlevel];
+    let mut tangent_orde = vec![zero_ud_field(nmutot); nlevel];
+    let mut tangent_local = vec![zero_ud_local(nmutot); nlevel];
+    let mut rt_active = vec![false; nlevel];
+
+    initialize_orders_buffers(
+        false,
+        &mut base_ud,
+        &mut base_ud_sum_local,
+        &mut base_orde,
+        &mut base_local,
+        nmutot,
+    );
+    initialize_orders_buffers(
+        false,
+        &mut result.ud,
+        &mut result.ud_sum_local,
+        &mut tangent_orde,
+        &mut tangent_local,
+        nmutot,
+    );
+    refresh_active_layer_mask(&rt[..nlevel], &mut rt_active, nmutot);
+
+    for ilevel in start_level..=end_level {
+        for imu in 0..nmutot {
+            let att = atten.get(imu, end_level, ilevel);
+            base_orde[ilevel].e.data[imu] = att;
+            base_ud[ilevel].e.data[imu] = att;
+            result.ud[ilevel].e.data[imu] = 0.0;
+            tangent_orde[ilevel].e.data[imu] = 0.0;
+        }
+    }
+
+    for ilevel in start_level..end_level {
+        for imu0 in 0..2 {
+            if !rt_active[ilevel + 1] {
+                continue;
+            }
+            let col_idx = n_gauss + imu0;
+            let att = atten.get(col_idx, end_level, ilevel + 1);
+            let datt = atten_tangent.get(col_idx, end_level, ilevel + 1);
+            let rt_t = &rt[ilevel + 1].t;
+            let drt_t = &rt_tangent[ilevel + 1].t;
+            for imu in 0..nmutot {
+                let rt_idx = imu * rt_t.n + col_idx;
+                base_local[ilevel].d.col[imu0].data[imu] = rt_t.data[rt_idx] * att;
+                tangent_local[ilevel].d.col[imu0].data[imu] =
+                    drt_t.data[rt_idx] * att + rt_t.data[rt_idx] * datt;
+            }
+        }
+    }
+    base_local[end_level].d = Vec2::zero(nmutot);
+    tangent_local[end_level].d = Vec2::zero(nmutot);
+
+    for ilevel in start_level..=end_level {
+        for imu0 in 0..2 {
+            if !rt_active[ilevel] {
+                continue;
+            }
+            let col_idx = n_gauss + imu0;
+            let att = atten.get(col_idx, end_level, ilevel);
+            let datt = atten_tangent.get(col_idx, end_level, ilevel);
+            let rt_r = &rt[ilevel].r;
+            let drt_r = &rt_tangent[ilevel].r;
+            for imu in 0..nmutot {
+                let rt_idx = imu * rt_r.n + col_idx;
+                base_local[ilevel].u.col[imu0].data[imu] = rt_r.data[rt_idx] * att;
+                tangent_local[ilevel].u.col[imu0].data[imu] =
+                    drt_r.data[rt_idx] * att + rt_r.data[rt_idx] * datt;
+            }
+        }
+    }
+
+    transport_to_other_levels(
+        start_level,
+        end_level,
+        nmutot,
+        atten,
+        &base_local,
+        &mut base_orde,
+    );
+    transport_to_other_levels_tangent(
+        start_level,
+        end_level,
+        nmutot,
+        atten,
+        atten_tangent,
+        &base_orde,
+        &tangent_local,
+        &mut tangent_orde,
+    );
+    copy_transported_order_into_output(&mut base_ud, &base_orde, start_level, end_level);
+    copy_transported_order_into_output(&mut result.ud, &tangent_orde, start_level, end_level);
+
+    let mut max_value = max_outgoing_upward(&base_orde, end_level, n_gauss, nmutot);
+    if controls.scattering != ScatteringMode::Multiple
+        || max_value < controls.performance_thresholds.threshold_conv_first
+    {
+        return result;
+    }
+
+    let mut num_orders = 1;
+    loop {
+        num_orders += 1;
+
+        for ilevel in start_level..end_level {
+            if !rt_active[ilevel + 1] {
+                base_local[ilevel].d = Vec2::zero(nmutot);
+                tangent_local[ilevel].d = Vec2::zero(nmutot);
+                continue;
+            }
+            let prev_u0 = base_orde[ilevel].u.col[0];
+            let prev_u1 = base_orde[ilevel].u.col[1];
+            let prev_d0 = base_orde[ilevel + 1].d.col[0];
+            let prev_d1 = base_orde[ilevel + 1].d.col[1];
+            let tangent_prev_u0 = tangent_orde[ilevel].u.col[0];
+            let tangent_prev_u1 = tangent_orde[ilevel].u.col[1];
+            let tangent_prev_d0 = tangent_orde[ilevel + 1].d.col[0];
+            let tangent_prev_d1 = tangent_orde[ilevel + 1].d.col[1];
+            for imu in 0..nmutot {
+                let rst_dot_u = dot_gauss_pair(&rt[ilevel + 1].r, imu, &prev_u0, &prev_u1, n_gauss);
+                let t_dot_d = dot_gauss_pair(&rt[ilevel + 1].t, imu, &prev_d0, &prev_d1, n_gauss);
+                base_local[ilevel].d.col[0].data[imu] = rst_dot_u.col0 + t_dot_d.col0;
+                base_local[ilevel].d.col[1].data[imu] = rst_dot_u.col1 + t_dot_d.col1;
+
+                let drst_dot_u =
+                    dot_gauss_pair(&rt_tangent[ilevel + 1].r, imu, &prev_u0, &prev_u1, n_gauss);
+                let rst_dot_du = dot_gauss_pair(
+                    &rt[ilevel + 1].r,
+                    imu,
+                    &tangent_prev_u0,
+                    &tangent_prev_u1,
+                    n_gauss,
+                );
+                let dt_dot_d =
+                    dot_gauss_pair(&rt_tangent[ilevel + 1].t, imu, &prev_d0, &prev_d1, n_gauss);
+                let t_dot_dd = dot_gauss_pair(
+                    &rt[ilevel + 1].t,
+                    imu,
+                    &tangent_prev_d0,
+                    &tangent_prev_d1,
+                    n_gauss,
+                );
+                tangent_local[ilevel].d.col[0].data[imu] =
+                    drst_dot_u.col0 + rst_dot_du.col0 + dt_dot_d.col0 + t_dot_dd.col0;
+                tangent_local[ilevel].d.col[1].data[imu] =
+                    drst_dot_u.col1 + rst_dot_du.col1 + dt_dot_d.col1 + t_dot_dd.col1;
+            }
+        }
+        base_local[end_level].d = Vec2::zero(nmutot);
+        tangent_local[end_level].d = Vec2::zero(nmutot);
+
+        if rt_active[start_level] {
+            let prev_d_start0 = base_orde[start_level].d.col[0];
+            let prev_d_start1 = base_orde[start_level].d.col[1];
+            let tangent_prev_d_start0 = tangent_orde[start_level].d.col[0];
+            let tangent_prev_d_start1 = tangent_orde[start_level].d.col[1];
+            for imu in 0..nmutot {
+                let r_dot_d = dot_gauss_pair(
+                    &rt[start_level].r,
+                    imu,
+                    &prev_d_start0,
+                    &prev_d_start1,
+                    n_gauss,
+                );
+                base_local[start_level].u.col[0].data[imu] = r_dot_d.col0;
+                base_local[start_level].u.col[1].data[imu] = r_dot_d.col1;
+
+                let dr_dot_d = dot_gauss_pair(
+                    &rt_tangent[start_level].r,
+                    imu,
+                    &prev_d_start0,
+                    &prev_d_start1,
+                    n_gauss,
+                );
+                let r_dot_dd = dot_gauss_pair(
+                    &rt[start_level].r,
+                    imu,
+                    &tangent_prev_d_start0,
+                    &tangent_prev_d_start1,
+                    n_gauss,
+                );
+                tangent_local[start_level].u.col[0].data[imu] = dr_dot_d.col0 + r_dot_dd.col0;
+                tangent_local[start_level].u.col[1].data[imu] = dr_dot_d.col1 + r_dot_dd.col1;
+            }
+        } else {
+            base_local[start_level].u = Vec2::zero(nmutot);
+            tangent_local[start_level].u = Vec2::zero(nmutot);
+        }
+
+        for ilevel in start_level + 1..=end_level {
+            if !rt_active[ilevel] {
+                base_local[ilevel].u = Vec2::zero(nmutot);
+                tangent_local[ilevel].u = Vec2::zero(nmutot);
+                continue;
+            }
+            let prev_d0 = base_orde[ilevel].d.col[0];
+            let prev_d1 = base_orde[ilevel].d.col[1];
+            let prev_u0 = base_orde[ilevel - 1].u.col[0];
+            let prev_u1 = base_orde[ilevel - 1].u.col[1];
+            let tangent_prev_d0 = tangent_orde[ilevel].d.col[0];
+            let tangent_prev_d1 = tangent_orde[ilevel].d.col[1];
+            let tangent_prev_u0 = tangent_orde[ilevel - 1].u.col[0];
+            let tangent_prev_u1 = tangent_orde[ilevel - 1].u.col[1];
+            for imu in 0..nmutot {
+                let r_dot_d = dot_gauss_pair(&rt[ilevel].r, imu, &prev_d0, &prev_d1, n_gauss);
+                let tst_dot_u = dot_gauss_pair(&rt[ilevel].t, imu, &prev_u0, &prev_u1, n_gauss);
+                base_local[ilevel].u.col[0].data[imu] = r_dot_d.col0 + tst_dot_u.col0;
+                base_local[ilevel].u.col[1].data[imu] = r_dot_d.col1 + tst_dot_u.col1;
+
+                let dr_dot_d =
+                    dot_gauss_pair(&rt_tangent[ilevel].r, imu, &prev_d0, &prev_d1, n_gauss);
+                let r_dot_dd = dot_gauss_pair(
+                    &rt[ilevel].r,
+                    imu,
+                    &tangent_prev_d0,
+                    &tangent_prev_d1,
+                    n_gauss,
+                );
+                let dtst_dot_u =
+                    dot_gauss_pair(&rt_tangent[ilevel].t, imu, &prev_u0, &prev_u1, n_gauss);
+                let tst_dot_du = dot_gauss_pair(
+                    &rt[ilevel].t,
+                    imu,
+                    &tangent_prev_u0,
+                    &tangent_prev_u1,
+                    n_gauss,
+                );
+                tangent_local[ilevel].u.col[0].data[imu] =
+                    dr_dot_d.col0 + r_dot_dd.col0 + dtst_dot_u.col0 + tst_dot_du.col0;
+                tangent_local[ilevel].u.col[1].data[imu] =
+                    dr_dot_d.col1 + r_dot_dd.col1 + dtst_dot_u.col1 + tst_dot_du.col1;
+            }
+        }
+
+        transport_to_other_levels(
+            start_level,
+            end_level,
+            nmutot,
+            atten,
+            &base_local,
+            &mut base_orde,
+        );
+        transport_to_other_levels_tangent(
+            start_level,
+            end_level,
+            nmutot,
+            atten,
+            atten_tangent,
+            &base_orde,
+            &tangent_local,
+            &mut tangent_orde,
+        );
+
+        max_value = max_outgoing_upward(&base_orde, end_level, n_gauss, nmutot);
+        if max_value < controls.performance_thresholds.threshold_conv_mult
+            || num_orders >= num_orders_max
+        {
+            break;
+        }
+
+        accumulate_order_contribution(
+            false,
+            &mut base_ud,
+            &mut base_ud_sum_local,
+            &base_orde,
+            &base_local,
+            start_level,
+            end_level,
+            nmutot,
+        );
+        accumulate_order_contribution(
+            false,
+            &mut result.ud,
+            &mut result.ud_sum_local,
+            &tangent_orde,
+            &tangent_local,
+            start_level,
+            end_level,
+            nmutot,
+        );
+    }
+
     result
 }

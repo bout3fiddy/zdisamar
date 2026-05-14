@@ -17,9 +17,9 @@ pub use orders::{
     accumulate_order_contribution, copy_transported_order_into_output, dot_gauss, dot_gauss_pair,
     initialize_orders_buffers, max_outgoing_upward, orders_scat, orders_scat_internal,
     orders_scat_into, orders_scat_into_with_active, orders_scat_into_with_active_local_sum,
-    orders_scat_into_with_local_sum, orders_scat_transport_into, refresh_active_layer_mask,
-    rt_layer_has_signal, transport_to_other_levels, zero_orders_result, zero_ud_field,
-    zero_ud_local,
+    orders_scat_into_with_local_sum, orders_scat_tangent, orders_scat_transport_into,
+    refresh_active_layer_mask, rt_layer_has_signal, transport_to_other_levels,
+    transport_to_other_levels_tangent, zero_orders_result, zero_ud_field, zero_ud_local,
 };
 pub use phase_basis::{
     FourierPlmBasis, PhaseKernel, PhaseKernelRow, fill_zplus_zmin, fill_zplus_zmin_from_basis,
