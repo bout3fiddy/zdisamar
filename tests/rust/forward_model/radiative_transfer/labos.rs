@@ -4,11 +4,13 @@ use zdisamar::forward_model::{
     radiative_transfer::{
         ForwardInput, LayerInput, PseudoSphericalGrid, PseudoSphericalSample,
         RadiativeTransferControls, RadiativeTransferPerformanceThresholds, RtmQuadratureGrid,
-        ScatteringMode, SourceInterfaceInput,
+        RtmQuadratureLevel, ScatteringMode, SourceInterfaceInput,
         labos::{
             DynamicAttenArray, FourierPlmBasis, Geometry, LayerRt, MAX_EXTRA, MAX_GAUSS, MAX_N2,
             MAX_NMUTOT, MAX_PHASE_COEF, Mat, OrdersWorkspace, PhaseKernel, Vec as LabosVec, Vec2,
-            accumulate_order_contribution, attenuation, calc_integrated_reflectance,
+            accumulate_order_contribution, attenuation,
+            calc_aerosol_layer_pressure_shift_weighting_with_basis,
+            calc_aerosol_optical_depth_weighting_with_basis, calc_integrated_reflectance,
             calc_integrated_reflectance_with_basis, calc_reflectance, calc_reflectance_tangent,
             calc_rt_layers, calc_rt_layers_into_with_basis, dot_gauss, dot_gauss_pair,
             fill_adjacent_layer_phase_max_indices, fill_layer_effective_scattering_suffixes,
@@ -969,4 +971,126 @@ fn labos_reflectance_sums_only_positive_scattering_optical_depth() {
     ];
 
     assert_close(total_scattering_optical_depth(&layers), 1.0);
+}
+
+#[test]
+fn labos_aerosol_optical_depth_weighting_uses_source_and_absorption_terms() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let view_idx = geometry.view_idx();
+    let solar_idx = geometry.n_gauss + 1;
+    let mut ud = vec![zero_ud_field(geometry.nmutot); 1];
+    ud[0].e.set(view_idx, 2.0);
+    ud[0].e.set(solar_idx, 3.0);
+    ud[0].u.col[1].set(view_idx, 4.0);
+    let mut scaled_phase = phase_functions::zero_phase_coefficients();
+    scaled_phase[0] = 0.5;
+    let mut ksca_phase_coefficient_jacobian =
+        [[0.0; phase_functions::PHASE_COEFFICIENT_COUNT]; jacobian::STATE_COUNT];
+    ksca_phase_coefficient_jacobian[jacobian::state_index(State::AerosolOpticalDepth)] =
+        scaled_phase;
+    let rtm_quadrature = RtmQuadratureGrid {
+        levels: vec![RtmQuadratureLevel {
+            weight: 2.0,
+            ksca: 1.0,
+            ksca_phase_coefficient_jacobian,
+            ..RtmQuadratureLevel::default()
+        }],
+    };
+    let basis = FourierPlmBasis::init(0, 0, &geometry);
+
+    let weighting = calc_aerosol_optical_depth_weighting_with_basis(
+        &[],
+        &rtm_quadrature,
+        &ud,
+        &[],
+        0,
+        0,
+        false,
+        &geometry,
+        &basis,
+        None,
+    );
+
+    let source = 2.0 * ((0.25 * 0.5 / geometry.muv) / geometry.mu0) * 3.0;
+    let absorption = -(4.0 * 2.0) / geometry.muv;
+    assert_close(weighting, 2.0 * (source + 0.5 * absorption));
+}
+
+#[test]
+fn labos_aerosol_layer_weightings_use_active_interior_bounds() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let view_idx = geometry.view_idx();
+    let solar_idx = geometry.n_gauss + 1;
+    let layers = vec![
+        LayerInput {
+            aerosol_optical_depth: 0.4,
+            aerosol_scattering_optical_depth: 0.4,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            aerosol_optical_depth: 0.6,
+            aerosol_scattering_optical_depth: 0.6,
+            ..LayerInput::default()
+        },
+    ];
+    let mut ud = vec![zero_ud_field(geometry.nmutot); 3];
+    for level in &mut ud {
+        level.e.set(view_idx, 2.0);
+        level.e.set(solar_idx, 3.0);
+    }
+    let mut half_phase = phase_functions::zero_phase_coefficients();
+    half_phase[0] = 0.5;
+    let zero_scaled_phase = [0.0; phase_functions::PHASE_COEFFICIENT_COUNT];
+    let mut ksca_phase_coefficient_jacobian =
+        [[0.0; phase_functions::PHASE_COEFFICIENT_COUNT]; jacobian::STATE_COUNT];
+    ksca_phase_coefficient_jacobian[jacobian::state_index(State::AerosolOpticalDepth)] = half_phase;
+    let rtm_quadrature = RtmQuadratureGrid {
+        levels: vec![
+            RtmQuadratureLevel {
+                altitude_km: 0.0,
+                aerosol_ksca_phase_above_per_km: zero_scaled_phase,
+                ..RtmQuadratureLevel::default()
+            },
+            RtmQuadratureLevel {
+                altitude_km: 1.0,
+                aerosol_ksca_phase_above_per_km: half_phase,
+                ksca_phase_coefficient_jacobian,
+                ..RtmQuadratureLevel::default()
+            },
+            RtmQuadratureLevel {
+                altitude_km: 2.0,
+                aerosol_ksca_phase_below_per_km: half_phase,
+                ..RtmQuadratureLevel::default()
+            },
+        ],
+    };
+    let basis = FourierPlmBasis::init(0, 0, &geometry);
+
+    let optical_depth_weighting = calc_aerosol_optical_depth_weighting_with_basis(
+        &layers,
+        &rtm_quadrature,
+        &ud,
+        &[],
+        2,
+        0,
+        false,
+        &geometry,
+        &basis,
+        None,
+    );
+    let pressure_shift_weighting = calc_aerosol_layer_pressure_shift_weighting_with_basis(
+        &layers,
+        &rtm_quadrature,
+        &ud,
+        &[],
+        2,
+        0,
+        false,
+        &geometry,
+        &basis,
+    );
+
+    let unit_source = 2.0 * ((0.25 / geometry.muv) / geometry.mu0) * 3.0;
+    assert_close(optical_depth_weighting, 0.5 * unit_source);
+    assert_close(pressure_shift_weighting, 0.5 * unit_source);
 }
