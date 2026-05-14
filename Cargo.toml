@@ -15,4 +15,12 @@ path = "tests/rust/common/units.rs"
 name = "common_lut_controls"
 path = "tests/rust/common/lut_controls.rs"
 
+[[test]]
+name = "input_atmospheric_types"
+path = "tests/rust/input/atmospheric_types.rs"
+
+[[test]]
+name = "input_binding"
+path = "tests/rust/input/binding.rs"
+
 [dependencies]
