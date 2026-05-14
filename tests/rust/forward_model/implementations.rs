@@ -1,15 +1,15 @@
 use zdisamar::{
     forward_model::{
-        implementations::{noise, surface, transport},
+        implementations::{instrument, noise, surface, transport},
         radiative_transfer::{
             DerivativeSemantics, DispatchRequest, ExecutionMode, ForwardResult,
             ImplementationClass, ScatteringMode, TransportFamily,
         },
     },
     input::{
-        InstrumentId, MeasurementPipeline, NoiseControls, NoiseModelKind, ObservationModel,
-        OperationalReferenceGrid, Scene, SpectralChannel, SpectralChannelControls, SpectralGrid,
-        Surface, SurfaceKind,
+        BuiltinLineShapeKind, InstrumentId, MeasurementPipeline, NoiseControls, NoiseModelKind,
+        ObservationModel, OperationalReferenceGrid, Scene, SlitIndex, SpectralChannel,
+        SpectralChannelControls, SpectralGrid, SpectralResponse, Surface, SurfaceKind,
     },
 };
 
@@ -46,6 +46,87 @@ fn noise_provider_resolution_matches_builtin_ids() {
         &scene,
         SpectralChannel::Radiance
     ));
+}
+
+#[test]
+fn instrument_calibration_and_response_helpers_match_builtin_rules() {
+    let scene = Scene {
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance: SpectralChannelControls {
+                    explicit: true,
+                    multiplicative_offset: 1.2,
+                    additive_offset: -0.1,
+                    wavelength_shift_nm: 0.03,
+                    stray_light: 0.04,
+                    ..SpectralChannelControls::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    let calibration =
+        instrument::calibration::calibration_for_scene(&scene, SpectralChannel::Radiance);
+    assert_eq!(calibration.gain, 1.2);
+    assert_eq!(calibration.offset, -0.1);
+    assert_eq!(calibration.wavelength_shift_nm, 0.03);
+    assert_eq!(calibration.stray_light, 0.04);
+
+    assert_close(
+        instrument::response::default_kernel_half_span_nm(0.54),
+        1.62,
+    );
+    assert_close(
+        instrument::response::default_kernel_half_span_nm(0.0),
+        0.0003,
+    );
+
+    let response = SpectralResponse {
+        fwhm_nm: 0.4,
+        high_resolution_half_span_nm: 1.2,
+        ..SpectralResponse::default()
+    };
+    assert_eq!(
+        instrument::response::adaptive_kernel_half_span_nm(&response),
+        1.2
+    );
+
+    let gaussian = SpectralResponse {
+        slit_index: SlitIndex::GaussianModulated,
+        fwhm_nm: 0.4,
+        amplitude: 0.1,
+        scale: 1.0,
+        phase_deg: 0.0,
+        ..SpectralResponse::default()
+    };
+    assert!(instrument::response::spectral_response_weight(&gaussian, 0.0) > 0.99);
+    assert!(instrument::response::spectral_response_weight(&gaussian, 0.4) < 0.1);
+
+    let table_backed = SpectralResponse {
+        slit_index: SlitIndex::Table,
+        fwhm_nm: 0.4,
+        builtin_line_shape: BuiltinLineShapeKind::FlatTopN4,
+        ..SpectralResponse::default()
+    };
+    assert_eq!(
+        instrument::response::spectral_response_weight(&table_backed, 0.0),
+        instrument::response::builtin_line_shape_weight(BuiltinLineShapeKind::FlatTopN4, 0.4, 0.0)
+    );
+
+    let mut kernel = instrument::types::IntegrationKernel {
+        enabled: true,
+        sample_count: 3,
+        ..instrument::types::IntegrationKernel::default()
+    };
+    kernel.offsets_nm[0] = -0.1;
+    kernel.weights[0] = 0.2;
+    instrument::response::reset_kernel(&mut kernel);
+    assert!(!kernel.enabled);
+    assert_eq!(kernel.sample_count, 0);
+    assert_eq!(kernel.offsets_nm[0], 0.0);
+    assert_eq!(kernel.weights[0], 0.0);
 }
 
 #[test]
