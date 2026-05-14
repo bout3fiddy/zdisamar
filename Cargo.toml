@@ -20,6 +20,10 @@ name = "input_atmospheric_types"
 path = "tests/rust/input/atmospheric_types.rs"
 
 [[test]]
+name = "input_atmosphere"
+path = "tests/rust/input/atmosphere.rs"
+
+[[test]]
 name = "input_binding"
 path = "tests/rust/input/binding.rs"
 
@@ -38,5 +42,9 @@ path = "tests/rust/input/measurement.rs"
 [[test]]
 name = "input_surface"
 path = "tests/rust/input/surface.rs"
+
+[[test]]
+name = "input_spectrum"
+path = "tests/rust/input/spectrum.rs"
 
 [dependencies]
