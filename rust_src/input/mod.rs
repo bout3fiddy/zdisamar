@@ -11,5 +11,6 @@ pub mod measurement;
 pub mod observation_legacy_support;
 pub mod observation_model;
 pub mod reference_data;
+pub mod scene;
 pub mod spectrum;
 pub mod surface;

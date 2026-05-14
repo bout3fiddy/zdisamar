@@ -56,6 +56,10 @@ name = "input_particles"
 path = "tests/rust/input/particles.rs"
 
 [[test]]
+name = "input_scene"
+path = "tests/rust/input/scene.rs"
+
+[[test]]
 name = "input_surface"
 path = "tests/rust/input/surface.rs"
 
@@ -64,3 +68,4 @@ name = "input_spectrum"
 path = "tests/rust/input/spectrum.rs"
 
 [dependencies]
+wyhash = "0.6.0"
