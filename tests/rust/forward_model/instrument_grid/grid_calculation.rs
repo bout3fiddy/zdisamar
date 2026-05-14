@@ -9,6 +9,10 @@ use zdisamar::{
                 ForwardIntegratedSample, MIN_PARALLEL_FORWARD_MISS_COUNT, radiance_from_forward,
                 radiance_jacobian_from_forward,
             },
+            storage::{
+                SummaryStorage, pseudo_spherical_sample_count_hint,
+                reflectance_calibration_enabled, transport_layer_count_hint, validate_buffers,
+            },
             types::{
                 FITTED_REFLECTANCE_EXPORT_NAME, InstrumentGridProductView, InstrumentGridSummary,
                 REFLECTANCE_EXPORT_NAME,
@@ -20,8 +24,8 @@ use zdisamar::{
         radiative_transfer::{ExecutionMode, ForwardResult, TransportFamily},
     },
     input::{
-        Binding, DerivativeMode, Geometry, MeasurementPipeline, NoiseControls, NoiseModelKind,
-        ObservationModel, ObservationRegime, Scene, SimpleOffsets, SpectralChannel,
+        Binding, DerivativeMode, Geometry, MeasurementPipeline, NodalCorrection, NoiseControls,
+        NoiseModelKind, ObservationModel, ObservationRegime, Scene, SimpleOffsets, SpectralChannel,
         SpectralChannelControls, SpectralGrid, SpectralResponse,
     },
 };
@@ -311,6 +315,145 @@ fn postprocess_applies_channel_corrections_and_reference_selection() {
 
     assert!(signal[0] > 23.0);
     assert!(signal[1] > signal[0]);
+}
+
+#[test]
+fn storage_hints_follow_layers_intervals_and_disamar_grid_mode() {
+    let route =
+        zdisamar::forward_model::radiative_transfer::prepare_route(Default::default()).unwrap();
+    let scene = Scene {
+        atmosphere: zdisamar::input::Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 3,
+            ..Default::default()
+        },
+        ..Scene::default()
+    };
+    assert_eq!(transport_layer_count_hint(&scene, route), 6);
+    assert_eq!(pseudo_spherical_sample_count_hint(&scene, route), 30);
+
+    let interval_scene = Scene {
+        atmosphere: zdisamar::input::Atmosphere {
+            sublayer_divisions: 3,
+            interval_grid: zdisamar::input::IntervalGrid {
+                semantics: zdisamar::input::IntervalSemantics::ExplicitPressureBounds,
+                intervals: vec![
+                    zdisamar::input::VerticalInterval {
+                        index_1based: 1,
+                        top_pressure_hpa: 100.0,
+                        bottom_pressure_hpa: 300.0,
+                        altitude_divisions: 2,
+                        ..Default::default()
+                    },
+                    zdisamar::input::VerticalInterval {
+                        index_1based: 2,
+                        top_pressure_hpa: 300.0,
+                        bottom_pressure_hpa: 900.0,
+                        altitude_divisions: 3,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance: SpectralChannelControls {
+                    explicit: true,
+                    response: SpectralResponse {
+                        integration_mode: zdisamar::input::IntegrationMode::DisamarHrGrid,
+                        ..SpectralResponse::default()
+                    },
+                    ..SpectralChannelControls::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    assert_eq!(transport_layer_count_hint(&interval_scene, route), 7);
+}
+
+#[test]
+fn summary_storage_reuses_buffers_and_shapes_optional_outputs() {
+    let route = zdisamar::forward_model::radiative_transfer::prepare_route(
+        zdisamar::forward_model::radiative_transfer::DispatchRequest {
+            derivative_mode: DerivativeMode::SemiAnalytical,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 761.0,
+            sample_count: 4,
+        },
+        atmosphere: zdisamar::input::Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 2,
+            ..Default::default()
+        },
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance: SpectralChannelControls {
+                    explicit: true,
+                    noise: NoiseControls {
+                        enabled: true,
+                        model: NoiseModelKind::ShotNoise,
+                        ..NoiseControls::default()
+                    },
+                    ..SpectralChannelControls::default()
+                },
+                reflectance_calibration: zdisamar::input::ReflectanceCalibration {
+                    multiplicative_error: NodalCorrection {
+                        wavelengths_nm: vec![760.0],
+                        values: vec![1.0],
+                        ..NodalCorrection::default()
+                    },
+                    ..Default::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    assert!(reflectance_calibration_enabled(&scene));
+
+    let mut storage = SummaryStorage::default();
+    {
+        let buffers = storage.buffers(
+            &scene,
+            route,
+            zdisamar::forward_model::implementations::exact(),
+        );
+        validate_buffers(4, &buffers).unwrap();
+        assert_eq!(buffers.layer_inputs.len(), 4);
+        assert_eq!(buffers.pseudo_spherical_layers.len(), 16);
+        assert_eq!(buffers.jacobian.as_ref().unwrap().len(), 12);
+        assert_eq!(buffers.noise_sigma.as_ref().unwrap().len(), 4);
+    }
+
+    storage.wavelength_plan_valid = true;
+    storage.forward_misses_valid = true;
+    storage.wavelength_sampling.push(
+        zdisamar::forward_model::instrument_grid::grid_calculation::wavelength_plan::WavelengthSampling {
+            nominal_wavelength_nm: 760.0,
+            radiance_wavelength_nm: 760.0,
+            irradiance_wavelength_nm: 760.0,
+            radiance_integration: Default::default(),
+            irradiance_integration: Default::default(),
+        },
+    );
+    storage.invalidate_wavelength_plan();
+    assert!(!storage.wavelength_plan_valid);
+    assert!(storage.wavelength_sampling.is_empty());
+
+    storage.spectral_cache().irradiance.insert(1, 2.0);
+    assert_eq!(storage.spectral_cache().irradiance.len(), 0);
 }
 
 #[test]
