@@ -6,14 +6,15 @@ use zdisamar::forward_model::{
         ScatteringMode,
         labos::{
             DynamicAttenArray, FourierPlmBasis, Geometry, LayerRt, MAX_EXTRA, MAX_GAUSS, MAX_N2,
-            MAX_NMUTOT, MAX_PHASE_COEF, Mat, PhaseKernel, Vec as LabosVec, Vec2,
+            MAX_NMUTOT, MAX_PHASE_COEF, Mat, OrdersWorkspace, PhaseKernel, Vec as LabosVec, Vec2,
             accumulate_order_contribution, attenuation, calc_rt_layers,
             calc_rt_layers_into_with_basis, dot_gauss, dot_gauss_pair,
             fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
             fill_zplus_zmin, fill_zplus_zmin_from_basis_limited,
-            fill_zplus_zmin_row_from_basis_limited, matrix, max_outgoing_upward,
-            refresh_active_layer_mask, renormalize_zero_fourier_phase_kernel,
-            transport_to_other_levels, zero_fourier_integral, zero_ud_field, zero_ud_local,
+            fill_zplus_zmin_row_from_basis_limited, matrix, max_outgoing_upward, orders_scat,
+            orders_scat_into_with_active_local_sum, refresh_active_layer_mask,
+            renormalize_zero_fourier_phase_kernel, transport_to_other_levels,
+            zero_fourier_integral, zero_ud_field, zero_ud_local,
         },
     },
 };
@@ -647,4 +648,75 @@ fn labos_order_activity_and_accumulation_helpers_match_layer_signal_rules() {
     assert_close(sum_local[1].u.col[0].get(1), 0.5);
     assert_close(sum_local[1].d.col[1].get(1), 0.75);
     assert_close(max_outgoing_upward(&ud, 1, 1, nmutot), 1.5);
+}
+
+#[test]
+fn labos_orders_scat_returns_direct_transmittance_when_layers_have_no_signal() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let atten = DynamicAttenArray::new(geometry.nmutot, 2);
+    let rt = vec![
+        LayerRt {
+            r: Mat::zero(geometry.nmutot),
+            t: Mat::zero(geometry.nmutot),
+        };
+        2
+    ];
+    let controls = RadiativeTransferControls {
+        scattering: ScatteringMode::Single,
+        ..RadiativeTransferControls::default()
+    };
+
+    let result = orders_scat(0, 1, &geometry, &atten, &rt, controls, 4);
+
+    assert_eq!(result.ud.len(), 2);
+    for level in 0..2 {
+        assert_close(result.ud[level].e.get(0), 1.0);
+        assert_close(result.ud[level].u.col[0].get(0), 0.0);
+        assert_close(result.ud[level].d.col[0].get(0), 0.0);
+    }
+}
+
+#[test]
+fn labos_orders_scat_uses_initial_surface_and_layer_sources() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let mut atten = DynamicAttenArray::new(geometry.nmutot, 2);
+    for imu in 0..geometry.nmutot {
+        atten.set(imu, 0, 1, 0.5);
+        atten.set(imu, 1, 0, 0.25);
+    }
+
+    let mut rt = vec![
+        LayerRt {
+            r: Mat::zero(geometry.nmutot),
+            t: Mat::zero(geometry.nmutot),
+        };
+        2
+    ];
+    let view_col = geometry.n_gauss;
+    rt[0].r.set(0, view_col, 2.0);
+    rt[1].r.set(0, view_col, 3.0);
+    rt[1].t.set(0, view_col, 4.0);
+
+    let controls = RadiativeTransferControls {
+        scattering: ScatteringMode::Single,
+        ..RadiativeTransferControls::default()
+    };
+    let mut workspace = OrdersWorkspace::new(2, geometry.nmutot);
+    workspace.rt_active = vec![true, true];
+    let result = orders_scat_into_with_active_local_sum(
+        &mut workspace,
+        0,
+        1,
+        &geometry,
+        &atten,
+        &rt,
+        controls,
+        4,
+    );
+
+    assert_close(result.ud_sum_local[0].u.col[0].get(0), 2.0 * 0.25);
+    assert_close(result.ud_sum_local[1].u.col[0].get(0), 3.0);
+    assert_close(result.ud_sum_local[0].d.col[0].get(0), 4.0);
+    assert_close(result.ud[1].u.col[0].get(0), 3.0 + 0.5 * (2.0 * 0.25));
+    assert_close(result.ud[0].d.col[0].get(0), 4.0);
 }

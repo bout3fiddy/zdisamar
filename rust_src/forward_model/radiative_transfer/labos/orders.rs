@@ -2,6 +2,7 @@ use super::{
     attenuation::{AttenArray, DynamicAttenArray},
     types::{Geometry, LayerRt, Mat, UdField, UdLocal, Vec as LabosVec, Vec2},
 };
+use crate::forward_model::radiative_transfer::{RadiativeTransferControls, ScatteringMode};
 
 pub trait AttenuationAccess {
     fn get(&self, imu: usize, from: usize, to: usize) -> f64;
@@ -263,4 +264,375 @@ pub fn zero_orders_result(nlevel: usize, geo: &Geometry) -> OrdersResult {
         ud: vec![zero_ud_field(geo.nmutot); nlevel],
         ud_sum_local: vec![zero_ud_local(geo.nmutot); nlevel],
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn orders_scat_internal<'a, A: AttenuationAccess>(
+    track_sum_local: bool,
+    rt_active_ready: bool,
+    ud: &'a mut [UdField],
+    ud_sum_local: &'a mut [UdLocal],
+    ud_orde: &mut [UdField],
+    ud_local: &mut [UdLocal],
+    rt_active: &mut [bool],
+    start_level: usize,
+    end_level: usize,
+    geo: &Geometry,
+    atten: &A,
+    rt: &[LayerRt],
+    controls: RadiativeTransferControls,
+    num_orders_max: usize,
+) -> OrdersResultView<'a> {
+    let nmutot = geo.nmutot;
+    let n_gauss = geo.n_gauss;
+    let nlevel = end_level + 1;
+    assert!(ud.len() >= nlevel);
+    assert!(ud_sum_local.len() >= nlevel);
+    assert!(ud_orde.len() >= nlevel);
+    assert!(ud_local.len() >= nlevel);
+    assert!(rt_active.len() >= nlevel);
+
+    let ud_view = &mut ud[..nlevel];
+    let ud_sum_local_view = &mut ud_sum_local[..nlevel];
+    let ud_orde_view = &mut ud_orde[..nlevel];
+    let ud_local_view = &mut ud_local[..nlevel];
+    let rt_active_view = &mut rt_active[..nlevel];
+
+    initialize_orders_buffers(
+        track_sum_local,
+        ud_view,
+        ud_sum_local_view,
+        ud_orde_view,
+        ud_local_view,
+        nmutot,
+    );
+
+    if !rt_active_ready {
+        refresh_active_layer_mask(&rt[..nlevel], rt_active_view, nmutot);
+    }
+
+    for ilevel in start_level..=end_level {
+        for imu in 0..nmutot {
+            let att = atten.get(imu, end_level, ilevel);
+            ud_orde_view[ilevel].e.data[imu] = att;
+            ud_view[ilevel].e.data[imu] = att;
+        }
+    }
+
+    for ilevel in start_level..end_level {
+        for imu0 in 0..2 {
+            if !rt_active_view[ilevel + 1] {
+                continue;
+            }
+            let col_idx = n_gauss + imu0;
+            let att = atten.get(col_idx, end_level, ilevel + 1);
+            let rt_t = &rt[ilevel + 1].t;
+            for imu in 0..nmutot {
+                let rt_idx = imu * rt_t.n + col_idx;
+                ud_local_view[ilevel].d.col[imu0].data[imu] = rt_t.data[rt_idx] * att;
+            }
+        }
+    }
+
+    for ilevel in start_level..=end_level {
+        for imu0 in 0..2 {
+            if !rt_active_view[ilevel] {
+                continue;
+            }
+            let col_idx = n_gauss + imu0;
+            let att = atten.get(col_idx, end_level, ilevel);
+            let rt_r = &rt[ilevel].r;
+            for imu in 0..nmutot {
+                let rt_idx = imu * rt_r.n + col_idx;
+                ud_local_view[ilevel].u.col[imu0].data[imu] = rt_r.data[rt_idx] * att;
+            }
+        }
+    }
+
+    if track_sum_local {
+        for ilevel in start_level..=end_level {
+            ud_sum_local_view[ilevel].u = ud_local_view[ilevel].u;
+            ud_sum_local_view[ilevel].d = ud_local_view[ilevel].d;
+        }
+    }
+
+    transport_to_other_levels(
+        start_level,
+        end_level,
+        nmutot,
+        atten,
+        ud_local_view,
+        ud_orde_view,
+    );
+    copy_transported_order_into_output(ud_view, ud_orde_view, start_level, end_level);
+
+    let mut max_value = max_outgoing_upward(ud_orde_view, end_level, n_gauss, nmutot);
+    if controls.scattering != ScatteringMode::Multiple
+        || max_value < controls.performance_thresholds.threshold_conv_first
+    {
+        return OrdersResultView {
+            ud: ud_view,
+            ud_sum_local: ud_sum_local_view,
+        };
+    }
+
+    let mut num_orders = 1;
+    loop {
+        num_orders += 1;
+
+        for ilevel in start_level..end_level {
+            if !rt_active_view[ilevel + 1] {
+                continue;
+            }
+            let prev_u0 = ud_orde_view[ilevel].u.col[0];
+            let prev_u1 = ud_orde_view[ilevel].u.col[1];
+            let prev_d0 = ud_orde_view[ilevel + 1].d.col[0];
+            let prev_d1 = ud_orde_view[ilevel + 1].d.col[1];
+            for imu in 0..nmutot {
+                let rst_dot_u = dot_gauss_pair(&rt[ilevel + 1].r, imu, &prev_u0, &prev_u1, n_gauss);
+                let t_dot_d = dot_gauss_pair(&rt[ilevel + 1].t, imu, &prev_d0, &prev_d1, n_gauss);
+                ud_local_view[ilevel].d.col[0].data[imu] = rst_dot_u.col0 + t_dot_d.col0;
+                ud_local_view[ilevel].d.col[1].data[imu] = rst_dot_u.col1 + t_dot_d.col1;
+            }
+        }
+        ud_local_view[end_level].d = Vec2::zero(nmutot);
+
+        if rt_active_view[start_level] {
+            let prev_d_start0 = ud_orde_view[start_level].d.col[0];
+            let prev_d_start1 = ud_orde_view[start_level].d.col[1];
+            for imu in 0..nmutot {
+                let r_dot_d = dot_gauss_pair(
+                    &rt[start_level].r,
+                    imu,
+                    &prev_d_start0,
+                    &prev_d_start1,
+                    n_gauss,
+                );
+                ud_local_view[start_level].u.col[0].data[imu] = r_dot_d.col0;
+                ud_local_view[start_level].u.col[1].data[imu] = r_dot_d.col1;
+            }
+        }
+
+        for ilevel in start_level + 1..=end_level {
+            if !rt_active_view[ilevel] {
+                continue;
+            }
+            let prev_d0 = ud_orde_view[ilevel].d.col[0];
+            let prev_d1 = ud_orde_view[ilevel].d.col[1];
+            let prev_u0 = ud_orde_view[ilevel - 1].u.col[0];
+            let prev_u1 = ud_orde_view[ilevel - 1].u.col[1];
+            for imu in 0..nmutot {
+                let r_dot_d = dot_gauss_pair(&rt[ilevel].r, imu, &prev_d0, &prev_d1, n_gauss);
+                let tst_dot_u = dot_gauss_pair(&rt[ilevel].t, imu, &prev_u0, &prev_u1, n_gauss);
+                ud_local_view[ilevel].u.col[0].data[imu] = r_dot_d.col0 + tst_dot_u.col0;
+                ud_local_view[ilevel].u.col[1].data[imu] = r_dot_d.col1 + tst_dot_u.col1;
+            }
+        }
+
+        transport_to_other_levels(
+            start_level,
+            end_level,
+            nmutot,
+            atten,
+            ud_local_view,
+            ud_orde_view,
+        );
+        max_value = max_outgoing_upward(ud_orde_view, end_level, n_gauss, nmutot);
+
+        // The current below-threshold order is intentionally not accumulated; this matches DISAMAR's loop exit.
+        if max_value < controls.performance_thresholds.threshold_conv_mult
+            || num_orders >= num_orders_max
+        {
+            break;
+        }
+
+        accumulate_order_contribution(
+            track_sum_local,
+            ud_view,
+            ud_sum_local_view,
+            ud_orde_view,
+            ud_local_view,
+            start_level,
+            end_level,
+            nmutot,
+        );
+    }
+
+    OrdersResultView {
+        ud: ud_view,
+        ud_sum_local: ud_sum_local_view,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn orders_scat_into<'a, A: AttenuationAccess>(
+    storage: &'a mut OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: &Geometry,
+    atten: &A,
+    rt: &[LayerRt],
+    controls: RadiativeTransferControls,
+    num_orders_max: usize,
+) -> OrdersResultView<'a> {
+    orders_scat_internal(
+        false,
+        false,
+        &mut storage.ud,
+        &mut storage.ud_sum_local,
+        &mut storage.ud_orde,
+        &mut storage.ud_local,
+        &mut storage.rt_active,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn orders_scat_into_with_local_sum<'a, A: AttenuationAccess>(
+    storage: &'a mut OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: &Geometry,
+    atten: &A,
+    rt: &[LayerRt],
+    controls: RadiativeTransferControls,
+    num_orders_max: usize,
+) -> OrdersResultView<'a> {
+    orders_scat_internal(
+        true,
+        false,
+        &mut storage.ud,
+        &mut storage.ud_sum_local,
+        &mut storage.ud_orde,
+        &mut storage.ud_local,
+        &mut storage.rt_active,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn orders_scat_into_with_active<'a, A: AttenuationAccess>(
+    storage: &'a mut OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: &Geometry,
+    atten: &A,
+    rt: &[LayerRt],
+    controls: RadiativeTransferControls,
+    num_orders_max: usize,
+) -> OrdersResultView<'a> {
+    orders_scat_internal(
+        false,
+        true,
+        &mut storage.ud,
+        &mut storage.ud_sum_local,
+        &mut storage.ud_orde,
+        &mut storage.ud_local,
+        &mut storage.rt_active,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn orders_scat_into_with_active_local_sum<'a, A: AttenuationAccess>(
+    storage: &'a mut OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: &Geometry,
+    atten: &A,
+    rt: &[LayerRt],
+    controls: RadiativeTransferControls,
+    num_orders_max: usize,
+) -> OrdersResultView<'a> {
+    orders_scat_internal(
+        true,
+        true,
+        &mut storage.ud,
+        &mut storage.ud_sum_local,
+        &mut storage.ud_orde,
+        &mut storage.ud_local,
+        &mut storage.rt_active,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn orders_scat_transport_into<'a, A: AttenuationAccess>(
+    storage: &'a mut OrdersWorkspace,
+    start_level: usize,
+    end_level: usize,
+    geo: &Geometry,
+    atten: &A,
+    rt: &[LayerRt],
+    controls: RadiativeTransferControls,
+    num_orders_max: usize,
+) -> OrdersResultView<'a> {
+    orders_scat_into(
+        storage,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn orders_scat<A: AttenuationAccess>(
+    start_level: usize,
+    end_level: usize,
+    geo: &Geometry,
+    atten: &A,
+    rt: &[LayerRt],
+    controls: RadiativeTransferControls,
+    num_orders_max: usize,
+) -> OrdersResult {
+    let nlevel = end_level + 1;
+    let mut result = zero_orders_result(nlevel, geo);
+    let mut ud_orde = vec![zero_ud_field(geo.nmutot); nlevel];
+    let mut ud_local = vec![zero_ud_local(geo.nmutot); nlevel];
+    let mut rt_active = vec![false; nlevel];
+    orders_scat_internal(
+        true,
+        false,
+        &mut result.ud,
+        &mut result.ud_sum_local,
+        &mut ud_orde,
+        &mut ud_local,
+        &mut rt_active,
+        start_level,
+        end_level,
+        geo,
+        atten,
+        rt,
+        controls,
+        num_orders_max,
+    );
+    result
 }
