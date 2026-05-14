@@ -68,6 +68,10 @@ name = "forward_model_radiative_transfer"
 path = "tests/rust/forward_model/radiative_transfer.rs"
 
 [[test]]
+name = "forward_model_optical_properties"
+path = "tests/rust/forward_model/optical_properties.rs"
+
+[[test]]
 name = "forward_model_labos"
 path = "tests/rust/forward_model/radiative_transfer/labos.rs"
 
