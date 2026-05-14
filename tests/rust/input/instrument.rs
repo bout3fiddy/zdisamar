@@ -1,9 +1,10 @@
 use zdisamar::{
     common::errors,
     input::instrument::{
-        AdaptiveReferenceGrid, BuiltinLineShapeKind, Id, InstrumentLineShape,
-        InstrumentLineShapeTable, OperationalCrossSectionLut, OperationalReferenceGrid,
-        OperationalSolarSpectrum,
+        AdaptiveReferenceGrid, BuiltinLineShapeKind, Id, Instrument, InstrumentLineShape,
+        InstrumentLineShapeTable, NodalCorrection, NoiseControls, NoiseModelKind,
+        OperationalBandSupport, OperationalCrossSectionLut, OperationalReferenceGrid,
+        OperationalSolarSpectrum, RingControls, SamplingMode, SlitIndex, SpectralResponse,
     },
 };
 
@@ -37,6 +38,18 @@ fn builtin_line_shape_parses_vendor_aliases() {
     assert_eq!(
         BuiltinLineShapeKind::parse("mystery"),
         Err(errors::Error::InvalidRequest)
+    );
+}
+
+#[test]
+fn instrument_pipeline_enums_parse_vendor_control_values() {
+    assert_eq!(SamplingMode::parse("native"), Ok(SamplingMode::Native));
+    assert_eq!(SamplingMode::Operational.label(), "operational");
+    assert_eq!(SlitIndex::parse("flat_top"), Ok(SlitIndex::FlatTopN4));
+    assert_eq!(SlitIndex::parse("5"), Ok(SlitIndex::Table));
+    assert_eq!(
+        SlitIndex::TripleFlatTopN4.builtin_kind(),
+        BuiltinLineShapeKind::TripleFlatTopN4
     );
 }
 
@@ -220,5 +233,140 @@ fn operational_cross_section_lut_evaluates_temperature_derivative_basis() {
     let expected_derivative = 4.0 / (400.0_f64.ln() - 100.0_f64.ln()) / 200.0;
     assert!(
         (lut.d_sigma_d_temperature_at(760.0, 200.0, 500.0) - expected_derivative).abs() < 1.0e-14
+    );
+}
+
+#[test]
+fn spectral_response_requires_line_shape_for_table_slit() {
+    assert_eq!(
+        SpectralResponse {
+            slit_index: SlitIndex::Table,
+            scale: 1.0,
+            ..SpectralResponse::default()
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+    assert_eq!(
+        SpectralResponse {
+            slit_index: SlitIndex::Table,
+            scale: 1.0,
+            instrument_line_shape: InstrumentLineShape {
+                sample_count: 2,
+                offsets_nm: vec![-0.1, 0.1],
+                weights: vec![1.0, 1.0],
+            },
+            ..SpectralResponse::default()
+        }
+        .validate(),
+        Ok(())
+    );
+}
+
+#[test]
+fn ring_controls_validate_degree_and_spectrum_values() {
+    assert_eq!(
+        RingControls {
+            degree_poly: 8,
+            ..RingControls::default()
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+    assert_eq!(
+        RingControls {
+            spectrum: vec![1.0, 2.0],
+            ..RingControls::default()
+        }
+        .validate(),
+        Ok(())
+    );
+}
+
+#[test]
+fn nodal_and_noise_controls_validate_nested_measurement_inputs() {
+    assert_eq!(
+        NodalCorrection {
+            wavelengths_nm: vec![760.0, 760.0],
+            values: vec![1.0, 2.0],
+            ..NodalCorrection::default()
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+    assert_eq!(
+        NodalCorrection {
+            wavelengths_nm: vec![760.0, 761.0],
+            values: vec![1.0, 2.0],
+            variances: vec![0.1, 0.2],
+            ..NodalCorrection::default()
+        }
+        .validate(),
+        Ok(())
+    );
+
+    assert_eq!(
+        NoiseControls {
+            enabled: true,
+            model: NoiseModelKind::LabOperational,
+            ..NoiseControls::default()
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+    assert_eq!(
+        NoiseControls {
+            enabled: true,
+            model: NoiseModelKind::LabOperational,
+            lab_a: 1.0,
+            ..NoiseControls::default()
+        }
+        .validate(),
+        Ok(())
+    );
+}
+
+#[test]
+fn instrument_contract_validates_nested_operational_support() {
+    assert_eq!(Instrument::default().validate(), Ok(()));
+    assert_eq!(
+        Instrument {
+            high_resolution_step_nm: 0.01,
+            ..Instrument::default()
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+
+    let support_without_id = OperationalBandSupport {
+        high_resolution_step_nm: 0.01,
+        high_resolution_half_span_nm: 0.5,
+        ..OperationalBandSupport::default()
+    };
+    assert_eq!(
+        support_without_id.validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+
+    let support = OperationalBandSupport {
+        id: "band_4".to_string(),
+        high_resolution_step_nm: 0.01,
+        high_resolution_half_span_nm: 0.5,
+        operational_solar_spectrum: OperationalSolarSpectrum {
+            wavelengths_nm: vec![760.0, 761.0, 762.0],
+            irradiance: vec![10.0, 20.0, 30.0],
+            spline_second_derivatives: Vec::new(),
+        },
+        ..OperationalBandSupport::default()
+    };
+    assert_eq!(support.validate(), Ok(()));
+    assert_eq!(
+        support
+            .clone_prepared()
+            .unwrap()
+            .operational_solar_spectrum
+            .spline_second_derivatives
+            .len(),
+        3
     );
 }
