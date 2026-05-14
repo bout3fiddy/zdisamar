@@ -5,6 +5,10 @@ use zdisamar::{
             postprocess::{
                 apply_channel_corrections, correction_reference_signal, materialize_channel_sigma,
             },
+            spectral_eval::{
+                cached_irradiance_at_wavelength, integrate_irradiance_at_nominal,
+                preferred_forward_worker_count,
+            },
             spectral_forward::{
                 ForwardIntegratedSample, MIN_PARALLEL_FORWARD_MISS_COUNT, radiance_from_forward,
                 radiance_jacobian_from_forward,
@@ -103,6 +107,8 @@ fn empty_product_view_owns_empty_vectors() {
 #[test]
 fn spectral_cache_uses_exact_wavelength_bits_and_resets_maps() {
     assert_eq!(MIN_PARALLEL_FORWARD_MISS_COUNT, 32);
+    assert_eq!(preferred_forward_worker_count(31), 1);
+    assert!(preferred_forward_worker_count(64) >= 1);
     let next_760 = f64::from_bits(760.0_f64.to_bits() + 1);
     assert_ne!(
         SpectralEvaluationCache::key_for(760.0),
@@ -124,6 +130,71 @@ fn spectral_cache_uses_exact_wavelength_bits_and_resets_maps() {
 
     assert!(cache.forward.is_empty());
     assert!(cache.irradiance.is_empty());
+}
+
+#[test]
+fn spectral_eval_caches_and_integrates_irradiance_samples() {
+    let mut scene = Scene {
+        observation_model: ObservationModel {
+            solar_spectrum_source: Binding::BundleDefault,
+            measurement_pipeline: MeasurementPipeline {
+                irradiance: SpectralChannelControls {
+                    explicit: true,
+                    response: SpectralResponse {
+                        integration_mode: zdisamar::input::IntegrationMode::DisamarHrGrid,
+                        high_resolution_step_nm: 0.1,
+                        high_resolution_half_span_nm: 0.1,
+                        ..SpectralResponse::default()
+                    },
+                    ..SpectralChannelControls::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            operational_band_support: vec![zdisamar::input::OperationalBandSupport {
+                id: "primary".to_string(),
+                operational_solar_spectrum: zdisamar::input::OperationalSolarSpectrum {
+                    wavelengths_nm: vec![760.0, 760.1, 760.2],
+                    irradiance: vec![10.0, 20.0, 30.0],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    scene.observation_model.operational_band_support[0]
+        .operational_solar_spectrum
+        .prepare_interpolation()
+        .unwrap();
+
+    let mut cache = SpectralEvaluationCache::default();
+    assert_close(
+        cached_irradiance_at_wavelength(&scene, 760.05, &mut cache),
+        15.0,
+    );
+    assert_eq!(cache.irradiance.len(), 1);
+    assert_close(
+        cached_irradiance_at_wavelength(&scene, 760.05, &mut cache),
+        15.0,
+    );
+    assert_eq!(cache.irradiance.len(), 1);
+
+    let mut integration = zdisamar::forward_model::implementations::instrument::IntegrationKernel {
+        enabled: true,
+        sample_count: 3,
+        ..Default::default()
+    };
+    integration.offsets_nm[0] = -0.05;
+    integration.offsets_nm[1] = 0.0;
+    integration.offsets_nm[2] = 0.05;
+    integration.weights[0] = 0.25;
+    integration.weights[1] = 0.5;
+    integration.weights[2] = 0.25;
+    assert_close(
+        integrate_irradiance_at_nominal(&scene, 760.1, &mut cache, &integration),
+        20.0,
+    );
 }
 
 #[test]
