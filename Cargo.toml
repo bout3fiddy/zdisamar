@@ -24,6 +24,10 @@ name = "input_atmosphere"
 path = "tests/rust/input/atmosphere.rs"
 
 [[test]]
+name = "input_absorber"
+path = "tests/rust/input/absorber.rs"
+
+[[test]]
 name = "input_binding"
 path = "tests/rust/input/binding.rs"
 

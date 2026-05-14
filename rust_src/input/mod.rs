@@ -1,3 +1,4 @@
+pub mod absorber;
 pub mod aerosol;
 pub mod atmosphere;
 pub mod atmospheric_types;
@@ -5,6 +6,8 @@ pub mod bands;
 pub mod binding;
 pub mod cloud;
 pub mod geometry;
+pub mod instrument;
 pub mod measurement;
+pub mod reference_data;
 pub mod spectrum;
 pub mod surface;
