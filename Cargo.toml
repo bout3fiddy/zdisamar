@@ -48,6 +48,10 @@ name = "input_measurement"
 path = "tests/rust/input/measurement.rs"
 
 [[test]]
+name = "input_observation_model"
+path = "tests/rust/input/observation_model.rs"
+
+[[test]]
 name = "input_particles"
 path = "tests/rust/input/particles.rs"
 

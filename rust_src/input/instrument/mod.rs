@@ -18,9 +18,9 @@ pub use cross_section_lut::OperationalCrossSectionLut;
 pub use id::Id;
 pub use line_shape::{BuiltinLineShapeKind, InstrumentLineShape, InstrumentLineShapeTable};
 pub use pipeline::{
-    MeasurementPipeline, NodalCorrection, NoiseControls, NoiseModelKind, ReflectanceCalibration,
-    RingControls, SamplingMode, SimpleOffsets, SinusoidalFeatures, SlitIndex, SpectralChannel,
-    SpectralChannelControls, SpectralResponse,
+    IntegrationMode, MeasurementPipeline, NodalCorrection, NoiseControls, NoiseModelKind,
+    ReflectanceCalibration, RingControls, SamplingMode, SimpleOffsets, SinusoidalFeatures,
+    SlitIndex, SpectralChannel, SpectralChannelControls, SpectralResponse,
 };
 pub use reference_grid::{AdaptiveReferenceGrid, OperationalReferenceGrid};
 pub use solar_spectrum::OperationalSolarSpectrum;
