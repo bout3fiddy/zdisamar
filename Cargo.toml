@@ -71,4 +71,8 @@ path = "tests/rust/forward_model/instrument_grid/spectral_math.rs"
 name = "forward_model_implementations"
 path = "tests/rust/forward_model/implementations.rs"
 
+[[test]]
+name = "forward_model_instrument_grid"
+path = "tests/rust/forward_model/instrument_grid/grid_calculation.rs"
+
 [dependencies]
