@@ -10,11 +10,16 @@ use zdisamar::{
                 FITTED_REFLECTANCE_EXPORT_NAME, InstrumentGridProductView, InstrumentGridSummary,
                 REFLECTANCE_EXPORT_NAME,
             },
+            wavelength_sampling::{build_wavelength_sampling, collect_unique_forward_misses},
         },
+        instrument_grid::spectral_math::{calibration, grid},
         jacobian::{self, State},
         radiative_transfer::{ExecutionMode, ForwardResult, TransportFamily},
     },
-    input::{Binding, DerivativeMode, Geometry, ObservationModel, ObservationRegime, Scene},
+    input::{
+        Binding, DerivativeMode, Geometry, MeasurementPipeline, ObservationModel,
+        ObservationRegime, Scene, SpectralChannelControls, SpectralGrid, SpectralResponse,
+    },
 };
 
 fn assert_close(actual: f64, expected: f64) {
@@ -111,6 +116,99 @@ fn spectral_cache_uses_exact_wavelength_bits_and_resets_maps() {
 
     assert!(cache.forward.is_empty());
     assert!(cache.irradiance.is_empty());
+}
+
+#[test]
+fn wavelength_sampling_uses_resolved_axis_and_channel_shifts() {
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 761.0,
+            sample_count: 3,
+        },
+        ..Scene::default()
+    };
+    let axis = grid::ResolvedAxis {
+        base: grid::SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 761.0,
+            sample_count: 3,
+        },
+        explicit_wavelengths_nm: &[760.02, 760.41, 760.93],
+    };
+
+    let plans = build_wavelength_sampling(
+        &scene,
+        axis,
+        calibration::Calibration {
+            wavelength_shift_nm: 0.01,
+            ..calibration::Calibration::default()
+        },
+        calibration::Calibration {
+            wavelength_shift_nm: -0.02,
+            ..calibration::Calibration::default()
+        },
+        zdisamar::forward_model::implementations::exact(),
+    )
+    .unwrap();
+
+    assert_eq!(plans.len(), 3);
+    assert_close(plans[1].nominal_wavelength_nm, 760.41);
+    assert_close(plans[1].radiance_wavelength_nm, 760.42);
+    assert_close(plans[1].irradiance_wavelength_nm, 760.39);
+    assert!(!plans[1].radiance_integration.enabled);
+    assert_eq!(plans[1].radiance_integration.sample_count, 1);
+}
+
+#[test]
+fn wavelength_sampling_collects_unique_radiance_integration_misses() {
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 760.2,
+            sample_count: 2,
+        },
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance: SpectralChannelControls {
+                    explicit: true,
+                    response: SpectralResponse {
+                        fwhm_nm: 0.4,
+                        high_resolution_step_nm: 0.1,
+                        high_resolution_half_span_nm: 0.1,
+                        ..SpectralResponse::default()
+                    },
+                    ..SpectralChannelControls::default()
+                },
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        ..Scene::default()
+    };
+    let axis = grid::ResolvedAxis {
+        base: grid::SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 760.1,
+            sample_count: 2,
+        },
+        explicit_wavelengths_nm: &[],
+    };
+
+    let plans = build_wavelength_sampling(
+        &scene,
+        axis,
+        calibration::Calibration::default(),
+        calibration::Calibration::default(),
+        zdisamar::forward_model::implementations::exact(),
+    )
+    .unwrap();
+    let misses = collect_unique_forward_misses(&plans);
+
+    assert_eq!(plans[0].radiance_integration.sample_count, 3);
+    assert_eq!(misses.len(), 4);
+    assert_close(misses[0].wavelength_nm, 759.9);
+    assert_close(misses[3].wavelength_nm, 760.2);
 }
 
 #[test]
