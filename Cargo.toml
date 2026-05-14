@@ -23,4 +23,8 @@ path = "tests/rust/input/atmospheric_types.rs"
 name = "input_binding"
 path = "tests/rust/input/binding.rs"
 
+[[test]]
+name = "input_geometry"
+path = "tests/rust/input/geometry.rs"
+
 [dependencies]
