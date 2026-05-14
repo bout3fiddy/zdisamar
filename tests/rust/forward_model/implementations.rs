@@ -2,7 +2,7 @@ use zdisamar::{
     forward_model::{
         implementations::{instrument, noise, surface, transport},
         radiative_transfer::{
-            DerivativeSemantics, DispatchRequest, ExecutionMode, ForwardResult,
+            DerivativeSemantics, DispatchRequest, ExecutionMode, ForwardInput, ForwardResult,
             ImplementationClass, ScatteringMode, TransportFamily,
         },
     },
@@ -184,6 +184,15 @@ fn transport_provider_prepares_labos_route_and_metadata() {
 
     let route = (provider.prepare_route)(DispatchRequest::default()).unwrap();
     assert_eq!(route.family, TransportFamily::Labos);
+    let forward = (provider.execute_prepared)(
+        route,
+        &ForwardInput {
+            surface_albedo: 0.2,
+            ..ForwardInput::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(forward.family, TransportFamily::Labos);
     assert_eq!(
         (provider.classification_for_route)(route),
         ImplementationClass::Baseline

@@ -1,8 +1,10 @@
 use crate::forward_model::radiative_transfer::{
-    self, DerivativeSemantics, DispatchRequest, ImplementationClass, Route,
+    self, DerivativeSemantics, DispatchRequest, ForwardInput, ForwardResult, ImplementationClass,
+    Route,
 };
 
 pub type PrepareRouteFn = fn(DispatchRequest) -> radiative_transfer::Result<Route>;
+pub type ExecutePreparedFn = fn(Route, &ForwardInput) -> radiative_transfer::Result<ForwardResult>;
 pub type ClassificationForRouteFn = fn(Route) -> ImplementationClass;
 pub type ProvenanceLabelForRouteFn = fn(Route) -> &'static str;
 pub type DerivativeSemanticsForRouteFn = fn(Route) -> DerivativeSemantics;
@@ -11,6 +13,7 @@ pub type DerivativeSemanticsForRouteFn = fn(Route) -> DerivativeSemantics;
 pub struct Implementation {
     pub id: &'static str,
     pub prepare_route: PrepareRouteFn,
+    pub execute_prepared: ExecutePreparedFn,
     pub classification_for_route: ClassificationForRouteFn,
     pub provenance_label_for_route: ProvenanceLabelForRouteFn,
     pub derivative_semantics_for_route: DerivativeSemanticsForRouteFn,
@@ -18,10 +21,10 @@ pub struct Implementation {
 
 pub fn resolve(provider_id: &str) -> Option<Implementation> {
     match provider_id {
-        // Execution is added with the real dispatcher; this resolver only exposes route metadata for now.
         "builtin.dispatcher" => Some(Implementation {
             id: "builtin.dispatcher",
-            prepare_route: radiative_transfer::prepare_route,
+            prepare_route: radiative_transfer::dispatcher::prepare,
+            execute_prepared: radiative_transfer::dispatcher::execute_prepared,
             classification_for_route,
             provenance_label_for_route,
             derivative_semantics_for_route,

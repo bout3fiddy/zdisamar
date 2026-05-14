@@ -3,8 +3,8 @@ use zdisamar::{
         jacobian::{self, State},
         optical_properties::shared::phase_functions,
         radiative_transfer::{
-            self, DerivativeSemantics, Error, ExecutionMode, ImplementationClass, LayerInput,
-            RadiativeTransferControls, RadiativeTransferPerformanceThresholds, Route,
+            self, DerivativeSemantics, Error, ExecutionMode, ForwardInput, ImplementationClass,
+            LayerInput, RadiativeTransferControls, RadiativeTransferPerformanceThresholds, Route,
             ScatteringMode, SourceInterfaceInput, TransportFamily,
         },
     },
@@ -155,6 +155,47 @@ fn prepare_route_keeps_only_labos_scalar_paths_executable() {
             ..radiative_transfer::DispatchRequest::default()
         }),
         Err(Error::UnsupportedDerivativeMode)
+    );
+}
+
+#[test]
+fn dispatcher_prepares_and_executes_labos_routes() {
+    let controls = RadiativeTransferControls {
+        scattering: ScatteringMode::None,
+        n_streams: 4,
+        ..RadiativeTransferControls::default()
+    };
+    let request = radiative_transfer::DispatchRequest {
+        rtm_controls: controls,
+        ..radiative_transfer::DispatchRequest::default()
+    };
+    let input = ForwardInput {
+        mu0: 0.8,
+        muv: 0.5,
+        optical_depth: 0.2,
+        surface_albedo: 0.3,
+        ..ForwardInput::default()
+    };
+
+    let result = radiative_transfer::dispatcher::execute(request, &input).unwrap();
+
+    let direct =
+        (-input.optical_depth / input.mu0).exp() * (-input.optical_depth / input.muv).exp();
+    assert_close(result.toa_reflectance_factor, input.surface_albedo * direct);
+    assert_eq!(result.family, TransportFamily::Labos);
+    assert!(result.jacobian.is_none());
+
+    let unsupported = Route {
+        family: TransportFamily::Labos,
+        regime: ObservationRegime::Limb,
+        execution_mode: ExecutionMode::Scalar,
+        derivative_mode: DerivativeMode::None,
+        derivative_state_mask: jacobian::ALL_STATES_MASK,
+        rtm_controls: controls,
+    };
+    assert_eq!(
+        radiative_transfer::dispatcher::execute_prepared(unsupported, &input),
+        Err(Error::UnsupportedObservationRegime)
     );
 }
 
