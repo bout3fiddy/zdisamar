@@ -27,4 +27,16 @@ path = "tests/rust/input/scene_primitives.rs"
 name = "input_binding"
 path = "tests/rust/input/binding.rs"
 
+[[test]]
+name = "input_atmosphere"
+path = "tests/rust/input/atmosphere.rs"
+
+[[test]]
+name = "input_particles"
+path = "tests/rust/input/particles.rs"
+
+[[test]]
+name = "input_measurement"
+path = "tests/rust/input/measurement.rs"
+
 [dependencies]
