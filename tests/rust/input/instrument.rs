@@ -2,7 +2,8 @@ use zdisamar::{
     common::errors,
     input::instrument::{
         AdaptiveReferenceGrid, BuiltinLineShapeKind, Id, InstrumentLineShape,
-        InstrumentLineShapeTable, OperationalReferenceGrid, OperationalSolarSpectrum,
+        InstrumentLineShapeTable, OperationalCrossSectionLut, OperationalReferenceGrid,
+        OperationalSolarSpectrum,
     },
 };
 
@@ -174,4 +175,50 @@ fn solar_spectrum_prepares_disamar_style_spline_and_corrects_measured_values() {
         .correct_measured_spectrum_onto(&[760.0, 761.0], &[2.0, 4.0], &[761.0, 762.0])
         .unwrap();
     assert_eq!(corrected, vec![4.0, 6.0]);
+}
+
+#[test]
+fn operational_cross_section_lut_validates_and_interpolates_sigma() {
+    let lut = OperationalCrossSectionLut {
+        wavelengths_nm: vec![760.0, 761.0],
+        coefficients: vec![2.0, 4.0],
+        temperature_coefficient_count: 1,
+        pressure_coefficient_count: 1,
+        min_temperature_k: 180.0,
+        max_temperature_k: 320.0,
+        min_pressure_hpa: 200.0,
+        max_pressure_hpa: 1000.0,
+    };
+    assert_eq!(lut.validate(), Ok(()));
+    assert_eq!(lut.sigma_at(760.5, 250.0, 500.0), 3.0);
+    assert_eq!(lut.d_sigma_d_temperature_at(760.5, 250.0, 500.0), 0.0);
+
+    assert_eq!(
+        OperationalCrossSectionLut {
+            coefficients: vec![1.0],
+            ..OperationalCrossSectionLut::default()
+        }
+        .validate(),
+        Err(errors::Error::InvalidRequest)
+    );
+}
+
+#[test]
+fn operational_cross_section_lut_evaluates_temperature_derivative_basis() {
+    let lut = OperationalCrossSectionLut {
+        wavelengths_nm: vec![760.0],
+        coefficients: vec![10.0, 2.0],
+        temperature_coefficient_count: 2,
+        pressure_coefficient_count: 1,
+        min_temperature_k: 100.0,
+        max_temperature_k: 400.0,
+        min_pressure_hpa: 100.0,
+        max_pressure_hpa: 1000.0,
+    };
+    assert_eq!(lut.validate(), Ok(()));
+    assert!((lut.sigma_at(760.0, 200.0, 500.0) - 10.0).abs() < 1.0e-14);
+    let expected_derivative = 4.0 / (400.0_f64.ln() - 100.0_f64.ln()) / 200.0;
+    assert!(
+        (lut.d_sigma_d_temperature_at(760.0, 200.0, 500.0) - expected_derivative).abs() < 1.0e-14
+    );
 }

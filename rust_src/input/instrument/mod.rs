@@ -1,5 +1,7 @@
 pub mod constants;
 pub mod cross_section_lut;
+mod cross_section_lut_basis;
+mod cross_section_lut_eval;
 pub mod id;
 pub mod line_shape;
 pub mod reference_grid;
