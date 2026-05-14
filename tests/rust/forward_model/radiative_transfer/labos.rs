@@ -2,11 +2,15 @@ use zdisamar::forward_model::{
     jacobian::{self, State},
     optical_properties::shared::phase_functions,
     radiative_transfer::{
-        LayerInput, PseudoSphericalGrid, PseudoSphericalSample,
+        LayerInput, PseudoSphericalGrid, PseudoSphericalSample, RadiativeTransferControls,
+        ScatteringMode,
         labos::{
-            FourierPlmBasis, Geometry, MAX_EXTRA, MAX_GAUSS, MAX_N2, MAX_NMUTOT, Mat,
-            Vec as LabosVec, Vec2, attenuation, fill_zplus_zmin,
+            FourierPlmBasis, Geometry, LayerRt, MAX_EXTRA, MAX_GAUSS, MAX_N2, MAX_NMUTOT,
+            MAX_PHASE_COEF, Mat, PhaseKernel, Vec as LabosVec, Vec2, attenuation, calc_rt_layers,
+            calc_rt_layers_into_with_basis, fill_layer_effective_scattering_suffixes,
+            fill_layer_phase_max_indices, fill_surface, fill_zplus_zmin,
             fill_zplus_zmin_from_basis_limited, fill_zplus_zmin_row_from_basis_limited, matrix,
+            renormalize_zero_fourier_phase_kernel, zero_fourier_integral,
         },
     },
 };
@@ -390,4 +394,168 @@ fn labos_phase_kernel_is_zero_when_fourier_order_exceeds_phase_terms() {
             .iter()
             .all(|value| *value == 0.0)
     );
+}
+
+#[test]
+fn labos_surface_is_lambertian_only_for_zero_fourier() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let surface = fill_surface(0, 0.25, &geometry);
+    for i in 0..geometry.nmutot {
+        for j in 0..geometry.nmutot {
+            assert_close(surface.r.get(i, j), geometry.w[i] * 0.25 * geometry.w[j]);
+            assert_close(surface.t.get(i, j), 0.0);
+        }
+    }
+
+    let higher_order = fill_surface(1, 0.25, &geometry);
+    assert!(
+        higher_order.r.data[..geometry.nmutot * geometry.nmutot]
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+}
+
+#[test]
+fn labos_zero_fourier_renormalization_restores_gauss_column_integral() {
+    let geometry = Geometry::init(3, 0.8, 0.6).unwrap();
+    let coefficients = phase_functions::zero_phase_coefficients();
+    let mut kernel = fill_zplus_zmin(0, &coefficients, &geometry);
+    for value in kernel
+        .zplus
+        .data
+        .iter_mut()
+        .take(geometry.nmutot * geometry.nmutot)
+    {
+        *value *= 0.8;
+    }
+
+    let before = zero_fourier_integral(&kernel.zplus, &kernel.zmin, &geometry, 0);
+    assert!(before < 2.0);
+    renormalize_zero_fourier_phase_kernel(&geometry, &mut kernel.zplus, &mut kernel.zmin);
+    let after = zero_fourier_integral(&kernel.zplus, &kernel.zmin, &geometry, 0);
+    assert_close(after, 2.0);
+}
+
+#[test]
+fn labos_layer_phase_index_and_suffix_precompute_match_effective_scattering_rule() {
+    let mut coefficients = phase_functions::zero_phase_coefficients();
+    coefficients[2] = 0.3;
+    coefficients[3] = -0.4;
+    let layers = vec![LayerInput {
+        phase_coefficients: coefficients,
+        ..LayerInput::default()
+    }];
+
+    let mut max_indices = [0usize; 1];
+    fill_layer_phase_max_indices(&mut max_indices, &layers);
+    assert_eq!(max_indices[0], 3);
+
+    let mut suffixes = vec![0.0; MAX_PHASE_COEF];
+    fill_layer_effective_scattering_suffixes(&mut suffixes, &layers, &max_indices);
+    assert_close(suffixes[3], 0.4 / 7.0);
+    assert_close(suffixes[2], (0.3_f64 / 5.0).max(0.4 / 7.0));
+    assert_close(suffixes[0], 1.0);
+}
+
+#[test]
+fn labos_layer_assembly_matches_single_scatter_formula_without_doubling() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let layer = LayerInput {
+        optical_depth: 0.2,
+        scattering_optical_depth: 0.1,
+        single_scatter_albedo: 0.7,
+        phase_coefficients: phase_functions::zero_phase_coefficients(),
+        ..LayerInput::default()
+    };
+    let controls = RadiativeTransferControls {
+        scattering: ScatteringMode::Single,
+        ..RadiativeTransferControls::default()
+    };
+
+    let rt = calc_rt_layers(&[layer], 0, &geometry, controls);
+    assert_eq!(rt.len(), 2);
+    assert!(
+        rt[0].r.data[..geometry.nmutot * geometry.nmutot]
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+
+    let i = 0;
+    let j = 1;
+    let idx = i * geometry.nmutot + j;
+    let ei = (-layer.optical_depth / geometry.u[i].max(1.0e-12)).exp();
+    let ej = (-layer.optical_depth / geometry.u[j].max(1.0e-12)).exp();
+    let z = geometry.w[i] * geometry.w[j];
+    assert_close(
+        rt[1].r.get(i, j),
+        layer.single_scatter_albedo * z * (1.0 - ei * ej) * geometry.dmu_plus[idx],
+    );
+    assert_close(
+        rt[1].t.get(i, j),
+        layer.single_scatter_albedo * z * (ei - ej) * geometry.dmu_min[idx],
+    );
+}
+
+#[test]
+fn labos_layer_assembly_populates_optional_caches_and_activity_mask() {
+    let geometry = Geometry::init(2, 0.8, 0.6).unwrap();
+    let layers = vec![
+        LayerInput::default(),
+        LayerInput {
+            optical_depth: 0.2,
+            scattering_optical_depth: 0.1,
+            single_scatter_albedo: 0.7,
+            phase_coefficients: phase_functions::zero_phase_coefficients(),
+            ..LayerInput::default()
+        },
+    ];
+    let controls = RadiativeTransferControls {
+        scattering: ScatteringMode::Single,
+        ..RadiativeTransferControls::default()
+    };
+    let basis = FourierPlmBasis::init(0, 0, &geometry);
+    let mut rt = vec![
+        LayerRt {
+            r: Mat::zero(geometry.nmutot),
+            t: Mat::zero(geometry.nmutot),
+        };
+        layers.len() + 1
+    ];
+    let mut cache = vec![
+        PhaseKernel {
+            zplus: Mat::zero(geometry.nmutot),
+            zmin: Mat::zero(geometry.nmutot),
+        };
+        layers.len() + 1
+    ];
+    let mut valid = vec![true; layers.len() + 1];
+    let mut active = vec![true; layers.len() + 1];
+
+    calc_rt_layers_into_with_basis(
+        &mut rt,
+        &layers,
+        0,
+        &geometry,
+        controls,
+        &basis,
+        Some(&[0, 0]),
+        None,
+        Some(&mut cache),
+        Some(&mut valid),
+        Some(&mut active),
+    );
+
+    assert!(!active[0]);
+    assert!(!active[1]);
+    assert!(active[2]);
+    assert!(!valid[0]);
+    assert!(!valid[1]);
+    assert!(valid[2]);
+    assert!(
+        rt[1].r.data[..geometry.nmutot * geometry.nmutot]
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert!(rt[2].r.get(0, 0) > 0.0);
+    assert_close(cache[2].zplus.get(0, 0), geometry.w[0] * geometry.w[0]);
 }
