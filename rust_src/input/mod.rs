@@ -7,6 +7,7 @@ pub mod cloud;
 pub mod geometry;
 pub mod instrument;
 pub mod measurement;
+pub mod observation_model;
 pub mod spectrum;
 pub mod surface;
 
@@ -30,5 +31,6 @@ pub use instrument::{
     SlitIndex, SpectralChannel, SpectralChannelControls, SpectralResponse,
 };
 pub use measurement::{ErrorModel, Measurement, MeasurementVector, Quantity, SpectralMask};
+pub use observation_model::{CrossSectionFitControls, ObservationModel, ObservationRegime};
 pub use spectrum::SpectralGrid;
 pub use surface::{Parameter, Surface, SurfaceKind};

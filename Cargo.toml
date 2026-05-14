@@ -43,4 +43,8 @@ path = "tests/rust/input/measurement.rs"
 name = "input_instrument"
 path = "tests/rust/input/instrument.rs"
 
+[[test]]
+name = "input_observation_model"
+path = "tests/rust/input/observation_model.rs"
+
 [dependencies]
