@@ -1,28 +1,33 @@
-use zdisamar::forward_model::{
-    jacobian::{self, State},
-    optical_properties::shared::phase_functions,
-    radiative_transfer::{
-        ForwardInput, LayerInput, PseudoSphericalGrid, PseudoSphericalSample,
-        RadiativeTransferControls, RadiativeTransferPerformanceThresholds, RtmQuadratureGrid,
-        RtmQuadratureLevel, ScatteringMode, SourceInterfaceInput,
-        labos::{
-            DynamicAttenArray, FourierPlmBasis, Geometry, LayerRt, MAX_EXTRA, MAX_GAUSS, MAX_N2,
-            MAX_NMUTOT, MAX_PHASE_COEF, Mat, OrdersWorkspace, PhaseKernel, Vec as LabosVec, Vec2,
-            accumulate_order_contribution, attenuation,
-            calc_aerosol_layer_pressure_shift_weighting_with_basis,
-            calc_aerosol_optical_depth_weighting_with_basis, calc_integrated_reflectance,
-            calc_integrated_reflectance_with_basis, calc_reflectance, calc_reflectance_tangent,
-            calc_rt_layers, calc_rt_layers_into_with_basis, dot_gauss, dot_gauss_pair,
-            fill_adjacent_layer_phase_max_indices, fill_layer_effective_scattering_suffixes,
-            fill_layer_phase_max_indices, fill_surface, fill_zplus_zmin,
-            fill_zplus_zmin_from_basis_limited, fill_zplus_zmin_row_from_basis_limited, matrix,
-            max_outgoing_upward, orders_scat, orders_scat_into_with_active_local_sum,
-            orders_scat_tangent, refresh_active_layer_mask, renormalize_zero_fourier_phase_kernel,
-            resolved_fourier_max, resolved_phase_coefficient_max, total_scattering_optical_depth,
-            transport_to_other_levels, transport_to_other_levels_tangent, zero_fourier_integral,
-            zero_ud_field, zero_ud_local,
+use zdisamar::{
+    forward_model::{
+        jacobian::{self, State},
+        optical_properties::shared::phase_functions,
+        radiative_transfer::{
+            ExecutionMode, ForwardInput, LayerInput, PseudoSphericalGrid, PseudoSphericalSample,
+            RadiativeTransferControls, RadiativeTransferPerformanceThresholds, Route,
+            RtmQuadratureGrid, RtmQuadratureLevel, ScatteringMode, SourceInterfaceInput,
+            TransportFamily,
+            labos::{
+                DynamicAttenArray, FourierPlmBasis, Geometry, LayerRt, MAX_EXTRA, MAX_GAUSS,
+                MAX_N2, MAX_NMUTOT, MAX_PHASE_COEF, Mat, OrdersWorkspace, PhaseKernel,
+                Vec as LabosVec, Vec2, accumulate_order_contribution, attenuation,
+                calc_aerosol_layer_pressure_shift_weighting_with_basis,
+                calc_aerosol_optical_depth_weighting_with_basis, calc_integrated_reflectance,
+                calc_integrated_reflectance_with_basis, calc_reflectance, calc_reflectance_tangent,
+                calc_rt_layers, calc_rt_layers_into_with_basis, dot_gauss, dot_gauss_pair, execute,
+                fill_adjacent_layer_phase_max_indices, fill_layer_effective_scattering_suffixes,
+                fill_layer_phase_max_indices, fill_surface, fill_zplus_zmin,
+                fill_zplus_zmin_from_basis_limited, fill_zplus_zmin_row_from_basis_limited, matrix,
+                max_outgoing_upward, orders_scat, orders_scat_into_with_active_local_sum,
+                orders_scat_tangent, refresh_active_layer_mask,
+                renormalize_zero_fourier_phase_kernel, resolved_fourier_max,
+                resolved_phase_coefficient_max, total_scattering_optical_depth,
+                transport_to_other_levels, transport_to_other_levels_tangent,
+                zero_fourier_integral, zero_ud_field, zero_ud_local,
+            },
         },
     },
+    input::{DerivativeMode, ObservationRegime},
 };
 
 fn assert_close(left: f64, right: f64) {
@@ -1093,4 +1098,78 @@ fn labos_aerosol_layer_weightings_use_active_interior_bounds() {
     let unit_source = 2.0 * ((0.25 / geometry.muv) / geometry.mu0) * 3.0;
     assert_close(optical_depth_weighting, 0.5 * unit_source);
     assert_close(pressure_shift_weighting, 0.5 * unit_source);
+}
+
+#[test]
+fn labos_execute_direct_surface_only_reports_surface_tangent() {
+    let controls = RadiativeTransferControls {
+        scattering: ScatteringMode::None,
+        n_streams: 4,
+        ..RadiativeTransferControls::default()
+    };
+    let route = Route {
+        family: TransportFamily::Labos,
+        regime: ObservationRegime::Nadir,
+        execution_mode: ExecutionMode::Scalar,
+        derivative_mode: DerivativeMode::SemiAnalytical,
+        derivative_state_mask: jacobian::state_mask(State::SurfaceAlbedo),
+        rtm_controls: controls,
+    };
+    let input = ForwardInput {
+        mu0: 0.8,
+        muv: 0.5,
+        optical_depth: 0.2,
+        surface_albedo: 0.3,
+        ..ForwardInput::default()
+    };
+
+    let result = execute(route, &input).unwrap();
+
+    let direct =
+        (-input.optical_depth / input.mu0).exp() * (-input.optical_depth / input.muv).exp();
+    assert_close(result.toa_reflectance_factor, input.surface_albedo * direct);
+    assert_close(
+        jacobian::get(result.jacobian.unwrap(), State::SurfaceAlbedo),
+        direct,
+    );
+}
+
+#[test]
+fn labos_execute_layer_resolved_absorbing_path_matches_surface_transmittance() {
+    let controls = RadiativeTransferControls {
+        n_streams: 4,
+        ..RadiativeTransferControls::default()
+    };
+    let route = Route {
+        family: TransportFamily::Labos,
+        regime: ObservationRegime::Nadir,
+        execution_mode: ExecutionMode::Scalar,
+        derivative_mode: DerivativeMode::None,
+        derivative_state_mask: jacobian::ALL_STATES_MASK,
+        rtm_controls: controls,
+    };
+    let input = ForwardInput {
+        mu0: 0.8,
+        muv: 0.5,
+        surface_albedo: 0.25,
+        layers: vec![
+            LayerInput {
+                optical_depth: 0.1,
+                ..LayerInput::default()
+            },
+            LayerInput {
+                optical_depth: 0.2,
+                ..LayerInput::default()
+            },
+        ],
+        ..ForwardInput::default()
+    };
+
+    let result = execute(route, &input).unwrap();
+
+    let total_tau = 0.3;
+    let expected =
+        input.surface_albedo * (-total_tau / input.mu0).exp() * (-total_tau / input.muv).exp();
+    assert_close(result.toa_reflectance_factor, expected);
+    assert!(result.jacobian.is_none());
 }

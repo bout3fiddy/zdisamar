@@ -1,4 +1,5 @@
 pub mod attenuation;
+pub mod execute;
 pub mod layers;
 pub mod matrix;
 pub mod orders;
@@ -7,6 +8,7 @@ pub mod reflectance;
 pub mod types;
 
 pub use attenuation::{AttenArray, DynamicAttenArray};
+pub use execute::execute;
 pub use layers::{
     calc_rt_layers, calc_rt_layers_into, calc_rt_layers_into_with_basis,
     calc_rt_layers_tangent_into_with_basis, fill_layer_effective_scattering_suffixes,
