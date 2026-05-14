@@ -1,21 +1,24 @@
 """Hatch build hook for zdisamar native wheels."""
 
 import subprocess
-import sys
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
-def library_filename() -> str:
+def synced_library_path(root: str) -> Path:
 
-    if sys.platform == "darwin":
-        return "libzdisamar_c.dylib"
+    bindings_dir = Path(root) / "python" / "zdisamar" / "bindings"
+    candidates = sorted(bindings_dir.glob("libzdisamar_c.*")) + sorted(
+        bindings_dir.glob("zdisamar_c.dll")
+    )
 
-    if sys.platform == "win32":
-        return "zdisamar_c.dll"
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"expected one synced native library in {bindings_dir}, found {candidates}"
+        )
 
-    return "libzdisamar_c.so"
+    return candidates[0]
 
 
 class NativeWheelHook(BuildHookInterface):
@@ -25,9 +28,7 @@ class NativeWheelHook(BuildHookInterface):
             return
 
         subprocess.run(["zig", "build", "sync-python-package"], cwd=self.root, check=True)
-        filename = library_filename()
-        build_data["force_include"][
-            str(Path(self.root) / "python" / "zdisamar" / "bindings" / filename)
-        ] = f"zdisamar/bindings/{filename}"
+        library = synced_library_path(self.root)
+        build_data["force_include"][str(library)] = f"zdisamar/bindings/{library.name}"
         build_data["infer_tag"] = True
         build_data["pure_python"] = False
