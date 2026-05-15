@@ -4,6 +4,7 @@ pub mod forward_layers;
 pub mod operational_o2;
 pub mod prepared_state;
 pub mod pseudo_spherical;
+pub mod rtm_quadrature;
 pub mod shared_carrier;
 pub mod shared_geometry;
 pub mod source_interfaces;
@@ -27,6 +28,7 @@ pub use forward_layers::{
 pub use operational_o2::operational_o2_evaluation_at_wavelength;
 pub use prepared_state::PreparedOpticalState;
 pub use pseudo_spherical::fill_shared_pseudo_spherical_grid_from_layer_inputs;
+pub use rtm_quadrature::fill_rtm_quadrature_at_wavelength_with_layers;
 pub use shared_carrier::{
     accumulate_shared_carrier, evaluate_reduced_layer_from_support_rows,
     evaluated_layer_from_shared_carrier,

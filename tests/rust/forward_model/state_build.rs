@@ -14,7 +14,7 @@ use zdisamar::{
                 collect_active_line_absorbers, collision_induced_sigma_at_wavelength,
                 continuum_carrier_density_at_sublayer,
                 effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
-                fill_forward_layers_at_wavelength,
+                fill_forward_layers_at_wavelength, fill_rtm_quadrature_at_wavelength_with_layers,
                 fill_shared_pseudo_spherical_grid_from_layer_inputs,
                 fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
                 forward_input_from_optical_depths, interpolate_prepared_scalar_at_altitude,
@@ -34,7 +34,7 @@ use zdisamar::{
             },
         },
         radiative_transfer::common_types::{
-            LayerInput, PseudoSphericalSample, SourceInterfaceInput,
+            LayerInput, PseudoSphericalSample, RtmQuadratureLevel, SourceInterfaceInput,
         },
     },
     input::{
@@ -1282,6 +1282,176 @@ fn forward_layers_fill_reduced_shared_rtm_grid_from_support_rows() {
             State::AerosolOpticalDepth,
         ),
         0.05,
+        1.0e-14,
+    );
+}
+
+#[test]
+fn rtm_quadrature_fills_sublayer_grid_and_rescales_to_layer_scattering() {
+    let mut phase = phase_functions::zero_phase_coefficients();
+    phase[1] = 0.4;
+    let sublayers = (0..3)
+        .map(|index| PreparedSublayer {
+            global_sublayer_index: index,
+            altitude_km: 1.0 + f64::from(index),
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.2,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: phase,
+            ..PreparedSublayer::default()
+        })
+        .collect::<Vec<_>>();
+    let prepared = PreparedOpticalState {
+        layers: vec![PreparedLayer {
+            sublayer_start_index: 0,
+            sublayer_count: 3,
+            ..PreparedLayer::default()
+        }],
+        sublayers: Some(sublayers),
+        aerosol_optical_depth: 0.6,
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        ..PreparedOpticalState::default()
+    };
+    let layer_inputs = vec![
+        LayerInput {
+            scattering_optical_depth: 0.2,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            scattering_optical_depth: 0.2,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            scattering_optical_depth: 0.2,
+            ..LayerInput::default()
+        },
+    ];
+    let mut rtm_levels = vec![RtmQuadratureLevel::default(); 4];
+
+    assert!(
+        fill_rtm_quadrature_at_wavelength_with_layers(
+            &prepared,
+            760.0,
+            &layer_inputs,
+            &mut rtm_levels,
+        )
+        .unwrap()
+    );
+
+    assert_close(rtm_levels[0].altitude_km, 0.5, 1.0e-14);
+    assert_close(rtm_levels[1].weight, 1.5, 1.0e-14);
+    assert_close(rtm_levels[2].weight, 1.5, 1.0e-14);
+    assert_close(rtm_levels[1].ksca, 0.2, 1.0e-14);
+    assert_close(rtm_levels[2].ksca, 0.2, 1.0e-14);
+    assert_close(rtm_levels[1].phase_coefficients[1], 0.4, 1.0e-14);
+    assert_close(
+        rtm_levels[1].aerosol_ksca_phase_above_per_km[1],
+        0.08,
+        1.0e-14,
+    );
+    assert_close(
+        rtm_levels[1].ksca_phase_coefficient_jacobian
+            [jacobian::state_index(State::AerosolOpticalDepth)][0],
+        0.2 / 0.6,
+        1.0e-14,
+    );
+}
+
+#[test]
+fn rtm_quadrature_fills_shared_grid_from_boundary_carriers() {
+    let mut below_phase = phase_functions::zero_phase_coefficients();
+    below_phase[1] = 0.2;
+    let mut above_phase = phase_functions::zero_phase_coefficients();
+    above_phase[1] = 0.8;
+    let sublayers = vec![
+        PreparedSublayer {
+            altitude_km: 0.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: below_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: below_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 2.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 3.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.3,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: above_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 4.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let mut prepared = PreparedOpticalState {
+        layers: vec![
+            PreparedLayer {
+                sublayer_start_index: 0,
+                sublayer_count: 3,
+                bottom_altitude_km: 0.0,
+                top_altitude_km: 2.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+            PreparedLayer {
+                sublayer_start_index: 2,
+                sublayer_count: 3,
+                bottom_altitude_km: 2.0,
+                top_altitude_km: 4.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+        ],
+        sublayers: Some(sublayers),
+        aerosol_optical_depth: 0.4,
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        interval_semantics: IntervalSemantics::ExplicitPressureBounds,
+        ..PreparedOpticalState::default()
+    };
+    prepared.ensure_shared_rtm_geometry_cache().unwrap();
+    let layer_inputs = vec![LayerInput::default(), LayerInput::default()];
+    let mut rtm_levels = vec![RtmQuadratureLevel::default(); 3];
+
+    assert!(
+        fill_rtm_quadrature_at_wavelength_with_layers(
+            &prepared,
+            760.0,
+            &layer_inputs,
+            &mut rtm_levels,
+        )
+        .unwrap()
+    );
+
+    assert_close(rtm_levels[1].altitude_km, 2.0, 0.0);
+    assert_close(rtm_levels[1].weight, 4.0, 1.0e-14);
+    assert_close(rtm_levels[1].ksca, 0.3, 1.0e-14);
+    assert_close(rtm_levels[1].phase_coefficients[1], 0.8, 1.0e-14);
+    assert_close(
+        rtm_levels[1].aerosol_ksca_phase_above_per_km[1],
+        0.24,
+        1.0e-14,
+    );
+    assert_close(
+        rtm_levels[1].aerosol_ksca_phase_below_per_km[1],
+        0.02,
         1.0e-14,
     );
 }
