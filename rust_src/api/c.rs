@@ -4,6 +4,11 @@ use std::{
     ptr,
 };
 
+use crate::{
+    forward_model::jacobian::{self, State},
+    input::scene::DerivativeMode,
+};
+
 const ZDS_OK: c_int = 0;
 const ZDS_FAILURE: c_int = 1;
 
@@ -221,6 +226,37 @@ pub unsafe extern "C" fn zds_run_spectrum(ctx: *mut Context, out: *mut ZdsSpectr
 #[unsafe(no_mangle)]
 /// # Safety
 ///
+/// `ctx` must be live and `out` must be valid for writing one `ZdsSpectrum`.
+pub unsafe extern "C" fn zds_run_spectrum_jacobian(
+    ctx: *mut Context,
+    out: *mut ZdsSpectrum,
+) -> c_int {
+    unsafe { run_spectrum_jacobian_for_state_ids(ctx, out, ptr::null(), 0) }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` and `out` must be valid. When `state_count` is nonzero, `state_ids`
+/// must point to `state_count` readable state ids.
+pub unsafe extern "C" fn zds_run_spectrum_jacobian_for_states(
+    ctx: *mut Context,
+    out: *mut ZdsSpectrum,
+    state_ids: *const u8,
+    state_count: usize,
+) -> c_int {
+    if state_count != 0 && state_ids.is_null() {
+        if let Some(resolved) = context_mut(ctx) {
+            return fail(resolved, "null Jacobian state ids");
+        }
+        return ZDS_FAILURE;
+    }
+    unsafe { run_spectrum_jacobian_for_state_ids(ctx, out, state_ids, state_count) }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
 /// `ctx` must be live and `out` must point to a `ZdsSpectrum` previously returned by this context.
 pub unsafe extern "C" fn zds_spectrum_free(ctx: *mut Context, out: *mut ZdsSpectrum) {
     let Some(resolved) = context_mut(ctx) else {
@@ -272,7 +308,85 @@ fn fail(ctx: &mut Context, message: impl AsRef<str>) -> c_int {
     ZDS_FAILURE
 }
 
+unsafe fn run_spectrum_jacobian_for_state_ids(
+    ctx: *mut Context,
+    out: *mut ZdsSpectrum,
+    state_ids: *const u8,
+    requested_state_count: usize,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    if out.is_null() {
+        return fail(resolved, "spectrum output pointer is null");
+    }
+    let Some(prepared) = resolved.prepared.as_ref() else {
+        return fail(resolved, "no prepared O2A case loaded");
+    };
+    let state_slice = if requested_state_count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(state_ids, requested_state_count) }
+    };
+    let derivative_state_mask = match jacobian_state_mask(state_slice) {
+        Some(mask) => mask,
+        None => return fail(resolved, "unsupported Jacobian state"),
+    };
+
+    let mut prepared = prepared.clone();
+    prepared.route.derivative_mode = DerivativeMode::SemiAnalytical;
+    prepared.route.derivative_state_mask = derivative_state_mask;
+
+    match crate::run_o2a_with_session_storage(&mut resolved.o2a_session_storage, &prepared) {
+        Ok(mut product) => {
+            let output_state_count = if requested_state_count == 0 {
+                jacobian::STATE_COUNT
+            } else {
+                requested_state_count
+            };
+            if !state_slice.is_empty()
+                && let Err(message) = compact_result_jacobian(&mut product, state_slice)
+            {
+                return fail(resolved, message);
+            }
+
+            let mut boxed = Box::new(product);
+            let raw_product = boxed.as_mut() as *mut crate::Output;
+            unsafe {
+                write_spectrum_with_state_count(
+                    out,
+                    &boxed,
+                    raw_product.cast::<c_void>(),
+                    output_state_count,
+                );
+            }
+            resolved.results.push(boxed);
+            resolved.clear_error();
+            ZDS_OK
+        }
+        Err(err) => fail(
+            resolved,
+            format!("failed to run spectrum Jacobian: {err:?}"),
+        ),
+    }
+}
+
 unsafe fn write_spectrum(out: *mut ZdsSpectrum, product: &crate::Output, handle: *mut c_void) {
+    let state_count = product
+        .jacobian
+        .as_ref()
+        .map_or(0, |_| jacobian::STATE_COUNT);
+    unsafe {
+        write_spectrum_with_state_count(out, product, handle, state_count);
+    }
+}
+
+unsafe fn write_spectrum_with_state_count(
+    out: *mut ZdsSpectrum,
+    product: &crate::Output,
+    handle: *mut c_void,
+    jacobian_state_count: usize,
+) {
     unsafe {
         *out = ZdsSpectrum {
             len: product.wavelengths.len(),
@@ -284,13 +398,55 @@ unsafe fn write_spectrum(out: *mut ZdsSpectrum, product: &crate::Output, handle:
                 .jacobian
                 .as_ref()
                 .map_or(ptr::null(), |values| values.as_ptr()),
-            jacobian_state_count: product
-                .jacobian
-                .as_ref()
-                .map_or(0, |_| crate::forward_model::jacobian::STATE_COUNT),
+            jacobian_state_count,
             result_handle: handle,
         };
     }
+}
+
+fn jacobian_state_from_id(state_id: u8) -> Option<State> {
+    match state_id {
+        0 => Some(State::SurfaceAlbedo),
+        1 => Some(State::AerosolOpticalDepth),
+        2 => Some(State::AerosolLayerMidPressureHpa),
+        _ => None,
+    }
+}
+
+fn jacobian_state_mask(state_ids: &[u8]) -> Option<jacobian::StateMask> {
+    if state_ids.is_empty() {
+        return Some(jacobian::ALL_STATES_MASK);
+    }
+    let mut mask = 0;
+    for &state_id in state_ids {
+        let state = jacobian_state_from_id(state_id)?;
+        mask |= jacobian::state_mask(state);
+    }
+    Some(jacobian::sanitized_mask(mask))
+}
+
+fn compact_result_jacobian(
+    result: &mut crate::Output,
+    state_ids: &[u8],
+) -> Result<(), &'static str> {
+    let Some(full) = result.jacobian.as_ref() else {
+        return Err("missing Jacobian");
+    };
+    if full.len() != result.wavelengths.len() * jacobian::STATE_COUNT {
+        return Err("Jacobian shape mismatch");
+    }
+
+    let mut compact = Vec::with_capacity(result.wavelengths.len() * state_ids.len());
+    for sample_index in 0..result.wavelengths.len() {
+        for &state_id in state_ids {
+            let Some(state) = jacobian_state_from_id(state_id) else {
+                return Err("unsupported Jacobian state");
+            };
+            compact.push(full[sample_index * jacobian::STATE_COUNT + jacobian::state_index(state)]);
+        }
+    }
+    result.jacobian = Some(compact);
+    Ok(())
 }
 
 fn empty_error() -> CString {
@@ -305,7 +461,19 @@ fn c_string_lossy(message: &str) -> CString {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forward_model::instrument_grid::InstrumentGridSummary;
+    use crate::{
+        forward_model::{
+            instrument_grid::InstrumentGridSummary,
+            optical_properties::{PreparedOpticalState, PreparedSublayer},
+            radiative_transfer::{
+                common_route,
+                common_types::{
+                    DispatchRequest, ExecutionMode, RadiativeTransferControls, ScatteringMode,
+                },
+            },
+        },
+        input::{o2a_reference::ReferenceSample, scene::Scene},
+    };
 
     #[test]
     fn spectrum_report_reads_owned_result_handle() {
@@ -363,5 +531,96 @@ mod tests {
         assert_eq!(report.wavelength_start_nm, 760.0);
         assert_eq!(report.wavelength_end_nm, 761.0);
         assert_eq!(report.mean_reflectance, 0.5);
+    }
+
+    #[test]
+    fn spectrum_jacobian_for_states_compacts_selected_columns() {
+        let mut ctx = Context {
+            prepared: Some(synthetic_prepared_o2a()),
+            ..Context::default()
+        };
+        let mut spectrum = ZdsSpectrum::default();
+        let states = [State::SurfaceAlbedo as u8];
+
+        let status = unsafe {
+            zds_run_spectrum_jacobian_for_states(
+                &mut ctx,
+                &mut spectrum,
+                states.as_ptr(),
+                states.len(),
+            )
+        };
+
+        assert_eq!(status, ZDS_OK);
+        assert_eq!(spectrum.len, 2);
+        assert_eq!(spectrum.jacobian_state_count, 1);
+        assert!(!spectrum.jacobian.is_null());
+        let jacobian = unsafe { std::slice::from_raw_parts(spectrum.jacobian, spectrum.len) };
+        assert!(jacobian.iter().all(|value| value.is_finite()));
+        assert!(jacobian.iter().all(|value| *value > 0.0));
+
+        unsafe {
+            zds_spectrum_free(&mut ctx, &mut spectrum);
+        }
+        assert!(spectrum.result_handle.is_null());
+    }
+
+    #[test]
+    fn spectrum_jacobian_rejects_unknown_state_id() {
+        let mut ctx = Context {
+            prepared: Some(synthetic_prepared_o2a()),
+            ..Context::default()
+        };
+        let mut spectrum = ZdsSpectrum::default();
+        let states = [99_u8];
+
+        let status = unsafe {
+            zds_run_spectrum_jacobian_for_states(
+                &mut ctx,
+                &mut spectrum,
+                states.as_ptr(),
+                states.len(),
+            )
+        };
+
+        assert_eq!(status, ZDS_FAILURE);
+        assert!(ctx.last_error.to_str().unwrap().contains("unsupported"));
+        assert!(spectrum.result_handle.is_null());
+    }
+
+    fn synthetic_prepared_o2a() -> crate::PreparedO2A {
+        let mut scene = Scene::default();
+        scene.surface.albedo = 0.23;
+        scene.spectral_grid.start_nm = 759.0;
+        scene.spectral_grid.end_nm = 761.0;
+        scene.spectral_grid.sample_count = 2;
+
+        let mut rtm_controls = RadiativeTransferControls {
+            scattering: ScatteringMode::None,
+            ..RadiativeTransferControls::default()
+        };
+        rtm_controls.integrate_source_function = false;
+
+        let route = common_route::prepare_route(DispatchRequest {
+            regime: scene.observation_model.regime,
+            execution_mode: ExecutionMode::Scalar,
+            derivative_mode: DerivativeMode::None,
+            rtm_controls,
+        })
+        .unwrap();
+
+        crate::PreparedO2A {
+            reference: Vec::<ReferenceSample>::new(),
+            scene,
+            route,
+            prepared: PreparedOpticalState {
+                sublayers: Some(vec![PreparedSublayer {
+                    altitude_km: 1.0,
+                    path_length_cm: 100_000.0,
+                    ..PreparedSublayer::default()
+                }]),
+                ..PreparedOpticalState::default()
+            },
+        }
     }
 }
