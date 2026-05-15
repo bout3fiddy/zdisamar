@@ -16,6 +16,10 @@ name = "common_lut_controls"
 path = "tests/rust/common/lut_controls.rs"
 
 [[test]]
+name = "common_math_quadrature"
+path = "tests/rust/common/math_quadrature.rs"
+
+[[test]]
 name = "input_atmospheric_types"
 path = "tests/rust/input/atmospheric_types.rs"
 
@@ -78,6 +82,10 @@ path = "tests/rust/forward_model/phase_functions.rs"
 [[test]]
 name = "forward_model_radiative_transfer"
 path = "tests/rust/forward_model/radiative_transfer.rs"
+
+[[test]]
+name = "forward_model_labos_basis"
+path = "tests/rust/forward_model/labos_basis.rs"
 
 [dependencies]
 wyhash = "0.6.0"
