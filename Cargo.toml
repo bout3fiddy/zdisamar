@@ -84,6 +84,10 @@ name = "forward_model_phase_functions"
 path = "tests/rust/forward_model/phase_functions.rs"
 
 [[test]]
+name = "forward_model_band_means"
+path = "tests/rust/forward_model/band_means.rs"
+
+[[test]]
 name = "forward_model_particle_profiles"
 path = "tests/rust/forward_model/particle_profiles.rs"
 
