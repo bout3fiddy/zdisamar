@@ -84,6 +84,10 @@ name = "forward_model_spectral_math"
 path = "tests/rust/forward_model/spectral_math.rs"
 
 [[test]]
+name = "forward_model_grid_calculation"
+path = "tests/rust/forward_model/grid_calculation.rs"
+
+[[test]]
 name = "forward_model_phase_functions"
 path = "tests/rust/forward_model/phase_functions.rs"
 
