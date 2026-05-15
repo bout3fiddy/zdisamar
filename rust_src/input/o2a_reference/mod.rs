@@ -24,8 +24,9 @@ pub use metrics::{
 };
 pub use run::{
     Error as RunError, Route, build_o2_absorber_set, build_resolved_vendor_o2a_scene,
-    load_reference_samples, load_solar_spectrum_samples, prepare_resolved_vendor_o2a_route,
-    reference_spectral_response, retain_solar_support,
+    build_vendor_trace_gas_spectroscopy_profile, load_climatology_profile, load_reference_samples,
+    load_solar_spectrum_samples, prepare_resolved_vendor_o2a_route, reference_spectral_response,
+    retain_solar_support,
 };
 pub use types::{
     AerosolSpec, CiaSpec, ExternalAsset, GeometrySpec, InputsSpec, LineGasSpec, Metadata,

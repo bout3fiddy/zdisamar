@@ -20,6 +20,7 @@ use crate::{
             SpectralChannelControls, SpectralResponse,
         },
         observation_model::ObservationModel,
+        reference_data::{ClimatologyPoint, ClimatologyProfile},
         scene::Scene,
         surface::Surface,
     },
@@ -115,6 +116,55 @@ pub fn load_solar_spectrum_samples(
     }
 
     Ok(samples)
+}
+
+pub fn load_climatology_profile(asset: &ExternalAsset) -> Result<ClimatologyProfile, Error> {
+    if asset.format != "profile_csv" {
+        return Err(Error::InvalidData);
+    }
+
+    let bytes = fs::read_to_string(&asset.path)?;
+    let mut rows = Vec::new();
+
+    for line in bytes.lines().skip(1) {
+        let trimmed = line.trim_matches(['\r', ' ', '\t']);
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut columns = trimmed.split(',');
+        rows.push(ClimatologyPoint {
+            altitude_km: parse_csv_f64(columns.next())?,
+            pressure_hpa: parse_csv_f64(columns.next())?,
+            temperature_k: parse_csv_f64(columns.next())?,
+            air_number_density_cm3: parse_csv_f64(columns.next())?,
+        });
+    }
+
+    Ok(ClimatologyProfile { rows })
+}
+
+pub fn build_vendor_trace_gas_spectroscopy_profile(
+    source_profile: &ClimatologyProfile,
+    dense_profile: &ClimatologyProfile,
+) -> ClimatologyProfile {
+    ClimatologyProfile {
+        rows: source_profile
+            .rows
+            .iter()
+            .map(|source_row| {
+                let pressure_hpa = source_row.pressure_hpa;
+                let temperature_k = source_row.temperature_k;
+                ClimatologyPoint {
+                    altitude_km: dense_profile
+                        .interpolate_altitude_for_pressure_spline(pressure_hpa),
+                    pressure_hpa,
+                    temperature_k,
+                    air_number_density_cm3: pressure_hpa / temperature_k.max(1.0e-9) / 1.380658e-19,
+                }
+            })
+            .collect(),
+    }
 }
 
 pub fn build_resolved_vendor_o2a_scene(

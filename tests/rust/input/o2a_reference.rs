@@ -122,6 +122,75 @@ fn o2a_runtime_loaders_parse_reference_and_solar_csv() {
     assert_eq!(solar.len(), 3);
     assert_eq!(solar[2].wavelength_nm, 776.5);
     assert_eq!(solar[2].irradiance, 12.0);
+
+    let profile_path = temp_csv_path("zdisamar-rust-profile.csv");
+    std::fs::write(
+        &profile_path,
+        "altitude_km,pressure_hpa,temperature_k,air_number_density_cm3\n0.0,1000.0,300.0,2.0\n10.0,100.0,230.0,1.0\n",
+    )
+    .unwrap();
+    let mut input = o2a_reference::default_input();
+    input.inputs.atmosphere_profile.path = profile_path.to_string_lossy().into_owned();
+    let profile =
+        o2a_reference::load_climatology_profile(&input.inputs.atmosphere_profile).unwrap();
+    std::fs::remove_file(&profile_path).unwrap();
+
+    assert_eq!(profile.rows.len(), 2);
+    assert_eq!(profile.rows[0].pressure_hpa, 1000.0);
+    assert_eq!(profile.rows[1].temperature_k, 230.0);
+}
+
+#[test]
+fn o2a_runtime_builds_trace_gas_spectroscopy_profile_from_dense_altitudes() {
+    let source = zdisamar::input::reference_data::ClimatologyProfile {
+        rows: vec![
+            zdisamar::input::reference_data::ClimatologyPoint {
+                altitude_km: 0.0,
+                pressure_hpa: 1000.0,
+                temperature_k: 300.0,
+                air_number_density_cm3: 0.0,
+            },
+            zdisamar::input::reference_data::ClimatologyPoint {
+                altitude_km: 12.0,
+                pressure_hpa: 100.0,
+                temperature_k: 230.0,
+                air_number_density_cm3: 0.0,
+            },
+        ],
+    };
+    let dense = zdisamar::input::reference_data::ClimatologyProfile {
+        rows: vec![
+            zdisamar::input::reference_data::ClimatologyPoint {
+                altitude_km: 0.0,
+                pressure_hpa: 1000.0,
+                temperature_k: 300.0,
+                air_number_density_cm3: 0.0,
+            },
+            zdisamar::input::reference_data::ClimatologyPoint {
+                altitude_km: 6.0,
+                pressure_hpa: 316.22776601683796,
+                temperature_k: 260.0,
+                air_number_density_cm3: 0.0,
+            },
+            zdisamar::input::reference_data::ClimatologyPoint {
+                altitude_km: 12.0,
+                pressure_hpa: 100.0,
+                temperature_k: 230.0,
+                air_number_density_cm3: 0.0,
+            },
+        ],
+    };
+
+    let spectroscopy_profile =
+        o2a_reference::build_vendor_trace_gas_spectroscopy_profile(&source, &dense);
+
+    assert_eq!(spectroscopy_profile.rows.len(), 2);
+    assert_eq!(spectroscopy_profile.rows[0].altitude_km, 0.0);
+    assert_eq!(spectroscopy_profile.rows[1].altitude_km, 12.0);
+    assert_eq!(
+        spectroscopy_profile.rows[0].air_number_density_cm3,
+        1000.0 / 300.0 / 1.380658e-19
+    );
 }
 
 #[test]

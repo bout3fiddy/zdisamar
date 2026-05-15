@@ -7,9 +7,9 @@ use zdisamar::input::reference::solar_irradiance::{
 };
 use zdisamar::input::reference::spectroscopy::line_list_ops;
 use zdisamar::input::reference_data::{
-    CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
-    CrossSectionTable, RelaxationMatrix, SpectroscopyLine, SpectroscopyLineList,
-    SpectroscopyStrongLine,
+    ClimatologyPoint, ClimatologyProfile, CollisionInducedAbsorptionPoint,
+    CollisionInducedAbsorptionTable, CrossSectionPoint, CrossSectionTable, RelaxationMatrix,
+    SpectroscopyLine, SpectroscopyLineList, SpectroscopyStrongLine,
 };
 use zdisamar::input::{binding::Binding, scene::Scene};
 
@@ -293,6 +293,65 @@ fn spectral_profile_preserves_requested_mean() {
     assert_eq!(
         spectral_profile_from_optical_depth(&wavelengths, 2.0, &proxy[..2]),
         Err(Error::ShapeMismatch)
+    );
+}
+
+#[test]
+fn climatology_profile_interpolates_and_densifies_vendor_pressure_grid() {
+    let profile = ClimatologyProfile {
+        rows: vec![
+            ClimatologyPoint {
+                altitude_km: 0.0,
+                pressure_hpa: 1000.0,
+                temperature_k: 300.0,
+                air_number_density_cm3: 2.0,
+            },
+            ClimatologyPoint {
+                altitude_km: 8.0,
+                pressure_hpa: 300.0,
+                temperature_k: 250.0,
+                air_number_density_cm3: 1.0,
+            },
+            ClimatologyPoint {
+                altitude_km: 16.0,
+                pressure_hpa: 100.0,
+                temperature_k: 220.0,
+                air_number_density_cm3: 0.5,
+            },
+        ],
+    };
+
+    assert_close(profile.mean_number_density(), 7.0 / 6.0, 1.0e-14);
+    assert_close(profile.interpolate_density(4.0), 1.5, 1.0e-14);
+    assert_close(profile.interpolate_temperature(4.0), 275.0, 1.0e-14);
+    assert_close(profile.interpolate_pressure(4.0), 650.0, 1.0e-14);
+    assert_close(profile.interpolate_pressure_log_linear(8.0), 300.0, 1.0e-12);
+    assert_close(
+        profile.interpolate_altitude_for_pressure(300.0),
+        8.0,
+        1.0e-12,
+    );
+
+    let dense = profile.densify_vendor_pressure_grid(1000.0).unwrap();
+    assert!(dense.rows.len() > profile.rows.len());
+    assert_close(dense.rows[0].pressure_hpa, 1000.0, 0.0);
+    assert_close(dense.rows[0].altitude_km, 0.0, 1.0e-12);
+    assert!(
+        dense
+            .rows
+            .windows(2)
+            .all(|pair| pair[0].pressure_hpa > pair[1].pressure_hpa)
+    );
+    assert!(
+        dense
+            .rows
+            .windows(2)
+            .all(|pair| pair[0].altitude_km < pair[1].altitude_km)
+    );
+    assert_close(
+        dense.rows[0].air_number_density_cm3,
+        1000.0 / 300.0 / 1.380658e-19,
+        1.0e6,
     );
 }
 

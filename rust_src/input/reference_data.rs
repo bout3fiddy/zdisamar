@@ -1,7 +1,453 @@
 use crate::{
-    common::{errors, math::interpolation::spline},
+    common::{
+        errors,
+        math::{interpolation::spline, quadrature::gauss_legendre},
+    },
     input::reference::spectroscopy::line_list_ops,
 };
+
+const MAX_SPLINE_PROFILE_ROWS: usize = spline::MAX_SPLINE_POINT_COUNT;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct ClimatologyPoint {
+    pub altitude_km: f64,
+    pub pressure_hpa: f64,
+    pub temperature_k: f64,
+    pub air_number_density_cm3: f64,
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ClimatologyProfile {
+    pub rows: Vec<ClimatologyPoint>,
+}
+
+impl ClimatologyProfile {
+    pub fn densify_vendor_pressure_grid(
+        &self,
+        surface_pressure_hpa: f64,
+    ) -> Result<Self, errors::Error> {
+        if self.rows.len() < 2 {
+            return Ok(self.clone());
+        }
+
+        let scale_height_guess_km = 8.0;
+        let mut dense_row_count = 1;
+        for pair in self.rows.windows(2) {
+            let lower = pair[0];
+            let upper = pair[1];
+            let safe_lower_pressure = lower.pressure_hpa.max(1.0e-9);
+            let safe_upper_pressure = upper.pressure_hpa.max(1.0e-9);
+            let delta_z_guess =
+                scale_height_guess_km * (safe_lower_pressure / safe_upper_pressure).ln();
+            let additional_levels = delta_z_guess.max(0.0).floor() as usize;
+            dense_row_count += additional_levels + 1;
+        }
+
+        let mut dense_pressures_hpa = vec![0.0; dense_row_count];
+        let mut dense_temperatures_k = vec![0.0; dense_row_count];
+        let mut dense_altitudes_km = vec![0.0; dense_row_count];
+        let mut dense_altitudes_gp_km = vec![0.0; (dense_row_count - 1) * 2];
+
+        // DISAMAR's layer setup is pressure-driven. Densifying in log-pressure keeps
+        // the vertical grid stable where the atmosphere thins quickly.
+        let mut dense_index = 0;
+        dense_pressures_hpa[dense_index] = self.rows[0].pressure_hpa;
+        for pair in self.rows.windows(2) {
+            let lower = pair[0];
+            let upper = pair[1];
+            let safe_lower_pressure = lower.pressure_hpa.max(1.0e-9);
+            let safe_upper_pressure = upper.pressure_hpa.max(1.0e-9);
+            let delta_z_guess =
+                scale_height_guess_km * (safe_lower_pressure / safe_upper_pressure).ln();
+            let additional_levels = delta_z_guess.max(0.0).floor() as usize;
+            if additional_levels > 0 {
+                let delta_nodes_lnp = (safe_lower_pressure / safe_upper_pressure).ln();
+                let delta_lnp = delta_nodes_lnp / (additional_levels + 1) as f64;
+                for _ in 0..additional_levels {
+                    dense_index += 1;
+                    dense_pressures_hpa[dense_index] =
+                        dense_pressures_hpa[dense_index - 1] * (-delta_lnp).exp();
+                }
+            }
+            dense_index += 1;
+            dense_pressures_hpa[dense_index] = upper.pressure_hpa;
+        }
+        debug_assert_eq!(dense_index + 1, dense_row_count);
+
+        for (index, pressure_hpa) in dense_pressures_hpa.iter().copied().enumerate() {
+            dense_temperatures_k[index] =
+                self.interpolate_temperature_for_pressure_spline(pressure_hpa);
+        }
+
+        let mut gauss_nodes_01 = [0.0; 2];
+        let mut gauss_weights_01 = [0.0; 2];
+        gauss_legendre::fill_disamar_div_points_01(2, &mut gauss_nodes_01, &mut gauss_weights_01)
+            .map_err(|_| errors::Error::InvalidRequest)?;
+
+        let universal_gas_constant = 8.3144621;
+        let mean_molecular_weight_air = 28.964e-3;
+        let safe_surface_pressure_hpa = surface_pressure_hpa.max(1.0e-9);
+        let mut dense_log_pressures = vec![0.0; dense_row_count];
+        for (index, pressure_hpa) in dense_pressures_hpa.iter().copied().enumerate() {
+            dense_log_pressures[index] = pressure_hpa.max(1.0e-9).ln();
+            dense_altitudes_km[index] = scale_height_guess_km
+                * (safe_surface_pressure_hpa.ln() - dense_log_pressures[index]);
+        }
+
+        for interval_index in 0..dense_row_count - 1 {
+            let dlnp =
+                dense_log_pressures[interval_index] - dense_log_pressures[interval_index + 1];
+            for (gauss_index, &gauss_node) in gauss_nodes_01.iter().enumerate() {
+                let gp_index = interval_index * 2 + gauss_index;
+                dense_altitudes_gp_km[gp_index] = scale_height_guess_km
+                    * (safe_surface_pressure_hpa.ln()
+                        - (dense_log_pressures[interval_index + 1] + dlnp * gauss_node));
+            }
+        }
+
+        let mut previous_altitudes_km = dense_altitudes_km.clone();
+        for _ in 0..6 {
+            dense_altitudes_km[0] = 0.0;
+            for pressure_index in 1..dense_row_count {
+                let gp_start = (pressure_index - 1) * 2;
+                let dlnp =
+                    dense_log_pressures[pressure_index - 1] - dense_log_pressures[pressure_index];
+                let mut interval_altitude_increment_km = 0.0;
+                for (gauss_index, (&gauss_node, &gauss_weight)) in
+                    gauss_nodes_01.iter().zip(&gauss_weights_01).enumerate()
+                {
+                    let gp_index = gp_start + gauss_index;
+                    let pressure_gp_hpa =
+                        (dense_log_pressures[pressure_index] + dlnp * gauss_node).exp();
+                    let temperature_gp_k =
+                        self.interpolate_temperature_for_pressure_spline(pressure_gp_hpa);
+                    let gravity = gravitational_acceleration_meters_per_second_squared(
+                        45.0,
+                        dense_altitudes_gp_km[gp_index],
+                    );
+                    let scale_height_km = 1.0e-3 * universal_gas_constant * temperature_gp_k
+                        / mean_molecular_weight_air
+                        / gravity;
+                    interval_altitude_increment_km += gauss_weight * dlnp * scale_height_km;
+                }
+                dense_altitudes_km[pressure_index] =
+                    dense_altitudes_km[pressure_index - 1] + interval_altitude_increment_km;
+            }
+
+            // The altitude grid depends on gravity at the grid-point altitude, so
+            // Zig iterates a few times instead of assuming one fixed scale height.
+            let chi2 = dense_altitudes_km
+                .iter()
+                .zip(&previous_altitudes_km)
+                .map(|(&altitude_km, &previous_altitude_km)| {
+                    let delta = altitude_km - previous_altitude_km;
+                    delta * delta
+                })
+                .sum::<f64>();
+            if chi2 < 1.0e-6 {
+                break;
+            }
+            previous_altitudes_km.copy_from_slice(&dense_altitudes_km);
+        }
+
+        // The vendor profile can start below the requested surface pressure. Shift
+        // the generated altitude axis so the active surface is exactly zero.
+        let surface_altitude_shift_km = linear_sample_descending(
+            &dense_pressures_hpa,
+            &dense_altitudes_km,
+            safe_surface_pressure_hpa,
+        );
+
+        let rows = dense_pressures_hpa
+            .iter()
+            .zip(&dense_temperatures_k)
+            .zip(&dense_altitudes_km)
+            .map(
+                |((&pressure_hpa, &temperature_k), &altitude_km)| ClimatologyPoint {
+                    altitude_km: altitude_km - surface_altitude_shift_km,
+                    pressure_hpa,
+                    temperature_k,
+                    air_number_density_cm3: pressure_hpa / temperature_k.max(1.0e-9) / 1.380658e-19,
+                },
+            )
+            .collect();
+
+        Ok(Self { rows })
+    }
+
+    pub fn mean_number_density(&self) -> f64 {
+        if self.rows.is_empty() {
+            return 0.0;
+        }
+        self.rows
+            .iter()
+            .map(|row| row.air_number_density_cm3)
+            .sum::<f64>()
+            / self.rows.len() as f64
+    }
+
+    pub fn interpolate_density(&self, altitude_km: f64) -> f64 {
+        interpolate_by_altitude(&self.rows, altitude_km, |row| row.air_number_density_cm3)
+    }
+
+    pub fn interpolate_temperature(&self, altitude_km: f64) -> f64 {
+        interpolate_by_altitude(&self.rows, altitude_km, |row| row.temperature_k)
+    }
+
+    pub fn interpolate_temperature_spline(&self, altitude_km: f64) -> f64 {
+        if self.rows.len() < 3 || self.rows.len() > MAX_SPLINE_PROFILE_ROWS {
+            return self.interpolate_temperature(altitude_km);
+        }
+        if altitude_km <= self.rows[0].altitude_km {
+            return self.rows[0].temperature_k;
+        }
+        if altitude_km >= self.rows[self.rows.len() - 1].altitude_km {
+            return self.rows[self.rows.len() - 1].temperature_k;
+        }
+
+        let altitudes_km = self
+            .rows
+            .iter()
+            .map(|row| row.altitude_km)
+            .collect::<Vec<_>>();
+        let temperatures_k = self
+            .rows
+            .iter()
+            .map(|row| row.temperature_k)
+            .collect::<Vec<_>>();
+        spline::sample_endpoint_secant(&altitudes_km, &temperatures_k, altitude_km)
+            .unwrap_or_else(|_| self.interpolate_temperature(altitude_km))
+    }
+
+    pub fn interpolate_temperature_for_pressure_log_linear(&self, pressure_hpa: f64) -> f64 {
+        interpolate_by_log_pressure(&self.rows, pressure_hpa, |row| row.temperature_k)
+    }
+
+    pub fn interpolate_temperature_for_pressure_spline(&self, pressure_hpa: f64) -> f64 {
+        sample_by_log_pressure_spline(&self.rows, pressure_hpa, |row| row.temperature_k)
+            .unwrap_or_else(|| self.interpolate_temperature_for_pressure_log_linear(pressure_hpa))
+    }
+
+    pub fn interpolate_pressure(&self, altitude_km: f64) -> f64 {
+        interpolate_by_altitude(&self.rows, altitude_km, |row| row.pressure_hpa)
+    }
+
+    pub fn interpolate_pressure_log_linear(&self, altitude_km: f64) -> f64 {
+        if self.rows.is_empty() {
+            return 0.0;
+        }
+        if altitude_km <= self.rows[0].altitude_km {
+            return self.rows[0].pressure_hpa;
+        }
+        for pair in self.rows.windows(2) {
+            let left = pair[0];
+            let right = pair[1];
+            if altitude_km <= right.altitude_km {
+                let span = right.altitude_km - left.altitude_km;
+                if span == 0.0 {
+                    return right.pressure_hpa;
+                }
+                let weight = (altitude_km - left.altitude_km) / span;
+                let left_log = left.pressure_hpa.max(1.0e-9).ln();
+                let right_log = right.pressure_hpa.max(1.0e-9).ln();
+                return (left_log + weight * (right_log - left_log)).exp();
+            }
+        }
+        self.rows[self.rows.len() - 1].pressure_hpa
+    }
+
+    pub fn interpolate_pressure_log_spline(&self, altitude_km: f64) -> f64 {
+        if self.rows.len() < 3 || self.rows.len() > MAX_SPLINE_PROFILE_ROWS {
+            return self.interpolate_pressure_log_linear(altitude_km);
+        }
+        if altitude_km <= self.rows[0].altitude_km {
+            return self.rows[0].pressure_hpa;
+        }
+        if altitude_km >= self.rows[self.rows.len() - 1].altitude_km {
+            return self.rows[self.rows.len() - 1].pressure_hpa;
+        }
+
+        let altitudes_km = self
+            .rows
+            .iter()
+            .map(|row| row.altitude_km)
+            .collect::<Vec<_>>();
+        let log_pressures = self
+            .rows
+            .iter()
+            .map(|row| row.pressure_hpa.max(1.0e-9).ln())
+            .collect::<Vec<_>>();
+        spline::sample_endpoint_secant(&altitudes_km, &log_pressures, altitude_km)
+            .map(f64::exp)
+            .unwrap_or_else(|_| self.interpolate_pressure_log_linear(altitude_km))
+    }
+
+    pub fn max_altitude(&self) -> f64 {
+        self.rows.last().map_or(0.0, |row| row.altitude_km)
+    }
+
+    pub fn interpolate_altitude_for_pressure(&self, pressure_hpa: f64) -> f64 {
+        interpolate_by_log_pressure(&self.rows, pressure_hpa, |row| row.altitude_km)
+    }
+
+    pub fn interpolate_altitude_for_pressure_spline(&self, pressure_hpa: f64) -> f64 {
+        sample_by_log_pressure_spline(&self.rows, pressure_hpa, |row| row.altitude_km)
+            .unwrap_or_else(|| self.interpolate_altitude_for_pressure(pressure_hpa))
+    }
+}
+
+fn interpolate_by_altitude(
+    rows: &[ClimatologyPoint],
+    altitude_km: f64,
+    value: impl Fn(ClimatologyPoint) -> f64,
+) -> f64 {
+    if rows.is_empty() {
+        return 0.0;
+    }
+    if altitude_km <= rows[0].altitude_km {
+        return value(rows[0]);
+    }
+    for pair in rows.windows(2) {
+        let left = pair[0];
+        let right = pair[1];
+        if altitude_km <= right.altitude_km {
+            let span = right.altitude_km - left.altitude_km;
+            if span == 0.0 {
+                return value(right);
+            }
+            let weight = (altitude_km - left.altitude_km) / span;
+            return value(left) + weight * (value(right) - value(left));
+        }
+    }
+    value(rows[rows.len() - 1])
+}
+
+fn interpolate_by_log_pressure(
+    rows: &[ClimatologyPoint],
+    pressure_hpa: f64,
+    value: impl Fn(ClimatologyPoint) -> f64,
+) -> f64 {
+    if rows.is_empty() {
+        return 0.0;
+    }
+
+    let safe_pressure_hpa = pressure_hpa.max(1.0e-9);
+    let first_pressure_hpa = rows[0].pressure_hpa;
+    let last_pressure_hpa = rows[rows.len() - 1].pressure_hpa;
+    let descending = first_pressure_hpa >= last_pressure_hpa;
+
+    if (descending && safe_pressure_hpa >= first_pressure_hpa)
+        || (!descending && safe_pressure_hpa <= first_pressure_hpa)
+    {
+        return value(rows[0]);
+    }
+    if (descending && safe_pressure_hpa <= last_pressure_hpa)
+        || (!descending && safe_pressure_hpa >= last_pressure_hpa)
+    {
+        return value(rows[rows.len() - 1]);
+    }
+
+    let log_pressure = safe_pressure_hpa.ln();
+    for pair in rows.windows(2) {
+        let left = pair[0];
+        let right = pair[1];
+        let in_segment = if descending {
+            safe_pressure_hpa <= left.pressure_hpa && safe_pressure_hpa >= right.pressure_hpa
+        } else {
+            safe_pressure_hpa >= left.pressure_hpa && safe_pressure_hpa <= right.pressure_hpa
+        };
+        if !in_segment {
+            continue;
+        }
+
+        let left_log = left.pressure_hpa.max(1.0e-9).ln();
+        let right_log = right.pressure_hpa.max(1.0e-9).ln();
+        let span = right_log - left_log;
+        if span == 0.0 {
+            return value(right);
+        }
+        let weight = (log_pressure - left_log) / span;
+        return value(left) + weight * (value(right) - value(left));
+    }
+    value(rows[rows.len() - 1])
+}
+
+fn sample_by_log_pressure_spline(
+    rows: &[ClimatologyPoint],
+    pressure_hpa: f64,
+    value: impl Fn(ClimatologyPoint) -> f64,
+) -> Option<f64> {
+    if rows.len() < 3 || rows.len() > MAX_SPLINE_PROFILE_ROWS {
+        return None;
+    }
+
+    let safe_pressure_hpa = pressure_hpa.max(1.0e-9);
+    let first_pressure_hpa = rows[0].pressure_hpa;
+    let last_pressure_hpa = rows[rows.len() - 1].pressure_hpa;
+    let descending = first_pressure_hpa >= last_pressure_hpa;
+
+    if (descending && safe_pressure_hpa >= first_pressure_hpa)
+        || (!descending && safe_pressure_hpa <= first_pressure_hpa)
+    {
+        return Some(value(rows[0]));
+    }
+    if (descending && safe_pressure_hpa <= last_pressure_hpa)
+        || (!descending && safe_pressure_hpa >= last_pressure_hpa)
+    {
+        return Some(value(rows[rows.len() - 1]));
+    }
+
+    let ordered = if descending {
+        rows.iter().rev().copied().collect::<Vec<_>>()
+    } else {
+        rows.to_vec()
+    };
+    let log_pressures = ordered
+        .iter()
+        .map(|row| row.pressure_hpa.max(1.0e-9).ln())
+        .collect::<Vec<_>>();
+    let values = ordered.iter().map(|&row| value(row)).collect::<Vec<_>>();
+    spline::sample_endpoint_secant(&log_pressures, &values, safe_pressure_hpa.ln()).ok()
+}
+
+fn linear_sample_descending(x_desc: &[f64], y: &[f64], target_x: f64) -> f64 {
+    debug_assert_eq!(x_desc.len(), y.len());
+    debug_assert!(!x_desc.is_empty());
+    if target_x >= x_desc[0] {
+        return y[0];
+    }
+    if target_x <= x_desc[x_desc.len() - 1] {
+        return y[y.len() - 1];
+    }
+
+    for index in 0..x_desc.len() - 1 {
+        let left_x = x_desc[index];
+        let right_x = x_desc[index + 1];
+        if target_x > left_x || target_x < right_x {
+            continue;
+        }
+        let span = right_x - left_x;
+        if span == 0.0 {
+            return y[index + 1];
+        }
+        let weight = (target_x - left_x) / span;
+        return y[index] + weight * (y[index + 1] - y[index]);
+    }
+    y[y.len() - 1]
+}
+
+fn gravitational_acceleration_meters_per_second_squared(
+    latitude_deg: f64,
+    altitude_km: f64,
+) -> f64 {
+    let geodetic_flattening_term = 0.993_306_f32 as f64;
+    let geodetic_latitude_rad = (latitude_deg.to_radians().tan()
+        / (geodetic_flattening_term + 1.049583e-6 * altitude_km))
+        .atan();
+    let sin_latitude = geodetic_latitude_rad.sin();
+    let gravity_at_mean_sea_level = 9.78031 + 0.05186 * sin_latitude * sin_latitude;
+    gravity_at_mean_sea_level - 3.086e-3 * altitude_km
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpectroscopyLine {
