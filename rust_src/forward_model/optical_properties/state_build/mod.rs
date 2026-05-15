@@ -5,6 +5,7 @@ pub mod shared_geometry;
 pub mod source_interfaces;
 pub mod spectroscopy;
 pub mod state_scalar;
+pub mod state_spectroscopy;
 pub mod state_types;
 
 pub use evaluation::{accumulate_breakdown, layer_input_from_evaluated};
@@ -24,6 +25,12 @@ pub use spectroscopy::{
 pub use state_scalar::{
     interpolate_prepared_scalar_at_altitude, particle_optical_depth_at_wavelength,
     prepared_scalar_for_sublayer,
+};
+pub use state_spectroscopy::{
+    cia_sigma_at_wavelength, collision_induced_sigma_at_wavelength,
+    effective_spectroscopy_evaluation_at_wavelength, total_cross_section_at_wavelength,
+    weighted_cross_section_sigma_at_wavelength, weighted_spectroscopy_evaluation_at_wavelength,
+    zero_spectroscopy_evaluation,
 };
 pub use state_types::{
     ActiveCrossSectionAbsorber, ActiveLineAbsorber, CrossSectionRepresentationKind, EvaluatedLayer,

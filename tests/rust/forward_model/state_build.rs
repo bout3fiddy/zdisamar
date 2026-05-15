@@ -1,4 +1,5 @@
 use zdisamar::{
+    common::errors,
     forward_model::{
         jacobian::{self, State},
         optical_properties::{
@@ -6,18 +7,21 @@ use zdisamar::{
             state_build::{
                 CrossSectionRepresentationKind, EvaluatedLayer, INVALID_SUPPORT_ROW_INDEX,
                 OpticalDepthBreakdown, PreparedCrossSectionAbsorber,
-                PreparedCrossSectionRepresentation, PreparedLayer, PreparedOpticalState,
-                PreparedSublayer, SharedRtmGeometry, SharedRtmLayerGeometry,
+                PreparedCrossSectionRepresentation, PreparedLayer, PreparedLineAbsorber,
+                PreparedOpticalState, PreparedSublayer, SharedRtmGeometry, SharedRtmLayerGeometry,
                 SharedRtmLevelGeometry, accumulate_breakdown,
                 build_shared_rtm_geometry_from_layers, collect_active_cross_section_absorbers,
-                collect_active_line_absorbers, fill_source_interfaces_from_prepared_layers,
-                first_active_support_row_index, interpolate_prepared_scalar_at_altitude,
-                interval_altitude_at_node, interval_weight_km, last_active_support_row_index,
-                layer_input_from_evaluated, level_altitude_from_sublayers,
-                operational_o2_evaluation_at_wavelength, particle_optical_depth_at_wavelength,
-                prepare_cross_section_absorbers, prepared_scalar_for_sublayer,
-                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
-                sort_line_list, species_mixing_ratio_at_pressure,
+                collect_active_line_absorbers, collision_induced_sigma_at_wavelength,
+                effective_spectroscopy_evaluation_at_wavelength,
+                fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
+                interpolate_prepared_scalar_at_altitude, interval_altitude_at_node,
+                interval_weight_km, last_active_support_row_index, layer_input_from_evaluated,
+                level_altitude_from_sublayers, operational_o2_evaluation_at_wavelength,
+                particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
+                prepared_scalar_for_sublayer, resolve_active_line_species,
+                resolve_continuum_owner_species, resolve_gauss_rule, sort_line_list,
+                species_mixing_ratio_at_pressure, total_cross_section_at_wavelength,
+                weighted_cross_section_sigma_at_wavelength, zero_spectroscopy_evaluation,
             },
         },
         radiative_transfer::common_types::{LayerInput, SourceInterfaceInput},
@@ -29,7 +33,8 @@ use zdisamar::{
         bands::{SpectralBand, SpectralBandSet},
         instrument::OperationalCrossSectionLut,
         reference_data::{
-            CrossSectionPoint, CrossSectionTable, SpectroscopyLine, SpectroscopyLineList,
+            CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
+            CrossSectionTable, SpectroscopyLine, SpectroscopyLineList,
         },
         scene::Scene,
     },
@@ -40,6 +45,24 @@ fn assert_close(actual: f64, expected: f64, tolerance: f64) {
         (actual - expected).abs() <= tolerance,
         "actual={actual:?} expected={expected:?} tolerance={tolerance:?}"
     );
+}
+
+fn scalar_lut(
+    left_nm: f64,
+    left_sigma: f64,
+    right_nm: f64,
+    right_sigma: f64,
+) -> OperationalCrossSectionLut {
+    OperationalCrossSectionLut {
+        wavelengths_nm: vec![left_nm, right_nm],
+        coefficients: vec![left_sigma, right_sigma],
+        temperature_coefficient_count: 1,
+        pressure_coefficient_count: 1,
+        min_temperature_k: 180.0,
+        max_temperature_k: 320.0,
+        min_pressure_hpa: 200.0,
+        max_pressure_hpa: 1000.0,
+    }
 }
 
 #[test]
@@ -440,6 +463,157 @@ fn operational_o2_evaluation_wraps_lut_sigma_as_line_absorption() {
         0.0,
         0.0,
     );
+}
+
+#[test]
+fn state_spectroscopy_weights_cross_section_absorbers_by_column_density() {
+    let first = PreparedCrossSectionAbsorber {
+        species: AbsorberSpecies::O2O2,
+        representation_kind: CrossSectionRepresentationKind::Table,
+        polynomial_order: 0,
+        representation: PreparedCrossSectionRepresentation::Table(CrossSectionTable {
+            points: vec![
+                CrossSectionPoint {
+                    wavelength_nm: 760.0,
+                    sigma_cm2_per_molecule: 1.0,
+                },
+                CrossSectionPoint {
+                    wavelength_nm: 762.0,
+                    sigma_cm2_per_molecule: 3.0,
+                },
+            ],
+        }),
+        number_densities_cm3: Vec::new(),
+        column_density_factor: 3.0,
+    };
+    let fallback_weight = PreparedCrossSectionAbsorber {
+        species: AbsorberSpecies::O2O2,
+        representation_kind: CrossSectionRepresentationKind::Table,
+        polynomial_order: 0,
+        representation: PreparedCrossSectionRepresentation::Table(CrossSectionTable {
+            points: vec![
+                CrossSectionPoint {
+                    wavelength_nm: 760.0,
+                    sigma_cm2_per_molecule: 10.0,
+                },
+                CrossSectionPoint {
+                    wavelength_nm: 762.0,
+                    sigma_cm2_per_molecule: 12.0,
+                },
+            ],
+        }),
+        number_densities_cm3: Vec::new(),
+        column_density_factor: 0.0,
+    };
+    let prepared = PreparedOpticalState {
+        cross_section_absorbers: vec![first, fallback_weight],
+        ..PreparedOpticalState::default()
+    };
+
+    assert_close(
+        weighted_cross_section_sigma_at_wavelength(&prepared, 761.0, 240.0, 700.0),
+        4.25,
+        1.0e-14,
+    );
+}
+
+#[test]
+fn state_spectroscopy_prefers_operational_cia_lut_over_cia_table() {
+    let prepared = PreparedOpticalState {
+        operational_o2o2_lut: scalar_lut(760.0, 20.0, 761.0, 40.0),
+        collision_induced_absorption: Some(CollisionInducedAbsorptionTable {
+            scale_factor_cm5_per_molecule2: 1.0,
+            points: vec![CollisionInducedAbsorptionPoint {
+                wavelength_nm: 760.5,
+                a0: 100.0,
+                a1: 0.0,
+                a2: 0.0,
+            }],
+        }),
+        effective_temperature_k: 250.0,
+        effective_pressure_hpa: 500.0,
+        ..PreparedOpticalState::default()
+    };
+
+    assert_close(
+        collision_induced_sigma_at_wavelength(&prepared, 760.5),
+        30.0,
+        1.0e-14,
+    );
+}
+
+#[test]
+fn state_spectroscopy_uses_operational_o2_without_fake_line_list_physics() {
+    let prepared = PreparedOpticalState {
+        operational_o2_lut: scalar_lut(760.0, 2.0, 761.0, 4.0),
+        oxygen_column_density_factor: 5.0,
+        effective_temperature_k: 250.0,
+        effective_pressure_hpa: 500.0,
+        line_absorbers: vec![PreparedLineAbsorber {
+            species: AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList::default(),
+            number_densities_cm3: Vec::new(),
+            column_density_factor: 2.0,
+        }],
+        ..PreparedOpticalState::default()
+    };
+
+    let evaluation = effective_spectroscopy_evaluation_at_wavelength(&prepared, 760.5).unwrap();
+
+    assert_close(evaluation.weak_line_sigma_cm2_per_molecule, 3.0, 1.0e-14);
+    assert_close(evaluation.total_sigma_cm2_per_molecule, 3.0, 1.0e-14);
+}
+
+#[test]
+fn state_spectroscopy_errors_when_only_unported_line_physics_is_available() {
+    let prepared = PreparedOpticalState {
+        line_absorbers: vec![PreparedLineAbsorber {
+            species: AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList {
+                lines: vec![SpectroscopyLine {
+                    gas_index: 7,
+                    isotope_number: 1,
+                    center_wavelength_nm: 760.5,
+                    line_strength_cm2_per_molecule: 1.0e-24,
+                }],
+            },
+            number_densities_cm3: Vec::new(),
+            column_density_factor: 1.0,
+        }],
+        ..PreparedOpticalState::default()
+    };
+
+    assert_eq!(
+        effective_spectroscopy_evaluation_at_wavelength(&prepared, 760.5).unwrap_err(),
+        errors::Error::InvalidRequest,
+    );
+}
+
+#[test]
+fn state_spectroscopy_adds_continuum_and_supported_line_sigma() {
+    let prepared = PreparedOpticalState {
+        continuum_points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 1.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 761.0,
+                sigma_cm2_per_molecule: 2.0,
+            },
+        ],
+        operational_o2_lut: scalar_lut(760.0, 10.0, 761.0, 20.0),
+        effective_temperature_k: 250.0,
+        effective_pressure_hpa: 500.0,
+        ..PreparedOpticalState::default()
+    };
+
+    assert_close(
+        total_cross_section_at_wavelength(&prepared, 760.5).unwrap(),
+        16.5,
+        1.0e-14,
+    );
+    assert_eq!(zero_spectroscopy_evaluation(), Default::default(),);
 }
 
 #[test]

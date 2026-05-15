@@ -53,28 +53,7 @@ impl CrossSectionTable {
     }
 
     pub fn interpolate_sigma(&self, wavelength_nm: f64) -> f64 {
-        if self.points.is_empty() {
-            return 0.0;
-        }
-        if wavelength_nm <= self.points[0].wavelength_nm {
-            return self.points[0].sigma_cm2_per_molecule;
-        }
-        if wavelength_nm >= self.points[self.points.len() - 1].wavelength_nm {
-            return self.points[self.points.len() - 1].sigma_cm2_per_molecule;
-        }
-
-        let Some((left_index, right_index)) = self.bracket_for_wavelength(wavelength_nm) else {
-            return self.points[self.points.len() - 1].sigma_cm2_per_molecule;
-        };
-        let left = self.points[left_index];
-        let right = self.points[right_index];
-        let span = right.wavelength_nm - left.wavelength_nm;
-        if span == 0.0 {
-            return right.sigma_cm2_per_molecule;
-        }
-        let weight = (wavelength_nm - left.wavelength_nm) / span;
-        left.sigma_cm2_per_molecule
-            + weight * (right.sigma_cm2_per_molecule - left.sigma_cm2_per_molecule)
+        interpolate_cross_section_sigma(&self.points, wavelength_nm)
     }
 
     pub fn sigma_at_high_resolution(&self, wavelength_nm: f64) -> f64 {
@@ -82,22 +61,56 @@ impl CrossSectionTable {
     }
 
     pub fn bracket_for_wavelength(&self, wavelength_nm: f64) -> Option<(usize, usize)> {
-        if self.points.len() < 2 {
-            return None;
-        }
-
-        let mut low = 0;
-        let mut high = self.points.len() - 1;
-        while low + 1 < high {
-            let middle = low + (high - low) / 2;
-            if self.points[middle].wavelength_nm <= wavelength_nm {
-                low = middle;
-            } else {
-                high = middle;
-            }
-        }
-        Some((low, high))
+        cross_section_bracket_for_wavelength(&self.points, wavelength_nm)
     }
+}
+
+pub fn interpolate_cross_section_sigma(points: &[CrossSectionPoint], wavelength_nm: f64) -> f64 {
+    if points.is_empty() {
+        return 0.0;
+    }
+    if wavelength_nm <= points[0].wavelength_nm {
+        return points[0].sigma_cm2_per_molecule;
+    }
+    if wavelength_nm >= points[points.len() - 1].wavelength_nm {
+        return points[points.len() - 1].sigma_cm2_per_molecule;
+    }
+
+    let Some((left_index, right_index)) =
+        cross_section_bracket_for_wavelength(points, wavelength_nm)
+    else {
+        return points[points.len() - 1].sigma_cm2_per_molecule;
+    };
+    let left = points[left_index];
+    let right = points[right_index];
+    let span = right.wavelength_nm - left.wavelength_nm;
+    if span == 0.0 {
+        return right.sigma_cm2_per_molecule;
+    }
+    let weight = (wavelength_nm - left.wavelength_nm) / span;
+    left.sigma_cm2_per_molecule
+        + weight * (right.sigma_cm2_per_molecule - left.sigma_cm2_per_molecule)
+}
+
+fn cross_section_bracket_for_wavelength(
+    points: &[CrossSectionPoint],
+    wavelength_nm: f64,
+) -> Option<(usize, usize)> {
+    if points.len() < 2 {
+        return None;
+    }
+
+    let mut low = 0;
+    let mut high = points.len() - 1;
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        if points[middle].wavelength_nm <= wavelength_nm {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    Some((low, high))
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
