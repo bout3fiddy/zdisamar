@@ -44,3 +44,56 @@ pub struct InstrumentGridProduct {
     pub depolarization_factor: f64,
     pub d_optical_depth_d_temperature: f64,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstrumentGridProductView<'a> {
+    pub summary: InstrumentGridSummary,
+    pub wavelengths: &'a [f64],
+    pub radiance: &'a [f64],
+    pub irradiance: &'a [f64],
+    pub reflectance: &'a [f64],
+    pub noise_sigma: &'a [f64],
+    pub radiance_noise_sigma: &'a [f64],
+    pub irradiance_noise_sigma: &'a [f64],
+    pub reflectance_noise_sigma: &'a [f64],
+    pub jacobian: Option<&'a [f64]>,
+    pub effective_air_mass_factor: f64,
+    pub effective_single_scatter_albedo: f64,
+    pub effective_temperature_k: f64,
+    pub effective_pressure_hpa: f64,
+    pub gas_optical_depth: f64,
+    pub cia_optical_depth: f64,
+    pub aerosol_optical_depth: f64,
+    pub cloud_optical_depth: f64,
+    pub total_optical_depth: f64,
+    pub depolarization_factor: f64,
+    pub d_optical_depth_d_temperature: f64,
+}
+
+impl InstrumentGridProductView<'_> {
+    pub fn to_owned(&self) -> InstrumentGridProduct {
+        InstrumentGridProduct {
+            summary: self.summary.clone(),
+            wavelengths: self.wavelengths.to_vec(),
+            radiance: self.radiance.to_vec(),
+            irradiance: self.irradiance.to_vec(),
+            reflectance: self.reflectance.to_vec(),
+            noise_sigma: self.noise_sigma.to_vec(),
+            radiance_noise_sigma: self.radiance_noise_sigma.to_vec(),
+            irradiance_noise_sigma: self.irradiance_noise_sigma.to_vec(),
+            reflectance_noise_sigma: self.reflectance_noise_sigma.to_vec(),
+            jacobian: self.jacobian.map(<[f64]>::to_vec),
+            effective_air_mass_factor: self.effective_air_mass_factor,
+            effective_single_scatter_albedo: self.effective_single_scatter_albedo,
+            effective_temperature_k: self.effective_temperature_k,
+            effective_pressure_hpa: self.effective_pressure_hpa,
+            gas_optical_depth: self.gas_optical_depth,
+            cia_optical_depth: self.cia_optical_depth,
+            aerosol_optical_depth: self.aerosol_optical_depth,
+            cloud_optical_depth: self.cloud_optical_depth,
+            total_optical_depth: self.total_optical_depth,
+            depolarization_factor: self.depolarization_factor,
+            d_optical_depth_d_temperature: self.d_optical_depth_d_temperature,
+        }
+    }
+}

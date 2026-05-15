@@ -745,6 +745,53 @@ fn product_wrapper_uses_explicit_implementation_bindings() {
 }
 
 #[test]
+fn product_workspace_warms_sampling_and_returns_borrowed_view() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        }]),
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.surface.albedo = 0.21;
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 761.0;
+    scene.spectral_grid.sample_count = 2;
+    let mut route = route();
+    route.rtm_controls.scattering = ScatteringMode::None;
+    route.rtm_controls.integrate_source_function = false;
+    let mut storage = ProductStorage::default();
+
+    grid_product::warm_product_workspace(
+        &mut storage,
+        &scene,
+        route,
+        &prepared,
+        implementation_root::exact(),
+    )
+    .unwrap();
+
+    assert!(storage.wavelength_plan_valid);
+    assert!(storage.forward_misses_valid);
+    assert_eq!(storage.wavelength_sampling.len(), 2);
+    assert_eq!(storage.forward_misses.len(), 2);
+
+    let view = grid_product::simulate_product_with_workspace(
+        &mut storage,
+        &scene,
+        route,
+        &prepared,
+        implementation_root::exact(),
+    )
+    .unwrap();
+    assert_eq!(view.wavelengths, &[760.0, 761.0]);
+    assert_close(view.summary.mean_reflectance, 0.21, 1.0e-14);
+    assert_eq!(view.to_owned().reflectance, vec![0.21, 0.21]);
+}
+
+#[test]
 fn generic_instrument_provider_matches_scene_controls() {
     let provider = resolve(GENERIC_RESPONSE_ID).unwrap();
     assert_eq!(provider.id, GENERIC_RESPONSE_ID);
