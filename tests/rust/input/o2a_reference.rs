@@ -1,10 +1,16 @@
 use zdisamar::{
-    forward_model::radiative_transfer::common_types::ExecutionMode,
+    forward_model::{
+        instrument_grid::{InstrumentGridProduct, InstrumentGridSummary},
+        radiative_transfer::common_types::ExecutionMode,
+    },
     input::{
         atmosphere::ParticlePlacementSemantics,
         geometry,
         instrument::{BuiltinLineShapeKind, SamplingMode},
-        o2a_reference::{self, PlanError, PlanSpec},
+        o2a_reference::{
+            self, AssessmentVerdict, PlanError, PlanSpec, ReferenceSample, TrendState,
+            TrendTolerances,
+        },
         scene::DerivativeMode,
     },
 };
@@ -82,4 +88,106 @@ fn o2a_plan_spec_rejects_unsupported_modes() {
         plan.validate().unwrap_err(),
         PlanError::UnsupportedExecutionMode
     );
+}
+
+#[test]
+fn o2a_comparison_metrics_match_exact_reference_samples() {
+    let wavelengths = vec![756.0, 760.5, 762.0, 764.5, 770.0];
+    let reflectance = vec![5.0, 1.0, 3.0, 4.0, 6.0];
+    let product = product_with_reflectance(wavelengths.clone(), reflectance.clone());
+    let reference = wavelengths
+        .iter()
+        .zip(&reflectance)
+        .map(|(&wavelength_nm, &reflectance)| ReferenceSample {
+            wavelength_nm,
+            irradiance: 0.0,
+            reflectance,
+        })
+        .collect::<Vec<_>>();
+
+    let metrics = o2a_reference::compute_comparison_metrics(&product, &reference, 0.0);
+
+    assert_eq!(metrics.sample_count, 5);
+    assert_eq!(metrics.nonzero_sample_count, 0);
+    assert!(metrics.exact_match_within_zero_tolerance);
+    assert_eq!(metrics.mean_abs_difference, 0.0);
+    assert_eq!(metrics.root_mean_square_difference, 0.0);
+    assert_eq!(metrics.max_abs_difference, 0.0);
+    assert_eq!(metrics.correlation, 1.0);
+    assert_eq!(metrics.trough_wavelength_difference_nm, 0.0);
+    assert_eq!(metrics.red_wing_mean_difference, 0.0);
+}
+
+#[test]
+fn o2a_assessment_reports_exact_and_regression_verdicts() {
+    let tolerances = TrendTolerances::with_core_tolerances(0.01, 0.01, 0.01, 0.01);
+    let exact = o2a_reference::ComparisonMetrics {
+        exact_match_within_zero_tolerance: true,
+        correlation: 1.0,
+        ..o2a_reference::ComparisonMetrics::default()
+    };
+
+    assert_eq!(
+        o2a_reference::assess_against_baseline(
+            exact,
+            o2a_reference::ComparisonMetrics::default(),
+            tolerances,
+            false,
+        )
+        .verdict,
+        AssessmentVerdict::ExactZeroPass
+    );
+
+    let current = o2a_reference::ComparisonMetrics {
+        mean_abs_difference: 0.5,
+        root_mean_square_difference: 0.5,
+        max_abs_difference: 0.5,
+        correlation: 0.0,
+        blue_wing_mean_difference: 0.5,
+        ..o2a_reference::ComparisonMetrics::default()
+    };
+    let baseline = o2a_reference::ComparisonMetrics {
+        correlation: 1.0,
+        ..o2a_reference::ComparisonMetrics::default()
+    };
+    let outcome = o2a_reference::assess_against_baseline(current, baseline, tolerances, true);
+
+    assert_eq!(outcome.verdict, AssessmentVerdict::RegressionFail);
+    assert_eq!(outcome.trend.mean_abs_difference, TrendState::Regressed);
+    assert_eq!(outcome.trend.correlation, TrendState::Regressed);
+}
+
+fn product_with_reflectance(wavelengths: Vec<f64>, reflectance: Vec<f64>) -> InstrumentGridProduct {
+    InstrumentGridProduct {
+        summary: InstrumentGridSummary {
+            sample_count: wavelengths.len() as u32,
+            wavelength_start_nm: wavelengths.first().copied().unwrap_or(0.0),
+            wavelength_end_nm: wavelengths.last().copied().unwrap_or(0.0),
+            mean_radiance: 0.0,
+            mean_irradiance: 0.0,
+            mean_reflectance: 0.0,
+            mean_noise_sigma: 0.0,
+            mean_jacobian: None,
+        },
+        wavelengths,
+        radiance: Vec::new(),
+        irradiance: Vec::new(),
+        reflectance,
+        noise_sigma: Vec::new(),
+        radiance_noise_sigma: Vec::new(),
+        irradiance_noise_sigma: Vec::new(),
+        reflectance_noise_sigma: Vec::new(),
+        jacobian: None,
+        effective_air_mass_factor: 0.0,
+        effective_single_scatter_albedo: 0.0,
+        effective_temperature_k: 0.0,
+        effective_pressure_hpa: 0.0,
+        gas_optical_depth: 0.0,
+        cia_optical_depth: 0.0,
+        aerosol_optical_depth: 0.0,
+        cloud_optical_depth: 0.0,
+        total_optical_depth: 0.0,
+        depolarization_factor: 0.0,
+        d_optical_depth_d_temperature: 0.0,
+    }
 }

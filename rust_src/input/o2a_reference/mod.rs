@@ -1,3 +1,4 @@
+pub mod metrics;
 pub mod types;
 
 use crate::{
@@ -13,6 +14,13 @@ use crate::{
     },
 };
 
+pub use metrics::{
+    AssessmentOutcome, AssessmentTrend, AssessmentVerdict, ComparisonMetrics, RangeExtremum,
+    TrendState, TrendTolerances, assess_against_baseline, compare_absolute_ceiling,
+    compare_higher_is_better, compare_lower_is_better, compute_comparison_metrics,
+    interpolate_vector, max_reference_in_range, max_vector_in_range, mean_reference_in_range,
+    mean_vector_in_range, min_reference_in_range, min_vector_in_range,
+};
 pub use types::{
     AerosolSpec, CiaSpec, ExternalAsset, GeometrySpec, InputsSpec, LineGasSpec, Metadata,
     ObservationSpec, OutputKind, OutputRequest, PlanError, PlanSpec, ReferenceSample,
