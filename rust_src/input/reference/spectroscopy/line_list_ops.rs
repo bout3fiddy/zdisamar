@@ -1,5 +1,72 @@
-use super::{VENDOR_CUTOFF_PREWINDOW_MARGIN_CM1, physics_core, support};
-use crate::input::reference_data::{SpectroscopyLine, SpectroscopyLineList};
+use super::{MAX_STRONG_LINE_SIDECARS, VENDOR_CUTOFF_PREWINDOW_MARGIN_CM1, physics_core, support};
+use crate::{
+    common::errors,
+    input::reference_data::{SpectroscopyLine, SpectroscopyLineList, SpectroscopyRuntimeControls},
+};
+
+pub fn apply_runtime_controls(
+    line_list: &mut SpectroscopyLineList,
+    gas_index: Option<u16>,
+    active_isotopes: &[u8],
+    threshold_line_scale: Option<f64>,
+    cutoff_cm1: Option<f64>,
+    line_mixing_factor: f64,
+) -> Result<(), errors::Error> {
+    line_list.runtime_controls = SpectroscopyRuntimeControls {
+        gas_index,
+        active_isotopes: active_isotopes.to_vec(),
+        threshold_line_scale,
+        cutoff_cm1,
+        cutoff_grid_wavelengths_nm: Vec::new(),
+        cutoff_grid_wavenumbers_cm1: Vec::new(),
+        line_mixing_factor,
+    };
+
+    if gas_index.is_some() || !active_isotopes.is_empty() {
+        let original_len = line_list.lines.len();
+        line_list
+            .lines
+            .retain(|line| support::runtime_controls_match_line(gas_index, active_isotopes, line));
+        if line_list.lines.len() != original_len {
+            line_list.lines_sorted_ascending = false;
+        }
+    }
+
+    line_list.strong_line_match_by_line = None;
+    if line_list.strong_lines.is_some()
+        && !support::runtime_controls_keep_strong_line_sidecars(gas_index, active_isotopes)
+    {
+        disable_strong_line_sidecars(line_list);
+        return Ok(());
+    }
+    line_list.vendor_strong_line_partition = detect_vendor_strong_line_partition(line_list);
+    validate_strong_line_partition(line_list)
+}
+
+pub fn build_strong_line_match_index(
+    line_list: &mut SpectroscopyLineList,
+) -> Result<(), errors::Error> {
+    line_list.strong_line_match_by_line = None;
+    if !line_list.has_strong_line_sidecars() || line_list.lines.is_empty() {
+        return Ok(());
+    }
+    validate_strong_line_partition(line_list)?;
+
+    let mut matches = vec![None; line_list.lines.len()];
+    for (line_index, line) in line_list.lines.iter().enumerate() {
+        if uses_vendor_strong_line_partition(line_list)
+            && !support::is_vendor_o2a_strong_candidate_from_source(line)
+        {
+            continue;
+        }
+        matches[line_index] = find_strong_line_match(line_list, line.center_wavelength_nm)
+            .map(u16::try_from)
+            .transpose()
+            .map_err(|_| errors::Error::InvalidRequest)?;
+    }
+    line_list.strong_line_match_by_line = Some(matches);
+    Ok(())
+}
 
 pub struct RelevantLineWindow<'a> {
     pub lines: &'a [SpectroscopyLine],
@@ -134,6 +201,13 @@ pub fn uses_vendor_strong_line_partition(line_list: &SpectroscopyLineList) -> bo
     line_list.has_strong_line_sidecars() && line_list.vendor_strong_line_partition
 }
 
+pub fn disable_strong_line_sidecars(line_list: &mut SpectroscopyLineList) {
+    line_list.strong_lines = None;
+    line_list.relaxation_matrix = None;
+    line_list.strong_line_match_by_line = None;
+    line_list.vendor_strong_line_partition = false;
+}
+
 pub fn detect_vendor_strong_line_partition(line_list: &SpectroscopyLineList) -> bool {
     if !line_list.has_strong_line_sidecars() {
         return false;
@@ -149,6 +223,36 @@ pub fn detect_vendor_strong_line_partition(line_list: &SpectroscopyLineList) -> 
         .lines
         .iter()
         .any(|line| line.gas_index == 7 && support::line_has_vendor_strong_line_metadata(line))
+}
+
+pub fn validate_strong_line_partition(
+    line_list: &SpectroscopyLineList,
+) -> Result<(), errors::Error> {
+    if !uses_vendor_strong_line_partition(line_list) {
+        return Ok(());
+    }
+    let Some(strong_lines) = &line_list.strong_lines else {
+        return Ok(());
+    };
+    if strong_lines.len() > MAX_STRONG_LINE_SIDECARS {
+        return Err(errors::Error::InvalidRequest);
+    }
+
+    let mut saw_candidate = false;
+    let mut matched_candidate = false;
+    for line in &line_list.lines {
+        if !support::is_vendor_o2a_strong_candidate_from_source(line) {
+            continue;
+        }
+        saw_candidate = true;
+        if find_strong_line_match(line_list, line.center_wavelength_nm).is_some() {
+            matched_candidate = true;
+        }
+    }
+    if saw_candidate && !matched_candidate {
+        return Err(errors::Error::InvalidRequest);
+    }
+    Ok(())
 }
 
 pub fn find_strong_line_match(

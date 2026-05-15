@@ -5,9 +5,11 @@ use zdisamar::input::reference::airmass_phase::{
 use zdisamar::input::reference::solar_irradiance::{
     bundled_solar_irradiance, default_solar_continuum_irradiance, irradiance_at_wavelength,
 };
+use zdisamar::input::reference::spectroscopy::line_list_ops;
 use zdisamar::input::reference_data::{
     CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
-    CrossSectionTable,
+    CrossSectionTable, RelaxationMatrix, SpectroscopyLine, SpectroscopyLineList,
+    SpectroscopyStrongLine,
 };
 use zdisamar::input::{binding::Binding, scene::Scene};
 
@@ -16,6 +18,134 @@ fn assert_close(actual: f64, expected: f64, tolerance: f64) {
         (actual - expected).abs() <= tolerance,
         "actual={actual:?} expected={expected:?} tolerance={tolerance:?}"
     );
+}
+
+fn spectroscopy_line(gas_index: u16, isotope_number: u8, wavelength_nm: f64) -> SpectroscopyLine {
+    SpectroscopyLine {
+        gas_index,
+        isotope_number,
+        center_wavelength_nm: wavelength_nm,
+        center_wavenumber_cm1: Some(1.0e7 / wavelength_nm),
+        line_strength_cm2_per_molecule: 1.0e-24,
+        air_half_width_cm1: Some(0.05),
+        ..SpectroscopyLine::default()
+    }
+}
+
+fn vendor_o2a_candidate(wavelength_nm: f64) -> SpectroscopyLine {
+    SpectroscopyLine {
+        vendor_filter_metadata_from_source: true,
+        branch_ic1: Some(5),
+        branch_ic2: Some(1),
+        rotational_nf: Some(12),
+        ..spectroscopy_line(7, 1, wavelength_nm)
+    }
+}
+
+fn spectroscopy_strong_line(wavelength_nm: f64) -> SpectroscopyStrongLine {
+    SpectroscopyStrongLine {
+        center_wavenumber_cm1: 1.0e7 / wavelength_nm,
+        center_wavelength_nm: wavelength_nm,
+        air_half_width_nm: 0.001,
+        ..SpectroscopyStrongLine::default()
+    }
+}
+
+fn one_line_relaxation_matrix() -> RelaxationMatrix {
+    RelaxationMatrix {
+        line_count: 1,
+        wt0: vec![0.0],
+        bw: vec![0.0],
+    }
+}
+
+#[test]
+fn spectroscopy_line_list_runtime_controls_filter_lines_and_record_controls() {
+    let mut line_list = SpectroscopyLineList {
+        lines: vec![
+            spectroscopy_line(7, 1, 760.5),
+            spectroscopy_line(7, 2, 760.6),
+            spectroscopy_line(8, 1, 760.7),
+        ],
+        lines_sorted_ascending: true,
+        strong_line_match_by_line: Some(vec![Some(0), None, None]),
+        ..SpectroscopyLineList::default()
+    };
+
+    line_list
+        .apply_runtime_controls(Some(7), &[1], Some(0.25), Some(10.0), 0.5)
+        .unwrap();
+
+    assert_eq!(line_list.lines.len(), 1);
+    assert_eq!(line_list.lines[0].gas_index, 7);
+    assert_eq!(line_list.lines[0].isotope_number, 1);
+    assert!(!line_list.lines_sorted_ascending);
+    assert_eq!(line_list.strong_line_match_by_line, None);
+    assert_eq!(line_list.runtime_controls.gas_index, Some(7));
+    assert_eq!(line_list.runtime_controls.active_isotopes, vec![1]);
+    assert_eq!(line_list.runtime_controls.threshold_line_scale, Some(0.25));
+    assert_eq!(line_list.runtime_controls.cutoff_cm1, Some(10.0));
+    assert_close(line_list.runtime_controls.line_mixing_factor, 0.5, 0.0);
+}
+
+#[test]
+fn spectroscopy_line_list_runtime_controls_disable_o2_sidecars_without_isotope_one() {
+    let mut line_list = SpectroscopyLineList {
+        lines: vec![spectroscopy_line(7, 2, 760.5)],
+        strong_lines: Some(vec![spectroscopy_strong_line(760.5)]),
+        relaxation_matrix: Some(one_line_relaxation_matrix()),
+        vendor_strong_line_partition: true,
+        strong_line_match_by_line: Some(vec![Some(0)]),
+        ..SpectroscopyLineList::default()
+    };
+
+    line_list
+        .apply_runtime_controls(Some(7), &[2], None, None, 1.0)
+        .unwrap();
+
+    assert!(line_list.strong_lines.is_none());
+    assert!(line_list.relaxation_matrix.is_none());
+    assert!(line_list.strong_line_match_by_line.is_none());
+    assert!(!line_list.vendor_strong_line_partition);
+}
+
+#[test]
+fn spectroscopy_line_list_builds_cached_vendor_strong_line_matches() {
+    let mut line_list = SpectroscopyLineList {
+        lines: vec![
+            vendor_o2a_candidate(760.5),
+            spectroscopy_line(7, 1, 760.5),
+            spectroscopy_line(7, 2, 760.6),
+        ],
+        strong_lines: Some(vec![spectroscopy_strong_line(760.5)]),
+        relaxation_matrix: Some(one_line_relaxation_matrix()),
+        ..SpectroscopyLineList::default()
+    };
+
+    line_list
+        .apply_runtime_controls(Some(7), &[1], None, None, 1.0)
+        .unwrap();
+    line_list.build_strong_line_match_index().unwrap();
+
+    assert!(line_list.vendor_strong_line_partition);
+    assert_eq!(
+        line_list.strong_line_match_by_line,
+        Some(vec![Some(0), None])
+    );
+    assert!(line_list_ops::should_exclude_weak_line(
+        &line_list,
+        0,
+        &line_list.lines[0],
+        0,
+        &[],
+    ));
+    assert!(!line_list_ops::should_exclude_weak_line(
+        &line_list,
+        0,
+        &line_list.lines[1],
+        1,
+        &[],
+    ));
 }
 
 #[test]

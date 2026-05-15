@@ -1,4 +1,7 @@
-use crate::common::math::interpolation::spline;
+use crate::{
+    common::{errors, math::interpolation::spline},
+    input::reference::spectroscopy::line_list_ops,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpectroscopyLine {
@@ -61,6 +64,28 @@ pub struct SpectroscopyLineList {
 impl SpectroscopyLineList {
     pub fn has_strong_line_sidecars(&self) -> bool {
         self.strong_lines.is_some() && self.relaxation_matrix.is_some()
+    }
+
+    pub fn apply_runtime_controls(
+        &mut self,
+        gas_index: Option<u16>,
+        active_isotopes: &[u8],
+        threshold_line_scale: Option<f64>,
+        cutoff_cm1: Option<f64>,
+        line_mixing_factor: f64,
+    ) -> Result<(), errors::Error> {
+        line_list_ops::apply_runtime_controls(
+            self,
+            gas_index,
+            active_isotopes,
+            threshold_line_scale,
+            cutoff_cm1,
+            line_mixing_factor,
+        )
+    }
+
+    pub fn build_strong_line_match_index(&mut self) -> Result<(), errors::Error> {
+        line_list_ops::build_strong_line_match_index(self)
     }
 
     pub fn sigma_at(&self, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) -> f64 {

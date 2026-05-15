@@ -19,3 +19,28 @@ pub fn is_vendor_o2a_strong_candidate(line: &SpectroscopyLine) -> bool {
 pub fn is_vendor_o2a_strong_candidate_from_source(line: &SpectroscopyLine) -> bool {
     line.vendor_filter_metadata_from_source && is_vendor_o2a_strong_candidate(line)
 }
+
+pub fn runtime_controls_match_line(
+    gas_index: Option<u16>,
+    active_isotopes: &[u8],
+    line: &SpectroscopyLine,
+) -> bool {
+    if let Some(expected_gas_index) = gas_index
+        && line.gas_index != expected_gas_index
+    {
+        return false;
+    }
+    active_isotopes.is_empty() || active_isotopes.contains(&line.isotope_number)
+}
+
+pub fn runtime_controls_keep_strong_line_sidecars(
+    gas_index: Option<u16>,
+    active_isotopes: &[u8],
+) -> bool {
+    if let Some(expected_gas_index) = gas_index
+        && expected_gas_index != 7
+    {
+        return false;
+    }
+    active_isotopes.is_empty() || active_isotopes.contains(&1)
+}
