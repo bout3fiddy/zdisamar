@@ -75,5 +75,9 @@ path = "tests/rust/forward_model/spectral_math.rs"
 name = "forward_model_phase_functions"
 path = "tests/rust/forward_model/phase_functions.rs"
 
+[[test]]
+name = "forward_model_radiative_transfer"
+path = "tests/rust/forward_model/radiative_transfer.rs"
+
 [dependencies]
 wyhash = "0.6.0"
