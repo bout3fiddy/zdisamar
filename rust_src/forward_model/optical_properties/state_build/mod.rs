@@ -44,8 +44,9 @@ pub use source_interfaces::{
 };
 pub use spectroscopy::{
     DEFAULT_O2_VOLUME_MIXING_RATIO, collect_active_cross_section_absorbers,
-    collect_active_line_absorbers, prepare_cross_section_absorbers, resolve_active_line_species,
-    resolve_continuum_owner_species, sort_line_list, species_mixing_ratio_at_pressure,
+    collect_active_line_absorbers, prepare_cross_section_absorbers, prepare_line_absorber,
+    prepare_line_absorber_line_list, resolve_active_line_species, resolve_continuum_owner_species,
+    sort_line_list, species_mixing_ratio_at_pressure,
 };
 pub use state_optical_depth::{
     aerosol_optical_depth_at_wavelength, cloud_optical_depth_at_wavelength,

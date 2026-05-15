@@ -24,6 +24,7 @@ use zdisamar::{
                 line_spectroscopy_carrier_density_at_sublayer,
                 operational_o2_evaluation_at_wavelength, optical_depth_breakdown_at_wavelength,
                 particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
+                prepare_line_absorber, prepare_line_absorber_line_list,
                 prepared_scalar_for_sublayer, quadrature_carrier_at_altitude,
                 resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
                 shared_active_carrier_at_level, shared_boundary_carrier_at_level,
@@ -628,7 +629,10 @@ fn spectroscopy_helpers_collect_active_absorbers_from_scene() {
                     spectroscopy: Spectroscopy {
                         mode: SpectroscopyMode::LineByLine,
                         line_gas_controls: LineGasControls {
+                            factor_lm_sim: Some(0.25),
+                            isotopes_sim: vec![1],
                             threshold_line_sim: Some(0.05),
+                            cutoff_sim_cm1: Some(10.0),
                             ..LineGasControls::default()
                         },
                         ..Spectroscopy::default()
@@ -673,6 +677,77 @@ fn spectroscopy_helpers_collect_active_absorbers_from_scene() {
     assert_eq!(line_absorbers.len(), 1);
     assert_eq!(line_absorbers[0].species, AbsorberSpecies::O2);
     assert_eq!(line_absorbers[0].controls.threshold_line_sim, Some(0.05));
+
+    let source_line_list = SpectroscopyLineList {
+        lines: vec![
+            SpectroscopyLine {
+                gas_index: 7,
+                isotope_number: 2,
+                center_wavelength_nm: 762.0,
+                ..SpectroscopyLine::default()
+            },
+            SpectroscopyLine {
+                gas_index: 7,
+                isotope_number: 1,
+                center_wavelength_nm: 761.0,
+                ..SpectroscopyLine::default()
+            },
+            SpectroscopyLine {
+                gas_index: 8,
+                isotope_number: 1,
+                center_wavelength_nm: 760.0,
+                ..SpectroscopyLine::default()
+            },
+        ],
+        ..SpectroscopyLineList::default()
+    };
+    let prepared_line = prepare_line_absorber(&line_absorbers[0], &source_line_list, 4, false)
+        .expect("line absorber should apply active controls");
+    assert_eq!(prepared_line.species, AbsorberSpecies::O2);
+    assert_eq!(prepared_line.number_densities_cm3, vec![0.0; 4]);
+    assert_eq!(prepared_line.line_list.lines.len(), 1);
+    assert_eq!(prepared_line.line_list.lines[0].isotope_number, 1);
+    assert_eq!(prepared_line.line_list.runtime_controls.gas_index, Some(7));
+    assert_eq!(
+        prepared_line.line_list.runtime_controls.active_isotopes,
+        vec![1]
+    );
+    assert_eq!(
+        prepared_line
+            .line_list
+            .runtime_controls
+            .threshold_line_scale,
+        Some(0.05)
+    );
+    assert_eq!(
+        prepared_line.line_list.runtime_controls.cutoff_cm1,
+        Some(10.0)
+    );
+    assert_close(
+        prepared_line.line_list.runtime_controls.line_mixing_factor,
+        0.25,
+        0.0,
+    );
+
+    let unsupported_lines = SpectroscopyLineList {
+        lines: vec![SpectroscopyLine {
+            gas_index: 8,
+            isotope_number: 1,
+            center_wavelength_nm: 760.0,
+            ..SpectroscopyLine::default()
+        }],
+        ..SpectroscopyLineList::default()
+    };
+    assert_eq!(
+        prepare_line_absorber_line_list(&line_absorbers[0], &unsupported_lines, false),
+        Err(zdisamar::common::errors::Error::InvalidRequest)
+    );
+    assert!(
+        prepare_line_absorber_line_list(&line_absorbers[0], &unsupported_lines, true)
+            .unwrap()
+            .lines
+            .is_empty()
+    );
 
     let active_cross_sections = collect_active_cross_section_absorbers(&scene, &fallback_table);
     assert_eq!(active_cross_sections.len(), 2);

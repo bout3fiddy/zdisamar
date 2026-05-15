@@ -128,6 +128,39 @@ pub fn prepare_cross_section_absorbers(
         .collect()
 }
 
+pub fn prepare_line_absorber(
+    active_absorber: &ActiveLineAbsorber,
+    line_list: &SpectroscopyLineList,
+    sublayer_count: usize,
+    use_operational_o2_lut: bool,
+) -> Result<PreparedLineAbsorber, errors::Error> {
+    let line_list =
+        prepare_line_absorber_line_list(active_absorber, line_list, use_operational_o2_lut)?;
+    Ok(PreparedLineAbsorber {
+        species: active_absorber.species,
+        line_list,
+        number_densities_cm3: vec![0.0; sublayer_count],
+        column_density_factor: 0.0,
+    })
+}
+
+pub fn prepare_line_absorber_line_list(
+    active_absorber: &ActiveLineAbsorber,
+    line_list: &SpectroscopyLineList,
+    use_operational_o2_lut: bool,
+) -> Result<SpectroscopyLineList, errors::Error> {
+    let mut prepared = line_list.clone();
+    apply_runtime_controls_for_absorber(&mut prepared, active_absorber)?;
+    if !use_operational_o2_lut && prepared.lines.is_empty() {
+        return Err(errors::Error::InvalidRequest);
+    }
+    sort_line_list(&mut prepared);
+    if !use_operational_o2_lut {
+        prepared.build_strong_line_match_index()?;
+    }
+    Ok(prepared)
+}
+
 fn representation_kind_for(
     absorber: &ActiveCrossSectionAbsorber<'_>,
 ) -> Result<CrossSectionRepresentationKind, errors::Error> {
@@ -223,6 +256,23 @@ pub fn sort_line_list(line_list: &mut SpectroscopyLineList) {
             .total_cmp(&right.center_wavelength_nm)
     });
     line_list.lines_sorted_ascending = true;
+}
+
+fn apply_runtime_controls_for_absorber(
+    line_list: &mut SpectroscopyLineList,
+    active_absorber: &ActiveLineAbsorber,
+) -> Result<(), errors::Error> {
+    line_list.apply_runtime_controls(
+        active_absorber.species.hitran_index().map(u16::from),
+        active_absorber.controls.active_isotopes(),
+        active_absorber.controls.active_threshold_line(),
+        active_absorber.controls.active_cutoff_cm1(),
+        if active_absorber.species == AbsorberSpecies::O2 {
+            active_absorber.controls.active_line_mixing_factor()
+        } else {
+            0.0
+        },
+    )
 }
 
 fn default_volume_mixing_ratio_for_scene(_scene: &Scene, species: AbsorberSpecies) -> Option<f64> {
