@@ -37,6 +37,51 @@ pub struct ZdsDiagnosticReport {
     pub mean_reflectance: f64,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct ZdsAtmosphericBudgetRow {
+    pub wavelength_nm: f64,
+    pub layer_index: u32,
+    pub sublayer_index: u32,
+    pub global_sublayer_index: u32,
+    pub interval_index_1based: u32,
+    pub support_row_kind: u32,
+    pub subcolumn_label: u32,
+    pub altitude_km: f64,
+    pub top_altitude_km: f64,
+    pub bottom_altitude_km: f64,
+    pub pressure_hpa: f64,
+    pub top_pressure_hpa: f64,
+    pub bottom_pressure_hpa: f64,
+    pub temperature_k: f64,
+    pub number_density_cm3: f64,
+    pub oxygen_number_density_cm3: f64,
+    pub absorber_number_density_cm3: f64,
+    pub path_length_cm: f64,
+    pub aerosol_fraction: f64,
+    pub cloud_fraction: f64,
+    pub gas_absorption_optical_depth: f64,
+    pub gas_scattering_optical_depth: f64,
+    pub cia_optical_depth: f64,
+    pub aerosol_optical_depth: f64,
+    pub aerosol_scattering_optical_depth: f64,
+    pub aerosol_absorption_optical_depth: f64,
+    pub cloud_optical_depth: f64,
+    pub cloud_scattering_optical_depth: f64,
+    pub cloud_absorption_optical_depth: f64,
+    pub total_absorption_optical_depth: f64,
+    pub total_scattering_optical_depth: f64,
+    pub total_optical_depth: f64,
+    pub single_scatter_albedo: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZdsAtmosphericBudget {
+    pub len: usize,
+    pub rows: *const ZdsAtmosphericBudgetRow,
+}
+
 impl Default for ZdsSpectrum {
     fn default() -> Self {
         Self {
@@ -52,12 +97,22 @@ impl Default for ZdsSpectrum {
     }
 }
 
+impl Default for ZdsAtmosphericBudget {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            rows: ptr::null(),
+        }
+    }
+}
+
 pub struct Context {
     prepared: Option<crate::PreparedO2A>,
     o2a_session_storage: crate::O2ASessionStorage,
     // The box keeps each product address stable while C/Python holds array pointers.
     #[allow(clippy::vec_box)]
     results: Vec<Box<crate::Output>>,
+    atmospheric_budgets: Vec<Box<[ZdsAtmosphericBudgetRow]>>,
     last_error: CString,
 }
 
@@ -67,6 +122,7 @@ impl Default for Context {
             prepared: None,
             o2a_session_storage: crate::O2ASessionStorage::default(),
             results: Vec::new(),
+            atmospheric_budgets: Vec::new(),
             last_error: empty_error(),
         }
     }
@@ -75,6 +131,19 @@ impl Default for Context {
 impl Context {
     fn clear_results(&mut self) {
         self.results.clear();
+    }
+
+    fn remove_atmospheric_budget(&mut self, rows: *const ZdsAtmosphericBudgetRow) {
+        if rows.is_null() {
+            return;
+        }
+        if let Some(index) = self
+            .atmospheric_budgets
+            .iter()
+            .position(|stored| stored.as_ptr() == rows)
+        {
+            drop(self.atmospheric_budgets.swap_remove(index));
+        }
     }
 
     fn result_for_handle(&self, handle: *const crate::Output) -> Option<&crate::Output> {
@@ -257,6 +326,61 @@ pub unsafe extern "C" fn zds_run_spectrum_jacobian_for_states(
 #[unsafe(no_mangle)]
 /// # Safety
 ///
+/// `ctx` must be live, `wavelengths_ptr` must point to `wavelength_count`
+/// readable `f64` values, and `out` must be valid for writing one table handle.
+pub unsafe extern "C" fn zds_atmospheric_budget(
+    ctx: *mut Context,
+    wavelengths_ptr: *const f64,
+    wavelength_count: usize,
+    out: *mut ZdsAtmosphericBudget,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    if out.is_null() {
+        return fail(resolved, "null atmospheric budget");
+    }
+    if wavelengths_ptr.is_null() {
+        return fail(resolved, "null wavelengths");
+    }
+    if wavelength_count == 0 {
+        return fail(resolved, "empty wavelengths");
+    }
+    let Some(prepared) = resolved.prepared.as_ref() else {
+        return fail(resolved, "no prepared O2A case loaded");
+    };
+
+    let wavelengths = unsafe { std::slice::from_raw_parts(wavelengths_ptr, wavelength_count) };
+    match crate::report::build_atmospheric_budget(&prepared.scene, &prepared.prepared, wavelengths)
+    {
+        Ok(native_rows) => {
+            let rows = native_rows
+                .into_iter()
+                .map(copy_atmospheric_budget_row)
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let len = rows.len();
+            let rows_ptr = rows.as_ptr();
+            resolved.atmospheric_budgets.push(rows);
+            unsafe {
+                *out = ZdsAtmosphericBudget {
+                    len,
+                    rows: rows_ptr,
+                };
+            }
+            resolved.clear_error();
+            ZDS_OK
+        }
+        Err(err) => fail(
+            resolved,
+            format!("failed to build atmospheric budget: {err:?}"),
+        ),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
 /// `ctx` must be live and `out` must point to a `ZdsSpectrum` previously returned by this context.
 pub unsafe extern "C" fn zds_spectrum_free(ctx: *mut Context, out: *mut ZdsSpectrum) {
     let Some(resolved) = context_mut(ctx) else {
@@ -284,6 +408,28 @@ pub unsafe extern "C" fn zds_spectrum_free(ctx: *mut Context, out: *mut ZdsSpect
 
     unsafe {
         *out = ZdsSpectrum::default();
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live and `out` must point to a table previously returned by this context.
+pub unsafe extern "C" fn zds_atmospheric_budget_free(
+    ctx: *mut Context,
+    out: *mut ZdsAtmosphericBudget,
+) {
+    let Some(resolved) = context_mut(ctx) else {
+        return;
+    };
+    if out.is_null() {
+        return;
+    }
+
+    let rows = unsafe { (*out).rows };
+    resolved.remove_atmospheric_budget(rows);
+    unsafe {
+        *out = ZdsAtmosphericBudget::default();
     }
 }
 
@@ -449,6 +595,44 @@ fn compact_result_jacobian(
     Ok(())
 }
 
+fn copy_atmospheric_budget_row(row: crate::AtmosphericBudgetRow) -> ZdsAtmosphericBudgetRow {
+    ZdsAtmosphericBudgetRow {
+        wavelength_nm: row.wavelength_nm,
+        layer_index: row.layer_index,
+        sublayer_index: row.sublayer_index,
+        global_sublayer_index: row.global_sublayer_index,
+        interval_index_1based: row.interval_index_1based,
+        support_row_kind: row.support_row_kind as u32,
+        subcolumn_label: row.subcolumn_label as u32,
+        altitude_km: row.altitude_km,
+        top_altitude_km: row.top_altitude_km,
+        bottom_altitude_km: row.bottom_altitude_km,
+        pressure_hpa: row.pressure_hpa,
+        top_pressure_hpa: row.top_pressure_hpa,
+        bottom_pressure_hpa: row.bottom_pressure_hpa,
+        temperature_k: row.temperature_k,
+        number_density_cm3: row.number_density_cm3,
+        oxygen_number_density_cm3: row.oxygen_number_density_cm3,
+        absorber_number_density_cm3: row.absorber_number_density_cm3,
+        path_length_cm: row.path_length_cm,
+        aerosol_fraction: row.aerosol_fraction,
+        cloud_fraction: row.cloud_fraction,
+        gas_absorption_optical_depth: row.gas_absorption_optical_depth,
+        gas_scattering_optical_depth: row.gas_scattering_optical_depth,
+        cia_optical_depth: row.cia_optical_depth,
+        aerosol_optical_depth: row.aerosol_optical_depth,
+        aerosol_scattering_optical_depth: row.aerosol_scattering_optical_depth,
+        aerosol_absorption_optical_depth: row.aerosol_absorption_optical_depth,
+        cloud_optical_depth: row.cloud_optical_depth,
+        cloud_scattering_optical_depth: row.cloud_scattering_optical_depth,
+        cloud_absorption_optical_depth: row.cloud_absorption_optical_depth,
+        total_absorption_optical_depth: row.total_absorption_optical_depth,
+        total_scattering_optical_depth: row.total_scattering_optical_depth,
+        total_optical_depth: row.total_optical_depth,
+        single_scatter_albedo: row.single_scatter_albedo,
+    }
+}
+
 fn empty_error() -> CString {
     CString::new("").expect("empty CString literal is valid")
 }
@@ -586,6 +770,37 @@ mod tests {
         assert_eq!(status, ZDS_FAILURE);
         assert!(ctx.last_error.to_str().unwrap().contains("unsupported"));
         assert!(spectrum.result_handle.is_null());
+    }
+
+    #[test]
+    fn atmospheric_budget_returns_owned_rows_and_free_resets_handle() {
+        let mut ctx = Context {
+            prepared: Some(synthetic_prepared_o2a()),
+            ..Context::default()
+        };
+        let wavelengths = [760.0];
+        let mut budget = ZdsAtmosphericBudget::default();
+
+        let status = unsafe {
+            zds_atmospheric_budget(
+                &mut ctx,
+                wavelengths.as_ptr(),
+                wavelengths.len(),
+                &mut budget,
+            )
+        };
+
+        assert_eq!(status, ZDS_OK);
+        assert_eq!(budget.len, 1);
+        assert!(!budget.rows.is_null());
+        let rows = unsafe { std::slice::from_raw_parts(budget.rows, budget.len) };
+        assert_eq!(rows[0].wavelength_nm, 760.0);
+        assert_eq!(rows[0].path_length_cm, 100_000.0);
+
+        unsafe {
+            zds_atmospheric_budget_free(&mut ctx, &mut budget);
+        }
+        assert_eq!(budget, ZdsAtmosphericBudget::default());
     }
 
     fn synthetic_prepared_o2a() -> crate::PreparedO2A {
