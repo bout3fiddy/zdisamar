@@ -1,68 +1,68 @@
 {
   "cache": {
-    "first_use_retrieval_s": 3.453297375002876,
+    "first_use_retrieval_s": 15.434355542063713,
     "reused_retrieval": {
       "converged": true,
       "iterations": 3,
       "iterations_detail": [
         {
           "index": 1,
-          "rtm_and_jacobian_s": 1.0491948339913506,
-          "solver_update_s": 0.00018462500884197652,
-          "total_iteration_s": 1.0493865410098806
+          "rtm_and_jacobian_s": 4.817297999979928,
+          "solver_update_s": 0.0001931249862536788,
+          "total_iteration_s": 4.817501334007829
         },
         {
           "index": 2,
-          "rtm_and_jacobian_s": 1.0505746249982622,
-          "solver_update_s": 0.00017908299923874438,
-          "total_iteration_s": 1.0507619999989402
+          "rtm_and_jacobian_s": 4.789218166959472,
+          "solver_update_s": 0.00017029198352247477,
+          "total_iteration_s": 4.789396208012477
         },
         {
           "index": 3,
-          "rtm_and_jacobian_s": 1.0422387500002515,
-          "solver_update_s": 0.00016145900008268654,
-          "total_iteration_s": 1.042405249987496
+          "rtm_and_jacobian_s": 4.872390250035096,
+          "solver_update_s": 0.0001622499548830092,
+          "total_iteration_s": 4.87255724996794
         }
       ],
-      "other_retrieval_s": 0.00043591600842773914,
-      "retrieval_plus_lazy_final_evaluation_s": 4.454839959013043,
+      "other_retrieval_s": 0.0005165411275811493,
+      "retrieval_plus_lazy_final_evaluation_s": 19.252435082977172,
       "retrieved": {
-        "aerosol_layer_mid_pressure_hpa": 329.19089154066546,
-        "aerosol_optical_depth": 1.9681945906310179
+        "aerosol_layer_mid_pressure_hpa": 329.1908915406733,
+        "aerosol_optical_depth": 1.96819459063108
       },
-      "rtm_and_jacobian_s": 3.142008208989864,
-      "solver_update_s": 0.0005251670081634074,
+      "rtm_and_jacobian_s": 14.478906416974496,
+      "solver_update_s": 0.0005256669246591628,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 3.1429692920064554
+      "wall_s": 14.479948625026736
     },
-    "setup_s": 0.31032808299642056
+    "setup_s": 0.9544069170369767
   },
   "direct_rtm_call_probe": {
     "jacobian_increment_s": {
-      "max": 0.11853749997681007,
-      "mean": 0.0016430001880507917,
-      "median": 0.08156070797122084,
-      "min": -0.34918345799087547
+      "max": 0.4848057080525905,
+      "mean": 0.3575436663930304,
+      "median": 0.3945857919752598,
+      "min": 0.17144766595447436
     },
     "probe_runs": 5,
     "rtm_and_jacobian_s": {
-      "max": 0.9693489169876557,
-      "mean": 0.9647894667985384,
-      "median": 0.9637660839944147,
-      "min": 0.9602716250228696
+      "max": 5.102010417031124,
+      "mean": 4.950996483396739,
+      "median": 4.921313834027387,
+      "min": 4.8527064579539
     },
     "rtm_only_s": {
-      "max": 1.309455083013745,
-      "mean": 0.9631464666104875,
-      "median": 0.8857436670223251,
-      "min": 0.8447188330173958
+      "max": 4.681258791999426,
+      "mean": 4.593452817003708,
+      "median": 4.6068460419774055,
+      "min": 4.526728042052127
     }
   },
-  "lazy_final_evaluation_s": 1.3118706670065876,
-  "measurement_build_s": 1.1898202080046758,
+  "lazy_final_evaluation_s": 4.772486457950436,
+  "measurement_build_s": 4.473444417002611,
   "reference_case": 71,
   "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
   "scene": {

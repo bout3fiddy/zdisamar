@@ -70,6 +70,50 @@ pub fn build_adaptive_integration_kernel(
     finalize_adaptive_kernel(nominal_wavelength_nm, wavelengths, raw_weights)
 }
 
+pub fn build_adaptive_support_wavelengths(
+    scene: &Scene,
+    prepared: &PreparedOpticalState,
+    response: &SpectralResponse,
+) -> Option<Vec<f64>> {
+    let adaptive = scene.observation_model.adaptive_reference_grid;
+    if !adaptive.enabled() || response.fwhm_nm <= 0.0 {
+        return None;
+    }
+    let has_single_line_list = prepared
+        .spectroscopy_lines
+        .as_ref()
+        .is_some_and(|line_list| !line_list.lines.is_empty());
+    if !has_single_line_list && prepared.line_absorbers.is_empty() {
+        return None;
+    }
+
+    let plan = build_adaptive_interval_plan(scene, prepared, response)?;
+    let mut support = Vec::new();
+    for interval in &plan {
+        let order = interval.division_count;
+        if order == 0 {
+            continue;
+        }
+        let (nodes_01, _) = fill_adaptive_unit_gauss(response, order)?;
+        let interval_width_nm = interval.interval_end_nm - interval.interval_start_nm;
+        for node_01 in nodes_01 {
+            // DISAMAR stores the cutoff grid on the same realized adaptive
+            // support used for convolution, before nominal-window trimming.
+            let wavelength_nm = interval.interval_start_nm + interval_width_nm * node_01;
+            if wavelength_nm.is_finite() {
+                support.push(wavelength_nm);
+            }
+        }
+    }
+    if support.is_empty() {
+        return None;
+    }
+
+    support.sort_by(f64::total_cmp);
+    support.dedup_by(|left, right| (*left - *right).abs() <= 1.0e-9);
+    Some(support)
+}
+
 pub fn build_disamar_realized_kernel(
     scene: &Scene,
     response: &SpectralResponse,

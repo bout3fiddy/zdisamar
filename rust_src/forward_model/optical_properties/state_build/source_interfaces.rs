@@ -1,6 +1,9 @@
 use super::{
     PreparedOpticalState, ProfileNodeSpectroscopyCache, SharedBoundaryCarrier,
-    carrier_eval::shared_boundary_carrier_at_level_with_cache,
+    carrier_eval::{
+        WavelengthCarrierCache, shared_boundary_carrier_at_level_with_cache,
+        shared_boundary_carrier_at_level_with_carrier_cache,
+    },
     state_types::{PreparedLayer, PreparedSublayer},
 };
 use crate::{
@@ -42,6 +45,58 @@ pub fn fill_source_interfaces_at_wavelength_with_layers(
                     sublayers,
                     level_geometry,
                     Some(&profile_cache),
+                )?;
+                *source_interface = source_interface_from_boundary_carrier(
+                    level_geometry.weight_km,
+                    boundary_carrier,
+                );
+            }
+            return Ok(());
+        }
+        for source_interface in source_interfaces {
+            *source_interface = SourceInterfaceInput::default();
+        }
+        return Ok(());
+    }
+
+    fill_source_interfaces_from_prepared_layers(
+        layer_inputs,
+        prepared.sublayers.as_deref(),
+        &prepared.layers,
+        source_interfaces,
+    );
+    Ok(())
+}
+
+pub fn fill_source_interfaces_at_wavelength_with_layers_and_carrier_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    layer_inputs: &[LayerInput],
+    source_interfaces: &mut [SourceInterfaceInput],
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<(), errors::Error> {
+    if layer_inputs.is_empty() || source_interfaces.len() != layer_inputs.len() + 1 {
+        return Ok(());
+    }
+
+    if let Some(sublayers) = &prepared.sublayers
+        && prepared.interval_semantics_use_reduced_shared_rtm_layers()
+        && layer_inputs.len() == prepared.layers.len()
+    {
+        if prepared
+            .shared_rtm_geometry
+            .is_valid_for(layer_inputs.len())
+        {
+            for (source_interface, &level_geometry) in source_interfaces
+                .iter_mut()
+                .zip(prepared.shared_rtm_geometry.levels.iter())
+            {
+                let boundary_carrier = shared_boundary_carrier_at_level_with_carrier_cache(
+                    prepared,
+                    wavelength_nm,
+                    sublayers,
+                    level_geometry,
+                    wavelength_cache,
                 )?;
                 *source_interface = source_interface_from_boundary_carrier(
                     level_geometry.weight_km,

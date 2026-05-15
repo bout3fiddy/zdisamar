@@ -2,14 +2,19 @@ use super::{
     OpticalDepthBreakdown, PreparedOpticalState, PreparedSublayer, ProfileNodeSpectroscopyCache,
     SharedRtmLayerGeometry, accumulate_breakdown, layer_input_from_evaluated,
     optical_depth_breakdown_at_wavelength, particle_optical_depth_at_wavelength,
-    shared_carrier::evaluate_reduced_layer_from_support_rows_with_cache,
+    shared_carrier::{
+        evaluate_reduced_layer_from_support_rows_with_cache,
+        evaluate_reduced_layer_from_support_rows_with_carrier_cache,
+    },
     state_optical_depth::evaluate_layer_at_wavelength_with_spectroscopy_cache,
 };
 use crate::{
     common::errors,
     forward_model::{
         jacobian,
-        optical_properties::shared::phase_functions,
+        optical_properties::{
+            shared::phase_functions, state_build::carrier_eval::WavelengthCarrierCache,
+        },
         radiative_transfer::common_types::{ForwardInput, LayerInput},
     },
     input::scene::Scene,
@@ -115,6 +120,65 @@ pub fn fill_forward_layers_at_wavelength(
     }
 
     if let Some(sublayers) = &prepared.sublayers {
+        return fill_sublayer_forward_layers_at_wavelength(
+            prepared,
+            scene,
+            wavelength_nm,
+            sublayers,
+            layer_inputs,
+        );
+    }
+
+    fill_prepared_layer_forward_inputs(prepared, scene, wavelength_nm, layer_inputs)
+}
+
+pub fn fill_forward_layers_at_wavelength_with_carrier_cache(
+    prepared: &PreparedOpticalState,
+    scene: &Scene,
+    wavelength_nm: f64,
+    layer_inputs: &mut [LayerInput],
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<OpticalDepthBreakdown, errors::Error> {
+    if layer_inputs.is_empty() {
+        return optical_depth_breakdown_at_wavelength(prepared, wavelength_nm);
+    }
+
+    if let Some(sublayers) = &prepared.sublayers {
+        if prepared.interval_semantics_use_reduced_shared_rtm_layers()
+            && layer_inputs.len() == prepared.layers.len()
+            && prepared
+                .shared_rtm_geometry
+                .is_valid_for(layer_inputs.len())
+        {
+            let mut totals = OpticalDepthBreakdown::default();
+            for (&layer_geometry, layer_input) in prepared
+                .shared_rtm_geometry
+                .layers
+                .iter()
+                .zip(layer_inputs.iter_mut())
+            {
+                let support_start_index = layer_geometry.support_start_index as usize;
+                let support_count = layer_geometry.support_count as usize;
+                let support_end_index = support_start_index + support_count;
+                let Some(support_sublayers) = sublayers.get(support_start_index..support_end_index)
+                else {
+                    return Err(errors::Error::InvalidRequest);
+                };
+                let evaluated = evaluate_reduced_layer_from_support_rows_with_carrier_cache(
+                    prepared,
+                    scene,
+                    wavelength_nm,
+                    support_sublayers,
+                    layer_geometry,
+                    wavelength_cache,
+                )?;
+                *layer_input = layer_input_from_evaluated(evaluated);
+                attach_aerosol_optical_depth_jacobian(scene, layer_input);
+                accumulate_breakdown(&mut totals, evaluated.breakdown);
+            }
+            return Ok(totals);
+        }
+
         return fill_sublayer_forward_layers_at_wavelength(
             prepared,
             scene,

@@ -21,7 +21,7 @@ use crate::{
             },
         },
         jacobian,
-        optical_properties::state_build::PreparedOpticalState,
+        optical_properties::state_build::{PreparedOpticalState, SharedOpticalCarrier},
         radiative_transfer::common_types::{
             LayerInput, PseudoSphericalSample, Route, RtmQuadratureLevel, SourceInterfaceInput,
         },
@@ -92,10 +92,16 @@ struct ForwardScratch {
     pseudo_spherical_samples: Vec<PseudoSphericalSample>,
     pseudo_spherical_level_starts: Vec<usize>,
     pseudo_spherical_level_altitudes: Vec<f64>,
+    support_carrier_valid: Vec<bool>,
+    support_carriers: Vec<SharedOpticalCarrier>,
 }
 
 impl ForwardScratch {
-    fn new(transport_layer_count: usize, pseudo_spherical_sample_count: usize) -> Self {
+    fn new(
+        transport_layer_count: usize,
+        pseudo_spherical_sample_count: usize,
+        support_cache_count: usize,
+    ) -> Self {
         Self {
             layer_inputs: vec![LayerInput::default(); transport_layer_count],
             pseudo_spherical_layers: vec![LayerInput::default(); pseudo_spherical_sample_count],
@@ -107,6 +113,8 @@ impl ForwardScratch {
             ],
             pseudo_spherical_level_starts: vec![0; transport_layer_count + 1],
             pseudo_spherical_level_altitudes: vec![0.0; transport_layer_count + 1],
+            support_carrier_valid: vec![false; support_cache_count],
+            support_carriers: vec![SharedOpticalCarrier::default(); support_cache_count],
         }
     }
 
@@ -119,6 +127,8 @@ impl ForwardScratch {
             pseudo_spherical_samples: &mut self.pseudo_spherical_samples,
             pseudo_spherical_level_starts: &mut self.pseudo_spherical_level_starts,
             pseudo_spherical_level_altitudes: &mut self.pseudo_spherical_level_altitudes,
+            support_carrier_valid: &mut self.support_carrier_valid,
+            support_carriers: &mut self.support_carriers,
         }
     }
 }
@@ -169,6 +179,10 @@ fn precompute_forward_cache(
     let transport_layer_count = storage::resolved_transport_layer_count(route, prepared);
     let pseudo_spherical_sample_count =
         storage::resolved_pseudo_spherical_sample_count(scene, route, prepared);
+    let support_cache_count = prepared
+        .sublayers
+        .as_ref()
+        .map_or(transport_layer_count, Vec::len);
 
     // Most O2 A instrument samples overlap heavily across nominal wavelengths.
     // Computing each unique forward wavelength once avoids duplicate RTM work,
@@ -176,7 +190,13 @@ fn precompute_forward_cache(
     let samples: Result<Vec<_>, spectral_eval::Error> = forward_misses
         .par_iter()
         .map_init(
-            || ForwardScratch::new(transport_layer_count, pseudo_spherical_sample_count),
+            || {
+                ForwardScratch::new(
+                    transport_layer_count,
+                    pseudo_spherical_sample_count,
+                    support_cache_count,
+                )
+            },
             |scratch, miss| {
                 spectral_forward::compute_forward_sample_at_wavelength(
                     scene,
@@ -245,6 +265,12 @@ pub fn simulate_product_with_implementations(
         vec![PseudoSphericalSample::default(); pseudo_spherical_sample_count];
     let mut pseudo_spherical_level_starts = vec![0; transport_layer_count + 1];
     let mut pseudo_spherical_level_altitudes = vec![0.0; transport_layer_count + 1];
+    let support_cache_count = prepared
+        .sublayers
+        .as_ref()
+        .map_or(transport_layer_count, Vec::len);
+    let mut support_carrier_valid = vec![false; support_cache_count];
+    let mut support_carriers = vec![SharedOpticalCarrier::default(); support_cache_count];
 
     let mut wavelengths = vec![0.0; sample_count];
     let mut radiance = vec![0.0; sample_count];
@@ -266,6 +292,8 @@ pub fn simulate_product_with_implementations(
         pseudo_spherical_samples: &mut pseudo_spherical_samples,
         pseudo_spherical_level_starts: &mut pseudo_spherical_level_starts,
         pseudo_spherical_level_altitudes: &mut pseudo_spherical_level_altitudes,
+        support_carrier_valid: &mut support_carrier_valid,
+        support_carriers: &mut support_carriers,
     };
 
     for (index, plan) in wavelength_sampling.iter().enumerate() {

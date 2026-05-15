@@ -1,7 +1,11 @@
 use super::{
     PreparedOpticalState, PreparedSublayer, ProfileNodeSpectroscopyCache,
-    carrier_eval::shared_optical_carrier_at_altitude_with_cache, level_altitude_from_sublayers,
-    shared_carrier::fill_shared_pseudo_spherical_samples_from_support_rows_with_cache,
+    carrier_eval::{WavelengthCarrierCache, shared_optical_carrier_at_altitude_with_cache},
+    level_altitude_from_sublayers,
+    shared_carrier::{
+        fill_shared_pseudo_spherical_samples_from_support_rows_with_cache,
+        fill_shared_pseudo_spherical_samples_from_support_rows_with_carrier_cache,
+    },
 };
 use crate::{
     common::{errors, math::quadrature::gauss_legendre},
@@ -160,6 +164,53 @@ pub fn fill_pseudo_spherical_grid_at_wavelength(
     )
 }
 
+pub fn fill_pseudo_spherical_grid_at_wavelength_with_carrier_cache(
+    prepared: &PreparedOpticalState,
+    scene: &Scene,
+    wavelength_nm: f64,
+    solver_layer_count: usize,
+    buffers: PseudoSphericalBuffers<'_>,
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<bool, errors::Error> {
+    let Some(sublayers) = &prepared.sublayers else {
+        return Ok(false);
+    };
+    let subgrid_divisions = usize::from(scene.atmosphere.sublayer_divisions).max(1);
+    let sample_count = solver_layer_count * subgrid_divisions;
+    if buffers.attenuation_samples.len() < sample_count
+        || buffers.level_sample_starts.len() != solver_layer_count + 1
+        || buffers.level_altitudes_km.len() != solver_layer_count + 1
+    {
+        return Ok(false);
+    }
+    if solver_layer_count != sublayers.len() && solver_layer_count != prepared.layers.len() {
+        return Ok(false);
+    }
+
+    if prepared.interval_semantics_use_reduced_shared_rtm_layers()
+        && solver_layer_count == prepared.layers.len()
+    {
+        return fill_shared_pseudo_spherical_grid_at_wavelength_with_carrier_cache(
+            prepared,
+            wavelength_nm,
+            solver_layer_count,
+            sublayers,
+            buffers,
+            wavelength_cache,
+        );
+    }
+
+    fill_regular_pseudo_spherical_grid_at_wavelength(
+        prepared,
+        scene,
+        wavelength_nm,
+        solver_layer_count,
+        sublayers,
+        buffers,
+        &wavelength_cache.profile_cache,
+    )
+}
+
 fn fill_shared_pseudo_spherical_grid_at_wavelength(
     prepared: &PreparedOpticalState,
     wavelength_nm: f64,
@@ -200,6 +251,52 @@ fn fill_shared_pseudo_spherical_grid_at_wavelength(
             &mut *buffers.attenuation_samples,
             sample_index,
             Some(profile_cache),
+        )?;
+    }
+    buffers.level_sample_starts[solver_layer_count] = sample_index;
+    Ok(true)
+}
+
+fn fill_shared_pseudo_spherical_grid_at_wavelength_with_carrier_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    solver_layer_count: usize,
+    sublayers: &[PreparedSublayer],
+    buffers: PseudoSphericalBuffers<'_>,
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<bool, errors::Error> {
+    if !prepared
+        .shared_rtm_geometry
+        .is_valid_for(solver_layer_count)
+    {
+        return Ok(false);
+    }
+
+    for (altitude_km, level_geometry) in buffers
+        .level_altitudes_km
+        .iter_mut()
+        .zip(prepared.shared_rtm_geometry.levels.iter())
+    {
+        *altitude_km = level_geometry.altitude_km;
+    }
+
+    let mut sample_index = 0;
+    for (layer_index, layer_geometry) in prepared.shared_rtm_geometry.layers.iter().enumerate() {
+        buffers.level_sample_starts[layer_index] = sample_index;
+        let support_start_index = layer_geometry.support_start_index as usize;
+        let support_count = layer_geometry.support_count as usize;
+        let support_end_index = support_start_index + support_count;
+        let Some(support_sublayers) = sublayers.get(support_start_index..support_end_index) else {
+            return Err(errors::Error::InvalidRequest);
+        };
+        sample_index = fill_shared_pseudo_spherical_samples_from_support_rows_with_carrier_cache(
+            prepared,
+            wavelength_nm,
+            support_sublayers,
+            &mut *buffers.attenuation_layers,
+            &mut *buffers.attenuation_samples,
+            sample_index,
+            wavelength_cache,
         )?;
     }
     buffers.level_sample_starts[solver_layer_count] = sample_index;

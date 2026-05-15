@@ -1,7 +1,9 @@
 use super::{
     PreparedOpticalState, PreparedSublayer, ProfileNodeSpectroscopyCache,
     carrier_eval::{
-        quadrature_carrier_at_altitude_with_cache, shared_boundary_carrier_at_level_with_cache,
+        WavelengthCarrierCache, quadrature_carrier_at_altitude_with_cache,
+        shared_boundary_carrier_at_level_with_cache,
+        shared_boundary_carrier_at_level_with_carrier_cache,
     },
 };
 use crate::{
@@ -47,6 +49,86 @@ fn scaled_aerosol_phase_per_km(
     scaled
 }
 
+fn fill_shared_aerosol_source_jacobian_from_layers(
+    sublayers: &[PreparedSublayer],
+    layer_inputs: &[LayerInput],
+    rtm_levels: &mut [RtmQuadratureLevel],
+) {
+    let state_index = jacobian::state_index(jacobian::State::AerosolOpticalDepth);
+    let phase_coefficients = sublayers
+        .iter()
+        .find(|sublayer| sublayer.aerosol_optical_depth > 0.0)
+        .map(|sublayer| sublayer.aerosol_phase_coefficients)
+        .unwrap_or_else(phase_functions::zero_phase_coefficients);
+    if phase_coefficients[0] == 0.0 {
+        return;
+    }
+
+    let total_scattering_derivative = layer_inputs
+        .iter()
+        .map(|layer| {
+            jacobian::get(
+                layer.scattering_optical_depth_jacobian,
+                jacobian::State::AerosolOpticalDepth,
+            )
+        })
+        .filter(|derivative| *derivative > 0.0)
+        .sum::<f64>();
+    if total_scattering_derivative <= 0.0 {
+        return;
+    }
+
+    let mut total_weight = 0.0;
+    for (level_index, level) in rtm_levels.iter().enumerate() {
+        if level.weight <= 0.0 {
+            continue;
+        }
+        let below_active = level_index > 0
+            && jacobian::get(
+                layer_inputs[level_index - 1].scattering_optical_depth_jacobian,
+                jacobian::State::AerosolOpticalDepth,
+            ) > 0.0;
+        let above_active = level_index < layer_inputs.len()
+            && jacobian::get(
+                layer_inputs[level_index].scattering_optical_depth_jacobian,
+                jacobian::State::AerosolOpticalDepth,
+            ) > 0.0;
+        if below_active || above_active {
+            total_weight += level.weight;
+        }
+    }
+    if total_weight <= 0.0 {
+        return;
+    }
+
+    // Shared RTM levels can sit on clean interval boundaries, so their sampled
+    // aerosol carrier may be zero even though adjacent layers carry aerosol.
+    // Spread the layer derivative over the active shared source weights.
+    let derivative_per_km = total_scattering_derivative / total_weight;
+    for (level_index, level) in rtm_levels.iter_mut().enumerate() {
+        if level.weight <= 0.0 {
+            continue;
+        }
+        let below_active = level_index > 0
+            && jacobian::get(
+                layer_inputs[level_index - 1].scattering_optical_depth_jacobian,
+                jacobian::State::AerosolOpticalDepth,
+            ) > 0.0;
+        let above_active = level_index < layer_inputs.len()
+            && jacobian::get(
+                layer_inputs[level_index].scattering_optical_depth_jacobian,
+                jacobian::State::AerosolOpticalDepth,
+            ) > 0.0;
+        if !below_active && !above_active {
+            continue;
+        }
+        for (index, coefficient) in phase_coefficients.iter().enumerate() {
+            level.ksca_phase_coefficient_jacobian[state_index][index] =
+                derivative_per_km * coefficient;
+        }
+    }
+}
+
 pub fn fill_rtm_quadrature_at_wavelength_with_layers(
     prepared: &PreparedOpticalState,
     wavelength_nm: f64,
@@ -82,6 +164,43 @@ pub fn fill_rtm_quadrature_at_wavelength_with_layers(
         layer_inputs,
         rtm_levels,
         &profile_cache,
+    )
+}
+
+pub fn fill_rtm_quadrature_at_wavelength_with_layers_and_carrier_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    layer_inputs: &[LayerInput],
+    rtm_levels: &mut [RtmQuadratureLevel],
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<bool, errors::Error> {
+    let Some(sublayers) = &prepared.sublayers else {
+        return Ok(false);
+    };
+    if rtm_levels.len() != layer_inputs.len() + 1 {
+        return Ok(false);
+    }
+
+    if prepared.interval_semantics_use_reduced_shared_rtm_layers()
+        && layer_inputs.len() == prepared.layers.len()
+    {
+        return fill_shared_rtm_quadrature_at_wavelength_with_carrier_cache(
+            prepared,
+            wavelength_nm,
+            sublayers,
+            layer_inputs,
+            rtm_levels,
+            wavelength_cache,
+        );
+    }
+
+    fill_sublayer_rtm_quadrature_at_wavelength(
+        prepared,
+        wavelength_nm,
+        sublayers,
+        layer_inputs,
+        rtm_levels,
+        &wavelength_cache.profile_cache,
     )
 }
 
@@ -136,9 +255,68 @@ fn fill_shared_rtm_quadrature_at_wavelength(
             boundary_carrier.aerosol_phase_coefficients_above,
         );
     }
+    fill_shared_aerosol_source_jacobian_from_layers(sublayers, layer_inputs, rtm_levels);
 
     // DISAMAR uses the coarse shared level carrier directly for integrated
     // source terms; it is not renormalized to the layer scattering totals.
+    Ok(rtm_levels
+        .iter()
+        .any(|rtm_level| rtm_level.weighted_scattering() > 0.0))
+}
+
+fn fill_shared_rtm_quadrature_at_wavelength_with_carrier_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: &[PreparedSublayer],
+    layer_inputs: &[LayerInput],
+    rtm_levels: &mut [RtmQuadratureLevel],
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<bool, errors::Error> {
+    if !prepared
+        .shared_rtm_geometry
+        .is_valid_for(layer_inputs.len())
+    {
+        for rtm_level in rtm_levels {
+            *rtm_level = RtmQuadratureLevel::default();
+        }
+        return Ok(false);
+    }
+
+    for (rtm_level, &level_geometry) in rtm_levels
+        .iter_mut()
+        .zip(prepared.shared_rtm_geometry.levels.iter())
+    {
+        let boundary_carrier = shared_boundary_carrier_at_level_with_carrier_cache(
+            prepared,
+            wavelength_nm,
+            sublayers,
+            level_geometry,
+            wavelength_cache,
+        )?;
+        *rtm_level = RtmQuadratureLevel {
+            altitude_km: level_geometry.altitude_km,
+            weight: level_geometry.weight_km,
+            ksca: boundary_carrier.ksca_above,
+            phase_coefficients: boundary_carrier.phase_coefficients_above,
+            aerosol_ksca_phase_above_per_km: scaled_aerosol_phase_per_km(
+                boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
+                boundary_carrier.aerosol_phase_coefficients_above,
+            ),
+            aerosol_ksca_phase_below_per_km: scaled_aerosol_phase_per_km(
+                boundary_carrier.aerosol_scattering_optical_depth_below_per_km,
+                boundary_carrier.aerosol_phase_coefficients_below,
+            ),
+            ..RtmQuadratureLevel::default()
+        };
+        fill_aerosol_source_jacobian(
+            prepared,
+            rtm_level,
+            boundary_carrier.aerosol_scattering_optical_depth_above_per_km,
+            boundary_carrier.aerosol_phase_coefficients_above,
+        );
+    }
+    fill_shared_aerosol_source_jacobian_from_layers(sublayers, layer_inputs, rtm_levels);
+
     Ok(rtm_levels
         .iter()
         .any(|rtm_level| rtm_level.weighted_scattering() > 0.0))

@@ -3,6 +3,7 @@ use std::{fs, io, num::ParseFloatError};
 use crate::{
     common::errors,
     forward_model::{
+        implementations::instrument::integration_for_wavelength_checked,
         instrument_grid::grid_calculation::simulate,
         optical_properties::{self, PreparationInputs},
         radiative_transfer::{
@@ -21,7 +22,7 @@ use crate::{
         geometry::Geometry,
         instrument::{
             Id as InstrumentId, IntegrationMode, OperationalSolarSpectrum, SlitIndex,
-            SpectralChannelControls, SpectralResponse,
+            SpectralChannel, SpectralChannelControls, SpectralResponse,
         },
         observation_model::ObservationModel,
         reference::airmass_phase::{AirmassFactorLut, AirmassFactorPoint},
@@ -341,9 +342,8 @@ pub fn prepare_resolved_vendor_o2a_case(
 ) -> Result<VendorO2APreparedCase, Error> {
     resolved.validate()?;
     let loaded = load_resolved_vendor_o2a_inputs(resolved)?;
-    let scene = build_resolved_vendor_o2a_scene(resolved, &loaded.raw_solar_spectrum)?;
-    let route = prepare_resolved_vendor_o2a_route(&scene, resolved)?;
-    let prepared = optical_properties::prepare(
+    let mut scene = build_resolved_vendor_o2a_scene(resolved, &loaded.raw_solar_spectrum)?;
+    let mut prepared = optical_properties::prepare(
         &scene,
         PreparationInputs {
             profile: &loaded.profile,
@@ -356,6 +356,9 @@ pub fn prepare_resolved_vendor_o2a_case(
             cloud_mie: None,
         },
     )?;
+    install_vendor_weak_cutoff_grid(&scene, &mut prepared)?;
+    rewindow_parity_solar_support_to_measurement_kernel(&mut scene, &prepared)?;
+    let route = prepare_resolved_vendor_o2a_route(&scene, resolved)?;
 
     Ok(VendorO2APreparedCase {
         reference: loaded.reference,
@@ -363,6 +366,177 @@ pub fn prepare_resolved_vendor_o2a_case(
         route,
         prepared,
     })
+}
+
+fn install_vendor_weak_cutoff_grid(
+    scene: &Scene,
+    prepared: &mut optical_properties::PreparedOpticalState,
+) -> Result<(), Error> {
+    let mut has_cutoff_line_list = prepared
+        .spectroscopy_lines
+        .as_ref()
+        .is_some_and(|line_list| line_list.runtime_controls.cutoff_cm1.is_some());
+    for line_absorber in &prepared.line_absorbers {
+        has_cutoff_line_list |= line_absorber
+            .line_list
+            .runtime_controls
+            .cutoff_cm1
+            .is_some();
+    }
+    if !has_cutoff_line_list {
+        return Ok(());
+    }
+
+    let response = scene
+        .observation_model
+        .resolved_channel_controls(SpectralChannel::Radiance)
+        .response;
+    let support = crate::forward_model::implementations::instrument::adaptive_plan::build_adaptive_support_wavelengths(
+        scene,
+        prepared,
+        &response,
+    )
+    .ok_or(Error::InvalidData)?;
+    if support.len() < 2 {
+        return Err(Error::InvalidData);
+    }
+
+    if let Some(line_list) = &mut prepared.spectroscopy_lines {
+        install_cutoff_grid_on_line_list(line_list, &support);
+    }
+    for line_absorber in &mut prepared.line_absorbers {
+        install_cutoff_grid_on_line_list(&mut line_absorber.line_list, &support);
+    }
+    Ok(())
+}
+
+fn install_cutoff_grid_on_line_list(
+    line_list: &mut SpectroscopyLineList,
+    support_wavelengths_nm: &[f64],
+) {
+    if line_list.runtime_controls.cutoff_cm1.is_none() {
+        return;
+    }
+    line_list.runtime_controls.cutoff_grid_wavelengths_nm = support_wavelengths_nm.to_vec();
+    line_list.runtime_controls.cutoff_grid_wavenumbers_cm1 = support_wavelengths_nm
+        .iter()
+        .map(|&wavelength_nm| 1.0e7 / wavelength_nm.max(1.0e-9))
+        .collect();
+}
+
+fn rewindow_parity_solar_support_to_measurement_kernel(
+    scene: &mut Scene,
+    prepared: &optical_properties::PreparedOpticalState,
+) -> Result<(), Error> {
+    if !scene.observation_model.operational_solar_spectrum.enabled() {
+        return Ok(());
+    }
+    let Some((support_start_nm, support_end_nm)) =
+        shared_parity_measurement_support(scene, prepared)?
+    else {
+        return Ok(());
+    };
+    if support_end_nm <= support_start_nm {
+        return Ok(());
+    }
+
+    let current = &scene.observation_model.operational_solar_spectrum;
+    let retained = current
+        .wavelengths_nm
+        .iter()
+        .copied()
+        .zip(current.irradiance.iter().copied())
+        .filter(|(wavelength_nm, _)| {
+            *wavelength_nm >= support_start_nm && *wavelength_nm <= support_end_nm
+        })
+        .collect::<Vec<_>>();
+    if retained.len() < 3 {
+        return Err(Error::InvalidData);
+    }
+
+    scene.observation_model.operational_solar_spectrum = OperationalSolarSpectrum {
+        wavelengths_nm: retained
+            .iter()
+            .map(|(wavelength_nm, _)| *wavelength_nm)
+            .collect(),
+        irradiance: retained.iter().map(|(_, irradiance)| *irradiance).collect(),
+        spline_second_derivatives: Vec::new(),
+    };
+    scene
+        .observation_model
+        .operational_solar_spectrum
+        .prepare_interpolation()?;
+    Ok(())
+}
+
+fn shared_parity_measurement_support(
+    scene: &Scene,
+    prepared: &optical_properties::PreparedOpticalState,
+) -> Result<Option<(f64, f64)>, Error> {
+    let radiance_start = integration_for_wavelength_checked(
+        scene,
+        Some(prepared),
+        SpectralChannel::Radiance,
+        scene.spectral_grid.start_nm,
+    )
+    .map_err(|_| Error::InvalidData)?;
+    let radiance_end = integration_for_wavelength_checked(
+        scene,
+        Some(prepared),
+        SpectralChannel::Radiance,
+        scene.spectral_grid.end_nm,
+    )
+    .map_err(|_| Error::InvalidData)?;
+    let irradiance_start = integration_for_wavelength_checked(
+        scene,
+        Some(prepared),
+        SpectralChannel::Irradiance,
+        scene.spectral_grid.start_nm,
+    )
+    .map_err(|_| Error::InvalidData)?;
+    let irradiance_end = integration_for_wavelength_checked(
+        scene,
+        Some(prepared),
+        SpectralChannel::Irradiance,
+        scene.spectral_grid.end_nm,
+    )
+    .map_err(|_| Error::InvalidData)?;
+
+    if !radiance_start.enabled
+        || !radiance_end.enabled
+        || !irradiance_start.enabled
+        || !irradiance_end.enabled
+        || radiance_start.sample_count == 0
+        || radiance_end.sample_count == 0
+        || irradiance_start.sample_count == 0
+        || irradiance_end.sample_count == 0
+    {
+        return Ok(None);
+    }
+    expect_parity_kernel_bounds_match(&radiance_start, &irradiance_start)?;
+    expect_parity_kernel_bounds_match(&radiance_end, &irradiance_end)?;
+
+    Ok(Some((
+        scene.spectral_grid.start_nm + radiance_start.offsets_nm[0],
+        scene.spectral_grid.end_nm + radiance_end.offsets_nm[radiance_end.sample_count - 1],
+    )))
+}
+
+fn expect_parity_kernel_bounds_match(
+    lhs: &crate::forward_model::instrument_grid::grid_calculation::spectral_eval::IntegrationKernel,
+    rhs: &crate::forward_model::instrument_grid::grid_calculation::spectral_eval::IntegrationKernel,
+) -> Result<(), Error> {
+    if lhs.sample_count != rhs.sample_count {
+        return Err(Error::InvalidData);
+    }
+    if (lhs.offsets_nm[0] - rhs.offsets_nm[0]).abs() > 1.0e-12 {
+        return Err(Error::InvalidData);
+    }
+    if (lhs.offsets_nm[lhs.sample_count - 1] - rhs.offsets_nm[rhs.sample_count - 1]).abs() > 1.0e-12
+    {
+        return Err(Error::InvalidData);
+    }
+    Ok(())
 }
 
 pub fn run_resolved_vendor_o2a_reflectance_case(

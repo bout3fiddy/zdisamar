@@ -64,6 +64,113 @@ impl SharedOpticalCarrier {
     }
 }
 
+#[derive(Debug)]
+pub struct WavelengthCarrierCache<'a> {
+    pub profile_cache: ProfileNodeSpectroscopyCache,
+    support_row_valid: &'a mut [bool],
+    support_row_carriers: &'a mut [SharedOpticalCarrier],
+    continuum_sigma: f64,
+    cia_coefficients: Option<CiaWavelengthCoefficients>,
+    rayleigh_cross_section_cm2: f64,
+    rayleigh_phase_coefficient2: f64,
+}
+
+impl<'a> WavelengthCarrierCache<'a> {
+    pub fn new(
+        prepared: &PreparedOpticalState,
+        wavelength_nm: f64,
+        support_row_valid: &'a mut [bool],
+        support_row_carriers: &'a mut [SharedOpticalCarrier],
+        profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+    ) -> Self {
+        support_row_valid.fill(false);
+        let continuum_sigma = if prepared.cross_section_absorbers.is_empty() {
+            interpolate_cross_section_sigma(&prepared.continuum_points, wavelength_nm)
+        } else {
+            0.0
+        };
+        Self {
+            profile_cache: profile_cache
+                .cloned()
+                .unwrap_or_else(|| ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm)),
+            support_row_valid,
+            support_row_carriers,
+            continuum_sigma,
+            cia_coefficients: CiaWavelengthCoefficients::new(prepared, wavelength_nm),
+            rayleigh_cross_section_cm2: rayleigh::cross_section_cm2(wavelength_nm),
+            rayleigh_phase_coefficient2: phase_functions::rayleigh_phase_coefficient2_at_wavelength(
+                wavelength_nm,
+            ),
+        }
+    }
+
+    fn cached_support_row(
+        &mut self,
+        prepared: &PreparedOpticalState,
+        wavelength_nm: f64,
+        sublayer: PreparedSublayer,
+        global_sublayer_index: usize,
+    ) -> Result<SharedOpticalCarrier, errors::Error> {
+        if global_sublayer_index >= self.support_row_valid.len()
+            || global_sublayer_index >= self.support_row_carriers.len()
+        {
+            return shared_optical_carrier_at_support_row_with_cache(
+                prepared,
+                wavelength_nm,
+                sublayer,
+                global_sublayer_index,
+                Some(&self.profile_cache),
+            );
+        }
+        if !self.support_row_valid[global_sublayer_index] {
+            self.support_row_carriers[global_sublayer_index] =
+                shared_optical_carrier_at_support_row_with_scalar_cache(
+                    prepared,
+                    wavelength_nm,
+                    sublayer,
+                    global_sublayer_index,
+                    Some(&self.profile_cache),
+                    self.continuum_sigma,
+                    self.cia_coefficients,
+                    self.rayleigh_cross_section_cm2,
+                    self.rayleigh_phase_coefficient2,
+                )?;
+            self.support_row_valid[global_sublayer_index] = true;
+        }
+        Ok(self.support_row_carriers[global_sublayer_index])
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CiaWavelengthCoefficients {
+    scale_factor_cm5_per_molecule2: f64,
+    a0: f64,
+    a1: f64,
+    a2: f64,
+}
+
+impl CiaWavelengthCoefficients {
+    fn new(prepared: &PreparedOpticalState, wavelength_nm: f64) -> Option<Self> {
+        if prepared.operational_o2o2_lut.enabled() {
+            return None;
+        }
+        let table = prepared.collision_induced_absorption.as_ref()?;
+        let coefficients = table.interpolate_coefficients(wavelength_nm);
+        Some(Self {
+            scale_factor_cm5_per_molecule2: table.scale_factor_cm5_per_molecule2,
+            a0: coefficients.a0,
+            a1: coefficients.a1,
+            a2: coefficients.a2,
+        })
+    }
+
+    fn sigma_at_temperature(self, temperature_k: f64) -> f64 {
+        let temperature_c = temperature_k - 273.15;
+        let raw_sigma = self.a0 + self.a1 * temperature_c + self.a2 * temperature_c * temperature_c;
+        self.scale_factor_cm5_per_molecule2 * raw_sigma.max(0.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PreparedQuadratureCarrier {
     pub ksca: f64,
@@ -301,6 +408,72 @@ pub fn shared_boundary_carrier_at_level_with_cache(
         ),
         phase_coefficients_below: phase_functions::combine_phase_coefficients_with_rayleigh2(
             rayleigh2,
+            gas_scattering,
+            particle_below.aerosol_scattering_optical_depth_per_km,
+            particle_below.cloud_scattering_optical_depth_per_km,
+            &particle_below.aerosol_phase_coefficients,
+            &particle_below.cloud_phase_coefficients,
+        ),
+    })
+}
+
+pub fn shared_boundary_carrier_at_level_with_carrier_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: &[PreparedSublayer],
+    level_geometry: SharedRtmLevelGeometry,
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<SharedBoundaryCarrier, errors::Error> {
+    let boundary_row_index = level_geometry.support_row_index as usize;
+    let Some(&boundary_sublayer) = sublayers.get(boundary_row_index) else {
+        return Ok(SharedBoundaryCarrier::default());
+    };
+    let gas_carrier = wavelength_cache.cached_support_row(
+        prepared,
+        wavelength_nm,
+        boundary_sublayer,
+        boundary_row_index,
+    )?;
+    let particle_above = particle_boundary_carrier_from_index(
+        prepared,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_above_support_row_index,
+    );
+    let particle_below = particle_boundary_carrier_from_index(
+        prepared,
+        wavelength_nm,
+        sublayers,
+        level_geometry.particle_below_support_row_index,
+    );
+    let gas_scattering = gas_carrier.gas_scattering_optical_depth_per_km;
+    Ok(SharedBoundaryCarrier {
+        gas_scattering_optical_depth_per_km: gas_scattering,
+        particle_scattering_optical_depth_above_per_km: particle_above
+            .total_scattering_optical_depth_per_km(),
+        particle_scattering_optical_depth_below_per_km: particle_below
+            .total_scattering_optical_depth_per_km(),
+        aerosol_scattering_optical_depth_above_per_km: particle_above
+            .aerosol_scattering_optical_depth_per_km,
+        aerosol_scattering_optical_depth_below_per_km: particle_below
+            .aerosol_scattering_optical_depth_per_km,
+        ksca_above: gas_scattering + particle_above.total_scattering_optical_depth_per_km(),
+        ksca_below: gas_scattering + particle_below.total_scattering_optical_depth_per_km(),
+        gas_phase_coefficients: phase_functions::gas_phase_coefficients_from_rayleigh2(
+            wavelength_cache.rayleigh_phase_coefficient2,
+        ),
+        aerosol_phase_coefficients_above: particle_above.aerosol_phase_coefficients,
+        aerosol_phase_coefficients_below: particle_below.aerosol_phase_coefficients,
+        phase_coefficients_above: phase_functions::combine_phase_coefficients_with_rayleigh2(
+            wavelength_cache.rayleigh_phase_coefficient2,
+            gas_scattering,
+            particle_above.aerosol_scattering_optical_depth_per_km,
+            particle_above.cloud_scattering_optical_depth_per_km,
+            &particle_above.aerosol_phase_coefficients,
+            &particle_above.cloud_phase_coefficients,
+        ),
+        phase_coefficients_below: phase_functions::combine_phase_coefficients_with_rayleigh2(
+            wavelength_cache.rayleigh_phase_coefficient2,
             gas_scattering,
             particle_below.aerosol_scattering_optical_depth_per_km,
             particle_below.cloud_scattering_optical_depth_per_km,
@@ -801,6 +974,41 @@ pub fn shared_optical_carrier_at_support_row_with_cache(
     } else {
         0.0
     };
+    shared_optical_carrier_at_support_row_with_scalar_cache(
+        prepared,
+        wavelength_nm,
+        sublayer,
+        global_sublayer_index,
+        profile_cache,
+        continuum_sigma,
+        None,
+        rayleigh::cross_section_cm2(wavelength_nm),
+        phase_functions::rayleigh_phase_coefficient2_at_wavelength(wavelength_nm),
+    )
+}
+
+pub fn shared_optical_carrier_at_support_row_with_carrier_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<SharedOpticalCarrier, errors::Error> {
+    wavelength_cache.cached_support_row(prepared, wavelength_nm, sublayer, global_sublayer_index)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shared_optical_carrier_at_support_row_with_scalar_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+    continuum_sigma: f64,
+    cia_coefficients: Option<CiaWavelengthCoefficients>,
+    rayleigh_cross_section_cm2: f64,
+    rayleigh_phase_coefficient2: f64,
+) -> Result<SharedOpticalCarrier, errors::Error> {
     let spectroscopy_eval = if !prepared.line_absorbers.is_empty() {
         weighted_spectroscopy_evaluation_at_support_row(
             prepared,
@@ -850,15 +1058,20 @@ pub fn shared_optical_carrier_at_support_row_with_cache(
             + spectroscopy_eval.total_sigma_cm2_per_molecule
                 * line_absorber_density_cm3
                 * CENTIMETERS_PER_KILOMETER;
-    let gas_scattering_optical_depth_per_km = rayleigh::cross_section_cm2(wavelength_nm)
-        * sublayer.number_density_cm3
-        * CENTIMETERS_PER_KILOMETER;
-    let cia_optical_depth_per_km = super::cia_sigma_at_wavelength(
-        prepared,
-        wavelength_nm,
-        sublayer.temperature_k,
-        sublayer.pressure_hpa,
-    ) * sublayer.cia_pair_density_cm6_value()
+    let gas_scattering_optical_depth_per_km =
+        rayleigh_cross_section_cm2 * sublayer.number_density_cm3 * CENTIMETERS_PER_KILOMETER;
+    let cia_sigma_cm5_per_molecule2 = cia_coefficients
+        .map(|coefficients| coefficients.sigma_at_temperature(sublayer.temperature_k))
+        .unwrap_or_else(|| {
+            super::cia_sigma_at_wavelength(
+                prepared,
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+            )
+        });
+    let cia_optical_depth_per_km = cia_sigma_cm5_per_molecule2
+        * sublayer.cia_pair_density_cm6_value()
         * CENTIMETERS_PER_KILOMETER;
     let aerosol_optical_depth_per_km = particle_profiles::scale_optical_depth(
         optical_depth_per_kilometer(sublayer.aerosol_optical_depth, sublayer.path_length_cm),
@@ -876,7 +1089,6 @@ pub fn shared_optical_carrier_at_support_row_with_cache(
         aerosol_optical_depth_per_km * sublayer.aerosol_single_scatter_albedo;
     let cloud_scattering_optical_depth_per_km =
         cloud_optical_depth_per_km * sublayer.cloud_single_scatter_albedo;
-    let rayleigh2 = phase_functions::rayleigh_phase_coefficient2_at_wavelength(wavelength_nm);
 
     Ok(SharedOpticalCarrier {
         gas_absorption_optical_depth_per_km,
@@ -888,7 +1100,7 @@ pub fn shared_optical_carrier_at_support_row_with_cache(
         cloud_scattering_optical_depth_per_km,
         aerosol_phase_coefficients: sublayer.aerosol_phase_coefficients,
         phase_coefficients: phase_functions::combine_phase_coefficients_with_rayleigh2(
-            rayleigh2,
+            rayleigh_phase_coefficient2,
             gas_scattering_optical_depth_per_km,
             aerosol_scattering_optical_depth_per_km,
             cloud_scattering_optical_depth_per_km,

@@ -2578,6 +2578,123 @@ fn rtm_quadrature_fills_shared_grid_from_boundary_carriers() {
 }
 
 #[test]
+fn rtm_quadrature_spreads_shared_grid_aerosol_source_jacobian_from_layers() {
+    let below_phase = phase_functions::hg_phase_coefficients(0.2);
+    let above_phase = phase_functions::hg_phase_coefficients(0.8);
+    let sublayers = vec![
+        PreparedSublayer {
+            altitude_km: 0.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: below_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: below_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 2.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 3.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.3,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: above_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 4.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let mut prepared = PreparedOpticalState {
+        layers: vec![
+            PreparedLayer {
+                sublayer_start_index: 0,
+                sublayer_count: 3,
+                bottom_altitude_km: 0.0,
+                top_altitude_km: 2.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+            PreparedLayer {
+                sublayer_start_index: 2,
+                sublayer_count: 3,
+                bottom_altitude_km: 2.0,
+                top_altitude_km: 4.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+        ],
+        sublayers: Some(sublayers),
+        aerosol_optical_depth: 0.3,
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        interval_semantics: IntervalSemantics::ExplicitPressureBounds,
+        ..PreparedOpticalState::default()
+    };
+    prepared.ensure_shared_rtm_geometry_cache().unwrap();
+    let mut layer_inputs = vec![LayerInput::default(), LayerInput::default()];
+    jacobian::set(
+        &mut layer_inputs[0].scattering_optical_depth_jacobian,
+        State::AerosolOpticalDepth,
+        0.05,
+    );
+    jacobian::set(
+        &mut layer_inputs[1].scattering_optical_depth_jacobian,
+        State::AerosolOpticalDepth,
+        0.15,
+    );
+    let mut rtm_levels = vec![RtmQuadratureLevel::default(); 3];
+
+    assert!(
+        fill_rtm_quadrature_at_wavelength_with_layers(
+            &prepared,
+            760.0,
+            &layer_inputs,
+            &mut rtm_levels,
+        )
+        .unwrap()
+    );
+
+    let active_weight = rtm_levels
+        .iter()
+        .enumerate()
+        .filter(|(index, level)| {
+            level.weight > 0.0
+                && ((*index > 0
+                    && jacobian::get(
+                        layer_inputs[*index - 1].scattering_optical_depth_jacobian,
+                        State::AerosolOpticalDepth,
+                    ) > 0.0)
+                    || (*index < layer_inputs.len()
+                        && jacobian::get(
+                            layer_inputs[*index].scattering_optical_depth_jacobian,
+                            State::AerosolOpticalDepth,
+                        ) > 0.0))
+        })
+        .map(|(_, level)| level.weight)
+        .sum::<f64>();
+    let expected = (0.05 + 0.15) / active_weight * below_phase[1];
+    assert_close(
+        rtm_levels[1].ksca_phase_coefficient_jacobian
+            [jacobian::state_index(State::AerosolOpticalDepth)][1],
+        expected,
+        1.0e-14,
+    );
+}
+
+#[test]
 fn source_interfaces_fill_shared_grid_from_boundary_carriers() {
     let mut below_phase = phase_functions::zero_phase_coefficients();
     below_phase[1] = 0.2;

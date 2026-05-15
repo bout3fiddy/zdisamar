@@ -2,10 +2,13 @@ use crate::{
     common::errors,
     forward_model::{
         optical_properties::state_build::{
-            PreparedOpticalState, PseudoSphericalBuffers, fill_forward_layers_at_wavelength,
-            fill_pseudo_spherical_grid_at_wavelength,
-            fill_rtm_quadrature_at_wavelength_with_layers,
-            fill_source_interfaces_at_wavelength_with_layers, forward_input_from_optical_depths,
+            PreparedOpticalState, PseudoSphericalBuffers, SharedOpticalCarrier,
+            carrier_eval::WavelengthCarrierCache,
+            fill_forward_layers_at_wavelength_with_carrier_cache,
+            fill_pseudo_spherical_grid_at_wavelength_with_carrier_cache,
+            fill_rtm_quadrature_at_wavelength_with_layers_and_carrier_cache,
+            fill_source_interfaces_at_wavelength_with_layers_and_carrier_cache,
+            forward_input_from_optical_depths,
         },
         radiative_transfer::common_types::{
             ForwardInput, LayerInput, PseudoSphericalGrid, PseudoSphericalSample, Route,
@@ -43,6 +46,8 @@ pub struct ForwardInputBuffers<'a> {
     pub pseudo_spherical_samples: &'a mut [PseudoSphericalSample],
     pub pseudo_spherical_level_starts: &'a mut [usize],
     pub pseudo_spherical_level_altitudes: &'a mut [f64],
+    pub support_carrier_valid: &'a mut [bool],
+    pub support_carriers: &'a mut [SharedOpticalCarrier],
 }
 
 impl ForwardInputBuffers<'_> {
@@ -55,6 +60,8 @@ impl ForwardInputBuffers<'_> {
             pseudo_spherical_samples: &mut *self.pseudo_spherical_samples,
             pseudo_spherical_level_starts: &mut *self.pseudo_spherical_level_starts,
             pseudo_spherical_level_altitudes: &mut *self.pseudo_spherical_level_altitudes,
+            support_carrier_valid: &mut *self.support_carrier_valid,
+            support_carriers: &mut *self.support_carriers,
         }
     }
 }
@@ -78,8 +85,20 @@ pub fn configured_forward_input(
         return Err(Error::InvalidRequest);
     }
 
-    let optical_depths =
-        fill_forward_layers_at_wavelength(prepared, scene, wavelength_nm, buffers.layer_inputs)?;
+    let mut wavelength_cache = WavelengthCarrierCache::new(
+        prepared,
+        wavelength_nm,
+        buffers.support_carrier_valid,
+        buffers.support_carriers,
+        None,
+    );
+    let optical_depths = fill_forward_layers_at_wavelength_with_carrier_cache(
+        prepared,
+        scene,
+        wavelength_nm,
+        buffers.layer_inputs,
+        &mut wavelength_cache,
+    )?;
     let mut input = forward_input_from_optical_depths(
         prepared,
         scene,
@@ -92,11 +111,12 @@ pub fn configured_forward_input(
 
     if route.rtm_controls.integrate_source_function {
         let rtm_levels = &mut buffers.rtm_quadrature_levels[..source_interface_count];
-        has_rtm_quadrature = fill_rtm_quadrature_at_wavelength_with_layers(
+        has_rtm_quadrature = fill_rtm_quadrature_at_wavelength_with_layers_and_carrier_cache(
             prepared,
             wavelength_nm,
             &input.layers,
             rtm_levels,
+            &mut wavelength_cache,
         )?;
         if has_rtm_quadrature {
             input.rtm_quadrature = RtmQuadratureGrid {
@@ -111,17 +131,18 @@ pub fn configured_forward_input(
 
     if !has_rtm_quadrature {
         let source_interfaces = &mut buffers.source_interfaces[..source_interface_count];
-        fill_source_interfaces_at_wavelength_with_layers(
+        fill_source_interfaces_at_wavelength_with_layers_and_carrier_cache(
             prepared,
             wavelength_nm,
             &input.layers,
             source_interfaces,
+            &mut wavelength_cache,
         )?;
         input.source_interfaces = source_interfaces.to_vec();
     }
 
     if route.rtm_controls.use_spherical_correction {
-        let has_grid = fill_pseudo_spherical_grid_at_wavelength(
+        let has_grid = fill_pseudo_spherical_grid_at_wavelength_with_carrier_cache(
             prepared,
             scene,
             wavelength_nm,
@@ -134,6 +155,7 @@ pub fn configured_forward_input(
                 level_altitudes_km: &mut buffers.pseudo_spherical_level_altitudes
                     [..source_interface_count],
             },
+            &mut wavelength_cache,
         )?;
         if has_grid {
             let sample_count = buffers.pseudo_spherical_level_starts[input.layers.len()];

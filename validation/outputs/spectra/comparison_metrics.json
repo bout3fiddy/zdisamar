@@ -9,62 +9,62 @@
   "schema_version": 2,
   "series": [
     {
-      "full_grid_max_abs_residual": 6.475375791126226e-14,
+      "full_grid_max_abs_residual": 6.480926906249351e-14,
       "full_grid_max_abs_wavelength_nm": 770.0,
       "marked_residual_blowup_regions_nm": [
         {
           "end_nm": 769.68,
-          "peak_abs_residual": 3.4389158187764224e-14,
+          "peak_abs_residual": 3.4333647036532966e-14,
           "peak_nm": 769.6,
           "start_nm": 769.52
         },
         {
           "end_nm": 770.0,
-          "peak_abs_residual": 6.475375791126226e-14,
+          "peak_abs_residual": 6.480926906249351e-14,
           "peak_nm": 770.0,
           "start_nm": 769.96
         }
       ],
-      "max_abs_residual": 3.4389158187764224e-14,
+      "max_abs_residual": 3.4333647036532966e-14,
       "max_abs_wavelength_nm": 769.6,
-      "mean_signed": 2.5032233810868e-16,
-      "rmse": 3.4902589085657994e-15,
+      "mean_signed": 2.568696138365724e-16,
+      "rmse": 3.4854622311664094e-15,
       "series": "RTM reflectance",
       "threshold_excluded_edge_samples_per_side": 1
     },
     {
-      "full_grid_max_abs_residual": 9.700504288723266e-13,
+      "full_grid_max_abs_residual": 9.700434899784227e-13,
       "full_grid_max_abs_wavelength_nm": 770.0,
       "marked_residual_blowup_regions_nm": [
         {
           "end_nm": 770.0,
-          "peak_abs_residual": 9.700504288723266e-13,
+          "peak_abs_residual": 9.700434899784227e-13,
           "peak_nm": 770.0,
           "start_nm": 769.96
         }
       ],
-      "max_abs_residual": 7.786826738964692e-14,
+      "max_abs_residual": 7.783357292012738e-14,
       "max_abs_wavelength_nm": 758.04,
-      "mean_signed": 3.8786725349886675e-16,
-      "rmse": 4.7919417163423825e-15,
+      "mean_signed": 3.6515829451720674e-16,
+      "rmse": 4.788168468946699e-15,
       "series": "dR/d aerosol optical depth",
       "threshold_excluded_edge_samples_per_side": 1
     },
     {
-      "full_grid_max_abs_residual": 8.759000418549637e-15,
+      "full_grid_max_abs_residual": 8.759170883930272e-15,
       "full_grid_max_abs_wavelength_nm": 758.0,
       "marked_residual_blowup_regions_nm": [
         {
           "end_nm": 758.04,
-          "peak_abs_residual": 8.759000418549637e-15,
+          "peak_abs_residual": 8.759170883930272e-15,
           "peak_nm": 758.0,
           "start_nm": 758.0
         }
       ],
-      "max_abs_residual": 1.0365178174451132e-15,
+      "max_abs_residual": 1.036522476126323e-15,
       "max_abs_wavelength_nm": 758.04,
-      "mean_signed": 5.829984006981205e-19,
-      "rmse": 6.809212778694621e-17,
+      "mean_signed": 6.253236668089248e-19,
+      "rmse": 6.809725096231282e-17,
       "series": "dR/d aerosol layer mid pressure",
       "threshold_excluded_edge_samples_per_side": 1
     }

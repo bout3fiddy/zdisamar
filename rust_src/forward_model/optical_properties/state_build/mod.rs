@@ -26,25 +26,35 @@ pub use accumulation::{AccumulationResult, PreparedMeans, accumulate};
 pub use builder::prepare;
 pub use carrier_eval::{
     InterpolatedQuadratureState, PreparedQuadratureCarrier, SharedBoundaryCarrier,
-    SharedOpticalCarrier, interpolate_quadrature_state_at_altitude, quadrature_carrier_at_altitude,
-    shared_active_carrier_at_level, shared_boundary_carrier_at_level,
-    shared_optical_carrier_at_altitude, shared_optical_carrier_at_support_row,
+    SharedOpticalCarrier, WavelengthCarrierCache, interpolate_quadrature_state_at_altitude,
+    quadrature_carrier_at_altitude, shared_active_carrier_at_level,
+    shared_boundary_carrier_at_level, shared_optical_carrier_at_altitude,
+    shared_optical_carrier_at_support_row,
 };
 pub use context::{PreparationContext, PreparationInputs};
 pub use evaluation::{accumulate_breakdown, layer_input_from_evaluated};
 pub use finalize::assemble;
 pub use forward_layers::{
-    fill_forward_layers_at_wavelength, forward_input_from_optical_depths, to_forward_input,
-    to_forward_input_at_wavelength, to_forward_input_at_wavelength_with_layers,
+    fill_forward_layers_at_wavelength, fill_forward_layers_at_wavelength_with_carrier_cache,
+    forward_input_from_optical_depths, to_forward_input, to_forward_input_at_wavelength,
+    to_forward_input_at_wavelength_with_layers,
 };
 pub use operational_o2::operational_o2_evaluation_at_wavelength;
 pub use prepared_state::PreparedOpticalState;
 pub use pseudo_spherical::fill_shared_pseudo_spherical_grid_from_layer_inputs;
-pub use pseudo_spherical::{PseudoSphericalBuffers, fill_pseudo_spherical_grid_at_wavelength};
-pub use rtm_quadrature::fill_rtm_quadrature_at_wavelength_with_layers;
+pub use pseudo_spherical::{
+    PseudoSphericalBuffers, fill_pseudo_spherical_grid_at_wavelength,
+    fill_pseudo_spherical_grid_at_wavelength_with_carrier_cache,
+};
+pub use rtm_quadrature::{
+    fill_rtm_quadrature_at_wavelength_with_layers,
+    fill_rtm_quadrature_at_wavelength_with_layers_and_carrier_cache,
+};
 pub use shared_carrier::{
     accumulate_shared_carrier, evaluate_reduced_layer_from_support_rows,
+    evaluate_reduced_layer_from_support_rows_with_carrier_cache,
     evaluated_layer_from_shared_carrier, fill_shared_pseudo_spherical_samples_from_support_rows,
+    fill_shared_pseudo_spherical_samples_from_support_rows_with_carrier_cache,
 };
 pub use shared_geometry::{
     INVALID_SUPPORT_ROW_INDEX, build_shared_rtm_geometry_from_layers,
@@ -52,7 +62,9 @@ pub use shared_geometry::{
     last_active_support_row_index, level_altitude_from_sublayers, resolve_gauss_rule,
 };
 pub use source_interfaces::{
-    fill_source_interfaces_at_wavelength_with_layers, fill_source_interfaces_from_prepared_layers,
+    fill_source_interfaces_at_wavelength_with_layers,
+    fill_source_interfaces_at_wavelength_with_layers_and_carrier_cache,
+    fill_source_interfaces_from_prepared_layers,
 };
 pub use spectroscopy::{
     DEFAULT_O2_VOLUME_MIXING_RATIO, collect_active_cross_section_absorbers,

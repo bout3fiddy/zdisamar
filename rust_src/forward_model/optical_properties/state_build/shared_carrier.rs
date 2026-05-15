@@ -1,7 +1,10 @@
 use super::{
     EvaluatedLayer, OpticalDepthBreakdown, PHASE_COEFFICIENT_COUNT, PreparedOpticalState,
     PreparedSublayer, ProfileNodeSpectroscopyCache, SharedOpticalCarrier, SharedRtmLayerGeometry,
-    carrier_eval::shared_optical_carrier_at_support_row_with_cache,
+    carrier_eval::{
+        WavelengthCarrierCache, shared_optical_carrier_at_support_row_with_cache,
+        shared_optical_carrier_at_support_row_with_carrier_cache,
+    },
 };
 use crate::{
     common::errors,
@@ -128,6 +131,50 @@ pub fn evaluate_reduced_layer_from_support_rows_with_cache(
     ))
 }
 
+pub fn evaluate_reduced_layer_from_support_rows_with_carrier_cache(
+    prepared: &PreparedOpticalState,
+    scene: &Scene,
+    wavelength_nm: f64,
+    support_sublayers: &[PreparedSublayer],
+    layer_geometry: SharedRtmLayerGeometry,
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<EvaluatedLayer, errors::Error> {
+    let mut breakdown = OpticalDepthBreakdown::default();
+    let mut phase_numerator = [0.0; PHASE_COEFFICIENT_COUNT];
+    if support_sublayers.len() < 2 {
+        return Ok(evaluated_layer_from_shared_carrier(
+            scene,
+            wavelength_nm,
+            layer_geometry.midpoint_altitude_km,
+            breakdown,
+            phase_numerator,
+        ));
+    }
+
+    for support_sublayer in &support_sublayers[1..support_sublayers.len() - 1] {
+        let weight_km = (support_sublayer.path_length_cm / 1.0e5).max(0.0);
+        if weight_km <= 0.0 {
+            continue;
+        }
+        let carrier = shared_optical_carrier_at_support_row_with_carrier_cache(
+            prepared,
+            wavelength_nm,
+            *support_sublayer,
+            support_sublayer.global_sublayer_index as usize,
+            wavelength_cache,
+        )?;
+        accumulate_shared_carrier(&mut breakdown, &mut phase_numerator, carrier, weight_km);
+    }
+
+    Ok(evaluated_layer_from_shared_carrier(
+        scene,
+        wavelength_nm,
+        layer_geometry.midpoint_altitude_km,
+        breakdown,
+        phase_numerator,
+    ))
+}
+
 pub fn fill_shared_pseudo_spherical_samples_from_support_rows(
     prepared: &PreparedOpticalState,
     wavelength_nm: f64,
@@ -174,6 +221,54 @@ pub fn fill_shared_pseudo_spherical_samples_from_support_rows_with_cache(
                     *support_sublayer,
                     support_sublayer.global_sublayer_index as usize,
                     profile_cache,
+                )?
+                .total_optical_depth_per_km()
+        } else {
+            0.0
+        };
+        attenuation_samples[sample_index] = PseudoSphericalSample {
+            altitude_km: support_sublayer.altitude_km,
+            thickness_km: weight_km,
+            optical_depth,
+        };
+        if let Some(layer) = attenuation_layers.get_mut(sample_index) {
+            *layer = LayerInput {
+                optical_depth,
+                ..LayerInput::default()
+            };
+        }
+        sample_index += 1;
+    }
+    Ok(sample_index)
+}
+
+pub fn fill_shared_pseudo_spherical_samples_from_support_rows_with_carrier_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    support_sublayers: &[PreparedSublayer],
+    attenuation_layers: &mut [LayerInput],
+    attenuation_samples: &mut [PseudoSphericalSample],
+    sample_index_start: usize,
+    wavelength_cache: &mut WavelengthCarrierCache<'_>,
+) -> Result<usize, errors::Error> {
+    let mut sample_index = sample_index_start;
+    if support_sublayers.len() < 2 {
+        return Ok(sample_index);
+    }
+
+    for support_sublayer in &support_sublayers[1..support_sublayers.len() - 1] {
+        if sample_index >= attenuation_samples.len() {
+            return Err(errors::Error::InvalidRequest);
+        }
+        let weight_km = (support_sublayer.path_length_cm / 1.0e5).max(0.0);
+        let optical_depth = if weight_km > 0.0 {
+            weight_km
+                * shared_optical_carrier_at_support_row_with_carrier_cache(
+                    prepared,
+                    wavelength_nm,
+                    *support_sublayer,
+                    support_sublayer.global_sublayer_index as usize,
+                    wavelength_cache,
                 )?
                 .total_optical_depth_per_km()
         } else {

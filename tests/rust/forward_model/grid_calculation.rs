@@ -41,8 +41,8 @@ use zdisamar::{
         method::Method,
         optical_properties::shared::phase_functions,
         optical_properties::state_build::{
-            PreparedLayer, PreparedOpticalState, PreparedSublayer, SharedRtmGeometry,
-            SharedRtmLayerGeometry,
+            PreparedLayer, PreparedOpticalState, PreparedSublayer, SharedOpticalCarrier,
+            SharedRtmGeometry, SharedRtmLayerGeometry,
         },
         radiative_transfer::common_types::{
             ExecutionMode, LayerInput, PseudoSphericalSample, RadiativeTransferControls, Route,
@@ -326,6 +326,8 @@ fn configured_forward_input_uses_source_interfaces_when_integrated_source_is_dis
     let mut pseudo_samples = vec![PseudoSphericalSample::default(); 2];
     let mut pseudo_starts = vec![0; 3];
     let mut pseudo_altitudes = vec![0.0; 3];
+    let mut support_valid = vec![false; 2];
+    let mut support_carriers = vec![SharedOpticalCarrier::default(); 2];
 
     let input = configured_forward_input(
         &scene,
@@ -340,6 +342,8 @@ fn configured_forward_input_uses_source_interfaces_when_integrated_source_is_dis
             pseudo_spherical_samples: &mut pseudo_samples,
             pseudo_spherical_level_starts: &mut pseudo_starts,
             pseudo_spherical_level_altitudes: &mut pseudo_altitudes,
+            support_carrier_valid: &mut support_valid,
+            support_carriers: &mut support_carriers,
         },
     )
     .unwrap();
@@ -439,6 +443,8 @@ fn configured_forward_input_attaches_rtm_quadrature_and_pseudo_spherical_grid() 
     let mut pseudo_samples = vec![PseudoSphericalSample::default(); 2];
     let mut pseudo_starts = vec![0; 3];
     let mut pseudo_altitudes = vec![0.0; 3];
+    let mut support_valid = vec![false; 5];
+    let mut support_carriers = vec![SharedOpticalCarrier::default(); 5];
 
     let input = configured_forward_input(
         &scene,
@@ -453,6 +459,8 @@ fn configured_forward_input_attaches_rtm_quadrature_and_pseudo_spherical_grid() 
             pseudo_spherical_samples: &mut pseudo_samples,
             pseudo_spherical_level_starts: &mut pseudo_starts,
             pseudo_spherical_level_altitudes: &mut pseudo_altitudes,
+            support_carrier_valid: &mut support_valid,
+            support_carriers: &mut support_carriers,
         },
     )
     .unwrap();
@@ -497,6 +505,8 @@ fn compute_forward_sample_runs_configured_input_and_labos_radiance() {
     let mut pseudo_samples = vec![PseudoSphericalSample::default(); 1];
     let mut pseudo_starts = vec![0; 2];
     let mut pseudo_altitudes = vec![0.0; 2];
+    let mut support_valid = vec![false; 1];
+    let mut support_carriers = vec![SharedOpticalCarrier::default(); 1];
 
     let sample = compute_forward_sample_at_wavelength(
         &scene,
@@ -511,6 +521,8 @@ fn compute_forward_sample_runs_configured_input_and_labos_radiance() {
             pseudo_spherical_samples: &mut pseudo_samples,
             pseudo_spherical_level_starts: &mut pseudo_starts,
             pseudo_spherical_level_altitudes: &mut pseudo_altitudes,
+            support_carrier_valid: &mut support_valid,
+            support_carriers: &mut support_carriers,
         },
     )
     .unwrap();
@@ -545,6 +557,8 @@ fn spectral_eval_caches_forward_and_integrates_kernel_samples() {
     let mut pseudo_samples = vec![PseudoSphericalSample::default(); 1];
     let mut pseudo_starts = vec![0; 2];
     let mut pseudo_altitudes = vec![0.0; 2];
+    let mut support_valid = vec![false; 1];
+    let mut support_carriers = vec![SharedOpticalCarrier::default(); 1];
     let mut buffers = ForwardInputBuffers {
         layer_inputs: &mut layers,
         pseudo_spherical_layers: &mut pseudo_layers,
@@ -553,6 +567,8 @@ fn spectral_eval_caches_forward_and_integrates_kernel_samples() {
         pseudo_spherical_samples: &mut pseudo_samples,
         pseudo_spherical_level_starts: &mut pseudo_starts,
         pseudo_spherical_level_altitudes: &mut pseudo_altitudes,
+        support_carrier_valid: &mut support_valid,
+        support_carriers: &mut support_carriers,
     };
     let mut cache = SpectralEvaluationCache::default();
     let integration = IntegrationKernel::from_samples(vec![-1.0, 1.0], vec![0.25, 0.75]);
