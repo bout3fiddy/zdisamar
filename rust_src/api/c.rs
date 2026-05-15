@@ -82,6 +82,131 @@ pub struct ZdsAtmosphericBudget {
     pub rows: *const ZdsAtmosphericBudgetRow,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct ZdsO2LineContributionRow {
+    pub wavelength_nm: f64,
+    pub profile_node_index: u32,
+    pub altitude_km: f64,
+    pub row_kind: u32,
+    pub status: u32,
+    pub line_index: u32,
+    pub strong_line_index: u32,
+    pub matched_strong_line_index: u32,
+    pub gas_index: u16,
+    pub isotope_number: u8,
+    pub isotopologue_code: i32,
+    pub center_wavelength_nm: f64,
+    pub center_wavenumber_cm1: f64,
+    pub shifted_center_wavenumber_cm1: f64,
+    pub line_strength_cm2_per_molecule: f64,
+    pub air_half_width_cm1: f64,
+    pub pressure_shift_cm1: f64,
+    pub lower_state_energy_cm1: f64,
+    pub temperature_k: f64,
+    pub pressure_hpa: f64,
+    pub weak_line_sigma_cm2_per_molecule: f64,
+    pub strong_line_sigma_cm2_per_molecule: f64,
+    pub line_mixing_sigma_cm2_per_molecule: f64,
+    pub total_sigma_cm2_per_molecule: f64,
+    pub abs_total_sigma_cm2_per_molecule: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZdsO2LineContributions {
+    pub len: usize,
+    pub total_row_count: usize,
+    pub truncated: u8,
+    pub rows: *const ZdsO2LineContributionRow,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct ZdsInstrumentResponseRow {
+    pub nominal_index: i32,
+    pub nominal_wavelength_nm: f64,
+    pub channel: u32,
+    pub sample_index: u32,
+    pub support_count: u32,
+    pub offset_nm: f64,
+    pub support_wavelength_nm: f64,
+    pub weight: f64,
+    pub support_width_nm: f64,
+    pub instrument_fwhm_nm: f64,
+    pub high_resolution_step_nm: f64,
+    pub high_resolution_half_span_nm: f64,
+    pub integration_mode: u32,
+    pub response_enabled: u8,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZdsInstrumentResponse {
+    pub len: usize,
+    pub rows: *const ZdsInstrumentResponseRow,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct ZdsO2O2CiaRow {
+    pub wavelength_nm: f64,
+    pub layer_index: u32,
+    pub sublayer_index: u32,
+    pub global_sublayer_index: u32,
+    pub interval_index_1based: u32,
+    pub altitude_km: f64,
+    pub pressure_hpa: f64,
+    pub temperature_k: f64,
+    pub oxygen_number_density_cm3: f64,
+    pub path_length_cm: f64,
+    pub cia_cross_section_cm5_per_molecule2: f64,
+    pub cia_optical_depth: f64,
+    pub total_absorption_optical_depth: f64,
+    pub total_optical_depth: f64,
+    pub cia_share_of_total_absorption: f64,
+    pub cia_share_of_total_optical_depth: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZdsO2O2CiaDiagnostics {
+    pub len: usize,
+    pub rows: *const ZdsO2O2CiaRow,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct ZdsRadiativeTransferDiagnosticRow {
+    pub wavelength_nm: f64,
+    pub layer_index: u32,
+    pub sublayer_index: u32,
+    pub global_sublayer_index: u32,
+    pub interval_index_1based: u32,
+    pub altitude_km: f64,
+    pub total_optical_depth: f64,
+    pub total_absorption_optical_depth: f64,
+    pub total_scattering_optical_depth: f64,
+    pub single_scatter_albedo: f64,
+    pub cumulative_optical_depth_above: f64,
+    pub mid_layer_transmission_proxy: f64,
+    pub direct_surface_transmission_proxy: f64,
+    pub atmospheric_scattering_source_proxy: f64,
+    pub absorption_loss_proxy: f64,
+    pub pseudo_spherical_airmass_factor: f64,
+    pub n_streams: u32,
+    pub integrate_source_function: u8,
+    pub final_reflectance: f64,
+    pub final_radiance: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZdsRadiativeTransferDiagnostics {
+    pub len: usize,
+    pub rows: *const ZdsRadiativeTransferDiagnosticRow,
+}
+
 impl Default for ZdsSpectrum {
     fn default() -> Self {
         Self {
@@ -106,6 +231,44 @@ impl Default for ZdsAtmosphericBudget {
     }
 }
 
+impl Default for ZdsO2LineContributions {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            total_row_count: 0,
+            truncated: 0,
+            rows: ptr::null(),
+        }
+    }
+}
+
+impl Default for ZdsInstrumentResponse {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            rows: ptr::null(),
+        }
+    }
+}
+
+impl Default for ZdsO2O2CiaDiagnostics {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            rows: ptr::null(),
+        }
+    }
+}
+
+impl Default for ZdsRadiativeTransferDiagnostics {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            rows: ptr::null(),
+        }
+    }
+}
+
 pub struct Context {
     prepared: Option<crate::PreparedO2A>,
     o2a_session_storage: crate::O2ASessionStorage,
@@ -113,6 +276,10 @@ pub struct Context {
     #[allow(clippy::vec_box)]
     results: Vec<Box<crate::Output>>,
     atmospheric_budgets: Vec<Box<[ZdsAtmosphericBudgetRow]>>,
+    o2_line_contribution_tables: Vec<Box<[ZdsO2LineContributionRow]>>,
+    instrument_responses: Vec<Box<[ZdsInstrumentResponseRow]>>,
+    o2_o2_cia_tables: Vec<Box<[ZdsO2O2CiaRow]>>,
+    radiative_transfer_tables: Vec<Box<[ZdsRadiativeTransferDiagnosticRow]>>,
     last_error: CString,
 }
 
@@ -123,6 +290,10 @@ impl Default for Context {
             o2a_session_storage: crate::O2ASessionStorage::default(),
             results: Vec::new(),
             atmospheric_budgets: Vec::new(),
+            o2_line_contribution_tables: Vec::new(),
+            instrument_responses: Vec::new(),
+            o2_o2_cia_tables: Vec::new(),
+            radiative_transfer_tables: Vec::new(),
             last_error: empty_error(),
         }
     }
@@ -134,16 +305,23 @@ impl Context {
     }
 
     fn remove_atmospheric_budget(&mut self, rows: *const ZdsAtmosphericBudgetRow) {
-        if rows.is_null() {
-            return;
-        }
-        if let Some(index) = self
-            .atmospheric_budgets
-            .iter()
-            .position(|stored| stored.as_ptr() == rows)
-        {
-            drop(self.atmospheric_budgets.swap_remove(index));
-        }
+        remove_row_table(&mut self.atmospheric_budgets, rows);
+    }
+
+    fn remove_o2_line_contribution_table(&mut self, rows: *const ZdsO2LineContributionRow) {
+        remove_row_table(&mut self.o2_line_contribution_tables, rows);
+    }
+
+    fn remove_instrument_response(&mut self, rows: *const ZdsInstrumentResponseRow) {
+        remove_row_table(&mut self.instrument_responses, rows);
+    }
+
+    fn remove_o2_o2_cia_table(&mut self, rows: *const ZdsO2O2CiaRow) {
+        remove_row_table(&mut self.o2_o2_cia_tables, rows);
+    }
+
+    fn remove_radiative_transfer_table(&mut self, rows: *const ZdsRadiativeTransferDiagnosticRow) {
+        remove_row_table(&mut self.radiative_transfer_tables, rows);
     }
 
     fn result_for_handle(&self, handle: *const crate::Output) -> Option<&crate::Output> {
@@ -340,17 +518,14 @@ pub unsafe extern "C" fn zds_atmospheric_budget(
     if out.is_null() {
         return fail(resolved, "null atmospheric budget");
     }
-    if wavelengths_ptr.is_null() {
-        return fail(resolved, "null wavelengths");
-    }
-    if wavelength_count == 0 {
-        return fail(resolved, "empty wavelengths");
-    }
+    let wavelengths = match unsafe { wavelength_slice(wavelengths_ptr, wavelength_count) } {
+        Ok(wavelengths) => wavelengths,
+        Err(message) => return fail(resolved, message),
+    };
     let Some(prepared) = resolved.prepared.as_ref() else {
         return fail(resolved, "no prepared O2A case loaded");
     };
 
-    let wavelengths = unsafe { std::slice::from_raw_parts(wavelengths_ptr, wavelength_count) };
     match crate::report::build_atmospheric_budget(&prepared.scene, &prepared.prepared, wavelengths)
     {
         Ok(native_rows) => {
@@ -374,6 +549,235 @@ pub unsafe extern "C" fn zds_atmospheric_budget(
         Err(err) => fail(
             resolved,
             format!("failed to build atmospheric budget: {err:?}"),
+        ),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live, `wavelengths_ptr` must point to `wavelength_count`
+/// readable `f64` values, and `out` must be valid for writing one table handle.
+pub unsafe extern "C" fn zds_o2_line_contributions(
+    ctx: *mut Context,
+    wavelengths_ptr: *const f64,
+    wavelength_count: usize,
+    max_rows: usize,
+    out: *mut ZdsO2LineContributions,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    if out.is_null() {
+        return fail(resolved, "null O2 line contribution table");
+    }
+    let wavelengths = match unsafe { wavelength_slice(wavelengths_ptr, wavelength_count) } {
+        Ok(wavelengths) => wavelengths,
+        Err(message) => return fail(resolved, message),
+    };
+    if max_rows == 0 {
+        return fail(resolved, "invalid row limit");
+    }
+    let Some(prepared) = resolved.prepared.as_ref() else {
+        return fail(resolved, "no prepared O2A case loaded");
+    };
+
+    match crate::report::build_o2_line_contributions(&prepared.prepared, wavelengths, max_rows) {
+        Ok(native_table) => {
+            let rows = native_table
+                .rows
+                .into_iter()
+                .map(copy_o2_line_contribution_row)
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let len = rows.len();
+            let rows_ptr = rows.as_ptr();
+            resolved.o2_line_contribution_tables.push(rows);
+            unsafe {
+                *out = ZdsO2LineContributions {
+                    len,
+                    total_row_count: native_table.total_row_count,
+                    truncated: u8::from(native_table.truncated),
+                    rows: rows_ptr,
+                };
+            }
+            resolved.clear_error();
+            ZDS_OK
+        }
+        Err(err) => fail(
+            resolved,
+            format!("failed to build O2 line contributions: {err:?}"),
+        ),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live, `wavelengths_ptr` must point to `wavelength_count`
+/// readable `f64` values, and `out` must be valid for writing one table handle.
+pub unsafe extern "C" fn zds_instrument_response_sampling(
+    ctx: *mut Context,
+    wavelengths_ptr: *const f64,
+    wavelength_count: usize,
+    channel_mask: u32,
+    out: *mut ZdsInstrumentResponse,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    if out.is_null() {
+        return fail(resolved, "null instrument response table");
+    }
+    let wavelengths = match unsafe { wavelength_slice(wavelengths_ptr, wavelength_count) } {
+        Ok(wavelengths) => wavelengths,
+        Err(message) => return fail(resolved, message),
+    };
+    let Some(prepared) = resolved.prepared.as_ref() else {
+        return fail(resolved, "no prepared O2A case loaded");
+    };
+
+    match crate::report::build_instrument_response(
+        &prepared.scene,
+        &prepared.prepared,
+        wavelengths,
+        channel_mask,
+    ) {
+        Ok(native_rows) => {
+            let rows = native_rows
+                .into_iter()
+                .map(copy_instrument_response_row)
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let len = rows.len();
+            let rows_ptr = rows.as_ptr();
+            resolved.instrument_responses.push(rows);
+            unsafe {
+                *out = ZdsInstrumentResponse {
+                    len,
+                    rows: rows_ptr,
+                };
+            }
+            resolved.clear_error();
+            ZDS_OK
+        }
+        Err(err) => fail(
+            resolved,
+            format!("failed to build instrument response: {err:?}"),
+        ),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live, `wavelengths_ptr` must point to `wavelength_count`
+/// readable `f64` values, and `out` must be valid for writing one table handle.
+pub unsafe extern "C" fn zds_o2_o2_cia_diagnostics(
+    ctx: *mut Context,
+    wavelengths_ptr: *const f64,
+    wavelength_count: usize,
+    out: *mut ZdsO2O2CiaDiagnostics,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    if out.is_null() {
+        return fail(resolved, "null O2-O2 CIA table");
+    }
+    let wavelengths = match unsafe { wavelength_slice(wavelengths_ptr, wavelength_count) } {
+        Ok(wavelengths) => wavelengths,
+        Err(message) => return fail(resolved, message),
+    };
+    let Some(prepared) = resolved.prepared.as_ref() else {
+        return fail(resolved, "no prepared O2A case loaded");
+    };
+
+    match crate::report::build_o2_o2_cia(&prepared.scene, &prepared.prepared, wavelengths) {
+        Ok(native_rows) => {
+            let rows = native_rows
+                .into_iter()
+                .map(copy_o2_o2_cia_row)
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let len = rows.len();
+            let rows_ptr = rows.as_ptr();
+            resolved.o2_o2_cia_tables.push(rows);
+            unsafe {
+                *out = ZdsO2O2CiaDiagnostics {
+                    len,
+                    rows: rows_ptr,
+                };
+            }
+            resolved.clear_error();
+            ZDS_OK
+        }
+        Err(err) => fail(
+            resolved,
+            format!("failed to build O2-O2 CIA diagnostics: {err:?}"),
+        ),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live, `wavelengths_ptr` must point to `wavelength_count`
+/// readable `f64` values, `spectrum` may be null or a spectrum returned by this
+/// context, and `out` must be valid for writing one table handle.
+pub unsafe extern "C" fn zds_radiative_transfer_diagnostics(
+    ctx: *mut Context,
+    wavelengths_ptr: *const f64,
+    wavelength_count: usize,
+    spectrum: *const ZdsSpectrum,
+    out: *mut ZdsRadiativeTransferDiagnostics,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    if out.is_null() {
+        return fail(resolved, "null radiative-transfer table");
+    }
+    let wavelengths = match unsafe { wavelength_slice(wavelengths_ptr, wavelength_count) } {
+        Ok(wavelengths) => wavelengths,
+        Err(message) => return fail(resolved, message),
+    };
+    let Some(prepared) = resolved.prepared.as_ref() else {
+        return fail(resolved, "no prepared O2A case loaded");
+    };
+    let spectrum_view = match unsafe { spectrum_view(resolved, spectrum) } {
+        Ok(view) => view,
+        Err(message) => return fail(resolved, message),
+    };
+
+    match crate::report::build_radiative_transfer_diagnostics(
+        &prepared.scene,
+        &prepared.prepared,
+        prepared.route,
+        wavelengths,
+        spectrum_view,
+    ) {
+        Ok(native_rows) => {
+            let rows = native_rows
+                .into_iter()
+                .map(copy_radiative_transfer_diagnostic_row)
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let len = rows.len();
+            let rows_ptr = rows.as_ptr();
+            resolved.radiative_transfer_tables.push(rows);
+            unsafe {
+                *out = ZdsRadiativeTransferDiagnostics {
+                    len,
+                    rows: rows_ptr,
+                };
+            }
+            resolved.clear_error();
+            ZDS_OK
+        }
+        Err(err) => fail(
+            resolved,
+            format!("failed to build radiative-transfer diagnostics: {err:?}"),
         ),
     }
 }
@@ -434,6 +838,94 @@ pub unsafe extern "C" fn zds_atmospheric_budget_free(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live and `out` must point to a table previously returned by this context.
+pub unsafe extern "C" fn zds_o2_line_contributions_free(
+    ctx: *mut Context,
+    out: *mut ZdsO2LineContributions,
+) {
+    let Some(resolved) = context_mut(ctx) else {
+        return;
+    };
+    if out.is_null() {
+        return;
+    }
+
+    let rows = unsafe { (*out).rows };
+    resolved.remove_o2_line_contribution_table(rows);
+    unsafe {
+        *out = ZdsO2LineContributions::default();
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live and `out` must point to a table previously returned by this context.
+pub unsafe extern "C" fn zds_instrument_response_free(
+    ctx: *mut Context,
+    out: *mut ZdsInstrumentResponse,
+) {
+    let Some(resolved) = context_mut(ctx) else {
+        return;
+    };
+    if out.is_null() {
+        return;
+    }
+
+    let rows = unsafe { (*out).rows };
+    resolved.remove_instrument_response(rows);
+    unsafe {
+        *out = ZdsInstrumentResponse::default();
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live and `out` must point to a table previously returned by this context.
+pub unsafe extern "C" fn zds_o2_o2_cia_diagnostics_free(
+    ctx: *mut Context,
+    out: *mut ZdsO2O2CiaDiagnostics,
+) {
+    let Some(resolved) = context_mut(ctx) else {
+        return;
+    };
+    if out.is_null() {
+        return;
+    }
+
+    let rows = unsafe { (*out).rows };
+    resolved.remove_o2_o2_cia_table(rows);
+    unsafe {
+        *out = ZdsO2O2CiaDiagnostics::default();
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live and `out` must point to a table previously returned by this context.
+pub unsafe extern "C" fn zds_radiative_transfer_diagnostics_free(
+    ctx: *mut Context,
+    out: *mut ZdsRadiativeTransferDiagnostics,
+) {
+    let Some(resolved) = context_mut(ctx) else {
+        return;
+    };
+    if out.is_null() {
+        return;
+    }
+
+    let rows = unsafe { (*out).rows };
+    resolved.remove_radiative_transfer_table(rows);
+    unsafe {
+        *out = ZdsRadiativeTransferDiagnostics::default();
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn zds_last_error(ctx: *mut Context) -> *const c_char {
     let Some(resolved) = context_mut(ctx) else {
         return NULL_CONTEXT_ERROR.as_ptr().cast::<c_char>();
@@ -452,6 +944,40 @@ fn context_mut(ctx: *mut Context) -> Option<&'static mut Context> {
 fn fail(ctx: &mut Context, message: impl AsRef<str>) -> c_int {
     ctx.set_error(message);
     ZDS_FAILURE
+}
+
+unsafe fn wavelength_slice<'a>(
+    wavelengths_ptr: *const f64,
+    wavelength_count: usize,
+) -> Result<&'a [f64], &'static str> {
+    if wavelengths_ptr.is_null() {
+        return Err("null wavelengths");
+    }
+    if wavelength_count == 0 {
+        return Err("empty wavelengths");
+    }
+    Ok(unsafe { std::slice::from_raw_parts(wavelengths_ptr, wavelength_count) })
+}
+
+unsafe fn spectrum_view<'a>(
+    ctx: &'a Context,
+    spectrum: *const ZdsSpectrum,
+) -> Result<Option<crate::RadiativeTransferSpectrumView<'a>>, &'static str> {
+    if spectrum.is_null() {
+        return Ok(None);
+    }
+    let handle = unsafe { (*spectrum).result_handle.cast::<crate::Output>() };
+    if handle.is_null() {
+        return Err("spectrum is closed");
+    }
+    let Some(product) = ctx.result_for_handle(handle) else {
+        return Err("unknown spectrum result");
+    };
+    Ok(Some(crate::RadiativeTransferSpectrumView {
+        wavelength_nm: &product.wavelengths,
+        reflectance: &product.reflectance,
+        radiance: &product.radiance,
+    }))
 }
 
 unsafe fn run_spectrum_jacobian_for_state_ids(
@@ -595,6 +1121,15 @@ fn compact_result_jacobian(
     Ok(())
 }
 
+fn remove_row_table<Row>(tables: &mut Vec<Box<[Row]>>, rows: *const Row) {
+    if rows.is_null() {
+        return;
+    }
+    if let Some(index) = tables.iter().position(|stored| stored.as_ptr() == rows) {
+        drop(tables.swap_remove(index));
+    }
+}
+
 fn copy_atmospheric_budget_row(row: crate::AtmosphericBudgetRow) -> ZdsAtmosphericBudgetRow {
     ZdsAtmosphericBudgetRow {
         wavelength_nm: row.wavelength_nm,
@@ -633,6 +1168,103 @@ fn copy_atmospheric_budget_row(row: crate::AtmosphericBudgetRow) -> ZdsAtmospher
     }
 }
 
+fn copy_o2_line_contribution_row(row: crate::O2LineContributionRow) -> ZdsO2LineContributionRow {
+    ZdsO2LineContributionRow {
+        wavelength_nm: row.wavelength_nm,
+        profile_node_index: row.profile_node_index,
+        altitude_km: row.altitude_km,
+        row_kind: row.row_kind as u32,
+        status: row.status as u32,
+        line_index: row.line_index,
+        strong_line_index: row.strong_line_index,
+        matched_strong_line_index: row.matched_strong_line_index,
+        gas_index: row.gas_index,
+        isotope_number: row.isotope_number,
+        isotopologue_code: row.isotopologue_code,
+        center_wavelength_nm: row.center_wavelength_nm,
+        center_wavenumber_cm1: row.center_wavenumber_cm1,
+        shifted_center_wavenumber_cm1: row.shifted_center_wavenumber_cm1,
+        line_strength_cm2_per_molecule: row.line_strength_cm2_per_molecule,
+        air_half_width_cm1: row.air_half_width_cm1,
+        pressure_shift_cm1: row.pressure_shift_cm1,
+        lower_state_energy_cm1: row.lower_state_energy_cm1,
+        temperature_k: row.temperature_k,
+        pressure_hpa: row.pressure_hpa,
+        weak_line_sigma_cm2_per_molecule: row.weak_line_sigma_cm2_per_molecule,
+        strong_line_sigma_cm2_per_molecule: row.strong_line_sigma_cm2_per_molecule,
+        line_mixing_sigma_cm2_per_molecule: row.line_mixing_sigma_cm2_per_molecule,
+        total_sigma_cm2_per_molecule: row.total_sigma_cm2_per_molecule,
+        abs_total_sigma_cm2_per_molecule: row.abs_total_sigma_cm2_per_molecule,
+    }
+}
+
+fn copy_instrument_response_row(row: crate::InstrumentResponseRow) -> ZdsInstrumentResponseRow {
+    ZdsInstrumentResponseRow {
+        nominal_index: row.nominal_index,
+        nominal_wavelength_nm: row.nominal_wavelength_nm,
+        channel: row.channel,
+        sample_index: row.sample_index,
+        support_count: row.support_count,
+        offset_nm: row.offset_nm,
+        support_wavelength_nm: row.support_wavelength_nm,
+        weight: row.weight,
+        support_width_nm: row.support_width_nm,
+        instrument_fwhm_nm: row.instrument_fwhm_nm,
+        high_resolution_step_nm: row.high_resolution_step_nm,
+        high_resolution_half_span_nm: row.high_resolution_half_span_nm,
+        integration_mode: row.integration_mode,
+        response_enabled: row.response_enabled,
+    }
+}
+
+fn copy_o2_o2_cia_row(row: crate::O2O2CiaRow) -> ZdsO2O2CiaRow {
+    ZdsO2O2CiaRow {
+        wavelength_nm: row.wavelength_nm,
+        layer_index: row.layer_index,
+        sublayer_index: row.sublayer_index,
+        global_sublayer_index: row.global_sublayer_index,
+        interval_index_1based: row.interval_index_1based,
+        altitude_km: row.altitude_km,
+        pressure_hpa: row.pressure_hpa,
+        temperature_k: row.temperature_k,
+        oxygen_number_density_cm3: row.oxygen_number_density_cm3,
+        path_length_cm: row.path_length_cm,
+        cia_cross_section_cm5_per_molecule2: row.cia_cross_section_cm5_per_molecule2,
+        cia_optical_depth: row.cia_optical_depth,
+        total_absorption_optical_depth: row.total_absorption_optical_depth,
+        total_optical_depth: row.total_optical_depth,
+        cia_share_of_total_absorption: row.cia_share_of_total_absorption,
+        cia_share_of_total_optical_depth: row.cia_share_of_total_optical_depth,
+    }
+}
+
+fn copy_radiative_transfer_diagnostic_row(
+    row: crate::RadiativeTransferDiagnosticRow,
+) -> ZdsRadiativeTransferDiagnosticRow {
+    ZdsRadiativeTransferDiagnosticRow {
+        wavelength_nm: row.wavelength_nm,
+        layer_index: row.layer_index,
+        sublayer_index: row.sublayer_index,
+        global_sublayer_index: row.global_sublayer_index,
+        interval_index_1based: row.interval_index_1based,
+        altitude_km: row.altitude_km,
+        total_optical_depth: row.total_optical_depth,
+        total_absorption_optical_depth: row.total_absorption_optical_depth,
+        total_scattering_optical_depth: row.total_scattering_optical_depth,
+        single_scatter_albedo: row.single_scatter_albedo,
+        cumulative_optical_depth_above: row.cumulative_optical_depth_above,
+        mid_layer_transmission_proxy: row.mid_layer_transmission_proxy,
+        direct_surface_transmission_proxy: row.direct_surface_transmission_proxy,
+        atmospheric_scattering_source_proxy: row.atmospheric_scattering_source_proxy,
+        absorption_loss_proxy: row.absorption_loss_proxy,
+        pseudo_spherical_airmass_factor: row.pseudo_spherical_airmass_factor,
+        n_streams: row.n_streams,
+        integrate_source_function: row.integrate_source_function,
+        final_reflectance: row.final_reflectance,
+        final_radiance: row.final_radiance,
+    }
+}
+
 fn empty_error() -> CString {
     CString::new("").expect("empty CString literal is valid")
 }
@@ -648,7 +1280,9 @@ mod tests {
     use crate::{
         forward_model::{
             instrument_grid::InstrumentGridSummary,
-            optical_properties::{PreparedOpticalState, PreparedSublayer},
+            optical_properties::{
+                PreparedOpticalState, PreparedSublayer, state_build::PreparedLineAbsorber,
+            },
             radiative_transfer::{
                 common_route,
                 common_types::{
@@ -656,7 +1290,12 @@ mod tests {
                 },
             },
         },
-        input::{o2a_reference::ReferenceSample, scene::Scene},
+        input::{
+            atmospheric_types::AbsorberSpecies,
+            o2a_reference::ReferenceSample,
+            reference_data::{SpectroscopyLine, SpectroscopyLineList},
+            scene::Scene,
+        },
     };
 
     #[test]
@@ -803,6 +1442,144 @@ mod tests {
         assert_eq!(budget, ZdsAtmosphericBudget::default());
     }
 
+    #[test]
+    fn o2_line_contributions_returns_owned_rows_and_free_resets_handle() {
+        let mut ctx = Context {
+            prepared: Some(synthetic_prepared_o2a_with_o2_line()),
+            ..Context::default()
+        };
+        let wavelengths = [760.5];
+        let mut table = ZdsO2LineContributions::default();
+
+        let status = unsafe {
+            zds_o2_line_contributions(
+                &mut ctx,
+                wavelengths.as_ptr(),
+                wavelengths.len(),
+                10,
+                &mut table,
+            )
+        };
+
+        assert_eq!(status, ZDS_OK);
+        assert_eq!(table.len, 1);
+        assert_eq!(table.total_row_count, 1);
+        assert_eq!(table.truncated, 0);
+        assert!(!table.rows.is_null());
+        let rows = unsafe { std::slice::from_raw_parts(table.rows, table.len) };
+        assert_eq!(rows[0].wavelength_nm, 760.5);
+        assert_eq!(rows[0].gas_index, 7);
+        assert_eq!(rows[0].isotope_number, 1);
+        assert!(rows[0].total_sigma_cm2_per_molecule >= 0.0);
+
+        unsafe {
+            zds_o2_line_contributions_free(&mut ctx, &mut table);
+        }
+        assert_eq!(table, ZdsO2LineContributions::default());
+    }
+
+    #[test]
+    fn instrument_response_sampling_returns_owned_rows_and_free_resets_handle() {
+        let mut ctx = Context {
+            prepared: Some(synthetic_prepared_o2a()),
+            ..Context::default()
+        };
+        let wavelengths = [759.0, 761.0];
+        let mut table = ZdsInstrumentResponse::default();
+
+        let status = unsafe {
+            zds_instrument_response_sampling(
+                &mut ctx,
+                wavelengths.as_ptr(),
+                wavelengths.len(),
+                crate::report::CHANNEL_MASK_RADIANCE,
+                &mut table,
+            )
+        };
+
+        assert_eq!(status, ZDS_OK);
+        assert_eq!(table.len, 2);
+        assert!(!table.rows.is_null());
+        let rows = unsafe { std::slice::from_raw_parts(table.rows, table.len) };
+        assert_eq!(rows[0].nominal_wavelength_nm, 759.0);
+        assert_eq!(rows[0].channel, 0);
+        assert_eq!(rows[0].weight, 1.0);
+        assert_eq!(rows[1].nominal_wavelength_nm, 761.0);
+
+        unsafe {
+            zds_instrument_response_free(&mut ctx, &mut table);
+        }
+        assert_eq!(table, ZdsInstrumentResponse::default());
+    }
+
+    #[test]
+    fn o2_o2_cia_diagnostics_returns_owned_rows_and_free_resets_handle() {
+        let mut ctx = Context {
+            prepared: Some(synthetic_prepared_o2a()),
+            ..Context::default()
+        };
+        let wavelengths = [760.0];
+        let mut table = ZdsO2O2CiaDiagnostics::default();
+
+        let status = unsafe {
+            zds_o2_o2_cia_diagnostics(
+                &mut ctx,
+                wavelengths.as_ptr(),
+                wavelengths.len(),
+                &mut table,
+            )
+        };
+
+        assert_eq!(status, ZDS_OK);
+        assert_eq!(table.len, 1);
+        assert!(!table.rows.is_null());
+        let rows = unsafe { std::slice::from_raw_parts(table.rows, table.len) };
+        assert_eq!(rows[0].wavelength_nm, 760.0);
+        assert_eq!(rows[0].path_length_cm, 100_000.0);
+
+        unsafe {
+            zds_o2_o2_cia_diagnostics_free(&mut ctx, &mut table);
+        }
+        assert_eq!(table, ZdsO2O2CiaDiagnostics::default());
+    }
+
+    #[test]
+    fn radiative_transfer_diagnostics_reads_optional_spectrum_handle() {
+        let mut ctx = Context {
+            prepared: Some(synthetic_prepared_o2a()),
+            ..Context::default()
+        };
+        let mut spectrum = ZdsSpectrum::default();
+        assert_eq!(unsafe { zds_run_spectrum(&mut ctx, &mut spectrum) }, ZDS_OK);
+
+        let wavelengths = [759.0];
+        let mut table = ZdsRadiativeTransferDiagnostics::default();
+        let status = unsafe {
+            zds_radiative_transfer_diagnostics(
+                &mut ctx,
+                wavelengths.as_ptr(),
+                wavelengths.len(),
+                &spectrum,
+                &mut table,
+            )
+        };
+
+        assert_eq!(status, ZDS_OK);
+        assert_eq!(table.len, 1);
+        assert!(!table.rows.is_null());
+        let rows = unsafe { std::slice::from_raw_parts(table.rows, table.len) };
+        assert_eq!(rows[0].wavelength_nm, 759.0);
+        assert_eq!(rows[0].final_reflectance, 0.23);
+        assert!(rows[0].final_radiance > 0.0);
+
+        unsafe {
+            zds_radiative_transfer_diagnostics_free(&mut ctx, &mut table);
+            zds_spectrum_free(&mut ctx, &mut spectrum);
+        }
+        assert_eq!(table, ZdsRadiativeTransferDiagnostics::default());
+        assert!(spectrum.result_handle.is_null());
+    }
+
     fn synthetic_prepared_o2a() -> crate::PreparedO2A {
         let mut scene = Scene::default();
         scene.surface.albedo = 0.23;
@@ -837,5 +1614,33 @@ mod tests {
                 ..PreparedOpticalState::default()
             },
         }
+    }
+
+    fn synthetic_prepared_o2a_with_o2_line() -> crate::PreparedO2A {
+        let mut prepared = synthetic_prepared_o2a();
+        prepared.prepared.effective_temperature_k = 296.0;
+        prepared.prepared.effective_pressure_hpa = 500.0;
+        prepared.prepared.line_absorbers = vec![PreparedLineAbsorber {
+            species: AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList {
+                lines: vec![SpectroscopyLine {
+                    gas_index: 7,
+                    isotope_number: 1,
+                    center_wavelength_nm: 760.5,
+                    center_wavenumber_cm1: Some(1.0e7 / 760.5),
+                    line_strength_cm2_per_molecule: 1.0e-24,
+                    air_half_width_cm1: Some(0.05),
+                    temperature_exponent: 0.75,
+                    lower_state_energy_cm1: 10.0,
+                    pressure_shift_cm1: Some(0.0),
+                    ..SpectroscopyLine::default()
+                }],
+                ..SpectroscopyLineList::default()
+            },
+            number_densities_cm3: Vec::new(),
+            strong_line_states: Vec::new(),
+            column_density_factor: 1.0,
+        }];
+        prepared
     }
 }
