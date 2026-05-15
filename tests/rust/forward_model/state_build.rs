@@ -5,13 +5,14 @@ use zdisamar::{
             shared::phase_functions,
             state_build::{
                 CrossSectionRepresentationKind, EvaluatedLayer, INVALID_SUPPORT_ROW_INDEX,
-                OpticalDepthBreakdown, PreparedCrossSectionAbsorber,
-                PreparedCrossSectionRepresentation, PreparedLayer, PreparedLineAbsorber,
-                PreparedOpticalState, PreparedSublayer, PseudoSphericalBuffers, SharedRtmGeometry,
-                SharedRtmLayerGeometry, SharedRtmLevelGeometry, accumulate_breakdown,
-                build_shared_rtm_geometry_from_layers, collect_active_cross_section_absorbers,
-                collect_active_line_absorbers, collision_induced_sigma_at_wavelength,
-                continuum_carrier_density_at_sublayer,
+                OpticalDepthBreakdown, PreparationContext, PreparationInputs,
+                PreparedCrossSectionAbsorber, PreparedCrossSectionRepresentation, PreparedLayer,
+                PreparedLineAbsorber, PreparedOpticalState, PreparedSublayer,
+                PseudoSphericalBuffers, SharedRtmGeometry, SharedRtmLayerGeometry,
+                SharedRtmLevelGeometry, accumulate_breakdown,
+                build_shared_rtm_geometry_from_layers, build_vertical_grid,
+                collect_active_cross_section_absorbers, collect_active_line_absorbers,
+                collision_induced_sigma_at_wavelength, continuum_carrier_density_at_sublayer,
                 effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
                 fill_forward_layers_at_wavelength, fill_pseudo_spherical_grid_at_wavelength,
                 fill_rtm_quadrature_at_wavelength_with_layers,
@@ -42,17 +43,24 @@ use zdisamar::{
     },
     input::{
         absorber::{Absorber, AbsorberSet, LineGasControls, Spectroscopy, SpectroscopyMode},
-        atmosphere::{FractionControl, FractionKind, FractionTarget, IntervalSemantics},
+        atmosphere::{
+            Atmosphere, FractionControl, FractionKind, FractionTarget, IntervalGrid,
+            IntervalSemantics, VerticalInterval,
+        },
         atmospheric_types::AbsorberSpecies,
         bands::{SpectralBand, SpectralBandSet},
-        instrument::OperationalCrossSectionLut,
-        reference::rayleigh,
+        geometry::Geometry,
+        instrument::SpectralChannelControls,
+        instrument::{IntegrationMode, MeasurementPipeline, OperationalCrossSectionLut},
+        observation_model::ObservationModel,
+        reference::{airmass_phase::AirmassFactorLut, rayleigh},
         reference_data::{
-            CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
-            CrossSectionTable, RelaxationMatrix, SpectroscopyLine, SpectroscopyLineList,
-            SpectroscopyStrongLine,
+            ClimatologyPoint, ClimatologyProfile, CollisionInducedAbsorptionPoint,
+            CollisionInducedAbsorptionTable, CrossSectionPoint, CrossSectionTable,
+            RelaxationMatrix, SpectroscopyLine, SpectroscopyLineList, SpectroscopyStrongLine,
         },
         scene::Scene,
+        spectrum::SpectralGrid,
     },
 };
 
@@ -61,6 +69,25 @@ fn assert_close(actual: f64, expected: f64, tolerance: f64) {
         (actual - expected).abs() <= tolerance,
         "actual={actual:?} expected={expected:?} tolerance={tolerance:?}"
     );
+}
+
+fn simple_profile() -> ClimatologyProfile {
+    ClimatologyProfile {
+        rows: vec![
+            ClimatologyPoint {
+                altitude_km: 0.0,
+                pressure_hpa: 1000.0,
+                temperature_k: 290.0,
+                air_number_density_cm3: 2.5e19,
+            },
+            ClimatologyPoint {
+                altitude_km: 10.0,
+                pressure_hpa: 200.0,
+                temperature_k: 230.0,
+                air_number_density_cm3: 7.0e18,
+            },
+        ],
+    }
 }
 
 fn scalar_lut(
@@ -111,6 +138,232 @@ fn strong_o2_line(center_wavelength_nm: f64, rotational_index_m1: i32) -> Spectr
         pressure_shift_nm: 0.0,
         rotational_index_m1,
     }
+}
+
+#[test]
+fn vertical_grid_builds_legacy_layers_from_profile() {
+    let scene = Scene {
+        atmosphere: Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 2,
+            ..Atmosphere::default()
+        },
+        geometry: Geometry {
+            surface_altitude_km: 0.0,
+            ..Geometry::default()
+        },
+        ..Scene::default()
+    };
+
+    let grid = build_vertical_grid(&scene, &simple_profile()).unwrap();
+
+    assert_eq!(grid.layer_top_altitudes_km.len(), 2);
+    assert_eq!(grid.sublayer_mid_altitudes_km.len(), 4);
+    assert_close(grid.layer_bottom_altitudes_km[0], 0.0, 0.0);
+    assert_close(grid.layer_top_altitudes_km[0], 5.0, 0.0);
+    assert_close(grid.layer_bottom_altitudes_km[1], 5.0, 0.0);
+    assert_close(grid.layer_top_altitudes_km[1], 10.0, 0.0);
+    assert_eq!(grid.layer_sublayer_starts, vec![0, 2]);
+    assert_eq!(grid.layer_sublayer_counts, vec![2, 2]);
+    assert_eq!(grid.layer_interval_indices_1based, vec![1, 2]);
+    assert_eq!(grid.sublayer_interval_indices_1based, vec![1, 1, 2, 2]);
+    assert_close(grid.sublayer_support_weights_km[0], 2.5, 0.0);
+    assert_close(grid.sublayer_support_weights_km[3], 2.5, 0.0);
+
+    let borrowed = grid.borrow();
+    assert_eq!(borrowed.layer_top_altitudes_km.len(), 2);
+    assert_eq!(borrowed.sublayer_mid_altitudes_km.len(), 4);
+}
+
+#[test]
+fn vertical_grid_builds_explicit_interval_layers_bottom_up() {
+    let scene = Scene {
+        atmosphere: Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 3,
+            interval_grid: IntervalGrid {
+                semantics: IntervalSemantics::ExplicitPressureBounds,
+                intervals: vec![
+                    VerticalInterval {
+                        index_1based: 1,
+                        top_pressure_hpa: 200.0,
+                        bottom_pressure_hpa: 500.0,
+                        top_altitude_km: 10.0,
+                        bottom_altitude_km: 5.0,
+                        altitude_divisions: 2,
+                        ..VerticalInterval::default()
+                    },
+                    VerticalInterval {
+                        index_1based: 2,
+                        top_pressure_hpa: 500.0,
+                        bottom_pressure_hpa: 1000.0,
+                        top_altitude_km: 5.0,
+                        bottom_altitude_km: 0.0,
+                        altitude_divisions: 1,
+                        ..VerticalInterval::default()
+                    },
+                ],
+                ..IntervalGrid::default()
+            },
+            ..Atmosphere::default()
+        },
+        ..Scene::default()
+    };
+
+    let grid = build_vertical_grid(&scene, &simple_profile()).unwrap();
+
+    assert_eq!(grid.layer_interval_indices_1based, vec![2, 1]);
+    assert_eq!(grid.layer_sublayer_starts, vec![0, 1]);
+    assert_eq!(grid.layer_sublayer_counts, vec![1, 2]);
+    assert_close(grid.layer_bottom_altitudes_km[0], 0.0, 0.0);
+    assert_close(grid.layer_top_altitudes_km[0], 5.0, 0.0);
+    assert_close(grid.layer_bottom_altitudes_km[1], 5.0, 0.0);
+    assert_close(grid.layer_top_altitudes_km[1], 10.0, 0.0);
+    assert_eq!(grid.sublayer_interval_indices_1based, vec![2, 1, 1]);
+    assert_close(grid.sublayer_mid_altitudes_km[0], 2.5, 0.0);
+    assert_close(grid.sublayer_mid_altitudes_km[1], 6.25, 0.0);
+    assert_close(grid.sublayer_mid_altitudes_km[2], 8.75, 0.0);
+}
+
+#[test]
+fn vertical_grid_builds_disamar_parity_support_rows() {
+    let mut radiance = SpectralChannelControls {
+        explicit: true,
+        ..SpectralChannelControls::default()
+    };
+    radiance.response.integration_mode = IntegrationMode::DisamarHrGrid;
+
+    let scene = Scene {
+        atmosphere: Atmosphere {
+            layer_count: 1,
+            sublayer_divisions: 2,
+            interval_grid: IntervalGrid {
+                semantics: IntervalSemantics::ExplicitPressureBounds,
+                intervals: vec![VerticalInterval {
+                    index_1based: 1,
+                    top_pressure_hpa: 200.0,
+                    bottom_pressure_hpa: 1000.0,
+                    top_altitude_km: 10.0,
+                    bottom_altitude_km: 0.0,
+                    altitude_divisions: 1,
+                    ..VerticalInterval::default()
+                }],
+                ..IntervalGrid::default()
+            },
+            ..Atmosphere::default()
+        },
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Scene::default()
+    };
+
+    let grid = build_vertical_grid(&scene, &simple_profile()).unwrap();
+
+    assert_eq!(grid.layer_top_altitudes_km.len(), 2);
+    assert_eq!(grid.sublayer_mid_altitudes_km.len(), 7);
+    assert_eq!(grid.layer_sublayer_starts, vec![0, 3]);
+    assert_eq!(grid.layer_sublayer_counts, vec![4, 4]);
+    assert_close(grid.sublayer_mid_altitudes_km[0], 0.0, 0.0);
+    assert_close(grid.sublayer_mid_altitudes_km[3], 5.0, 1.0e-12);
+    assert_close(grid.sublayer_mid_altitudes_km[6], 10.0, 1.0e-12);
+    assert_close(grid.sublayer_support_weights_km[0], 0.0, 0.0);
+    assert_close(grid.sublayer_support_weights_km[3], 0.0, 0.0);
+    assert_close(grid.sublayer_support_weights_km[6], 0.0, 0.0);
+    assert_close(
+        grid.sublayer_support_weights_km.iter().sum::<f64>(),
+        10.0,
+        1.0e-12,
+    );
+}
+
+#[test]
+fn preparation_context_materializes_vertical_grid_and_owned_inputs() {
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 761.0,
+            sample_count: 2,
+        },
+        atmosphere: Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 2,
+            ..Atmosphere::default()
+        },
+        ..Scene::default()
+    };
+    let profile = simple_profile();
+    let spectroscopy_profile = ClimatologyProfile {
+        rows: vec![ClimatologyPoint {
+            altitude_km: 1.0,
+            pressure_hpa: 900.0,
+            temperature_k: 280.0,
+            air_number_density_cm3: 2.2e19,
+        }],
+    };
+    let cross_sections = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 1.0e-24,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 761.0,
+                sigma_cm2_per_molecule: 2.0e-24,
+            },
+        ],
+    };
+    let lut = AirmassFactorLut::default();
+    let cia = CollisionInducedAbsorptionTable {
+        points: vec![CollisionInducedAbsorptionPoint {
+            wavelength_nm: 760.0,
+            a0: 1.0,
+            ..CollisionInducedAbsorptionPoint::default()
+        }],
+        scale_factor_cm5_per_molecule2: 1.0e-46,
+    };
+    let line_list = SpectroscopyLineList {
+        lines: vec![weak_o2_line()],
+        ..SpectroscopyLineList::default()
+    };
+
+    let context = PreparationContext::init(
+        &scene,
+        PreparationInputs {
+            profile: &profile,
+            spectroscopy_profile: Some(&spectroscopy_profile),
+            cross_sections: &cross_sections,
+            lut: &lut,
+            collision_induced_absorption: Some(&cia),
+            spectroscopy_lines: Some(&line_list),
+            aerosol_mie: None,
+            cloud_mie: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(context.vertical_grid.layer_top_altitudes_km.len(), 2);
+    assert_eq!(context.layers.len(), 2);
+    assert_eq!(context.sublayers.len(), 4);
+    assert_eq!(context.continuum_points, cross_sections.points);
+    assert_eq!(context.spectroscopy_profile_altitudes_km, vec![1.0]);
+    assert_eq!(context.spectroscopy_profile_pressures_hpa, vec![900.0]);
+    assert_eq!(context.spectroscopy_profile_temperatures_k, vec![280.0]);
+    assert_eq!(
+        context
+            .collision_induced_absorption
+            .as_ref()
+            .unwrap()
+            .points
+            .len(),
+        1
+    );
+    assert_eq!(context.spectroscopy_lines.as_ref().unwrap().lines.len(), 1);
+    assert_close(context.midpoint_nm, 760.5, 0.0);
 }
 
 #[test]

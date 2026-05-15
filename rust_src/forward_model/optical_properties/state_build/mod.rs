@@ -1,4 +1,5 @@
 pub mod carrier_eval;
+pub mod context;
 pub mod evaluation;
 pub mod forward_layers;
 pub mod operational_o2;
@@ -13,6 +14,7 @@ pub mod state_optical_depth;
 pub mod state_scalar;
 pub mod state_spectroscopy;
 pub mod state_types;
+pub mod vertical_grid;
 
 pub use carrier_eval::{
     InterpolatedQuadratureState, PreparedQuadratureCarrier, SharedBoundaryCarrier,
@@ -20,6 +22,7 @@ pub use carrier_eval::{
     shared_active_carrier_at_level, shared_boundary_carrier_at_level,
     shared_optical_carrier_at_altitude, shared_optical_carrier_at_support_row,
 };
+pub use context::{PreparationContext, PreparationInputs};
 pub use evaluation::{accumulate_breakdown, layer_input_from_evaluated};
 pub use forward_layers::{
     fill_forward_layers_at_wavelength, forward_input_from_optical_depths, to_forward_input,
@@ -74,3 +77,4 @@ pub use state_types::{
     PreparedLineAbsorber, PreparedStateFractions, PreparedSublayer, PreparedSupportRowKind,
     SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
 };
+pub use vertical_grid::{OwnedVerticalGrid, build as build_vertical_grid};
