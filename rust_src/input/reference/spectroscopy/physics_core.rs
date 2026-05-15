@@ -6,6 +6,7 @@ use super::{
 };
 use crate::input::reference_data::{
     SpectroscopyEvaluation, SpectroscopyLine, SpectroscopyRuntimeControls,
+    WeakLinePreparedLineState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -143,6 +144,56 @@ pub fn prepare_weak_line_wavelength_state(
     }
 }
 
+pub fn prepare_weak_line_prepared_line_state(
+    line: &SpectroscopyLine,
+    temperature_k: f64,
+    pressure_atm: f64,
+    reference_temperature_k: f64,
+) -> WeakLinePreparedLineState {
+    let safe_temperature = temperature_k.max(150.0);
+    let safe_pressure = pressure_atm.max(MIN_SPECTROSCOPY_PRESSURE_ATM);
+    let center_wavenumber_cm1 = line_center_wavenumber_cm1(line);
+    let temperature_ratio = reference_temperature_k / safe_temperature;
+    let shifted_center_wavenumber_cm1 =
+        (center_wavenumber_cm1 + line_pressure_shift_cm1(line) * safe_pressure).max(1.0);
+    let half_width_cm1_at_t = (line_air_half_width_cm1(line)
+        * temperature_ratio.powf(line.temperature_exponent))
+    .max(1.0e-6);
+    let doppler_width_cm1 = doppler_width_cm1(
+        safe_temperature,
+        shifted_center_wavenumber_cm1,
+        strong_lines::molecular_weight_for_line(line),
+    )
+    .max(1.0e-6);
+    let cte = std::f64::consts::LN_2.sqrt() / doppler_width_cm1;
+
+    let mut converted_strength = line.line_strength_cm2_per_molecule
+        * strong_lines::partition_ratio_t0_over_t(line, safe_temperature, reference_temperature_k)
+        * (HITRAN_HC_OVER_KB_CM_K
+            * line.lower_state_energy_cm1
+            * ((1.0 / reference_temperature_k) - (1.0 / safe_temperature)))
+            .exp()
+        / shifted_center_wavenumber_cm1;
+    converted_strength *= 0.1013
+        / HITRAN_BOLTZMANN_CONSTANT_J_PER_K
+        / safe_temperature
+        / (1.0
+            - (-HITRAN_HC_OVER_KB_CM_K * shifted_center_wavenumber_cm1 / reference_temperature_k)
+                .exp())
+        .max(1.0e-12);
+
+    WeakLinePreparedLineState {
+        shifted_center_wavenumber_cm1,
+        cte,
+        line_shape_y: half_width_cm1_at_t * safe_pressure * cte,
+        prefactor_base: std::f64::consts::LN_2.sqrt() / doppler_width_cm1 / HITRAN_PI.sqrt()
+            * safe_pressure
+            * converted_strength,
+        safe_temperature,
+        safe_pressure,
+    }
+}
+
 pub fn weak_line_contribution(
     wavelength_nm: f64,
     line: &SpectroscopyLine,
@@ -235,6 +286,43 @@ pub fn weak_line_contribution_with_wavelength_state(
     }
 }
 
+pub fn weak_line_contribution_prepared(
+    wavelength_state: WeakLineWavelengthState,
+    prepared_line: WeakLinePreparedLineState,
+    runtime_controls: &SpectroscopyRuntimeControls,
+) -> SpectroscopyEvaluation {
+    if !prepared_weak_line_inside_vendor_cutoff(prepared_line, runtime_controls, wavelength_state) {
+        return SpectroscopyEvaluation::default();
+    }
+
+    let cpf = complex_probability_function(
+        (prepared_line.shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1)
+            * prepared_line.cte,
+        prepared_line.line_shape_y,
+    );
+    let stimulated_emission_scale = wavelength_state.evaluation_wavenumber_cm1
+        * (1.0
+            - (-HITRAN_HC_OVER_KB_CM_K * wavelength_state.evaluation_wavenumber_cm1
+                / prepared_line.safe_temperature)
+                .exp());
+    let prefactor = prepared_line.prefactor_base
+        * stimulated_emission_scale
+        * prepared_line.safe_temperature
+        * HITRAN_BOLTZMANN_CONSTANT_CM3_HPA_PER_K
+        / prepared_line.safe_pressure
+        / 1013.25;
+    let line_sigma = (prefactor * cpf.wr).max(0.0);
+
+    SpectroscopyEvaluation {
+        weak_line_sigma_cm2_per_molecule: line_sigma,
+        strong_line_sigma_cm2_per_molecule: 0.0,
+        line_sigma_cm2_per_molecule: line_sigma,
+        line_mixing_sigma_cm2_per_molecule: 0.0,
+        total_sigma_cm2_per_molecule: line_sigma,
+        d_sigma_d_temperature_cm2_per_molecule_per_k: 0.0,
+    }
+}
+
 fn line_center_wavenumber_cm1(line: &SpectroscopyLine) -> f64 {
     line.center_wavenumber_cm1
         .filter(|value| value.is_finite())
@@ -310,6 +398,56 @@ fn weak_line_inside_vendor_cutoff(
 
     let fallback_cutoff_cm1 = window_cm1 + VENDOR_CUTOFF_BOUNDARY_MARGIN_CM1;
     (shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1).abs()
+        <= fallback_cutoff_cm1
+}
+
+fn prepared_weak_line_inside_vendor_cutoff(
+    prepared_line: WeakLinePreparedLineState,
+    runtime_controls: &SpectroscopyRuntimeControls,
+    wavelength_state: WeakLineWavelengthState,
+) -> bool {
+    let Some(window_cm1) = runtime_controls.cutoff_cm1 else {
+        return true;
+    };
+
+    if runtime_controls.cutoff_grid_wavelengths_nm.len() >= 2 {
+        let (lower_endpoint_index, upper_endpoint_index) =
+            if runtime_controls.cutoff_grid_wavenumbers_cm1.len()
+                == runtime_controls.cutoff_grid_wavelengths_nm.len()
+                && runtime_controls.cutoff_grid_wavenumbers_cm1.len() >= 2
+            {
+                (
+                    nearest_wavenumber_grid_index_from_wavenumbers(
+                        &runtime_controls.cutoff_grid_wavenumbers_cm1,
+                        prepared_line.shifted_center_wavenumber_cm1 + window_cm1,
+                    ),
+                    nearest_wavenumber_grid_index_from_wavenumbers(
+                        &runtime_controls.cutoff_grid_wavenumbers_cm1,
+                        prepared_line.shifted_center_wavenumber_cm1 - window_cm1,
+                    ),
+                )
+            } else {
+                (
+                    nearest_wavenumber_grid_index(
+                        &runtime_controls.cutoff_grid_wavelengths_nm,
+                        prepared_line.shifted_center_wavenumber_cm1 + window_cm1,
+                    ),
+                    nearest_wavenumber_grid_index(
+                        &runtime_controls.cutoff_grid_wavelengths_nm,
+                        prepared_line.shifted_center_wavenumber_cm1 - window_cm1,
+                    ),
+                )
+            };
+        let Some(evaluation_index) = wavelength_state.cutoff_grid_index else {
+            return false;
+        };
+        let start_index = lower_endpoint_index.min(upper_endpoint_index);
+        let end_index = lower_endpoint_index.max(upper_endpoint_index);
+        return evaluation_index >= start_index && evaluation_index <= end_index;
+    }
+
+    let fallback_cutoff_cm1 = window_cm1 + VENDOR_CUTOFF_BOUNDARY_MARGIN_CM1;
+    (prepared_line.shifted_center_wavenumber_cm1 - wavelength_state.evaluation_wavenumber_cm1).abs()
         <= fallback_cutoff_cm1
 }
 

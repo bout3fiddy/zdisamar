@@ -1,7 +1,13 @@
-use super::{MAX_STRONG_LINE_SIDECARS, VENDOR_CUTOFF_PREWINDOW_MARGIN_CM1, physics_core, support};
+use super::{
+    HITRAN_REFERENCE_TEMPERATURE_K, MAX_STRONG_LINE_SIDECARS, VENDOR_CUTOFF_PREWINDOW_MARGIN_CM1,
+    physics_core, strong_lines, support,
+};
 use crate::{
     common::errors,
-    input::reference_data::{SpectroscopyLine, SpectroscopyLineList, SpectroscopyRuntimeControls},
+    input::reference_data::{
+        SpectroscopyLine, SpectroscopyLineList, SpectroscopyRuntimeControls,
+        StrongLinePreparedState, WeakLinePreparedState,
+    },
 };
 
 pub fn apply_runtime_controls(
@@ -66,6 +72,49 @@ pub fn build_strong_line_match_index(
     }
     line_list.strong_line_match_by_line = Some(matches);
     Ok(())
+}
+
+pub fn prepare_strong_line_state(
+    line_list: &SpectroscopyLineList,
+    temperature_k: f64,
+    pressure_hpa: f64,
+) -> Option<StrongLinePreparedState> {
+    if !line_list.has_strong_line_sidecars() {
+        return None;
+    }
+    let strong_lines = line_list.strong_lines.as_ref()?;
+    let relaxation_matrix = line_list.relaxation_matrix.as_ref()?;
+    let pressure_scale = (pressure_hpa / 1013.25).max(super::MIN_SPECTROSCOPY_PRESSURE_ATM);
+    Some(strong_lines::prepare_strong_line_convtp_state(
+        strong_lines,
+        relaxation_matrix,
+        temperature_k.max(150.0),
+        pressure_scale,
+    ))
+}
+
+pub fn prepare_weak_line_state(
+    line_list: &SpectroscopyLineList,
+    temperature_k: f64,
+    pressure_hpa: f64,
+) -> WeakLinePreparedState {
+    let pressure_scale = (pressure_hpa / 1013.25).max(super::MIN_SPECTROSCOPY_PRESSURE_ATM);
+    let lines = line_list
+        .lines
+        .iter()
+        .map(|line| {
+            physics_core::prepare_weak_line_prepared_line_state(
+                line,
+                temperature_k,
+                pressure_scale,
+                HITRAN_REFERENCE_TEMPERATURE_K,
+            )
+        })
+        .collect::<Vec<_>>();
+    WeakLinePreparedState {
+        line_count: lines.len(),
+        lines,
+    }
 }
 
 pub struct RelevantLineWindow<'a> {

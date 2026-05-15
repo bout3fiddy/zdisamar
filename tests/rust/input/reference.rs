@@ -46,7 +46,14 @@ fn spectroscopy_strong_line(wavelength_nm: f64) -> SpectroscopyStrongLine {
     SpectroscopyStrongLine {
         center_wavenumber_cm1: 1.0e7 / wavelength_nm,
         center_wavelength_nm: wavelength_nm,
+        population_t0: 1.0e-20,
+        dipole_ratio: 1.0,
+        dipole_t0: 1.0e-5,
+        lower_state_energy_cm1: 10.0,
+        air_half_width_cm1: 0.05,
         air_half_width_nm: 0.001,
+        temperature_exponent: 0.75,
+        rotational_index_m1: 1,
         ..SpectroscopyStrongLine::default()
     }
 }
@@ -146,6 +153,55 @@ fn spectroscopy_line_list_builds_cached_vendor_strong_line_matches() {
         1,
         &[],
     ));
+}
+
+#[test]
+fn spectroscopy_line_list_prepared_states_match_direct_sigma() {
+    let weak_only = SpectroscopyLineList {
+        lines: vec![spectroscopy_line(7, 1, 760.5)],
+        ..SpectroscopyLineList::default()
+    };
+    let weak_state = weak_only.prepare_weak_line_state(296.0, 500.0);
+    assert_eq!(weak_state.line_count, 1);
+    assert_close(
+        weak_only.sigma_at_with_prepared_profile_state(
+            760.5,
+            296.0,
+            500.0,
+            None,
+            Some(&weak_state),
+        ),
+        weak_only.sigma_at(760.5, 296.0, 500.0),
+        1.0e-40,
+    );
+
+    let mut with_sidecars = SpectroscopyLineList {
+        lines: vec![vendor_o2a_candidate(760.5)],
+        strong_lines: Some(vec![spectroscopy_strong_line(760.5)]),
+        relaxation_matrix: Some(one_line_relaxation_matrix()),
+        ..SpectroscopyLineList::default()
+    };
+    with_sidecars
+        .apply_runtime_controls(Some(7), &[1], None, None, 1.0)
+        .unwrap();
+    with_sidecars.build_strong_line_match_index().unwrap();
+    let strong_state = with_sidecars
+        .prepare_strong_line_state(296.0, 500.0)
+        .expect("strong sidecars should prepare");
+    let weak_state = with_sidecars.prepare_weak_line_state(296.0, 500.0);
+
+    assert_eq!(strong_state.line_count, 1);
+    assert_close(
+        with_sidecars.sigma_at_with_prepared_profile_state(
+            760.5,
+            296.0,
+            500.0,
+            Some(&strong_state),
+            Some(&weak_state),
+        ),
+        with_sidecars.sigma_at(760.5, 296.0, 500.0),
+        1.0e-55,
+    );
 }
 
 #[test]

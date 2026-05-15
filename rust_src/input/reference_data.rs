@@ -88,9 +88,44 @@ impl SpectroscopyLineList {
         line_list_ops::build_strong_line_match_index(self)
     }
 
+    pub fn prepare_strong_line_state(
+        &self,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) -> Option<StrongLinePreparedState> {
+        line_list_ops::prepare_strong_line_state(self, temperature_k, pressure_hpa)
+    }
+
+    pub fn prepare_weak_line_state(
+        &self,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) -> WeakLinePreparedState {
+        line_list_ops::prepare_weak_line_state(self, temperature_k, pressure_hpa)
+    }
+
     pub fn sigma_at(&self, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) -> f64 {
         self.evaluate_at(wavelength_nm, temperature_k, pressure_hpa)
             .total_sigma_cm2_per_molecule
+    }
+
+    pub fn sigma_at_with_prepared_profile_state(
+        &self,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        prepared_strong_state: Option<&StrongLinePreparedState>,
+        prepared_weak_state: Option<&WeakLinePreparedState>,
+    ) -> f64 {
+        crate::input::reference::spectroscopy::line_list_eval::total_sigma_with_prepared_profile_state(
+            self,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+            prepared_strong_state,
+            prepared_weak_state,
+        )
+        .total_sigma_cm2_per_molecule
     }
 
     pub fn evaluate_at(
@@ -176,6 +211,9 @@ impl RelaxationMatrix {
     }
 }
 
+pub type StrongLinePreparedState =
+    crate::input::reference::spectroscopy::strong_lines::StrongLineConvTpState;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectroscopyRuntimeControls {
     pub gas_index: Option<u16>,
@@ -209,6 +247,22 @@ pub struct SpectroscopyEvaluation {
     pub line_mixing_sigma_cm2_per_molecule: f64,
     pub total_sigma_cm2_per_molecule: f64,
     pub d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct WeakLinePreparedLineState {
+    pub shifted_center_wavenumber_cm1: f64,
+    pub cte: f64,
+    pub line_shape_y: f64,
+    pub prefactor_base: f64,
+    pub safe_temperature: f64,
+    pub safe_pressure: f64,
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct WeakLinePreparedState {
+    pub line_count: usize,
+    pub lines: Vec<WeakLinePreparedLineState>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
