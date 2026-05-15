@@ -12,17 +12,19 @@ use zdisamar::{
                 SharedRtmLevelGeometry, accumulate_breakdown,
                 build_shared_rtm_geometry_from_layers, collect_active_cross_section_absorbers,
                 collect_active_line_absorbers, collision_induced_sigma_at_wavelength,
-                effective_spectroscopy_evaluation_at_wavelength,
+                continuum_carrier_density_at_sublayer,
+                effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
                 fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
                 interpolate_prepared_scalar_at_altitude, interval_altitude_at_node,
                 interval_weight_km, last_active_support_row_index, layer_input_from_evaluated,
-                level_altitude_from_sublayers, operational_o2_evaluation_at_wavelength,
-                optical_depth_breakdown_at_wavelength, particle_optical_depth_at_wavelength,
-                prepare_cross_section_absorbers, prepared_scalar_for_sublayer,
-                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
-                sort_line_list, species_mixing_ratio_at_pressure,
-                total_cross_section_at_wavelength, total_optical_depth_at_wavelength,
-                weighted_cross_section_sigma_at_wavelength, zero_spectroscopy_evaluation,
+                level_altitude_from_sublayers, line_spectroscopy_carrier_density_at_sublayer,
+                operational_o2_evaluation_at_wavelength, optical_depth_breakdown_at_wavelength,
+                particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
+                prepared_scalar_for_sublayer, resolve_active_line_species,
+                resolve_continuum_owner_species, resolve_gauss_rule, sort_line_list,
+                species_mixing_ratio_at_pressure, total_cross_section_at_wavelength,
+                total_optical_depth_at_wavelength, weighted_cross_section_sigma_at_wavelength,
+                zero_spectroscopy_evaluation,
             },
         },
         radiative_transfer::common_types::{LayerInput, SourceInterfaceInput},
@@ -202,6 +204,56 @@ fn prepared_scalar_helpers_interpolate_by_altitude() {
     assert_close(
         interpolate_prepared_scalar_at_altitude(&[], &values, 4.0),
         0.0,
+        0.0,
+    );
+}
+
+#[test]
+fn prepared_scalar_helpers_resolve_carrier_densities_by_species() {
+    let sublayer = PreparedSublayer {
+        global_sublayer_index: 1,
+        absorber_number_density_cm3: 10.0,
+        oxygen_number_density_cm3: 4.0,
+        ..PreparedSublayer::default()
+    };
+    let prepared = PreparedOpticalState {
+        continuum_owner_species: Some(AbsorberSpecies::O2),
+        operational_o2_lut: scalar_lut(760.0, 1.0, 761.0, 1.0),
+        line_absorbers: vec![PreparedLineAbsorber {
+            species: AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList::default(),
+            number_densities_cm3: vec![2.0, 3.0],
+            column_density_factor: 1.0,
+        }],
+        cross_section_absorbers: vec![PreparedCrossSectionAbsorber {
+            species: AbsorberSpecies::O2O2,
+            representation_kind: CrossSectionRepresentationKind::Table,
+            polynomial_order: 0,
+            representation: PreparedCrossSectionRepresentation::Table(CrossSectionTable::default()),
+            number_densities_cm3: vec![1.0, 6.0],
+            column_density_factor: 1.0,
+        }],
+        ..PreparedOpticalState::default()
+    };
+
+    assert_close(
+        continuum_carrier_density_at_sublayer(&prepared, sublayer, 1),
+        4.0,
+        0.0,
+    );
+    assert_close(
+        line_spectroscopy_carrier_density_at_sublayer(&prepared, sublayer, 1),
+        4.0,
+        0.0,
+    );
+
+    let no_operational_o2 = PreparedOpticalState {
+        cross_section_absorbers: prepared.cross_section_absorbers.clone(),
+        ..PreparedOpticalState::default()
+    };
+    assert_close(
+        line_spectroscopy_carrier_density_at_sublayer(&no_operational_o2, sublayer, 1),
+        4.0,
         0.0,
     );
 }
@@ -670,14 +722,96 @@ fn state_optical_depth_builds_single_layer_breakdown() {
 }
 
 #[test]
-fn state_optical_depth_rejects_sublayers_until_layer_evaluator_is_ported() {
+fn state_optical_depth_evaluates_and_aggregates_sublayers() {
+    let mut aerosol_phase = phase_functions::gas_phase_coefficients();
+    aerosol_phase[1] = 2.0;
+    let mut cloud_phase = phase_functions::gas_phase_coefficients();
+    cloud_phase[1] = 4.0;
+    let sublayers = vec![PreparedSublayer {
+        global_sublayer_index: 0,
+        altitude_km: 2.0,
+        temperature_k: 250.0,
+        pressure_hpa: 500.0,
+        number_density_cm3: 4.0,
+        absorber_number_density_cm3: 3.0,
+        oxygen_number_density_cm3: 2.0,
+        cia_pair_density_cm6: 6.0,
+        path_length_cm: 5.0,
+        aerosol_optical_depth: 0.2,
+        aerosol_single_scatter_albedo: 0.5,
+        aerosol_phase_coefficients: aerosol_phase,
+        cloud_optical_depth: 0.4,
+        cloud_single_scatter_albedo: 0.25,
+        cloud_phase_coefficients: cloud_phase,
+        ..PreparedSublayer::default()
+    }];
     let prepared = PreparedOpticalState {
-        sublayers: Some(vec![PreparedSublayer::default()]),
+        layers: vec![PreparedLayer {
+            altitude_km: 2.0,
+            sublayer_start_index: 0,
+            sublayer_count: 1,
+            ..PreparedLayer::default()
+        }],
+        sublayers: Some(sublayers.clone()),
+        continuum_points: vec![CrossSectionPoint {
+            wavelength_nm: 760.0,
+            sigma_cm2_per_molecule: 2.0,
+        }],
+        operational_o2o2_lut: scalar_lut(760.0, 0.1, 761.0, 0.1),
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
         ..PreparedOpticalState::default()
     };
 
+    let evaluated =
+        evaluate_layer_at_wavelength(&prepared, None, 2.0, 760.0, 0, &sublayers).unwrap();
+
+    assert_close(
+        evaluated.breakdown.gas_absorption_optical_depth,
+        30.0,
+        1.0e-14,
+    );
+    assert_close(
+        evaluated.breakdown.gas_scattering_optical_depth,
+        rayleigh::cross_section_cm2(760.0) * 20.0,
+        1.0e-30,
+    );
+    assert_close(evaluated.breakdown.cia_optical_depth, 3.0, 1.0e-14);
+    assert_close(
+        evaluated.breakdown.aerosol_scattering_optical_depth,
+        0.1,
+        1.0e-14,
+    );
+    assert_close(
+        evaluated.breakdown.cloud_scattering_optical_depth,
+        0.1,
+        1.0e-14,
+    );
+    assert_close(evaluated.phase_coefficients[0], 1.0, 0.0);
+    assert_close(evaluated.phase_coefficients[1], 3.0, 1.0e-14);
+
+    let breakdown = optical_depth_breakdown_at_wavelength(&prepared, 760.0).unwrap();
+    assert_eq!(breakdown, evaluated.breakdown);
+}
+
+#[test]
+fn state_optical_depth_rejects_unported_line_absorbers_in_sublayers() {
+    let prepared = PreparedOpticalState {
+        line_absorbers: vec![PreparedLineAbsorber {
+            species: AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList::default(),
+            number_densities_cm3: vec![1.0],
+            column_density_factor: 1.0,
+        }],
+        ..PreparedOpticalState::default()
+    };
+    let sublayers = vec![PreparedSublayer {
+        path_length_cm: 1.0,
+        ..PreparedSublayer::default()
+    }];
+
     assert_eq!(
-        optical_depth_breakdown_at_wavelength(&prepared, 760.5).unwrap_err(),
+        evaluate_layer_at_wavelength(&prepared, None, 0.0, 760.0, 0, &sublayers).unwrap_err(),
         errors::Error::InvalidRequest,
     );
 }

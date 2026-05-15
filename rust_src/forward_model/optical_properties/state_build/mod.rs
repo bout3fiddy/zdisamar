@@ -25,11 +25,14 @@ pub use spectroscopy::{
 };
 pub use state_optical_depth::{
     aerosol_optical_depth_at_wavelength, cloud_optical_depth_at_wavelength,
-    collision_induced_optical_depth_at_wavelength, gas_optical_depth_at_wavelength,
-    optical_depth_breakdown_at_wavelength, total_optical_depth_at_wavelength,
+    collision_induced_optical_depth_at_wavelength, evaluate_layer_at_wavelength,
+    gas_optical_depth_at_wavelength, optical_depth_breakdown_at_wavelength,
+    total_optical_depth_at_wavelength,
 };
 pub use state_scalar::{
-    interpolate_prepared_scalar_at_altitude, particle_optical_depth_at_wavelength,
+    continuum_carrier_density_at_altitude, continuum_carrier_density_at_sublayer,
+    interpolate_prepared_scalar_at_altitude, line_spectroscopy_carrier_density,
+    line_spectroscopy_carrier_density_at_sublayer, particle_optical_depth_at_wavelength,
     prepared_scalar_for_sublayer,
 };
 pub use state_spectroscopy::{

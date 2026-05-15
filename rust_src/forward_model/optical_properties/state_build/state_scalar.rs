@@ -1,7 +1,7 @@
-use super::state_types::PreparedSublayer;
+use super::{prepared_state::PreparedOpticalState, state_types::PreparedSublayer};
 use crate::{
     forward_model::optical_properties::shared::particle_profiles,
-    input::atmosphere::FractionControl,
+    input::{atmosphere::FractionControl, atmospheric_types::AbsorberSpecies},
 };
 
 pub fn prepared_scalar_for_sublayer(values: &[f64], sublayer: PreparedSublayer) -> f64 {
@@ -63,6 +63,125 @@ pub fn interpolate_prepared_scalar_at_altitude(
         }
     }
     prepared_scalar_for_sublayer(values, last)
+}
+
+fn line_absorber_density_for_species_at_sublayer(
+    prepared: &PreparedOpticalState,
+    species: AbsorberSpecies,
+    global_sublayer_index: usize,
+) -> f64 {
+    for line_absorber in &prepared.line_absorbers {
+        if line_absorber.species != species {
+            continue;
+        }
+        return line_absorber
+            .number_densities_cm3
+            .get(global_sublayer_index)
+            .copied()
+            .unwrap_or(0.0);
+    }
+    0.0
+}
+
+fn line_absorber_density_for_species_at_altitude(
+    prepared: &PreparedOpticalState,
+    species: AbsorberSpecies,
+    sublayers: &[PreparedSublayer],
+    altitude_km: f64,
+) -> f64 {
+    for line_absorber in &prepared.line_absorbers {
+        if line_absorber.species != species {
+            continue;
+        }
+        return interpolate_prepared_scalar_at_altitude(
+            sublayers,
+            &line_absorber.number_densities_cm3,
+            altitude_km,
+        );
+    }
+    0.0
+}
+
+pub fn continuum_carrier_density_at_sublayer(
+    prepared: &PreparedOpticalState,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+) -> f64 {
+    if prepared.line_absorbers.is_empty() {
+        return sublayer.absorber_number_density_cm3;
+    }
+
+    let Some(owner_species) = prepared.continuum_owner_species else {
+        return sublayer.absorber_number_density_cm3;
+    };
+    if prepared.operational_o2_lut.enabled() && owner_species == AbsorberSpecies::O2 {
+        return sublayer.oxygen_number_density_cm3;
+    }
+    line_absorber_density_for_species_at_sublayer(prepared, owner_species, global_sublayer_index)
+}
+
+fn cross_section_carrier_density_at_sublayer(
+    prepared: &PreparedOpticalState,
+    global_sublayer_index: usize,
+) -> f64 {
+    prepared
+        .cross_section_absorbers
+        .iter()
+        .filter_map(|absorber| absorber.number_densities_cm3.get(global_sublayer_index))
+        .copied()
+        .sum()
+}
+
+pub fn line_spectroscopy_carrier_density(
+    prepared: &PreparedOpticalState,
+    absorber_density_cm3: f64,
+    oxygen_density_cm3: f64,
+    cross_section_density_cm3: f64,
+) -> f64 {
+    if prepared.operational_o2_lut.enabled() {
+        return oxygen_density_cm3;
+    }
+    if cross_section_density_cm3 <= 0.0 {
+        return absorber_density_cm3;
+    }
+    (absorber_density_cm3 - cross_section_density_cm3).max(0.0)
+}
+
+pub fn line_spectroscopy_carrier_density_at_sublayer(
+    prepared: &PreparedOpticalState,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+) -> f64 {
+    line_spectroscopy_carrier_density(
+        prepared,
+        sublayer.absorber_number_density_cm3,
+        sublayer.oxygen_number_density_cm3,
+        if prepared.cross_section_absorbers.is_empty() {
+            0.0
+        } else {
+            cross_section_carrier_density_at_sublayer(prepared, global_sublayer_index)
+        },
+    )
+}
+
+pub fn continuum_carrier_density_at_altitude(
+    prepared: &PreparedOpticalState,
+    sublayers: &[PreparedSublayer],
+    altitude_km: f64,
+    absorber_density_cm3: f64,
+    oxygen_density_cm3: f64,
+) -> f64 {
+    if prepared.line_absorbers.is_empty() {
+        return absorber_density_cm3;
+    }
+
+    let Some(owner_species) = prepared.continuum_owner_species else {
+        return absorber_density_cm3;
+    };
+    if prepared.operational_o2_lut.enabled() && owner_species == AbsorberSpecies::O2 {
+        return oxygen_density_cm3;
+    }
+    line_absorber_density_for_species_at_altitude(prepared, owner_species, sublayers, altitude_km)
 }
 
 fn fraction_at_wavelength(control: &FractionControl, wavelength_nm: f64) -> f64 {
