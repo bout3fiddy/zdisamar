@@ -3,6 +3,7 @@ pub use super::attenuation::{
     fill_attenuation_dynamic_with_grid,
 };
 pub use super::layers::{
+    calc_rt_layers, calc_rt_layers_into, calc_rt_layers_into_with_basis,
     fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
     renormalize_zero_fourier_phase_kernel, zero_fourier_integral,
 };

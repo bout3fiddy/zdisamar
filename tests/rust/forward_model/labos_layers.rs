@@ -3,7 +3,8 @@ use zdisamar::forward_model::{
     radiative_transfer::{
         common_types::LayerInput,
         labos::{
-            FourierPlmBasis, Geometry, MAX_PHASE_COEF, fill_layer_effective_scattering_suffixes,
+            FourierPlmBasis, Geometry, MAX_PHASE_COEF, Mat, PhaseKernel, calc_rt_layers,
+            calc_rt_layers_into_with_basis, fill_layer_effective_scattering_suffixes,
             fill_layer_phase_max_indices, fill_surface, fill_zplus_zmin_from_basis,
             renormalize_zero_fourier_phase_kernel, zero_fourier_integral,
         },
@@ -115,4 +116,75 @@ fn zero_fourier_renormalization_restores_column_integrals() {
             1.0e-10,
         );
     }
+}
+
+#[test]
+fn rt_layer_builder_skips_fourier_orders_without_phase_support() {
+    let geometry = Geometry::init(4, 0.58, 0.64);
+    let layers = vec![LayerInput {
+        optical_depth: 0.2,
+        scattering_optical_depth: 0.1,
+        single_scatter_albedo: 0.7,
+        phase_coefficients: phase_coefficients(&[(1, 0.2)]),
+        ..LayerInput::default()
+    }];
+
+    let rt = calc_rt_layers(&layers, 2, &geometry, Default::default());
+    for value in rt[1].r.data.iter().take(geometry.nmutot * geometry.nmutot) {
+        assert_close(*value, 0.0, 0.0);
+    }
+}
+
+#[test]
+fn rt_layer_builder_populates_phase_cache_and_active_mask() {
+    let geometry = Geometry::init(4, 0.58, 0.64);
+    let layers = vec![LayerInput {
+        optical_depth: 0.2,
+        scattering_optical_depth: 0.1,
+        single_scatter_albedo: 0.7,
+        phase_coefficients: phase_coefficients(&[(1, 0.2), (2, 0.05)]),
+        ..LayerInput::default()
+    }];
+    let mut rt = vec![
+        fill_surface(0, 0.0, &geometry),
+        fill_surface(0, 0.0, &geometry),
+    ];
+    let mut max_indices = vec![0; layers.len()];
+    fill_layer_phase_max_indices(&mut max_indices, &layers);
+    let mut suffixes = vec![0.0; layers.len() * MAX_PHASE_COEF];
+    fill_layer_effective_scattering_suffixes(&mut suffixes, &layers, &max_indices);
+    let basis = FourierPlmBasis::init(0, max_indices[0], &geometry);
+    let mut phase_cache = vec![
+        PhaseKernel {
+            zplus: Mat::zero(geometry.nmutot),
+            zmin: Mat::zero(geometry.nmutot),
+        };
+        2
+    ];
+    let mut phase_valid = vec![true; 2];
+    let mut active = vec![true; 2];
+
+    calc_rt_layers_into_with_basis(
+        &mut rt,
+        &layers,
+        0,
+        &geometry,
+        Default::default(),
+        &basis,
+        Some(&max_indices),
+        Some(&suffixes),
+        Some(&mut phase_cache),
+        Some(&mut phase_valid),
+        Some(&mut active),
+    );
+
+    assert!(!active[0]);
+    assert!(active[1]);
+    assert!(!phase_valid[0]);
+    assert!(phase_valid[1]);
+    assert!(
+        rt[1].r.data[..geometry.nmutot * geometry.nmutot]
+            .iter()
+            .any(|value| *value != 0.0)
+    );
 }
