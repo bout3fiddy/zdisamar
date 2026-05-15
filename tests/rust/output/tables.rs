@@ -4,7 +4,8 @@ use zdisamar::{
     forward_model::{
         instrument_grid::{InstrumentGridProduct, InstrumentGridSummary},
         optical_properties::state_build::{
-            PreparedLayer, PreparedOpticalState, PreparedSublayer, PreparedSupportRowKind,
+            PreparedLayer, PreparedLineAbsorber, PreparedOpticalState, PreparedSublayer,
+            PreparedSupportRowKind,
         },
         radiative_transfer::{
             common_route,
@@ -14,12 +15,15 @@ use zdisamar::{
     input::{
         atmosphere::PartitionLabel,
         instrument::IntegrationMode,
-        reference_data::{CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable},
+        reference_data::{
+            CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, RelaxationMatrix,
+            SpectroscopyLine, SpectroscopyLineList, SpectroscopyStrongLine,
+        },
         scene::{DerivativeMode, Scene},
     },
     output::{
-        self, CHANNEL_MASK_IRRADIANCE, CHANNEL_MASK_RADIANCE, InstrumentResponseRow, SummaryReport,
-        SupportRowKind,
+        self, CHANNEL_MASK_IRRADIANCE, CHANNEL_MASK_RADIANCE, InstrumentResponseRow, O2LineRowKind,
+        O2LineStatus, SummaryReport, SupportRowKind,
     },
 };
 
@@ -28,6 +32,36 @@ fn assert_close(actual: f64, expected: f64, tolerance: f64) {
         (actual - expected).abs() <= tolerance,
         "expected {actual} to be within {tolerance} of {expected}"
     );
+}
+
+fn weak_o2_line() -> SpectroscopyLine {
+    SpectroscopyLine {
+        gas_index: 7,
+        isotope_number: 1,
+        center_wavelength_nm: 760.5,
+        center_wavenumber_cm1: Some(1.0e7 / 760.5),
+        line_strength_cm2_per_molecule: 1.0e-24,
+        air_half_width_cm1: Some(0.05),
+        temperature_exponent: 0.75,
+        lower_state_energy_cm1: 10.0,
+        pressure_shift_cm1: Some(0.0),
+        ..SpectroscopyLine::default()
+    }
+}
+
+fn strong_o2_line() -> SpectroscopyStrongLine {
+    SpectroscopyStrongLine {
+        center_wavenumber_cm1: 1.0e7 / 760.5,
+        center_wavelength_nm: 760.5,
+        population_t0: 1.0e-20,
+        dipole_ratio: 1.0,
+        dipole_t0: 1.0e-5,
+        lower_state_energy_cm1: 10.0,
+        air_half_width_cm1: 0.05,
+        temperature_exponent: 0.75,
+        rotational_index_m1: 1,
+        ..SpectroscopyStrongLine::default()
+    }
 }
 
 #[test]
@@ -102,6 +136,47 @@ fn summary_report_writer_matches_zig_field_names() {
     assert!(content.contains("\"sample_count\": 2"));
     assert!(content.contains("\"wavelength_start_nm\": 760"));
     assert!(content.contains("\"mean_reflectance\": 0.5"));
+}
+
+#[test]
+fn o2_line_contributions_report_weak_and_strong_rows() {
+    let prepared = PreparedOpticalState {
+        effective_temperature_k: 296.0,
+        effective_pressure_hpa: 500.0,
+        line_absorbers: vec![PreparedLineAbsorber {
+            species: zdisamar::input::atmospheric_types::AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList {
+                lines: vec![weak_o2_line()],
+                strong_lines: Some(vec![strong_o2_line()]),
+                relaxation_matrix: Some(RelaxationMatrix {
+                    line_count: 1,
+                    wt0: vec![0.05],
+                    bw: vec![0.0],
+                }),
+                ..SpectroscopyLineList::default()
+            },
+            number_densities_cm3: Vec::new(),
+            strong_line_states: Vec::new(),
+            column_density_factor: 1.0,
+        }],
+        ..PreparedOpticalState::default()
+    };
+
+    let table = output::build_o2_line_contributions(&prepared, &[760.5], 10).unwrap();
+
+    assert_eq!(table.total_row_count, 2);
+    assert!(!table.truncated);
+    assert_eq!(table.rows.len(), 2);
+    assert_eq!(table.rows[0].row_kind, O2LineRowKind::WeakLine);
+    assert_eq!(table.rows[0].status, O2LineStatus::WeakExcludedByStrongLine);
+    assert_eq!(table.rows[0].matched_strong_line_index, 0);
+    assert_eq!(table.rows[1].row_kind, O2LineRowKind::StrongLine);
+    assert_eq!(table.rows[1].status, O2LineStatus::StrongSidecar);
+    assert_close(
+        table.rows[1].strong_line_sigma_cm2_per_molecule,
+        5.786_354_609_661_759e-45,
+        1.0e-57,
+    );
 }
 
 #[test]

@@ -323,13 +323,13 @@ pub fn weak_line_contribution_prepared(
     }
 }
 
-fn line_center_wavenumber_cm1(line: &SpectroscopyLine) -> f64 {
+pub fn line_center_wavenumber_cm1(line: &SpectroscopyLine) -> f64 {
     line.center_wavenumber_cm1
         .filter(|value| value.is_finite())
         .unwrap_or_else(|| wavelength_to_wavenumber_cm1(line.center_wavelength_nm))
 }
 
-fn line_air_half_width_cm1(line: &SpectroscopyLine) -> f64 {
+pub fn line_air_half_width_cm1(line: &SpectroscopyLine) -> f64 {
     line.air_half_width_cm1
         .filter(|value| value.is_finite())
         .unwrap_or_else(|| {
@@ -337,7 +337,7 @@ fn line_air_half_width_cm1(line: &SpectroscopyLine) -> f64 {
         })
 }
 
-fn line_pressure_shift_cm1(line: &SpectroscopyLine) -> f64 {
+pub fn line_pressure_shift_cm1(line: &SpectroscopyLine) -> f64 {
     line.pressure_shift_cm1
         .filter(|value| value.is_finite())
         .unwrap_or_else(|| {
@@ -345,7 +345,7 @@ fn line_pressure_shift_cm1(line: &SpectroscopyLine) -> f64 {
         })
 }
 
-fn shifted_line_center_wavenumber_cm1(line: &SpectroscopyLine, pressure_atm: f64) -> f64 {
+pub fn shifted_line_center_wavenumber_cm1(line: &SpectroscopyLine, pressure_atm: f64) -> f64 {
     (line_center_wavenumber_cm1(line) + line_pressure_shift_cm1(line) * pressure_atm).max(1.0)
 }
 
