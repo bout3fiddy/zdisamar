@@ -3,8 +3,12 @@ use crate::{
     forward_model::{
         instrument_grid::{
             grid_calculation::{
+                cache::SpectralEvaluationCache,
                 forward_input::ForwardInputBuffers,
-                spectral_forward::{self, compute_forward_sample_at_wavelength},
+                spectral_eval::{
+                    self, IntegrationKernel, integrate_forward_at_nominal,
+                    integrate_irradiance_at_nominal,
+                },
                 storage,
                 types::{InstrumentGridProduct, InstrumentGridSummary},
             },
@@ -16,14 +20,14 @@ use crate::{
             LayerInput, PseudoSphericalSample, Route, RtmQuadratureLevel, SourceInterfaceInput,
         },
     },
-    input::{reference::solar_irradiance, scene::Scene},
+    input::scene::Scene,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     Scene(errors::Error),
     Grid(grid::Error),
-    ForwardSample(spectral_forward::Error),
+    SpectralEval(spectral_eval::Error),
 }
 
 impl From<errors::Error> for Error {
@@ -38,9 +42,9 @@ impl From<grid::Error> for Error {
     }
 }
 
-impl From<spectral_forward::Error> for Error {
-    fn from(value: spectral_forward::Error) -> Self {
-        Self::ForwardSample(value)
+impl From<spectral_eval::Error> for Error {
+    fn from(value: spectral_eval::Error) -> Self {
+        Self::SpectralEval(value)
     }
 }
 
@@ -126,25 +130,31 @@ pub fn simulate_product(
         wants_jacobian.then(|| vec![0.0; sample_count * jacobian::STATE_COUNT]);
     let mut summary = RunningSummary::new();
     let solar_cosine = scene.geometry.solar_cosine_at_altitude(0.0);
+    let mut cache = SpectralEvaluationCache::default();
+    let integration = IntegrationKernel::disabled();
+    let mut forward_buffers = ForwardInputBuffers {
+        layer_inputs: &mut layer_inputs,
+        pseudo_spherical_layers: &mut pseudo_spherical_layers,
+        source_interfaces: &mut source_interfaces,
+        rtm_quadrature_levels: &mut rtm_quadrature_levels,
+        pseudo_spherical_samples: &mut pseudo_spherical_samples,
+        pseudo_spherical_level_starts: &mut pseudo_spherical_level_starts,
+        pseudo_spherical_level_altitudes: &mut pseudo_spherical_level_altitudes,
+    };
 
     for index in 0..sample_count {
         let wavelength_nm = axis.sample_at(index as u32)?;
-        let sample = compute_forward_sample_at_wavelength(
+        let sample = integrate_forward_at_nominal(
             scene,
             route,
             prepared,
             wavelength_nm,
-            ForwardInputBuffers {
-                layer_inputs: &mut layer_inputs,
-                pseudo_spherical_layers: &mut pseudo_spherical_layers,
-                source_interfaces: &mut source_interfaces,
-                rtm_quadrature_levels: &mut rtm_quadrature_levels,
-                pseudo_spherical_samples: &mut pseudo_spherical_samples,
-                pseudo_spherical_level_starts: &mut pseudo_spherical_level_starts,
-                pseudo_spherical_level_altitudes: &mut pseudo_spherical_level_altitudes,
-            },
+            &mut forward_buffers,
+            &mut cache,
+            &integration,
         )?;
-        let sample_irradiance = solar_irradiance::irradiance_at_wavelength(scene, wavelength_nm);
+        let sample_irradiance =
+            integrate_irradiance_at_nominal(scene, wavelength_nm, &mut cache, &integration)?;
         let sample_reflectance = if sample_irradiance > 0.0 && solar_cosine > 0.0 {
             sample.radiance * std::f64::consts::PI / (sample_irradiance * solar_cosine)
         } else {

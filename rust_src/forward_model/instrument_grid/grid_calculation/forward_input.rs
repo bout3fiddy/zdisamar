@@ -45,6 +45,20 @@ pub struct ForwardInputBuffers<'a> {
     pub pseudo_spherical_level_altitudes: &'a mut [f64],
 }
 
+impl ForwardInputBuffers<'_> {
+    pub fn reborrow(&mut self) -> ForwardInputBuffers<'_> {
+        ForwardInputBuffers {
+            layer_inputs: &mut *self.layer_inputs,
+            pseudo_spherical_layers: &mut *self.pseudo_spherical_layers,
+            source_interfaces: &mut *self.source_interfaces,
+            rtm_quadrature_levels: &mut *self.rtm_quadrature_levels,
+            pseudo_spherical_samples: &mut *self.pseudo_spherical_samples,
+            pseudo_spherical_level_starts: &mut *self.pseudo_spherical_level_starts,
+            pseudo_spherical_level_altitudes: &mut *self.pseudo_spherical_level_altitudes,
+        }
+    }
+}
+
 pub fn configured_forward_input(
     scene: &Scene,
     route: Route,

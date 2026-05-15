@@ -1,9 +1,14 @@
 use zdisamar::{
     forward_model::{
+        instrument_grid::grid_calculation::cache::SpectralEvaluationCache,
         instrument_grid::grid_calculation::forward_input::{
             ForwardInputBuffers, configured_forward_input,
         },
         instrument_grid::grid_calculation::simulate::simulate_product,
+        instrument_grid::grid_calculation::spectral_eval::{
+            IntegrationKernel, cached_irradiance_at_wavelength, integrate_forward_at_nominal,
+            integrate_irradiance_at_nominal,
+        },
         instrument_grid::grid_calculation::spectral_forward::compute_forward_sample_at_wavelength,
         instrument_grid::grid_calculation::storage::{
             Buffers, Error as StorageError, pseudo_spherical_sample_count_hint,
@@ -407,6 +412,68 @@ fn compute_forward_sample_runs_configured_input_and_labos_radiance() {
         1.0,
     );
     assert_eq!(sample.jacobian, jacobian::zero());
+}
+
+#[test]
+fn spectral_eval_caches_forward_and_integrates_kernel_samples() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        }]),
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.surface.albedo = 0.23;
+    let mut route = route();
+    route.rtm_controls.scattering = ScatteringMode::None;
+    route.rtm_controls.integrate_source_function = false;
+    let mut layers = vec![LayerInput::default(); 1];
+    let mut pseudo_layers = vec![LayerInput::default(); 1];
+    let mut source_interfaces = vec![SourceInterfaceInput::default(); 2];
+    let mut rtm_levels = vec![RtmQuadratureLevel::default(); 2];
+    let mut pseudo_samples = vec![PseudoSphericalSample::default(); 1];
+    let mut pseudo_starts = vec![0; 2];
+    let mut pseudo_altitudes = vec![0.0; 2];
+    let mut buffers = ForwardInputBuffers {
+        layer_inputs: &mut layers,
+        pseudo_spherical_layers: &mut pseudo_layers,
+        source_interfaces: &mut source_interfaces,
+        rtm_quadrature_levels: &mut rtm_levels,
+        pseudo_spherical_samples: &mut pseudo_samples,
+        pseudo_spherical_level_starts: &mut pseudo_starts,
+        pseudo_spherical_level_altitudes: &mut pseudo_altitudes,
+    };
+    let mut cache = SpectralEvaluationCache::default();
+    let integration = IntegrationKernel::from_samples(vec![-1.0, 1.0], vec![0.25, 0.75]);
+
+    let sample = integrate_forward_at_nominal(
+        &scene,
+        route,
+        &prepared,
+        760.0,
+        &mut buffers,
+        &mut cache,
+        &integration,
+    )
+    .unwrap();
+    let irradiance =
+        integrate_irradiance_at_nominal(&scene, 760.0, &mut cache, &integration).unwrap();
+    let expected_radiance = 0.23 * irradiance / std::f64::consts::PI;
+
+    assert_close(sample.radiance, expected_radiance, 1.0);
+    assert_eq!(sample.jacobian, jacobian::zero());
+    assert_eq!(cache.forward_len(), 2);
+    assert_eq!(cache.irradiance_len(), 2);
+
+    let cached = cached_irradiance_at_wavelength(&scene, 759.0, &mut cache);
+    assert_close(
+        cached,
+        zdisamar::input::reference::solar_irradiance::irradiance_at_wavelength(&scene, 759.0),
+        0.0,
+    );
+    assert_eq!(cache.irradiance_len(), 2);
 }
 
 #[test]
