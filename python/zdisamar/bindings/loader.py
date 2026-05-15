@@ -1,4 +1,4 @@
-"""Load the packaged zdisamar Zig binding."""
+"""Load the packaged zdisamar native binding."""
 
 import ctypes
 import os
@@ -13,7 +13,7 @@ def load_library() -> ctypes.CDLL:
 
     if not packaged.is_file():
         raise FileNotFoundError(
-            "zdisamar Zig bindings are not packaged; run `zig build` before using "
+            "zdisamar native bindings are not packaged; build the Rust library before using "
             "the source checkout or install a built wheel"
         )
 

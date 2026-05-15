@@ -357,7 +357,7 @@ pub fn build(b: *std.Build) void {
     sync_python_package_cmd.step.dependOn(&c_api_install.step);
     const sync_python_package_step = b.step(
         "sync-python-package",
-        "Copy Zig bindings and reference data into the Python package tree",
+        "Copy native bindings and reference data into the Python package tree",
     );
     sync_python_package_step.dependOn(&sync_python_package_cmd.step);
 

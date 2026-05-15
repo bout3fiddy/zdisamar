@@ -1,4 +1,4 @@
-"""Low-level Zig binding handle for RTM calls."""
+"""Low-level native binding handle for RTM calls."""
 
 import copy
 import ctypes
@@ -85,7 +85,7 @@ def jacobian_state_ids(state_names: tuple[str, ...]):
 
 
 class RtmHandle:
-    """Own the opaque Zig RTM handle used by the C ABI."""
+    """Own the opaque native RTM handle used by the C ABI."""
 
     def __init__(self):
 
@@ -103,7 +103,7 @@ class RtmHandle:
         return None if self._case is None else copy.deepcopy(self._case)
 
     def default_o2a_case(self) -> O2AInput:
-        """Read the packaged O2 A reference case from the Zig binding."""
+        """Read the packaged O2 A reference case from the native binding."""
 
         size = ctypes.c_size_t()
         self._check(self._lib.zds_default_o2a_input_json(self._ctx, None, 0, ctypes.byref(size)))
@@ -280,7 +280,7 @@ class RtmHandle:
         )
 
     def close(self) -> None:
-        """Release the opaque Zig RTM handle."""
+        """Release the opaque native RTM handle."""
 
         if self._ctx:
             self._lib.zds_context_destroy(self._ctx)

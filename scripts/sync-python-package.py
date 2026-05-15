@@ -13,7 +13,7 @@ def parse_args() -> argparse.Namespace:
         "--binding",
         type=Path,
         required=True,
-        help="Zig-built zdisamar C shared-library artifact.",
+        help="Built zdisamar C shared-library artifact.",
     )
 
     return parser.parse_args()
@@ -42,7 +42,7 @@ def main() -> int:
     library_source = args.binding
 
     if not library_source.is_file():
-        raise FileNotFoundError(f"Zig shared library is not built: {library_source}")
+        raise FileNotFoundError(f"native shared library is not built: {library_source}")
 
     bindings_dir = package_root / "bindings"
     bindings_dir.mkdir(parents=True, exist_ok=True)
