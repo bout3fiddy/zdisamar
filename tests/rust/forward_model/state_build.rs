@@ -16,6 +16,7 @@ use zdisamar::{
                 effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
                 fill_forward_layers_at_wavelength, fill_rtm_quadrature_at_wavelength_with_layers,
                 fill_shared_pseudo_spherical_grid_from_layer_inputs,
+                fill_source_interfaces_at_wavelength_with_layers,
                 fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
                 forward_input_from_optical_depths, interpolate_prepared_scalar_at_altitude,
                 interval_altitude_at_node, interval_weight_km, last_active_support_row_index,
@@ -1452,6 +1453,99 @@ fn rtm_quadrature_fills_shared_grid_from_boundary_carriers() {
     assert_close(
         rtm_levels[1].aerosol_ksca_phase_below_per_km[1],
         0.02,
+        1.0e-14,
+    );
+}
+
+#[test]
+fn source_interfaces_fill_shared_grid_from_boundary_carriers() {
+    let mut below_phase = phase_functions::zero_phase_coefficients();
+    below_phase[1] = 0.2;
+    let mut above_phase = phase_functions::zero_phase_coefficients();
+    above_phase[1] = 0.8;
+    let sublayers = vec![
+        PreparedSublayer {
+            altitude_km: 0.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: below_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 2.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 3.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.3,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: above_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 4.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let mut prepared = PreparedOpticalState {
+        layers: vec![
+            PreparedLayer {
+                sublayer_start_index: 0,
+                sublayer_count: 3,
+                bottom_altitude_km: 0.0,
+                top_altitude_km: 2.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+            PreparedLayer {
+                sublayer_start_index: 2,
+                sublayer_count: 3,
+                bottom_altitude_km: 2.0,
+                top_altitude_km: 4.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+        ],
+        sublayers: Some(sublayers),
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        interval_semantics: IntervalSemantics::ExplicitPressureBounds,
+        ..PreparedOpticalState::default()
+    };
+    prepared.ensure_shared_rtm_geometry_cache().unwrap();
+    let layer_inputs = vec![LayerInput::default(), LayerInput::default()];
+    let mut source_interfaces = vec![SourceInterfaceInput::default(); 3];
+
+    fill_source_interfaces_at_wavelength_with_layers(
+        &prepared,
+        760.0,
+        &layer_inputs,
+        &mut source_interfaces,
+    )
+    .unwrap();
+
+    assert_close(source_interfaces[1].rtm_weight, 4.0, 1.0e-14);
+    assert_close(source_interfaces[1].particle_ksca_above, 0.3, 1.0e-14);
+    assert_close(source_interfaces[1].particle_ksca_below, 0.1, 1.0e-14);
+    assert_close(source_interfaces[1].ksca_above, 0.3, 1.0e-14);
+    assert_close(source_interfaces[1].ksca_below, 0.1, 1.0e-14);
+    assert_close(
+        source_interfaces[1].phase_coefficients_above[1],
+        0.8,
+        1.0e-14,
+    );
+    assert_close(
+        source_interfaces[1].phase_coefficients_below[1],
+        0.2,
         1.0e-14,
     );
 }

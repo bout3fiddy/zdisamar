@@ -1,10 +1,66 @@
-use super::state_types::{PreparedLayer, PreparedSublayer};
-use crate::forward_model::radiative_transfer::{
-    common_route,
-    common_types::{LayerInput, SourceInterfaceInput},
+use super::{
+    PreparedOpticalState, SharedBoundaryCarrier, shared_boundary_carrier_at_level,
+    state_types::{PreparedLayer, PreparedSublayer},
+};
+use crate::{
+    common::errors,
+    forward_model::radiative_transfer::{
+        common_route,
+        common_types::{LayerInput, SourceInterfaceInput},
+    },
 };
 
 const CENTIMETERS_PER_KILOMETER: f64 = 1.0e5;
+
+pub fn fill_source_interfaces_at_wavelength_with_layers(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    layer_inputs: &[LayerInput],
+    source_interfaces: &mut [SourceInterfaceInput],
+) -> Result<(), errors::Error> {
+    if layer_inputs.is_empty() || source_interfaces.len() != layer_inputs.len() + 1 {
+        return Ok(());
+    }
+
+    if let Some(sublayers) = &prepared.sublayers
+        && prepared.interval_semantics_use_reduced_shared_rtm_layers()
+        && layer_inputs.len() == prepared.layers.len()
+    {
+        if prepared
+            .shared_rtm_geometry
+            .is_valid_for(layer_inputs.len())
+        {
+            for (source_interface, &level_geometry) in source_interfaces
+                .iter_mut()
+                .zip(prepared.shared_rtm_geometry.levels.iter())
+            {
+                let boundary_carrier = shared_boundary_carrier_at_level(
+                    prepared,
+                    wavelength_nm,
+                    sublayers,
+                    level_geometry,
+                )?;
+                *source_interface = source_interface_from_boundary_carrier(
+                    level_geometry.weight_km,
+                    boundary_carrier,
+                );
+            }
+            return Ok(());
+        }
+        for source_interface in source_interfaces {
+            *source_interface = SourceInterfaceInput::default();
+        }
+        return Ok(());
+    }
+
+    fill_source_interfaces_from_prepared_layers(
+        layer_inputs,
+        prepared.sublayers.as_deref(),
+        &prepared.layers,
+        source_interfaces,
+    );
+    Ok(())
+}
 
 pub fn fill_source_interfaces_from_prepared_layers(
     layer_inputs: &[LayerInput],
@@ -52,6 +108,24 @@ fn fill_sublayer_source_interfaces(
             phase_coefficients_above: layer_inputs[ilevel].phase_coefficients,
             ..SourceInterfaceInput::default()
         };
+    }
+}
+
+fn source_interface_from_boundary_carrier(
+    rtm_weight: f64,
+    boundary_carrier: SharedBoundaryCarrier,
+) -> SourceInterfaceInput {
+    SourceInterfaceInput {
+        source_weight: 0.0,
+        rtm_weight,
+        gas_ksca: boundary_carrier.gas_scattering_optical_depth_per_km,
+        particle_ksca_above: boundary_carrier.particle_scattering_optical_depth_above_per_km,
+        particle_ksca_below: boundary_carrier.particle_scattering_optical_depth_below_per_km,
+        ksca_above: boundary_carrier.ksca_above,
+        ksca_below: boundary_carrier.ksca_below,
+        gas_phase_coefficients: boundary_carrier.gas_phase_coefficients,
+        phase_coefficients_above: boundary_carrier.phase_coefficients_above,
+        phase_coefficients_below: boundary_carrier.phase_coefficients_below,
     }
 }
 
