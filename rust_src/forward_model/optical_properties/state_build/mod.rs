@@ -1,9 +1,11 @@
 pub mod evaluation;
+pub mod operational_o2;
 pub mod spectroscopy;
 pub mod state_scalar;
 pub mod state_types;
 
 pub use evaluation::{accumulate_breakdown, layer_input_from_evaluated};
+pub use operational_o2::operational_o2_evaluation_at_wavelength;
 pub use spectroscopy::{
     DEFAULT_O2_VOLUME_MIXING_RATIO, collect_active_cross_section_absorbers,
     collect_active_line_absorbers, prepare_cross_section_absorbers, resolve_active_line_species,

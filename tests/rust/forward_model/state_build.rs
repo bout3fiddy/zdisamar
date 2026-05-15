@@ -9,10 +9,10 @@ use zdisamar::{
                 SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
                 accumulate_breakdown, collect_active_cross_section_absorbers,
                 collect_active_line_absorbers, interpolate_prepared_scalar_at_altitude,
-                layer_input_from_evaluated, particle_optical_depth_at_wavelength,
-                prepare_cross_section_absorbers, prepared_scalar_for_sublayer,
-                resolve_active_line_species, resolve_continuum_owner_species, sort_line_list,
-                species_mixing_ratio_at_pressure,
+                layer_input_from_evaluated, operational_o2_evaluation_at_wavelength,
+                particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
+                prepared_scalar_for_sublayer, resolve_active_line_species,
+                resolve_continuum_owner_species, sort_line_list, species_mixing_ratio_at_pressure,
             },
         },
     },
@@ -404,6 +404,33 @@ fn spectroscopy_helpers_resolve_species_and_profiles() {
             None,
         )
         .unwrap(),
+        0.0,
+        0.0,
+    );
+}
+
+#[test]
+fn operational_o2_evaluation_wraps_lut_sigma_as_line_absorption() {
+    let lut = OperationalCrossSectionLut {
+        wavelengths_nm: vec![760.0, 761.0],
+        coefficients: vec![2.0, 4.0],
+        temperature_coefficient_count: 1,
+        pressure_coefficient_count: 1,
+        min_temperature_k: 180.0,
+        max_temperature_k: 320.0,
+        min_pressure_hpa: 200.0,
+        max_pressure_hpa: 1000.0,
+    };
+
+    let evaluation = operational_o2_evaluation_at_wavelength(&lut, 760.5, 250.0, 500.0);
+
+    assert_close(evaluation.weak_line_sigma_cm2_per_molecule, 3.0, 0.0);
+    assert_close(evaluation.strong_line_sigma_cm2_per_molecule, 0.0, 0.0);
+    assert_close(evaluation.line_sigma_cm2_per_molecule, 3.0, 0.0);
+    assert_close(evaluation.line_mixing_sigma_cm2_per_molecule, 0.0, 0.0);
+    assert_close(evaluation.total_sigma_cm2_per_molecule, 3.0, 0.0);
+    assert_close(
+        evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k,
         0.0,
         0.0,
     );

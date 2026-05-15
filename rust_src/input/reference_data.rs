@@ -12,6 +12,16 @@ pub struct SpectroscopyLineList {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct SpectroscopyEvaluation {
+    pub weak_line_sigma_cm2_per_molecule: f64,
+    pub strong_line_sigma_cm2_per_molecule: f64,
+    pub line_sigma_cm2_per_molecule: f64,
+    pub line_mixing_sigma_cm2_per_molecule: f64,
+    pub total_sigma_cm2_per_molecule: f64,
+    pub d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct CrossSectionPoint {
     pub wavelength_nm: f64,
     pub sigma_cm2_per_molecule: f64,
