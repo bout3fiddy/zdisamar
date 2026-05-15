@@ -423,23 +423,19 @@ pub fn prefetchForwardSamples(
     }
 
     var started_thread_count: usize = 0;
-    var spawn_error: ?std.Thread.SpawnError = null;
     for (0..worker_count - 1) |worker_index| {
         threads[started_thread_count] = std.Thread.spawn(
             .{},
             prefetchForwardWorkerMain,
             .{&workers[worker_index]},
-        ) catch |err| {
-            spawn_error = err;
-            break;
+        ) catch {
+            prefetchForwardWorkerMain(&workers[worker_index]);
+            continue;
         };
         started_thread_count += 1;
     }
-    if (spawn_error == null) {
-        prefetchForwardWorkerMain(&workers[worker_count - 1]);
-    }
+    prefetchForwardWorkerMain(&workers[worker_count - 1]);
     for (threads[0..started_thread_count]) |thread| thread.join();
-    if (spawn_error) |err| return err;
     if (error_state.err) |err| return err;
 }
 
