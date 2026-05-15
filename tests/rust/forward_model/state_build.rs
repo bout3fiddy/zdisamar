@@ -9,10 +9,10 @@ use zdisamar::{
                 INVALID_SUPPORT_ROW_INDEX, OpticalDepthBreakdown, PreparationContext,
                 PreparationInputs, PreparedCrossSectionAbsorber,
                 PreparedCrossSectionRepresentation, PreparedLayer, PreparedLineAbsorber,
-                PreparedMeans, PreparedOpticalState, PreparedSublayer, PseudoSphericalBuffers,
-                SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry, accumulate,
-                accumulate_breakdown, assemble, build_absorbers,
-                build_shared_rtm_geometry_from_layers, build_vertical_grid,
+                PreparedMeans, PreparedOpticalState, PreparedSublayer, PreparedSupportRowKind,
+                PseudoSphericalBuffers, SharedRtmGeometry, SharedRtmLayerGeometry,
+                SharedRtmLevelGeometry, accumulate, accumulate_breakdown, assemble,
+                build_absorbers, build_shared_rtm_geometry_from_layers, build_vertical_grid,
                 collect_active_cross_section_absorbers, collect_active_line_absorbers,
                 collision_induced_sigma_at_wavelength, continuum_carrier_density_at_sublayer,
                 effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
@@ -557,6 +557,115 @@ fn accumulation_populates_layers_sublayers_and_prepared_means() {
     assert!(accumulation.means.oxygen_column_density_factor > 0.0);
     assert!(accumulation.means.total_optical_depth > 0.0);
     assert!(absorbers.owned_cross_section_absorbers[0].column_density_factor > 0.0);
+}
+
+#[test]
+fn accumulation_populates_disamar_parity_support_rows() {
+    let mut radiance = SpectralChannelControls {
+        explicit: true,
+        ..SpectralChannelControls::default()
+    };
+    radiance.response.integration_mode = IntegrationMode::DisamarHrGrid;
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 762.0,
+            sample_count: 3,
+        },
+        atmosphere: Atmosphere {
+            layer_count: 1,
+            sublayer_divisions: 2,
+            interval_grid: IntervalGrid {
+                semantics: IntervalSemantics::ExplicitPressureBounds,
+                intervals: vec![VerticalInterval {
+                    index_1based: 1,
+                    top_pressure_hpa: 200.0,
+                    bottom_pressure_hpa: 1000.0,
+                    top_altitude_km: 10.0,
+                    bottom_altitude_km: 0.0,
+                    altitude_divisions: 1,
+                    ..VerticalInterval::default()
+                }],
+                ..IntervalGrid::default()
+            },
+            ..Atmosphere::default()
+        },
+        observation_model: ObservationModel {
+            measurement_pipeline: MeasurementPipeline {
+                radiance,
+                ..MeasurementPipeline::default()
+            },
+            ..ObservationModel::default()
+        },
+        absorbers: AbsorberSet {
+            items: vec![Absorber {
+                id: "o2-lines".to_string(),
+                species: "o2".to_string(),
+                spectroscopy: Spectroscopy {
+                    mode: SpectroscopyMode::LineByLine,
+                    ..Spectroscopy::default()
+                },
+                volume_mixing_ratio_profile_ppmv: vec![[1000.0, 209_460.0]],
+                ..Absorber::default()
+            }],
+        },
+        ..Scene::default()
+    };
+    let profile = simple_profile();
+    let cross_sections = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 0.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 0.0,
+            },
+        ],
+    };
+    let lut = AirmassFactorLut::default();
+    let line_list = SpectroscopyLineList {
+        lines: vec![weak_o2_line()],
+        ..SpectroscopyLineList::default()
+    };
+    let mut context = PreparationContext::init(
+        &scene,
+        PreparationInputs {
+            profile: &profile,
+            spectroscopy_profile: None,
+            cross_sections: &cross_sections,
+            lut: &lut,
+            collision_induced_absorption: None,
+            spectroscopy_lines: Some(&line_list),
+            aerosol_mie: None,
+            cloud_mie: None,
+        },
+    )
+    .unwrap();
+    let mut absorbers = build_absorbers(&mut context).unwrap();
+
+    let accumulation = accumulate(&mut context, &mut absorbers).unwrap();
+
+    assert_eq!(context.layers.len(), 2);
+    assert_eq!(context.sublayers.len(), 7);
+    assert_eq!(
+        context.sublayers[0].support_row_kind,
+        PreparedSupportRowKind::ParityBoundary
+    );
+    assert_eq!(
+        context.sublayers[1].support_row_kind,
+        PreparedSupportRowKind::ParityActive
+    );
+    assert_eq!(
+        context.sublayers[3].support_row_kind,
+        PreparedSupportRowKind::ParityBoundary
+    );
+    assert_eq!(context.sublayers[0].path_length_cm, 0.0);
+    assert!(context.sublayers[1].path_length_cm > 0.0);
+    assert!(context.layers[0].optical_depth > 0.0);
+    assert!(context.layers[1].optical_depth > 0.0);
+    assert!(accumulation.means.air_column_density_factor > 0.0);
 }
 
 #[test]
