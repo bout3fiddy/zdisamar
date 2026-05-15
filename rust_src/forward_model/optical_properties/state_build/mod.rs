@@ -74,7 +74,7 @@ pub use state_scalar::{
     prepared_scalar_for_sublayer,
 };
 pub use state_spectroscopy::{
-    cia_sigma_at_wavelength, collision_induced_sigma_at_wavelength,
+    ProfileNodeSpectroscopyCache, cia_sigma_at_wavelength, collision_induced_sigma_at_wavelength,
     effective_spectroscopy_evaluation_at_wavelength, total_cross_section_at_wavelength,
     weighted_cross_section_sigma_at_wavelength, weighted_spectroscopy_evaluation_at_wavelength,
     zero_spectroscopy_evaluation,

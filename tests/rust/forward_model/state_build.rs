@@ -10,11 +10,12 @@ use zdisamar::{
                 PreparationInputs, PreparedCrossSectionAbsorber,
                 PreparedCrossSectionRepresentation, PreparedLayer, PreparedLineAbsorber,
                 PreparedMeans, PreparedOpticalState, PreparedSublayer, PreparedSupportRowKind,
-                PseudoSphericalBuffers, SharedRtmGeometry, SharedRtmLayerGeometry,
-                SharedRtmLevelGeometry, accumulate, accumulate_breakdown, assemble,
-                build_absorbers, build_shared_rtm_geometry_from_layers, build_vertical_grid,
-                collect_active_cross_section_absorbers, collect_active_line_absorbers,
-                collision_induced_sigma_at_wavelength, continuum_carrier_density_at_sublayer,
+                ProfileNodeSpectroscopyCache, PseudoSphericalBuffers, SharedRtmGeometry,
+                SharedRtmLayerGeometry, SharedRtmLevelGeometry, accumulate, accumulate_breakdown,
+                assemble, build_absorbers, build_shared_rtm_geometry_from_layers,
+                build_vertical_grid, collect_active_cross_section_absorbers,
+                collect_active_line_absorbers, collision_induced_sigma_at_wavelength,
+                continuum_carrier_density_at_sublayer,
                 effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
                 fill_forward_layers_at_wavelength, fill_pseudo_spherical_grid_at_wavelength,
                 fill_rtm_quadrature_at_wavelength_with_layers,
@@ -36,7 +37,7 @@ use zdisamar::{
                 sort_line_list, species_mixing_ratio_at_pressure,
                 to_forward_input_at_wavelength_with_layers, total_cross_section_at_wavelength,
                 total_optical_depth_at_wavelength, weighted_cross_section_sigma_at_wavelength,
-                zero_spectroscopy_evaluation,
+                weighted_spectroscopy_evaluation_at_wavelength, zero_spectroscopy_evaluation,
             },
         },
         radiative_transfer::common_types::{
@@ -1765,6 +1766,32 @@ fn state_spectroscopy_evaluates_weak_line_absorber() {
         1.181_268_936_599_625e-23,
         1.0e-36,
     );
+}
+
+#[test]
+fn profile_node_spectroscopy_cache_matches_profile_node_evaluation() {
+    let prepared = PreparedOpticalState {
+        spectroscopy_lines: Some(SpectroscopyLineList {
+            lines: vec![weak_o2_line()],
+            ..SpectroscopyLineList::default()
+        }),
+        spectroscopy_profile_altitudes_km: vec![0.0, 5.0, 10.0],
+        spectroscopy_profile_pressures_hpa: vec![1000.0, 500.0, 200.0],
+        spectroscopy_profile_temperatures_k: vec![290.0, 250.0, 220.0],
+        ..PreparedOpticalState::default()
+    };
+
+    let cache = ProfileNodeSpectroscopyCache::new(&prepared, 760.5);
+    let cached = cache.evaluation_at_altitude(5.0).unwrap();
+    let direct =
+        weighted_spectroscopy_evaluation_at_wavelength(&prepared, 760.5, 250.0, 500.0).unwrap();
+
+    assert_close(
+        cached.total_sigma_cm2_per_molecule,
+        direct.total_sigma_cm2_per_molecule,
+        1.0e-36,
+    );
+    assert!(cache.evaluation_at_altitude(20.0).is_none());
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use super::{
     EvaluatedLayer, OpticalDepthBreakdown, PHASE_COEFFICIENT_COUNT, PreparedOpticalState,
-    PreparedSublayer, SharedOpticalCarrier, SharedRtmLayerGeometry,
-    shared_optical_carrier_at_support_row,
+    PreparedSublayer, ProfileNodeSpectroscopyCache, SharedOpticalCarrier, SharedRtmLayerGeometry,
+    carrier_eval::shared_optical_carrier_at_support_row_with_cache,
 };
 use crate::{
     common::errors,
@@ -74,6 +74,24 @@ pub fn evaluate_reduced_layer_from_support_rows(
     support_sublayers: &[PreparedSublayer],
     layer_geometry: SharedRtmLayerGeometry,
 ) -> Result<EvaluatedLayer, errors::Error> {
+    evaluate_reduced_layer_from_support_rows_with_cache(
+        prepared,
+        scene,
+        wavelength_nm,
+        support_sublayers,
+        layer_geometry,
+        None,
+    )
+}
+
+pub fn evaluate_reduced_layer_from_support_rows_with_cache(
+    prepared: &PreparedOpticalState,
+    scene: &Scene,
+    wavelength_nm: f64,
+    support_sublayers: &[PreparedSublayer],
+    layer_geometry: SharedRtmLayerGeometry,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+) -> Result<EvaluatedLayer, errors::Error> {
     let mut breakdown = OpticalDepthBreakdown::default();
     let mut phase_numerator = [0.0; PHASE_COEFFICIENT_COUNT];
     if support_sublayers.len() < 2 {
@@ -91,11 +109,12 @@ pub fn evaluate_reduced_layer_from_support_rows(
         if weight_km <= 0.0 {
             continue;
         }
-        let carrier = shared_optical_carrier_at_support_row(
+        let carrier = shared_optical_carrier_at_support_row_with_cache(
             prepared,
             wavelength_nm,
             *support_sublayer,
             support_sublayer.global_sublayer_index as usize,
+            profile_cache,
         )?;
         accumulate_shared_carrier(&mut breakdown, &mut phase_numerator, carrier, weight_km);
     }
@@ -117,6 +136,26 @@ pub fn fill_shared_pseudo_spherical_samples_from_support_rows(
     attenuation_samples: &mut [PseudoSphericalSample],
     sample_index_start: usize,
 ) -> Result<usize, errors::Error> {
+    fill_shared_pseudo_spherical_samples_from_support_rows_with_cache(
+        prepared,
+        wavelength_nm,
+        support_sublayers,
+        attenuation_layers,
+        attenuation_samples,
+        sample_index_start,
+        None,
+    )
+}
+
+pub fn fill_shared_pseudo_spherical_samples_from_support_rows_with_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    support_sublayers: &[PreparedSublayer],
+    attenuation_layers: &mut [LayerInput],
+    attenuation_samples: &mut [PseudoSphericalSample],
+    sample_index_start: usize,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+) -> Result<usize, errors::Error> {
     let mut sample_index = sample_index_start;
     if support_sublayers.len() < 2 {
         return Ok(sample_index);
@@ -129,11 +168,12 @@ pub fn fill_shared_pseudo_spherical_samples_from_support_rows(
         let weight_km = (support_sublayer.path_length_cm / 1.0e5).max(0.0);
         let optical_depth = if weight_km > 0.0 {
             weight_km
-                * shared_optical_carrier_at_support_row(
+                * shared_optical_carrier_at_support_row_with_cache(
                     prepared,
                     wavelength_nm,
                     *support_sublayer,
                     support_sublayer.global_sublayer_index as usize,
+                    profile_cache,
                 )?
                 .total_optical_depth_per_km()
         } else {

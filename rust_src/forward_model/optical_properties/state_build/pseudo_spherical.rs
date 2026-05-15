@@ -1,6 +1,7 @@
 use super::{
-    PreparedOpticalState, PreparedSublayer, fill_shared_pseudo_spherical_samples_from_support_rows,
-    level_altitude_from_sublayers, shared_optical_carrier_at_altitude,
+    PreparedOpticalState, PreparedSublayer, ProfileNodeSpectroscopyCache,
+    carrier_eval::shared_optical_carrier_at_altitude_with_cache, level_altitude_from_sublayers,
+    shared_carrier::fill_shared_pseudo_spherical_samples_from_support_rows_with_cache,
 };
 use crate::{
     common::{errors, math::quadrature::gauss_legendre},
@@ -136,15 +137,18 @@ pub fn fill_pseudo_spherical_grid_at_wavelength(
     if prepared.interval_semantics_use_reduced_shared_rtm_layers()
         && solver_layer_count == prepared.layers.len()
     {
+        let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
         return fill_shared_pseudo_spherical_grid_at_wavelength(
             prepared,
             wavelength_nm,
             solver_layer_count,
             sublayers,
             buffers,
+            &profile_cache,
         );
     }
 
+    let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
     fill_regular_pseudo_spherical_grid_at_wavelength(
         prepared,
         scene,
@@ -152,6 +156,7 @@ pub fn fill_pseudo_spherical_grid_at_wavelength(
         solver_layer_count,
         sublayers,
         buffers,
+        &profile_cache,
     )
 }
 
@@ -161,6 +166,7 @@ fn fill_shared_pseudo_spherical_grid_at_wavelength(
     solver_layer_count: usize,
     sublayers: &[PreparedSublayer],
     buffers: PseudoSphericalBuffers<'_>,
+    profile_cache: &ProfileNodeSpectroscopyCache,
 ) -> Result<bool, errors::Error> {
     if !prepared
         .shared_rtm_geometry
@@ -186,13 +192,14 @@ fn fill_shared_pseudo_spherical_grid_at_wavelength(
         let Some(support_sublayers) = sublayers.get(support_start_index..support_end_index) else {
             return Err(errors::Error::InvalidRequest);
         };
-        sample_index = fill_shared_pseudo_spherical_samples_from_support_rows(
+        sample_index = fill_shared_pseudo_spherical_samples_from_support_rows_with_cache(
             prepared,
             wavelength_nm,
             support_sublayers,
             &mut *buffers.attenuation_layers,
             &mut *buffers.attenuation_samples,
             sample_index,
+            Some(profile_cache),
         )?;
     }
     buffers.level_sample_starts[solver_layer_count] = sample_index;
@@ -206,6 +213,7 @@ fn fill_regular_pseudo_spherical_grid_at_wavelength(
     solver_layer_count: usize,
     sublayers: &[PreparedSublayer],
     buffers: PseudoSphericalBuffers<'_>,
+    profile_cache: &ProfileNodeSpectroscopyCache,
 ) -> Result<bool, errors::Error> {
     fill_regular_level_altitudes(
         prepared,
@@ -230,11 +238,12 @@ fn fill_regular_pseudo_spherical_grid_at_wavelength(
             } else {
                 interval.lower_altitude_km
             };
-            let optical_depth = shared_optical_carrier_at_altitude(
+            let optical_depth = shared_optical_carrier_at_altitude_with_cache(
                 prepared,
                 wavelength_nm,
                 interval.support_sublayers,
                 sample_altitude_km,
+                Some(profile_cache),
             )?
             .total_optical_depth_per_km()
                 * altitude_span_km;
@@ -286,11 +295,12 @@ fn fill_regular_pseudo_spherical_grid_at_wavelength(
             let node_altitude_km =
                 interval.lower_altitude_km + normalized_position * altitude_span_km;
             let weight_km = 0.5 * weights[node_index] * altitude_span_km;
-            let optical_depth = shared_optical_carrier_at_altitude(
+            let optical_depth = shared_optical_carrier_at_altitude_with_cache(
                 prepared,
                 wavelength_nm,
                 interval.support_sublayers,
                 node_altitude_km,
+                Some(profile_cache),
             )?
             .total_optical_depth_per_km()
                 * weight_km;

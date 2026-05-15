@@ -10,8 +10,9 @@ use crate::{
                 spectral_eval::{
                     self, integrate_forward_at_nominal, integrate_irradiance_at_nominal,
                 },
-                storage,
+                spectral_forward, storage,
                 types::{Implementations, InstrumentGridProduct, InstrumentGridSummary},
+                wavelength_plan::WavelengthSampling,
                 wavelength_sampling,
             },
             spectral_math::{
@@ -27,6 +28,7 @@ use crate::{
     },
     input::{instrument::SpectralChannel, scene::Scene},
 };
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -82,6 +84,45 @@ struct RunningSummary {
     jacobian_sum: jacobian::Vector,
 }
 
+struct ForwardScratch {
+    layer_inputs: Vec<LayerInput>,
+    pseudo_spherical_layers: Vec<LayerInput>,
+    source_interfaces: Vec<SourceInterfaceInput>,
+    rtm_quadrature_levels: Vec<RtmQuadratureLevel>,
+    pseudo_spherical_samples: Vec<PseudoSphericalSample>,
+    pseudo_spherical_level_starts: Vec<usize>,
+    pseudo_spherical_level_altitudes: Vec<f64>,
+}
+
+impl ForwardScratch {
+    fn new(transport_layer_count: usize, pseudo_spherical_sample_count: usize) -> Self {
+        Self {
+            layer_inputs: vec![LayerInput::default(); transport_layer_count],
+            pseudo_spherical_layers: vec![LayerInput::default(); pseudo_spherical_sample_count],
+            source_interfaces: vec![SourceInterfaceInput::default(); transport_layer_count + 1],
+            rtm_quadrature_levels: vec![RtmQuadratureLevel::default(); transport_layer_count + 1],
+            pseudo_spherical_samples: vec![
+                PseudoSphericalSample::default();
+                pseudo_spherical_sample_count
+            ],
+            pseudo_spherical_level_starts: vec![0; transport_layer_count + 1],
+            pseudo_spherical_level_altitudes: vec![0.0; transport_layer_count + 1],
+        }
+    }
+
+    fn buffers(&mut self) -> ForwardInputBuffers<'_> {
+        ForwardInputBuffers {
+            layer_inputs: &mut self.layer_inputs,
+            pseudo_spherical_layers: &mut self.pseudo_spherical_layers,
+            source_interfaces: &mut self.source_interfaces,
+            rtm_quadrature_levels: &mut self.rtm_quadrature_levels,
+            pseudo_spherical_samples: &mut self.pseudo_spherical_samples,
+            pseudo_spherical_level_starts: &mut self.pseudo_spherical_level_starts,
+            pseudo_spherical_level_altitudes: &mut self.pseudo_spherical_level_altitudes,
+        }
+    }
+}
+
 impl RunningSummary {
     fn new() -> Self {
         Self {
@@ -117,6 +158,46 @@ impl RunningSummary {
     }
 }
 
+fn precompute_forward_cache(
+    scene: &Scene,
+    route: Route,
+    prepared: &PreparedOpticalState,
+    wavelength_sampling: &[WavelengthSampling],
+    cache: &mut SpectralEvaluationCache,
+) -> Result<(), spectral_eval::Error> {
+    let forward_misses = wavelength_sampling::collect_unique_forward_misses(wavelength_sampling);
+    let transport_layer_count = storage::resolved_transport_layer_count(route, prepared);
+    let pseudo_spherical_sample_count =
+        storage::resolved_pseudo_spherical_sample_count(scene, route, prepared);
+
+    // Most O2 A instrument samples overlap heavily across nominal wavelengths.
+    // Computing each unique forward wavelength once avoids duplicate RTM work,
+    // and thread-local buffers keep the parallel path free of shared mutation.
+    let samples: Result<Vec<_>, spectral_eval::Error> = forward_misses
+        .par_iter()
+        .map_init(
+            || ForwardScratch::new(transport_layer_count, pseudo_spherical_sample_count),
+            |scratch, miss| {
+                spectral_forward::compute_forward_sample_at_wavelength(
+                    scene,
+                    route,
+                    prepared,
+                    miss.wavelength_nm,
+                    scratch.buffers(),
+                )
+                .map(|sample| (miss.wavelength_nm, sample))
+                .map_err(spectral_eval::Error::from)
+            },
+        )
+        .collect();
+
+    for (wavelength_nm, sample) in samples? {
+        cache.put_forward(wavelength_nm, sample);
+    }
+
+    Ok(())
+}
+
 pub fn simulate_product(
     scene: &Scene,
     route: Route,
@@ -149,6 +230,8 @@ pub fn simulate_product_with_implementations(
         prepared,
         instrument_provider,
     )?;
+    let mut cache = SpectralEvaluationCache::default();
+    precompute_forward_cache(scene, route, prepared, &wavelength_sampling, &mut cache)?;
 
     let sample_count = scene.spectral_grid.sample_count as usize;
     let transport_layer_count = storage::resolved_transport_layer_count(route, prepared);
@@ -175,7 +258,6 @@ pub fn simulate_product_with_implementations(
         wants_jacobian.then(|| vec![0.0; sample_count * jacobian::STATE_COUNT]);
     let mut summary = RunningSummary::new();
     let solar_cosine = scene.geometry.solar_cosine_at_altitude(0.0);
-    let mut cache = SpectralEvaluationCache::default();
     let mut forward_buffers = ForwardInputBuffers {
         layer_inputs: &mut layer_inputs,
         pseudo_spherical_layers: &mut pseudo_spherical_layers,

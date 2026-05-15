@@ -1,6 +1,8 @@
 use super::{
-    PreparedOpticalState, PreparedSublayer, quadrature_carrier_at_altitude,
-    shared_boundary_carrier_at_level,
+    PreparedOpticalState, PreparedSublayer, ProfileNodeSpectroscopyCache,
+    carrier_eval::{
+        quadrature_carrier_at_altitude_with_cache, shared_boundary_carrier_at_level_with_cache,
+    },
 };
 use crate::{
     common::{errors, math::quadrature::gauss_legendre},
@@ -61,21 +63,25 @@ pub fn fill_rtm_quadrature_at_wavelength_with_layers(
     if prepared.interval_semantics_use_reduced_shared_rtm_layers()
         && layer_inputs.len() == prepared.layers.len()
     {
+        let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
         return fill_shared_rtm_quadrature_at_wavelength(
             prepared,
             wavelength_nm,
             sublayers,
             layer_inputs,
             rtm_levels,
+            &profile_cache,
         );
     }
 
+    let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
     fill_sublayer_rtm_quadrature_at_wavelength(
         prepared,
         wavelength_nm,
         sublayers,
         layer_inputs,
         rtm_levels,
+        &profile_cache,
     )
 }
 
@@ -85,6 +91,7 @@ fn fill_shared_rtm_quadrature_at_wavelength(
     sublayers: &[PreparedSublayer],
     layer_inputs: &[LayerInput],
     rtm_levels: &mut [RtmQuadratureLevel],
+    profile_cache: &ProfileNodeSpectroscopyCache,
 ) -> Result<bool, errors::Error> {
     if !prepared
         .shared_rtm_geometry
@@ -100,8 +107,13 @@ fn fill_shared_rtm_quadrature_at_wavelength(
         .iter_mut()
         .zip(prepared.shared_rtm_geometry.levels.iter())
     {
-        let boundary_carrier =
-            shared_boundary_carrier_at_level(prepared, wavelength_nm, sublayers, level_geometry)?;
+        let boundary_carrier = shared_boundary_carrier_at_level_with_cache(
+            prepared,
+            wavelength_nm,
+            sublayers,
+            level_geometry,
+            Some(profile_cache),
+        )?;
         *rtm_level = RtmQuadratureLevel {
             altitude_km: level_geometry.altitude_km,
             weight: level_geometry.weight_km,
@@ -138,6 +150,7 @@ fn fill_sublayer_rtm_quadrature_at_wavelength(
     sublayers: &[PreparedSublayer],
     layer_inputs: &[LayerInput],
     rtm_levels: &mut [RtmQuadratureLevel],
+    profile_cache: &ProfileNodeSpectroscopyCache,
 ) -> Result<bool, errors::Error> {
     if layer_inputs.len() != sublayers.len() {
         return Ok(false);
@@ -195,11 +208,12 @@ fn fill_sublayer_rtm_quadrature_at_wavelength(
             let level = start + 1 + node_index;
             let normalized_position = 0.5 * (nodes[node_index] + 1.0);
             let node_altitude_km = lower_altitude_km + normalized_position * altitude_span_km;
-            let carrier = quadrature_carrier_at_altitude(
+            let carrier = quadrature_carrier_at_altitude_with_cache(
                 prepared,
                 wavelength_nm,
                 &sublayers[start..stop],
                 node_altitude_km,
+                Some(profile_cache),
             )?;
             rtm_levels[level] = RtmQuadratureLevel {
                 altitude_km: node_altitude_km,

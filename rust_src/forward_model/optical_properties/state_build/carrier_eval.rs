@@ -1,5 +1,5 @@
 use super::{
-    PreparedOpticalState, PreparedSublayer, SharedRtmLevelGeometry,
+    PreparedOpticalState, PreparedSublayer, ProfileNodeSpectroscopyCache, SharedRtmLevelGeometry,
     continuum_carrier_density_at_altitude, continuum_carrier_density_at_sublayer,
     interpolate_prepared_scalar_at_altitude, line_spectroscopy_carrier_density,
     line_spectroscopy_carrier_density_at_sublayer, zero_spectroscopy_evaluation,
@@ -235,15 +235,32 @@ pub fn shared_boundary_carrier_at_level(
     sublayers: &[PreparedSublayer],
     level_geometry: SharedRtmLevelGeometry,
 ) -> Result<SharedBoundaryCarrier, errors::Error> {
+    shared_boundary_carrier_at_level_with_cache(
+        prepared,
+        wavelength_nm,
+        sublayers,
+        level_geometry,
+        None,
+    )
+}
+
+pub fn shared_boundary_carrier_at_level_with_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: &[PreparedSublayer],
+    level_geometry: SharedRtmLevelGeometry,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+) -> Result<SharedBoundaryCarrier, errors::Error> {
     let boundary_row_index = level_geometry.support_row_index as usize;
     let Some(&boundary_sublayer) = sublayers.get(boundary_row_index) else {
         return Ok(SharedBoundaryCarrier::default());
     };
-    let gas_carrier = shared_optical_carrier_at_support_row(
+    let gas_carrier = shared_optical_carrier_at_support_row_with_cache(
         prepared,
         wavelength_nm,
         boundary_sublayer,
         boundary_row_index,
+        profile_cache,
     )?;
     let particle_above = particle_boundary_carrier_from_index(
         prepared,
@@ -299,15 +316,32 @@ pub fn shared_active_carrier_at_level(
     sublayers: &[PreparedSublayer],
     level_geometry: SharedRtmLevelGeometry,
 ) -> Result<SharedOpticalCarrier, errors::Error> {
+    shared_active_carrier_at_level_with_cache(
+        prepared,
+        wavelength_nm,
+        sublayers,
+        level_geometry,
+        None,
+    )
+}
+
+pub fn shared_active_carrier_at_level_with_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: &[PreparedSublayer],
+    level_geometry: SharedRtmLevelGeometry,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+) -> Result<SharedOpticalCarrier, errors::Error> {
     let boundary_row_index = level_geometry.support_row_index as usize;
     let Some(&boundary_sublayer) = sublayers.get(boundary_row_index) else {
         return Ok(SharedOpticalCarrier::default());
     };
-    let gas_carrier = shared_optical_carrier_at_support_row(
+    let gas_carrier = shared_optical_carrier_at_support_row_with_cache(
         prepared,
         wavelength_nm,
         boundary_sublayer,
         boundary_row_index,
+        profile_cache,
     )?;
 
     let below_index = level_geometry.particle_below_support_row_index;
@@ -586,8 +620,23 @@ pub fn quadrature_carrier_at_altitude(
     sublayers: &[PreparedSublayer],
     altitude_km: f64,
 ) -> Result<PreparedQuadratureCarrier, errors::Error> {
-    let carrier =
-        shared_optical_carrier_at_altitude(prepared, wavelength_nm, sublayers, altitude_km)?;
+    quadrature_carrier_at_altitude_with_cache(prepared, wavelength_nm, sublayers, altitude_km, None)
+}
+
+pub fn quadrature_carrier_at_altitude_with_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: &[PreparedSublayer],
+    altitude_km: f64,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+) -> Result<PreparedQuadratureCarrier, errors::Error> {
+    let carrier = shared_optical_carrier_at_altitude_with_cache(
+        prepared,
+        wavelength_nm,
+        sublayers,
+        altitude_km,
+        profile_cache,
+    )?;
     Ok(PreparedQuadratureCarrier {
         ksca: carrier.total_scattering_optical_depth_per_km(),
         aerosol_scattering_optical_depth_per_km: carrier.aerosol_scattering_optical_depth_per_km,
@@ -731,6 +780,22 @@ pub fn shared_optical_carrier_at_support_row(
     sublayer: PreparedSublayer,
     global_sublayer_index: usize,
 ) -> Result<SharedOpticalCarrier, errors::Error> {
+    shared_optical_carrier_at_support_row_with_cache(
+        prepared,
+        wavelength_nm,
+        sublayer,
+        global_sublayer_index,
+        None,
+    )
+}
+
+pub fn shared_optical_carrier_at_support_row_with_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayer: PreparedSublayer,
+    global_sublayer_index: usize,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+) -> Result<SharedOpticalCarrier, errors::Error> {
     let continuum_sigma = if prepared.cross_section_absorbers.is_empty() {
         interpolate_cross_section_sigma(&prepared.continuum_points, wavelength_nm)
     } else {
@@ -743,6 +808,10 @@ pub fn shared_optical_carrier_at_support_row(
             sublayer,
             global_sublayer_index,
         )?
+    } else if let Some(evaluation) =
+        profile_cache.and_then(|cache| cache.evaluation_at_altitude(sublayer.altitude_km))
+    {
+        evaluation
     } else {
         super::weighted_spectroscopy_evaluation_at_wavelength(
             prepared,
@@ -835,6 +904,22 @@ pub fn shared_optical_carrier_at_altitude(
     sublayers: &[PreparedSublayer],
     altitude_km: f64,
 ) -> Result<SharedOpticalCarrier, errors::Error> {
+    shared_optical_carrier_at_altitude_with_cache(
+        prepared,
+        wavelength_nm,
+        sublayers,
+        altitude_km,
+        None,
+    )
+}
+
+pub fn shared_optical_carrier_at_altitude_with_cache(
+    prepared: &PreparedOpticalState,
+    wavelength_nm: f64,
+    sublayers: &[PreparedSublayer],
+    altitude_km: f64,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+) -> Result<SharedOpticalCarrier, errors::Error> {
     let Some(state) = interpolate_quadrature_state_at_altitude(sublayers, altitude_km) else {
         return Ok(SharedOpticalCarrier::default());
     };
@@ -854,6 +939,10 @@ pub fn shared_optical_carrier_at_altitude(
             state.oxygen_number_density_cm3,
         )?
         .total_sigma_cm2_per_molecule
+    } else if let Some(evaluation) =
+        profile_cache.and_then(|cache| cache.evaluation_at_altitude(altitude_km))
+    {
+        evaluation.total_sigma_cm2_per_molecule
     } else {
         super::weighted_spectroscopy_evaluation_at_wavelength(
             prepared,

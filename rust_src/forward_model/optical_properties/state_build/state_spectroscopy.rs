@@ -1,8 +1,151 @@
 use super::{PreparedOpticalState, operational_o2_evaluation_at_wavelength};
 use crate::{
-    common::errors,
-    input::reference_data::{SpectroscopyEvaluation, interpolate_cross_section_sigma},
+    common::{errors, math::interpolation::spline},
+    input::{
+        reference::spectroscopy::line_list_eval,
+        reference_data::{SpectroscopyEvaluation, interpolate_cross_section_sigma},
+    },
 };
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ProfileNodeSpectroscopyCache {
+    altitudes_km: Vec<f64>,
+    weak_values: Vec<f64>,
+    strong_values: Vec<f64>,
+    line_values: Vec<f64>,
+    line_mixing_values: Vec<f64>,
+    total_values: Vec<f64>,
+    weak_second: Vec<f64>,
+    strong_second: Vec<f64>,
+    line_second: Vec<f64>,
+    line_mixing_second: Vec<f64>,
+    total_second: Vec<f64>,
+}
+
+impl ProfileNodeSpectroscopyCache {
+    pub fn new(prepared: &PreparedOpticalState, wavelength_nm: f64) -> Self {
+        let Some(line_list) = &prepared.spectroscopy_lines else {
+            return Self::default();
+        };
+        if !prepared.line_absorbers.is_empty() || prepared.operational_o2_lut.enabled() {
+            return Self::default();
+        }
+
+        let node_count = prepared.spectroscopy_profile_altitudes_km.len();
+        if !(3..=spline::MAX_SPLINE_POINT_COUNT).contains(&node_count)
+            || prepared.spectroscopy_profile_pressures_hpa.len() != node_count
+            || prepared.spectroscopy_profile_temperatures_k.len() != node_count
+        {
+            return Self::default();
+        }
+
+        let strong_states = (prepared.spectroscopy_profile_strong_line_states.len() == node_count)
+            .then_some(prepared.spectroscopy_profile_strong_line_states.as_slice());
+        let weak_states = (prepared.spectroscopy_profile_weak_line_states.len() == node_count)
+            .then_some(prepared.spectroscopy_profile_weak_line_states.as_slice());
+
+        let mut cache = Self {
+            altitudes_km: prepared.spectroscopy_profile_altitudes_km.clone(),
+            weak_values: Vec::with_capacity(node_count),
+            strong_values: Vec::with_capacity(node_count),
+            line_values: Vec::with_capacity(node_count),
+            line_mixing_values: Vec::with_capacity(node_count),
+            total_values: Vec::with_capacity(node_count),
+            weak_second: Vec::new(),
+            strong_second: Vec::new(),
+            line_second: Vec::new(),
+            line_mixing_second: Vec::new(),
+            total_second: Vec::new(),
+        };
+
+        for index in 0..node_count {
+            let evaluation = line_list_eval::total_sigma_with_prepared_profile_state(
+                line_list,
+                wavelength_nm,
+                prepared.spectroscopy_profile_temperatures_k[index],
+                prepared.spectroscopy_profile_pressures_hpa[index],
+                strong_states.map(|states| &states[index]),
+                weak_states.map(|states| &states[index]),
+            );
+            cache
+                .weak_values
+                .push(evaluation.weak_line_sigma_cm2_per_molecule);
+            cache
+                .strong_values
+                .push(evaluation.strong_line_sigma_cm2_per_molecule);
+            cache
+                .line_values
+                .push(evaluation.line_sigma_cm2_per_molecule);
+            cache
+                .line_mixing_values
+                .push(evaluation.line_mixing_sigma_cm2_per_molecule);
+            cache
+                .total_values
+                .push(evaluation.total_sigma_cm2_per_molecule);
+        }
+
+        if cache.fill_second_derivatives().is_err() {
+            return Self::default();
+        }
+        cache
+    }
+
+    pub fn evaluation_at_altitude(&self, altitude_km: f64) -> Option<SpectroscopyEvaluation> {
+        if self.altitudes_km.len() < 3
+            || altitude_km < self.altitudes_km[0]
+            || altitude_km > self.altitudes_km[self.altitudes_km.len() - 1]
+        {
+            return None;
+        }
+
+        Some(SpectroscopyEvaluation {
+            weak_line_sigma_cm2_per_molecule: self.sample(
+                &self.weak_values,
+                &self.weak_second,
+                altitude_km,
+            )?,
+            strong_line_sigma_cm2_per_molecule: self.sample(
+                &self.strong_values,
+                &self.strong_second,
+                altitude_km,
+            )?,
+            line_sigma_cm2_per_molecule: self.sample(
+                &self.line_values,
+                &self.line_second,
+                altitude_km,
+            )?,
+            line_mixing_sigma_cm2_per_molecule: self.sample(
+                &self.line_mixing_values,
+                &self.line_mixing_second,
+                altitude_km,
+            )?,
+            total_sigma_cm2_per_molecule: self
+                .sample(&self.total_values, &self.total_second, altitude_km)?
+                .max(0.0),
+            d_sigma_d_temperature_cm2_per_molecule_per_k: 0.0,
+        })
+    }
+
+    fn fill_second_derivatives(&mut self) -> Result<(), spline::Error> {
+        self.weak_second =
+            spline::endpoint_secant_second_derivatives(&self.altitudes_km, &self.weak_values)?;
+        self.strong_second =
+            spline::endpoint_secant_second_derivatives(&self.altitudes_km, &self.strong_values)?;
+        self.line_second =
+            spline::endpoint_secant_second_derivatives(&self.altitudes_km, &self.line_values)?;
+        self.line_mixing_second = spline::endpoint_secant_second_derivatives(
+            &self.altitudes_km,
+            &self.line_mixing_values,
+        )?;
+        self.total_second =
+            spline::endpoint_secant_second_derivatives(&self.altitudes_km, &self.total_values)?;
+        Ok(())
+    }
+
+    fn sample(&self, values: &[f64], second: &[f64], altitude_km: f64) -> Option<f64> {
+        spline::sample_with_second_derivatives(&self.altitudes_km, values, second, altitude_km).ok()
+    }
+}
 
 pub fn total_cross_section_at_wavelength(
     prepared: &PreparedOpticalState,

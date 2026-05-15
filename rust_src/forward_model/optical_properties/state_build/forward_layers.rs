@@ -1,8 +1,9 @@
 use super::{
-    OpticalDepthBreakdown, PreparedOpticalState, PreparedSublayer, SharedRtmLayerGeometry,
-    accumulate_breakdown, evaluate_layer_at_wavelength, evaluate_reduced_layer_from_support_rows,
-    layer_input_from_evaluated, optical_depth_breakdown_at_wavelength,
-    particle_optical_depth_at_wavelength,
+    OpticalDepthBreakdown, PreparedOpticalState, PreparedSublayer, ProfileNodeSpectroscopyCache,
+    SharedRtmLayerGeometry, accumulate_breakdown, layer_input_from_evaluated,
+    optical_depth_breakdown_at_wavelength, particle_optical_depth_at_wavelength,
+    shared_carrier::evaluate_reduced_layer_from_support_rows_with_cache,
+    state_optical_depth::evaluate_layer_at_wavelength_with_spectroscopy_cache,
 };
 use crate::{
     common::errors,
@@ -136,26 +137,30 @@ fn fill_sublayer_forward_layers_at_wavelength(
     if prepared.interval_semantics_use_reduced_shared_rtm_layers()
         && layer_inputs.len() == prepared.layers.len()
     {
+        let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
         return fill_reduced_shared_rtm_layers_at_wavelength(
             prepared,
             scene,
             wavelength_nm,
             sublayers,
             layer_inputs,
+            &profile_cache,
         );
     }
 
     let mut totals = OpticalDepthBreakdown::default();
+    let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
     if layer_inputs.len() == sublayers.len() {
         for (sublayer_index, layer_input) in layer_inputs.iter_mut().enumerate() {
             let sublayer = sublayers[sublayer_index];
-            let evaluated = evaluate_layer_at_wavelength(
+            let evaluated = evaluate_layer_at_wavelength_with_spectroscopy_cache(
                 prepared,
                 Some(scene),
                 sublayer.altitude_km,
                 wavelength_nm,
                 sublayer_index,
                 &sublayers[sublayer_index..sublayer_index + 1],
+                Some(&profile_cache),
             )?;
             *layer_input = layer_input_from_evaluated(evaluated);
             attach_aerosol_optical_depth_jacobian(scene, layer_input);
@@ -174,13 +179,14 @@ fn fill_sublayer_forward_layers_at_wavelength(
         if start_index >= sublayers.len() || end_index > sublayers.len() {
             return Err(errors::Error::InvalidRequest);
         }
-        let evaluated = evaluate_layer_at_wavelength(
+        let evaluated = evaluate_layer_at_wavelength_with_spectroscopy_cache(
             prepared,
             Some(scene),
             layer.altitude_km,
             wavelength_nm,
             start_index,
             &sublayers[start_index..end_index],
+            Some(&profile_cache),
         )?;
         *layer_input = layer_input_from_evaluated(evaluated);
         attach_aerosol_optical_depth_jacobian(scene, layer_input);
@@ -195,6 +201,7 @@ fn fill_reduced_shared_rtm_layers_at_wavelength(
     wavelength_nm: f64,
     sublayers: &[PreparedSublayer],
     layer_inputs: &mut [LayerInput],
+    profile_cache: &ProfileNodeSpectroscopyCache,
 ) -> Result<OpticalDepthBreakdown, errors::Error> {
     if layer_inputs.len() != prepared.layers.len() {
         return Err(errors::Error::InvalidRequest);
@@ -230,12 +237,13 @@ fn fill_reduced_shared_rtm_layers_at_wavelength(
 
         // DISAMAR builds shared RTM layer depth from prepared support rows.
         // Rebuilding a fresh subgrid here changes line-shoulder absorption.
-        let evaluated = evaluate_reduced_layer_from_support_rows(
+        let evaluated = evaluate_reduced_layer_from_support_rows_with_cache(
             prepared,
             scene,
             wavelength_nm,
             support_sublayers,
             layer_geometry,
+            Some(profile_cache),
         )?;
         *layer_input = layer_input_from_evaluated(evaluated);
         attach_aerosol_optical_depth_jacobian(scene, layer_input);

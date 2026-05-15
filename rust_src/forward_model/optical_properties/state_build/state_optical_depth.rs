@@ -1,9 +1,9 @@
 use super::{
     EvaluatedLayer, OpticalDepthBreakdown, PHASE_COEFFICIENT_COUNT, PreparedOpticalState,
-    PreparedSublayer, cia_sigma_at_wavelength, collision_induced_sigma_at_wavelength,
-    continuum_carrier_density_at_sublayer, line_spectroscopy_carrier_density_at_sublayer,
-    particle_optical_depth_at_wavelength, total_cross_section_at_wavelength,
-    weighted_spectroscopy_evaluation_at_wavelength,
+    PreparedSublayer, ProfileNodeSpectroscopyCache, cia_sigma_at_wavelength,
+    collision_induced_sigma_at_wavelength, continuum_carrier_density_at_sublayer,
+    line_spectroscopy_carrier_density_at_sublayer, particle_optical_depth_at_wavelength,
+    total_cross_section_at_wavelength, weighted_spectroscopy_evaluation_at_wavelength,
 };
 use crate::{
     common::errors,
@@ -20,19 +20,21 @@ pub fn optical_depth_breakdown_at_wavelength(
 ) -> Result<OpticalDepthBreakdown, errors::Error> {
     if let Some(sublayers) = &prepared.sublayers {
         let mut totals = OpticalDepthBreakdown::default();
+        let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
         for layer in &prepared.layers {
             let start_index = layer.sublayer_start_index as usize;
             let end_index = start_index + layer.sublayer_count as usize;
             if start_index >= sublayers.len() || end_index > sublayers.len() {
                 return Err(errors::Error::InvalidRequest);
             }
-            let evaluated = evaluate_layer_at_wavelength(
+            let evaluated = evaluate_layer_at_wavelength_with_spectroscopy_cache(
                 prepared,
                 None,
                 layer.altitude_km,
                 wavelength_nm,
                 start_index,
                 &sublayers[start_index..end_index],
+                Some(&profile_cache),
             )?;
             accumulate_breakdown_fields(&mut totals, evaluated.breakdown);
         }
@@ -118,6 +120,26 @@ pub fn evaluate_layer_at_wavelength(
     sublayer_start_index: usize,
     sublayers: &[PreparedSublayer],
 ) -> Result<EvaluatedLayer, errors::Error> {
+    evaluate_layer_at_wavelength_with_spectroscopy_cache(
+        prepared,
+        scene,
+        altitude_km,
+        wavelength_nm,
+        sublayer_start_index,
+        sublayers,
+        None,
+    )
+}
+
+pub fn evaluate_layer_at_wavelength_with_spectroscopy_cache(
+    prepared: &PreparedOpticalState,
+    scene: Option<&Scene>,
+    altitude_km: f64,
+    wavelength_nm: f64,
+    sublayer_start_index: usize,
+    sublayers: &[PreparedSublayer],
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
+) -> Result<EvaluatedLayer, errors::Error> {
     let mut breakdown = OpticalDepthBreakdown::default();
     let mut phase_numerator = [0.0; PHASE_COEFFICIENT_COUNT];
     let gas_phase_coefficients =
@@ -130,6 +152,7 @@ pub fn evaluate_layer_at_wavelength(
             sublayer,
             global_sublayer_index,
             wavelength_nm,
+            profile_cache,
         )?;
         let gas_scattering_optical_depth = rayleigh::cross_section_cm2(wavelength_nm)
             * sublayer.number_density_cm3
@@ -209,6 +232,7 @@ fn gas_absorption_optical_depth_at_sublayer(
     sublayer: PreparedSublayer,
     global_sublayer_index: usize,
     wavelength_nm: f64,
+    profile_cache: Option<&ProfileNodeSpectroscopyCache>,
 ) -> Result<f64, errors::Error> {
     let continuum_sigma = if prepared.cross_section_absorbers.is_empty() {
         interpolate_cross_section_sigma(&prepared.continuum_points, wavelength_nm)
@@ -271,13 +295,19 @@ fn gas_absorption_optical_depth_at_sublayer(
         }
         optical_depth
     } else {
-        let spectroscopy_sigma = weighted_spectroscopy_evaluation_at_wavelength(
-            prepared,
-            wavelength_nm,
-            sublayer.temperature_k,
-            sublayer.pressure_hpa,
-        )?
-        .total_sigma_cm2_per_molecule;
+        let spectroscopy_sigma = if let Some(evaluation) =
+            profile_cache.and_then(|cache| cache.evaluation_at_altitude(sublayer.altitude_km))
+        {
+            evaluation.total_sigma_cm2_per_molecule
+        } else {
+            weighted_spectroscopy_evaluation_at_wavelength(
+                prepared,
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+            )?
+            .total_sigma_cm2_per_molecule
+        };
         let spectroscopy_density_cm3 = line_spectroscopy_carrier_density_at_sublayer(
             prepared,
             sublayer,

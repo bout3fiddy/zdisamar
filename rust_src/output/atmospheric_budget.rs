@@ -2,7 +2,8 @@ use crate::{
     common::errors,
     forward_model::optical_properties::state_build::{
         OpticalDepthBreakdown, PreparedLayer, PreparedOpticalState, PreparedSublayer,
-        PreparedSupportRowKind, evaluate_layer_at_wavelength, particle_optical_depth_at_wavelength,
+        PreparedSupportRowKind, ProfileNodeSpectroscopyCache, particle_optical_depth_at_wavelength,
+        state_optical_depth::evaluate_layer_at_wavelength_with_spectroscopy_cache,
     },
     input::{atmosphere::PartitionLabel, reference::rayleigh, scene::Scene},
 };
@@ -76,6 +77,7 @@ pub fn build(
     let mut rows = Vec::with_capacity(wavelengths_nm.len() * vertical_count);
     for &wavelength_nm in wavelengths_nm {
         if let Some(sublayers) = &prepared.sublayers {
+            let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
             for (sublayer_index, &sublayer) in sublayers.iter().enumerate() {
                 rows.push(sublayer_row(
                     prepared,
@@ -84,6 +86,7 @@ pub fn build(
                     sublayers,
                     sublayer,
                     sublayer_index,
+                    &profile_cache,
                 )?);
             }
         } else {
@@ -102,14 +105,16 @@ fn sublayer_row(
     sublayers: &[PreparedSublayer],
     sublayer: PreparedSublayer,
     sublayer_index: usize,
+    profile_cache: &ProfileNodeSpectroscopyCache,
 ) -> Result<AtmosphericBudgetRow, errors::Error> {
-    let evaluated = evaluate_layer_at_wavelength(
+    let evaluated = evaluate_layer_at_wavelength_with_spectroscopy_cache(
         prepared,
         Some(scene),
         sublayer.altitude_km,
         wavelength_nm,
         sublayer_index,
         &sublayers[sublayer_index..sublayer_index + 1],
+        Some(profile_cache),
     )?;
     let totals = derived_totals(evaluated.breakdown);
 

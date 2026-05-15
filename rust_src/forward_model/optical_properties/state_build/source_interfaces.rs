@@ -1,5 +1,6 @@
 use super::{
-    PreparedOpticalState, SharedBoundaryCarrier, shared_boundary_carrier_at_level,
+    PreparedOpticalState, ProfileNodeSpectroscopyCache, SharedBoundaryCarrier,
+    carrier_eval::shared_boundary_carrier_at_level_with_cache,
     state_types::{PreparedLayer, PreparedSublayer},
 };
 use crate::{
@@ -30,15 +31,17 @@ pub fn fill_source_interfaces_at_wavelength_with_layers(
             .shared_rtm_geometry
             .is_valid_for(layer_inputs.len())
         {
+            let profile_cache = ProfileNodeSpectroscopyCache::new(prepared, wavelength_nm);
             for (source_interface, &level_geometry) in source_interfaces
                 .iter_mut()
                 .zip(prepared.shared_rtm_geometry.levels.iter())
             {
-                let boundary_carrier = shared_boundary_carrier_at_level(
+                let boundary_carrier = shared_boundary_carrier_at_level_with_cache(
                     prepared,
                     wavelength_nm,
                     sublayers,
                     level_geometry,
+                    Some(&profile_cache),
                 )?;
                 *source_interface = source_interface_from_boundary_carrier(
                     level_geometry.weight_km,
