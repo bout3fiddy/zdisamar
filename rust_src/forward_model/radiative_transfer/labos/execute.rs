@@ -1,15 +1,21 @@
 use super::{
-    attenuation::{fill_attenuation, fill_attenuation_dynamic_with_grid},
-    layers::{
-        calc_rt_layers, calc_rt_layers_into_with_basis, fill_layer_effective_scattering_suffixes,
-        fill_layer_phase_max_indices, fill_surface,
+    attenuation::{
+        fill_attenuation, fill_attenuation_dynamic_with_grid, fill_attenuation_tangent_dynamic,
     },
-    orders::{OrdersWorkspace, orders_scat_into_with_active, orders_scat_transport_into},
+    layers::{
+        calc_rt_layers, calc_rt_layers_into_with_basis, calc_rt_layers_tangent_into_with_basis,
+        fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
+    },
+    orders::{
+        AttenuationLookup, OrdersWorkspace, orders_scat_into_with_active,
+        orders_scat_into_with_active_local_sum, orders_scat_tangent, orders_scat_transport_into,
+    },
     phase_basis::{FourierPlmBasis, PhaseKernel},
     reflectance::{
-        calc_integrated_reflectance_with_basis, calc_reflectance,
-        fill_adjacent_layer_phase_max_indices, resolved_fourier_max,
-        resolved_phase_coefficient_max, total_scattering_optical_depth,
+        calc_aerosol_layer_pressure_shift_weighting_with_basis,
+        calc_aerosol_optical_depth_weighting_with_basis, calc_integrated_reflectance_with_basis,
+        calc_reflectance, calc_reflectance_tangent, fill_adjacent_layer_phase_max_indices,
+        resolved_fourier_max, resolved_phase_coefficient_max, total_scattering_optical_depth,
     },
     types::{Geometry, LayerRt, Mat, UdField},
     workspace::Workspace,
@@ -49,7 +55,6 @@ pub fn execute_with_workspace(
 ) -> Result<ForwardResult, Error> {
     let controls = route.rtm_controls;
     let compute_jacobian = route.derivative_mode != DerivativeMode::None;
-    reject_unported_derivative_states(route.derivative_state_mask, compute_jacobian)?;
 
     let wants_surface_albedo =
         compute_jacobian && jacobian::includes(route.derivative_state_mask, State::SurfaceAlbedo);
@@ -97,21 +102,6 @@ pub fn execute_with_workspace(
         toa_reflectance_factor: computation.reflectance,
         jacobian: (route.derivative_mode != DerivativeMode::None).then_some(computation.jacobian),
     })
-}
-
-fn reject_unported_derivative_states(
-    mask: jacobian::StateMask,
-    compute_jacobian: bool,
-) -> Result<(), Error> {
-    if !compute_jacobian {
-        return Ok(());
-    }
-    if jacobian::includes(mask, State::AerosolOpticalDepth)
-        || jacobian::includes(mask, State::AerosolLayerMidPressureHpa)
-    {
-        return Err(Error::UnsupportedDerivativeMode);
-    }
-    Ok(())
 }
 
 fn direct_surface_only(
@@ -241,6 +231,12 @@ fn layer_resolved_labos_with_workspace(
 
     let mut reflectance = 0.0;
     let mut surface_albedo_tangent = 0.0;
+    let wants_aerosol_optical_depth =
+        compute_jacobian && jacobian::includes(derivative_state_mask, State::AerosolOpticalDepth);
+    let wants_aerosol_layer_mid_pressure = compute_jacobian
+        && jacobian::includes(derivative_state_mask, State::AerosolLayerMidPressureHpa);
+    let mut aerosol_optical_depth_tangent = 0.0;
+    let mut aerosol_layer_mid_pressure_tangent = 0.0;
     for i_fourier in 0..=fourier_max {
         let plm_basis = FourierPlmBasis::init(i_fourier, phase_max, &geometry);
         calc_rt_layers_into_with_basis(
@@ -259,7 +255,18 @@ fn layer_resolved_labos_with_workspace(
         rt[0] = fill_surface(i_fourier, input.surface_albedo, &geometry);
         orders_workspace.rt_active[0] = i_fourier == 0 && input.surface_albedo != 0.0;
 
-        let orders_result = if use_integrated_source {
+        let orders_result = if use_integrated_source && compute_jacobian {
+            orders_scat_into_with_active_local_sum(
+                &mut orders_workspace,
+                0,
+                nlayer,
+                &geometry,
+                &attenuation,
+                &rt,
+                controls,
+                num_orders_max,
+            )
+        } else if use_integrated_source {
             orders_scat_into_with_active(
                 &mut orders_workspace,
                 0,
@@ -310,6 +317,66 @@ fn layer_resolved_labos_with_workspace(
             surface_albedo_tangent +=
                 surface_albedo_weighting_function(orders_result.ud, &geometry);
         }
+        if wants_aerosol_optical_depth {
+            let tangent_refl_fc = if use_integrated_source {
+                calc_aerosol_optical_depth_weighting_with_basis(
+                    &input.layers,
+                    &input.rtm_quadrature,
+                    orders_result.ud,
+                    orders_result.ud_sum_local,
+                    nlayer,
+                    i_fourier,
+                    controls.use_spherical_correction,
+                    &geometry,
+                    &plm_basis,
+                    Some(&adjacent_layer_phase_max_indices),
+                )
+            } else {
+                non_integrated_reflectance_tangent(
+                    &input.layers,
+                    State::AerosolOpticalDepth,
+                    i_fourier,
+                    &geometry,
+                    &attenuation,
+                    &rt,
+                    controls,
+                    &plm_basis,
+                    num_orders_max,
+                )
+            };
+            aerosol_optical_depth_tangent += fourier_weight * tangent_refl_fc;
+        }
+        if wants_aerosol_layer_mid_pressure {
+            let pressure_tangent_refl_fc = if use_integrated_source {
+                calc_aerosol_layer_pressure_shift_weighting_with_basis(
+                    &input.layers,
+                    &input.rtm_quadrature,
+                    orders_result.ud,
+                    orders_result.ud_sum_local,
+                    nlayer,
+                    i_fourier,
+                    controls.use_spherical_correction,
+                    &geometry,
+                    &plm_basis,
+                )
+            } else {
+                if !has_layer_jacobian(&input.layers, State::AerosolLayerMidPressureHpa) {
+                    return Err(Error::UnsupportedDerivativeMode);
+                }
+                non_integrated_reflectance_tangent(
+                    &input.layers,
+                    State::AerosolLayerMidPressureHpa,
+                    i_fourier,
+                    &geometry,
+                    &attenuation,
+                    &rt,
+                    controls,
+                    &plm_basis,
+                    num_orders_max,
+                )
+            };
+            aerosol_layer_mid_pressure_tangent += fourier_weight * pressure_tangent_refl_fc;
+        }
         if i_fourier >= usize::from(controls.performance_thresholds.fourier_floor_scalar)
             && refl_fc.abs()
                 <= controls
@@ -328,9 +395,68 @@ fn layer_resolved_labos_with_workspace(
             surface_albedo_tangent,
         );
     }
+    if wants_aerosol_optical_depth {
+        jacobian::set(
+            &mut result_jacobian,
+            State::AerosolOpticalDepth,
+            aerosol_optical_depth_tangent,
+        );
+    }
+    if wants_aerosol_layer_mid_pressure {
+        jacobian::set(
+            &mut result_jacobian,
+            State::AerosolLayerMidPressureHpa,
+            aerosol_layer_mid_pressure_tangent,
+        );
+    }
     Ok(LabosComputation {
         reflectance: reflectance.clamp(0.0, 2.0),
         jacobian: result_jacobian,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn non_integrated_reflectance_tangent<A: AttenuationLookup>(
+    layers: &[LayerInput],
+    state: State,
+    i_fourier: usize,
+    geometry: &Geometry,
+    attenuation: &A,
+    rt: &[LayerRt],
+    controls: RadiativeTransferControls,
+    plm_basis: &FourierPlmBasis,
+    num_orders_max: usize,
+) -> f64 {
+    let attenuation_tangent = fill_attenuation_tangent_dynamic(layers, state, geometry);
+    let mut rt_tangent = vec![zero_layer_rt(geometry.nmutot); layers.len() + 1];
+    calc_rt_layers_tangent_into_with_basis(
+        &mut rt_tangent,
+        layers,
+        state,
+        i_fourier,
+        geometry,
+        controls,
+        plm_basis,
+    );
+    let tangent_orders = orders_scat_tangent(
+        0,
+        layers.len(),
+        geometry,
+        attenuation,
+        &attenuation_tangent,
+        rt,
+        &rt_tangent,
+        controls,
+        num_orders_max,
+    );
+    calc_reflectance_tangent(&tangent_orders.ud, layers.len(), geometry)
+}
+
+fn has_layer_jacobian(layers: &[LayerInput], state: State) -> bool {
+    layers.iter().any(|layer| {
+        jacobian::get(layer.optical_depth_jacobian, state) != 0.0
+            || jacobian::get(layer.scattering_optical_depth_jacobian, state) != 0.0
+            || jacobian::get(layer.single_scatter_albedo_jacobian, state) != 0.0
     })
 }
 

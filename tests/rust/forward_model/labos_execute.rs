@@ -115,12 +115,96 @@ fn layer_resolved_execute_matches_workspace_and_stays_physical() {
     assert!(plain.toa_reflectance_factor <= 2.0);
 }
 
+fn perturbed_for_state(input: &ForwardInput, state: State, epsilon: f64) -> ForwardInput {
+    let mut perturbed = input.clone();
+    for layer in &mut perturbed.layers {
+        layer.optical_depth += epsilon * jacobian::get(layer.optical_depth_jacobian, state);
+        layer.scattering_optical_depth +=
+            epsilon * jacobian::get(layer.scattering_optical_depth_jacobian, state);
+        layer.single_scatter_albedo +=
+            epsilon * jacobian::get(layer.single_scatter_albedo_jacobian, state);
+    }
+    perturbed
+}
+
 #[test]
-fn unported_aerosol_derivative_states_are_rejected_explicitly() {
+fn aerosol_optical_depth_tangent_matches_non_integrated_finite_difference() {
     let mut route = scalar_route(ScatteringMode::Multiple);
     route.derivative_mode = DerivativeMode::SemiAnalytical;
     route.derivative_state_mask = jacobian::state_mask(State::AerosolOpticalDepth);
-    let input = ForwardInput::default();
+    let plain_route = scalar_route(ScatteringMode::Multiple);
+    let mut phase = phase_functions::zero_phase_coefficients();
+    phase[1] = 0.22;
+    phase[2] = 0.05;
+    let mut layer = LayerInput {
+        optical_depth: 0.18,
+        scattering_optical_depth: 0.12,
+        single_scatter_albedo: 0.7,
+        solar_mu: 0.61,
+        view_mu: 0.72,
+        phase_coefficients: phase,
+        ..LayerInput::default()
+    };
+    jacobian::set(
+        &mut layer.optical_depth_jacobian,
+        State::AerosolOpticalDepth,
+        0.08,
+    );
+    jacobian::set(
+        &mut layer.scattering_optical_depth_jacobian,
+        State::AerosolOpticalDepth,
+        0.05,
+    );
+    jacobian::set(
+        &mut layer.single_scatter_albedo_jacobian,
+        State::AerosolOpticalDepth,
+        -0.02,
+    );
+    let input = ForwardInput {
+        mu0: 0.61,
+        muv: 0.72,
+        surface_albedo: 0.21,
+        relative_azimuth_rad: 0.0,
+        layers: vec![layer],
+        ..ForwardInput::default()
+    };
+
+    let tangent = jacobian::get(
+        execute(route, &input).unwrap().jacobian.unwrap(),
+        State::AerosolOpticalDepth,
+    );
+    let epsilon = 1.0e-5;
+    let plus = execute(
+        plain_route,
+        &perturbed_for_state(&input, State::AerosolOpticalDepth, epsilon),
+    )
+    .unwrap()
+    .toa_reflectance_factor;
+    let minus = execute(
+        plain_route,
+        &perturbed_for_state(&input, State::AerosolOpticalDepth, -epsilon),
+    )
+    .unwrap()
+    .toa_reflectance_factor;
+    let expected = (plus - minus) / (2.0 * epsilon);
+
+    assert_close(tangent, expected, 2.0e-6);
+}
+
+#[test]
+fn non_integrated_pressure_derivative_requires_layer_jacobian() {
+    let mut route = scalar_route(ScatteringMode::Multiple);
+    route.derivative_mode = DerivativeMode::SemiAnalytical;
+    route.derivative_state_mask = jacobian::state_mask(State::AerosolLayerMidPressureHpa);
+    let input = ForwardInput {
+        layers: vec![LayerInput {
+            optical_depth: 0.18,
+            scattering_optical_depth: 0.12,
+            single_scatter_albedo: 0.7,
+            ..LayerInput::default()
+        }],
+        ..ForwardInput::default()
+    };
 
     assert_eq!(
         execute(route, &input),
