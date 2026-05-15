@@ -1,4 +1,5 @@
 pub mod evaluation;
+pub mod forward_layers;
 pub mod operational_o2;
 pub mod prepared_state;
 pub mod shared_geometry;
@@ -10,6 +11,10 @@ pub mod state_spectroscopy;
 pub mod state_types;
 
 pub use evaluation::{accumulate_breakdown, layer_input_from_evaluated};
+pub use forward_layers::{
+    fill_forward_layers_at_wavelength, forward_input_from_optical_depths, to_forward_input,
+    to_forward_input_at_wavelength, to_forward_input_at_wavelength_with_layers,
+};
 pub use operational_o2::operational_o2_evaluation_at_wavelength;
 pub use prepared_state::PreparedOpticalState;
 pub use shared_geometry::{

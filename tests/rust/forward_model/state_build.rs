@@ -14,7 +14,8 @@ use zdisamar::{
                 collect_active_line_absorbers, collision_induced_sigma_at_wavelength,
                 continuum_carrier_density_at_sublayer,
                 effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
-                fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
+                fill_forward_layers_at_wavelength, fill_source_interfaces_from_prepared_layers,
+                first_active_support_row_index, forward_input_from_optical_depths,
                 interpolate_prepared_scalar_at_altitude, interval_altitude_at_node,
                 interval_weight_km, last_active_support_row_index, layer_input_from_evaluated,
                 level_altitude_from_sublayers, line_spectroscopy_carrier_density_at_sublayer,
@@ -22,9 +23,9 @@ use zdisamar::{
                 particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
                 prepared_scalar_for_sublayer, resolve_active_line_species,
                 resolve_continuum_owner_species, resolve_gauss_rule, sort_line_list,
-                species_mixing_ratio_at_pressure, total_cross_section_at_wavelength,
-                total_optical_depth_at_wavelength, weighted_cross_section_sigma_at_wavelength,
-                zero_spectroscopy_evaluation,
+                species_mixing_ratio_at_pressure, to_forward_input_at_wavelength_with_layers,
+                total_cross_section_at_wavelength, total_optical_depth_at_wavelength,
+                weighted_cross_section_sigma_at_wavelength, zero_spectroscopy_evaluation,
             },
         },
         radiative_transfer::common_types::{LayerInput, SourceInterfaceInput},
@@ -812,6 +813,164 @@ fn state_optical_depth_rejects_unported_line_absorbers_in_sublayers() {
 
     assert_eq!(
         evaluate_layer_at_wavelength(&prepared, None, 0.0, 760.0, 0, &sublayers).unwrap_err(),
+        errors::Error::InvalidRequest,
+    );
+}
+
+#[test]
+fn forward_layers_map_total_depths_into_forward_input() {
+    let prepared = PreparedOpticalState {
+        effective_air_mass_factor: 2.5,
+        effective_single_scatter_albedo: 0.42,
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 762.0;
+    scene.spectral_grid.sample_count = 5;
+    scene.geometry.solar_zenith_deg = 60.0;
+    scene.geometry.viewing_zenith_deg = 30.0;
+    scene.geometry.relative_azimuth_deg = 20.0;
+    scene.surface.albedo = 1.2;
+
+    let input = forward_input_from_optical_depths(
+        &prepared,
+        &scene,
+        761.0,
+        OpticalDepthBreakdown::default(),
+        &[],
+    );
+
+    assert_close(input.spectral_weight, 0.5, 1.0e-14);
+    assert_close(input.air_mass_factor, 2.5, 0.0);
+    assert_close(input.mu0, 0.5, 1.0e-14);
+    assert_close(input.muv, 30.0_f64.to_radians().cos(), 1.0e-14);
+    assert_close(input.relative_azimuth_rad, 160.0_f64.to_radians(), 1.0e-14);
+    assert_close(input.surface_albedo, 1.0, 0.0);
+    assert_close(input.single_scatter_albedo, 0.42, 0.0);
+    assert!(input.layers.is_empty());
+}
+
+#[test]
+fn forward_layers_fill_prepared_layer_inputs_and_aerosol_tangent() {
+    let prepared = PreparedOpticalState {
+        layers: vec![PreparedLayer {
+            altitude_km: 2.0,
+            gas_optical_depth: 0.5,
+            gas_scattering_optical_depth: 0.1,
+            cia_optical_depth: 0.03,
+            aerosol_optical_depth: 0.2,
+            cloud_optical_depth: 0.4,
+            ..PreparedLayer::default()
+        }],
+        aerosol_reference_wavelength_nm: 760.0,
+        aerosol_single_scatter_albedo: 0.5,
+        cloud_reference_wavelength_nm: 760.0,
+        cloud_single_scatter_albedo: 0.25,
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.aerosol.optical_depth = 0.2;
+    scene.aerosol.asymmetry_factor = 0.3;
+    let mut layer_inputs = vec![LayerInput::default()];
+
+    let totals =
+        fill_forward_layers_at_wavelength(&prepared, &scene, 760.0, &mut layer_inputs).unwrap();
+
+    assert_close(
+        totals.total_optical_depth(),
+        layer_inputs[0].optical_depth,
+        1.0e-14,
+    );
+    assert_close(
+        totals.total_scattering_optical_depth(),
+        layer_inputs[0].scattering_optical_depth,
+        1.0e-14,
+    );
+    assert_close(layer_inputs[0].gas_absorption_optical_depth, 0.4, 1.0e-14);
+    assert_close(
+        layer_inputs[0].aerosol_scattering_optical_depth,
+        0.1,
+        1.0e-14,
+    );
+    assert_close(layer_inputs[0].cloud_scattering_optical_depth, 0.1, 1.0e-14);
+    assert_eq!(
+        layer_inputs[0].phase_coefficients,
+        phase_functions::hg_phase_coefficients(0.3),
+    );
+    assert_close(
+        jacobian::get(
+            layer_inputs[0].optical_depth_jacobian,
+            State::AerosolOpticalDepth,
+        ),
+        1.0,
+        1.0e-14,
+    );
+    assert_close(
+        jacobian::get(
+            layer_inputs[0].scattering_optical_depth_jacobian,
+            State::AerosolOpticalDepth,
+        ),
+        0.5,
+        1.0e-14,
+    );
+}
+
+#[test]
+fn forward_layers_fill_sublayer_grid_and_return_forward_input_layers() {
+    let sublayers = vec![PreparedSublayer {
+        global_sublayer_index: 0,
+        altitude_km: 1.0,
+        temperature_k: 250.0,
+        pressure_hpa: 500.0,
+        number_density_cm3: 1.0,
+        absorber_number_density_cm3: 2.0,
+        path_length_cm: 3.0,
+        aerosol_optical_depth: 0.1,
+        aerosol_single_scatter_albedo: 0.5,
+        ..PreparedSublayer::default()
+    }];
+    let prepared = PreparedOpticalState {
+        sublayers: Some(sublayers),
+        continuum_points: vec![CrossSectionPoint {
+            wavelength_nm: 760.0,
+            sigma_cm2_per_molecule: 4.0,
+        }],
+        aerosol_reference_wavelength_nm: 760.0,
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.spectral_grid.start_nm = 759.0;
+    scene.spectral_grid.end_nm = 761.0;
+    scene.spectral_grid.sample_count = 3;
+    let mut layer_inputs = vec![LayerInput::default()];
+
+    let input =
+        to_forward_input_at_wavelength_with_layers(&prepared, &scene, 760.0, &mut layer_inputs)
+            .unwrap();
+
+    assert_close(layer_inputs[0].gas_absorption_optical_depth, 24.0, 1.0e-14);
+    assert_eq!(input.layers, layer_inputs);
+    assert_close(input.optical_depth, layer_inputs[0].optical_depth, 1.0e-14);
+}
+
+#[test]
+fn forward_layers_reject_shared_rtm_grid_until_carrier_path_is_ported() {
+    let prepared = PreparedOpticalState {
+        layers: vec![PreparedLayer {
+            sublayer_start_index: 0,
+            sublayer_count: 2,
+            ..PreparedLayer::default()
+        }],
+        sublayers: Some(vec![PreparedSublayer::default()]),
+        interval_semantics: IntervalSemantics::ExplicitPressureBounds,
+        ..PreparedOpticalState::default()
+    };
+    let mut layer_inputs = vec![LayerInput::default()];
+
+    assert_eq!(
+        fill_forward_layers_at_wavelength(&prepared, &Scene::default(), 760.0, &mut layer_inputs)
+            .unwrap_err(),
         errors::Error::InvalidRequest,
     );
 }
