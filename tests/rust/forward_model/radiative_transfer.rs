@@ -1,14 +1,16 @@
 use zdisamar::{
     forward_model::{
+        implementations::{root as implementation_root, surface, transport},
         jacobian::{self, State},
         optical_properties::shared::phase_functions,
+        optical_properties::state_build::PreparedOpticalState,
         radiative_transfer::{
             common_route,
             common_types::{
-                DerivativeSemantics, DispatchRequest, Error, ExecutionMode, LayerInput,
-                PseudoSphericalGrid, PseudoSphericalSample, RadiativeTransferControls,
-                RadiativeTransferPerformanceThresholds, ScatteringMode, SourceInterfaceInput,
-                TransportFamily,
+                DerivativeSemantics, DispatchRequest, Error, ExecutionMode, ForwardInput,
+                ForwardResult, LayerInput, PseudoSphericalGrid, PseudoSphericalSample,
+                RadiativeTransferControls, RadiativeTransferPerformanceThresholds, ScatteringMode,
+                SourceInterfaceInput, TransportFamily,
             },
             derivatives,
         },
@@ -96,6 +98,72 @@ fn route_preparation_rejects_unsupported_modes_and_reports_semantics() {
         }),
         Err(Error::UnsupportedDerivativeMode)
     );
+}
+
+#[test]
+fn implementation_bindings_resolve_surface_and_transport_providers() {
+    let bindings = implementation_root::exact();
+    assert_eq!(bindings.transport.id, transport::DISPATCHER_ID);
+    assert_eq!(bindings.surface.id, surface::LAMBERTIAN_SURFACE_ID);
+
+    let route = (bindings.transport.prepare_route)(DispatchRequest {
+        rtm_controls: RadiativeTransferControls {
+            scattering: ScatteringMode::None,
+            ..RadiativeTransferControls::default()
+        },
+        ..DispatchRequest::default()
+    })
+    .unwrap();
+    assert_eq!(
+        (bindings.transport.classification_for_route)(route),
+        route.family.classification()
+    );
+    assert_eq!(
+        (bindings.transport.provenance_label_for_route)(route),
+        "baseline_labos"
+    );
+    assert_eq!(
+        (bindings.transport.derivative_semantics_for_route)(route),
+        DerivativeSemantics::None
+    );
+
+    let input = ForwardInput {
+        surface_albedo: 0.2,
+        optical_depth: 0.0,
+        rtm_controls: route.rtm_controls,
+        ..ForwardInput::default()
+    };
+    let forward = (bindings.transport.execute_prepared)(route, &input).unwrap();
+    assert_eq!(forward.toa_reflectance_factor, 0.2);
+    let with_workspace = bindings
+        .transport
+        .execute_prepared_with_labos_workspace
+        .unwrap();
+    assert_eq!(
+        with_workspace(route, &input, None)
+            .unwrap()
+            .toa_reflectance_factor,
+        0.2
+    );
+
+    let mut scene = zdisamar::input::scene::Scene::default();
+    scene.surface.kind = zdisamar::input::surface::Kind::WavelDependent;
+    let context = surface::EvaluationContext {
+        scene: &scene,
+        prepared: &PreparedOpticalState::default(),
+        wavelength_nm: 760.0,
+        safe_span: 1.0,
+        phase: 0.0,
+        forward: &ForwardResult {
+            family: route.family,
+            regime: route.regime,
+            execution_mode: route.execution_mode,
+            derivative_mode: route.derivative_mode,
+            toa_reflectance_factor: 0.2,
+            jacobian: None,
+        },
+    };
+    assert_eq!((bindings.surface.brdf_factor)(context), 1.0);
 }
 
 #[test]

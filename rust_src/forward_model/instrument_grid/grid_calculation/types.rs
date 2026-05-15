@@ -1,4 +1,12 @@
-use crate::forward_model::jacobian;
+use crate::forward_model::{implementations, jacobian};
+
+#[derive(Debug, Clone, Copy)]
+pub struct Implementations {
+    pub transport: implementations::transport::Implementation,
+    pub surface: implementations::surface::Implementation,
+    pub instrument: implementations::instrument::Implementation,
+    pub noise: implementations::noise::Implementation,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstrumentGridSummary {
