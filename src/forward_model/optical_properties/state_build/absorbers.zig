@@ -8,26 +8,11 @@ const ProfileStateCache = @import("profile_state_cache.zig");
 const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
 const Trace = @import("../../performance_trace.zig");
+const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;
 const min_parallel_profile_line_state_count: usize = 4;
 const profile_line_state_chunk_size: usize = 2;
-
-const ProfileLineStateQueue = struct {
-    mutex: std.Thread.Mutex = .{},
-    next_index: usize = 0,
-    len: usize,
-
-    fn next(self: *ProfileLineStateQueue) ?struct { start: usize, end: usize } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.next_index >= self.len) return null;
-        const start = self.next_index;
-        const end = @min(start + profile_line_state_chunk_size, self.len);
-        self.next_index = end;
-        return .{ .start = start, .end = end };
-    }
-};
 
 const ProfileLineStateWorker = struct {
     line_list: ReferenceData.SpectroscopyLineList,
@@ -35,7 +20,7 @@ const ProfileLineStateWorker = struct {
     pressures_hpa: []const f64,
     weak_states: ?[]ReferenceData.WeakLinePreparedState,
     strong_states: ?[]ReferenceData.StrongLinePreparedState,
-    queue: *ProfileLineStateQueue,
+    queue: *work_partition.ChunkQueue,
     worker_index: usize,
 };
 
@@ -306,7 +291,7 @@ fn fillProfileLineStates(
         return;
     }
 
-    var queue: ProfileLineStateQueue = .{ .len = temperatures_k.len };
+    var queue = work_partition.ChunkQueue.init(temperatures_k.len, profile_line_state_chunk_size);
     var worker_buffer: [Trace.max_workers]ProfileLineStateWorker = undefined;
     var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
     const workers = worker_buffer[0..worker_count];
@@ -400,9 +385,7 @@ fn fillProfileLineStateRange(
 }
 
 fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
-    if (profile_count < min_parallel_profile_line_state_count) return 1;
-    const cpu_count = std.Thread.getCpuCount() catch 1;
-    return @min(Trace.max_workers, @min(cpu_count, @max(@as(usize, 1), profile_count / min_parallel_profile_line_state_count)));
+    return work_partition.preferredWorkerCount(profile_count, min_parallel_profile_line_state_count);
 }
 
 fn buildCrossSectionAbsorbers(

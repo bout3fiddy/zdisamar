@@ -47,21 +47,11 @@ fn addTestStep(
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const runtime_optimize = b.option(
-        std.builtin.OptimizeMode,
-        "runtime-optimize",
-        "Optimization mode for installed runtime artifacts",
-    ) orelse .ReleaseFast;
     const enable_ztracy = b.option(
         bool,
         "enable-ztracy",
         "Enable full Tracy profile zones in the trace executable",
     ) orelse false;
-    const trace_optimize = b.option(
-        std.builtin.OptimizeMode,
-        "trace-optimize",
-        "Optimization mode for the LABOS bottleneck trace executable",
-    ) orelse runtime_optimize;
 
     const ztracy_stub_module = b.createModule(.{
         .root_source_file = b.path("src/forward_model/tracy_stub.zig"),
@@ -71,7 +61,7 @@ pub fn build(b: *std.Build) void {
     const trace_ztracy_dependency = if (enable_ztracy)
         b.dependency("ztracy", .{
             .target = target,
-            .optimize = trace_optimize,
+            .optimize = optimize,
             .enable_ztracy = true,
             .enable_fibers = false,
             .on_demand = false,
@@ -98,6 +88,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = if (target.result.os.tag == .linux) true else null,
         .imports = &.{
             .{
                 .name = "build_options",
@@ -118,7 +109,8 @@ pub fn build(b: *std.Build) void {
     const c_api_module = b.createModule(.{
         .root_source_file = b.path("src/api/c.zig"),
         .target = target,
-        .optimize = runtime_optimize,
+        .optimize = optimize,
+        .link_libc = if (target.result.os.tag == .linux) true else null,
         .imports = &.{
             .{
                 .name = "zdisamar",
@@ -145,7 +137,7 @@ pub fn build(b: *std.Build) void {
     const plot_spectrum_module = b.createModule(.{
         .root_source_file = b.path("src/validation/o2a_plot_spectrum_cli.zig"),
         .target = target,
-        .optimize = runtime_optimize,
+        .optimize = optimize,
         .imports = &.{
             .{
                 .name = "zdisamar",
@@ -259,14 +251,14 @@ pub fn build(b: *std.Build) void {
     const labos_kernel_bench_module = b.createModule(.{
         .root_source_file = b.path("tests/perf/labos_kernel_bench.zig"),
         .target = target,
-        .optimize = runtime_optimize,
+        .optimize = optimize,
         .imports = &.{
             .{
                 .name = "internal",
                 .module = b.createModule(.{
                     .root_source_file = b.path("src/internal.zig"),
                     .target = target,
-                    .optimize = runtime_optimize,
+                    .optimize = optimize,
                     .imports = &.{
                         .{
                             .name = "build_options",
@@ -292,7 +284,7 @@ pub fn build(b: *std.Build) void {
     const trace_internal_module = b.createModule(.{
         .root_source_file = b.path("src/internal.zig"),
         .target = target,
-        .optimize = trace_optimize,
+        .optimize = optimize,
         .imports = &.{
             .{
                 .name = "build_options",
@@ -307,7 +299,7 @@ pub fn build(b: *std.Build) void {
     const labos_bottleneck_trace_module = b.createModule(.{
         .root_source_file = b.path("src/validation/performance/labos_bottleneck_trace_cli.zig"),
         .target = target,
-        .optimize = trace_optimize,
+        .optimize = optimize,
         .imports = &.{
             .{
                 .name = "internal",

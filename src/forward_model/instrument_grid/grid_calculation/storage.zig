@@ -25,6 +25,10 @@ pub const Error =
     error{
         ShapeMismatch,
         OutOfMemory,
+        ThreadQuotaExceeded,
+        SystemResources,
+        LockedMemoryLimitExceeded,
+        Unexpected,
     };
 
 pub const Buffers = struct {

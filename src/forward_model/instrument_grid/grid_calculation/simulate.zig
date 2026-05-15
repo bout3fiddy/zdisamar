@@ -14,6 +14,7 @@ const SpectroscopyState = @import("../../optical_properties/state_build/state_sp
 const Types = @import("types.zig");
 const Storage = @import("storage.zig");
 const Trace = @import("../../performance_trace.zig");
+const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;
 const max_summary_samples: u32 = 128;
@@ -98,27 +99,11 @@ const RunningSummary = struct {
     }
 };
 
-const ProfileCacheBuildQueue = struct {
-    mutex: std.Thread.Mutex = .{},
-    next_index: usize = 0,
-    len: usize,
-
-    fn next(self: *ProfileCacheBuildQueue) ?struct { start: usize, end: usize } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.next_index >= self.len) return null;
-        const start = self.next_index;
-        const end = @min(start + profile_cache_build_chunk_size, self.len);
-        self.next_index = end;
-        return .{ .start = start, .end = end };
-    }
-};
-
 const ProfileCacheBuildWorker = struct {
     prepared: *const OpticsPreparation.PreparedOpticalState,
     forward_misses: []const SpectralEval.ForwardCacheMiss,
     caches: []SpectroscopyState.ProfileNodeSpectroscopyCache,
-    queue: *ProfileCacheBuildQueue,
+    queue: *work_partition.ChunkQueue,
     worker_index: usize = 0,
 };
 
@@ -241,7 +226,7 @@ fn buildProfileSpectroscopyCaches(
         return caches;
     }
 
-    var queue: ProfileCacheBuildQueue = .{ .len = forward_misses.len };
+    var queue = work_partition.ChunkQueue.init(forward_misses.len, profile_cache_build_chunk_size);
     const workers = try allocator.alloc(ProfileCacheBuildWorker, worker_count);
     defer allocator.free(workers);
     const threads = try allocator.alloc(std.Thread, worker_count - 1);

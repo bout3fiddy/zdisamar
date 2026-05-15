@@ -29,19 +29,15 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-24.04
             zig-target: x86_64-linux-gnu
-            runtime-optimize: ReleaseSmall
           - name: windows-x86_64
             os: windows-2025
             zig-target: x86_64-windows-gnu
-            runtime-optimize: ReleaseFast
           - name: macos-arm64
             os: macos-15
             zig-target: aarch64-macos
-            runtime-optimize: ReleaseFast
           - name: macos-x86_64
             os: macos-15-intel
             zig-target: x86_64-macos
-            runtime-optimize: ReleaseFast
 
     steps:
       - name: Check out source
@@ -66,7 +62,7 @@ jobs:
         env:
           ZDISAMAR_BUILD_PYTHON: "3.11"
           ZDISAMAR_ZIG_TARGET: ${{ matrix.zig-target }}
-          ZDISAMAR_ZIG_RUNTIME_OPTIMIZE: ${{ matrix.runtime-optimize }}
+          ZDISAMAR_ZIG_OPTIMIZE: ReleaseFast
         run: ./scripts/build-wheel.sh dist
 
       - name: Repair Linux wheel

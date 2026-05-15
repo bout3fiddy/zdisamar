@@ -5,6 +5,7 @@ const Absorbers = @import("absorbers.zig");
 const Spectroscopy = @import("spectroscopy.zig");
 const State = @import("state.zig");
 const Trace = @import("../../performance_trace.zig");
+const work_partition = @import("../../work_partition.zig");
 const spline = @import("../../../common/math/interpolation/spline.zig");
 
 const std = @import("std");
@@ -14,22 +15,6 @@ const max_spectroscopy_profile_nodes: usize = 256;
 const min_parallel_profile_cache_node_count: usize = 8;
 const profile_cache_node_chunk_size: usize = 2;
 
-const ProfileCacheValueQueue = struct {
-    mutex: std.Thread.Mutex = .{},
-    next_index: usize = 0,
-    len: usize,
-
-    fn next(self: *ProfileCacheValueQueue) ?struct { start: usize, end: usize } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.next_index >= self.len) return null;
-        const start = self.next_index;
-        const end = @min(start + profile_cache_node_chunk_size, self.len);
-        self.next_index = end;
-        return .{ .start = start, .end = end };
-    }
-};
-
 const ProfileCacheValueWorker = struct {
     cache: *ProfileSpectroscopyCache,
     line_list: ReferenceData.SpectroscopyLineList,
@@ -38,7 +23,7 @@ const ProfileCacheValueWorker = struct {
     prepared_states: ?[]const ReferenceData.StrongLinePreparedState,
     prepared_weak_states: ?[]const ReferenceData.WeakLinePreparedState,
     wavelength_window: ?LineListEval.StrongLineWavelengthWindow,
-    queue: *ProfileCacheValueQueue,
+    queue: *work_partition.ChunkQueue,
     worker_index: usize,
 };
 
@@ -213,7 +198,7 @@ fn fillProfileSpectroscopyCacheValues(
         return;
     }
 
-    var queue: ProfileCacheValueQueue = .{ .len = cache.node_count };
+    var queue = work_partition.ChunkQueue.init(cache.node_count, profile_cache_node_chunk_size);
     var worker_buffer: [Trace.max_workers]ProfileCacheValueWorker = undefined;
     var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
     const workers = worker_buffer[0..worker_count];
@@ -321,9 +306,7 @@ fn fillProfileSpectroscopyCacheValueRange(
 }
 
 fn preferredProfileCacheWorkerCount(node_count: usize) usize {
-    if (node_count < min_parallel_profile_cache_node_count) return 1;
-    const cpu_count = std.Thread.getCpuCount() catch 1;
-    return @min(Trace.max_workers, @min(cpu_count, @max(@as(usize, 1), node_count / min_parallel_profile_cache_node_count)));
+    return work_partition.preferredWorkerCount(node_count, min_parallel_profile_cache_node_count);
 }
 
 fn sampleCachedEndpointSecant(
