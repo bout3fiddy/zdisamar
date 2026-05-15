@@ -2,16 +2,42 @@ use zdisamar::input::reference::airmass_phase::{
     AirmassFactorLut, AirmassFactorPoint, Error, MiePhasePoint, MiePhaseTable,
     spectral_profile_from_optical_depth,
 };
+use zdisamar::input::reference::solar_irradiance::{
+    bundled_solar_irradiance, default_solar_continuum_irradiance, irradiance_at_wavelength,
+};
 use zdisamar::input::reference_data::{
     CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
     CrossSectionTable,
 };
+use zdisamar::input::{binding::Binding, scene::Scene};
 
 fn assert_close(actual: f64, expected: f64, tolerance: f64) {
     assert!(
         (actual - expected).abs() <= tolerance,
         "actual={actual:?} expected={expected:?} tolerance={tolerance:?}"
     );
+}
+
+#[test]
+fn solar_irradiance_uses_bundled_o2a_source_or_continuum_fallback() {
+    assert_close(
+        bundled_solar_irradiance(760.01).unwrap(),
+        4.858697784e14,
+        1.0,
+    );
+    assert!(bundled_solar_irradiance(700.0).is_none());
+    assert_close(default_solar_continuum_irradiance(760.0), 4.87401e14, 1.0);
+
+    let mut scene = Scene::default();
+    scene.observation_model.solar_spectrum_source = Binding::BundleDefault;
+    assert_close(
+        irradiance_at_wavelength(&scene, 760.01),
+        4.858697784e14,
+        1.0,
+    );
+
+    scene.observation_model.solar_spectrum_source = Binding::None;
+    assert_close(irradiance_at_wavelength(&scene, 760.0), 4.87401e14, 1.0);
 }
 
 #[test]
