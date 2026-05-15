@@ -8,13 +8,14 @@ use zdisamar::{
                 CrossSectionRepresentationKind, EvaluatedLayer, INVALID_SUPPORT_ROW_INDEX,
                 OpticalDepthBreakdown, PreparedCrossSectionAbsorber,
                 PreparedCrossSectionRepresentation, PreparedLayer, PreparedLineAbsorber,
-                PreparedOpticalState, PreparedSublayer, SharedRtmGeometry, SharedRtmLayerGeometry,
-                SharedRtmLevelGeometry, accumulate_breakdown,
+                PreparedOpticalState, PreparedSublayer, PseudoSphericalBuffers, SharedRtmGeometry,
+                SharedRtmLayerGeometry, SharedRtmLevelGeometry, accumulate_breakdown,
                 build_shared_rtm_geometry_from_layers, collect_active_cross_section_absorbers,
                 collect_active_line_absorbers, collision_induced_sigma_at_wavelength,
                 continuum_carrier_density_at_sublayer,
                 effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
-                fill_forward_layers_at_wavelength, fill_rtm_quadrature_at_wavelength_with_layers,
+                fill_forward_layers_at_wavelength, fill_pseudo_spherical_grid_at_wavelength,
+                fill_rtm_quadrature_at_wavelength_with_layers,
                 fill_shared_pseudo_spherical_grid_from_layer_inputs,
                 fill_source_interfaces_at_wavelength_with_layers,
                 fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
@@ -1548,6 +1549,163 @@ fn source_interfaces_fill_shared_grid_from_boundary_carriers() {
         0.2,
         1.0e-14,
     );
+}
+
+#[test]
+fn pseudo_spherical_wavelength_grid_fills_sublayer_carrier_samples() {
+    let sublayers = vec![PreparedSublayer {
+        altitude_km: 1.0,
+        absorber_number_density_cm3: 2.0e18,
+        path_length_cm: 100_000.0,
+        aerosol_optical_depth: 0.1,
+        aerosol_single_scatter_albedo: 0.5,
+        ..PreparedSublayer::default()
+    }];
+    let prepared = PreparedOpticalState {
+        sublayers: Some(sublayers),
+        continuum_points: vec![CrossSectionPoint {
+            wavelength_nm: 760.0,
+            sigma_cm2_per_molecule: 1.0e-24,
+        }],
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.atmosphere.sublayer_divisions = 2;
+    let mut attenuation_layers = vec![LayerInput::default(); 2];
+    let mut attenuation_samples = vec![PseudoSphericalSample::default(); 2];
+    let mut level_sample_starts = vec![0; 2];
+    let mut level_altitudes_km = vec![0.0; 2];
+
+    assert!(
+        fill_pseudo_spherical_grid_at_wavelength(
+            &prepared,
+            &scene,
+            760.0,
+            1,
+            PseudoSphericalBuffers {
+                attenuation_layers: &mut attenuation_layers,
+                attenuation_samples: &mut attenuation_samples,
+                level_sample_starts: &mut level_sample_starts,
+                level_altitudes_km: &mut level_altitudes_km,
+            },
+        )
+        .unwrap()
+    );
+
+    assert_eq!(level_sample_starts, vec![0, 2]);
+    assert_eq!(level_altitudes_km, vec![0.5, 1.5]);
+    assert_close(attenuation_samples[0].altitude_km, 0.5, 0.0);
+    assert_close(attenuation_samples[0].optical_depth, 0.0, 0.0);
+    assert_close(attenuation_samples[1].altitude_km, 1.0, 1.0e-14);
+    assert_close(attenuation_samples[1].thickness_km, 1.0, 1.0e-14);
+    assert_close(attenuation_samples[1].optical_depth, 0.3, 1.0e-14);
+    assert_close(attenuation_layers[1].optical_depth, 0.3, 1.0e-14);
+}
+
+#[test]
+fn pseudo_spherical_wavelength_grid_fills_shared_support_row_samples() {
+    let sublayers = vec![
+        PreparedSublayer {
+            global_sublayer_index: 0,
+            altitude_km: 0.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 1,
+            altitude_km: 1.0,
+            absorber_number_density_cm3: 2.0e18,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 0.5,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 2,
+            altitude_km: 2.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 3,
+            altitude_km: 3.0,
+            absorber_number_density_cm3: 4.0e18,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.2,
+            aerosol_single_scatter_albedo: 0.25,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 4,
+            altitude_km: 4.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let mut prepared = PreparedOpticalState {
+        layers: vec![
+            PreparedLayer {
+                sublayer_start_index: 0,
+                sublayer_count: 3,
+                bottom_altitude_km: 0.0,
+                top_altitude_km: 2.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+            PreparedLayer {
+                sublayer_start_index: 2,
+                sublayer_count: 3,
+                bottom_altitude_km: 2.0,
+                top_altitude_km: 4.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+        ],
+        sublayers: Some(sublayers),
+        continuum_points: vec![CrossSectionPoint {
+            wavelength_nm: 760.0,
+            sigma_cm2_per_molecule: 1.0e-24,
+        }],
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        interval_semantics: IntervalSemantics::ExplicitPressureBounds,
+        ..PreparedOpticalState::default()
+    };
+    prepared.ensure_shared_rtm_geometry_cache().unwrap();
+    let mut scene = Scene::default();
+    scene.atmosphere.sublayer_divisions = 1;
+    let mut attenuation_layers = vec![LayerInput::default(); 2];
+    let mut attenuation_samples = vec![PseudoSphericalSample::default(); 2];
+    let mut level_sample_starts = vec![0; 3];
+    let mut level_altitudes_km = vec![0.0; 3];
+
+    assert!(
+        fill_pseudo_spherical_grid_at_wavelength(
+            &prepared,
+            &scene,
+            760.0,
+            2,
+            PseudoSphericalBuffers {
+                attenuation_layers: &mut attenuation_layers,
+                attenuation_samples: &mut attenuation_samples,
+                level_sample_starts: &mut level_sample_starts,
+                level_altitudes_km: &mut level_altitudes_km,
+            },
+        )
+        .unwrap()
+    );
+
+    assert_eq!(level_sample_starts, vec![0, 1, 2]);
+    assert_eq!(level_altitudes_km, vec![0.0, 2.0, 4.0]);
+    assert_close(attenuation_samples[0].altitude_km, 1.0, 0.0);
+    assert_close(attenuation_samples[0].thickness_km, 1.0, 0.0);
+    assert_close(attenuation_samples[0].optical_depth, 0.3, 1.0e-14);
+    assert_close(attenuation_samples[1].altitude_km, 3.0, 0.0);
+    assert_close(attenuation_samples[1].thickness_km, 1.0, 0.0);
+    assert_close(attenuation_samples[1].optical_depth, 0.6, 1.0e-14);
+    assert_close(attenuation_layers[1].optical_depth, 0.6, 1.0e-14);
 }
 
 #[test]

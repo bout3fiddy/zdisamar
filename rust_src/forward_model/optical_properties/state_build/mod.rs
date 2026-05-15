@@ -28,10 +28,11 @@ pub use forward_layers::{
 pub use operational_o2::operational_o2_evaluation_at_wavelength;
 pub use prepared_state::PreparedOpticalState;
 pub use pseudo_spherical::fill_shared_pseudo_spherical_grid_from_layer_inputs;
+pub use pseudo_spherical::{PseudoSphericalBuffers, fill_pseudo_spherical_grid_at_wavelength};
 pub use rtm_quadrature::fill_rtm_quadrature_at_wavelength_with_layers;
 pub use shared_carrier::{
     accumulate_shared_carrier, evaluate_reduced_layer_from_support_rows,
-    evaluated_layer_from_shared_carrier,
+    evaluated_layer_from_shared_carrier, fill_shared_pseudo_spherical_samples_from_support_rows,
 };
 pub use shared_geometry::{
     INVALID_SUPPORT_ROW_INDEX, build_shared_rtm_geometry_from_layers,
