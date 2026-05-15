@@ -14,11 +14,13 @@ use zdisamar::{
                 collect_active_line_absorbers, collision_induced_sigma_at_wavelength,
                 continuum_carrier_density_at_sublayer,
                 effective_spectroscopy_evaluation_at_wavelength, evaluate_layer_at_wavelength,
-                fill_forward_layers_at_wavelength, fill_source_interfaces_from_prepared_layers,
-                first_active_support_row_index, forward_input_from_optical_depths,
-                interpolate_prepared_scalar_at_altitude, interval_altitude_at_node,
-                interval_weight_km, last_active_support_row_index, layer_input_from_evaluated,
-                level_altitude_from_sublayers, line_spectroscopy_carrier_density_at_sublayer,
+                fill_forward_layers_at_wavelength,
+                fill_shared_pseudo_spherical_grid_from_layer_inputs,
+                fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
+                forward_input_from_optical_depths, interpolate_prepared_scalar_at_altitude,
+                interval_altitude_at_node, interval_weight_km, last_active_support_row_index,
+                layer_input_from_evaluated, level_altitude_from_sublayers,
+                line_spectroscopy_carrier_density_at_sublayer,
                 operational_o2_evaluation_at_wavelength, optical_depth_breakdown_at_wavelength,
                 particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
                 prepared_scalar_for_sublayer, resolve_active_line_species,
@@ -28,7 +30,9 @@ use zdisamar::{
                 weighted_cross_section_sigma_at_wavelength, zero_spectroscopy_evaluation,
             },
         },
-        radiative_transfer::common_types::{LayerInput, SourceInterfaceInput},
+        radiative_transfer::common_types::{
+            LayerInput, PseudoSphericalSample, SourceInterfaceInput,
+        },
     },
     input::{
         absorber::{Absorber, AbsorberSet, LineGasControls, Spectroscopy, SpectroscopyMode},
@@ -973,6 +977,115 @@ fn forward_layers_reject_shared_rtm_grid_until_carrier_path_is_ported() {
             .unwrap_err(),
         errors::Error::InvalidRequest,
     );
+}
+
+#[test]
+fn pseudo_spherical_shared_grid_uses_prepared_layer_inputs() {
+    let prepared = PreparedOpticalState {
+        shared_rtm_geometry: SharedRtmGeometry {
+            layers: vec![
+                SharedRtmLayerGeometry {
+                    lower_altitude_km: 0.0,
+                    upper_altitude_km: 2.0,
+                    midpoint_altitude_km: 1.0,
+                    thickness_km: 2.0,
+                    ..SharedRtmLayerGeometry::default()
+                },
+                SharedRtmLayerGeometry {
+                    lower_altitude_km: 2.0,
+                    upper_altitude_km: 4.0,
+                    midpoint_altitude_km: 3.0,
+                    thickness_km: 2.0,
+                    ..SharedRtmLayerGeometry::default()
+                },
+            ],
+            levels: vec![
+                SharedRtmLevelGeometry {
+                    altitude_km: 0.0,
+                    ..SharedRtmLevelGeometry::default()
+                },
+                SharedRtmLevelGeometry {
+                    altitude_km: 2.0,
+                    ..SharedRtmLevelGeometry::default()
+                },
+                SharedRtmLevelGeometry {
+                    altitude_km: 4.0,
+                    ..SharedRtmLevelGeometry::default()
+                },
+            ],
+        },
+        ..PreparedOpticalState::default()
+    };
+    let layer_inputs = vec![
+        LayerInput {
+            optical_depth: 0.2,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            optical_depth: 0.4,
+            ..LayerInput::default()
+        },
+    ];
+    let mut scene = Scene::default();
+    scene.atmosphere.sublayer_divisions = 3;
+    let mut attenuation_layers = vec![LayerInput::default(); 6];
+    let mut attenuation_samples = vec![PseudoSphericalSample::default(); 6];
+    let mut level_sample_starts = vec![0; 3];
+    let mut level_altitudes_km = vec![0.0; 3];
+
+    assert!(fill_shared_pseudo_spherical_grid_from_layer_inputs(
+        &prepared,
+        &scene,
+        &layer_inputs,
+        &mut attenuation_layers,
+        &mut attenuation_samples,
+        &mut level_sample_starts,
+        &mut level_altitudes_km,
+    ));
+
+    assert_eq!(level_sample_starts, vec![0, 3, 6]);
+    assert_eq!(level_altitudes_km, vec![0.0, 2.0, 4.0]);
+    assert_close(attenuation_samples[0].altitude_km, 0.0, 0.0);
+    assert_close(attenuation_samples[0].optical_depth, 0.0, 0.0);
+    assert_close(attenuation_samples[1].altitude_km, 1.0, 0.0);
+    assert_close(attenuation_samples[1].thickness_km, 2.0, 0.0);
+    assert_close(attenuation_samples[1].optical_depth, 0.2, 0.0);
+    assert_close(attenuation_samples[2].altitude_km, 2.0, 0.0);
+    assert_close(attenuation_samples[4].altitude_km, 3.0, 0.0);
+    assert_close(attenuation_samples[4].optical_depth, 0.4, 0.0);
+    assert_close(attenuation_layers[1].optical_depth, 0.2, 0.0);
+    assert_close(attenuation_layers[4].optical_depth, 0.4, 0.0);
+}
+
+#[test]
+fn pseudo_spherical_shared_grid_rejects_invalid_buffers() {
+    let prepared = PreparedOpticalState {
+        shared_rtm_geometry: SharedRtmGeometry {
+            layers: vec![SharedRtmLayerGeometry::default()],
+            levels: vec![
+                SharedRtmLevelGeometry::default(),
+                SharedRtmLevelGeometry::default(),
+            ],
+        },
+        ..PreparedOpticalState::default()
+    };
+    let layer_inputs = vec![LayerInput::default()];
+    let mut scene = Scene::default();
+    scene.atmosphere.sublayer_divisions = 2;
+    let mut attenuation_layers = Vec::new();
+    let mut attenuation_samples = vec![PseudoSphericalSample::default(); 1];
+    let mut level_sample_starts = vec![0; 2];
+    let mut level_altitudes_km = vec![0.0; 2];
+
+    assert!(!fill_shared_pseudo_spherical_grid_from_layer_inputs(
+        &prepared,
+        &scene,
+        &layer_inputs,
+        &mut attenuation_layers,
+        &mut attenuation_samples,
+        &mut level_sample_starts,
+        &mut level_altitudes_km,
+    ));
 }
 
 #[test]
