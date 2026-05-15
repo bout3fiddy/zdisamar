@@ -1,6 +1,6 @@
 [project]
 name = "zdisamar"
-version = "0.0.5"
+version = "0.0.6"
 description = "Oxygen A-band radiative-transfer model with Python bindings"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,7 +30,7 @@ classifiers = [
 ]
 dependencies = [
     "altair>=5.5",
-    "numpy>=2.2",
+    "numpy>=2.0,<3",
     "pandas>=2.2",
     "polars>=1.35",
     "vl-convert-python>=1.7",
