@@ -592,6 +592,43 @@ fn simulate_product_uses_resolved_line_shape_integration_kernels() {
 }
 
 #[test]
+fn simulate_product_applies_radiance_channel_corrections() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        }]),
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.surface.albedo = 0.23;
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 761.0;
+    scene.spectral_grid.sample_count = 2;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .explicit = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .multiplicative_offset = 2.0;
+    let mut route = route();
+    route.rtm_controls.scattering = ScatteringMode::None;
+    route.rtm_controls.integrate_source_function = false;
+
+    let product = simulate_product(&scene, route, &prepared).unwrap();
+
+    for reflectance in product.reflectance {
+        assert_close(reflectance, 0.46, 1.0e-14);
+    }
+    assert_close(product.summary.mean_reflectance, 0.46, 1.0e-14);
+}
+
+#[test]
 fn generic_instrument_provider_matches_scene_controls() {
     let provider = resolve(GENERIC_RESPONSE_ID).unwrap();
     assert_eq!(provider.id, GENERIC_RESPONSE_ID);

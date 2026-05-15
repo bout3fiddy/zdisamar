@@ -1,11 +1,12 @@
 use crate::{
     common::errors,
     forward_model::{
-        implementations::instrument,
+        implementations::{instrument, noise},
         instrument_grid::{
             grid_calculation::{
                 cache::SpectralEvaluationCache,
                 forward_input::ForwardInputBuffers,
+                postprocess,
                 spectral_eval::{
                     self, integrate_forward_at_nominal, integrate_irradiance_at_nominal,
                 },
@@ -13,7 +14,10 @@ use crate::{
                 types::{InstrumentGridProduct, InstrumentGridSummary},
                 wavelength_sampling,
             },
-            spectral_math::grid::{self, ResolvedAxis, SpectralGrid},
+            spectral_math::{
+                calibration,
+                grid::{self, ResolvedAxis, SpectralGrid},
+            },
         },
         jacobian,
         optical_properties::state_build::PreparedOpticalState,
@@ -21,7 +25,7 @@ use crate::{
             LayerInput, PseudoSphericalSample, Route, RtmQuadratureLevel, SourceInterfaceInput,
         },
     },
-    input::scene::Scene,
+    input::{instrument::SpectralChannel, scene::Scene},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +35,8 @@ pub enum Error {
     SpectralEval(spectral_eval::Error),
     InstrumentIntegration(crate::forward_model::implementations::instrument::Error),
     InstrumentProvider,
+    NoiseProvider,
+    Postprocess(postprocess::Error),
     WavelengthSampling(wavelength_sampling::Error),
 }
 
@@ -61,6 +67,12 @@ impl From<crate::forward_model::implementations::instrument::Error> for Error {
 impl From<wavelength_sampling::Error> for Error {
     fn from(value: wavelength_sampling::Error) -> Self {
         Self::WavelengthSampling(value)
+    }
+}
+
+impl From<postprocess::Error> for Error {
+    fn from(value: postprocess::Error) -> Self {
+        Self::Postprocess(value)
     }
 }
 
@@ -124,6 +136,7 @@ pub fn simulate_product(
     axis.validate()?;
     let instrument_provider =
         instrument::resolve(instrument::GENERIC_RESPONSE_ID).ok_or(Error::InstrumentProvider)?;
+    let noise_provider = noise::resolve(noise::SCENE_NOISE_ID).ok_or(Error::NoiseProvider)?;
     let wavelength_sampling =
         wavelength_sampling::build_wavelength_sampling(scene, &axis, instrument_provider)?;
 
@@ -144,7 +157,9 @@ pub fn simulate_product(
     let mut radiance = vec![0.0; sample_count];
     let mut irradiance = vec![0.0; sample_count];
     let mut reflectance = vec![0.0; sample_count];
-    let noise_sigma = vec![0.0; sample_count];
+    let mut noise_sigma = vec![0.0; sample_count];
+    let mut scratch = vec![0.0; sample_count];
+    let mut scratch_aux = vec![0.0; sample_count];
     let wants_jacobian = route.derivative_mode != crate::input::scene::DerivativeMode::None;
     let mut jacobian_values =
         wants_jacobian.then(|| vec![0.0; sample_count * jacobian::STATE_COUNT]);
@@ -177,23 +192,88 @@ pub fn simulate_product(
             &mut cache,
             &plan.irradiance_integration,
         )?;
-        let sample_reflectance = if sample_irradiance > 0.0 && solar_cosine > 0.0 {
-            sample.radiance * std::f64::consts::PI / (sample_irradiance * solar_cosine)
-        } else {
-            0.0
-        };
-
         wavelengths[index] = plan.nominal_wavelength_nm;
         radiance[index] = sample.radiance;
         irradiance[index] = sample_irradiance;
-        reflectance[index] = sample_reflectance;
-        summary.radiance_sum += sample.radiance;
-        summary.irradiance_sum += sample_irradiance;
-        summary.reflectance_sum += sample_reflectance;
         if let Some(values) = &mut jacobian_values {
             let start = index * jacobian::STATE_COUNT;
             values[start..start + jacobian::STATE_COUNT].copy_from_slice(&sample.jacobian);
-            jacobian::add_scaled(&mut summary.jacobian_sum, sample.jacobian, 1.0);
+        }
+    }
+
+    postprocess::apply_channel_corrections(
+        scene,
+        SpectralChannel::Radiance,
+        (instrument_provider.calibration_for_scene)(scene, SpectralChannel::Radiance),
+        prepared.depolarization_factor,
+        &wavelengths,
+        &mut radiance,
+        &mut scratch,
+    )?;
+    postprocess::apply_channel_corrections(
+        scene,
+        SpectralChannel::Irradiance,
+        (instrument_provider.calibration_for_scene)(scene, SpectralChannel::Irradiance),
+        prepared.depolarization_factor,
+        &wavelengths,
+        &mut irradiance,
+        &mut scratch,
+    )?;
+    calibration::apply_ring_spectrum(
+        &scene.observation_model.resolved_ring_controls(),
+        &wavelengths,
+        &irradiance,
+        &mut radiance,
+        &mut scratch,
+    )
+    .map_err(postprocess::Error::from)?;
+
+    if let Some(values) = &mut jacobian_values {
+        for state_index in 0..jacobian::STATE_COUNT {
+            for sample_index in 0..sample_count {
+                scratch[sample_index] = values[sample_index * jacobian::STATE_COUNT + state_index];
+            }
+            postprocess::apply_channel_jacobian_corrections(
+                scene,
+                SpectralChannel::Radiance,
+                (instrument_provider.calibration_for_scene)(scene, SpectralChannel::Radiance),
+                prepared.depolarization_factor,
+                &wavelengths,
+                &mut scratch,
+                &mut scratch_aux,
+            )?;
+            for sample_index in 0..sample_count {
+                values[sample_index * jacobian::STATE_COUNT + state_index] = scratch[sample_index];
+            }
+        }
+    }
+
+    let has_noise_sigma = (noise_provider.materializes_sigma)(scene, SpectralChannel::Radiance);
+    postprocess::materialize_channel_sigma(
+        noise_provider,
+        scene,
+        SpectralChannel::Radiance,
+        &wavelengths,
+        &radiance,
+        &mut noise_sigma,
+    )?;
+    summary.noise_sum = noise_sigma.iter().sum();
+
+    for index in 0..sample_count {
+        let sample_reflectance = if irradiance[index] > 0.0 && solar_cosine > 0.0 {
+            radiance[index] * std::f64::consts::PI / (irradiance[index] * solar_cosine)
+        } else {
+            0.0
+        };
+        reflectance[index] = sample_reflectance;
+        summary.radiance_sum += radiance[index];
+        summary.irradiance_sum += irradiance[index];
+        summary.reflectance_sum += sample_reflectance;
+        if let Some(values) = &jacobian_values {
+            let start = index * jacobian::STATE_COUNT;
+            let mut row = jacobian::zero();
+            row.copy_from_slice(&values[start..start + jacobian::STATE_COUNT]);
+            jacobian::add_scaled(&mut summary.jacobian_sum, row, 1.0);
         }
     }
 
@@ -204,7 +284,7 @@ pub fn simulate_product(
         }
         mean
     });
-    let product_summary = summary.to_summary(&wavelengths, false, mean_jacobian);
+    let product_summary = summary.to_summary(&wavelengths, has_noise_sigma, mean_jacobian);
     Ok(InstrumentGridProduct {
         summary: product_summary,
         wavelengths,
