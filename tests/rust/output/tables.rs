@@ -3,11 +3,19 @@ use std::fs;
 use zdisamar::{
     forward_model::{
         instrument_grid::{InstrumentGridProduct, InstrumentGridSummary},
-        optical_properties::state_build::PreparedOpticalState,
+        optical_properties::state_build::{
+            PreparedLayer, PreparedOpticalState, PreparedSublayer, PreparedSupportRowKind,
+        },
     },
-    input::{instrument::IntegrationMode, scene::Scene},
+    input::{
+        atmosphere::PartitionLabel,
+        instrument::IntegrationMode,
+        reference_data::{CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable},
+        scene::Scene,
+    },
     output::{
         self, CHANNEL_MASK_IRRADIANCE, CHANNEL_MASK_RADIANCE, InstrumentResponseRow, SummaryReport,
+        SupportRowKind,
     },
 };
 
@@ -173,4 +181,92 @@ fn instrument_response_rejects_empty_requests() {
         output::build_instrument_response(&scene, &prepared, &[], CHANNEL_MASK_RADIANCE).is_err()
     );
     assert!(output::build_instrument_response(&scene, &prepared, &[760.0], 0).is_err());
+}
+
+#[test]
+fn atmospheric_budget_reports_layer_totals_like_zig() {
+    let scene = Scene::default();
+    let prepared = PreparedOpticalState {
+        layers: vec![PreparedLayer {
+            layer_index: 4,
+            altitude_km: 2.0,
+            top_altitude_km: 3.0,
+            bottom_altitude_km: 1.0,
+            pressure_hpa: 500.0,
+            temperature_k: 250.0,
+            gas_optical_depth: 1.1,
+            gas_scattering_optical_depth: 0.1,
+            cia_optical_depth: 0.2,
+            aerosol_optical_depth: 0.4,
+            cloud_optical_depth: 0.8,
+            interval_index_1based: 2,
+            subcolumn_label: PartitionLabel::FitInterval,
+            ..PreparedLayer::default()
+        }],
+        aerosol_single_scatter_albedo: 0.5,
+        cloud_single_scatter_albedo: 0.25,
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        ..PreparedOpticalState::default()
+    };
+
+    let rows = output::build_atmospheric_budget(&scene, &prepared, &[760.0]).unwrap();
+
+    assert_eq!(rows.len(), 1);
+    let row = rows[0];
+    assert_eq!(row.layer_index, 4);
+    assert_eq!(row.sublayer_index, u32::MAX);
+    assert_eq!(row.subcolumn_label as u32, 3);
+    assert_close(row.gas_absorption_optical_depth, 1.0, 1.0e-14);
+    assert_close(row.aerosol_scattering_optical_depth, 0.2, 1.0e-14);
+    assert_close(row.cloud_absorption_optical_depth, 0.6, 1.0e-14);
+    assert_close(row.total_absorption_optical_depth, 2.0, 1.0e-14);
+    assert_close(row.total_scattering_optical_depth, 0.5, 1.0e-14);
+    assert_close(row.total_optical_depth, 2.5, 1.0e-14);
+    assert_close(row.single_scatter_albedo, 0.2, 1.0e-14);
+}
+
+#[test]
+fn o2_o2_cia_rows_are_derived_from_sublayer_budget() {
+    let scene = Scene::default();
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer {
+            parent_layer_index: 1,
+            sublayer_index: 2,
+            altitude_km: 4.0,
+            pressure_hpa: 500.0,
+            temperature_k: 273.15,
+            number_density_cm3: 5.0,
+            oxygen_number_density_cm3: 2.0,
+            path_length_cm: 10.0,
+            support_row_kind: PreparedSupportRowKind::ParityActive,
+            subcolumn_label: PartitionLabel::BoundaryLayer,
+            ..PreparedSublayer::default()
+        }]),
+        collision_induced_absorption: Some(CollisionInducedAbsorptionTable {
+            scale_factor_cm5_per_molecule2: 1.0,
+            points: vec![CollisionInducedAbsorptionPoint {
+                wavelength_nm: 760.0,
+                a0: 0.01,
+                a1: 0.0,
+                a2: 0.0,
+            }],
+        }),
+        ..PreparedOpticalState::default()
+    };
+
+    let budget = output::build_atmospheric_budget(&scene, &prepared, &[760.0]).unwrap();
+    assert_eq!(budget[0].support_row_kind, SupportRowKind::ParityActive);
+    assert_eq!(budget[0].subcolumn_label as u32, 1);
+    assert_close(budget[0].cia_optical_depth, 0.4, 1.0e-14);
+
+    let rows = output::build_o2_o2_cia(&scene, &prepared, &[760.0]).unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].layer_index, 1);
+    assert_eq!(rows[0].sublayer_index, 2);
+    assert_close(rows[0].cia_cross_section_cm5_per_molecule2, 0.01, 1.0e-14);
+    assert_close(rows[0].cia_optical_depth, 0.4, 1.0e-14);
+    assert_close(rows[0].cia_share_of_total_absorption, 1.0, 1.0e-14);
+    assert_close(rows[0].cia_share_of_total_optical_depth, 1.0, 1.0e-12);
 }
