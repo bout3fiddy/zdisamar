@@ -4,15 +4,19 @@ use zdisamar::{
         optical_properties::{
             shared::phase_functions,
             state_build::{
-                CrossSectionRepresentationKind, EvaluatedLayer, OpticalDepthBreakdown,
-                PreparedCrossSectionAbsorber, PreparedCrossSectionRepresentation, PreparedSublayer,
+                CrossSectionRepresentationKind, EvaluatedLayer, INVALID_SUPPORT_ROW_INDEX,
+                OpticalDepthBreakdown, PreparedCrossSectionAbsorber,
+                PreparedCrossSectionRepresentation, PreparedLayer, PreparedSublayer,
                 SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
-                accumulate_breakdown, collect_active_cross_section_absorbers,
-                collect_active_line_absorbers, interpolate_prepared_scalar_at_altitude,
-                layer_input_from_evaluated, operational_o2_evaluation_at_wavelength,
-                particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
-                prepared_scalar_for_sublayer, resolve_active_line_species,
-                resolve_continuum_owner_species, sort_line_list, species_mixing_ratio_at_pressure,
+                accumulate_breakdown, build_shared_rtm_geometry_from_layers,
+                collect_active_cross_section_absorbers, collect_active_line_absorbers,
+                first_active_support_row_index, interpolate_prepared_scalar_at_altitude,
+                interval_altitude_at_node, interval_weight_km, last_active_support_row_index,
+                layer_input_from_evaluated, level_altitude_from_sublayers,
+                operational_o2_evaluation_at_wavelength, particle_optical_depth_at_wavelength,
+                prepare_cross_section_absorbers, prepared_scalar_for_sublayer,
+                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
+                sort_line_list, species_mixing_ratio_at_pressure,
             },
         },
     },
@@ -434,4 +438,108 @@ fn operational_o2_evaluation_wraps_lut_sigma_as_line_absorption() {
         0.0,
         0.0,
     );
+}
+
+#[test]
+fn shared_geometry_builds_reduced_rtm_levels_and_interval_weights() {
+    let sublayers = (0..=5)
+        .map(|index| PreparedSublayer {
+            altitude_km: f64::from(index),
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        })
+        .collect::<Vec<_>>();
+    let layers = vec![
+        PreparedLayer {
+            sublayer_start_index: 0,
+            sublayer_count: 3,
+            bottom_altitude_km: 0.0,
+            top_altitude_km: 2.0,
+            interval_index_1based: 1,
+            ..PreparedLayer::default()
+        },
+        PreparedLayer {
+            sublayer_start_index: 2,
+            sublayer_count: 3,
+            bottom_altitude_km: 2.0,
+            top_altitude_km: 4.0,
+            interval_index_1based: 1,
+            ..PreparedLayer::default()
+        },
+        PreparedLayer {
+            sublayer_start_index: 4,
+            sublayer_count: 2,
+            bottom_altitude_km: 4.0,
+            top_altitude_km: 5.0,
+            interval_index_1based: 2,
+            ..PreparedLayer::default()
+        },
+    ];
+
+    let geometry = build_shared_rtm_geometry_from_layers(&layers, &sublayers).unwrap();
+
+    assert!(geometry.is_valid_for(3));
+    assert_close(geometry.layers[0].midpoint_altitude_km, 1.0, 0.0);
+    assert_close(geometry.layers[1].thickness_km, 2.0, 0.0);
+    assert_close(geometry.levels[0].altitude_km, 0.0, 0.0);
+    assert_eq!(geometry.levels[0].particle_above_support_row_index, 1);
+    assert_eq!(
+        geometry.levels[0].particle_below_support_row_index,
+        INVALID_SUPPORT_ROW_INDEX
+    );
+    assert_close(geometry.levels[1].altitude_km, 2.0, 0.0);
+    assert_close(geometry.levels[1].weight_km, 4.0, 1.0e-14);
+    assert_eq!(geometry.levels[1].particle_above_support_row_index, 3);
+    assert_eq!(geometry.levels[1].particle_below_support_row_index, 1);
+    assert_eq!(
+        geometry.levels[2].particle_above_support_row_index,
+        INVALID_SUPPORT_ROW_INDEX
+    );
+    assert_eq!(geometry.levels[2].particle_below_support_row_index, 3);
+    assert_close(geometry.levels[3].altitude_km, 5.0, 0.0);
+}
+
+#[test]
+fn shared_geometry_helpers_match_zig_boundary_semantics() {
+    let rule = resolve_gauss_rule(1).unwrap();
+    assert_close(rule.nodes[0], 0.0, 1.0e-14);
+    assert_close(rule.weights[0], 2.0, 1.0e-14);
+    assert!(resolve_gauss_rule(0).is_err());
+
+    assert_close(interval_altitude_at_node(2.0, 6.0, 0.0), 4.0, 0.0);
+    assert_close(interval_weight_km(2.0, 6.0, 2.0), 4.0, 0.0);
+    assert_close(interval_altitude_at_node(6.0, 2.0, 0.0), 6.0, 0.0);
+    assert_close(interval_weight_km(6.0, 2.0, 2.0), 0.0, 0.0);
+
+    let active_layer = PreparedLayer {
+        sublayer_start_index: 4,
+        sublayer_count: 4,
+        ..PreparedLayer::default()
+    };
+    assert_eq!(first_active_support_row_index(active_layer), 5);
+    assert_eq!(last_active_support_row_index(active_layer), 6);
+    assert_eq!(
+        first_active_support_row_index(PreparedLayer {
+            sublayer_count: 2,
+            ..PreparedLayer::default()
+        }),
+        INVALID_SUPPORT_ROW_INDEX
+    );
+
+    let sublayers = vec![
+        PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 3.0,
+            path_length_cm: 200_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    assert_close(level_altitude_from_sublayers(&sublayers, 0), 0.5, 0.0);
+    assert_close(level_altitude_from_sublayers(&sublayers, 1), 2.0, 0.0);
+    assert_close(level_altitude_from_sublayers(&sublayers, 2), 4.0, 0.0);
+    assert_close(level_altitude_from_sublayers(&[], 0), 0.0, 0.0);
 }
