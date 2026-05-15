@@ -4,8 +4,9 @@ pub use super::attenuation::{
 };
 pub use super::layers::{
     calc_rt_layers, calc_rt_layers_into, calc_rt_layers_into_with_basis,
-    fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
-    renormalize_zero_fourier_phase_kernel, zero_fourier_integral,
+    calc_rt_layers_tangent_into_with_basis, fill_layer_effective_scattering_suffixes,
+    fill_layer_phase_max_indices, fill_surface, renormalize_zero_fourier_phase_kernel,
+    zero_fourier_integral,
 };
 pub use super::matrix::{
     esmul, esmul_semul, esmul_semul_add, mat_add, mat_add_esmul, mat_add_esmul3, mat_add_semul3,

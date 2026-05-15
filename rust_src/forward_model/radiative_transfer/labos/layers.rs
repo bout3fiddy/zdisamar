@@ -6,6 +6,7 @@ use super::{
     types::{Geometry, LayerRt, MAX_NMUTOT, MAX_PHASE_COEF, Mat, Vec as LabosVec},
 };
 use crate::forward_model::{
+    jacobian,
     optical_properties::shared::phase_functions,
     radiative_transfer::common_types::LayerInput,
     radiative_transfer::common_types::{RadiativeTransferControls, ScatteringMode},
@@ -479,4 +480,96 @@ pub fn calc_rt_layers(
     let mut rt = vec![zero_layer_rt(geometry.nmutot); layers.len() + 1];
     calc_rt_layers_into(&mut rt, layers, i_fourier, geometry, controls);
     rt
+}
+
+pub fn calc_rt_layers_tangent_into_with_basis(
+    rt_tangent: &mut [LayerRt],
+    layers: &[LayerInput],
+    state: jacobian::State,
+    i_fourier: usize,
+    geometry: &Geometry,
+    controls: RadiativeTransferControls,
+    plm_basis: &FourierPlmBasis,
+) {
+    let nlevel = layers.len() + 1;
+    assert!(rt_tangent.len() >= nlevel);
+    for layer_rt in rt_tangent.iter_mut().take(nlevel) {
+        *layer_rt = zero_layer_rt(geometry.nmutot);
+    }
+
+    let eps = 1.0e-5;
+    let inv_span = 0.5 / eps;
+    for (layer_idx, layer) in layers.iter().enumerate() {
+        let d_optical_depth = jacobian::get(layer.optical_depth_jacobian, state);
+        let d_scattering_optical_depth =
+            jacobian::get(layer.scattering_optical_depth_jacobian, state);
+        let d_single_scatter_albedo = jacobian::get(layer.single_scatter_albedo_jacobian, state);
+        if d_optical_depth == 0.0
+            && d_scattering_optical_depth == 0.0
+            && d_single_scatter_albedo == 0.0
+        {
+            continue;
+        }
+
+        let mut plus_layer = layer.clone();
+        plus_layer.optical_depth = (layer.optical_depth + eps * d_optical_depth).max(0.0);
+        plus_layer.scattering_optical_depth =
+            (layer.scattering_optical_depth + eps * d_scattering_optical_depth).max(0.0);
+        plus_layer.single_scatter_albedo =
+            (layer.single_scatter_albedo + eps * d_single_scatter_albedo).clamp(0.0, 1.0);
+
+        let mut minus_layer = layer.clone();
+        minus_layer.optical_depth = (layer.optical_depth - eps * d_optical_depth).max(0.0);
+        minus_layer.scattering_optical_depth =
+            (layer.scattering_optical_depth - eps * d_scattering_optical_depth).max(0.0);
+        minus_layer.single_scatter_albedo =
+            (layer.single_scatter_albedo - eps * d_single_scatter_albedo).clamp(0.0, 1.0);
+
+        let plus_layers = [plus_layer];
+        let minus_layers = [minus_layer];
+        let mut plus_rt = vec![zero_layer_rt(geometry.nmutot); 2];
+        let mut minus_rt = vec![zero_layer_rt(geometry.nmutot); 2];
+        calc_rt_layers_into_with_basis(
+            &mut plus_rt,
+            &plus_layers,
+            i_fourier,
+            geometry,
+            controls,
+            plm_basis,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        calc_rt_layers_into_with_basis(
+            &mut minus_rt,
+            &minus_layers,
+            i_fourier,
+            geometry,
+            controls,
+            plm_basis,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        rt_tangent[layer_idx + 1] = layer_rt_difference_scaled(plus_rt[1], minus_rt[1], inv_span);
+    }
+}
+
+fn layer_rt_difference_scaled(plus: LayerRt, minus: LayerRt, scale: f64) -> LayerRt {
+    LayerRt {
+        r: mat_difference_scaled(plus.r, minus.r, scale),
+        t: mat_difference_scaled(plus.t, minus.t, scale),
+    }
+}
+
+fn mat_difference_scaled(plus: Mat, minus: Mat, scale: f64) -> Mat {
+    let mut result = Mat::zero(plus.n);
+    for index in 0..plus.n * plus.n {
+        result.data[index] = (plus.data[index] - minus.data[index]) * scale;
+    }
+    result
 }

@@ -1,12 +1,14 @@
 use zdisamar::forward_model::{
+    jacobian::{self, State},
     optical_properties::shared::phase_functions::{self, PhaseCoefficients},
     radiative_transfer::{
         common_types::LayerInput,
         labos::{
             FourierPlmBasis, Geometry, MAX_PHASE_COEF, Mat, PhaseKernel, calc_rt_layers,
-            calc_rt_layers_into_with_basis, fill_layer_effective_scattering_suffixes,
-            fill_layer_phase_max_indices, fill_surface, fill_zplus_zmin_from_basis,
-            renormalize_zero_fourier_phase_kernel, zero_fourier_integral,
+            calc_rt_layers_into_with_basis, calc_rt_layers_tangent_into_with_basis,
+            fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
+            fill_zplus_zmin_from_basis, renormalize_zero_fourier_phase_kernel,
+            zero_fourier_integral,
         },
     },
 };
@@ -186,5 +188,93 @@ fn rt_layer_builder_populates_phase_cache_and_active_mask() {
         rt[1].r.data[..geometry.nmutot * geometry.nmutot]
             .iter()
             .any(|value| *value != 0.0)
+    );
+}
+
+#[test]
+fn rt_layer_tangent_matches_local_finite_difference() {
+    let geometry = Geometry::init(4, 0.58, 0.64);
+    let mut layer = LayerInput {
+        optical_depth: 0.2,
+        scattering_optical_depth: 0.12,
+        single_scatter_albedo: 0.7,
+        phase_coefficients: phase_coefficients(&[(1, 0.2), (2, 0.05)]),
+        ..LayerInput::default()
+    };
+    jacobian::set(
+        &mut layer.optical_depth_jacobian,
+        State::AerosolLayerMidPressureHpa,
+        0.003,
+    );
+    jacobian::set(
+        &mut layer.scattering_optical_depth_jacobian,
+        State::AerosolLayerMidPressureHpa,
+        0.002,
+    );
+    jacobian::set(
+        &mut layer.single_scatter_albedo_jacobian,
+        State::AerosolLayerMidPressureHpa,
+        -0.001,
+    );
+    let layers = vec![layer.clone()];
+    let basis = FourierPlmBasis::init(0, 2, &geometry);
+    let mut tangent_rt = vec![fill_surface(0, 0.0, &geometry); 2];
+
+    calc_rt_layers_tangent_into_with_basis(
+        &mut tangent_rt,
+        &layers,
+        State::AerosolLayerMidPressureHpa,
+        0,
+        &geometry,
+        Default::default(),
+        &basis,
+    );
+
+    let eps = 1.0e-5;
+    let mut plus_layer = layer.clone();
+    plus_layer.optical_depth += eps
+        * jacobian::get(
+            layer.optical_depth_jacobian,
+            State::AerosolLayerMidPressureHpa,
+        );
+    plus_layer.scattering_optical_depth += eps
+        * jacobian::get(
+            layer.scattering_optical_depth_jacobian,
+            State::AerosolLayerMidPressureHpa,
+        );
+    plus_layer.single_scatter_albedo += eps
+        * jacobian::get(
+            layer.single_scatter_albedo_jacobian,
+            State::AerosolLayerMidPressureHpa,
+        );
+    let mut minus_layer = layer.clone();
+    minus_layer.optical_depth -= eps
+        * jacobian::get(
+            layer.optical_depth_jacobian,
+            State::AerosolLayerMidPressureHpa,
+        );
+    minus_layer.scattering_optical_depth -= eps
+        * jacobian::get(
+            layer.scattering_optical_depth_jacobian,
+            State::AerosolLayerMidPressureHpa,
+        );
+    minus_layer.single_scatter_albedo -= eps
+        * jacobian::get(
+            layer.single_scatter_albedo_jacobian,
+            State::AerosolLayerMidPressureHpa,
+        );
+
+    let plus_rt = calc_rt_layers(&[plus_layer], 0, &geometry, Default::default());
+    let minus_rt = calc_rt_layers(&[minus_layer], 0, &geometry, Default::default());
+    let view_idx = geometry.view_idx();
+    let solar_idx = geometry.n_gauss + 1;
+    let finite_difference = (plus_rt[1].r.get(view_idx, solar_idx)
+        - minus_rt[1].r.get(view_idx, solar_idx))
+        / (2.0 * eps);
+
+    assert_close(
+        tangent_rt[1].r.get(view_idx, solar_idx),
+        finite_difference,
+        1.0e-10,
     );
 }
