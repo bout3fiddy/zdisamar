@@ -1,13 +1,17 @@
-use zdisamar::forward_model::{
-    jacobian::{self, State},
-    optical_properties::{
-        shared::phase_functions,
-        state_build::{
-            EvaluatedLayer, OpticalDepthBreakdown, PreparedSublayer, SharedRtmGeometry,
-            SharedRtmLayerGeometry, SharedRtmLevelGeometry, accumulate_breakdown,
-            layer_input_from_evaluated,
+use zdisamar::{
+    forward_model::{
+        jacobian::{self, State},
+        optical_properties::{
+            shared::phase_functions,
+            state_build::{
+                EvaluatedLayer, OpticalDepthBreakdown, PreparedSublayer, SharedRtmGeometry,
+                SharedRtmLayerGeometry, SharedRtmLevelGeometry, accumulate_breakdown,
+                interpolate_prepared_scalar_at_altitude, layer_input_from_evaluated,
+                particle_optical_depth_at_wavelength, prepared_scalar_for_sublayer,
+            },
         },
     },
+    input::atmosphere::{FractionControl, FractionKind, FractionTarget},
 };
 
 fn assert_close(actual: f64, expected: f64, tolerance: f64) {
@@ -110,5 +114,77 @@ fn prepared_sublayer_and_shared_geometry_match_zig_defaults() {
     assert_eq!(
         SharedRtmLevelGeometry::default().particle_above_support_row_index,
         u32::MAX
+    );
+}
+
+#[test]
+fn prepared_scalar_helpers_interpolate_by_altitude() {
+    let sublayers = vec![
+        PreparedSublayer {
+            global_sublayer_index: 0,
+            altitude_km: 1.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 1,
+            altitude_km: 3.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 2,
+            altitude_km: 5.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let values = [10.0, 20.0, 50.0];
+
+    assert_close(
+        prepared_scalar_for_sublayer(&values, sublayers[1]),
+        20.0,
+        0.0,
+    );
+    assert_close(
+        interpolate_prepared_scalar_at_altitude(&sublayers, &values, 4.0),
+        35.0,
+        1.0e-14,
+    );
+    assert_close(
+        interpolate_prepared_scalar_at_altitude(&sublayers, &values, 0.0),
+        10.0,
+        1.0e-14,
+    );
+    assert_close(
+        interpolate_prepared_scalar_at_altitude(&[], &values, 4.0),
+        0.0,
+        0.0,
+    );
+}
+
+#[test]
+fn particle_optical_depth_uses_base_or_effective_fraction_semantics() {
+    let disabled_control = FractionControl::default();
+    assert_close(
+        particle_optical_depth_at_wavelength(0.2, 0.0, 760.0, 0.0, &disabled_control, 770.0),
+        0.2,
+        0.0,
+    );
+
+    let control = FractionControl {
+        enabled: true,
+        target: FractionTarget::Aerosol,
+        kind: FractionKind::WavelDependent,
+        wavelengths_nm: vec![760.0, 770.0],
+        values: vec![0.5, 1.0],
+        ..FractionControl::default()
+    };
+    assert_close(
+        particle_optical_depth_at_wavelength(0.2, 0.0, 760.0, 0.0, &control, 770.0),
+        0.4,
+        1.0e-14,
+    );
+    assert_close(
+        particle_optical_depth_at_wavelength(0.2, 0.1, 760.0, 0.0, &control, 770.0),
+        0.1,
+        1.0e-14,
     );
 }
