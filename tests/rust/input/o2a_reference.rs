@@ -348,6 +348,33 @@ fn o2a_runtime_builds_scene_and_route_from_resolved_case() {
 }
 
 #[test]
+fn o2a_runtime_prepares_resolved_vendor_case() {
+    let mut input = o2a_reference::default_input();
+    input.o2.line_list_asset.path =
+        "data/reference_data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par".to_string();
+    input.o2.strong_lines_asset.path =
+        "data/reference_data/cross_sections/o2a_lisa_sdf_subset.dat".to_string();
+    input.o2.line_mixing_asset.path =
+        "data/reference_data/cross_sections/o2a_lisa_rmf_subset.dat".to_string();
+    input.o2o2.cia_asset.as_mut().unwrap().path =
+        "data/reference_data/cross_sections/o2o2_bira_o2a_subset.dat".to_string();
+
+    let prepared = o2a_reference::prepare_resolved_vendor_o2a_case(&input).unwrap();
+
+    assert_eq!(prepared.reference.len(), 701);
+    assert_eq!(prepared.scene.id, "o2a_disamar_reference_python");
+    assert_eq!(prepared.route.execution_mode, ExecutionMode::Scalar);
+    assert!(prepared.prepared.sublayers.as_ref().unwrap().len() > prepared.prepared.layers.len());
+    assert!(prepared.prepared.air_column_density_factor > 0.0);
+    assert!(
+        prepared
+            .prepared
+            .shared_rtm_geometry
+            .is_valid_for(prepared.prepared.layers.len())
+    );
+}
+
+#[test]
 fn o2a_comparison_metrics_match_exact_reference_samples() {
     let wavelengths = vec![756.0, 760.5, 762.0, 764.5, 770.0];
     let reflectance = vec![5.0, 1.0, 3.0, 4.0, 6.0];

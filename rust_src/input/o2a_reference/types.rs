@@ -1,6 +1,10 @@
 use crate::{
     common::errors,
-    forward_model::radiative_transfer::common_types::{ExecutionMode, RadiativeTransferControls},
+    forward_model::{
+        instrument_grid::InstrumentGridProduct,
+        optical_properties::PreparedOpticalState,
+        radiative_transfer::common_types::{ExecutionMode, RadiativeTransferControls, Route},
+    },
     input::{
         atmosphere::{IntervalPlacement, VerticalInterval},
         geometry,
@@ -11,6 +15,7 @@ use crate::{
             ClimatologyProfile, CollisionInducedAbsorptionTable, CrossSectionTable,
             SpectroscopyLineList,
         },
+        scene::Scene,
         spectrum::SpectralGrid,
     },
 };
@@ -198,6 +203,23 @@ pub struct LoadedVendorO2AInputs {
     pub lut: AirmassFactorLut,
     pub reference: Vec<ReferenceSample>,
     pub raw_solar_spectrum: Vec<SolarSpectrumSample>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VendorO2APreparedCase {
+    pub reference: Vec<ReferenceSample>,
+    pub scene: Scene,
+    pub route: Route,
+    pub prepared: PreparedOpticalState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VendorO2AReflectanceCase {
+    pub reference: Vec<ReferenceSample>,
+    pub scene: Scene,
+    pub route: Route,
+    pub prepared: PreparedOpticalState,
+    pub product: InstrumentGridProduct,
 }
 
 impl ResolvedVendorO2ACase {

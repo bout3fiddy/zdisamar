@@ -28,13 +28,15 @@ pub use run::{
     load_climatology_profile, load_reference_samples, load_resolved_vendor_o2a_inputs,
     load_resolved_vendor_o2a_line_list, load_solar_spectrum_samples, load_spectroscopy_line_list,
     load_spectroscopy_relaxation_matrix, load_spectroscopy_strong_lines,
-    prepare_resolved_vendor_o2a_route, reference_spectral_response, retain_solar_support,
+    prepare_resolved_vendor_o2a_case, prepare_resolved_vendor_o2a_route,
+    reference_spectral_response, retain_solar_support, run_resolved_vendor_o2a_reflectance_case,
     zero_continuum_table,
 };
 pub use types::{
     AerosolSpec, CiaSpec, ExternalAsset, GeometrySpec, InputsSpec, LineGasSpec,
     LoadedVendorO2AInputs, Metadata, ObservationSpec, OutputKind, OutputRequest, PlanError,
     PlanSpec, ReferenceSample, ResolvedVendorO2ACase, SolarSpectrumSample, ValidationPolicy,
+    VendorO2APreparedCase, VendorO2AReflectanceCase,
 };
 
 const DEFAULT_ISOTOPES: [u8; 3] = [1, 2, 3];

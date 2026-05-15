@@ -2,9 +2,13 @@ use std::{fs, io, num::ParseFloatError};
 
 use crate::{
     common::errors,
-    forward_model::radiative_transfer::{
-        common_route,
-        common_types::{self, DispatchRequest},
+    forward_model::{
+        instrument_grid::grid_calculation::simulate,
+        optical_properties::{self, PreparationInputs},
+        radiative_transfer::{
+            common_route,
+            common_types::{self, DispatchRequest},
+        },
     },
     input::{
         absorber::{
@@ -34,7 +38,7 @@ use crate::{
 
 use super::types::{
     ExternalAsset, LineGasSpec, LoadedVendorO2AInputs, ReferenceSample, ResolvedVendorO2ACase,
-    SolarSpectrumSample,
+    SolarSpectrumSample, VendorO2APreparedCase, VendorO2AReflectanceCase,
 };
 
 #[derive(Debug)]
@@ -44,6 +48,7 @@ pub enum Error {
     InvalidData,
     InvalidRequest(errors::Error),
     Route(common_types::Error),
+    Simulation(simulate::Error),
     UnsupportedSolarReferenceAssetFormat,
 }
 
@@ -68,6 +73,12 @@ impl From<errors::Error> for Error {
 impl From<common_types::Error> for Error {
     fn from(value: common_types::Error) -> Self {
         Self::Route(value)
+    }
+}
+
+impl From<simulate::Error> for Error {
+    fn from(value: simulate::Error) -> Self {
+        Self::Simulation(value)
     }
 }
 
@@ -322,6 +333,54 @@ pub fn load_resolved_vendor_o2a_inputs(
         lut,
         reference,
         raw_solar_spectrum,
+    })
+}
+
+pub fn prepare_resolved_vendor_o2a_case(
+    resolved: &ResolvedVendorO2ACase,
+) -> Result<VendorO2APreparedCase, Error> {
+    resolved.validate()?;
+    let loaded = load_resolved_vendor_o2a_inputs(resolved)?;
+    let scene = build_resolved_vendor_o2a_scene(resolved, &loaded.raw_solar_spectrum)?;
+    let route = prepare_resolved_vendor_o2a_route(&scene, resolved)?;
+    let prepared = optical_properties::prepare(
+        &scene,
+        PreparationInputs {
+            profile: &loaded.profile,
+            spectroscopy_profile: Some(&loaded.spectroscopy_profile),
+            cross_sections: &loaded.cross_sections,
+            lut: &loaded.lut,
+            collision_induced_absorption: loaded.cia_table.as_ref(),
+            spectroscopy_lines: Some(&loaded.line_list),
+            aerosol_mie: None,
+            cloud_mie: None,
+        },
+    )?;
+
+    Ok(VendorO2APreparedCase {
+        reference: loaded.reference,
+        scene,
+        route,
+        prepared,
+    })
+}
+
+pub fn run_resolved_vendor_o2a_reflectance_case(
+    resolved: &ResolvedVendorO2ACase,
+) -> Result<VendorO2AReflectanceCase, Error> {
+    let prepared_case = prepare_resolved_vendor_o2a_case(resolved)?;
+    let product = simulate::simulate_product(
+        &prepared_case.scene,
+        prepared_case.route,
+        &prepared_case.prepared,
+    )?;
+
+    Ok(VendorO2AReflectanceCase {
+        reference: prepared_case.reference,
+        scene: prepared_case.scene,
+        route: prepared_case.route,
+        prepared: prepared_case.prepared,
+        product,
     })
 }
 
