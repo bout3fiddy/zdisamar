@@ -23,11 +23,14 @@ use zdisamar::{
                 line_spectroscopy_carrier_density_at_sublayer,
                 operational_o2_evaluation_at_wavelength, optical_depth_breakdown_at_wavelength,
                 particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
-                prepared_scalar_for_sublayer, resolve_active_line_species,
-                resolve_continuum_owner_species, resolve_gauss_rule, sort_line_list,
-                species_mixing_ratio_at_pressure, to_forward_input_at_wavelength_with_layers,
-                total_cross_section_at_wavelength, total_optical_depth_at_wavelength,
-                weighted_cross_section_sigma_at_wavelength, zero_spectroscopy_evaluation,
+                prepared_scalar_for_sublayer, quadrature_carrier_at_altitude,
+                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
+                shared_active_carrier_at_level, shared_boundary_carrier_at_level,
+                shared_optical_carrier_at_altitude, shared_optical_carrier_at_support_row,
+                sort_line_list, species_mixing_ratio_at_pressure,
+                to_forward_input_at_wavelength_with_layers, total_cross_section_at_wavelength,
+                total_optical_depth_at_wavelength, weighted_cross_section_sigma_at_wavelength,
+                zero_spectroscopy_evaluation,
             },
         },
         radiative_transfer::common_types::{
@@ -260,6 +263,215 @@ fn prepared_scalar_helpers_resolve_carrier_densities_by_species() {
         line_spectroscopy_carrier_density_at_sublayer(&no_operational_o2, sublayer, 1),
         4.0,
         0.0,
+    );
+}
+
+#[test]
+fn carrier_eval_composes_support_row_per_km_terms() {
+    let mut aerosol_phase = phase_functions::zero_phase_coefficients();
+    aerosol_phase[1] = 0.3;
+    let mut cloud_phase = phase_functions::zero_phase_coefficients();
+    cloud_phase[1] = 0.6;
+    let sublayer = PreparedSublayer {
+        temperature_k: 250.0,
+        pressure_hpa: 600.0,
+        number_density_cm3: 1.0e18,
+        absorber_number_density_cm3: 2.0e18,
+        path_length_cm: 100_000.0,
+        aerosol_optical_depth: 0.2,
+        aerosol_single_scatter_albedo: 0.5,
+        cloud_optical_depth: 0.1,
+        cloud_single_scatter_albedo: 0.2,
+        aerosol_phase_coefficients: aerosol_phase,
+        cloud_phase_coefficients: cloud_phase,
+        ..PreparedSublayer::default()
+    };
+    let prepared = PreparedOpticalState {
+        continuum_points: vec![CrossSectionPoint {
+            wavelength_nm: 760.0,
+            sigma_cm2_per_molecule: 1.0e-24,
+        }],
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        ..PreparedOpticalState::default()
+    };
+
+    let carrier = shared_optical_carrier_at_support_row(&prepared, 760.0, sublayer, 0).unwrap();
+
+    let gas_scattering = rayleigh::cross_section_cm2(760.0) * 1.0e18 * 100_000.0;
+    assert_close(carrier.gas_absorption_optical_depth_per_km, 0.2, 1.0e-14);
+    assert_close(
+        carrier.gas_scattering_optical_depth_per_km,
+        gas_scattering,
+        1.0e-14,
+    );
+    assert_close(carrier.aerosol_optical_depth_per_km, 0.2, 1.0e-14);
+    assert_close(
+        carrier.aerosol_scattering_optical_depth_per_km,
+        0.1,
+        1.0e-14,
+    );
+    assert_close(carrier.cloud_optical_depth_per_km, 0.1, 1.0e-14);
+    assert_close(carrier.cloud_scattering_optical_depth_per_km, 0.02, 1.0e-14);
+    assert_close(
+        carrier.total_optical_depth_per_km(),
+        0.2 + gas_scattering + 0.2 + 0.1,
+        1.0e-14,
+    );
+    assert_close(
+        carrier.phase_coefficients[1],
+        (0.1 * 0.3 + 0.02 * 0.6) / (gas_scattering + 0.1 + 0.02),
+        1.0e-14,
+    );
+}
+
+#[test]
+fn carrier_eval_uses_boundary_particle_support_rows() {
+    let mut below_phase = phase_functions::zero_phase_coefficients();
+    below_phase[1] = 0.2;
+    let mut above_phase = phase_functions::zero_phase_coefficients();
+    above_phase[1] = 0.8;
+    let sublayers = vec![
+        PreparedSublayer {
+            altitude_km: 0.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 0.5,
+            aerosol_phase_coefficients: below_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 5.0,
+            number_density_cm3: 1.0e18,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 10.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.3,
+            aerosol_single_scatter_albedo: 0.25,
+            aerosol_phase_coefficients: above_phase,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let prepared = PreparedOpticalState {
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        ..PreparedOpticalState::default()
+    };
+    let level_geometry = SharedRtmLevelGeometry {
+        support_row_index: 1,
+        particle_above_support_row_index: 2,
+        particle_below_support_row_index: 0,
+        ..SharedRtmLevelGeometry::default()
+    };
+
+    let carrier =
+        shared_boundary_carrier_at_level(&prepared, 760.0, &sublayers, level_geometry).unwrap();
+
+    let gas_scattering = rayleigh::cross_section_cm2(760.0) * 1.0e18 * 100_000.0;
+    assert_close(
+        carrier.gas_scattering_optical_depth_per_km,
+        gas_scattering,
+        1.0e-14,
+    );
+    assert_close(
+        carrier.aerosol_scattering_optical_depth_above_per_km,
+        0.075,
+        1.0e-14,
+    );
+    assert_close(
+        carrier.aerosol_scattering_optical_depth_below_per_km,
+        0.05,
+        1.0e-14,
+    );
+    assert_close(carrier.ksca_above, gas_scattering + 0.075, 1.0e-14);
+    assert_close(carrier.ksca_below, gas_scattering + 0.05, 1.0e-14);
+    assert_close(
+        carrier.phase_coefficients_above[1],
+        (0.075 * 0.8) / (gas_scattering + 0.075),
+        1.0e-14,
+    );
+}
+
+#[test]
+fn carrier_eval_interpolates_active_and_quadrature_particles_by_scattering() {
+    let mut below_phase = phase_functions::zero_phase_coefficients();
+    below_phase[1] = 0.1;
+    let mut above_phase = phase_functions::zero_phase_coefficients();
+    above_phase[1] = 0.9;
+    let sublayers = vec![
+        PreparedSublayer {
+            altitude_km: 0.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: below_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            altitude_km: 10.0,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.3,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: above_phase,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let prepared = PreparedOpticalState {
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        ..PreparedOpticalState::default()
+    };
+    let level_geometry = SharedRtmLevelGeometry {
+        altitude_km: 5.0,
+        support_row_index: 0,
+        particle_above_support_row_index: 1,
+        particle_below_support_row_index: 0,
+        ..SharedRtmLevelGeometry::default()
+    };
+
+    let active =
+        shared_active_carrier_at_level(&prepared, 760.0, &sublayers, level_geometry).unwrap();
+    let quadrature = quadrature_carrier_at_altitude(&prepared, 760.0, &sublayers, 5.0).unwrap();
+
+    assert_close(active.aerosol_optical_depth_per_km, 0.2, 1.0e-14);
+    assert_close(active.aerosol_phase_coefficients[1], 0.7, 1.0e-14);
+    assert_close(
+        quadrature.aerosol_scattering_optical_depth_per_km,
+        0.2,
+        1.0e-14,
+    );
+    assert_close(quadrature.aerosol_phase_coefficients[1], 0.7, 1.0e-14);
+    assert_close(quadrature.ksca, 0.2, 1.0e-14);
+}
+
+#[test]
+fn carrier_eval_rejects_unported_line_absorber_without_operational_lut() {
+    let prepared = PreparedOpticalState {
+        line_absorbers: vec![PreparedLineAbsorber {
+            species: AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList::default(),
+            number_densities_cm3: vec![1.0e18],
+            column_density_factor: 1.0,
+        }],
+        ..PreparedOpticalState::default()
+    };
+    let sublayer = PreparedSublayer {
+        global_sublayer_index: 0,
+        path_length_cm: 100_000.0,
+        absorber_number_density_cm3: 1.0e18,
+        ..PreparedSublayer::default()
+    };
+
+    assert_eq!(
+        shared_optical_carrier_at_support_row(&prepared, 760.0, sublayer, 0).unwrap_err(),
+        errors::Error::InvalidRequest,
+    );
+    assert_eq!(
+        shared_optical_carrier_at_altitude(&prepared, 760.0, &[sublayer], 0.0).unwrap_err(),
+        errors::Error::InvalidRequest,
     );
 }
 

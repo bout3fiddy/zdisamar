@@ -1,3 +1,4 @@
+pub mod carrier_eval;
 pub mod evaluation;
 pub mod forward_layers;
 pub mod operational_o2;
@@ -11,6 +12,12 @@ pub mod state_scalar;
 pub mod state_spectroscopy;
 pub mod state_types;
 
+pub use carrier_eval::{
+    InterpolatedQuadratureState, PreparedQuadratureCarrier, SharedBoundaryCarrier,
+    SharedOpticalCarrier, interpolate_quadrature_state_at_altitude, quadrature_carrier_at_altitude,
+    shared_active_carrier_at_level, shared_boundary_carrier_at_level,
+    shared_optical_carrier_at_altitude, shared_optical_carrier_at_support_row,
+};
 pub use evaluation::{accumulate_breakdown, layer_input_from_evaluated};
 pub use forward_layers::{
     fill_forward_layers_at_wavelength, forward_input_from_optical_depths, to_forward_input,
