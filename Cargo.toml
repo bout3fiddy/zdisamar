@@ -151,5 +151,9 @@ path = "tests/rust/forward_model/labos_execute.rs"
 name = "output_tables"
 path = "tests/rust/output/tables.rs"
 
+[[test]]
+name = "root_api"
+path = "tests/rust/root_api.rs"
+
 [dependencies]
 wyhash = "0.6.0"
