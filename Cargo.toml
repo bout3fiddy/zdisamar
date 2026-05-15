@@ -64,6 +64,10 @@ name = "input_observation_model"
 path = "tests/rust/input/observation_model.rs"
 
 [[test]]
+name = "input_o2a_reference"
+path = "tests/rust/input/o2a_reference.rs"
+
+[[test]]
 name = "input_particles"
 path = "tests/rust/input/particles.rs"
 

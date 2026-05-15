@@ -8,6 +8,7 @@ pub mod cloud;
 pub mod geometry;
 pub mod instrument;
 pub mod measurement;
+pub mod o2a_reference;
 pub mod observation_legacy_support;
 pub mod observation_model;
 pub mod reference;
