@@ -6,25 +6,25 @@ use zdisamar::{
             state_build::{
                 CrossSectionRepresentationKind, EvaluatedLayer, INVALID_SUPPORT_ROW_INDEX,
                 OpticalDepthBreakdown, PreparedCrossSectionAbsorber,
-                PreparedCrossSectionRepresentation, PreparedLayer, PreparedSublayer,
-                SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
-                accumulate_breakdown, build_shared_rtm_geometry_from_layers,
-                collect_active_cross_section_absorbers, collect_active_line_absorbers,
-                fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
-                interpolate_prepared_scalar_at_altitude, interval_altitude_at_node,
-                interval_weight_km, last_active_support_row_index, layer_input_from_evaluated,
-                level_altitude_from_sublayers, operational_o2_evaluation_at_wavelength,
-                particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
-                prepared_scalar_for_sublayer, resolve_active_line_species,
-                resolve_continuum_owner_species, resolve_gauss_rule, sort_line_list,
-                species_mixing_ratio_at_pressure,
+                PreparedCrossSectionRepresentation, PreparedLayer, PreparedOpticalState,
+                PreparedSublayer, SharedRtmGeometry, SharedRtmLayerGeometry,
+                SharedRtmLevelGeometry, accumulate_breakdown,
+                build_shared_rtm_geometry_from_layers, collect_active_cross_section_absorbers,
+                collect_active_line_absorbers, fill_source_interfaces_from_prepared_layers,
+                first_active_support_row_index, interpolate_prepared_scalar_at_altitude,
+                interval_altitude_at_node, interval_weight_km, last_active_support_row_index,
+                layer_input_from_evaluated, level_altitude_from_sublayers,
+                operational_o2_evaluation_at_wavelength, particle_optical_depth_at_wavelength,
+                prepare_cross_section_absorbers, prepared_scalar_for_sublayer,
+                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
+                sort_line_list, species_mixing_ratio_at_pressure,
             },
         },
         radiative_transfer::common_types::{LayerInput, SourceInterfaceInput},
     },
     input::{
         absorber::{Absorber, AbsorberSet, LineGasControls, Spectroscopy, SpectroscopyMode},
-        atmosphere::{FractionControl, FractionKind, FractionTarget},
+        atmosphere::{FractionControl, FractionKind, FractionTarget, IntervalSemantics},
         atmospheric_types::AbsorberSpecies,
         bands::{SpectralBand, SpectralBandSet},
         instrument::OperationalCrossSectionLut,
@@ -658,4 +658,82 @@ fn source_interfaces_sum_support_sublayers_for_layer_inputs() {
     assert_close(interfaces[2].source_weight, 0.0, 0.0);
     assert_close(interfaces[2].rtm_weight, 0.0, 0.0);
     assert_eq!(interfaces[2].phase_coefficients_above, phase);
+}
+
+#[test]
+fn prepared_optical_state_resolves_transport_grid_and_shared_geometry_cache() {
+    let layers = vec![
+        PreparedLayer {
+            sublayer_start_index: 0,
+            sublayer_count: 3,
+            bottom_altitude_km: 0.0,
+            top_altitude_km: 2.0,
+            interval_index_1based: 1,
+            ..PreparedLayer::default()
+        },
+        PreparedLayer {
+            sublayer_start_index: 2,
+            sublayer_count: 3,
+            bottom_altitude_km: 2.0,
+            top_altitude_km: 4.0,
+            interval_index_1based: 1,
+            ..PreparedLayer::default()
+        },
+    ];
+    let sublayers = (0..=4)
+        .map(|index| PreparedSublayer {
+            altitude_km: f64::from(index),
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        })
+        .collect::<Vec<_>>();
+    let mut prepared = PreparedOpticalState {
+        layers,
+        sublayers: Some(sublayers),
+        interval_semantics: IntervalSemantics::ExplicitPressureBounds,
+        effective_single_scatter_albedo: 0.4,
+        ..PreparedOpticalState::default()
+    };
+
+    assert!(prepared.interval_semantics_use_reduced_shared_rtm_layers());
+    assert_eq!(prepared.transport_layer_count(), 2);
+    prepared.ensure_shared_rtm_geometry_cache().unwrap();
+    assert!(prepared.shared_rtm_geometry.is_valid_for(2));
+    assert_close(
+        prepared.shared_rtm_geometry.levels[1].weight_km,
+        4.0,
+        1.0e-14,
+    );
+
+    let albedos = prepared.resolved_particle_single_scatter_albedos();
+    assert_close(albedos.aerosol, 0.4, 0.0);
+    assert_close(albedos.cloud, 0.4, 0.0);
+}
+
+#[test]
+fn prepared_optical_state_uses_sublayer_transport_grid_without_shared_reuse() {
+    let mut prepared = PreparedOpticalState {
+        layers: vec![PreparedLayer {
+            sublayer_count: 1,
+            ..PreparedLayer::default()
+        }],
+        sublayers: Some(vec![
+            PreparedSublayer::default(),
+            PreparedSublayer::default(),
+        ]),
+        interval_semantics: IntervalSemantics::ExplicitPressureBounds,
+        aerosol_single_scatter_albedo: 1.2,
+        cloud_single_scatter_albedo: -0.5,
+        effective_single_scatter_albedo: 0.25,
+        ..PreparedOpticalState::default()
+    };
+
+    assert!(!prepared.interval_semantics_use_reduced_shared_rtm_layers());
+    assert_eq!(prepared.transport_layer_count(), 2);
+    prepared.ensure_shared_rtm_geometry_cache().unwrap();
+    assert!(!prepared.shared_rtm_geometry.is_valid_for(2));
+
+    let albedos = prepared.resolved_particle_single_scatter_albedos();
+    assert_close(albedos.aerosol, 1.0, 0.0);
+    assert_close(albedos.cloud, 0.25, 0.0);
 }

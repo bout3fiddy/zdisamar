@@ -1,5 +1,6 @@
 pub mod evaluation;
 pub mod operational_o2;
+pub mod prepared_state;
 pub mod shared_geometry;
 pub mod source_interfaces;
 pub mod spectroscopy;
@@ -8,6 +9,7 @@ pub mod state_types;
 
 pub use evaluation::{accumulate_breakdown, layer_input_from_evaluated};
 pub use operational_o2::operational_o2_evaluation_at_wavelength;
+pub use prepared_state::PreparedOpticalState;
 pub use shared_geometry::{
     INVALID_SUPPORT_ROW_INDEX, build_shared_rtm_geometry_from_layers,
     first_active_support_row_index, interval_altitude_at_node, interval_weight_km,
