@@ -3,6 +3,7 @@ import json
 import numpy as np
 from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Measurement, Result
 from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
+from zdisamar.plot.properties import PLOT
 
 
 def build_result() -> Result:
@@ -57,7 +58,7 @@ def main() -> int:
 
     convergence = result.plot.convergence().to_dict()
     assert convergence["title"] == "Retrieved state trajectory"
-    assert convergence["columns"] == 2
+    assert len(convergence["hconcat"]) == 2
     assert convergence["resolve"]["scale"]["y"] == "independent"
     assert "Aerosol optical depth" in json.dumps(convergence)
     assert "Layer mid-pressure (hPa)" in json.dumps(convergence)
@@ -70,10 +71,18 @@ def main() -> int:
     assert "Residual" in fit_spec
 
     jacobian = result.plot.jacobian().to_dict()
+    jacobian_spec = json.dumps(jacobian)
     assert jacobian["title"] == "Final reflectance Jacobians"
-    assert jacobian["columns"] == 2
+    assert len(jacobian["hconcat"]) == 2
     assert jacobian["resolve"]["scale"]["y"] == "independent"
-    assert "state_panel" in json.dumps(jacobian)
+    assert "x1e-5" in jacobian_spec
+    assert "Jacobian (x1e-5)" in jacobian_spec
+    assert "Reflectance jacobian" in jacobian_spec
+
+    theme = PLOT.theme()["config"]
+    assert theme["axisX"]["grid"] is False
+    assert theme["axisY"]["tickCount"] == 5
+    assert theme["axis"]["gridOpacity"] <= 0.15
 
     print("optimal_estimation_plot=ok")
 

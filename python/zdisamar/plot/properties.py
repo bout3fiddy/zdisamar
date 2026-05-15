@@ -23,6 +23,9 @@ class PlotProperties:
     minimum_point_size = 35
     noise_band_opacity = 0.45
     png_scale_factor = 4.0
+    grid_opacity = 0.10
+    x_axis_tick_count = 6
+    y_axis_tick_count = 5
     axis_label_font_size = 16
     axis_title_font_size = 20
     legend_font_size = 16
@@ -106,7 +109,7 @@ class PlotProperties:
                     "domainColor": "black",
                     "grid": True,
                     "gridColor": self.colors["grid"],
-                    "gridOpacity": 0.25,
+                    "gridOpacity": self.grid_opacity,
                     "labelColor": "black",
                     "labelFont": self.font,
                     "labelFontSize": self.axis_label_font_size,
@@ -114,6 +117,14 @@ class PlotProperties:
                     "titleColor": "black",
                     "titleFont": self.font,
                     "titleFontSize": self.axis_title_font_size,
+                },
+                "axisX": {
+                    "grid": False,
+                    "tickCount": self.x_axis_tick_count,
+                },
+                "axisY": {
+                    "grid": True,
+                    "tickCount": self.y_axis_tick_count,
                 },
                 "legend": {
                     "labelColor": "black",

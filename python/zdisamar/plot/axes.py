@@ -18,7 +18,7 @@ def wavelength_x():
     return alt.X(
         f"{fields.WAVELENGTH_NM}:Q",
         title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
-        axis=alt.Axis(tickMinStep=5),
+        axis=alt.Axis(grid=False, tickCount=6, tickMinStep=5),
         scale=alt.Scale(zero=False),
     )
 
@@ -48,13 +48,13 @@ def scaled_y(data, field: str, title: str, *, axis: alt.Axis | None = None):
 
     plot_data = data
     plot_field = field
-    scale_factor = _axis_scale_factor(data[field])
+    scale_factor = axis_scale_factor(data[field])
 
     if scale_factor != 1.0:
         plot_field = f"{field}_scaled"
         plot_data = data.copy()
         plot_data[plot_field] = data[field].astype(float) / scale_factor
-        title = f"{title} ({_scale_label(scale_factor)})"
+        title = f"{title} ({axis_scale_label(scale_factor)})"
 
     return (
         plot_data,
@@ -62,7 +62,7 @@ def scaled_y(data, field: str, title: str, *, axis: alt.Axis | None = None):
         alt.Y(
             f"{plot_field}:Q",
             title=title,
-            axis=axis or alt.Axis(format=".4g"),
+            axis=axis or alt.Axis(format=".4g", tickCount=PLOT.y_axis_tick_count),
             scale=finite_padded_scale(plot_data[plot_field]),
         ),
     )
@@ -73,13 +73,13 @@ def scaled_x(data, field: str, title: str, *, axis: alt.Axis | None = None):
 
     plot_data = data
     plot_field = field
-    scale_factor = _axis_scale_factor(data[field])
+    scale_factor = axis_scale_factor(data[field])
 
     if scale_factor != 1.0:
         plot_field = f"{field}_scaled"
         plot_data = data.copy()
         plot_data[plot_field] = data[field].astype(float) / scale_factor
-        title = f"{title} ({_scale_label(scale_factor)})"
+        title = f"{title} ({axis_scale_label(scale_factor)})"
 
     return (
         plot_data,
@@ -87,7 +87,7 @@ def scaled_x(data, field: str, title: str, *, axis: alt.Axis | None = None):
         alt.X(
             f"{plot_field}:Q",
             title=title,
-            axis=axis or alt.Axis(format=".4g"),
+            axis=axis or alt.Axis(format=".4g", tickCount=PLOT.x_axis_tick_count),
             scale=finite_padded_scale(plot_data[plot_field]),
         ),
     )
@@ -108,7 +108,8 @@ def finite_padded_scale(values):
     return alt.Scale(domain=[low - pad, high + pad], zero=False)
 
 
-def _axis_scale_factor(values) -> float:
+def axis_scale_factor(values) -> float:
+    """Use one scientific multiplier for axes with very small or large values."""
 
     finite = _finite_values(values)
 
@@ -120,16 +121,17 @@ def _axis_scale_factor(values) -> float:
     if max_abs == 0.0 or 1.0e-2 <= max_abs < 1.0e4:
         return 1.0
 
-    exponent = int(math.floor(math.log10(max_abs) / 3.0) * 3)
+    exponent = int(math.floor(math.log10(max_abs)))
 
     return 10.0**exponent
 
 
-def _scale_label(scale_factor: float) -> str:
+def axis_scale_label(scale_factor: float) -> str:
 
     exponent = int(round(math.log10(scale_factor)))
+    exponent_text = str(exponent)
 
-    return f"1e{exponent:+d}"
+    return f"x1e{exponent_text}"
 
 
 def _finite_values(values) -> list[float]:
