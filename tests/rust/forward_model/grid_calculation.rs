@@ -11,6 +11,10 @@ use zdisamar::{
         instrument_grid::grid_calculation::forward_input::{
             ForwardInputBuffers, configured_forward_input,
         },
+        instrument_grid::grid_calculation::postprocess::{
+            apply_channel_corrections, apply_channel_jacobian_corrections,
+            materialize_channel_sigma,
+        },
         instrument_grid::grid_calculation::simulate::simulate_product,
         instrument_grid::grid_calculation::spectral_eval::{
             IntegrationKernel, cached_irradiance_at_wavelength, integrate_forward_at_nominal,
@@ -24,7 +28,10 @@ use zdisamar::{
         instrument_grid::grid_calculation::wavelength_sampling::{
             build_wavelength_sampling, collect_unique_forward_misses,
         },
-        instrument_grid::spectral_math::grid::{ResolvedAxis, SpectralGrid},
+        instrument_grid::spectral_math::{
+            calibration::Calibration,
+            grid::{ResolvedAxis, SpectralGrid},
+        },
         jacobian,
         method::Method,
         optical_properties::shared::phase_functions,
@@ -725,6 +732,82 @@ fn noise_provider_materializes_scene_and_zero_sigma() {
     )
     .unwrap();
     assert_eq!(output, [0.0, 0.0]);
+}
+
+#[test]
+fn postprocess_applies_channel_corrections_and_noise_materialization() {
+    let mut scene = Scene::default();
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .explicit = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .simple_offsets
+        .multiplicative_percent = 10.0;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .simple_offsets
+        .additive_percent_of_first = 5.0;
+    let wavelengths_nm = [760.0, 761.0];
+    let mut signal = [10.0, 20.0];
+    let mut scratch = [0.0, 0.0];
+
+    apply_channel_corrections(
+        &scene,
+        SpectralChannel::Radiance,
+        Calibration {
+            gain: 2.0,
+            offset: 1.0,
+            wavelength_shift_nm: 0.0,
+            stray_light: 0.0,
+        },
+        0.0,
+        &wavelengths_nm,
+        &mut signal,
+        &mut scratch,
+    )
+    .unwrap();
+
+    assert_close(signal[0], 24.15, 1.0e-14);
+    assert_close(signal[1], 46.15, 1.0e-14);
+
+    let mut jacobian = [10.0, 20.0];
+    apply_channel_jacobian_corrections(
+        &scene,
+        SpectralChannel::Radiance,
+        Calibration {
+            gain: 2.0,
+            offset: 1.0,
+            wavelength_shift_nm: 0.0,
+            stray_light: 0.0,
+        },
+        0.0,
+        &wavelengths_nm,
+        &mut jacobian,
+        &mut scratch,
+    )
+    .unwrap();
+    assert_close(jacobian[0], 23.0, 1.0e-14);
+    assert_close(jacobian[1], 45.0, 1.0e-14);
+
+    let none_provider = noise_provider::resolve(noise_provider::NONE_NOISE_ID).unwrap();
+    let mut sigma = [-1.0, -1.0];
+    materialize_channel_sigma(
+        none_provider,
+        &scene,
+        SpectralChannel::Radiance,
+        &wavelengths_nm,
+        &signal,
+        &mut sigma,
+    )
+    .unwrap();
+    assert_eq!(sigma, [0.0, 0.0]);
 }
 
 #[test]
