@@ -25,8 +25,9 @@ use zdisamar::{
                 operational_o2_evaluation_at_wavelength, optical_depth_breakdown_at_wavelength,
                 particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
                 prepare_line_absorber, prepare_line_absorber_line_list,
-                prepared_scalar_for_sublayer, quadrature_carrier_at_altitude,
-                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
+                prepare_line_absorber_strong_line_states, prepared_scalar_for_sublayer,
+                quadrature_carrier_at_altitude, resolve_active_line_species,
+                resolve_continuum_owner_species, resolve_gauss_rule,
                 shared_active_carrier_at_level, shared_boundary_carrier_at_level,
                 shared_optical_carrier_at_altitude, shared_optical_carrier_at_support_row,
                 sort_line_list, species_mixing_ratio_at_pressure,
@@ -266,6 +267,7 @@ fn prepared_scalar_helpers_resolve_carrier_densities_by_species() {
             species: AbsorberSpecies::O2,
             line_list: SpectroscopyLineList::default(),
             number_densities_cm3: vec![2.0, 3.0],
+            strong_line_states: Vec::new(),
             column_density_factor: 1.0,
         }],
         cross_section_absorbers: vec![PreparedCrossSectionAbsorber {
@@ -492,6 +494,7 @@ fn carrier_eval_uses_weak_line_absorber_without_operational_lut() {
                 ..SpectroscopyLineList::default()
             },
             number_densities_cm3: vec![1.0e18],
+            strong_line_states: Vec::new(),
             column_density_factor: 1.0,
         }],
         ..PreparedOpticalState::default()
@@ -944,6 +947,7 @@ fn state_spectroscopy_uses_operational_o2_without_fake_line_list_physics() {
             species: AbsorberSpecies::O2,
             line_list: SpectroscopyLineList::default(),
             number_densities_cm3: Vec::new(),
+            strong_line_states: Vec::new(),
             column_density_factor: 2.0,
         }],
         ..PreparedOpticalState::default()
@@ -967,6 +971,7 @@ fn state_spectroscopy_evaluates_weak_line_absorber() {
                 ..SpectroscopyLineList::default()
             },
             number_densities_cm3: Vec::new(),
+            strong_line_states: Vec::new(),
             column_density_factor: 1.0,
         }],
         ..PreparedOpticalState::default()
@@ -1012,6 +1017,7 @@ fn state_spectroscopy_evaluates_o2_strong_line_sidecars() {
                 ..SpectroscopyLineList::default()
             },
             number_densities_cm3: Vec::new(),
+            strong_line_states: Vec::new(),
             column_density_factor: 1.0,
         }],
         ..PreparedOpticalState::default()
@@ -1030,6 +1036,48 @@ fn state_spectroscopy_evaluates_o2_strong_line_sidecars() {
         evaluation.total_sigma_cm2_per_molecule,
         5.786_354_609_661_759e-45,
         1.0e-57,
+    );
+}
+
+#[test]
+fn prepared_line_absorber_caches_strong_line_states_for_sublayers() {
+    let mut line_absorber = PreparedLineAbsorber {
+        species: AbsorberSpecies::O2,
+        line_list: SpectroscopyLineList {
+            lines: vec![weak_o2_line()],
+            strong_lines: Some(vec![strong_o2_line(760.5, 1)]),
+            relaxation_matrix: Some(RelaxationMatrix {
+                line_count: 1,
+                wt0: vec![0.05],
+                bw: vec![0.0],
+            }),
+            ..SpectroscopyLineList::default()
+        },
+        number_densities_cm3: vec![1.0e18, 2.0e18],
+        strong_line_states: Vec::new(),
+        column_density_factor: 0.0,
+    };
+    let sublayers = vec![
+        PreparedSublayer {
+            temperature_k: 296.0,
+            pressure_hpa: 500.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            temperature_k: 250.0,
+            pressure_hpa: 700.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+
+    prepare_line_absorber_strong_line_states(&mut line_absorber, &sublayers).unwrap();
+
+    assert_eq!(line_absorber.strong_line_states.len(), 2);
+    assert_eq!(line_absorber.strong_line_state_at(1).unwrap().line_count, 1);
+    assert_close(
+        line_absorber.sigma_at_sublayer(760.5, 250.0, 700.0, 1),
+        line_absorber.line_list.sigma_at(760.5, 250.0, 700.0),
+        1.0e-55,
     );
 }
 
@@ -1059,6 +1107,7 @@ fn state_spectroscopy_evaluates_o2_line_mixing_sidecars() {
                 ..SpectroscopyLineList::default()
             },
             number_densities_cm3: Vec::new(),
+            strong_line_states: Vec::new(),
             column_density_factor: 1.0,
         }],
         ..PreparedOpticalState::default()
@@ -1245,6 +1294,7 @@ fn state_optical_depth_uses_weak_line_absorbers_in_sublayers() {
                 ..SpectroscopyLineList::default()
             },
             number_densities_cm3: vec![1.0e18],
+            strong_line_states: Vec::new(),
             column_density_factor: 1.0,
         }],
         ..PreparedOpticalState::default()
@@ -1263,6 +1313,49 @@ fn state_optical_depth_uses_weak_line_absorbers_in_sublayers() {
         evaluated.breakdown.gas_absorption_optical_depth,
         1.090_784_048_534_016,
         1.0e-12,
+    );
+}
+
+#[test]
+fn state_optical_depth_uses_prepared_strong_line_states_in_sublayers() {
+    let sublayers = vec![PreparedSublayer {
+        path_length_cm: 100_000.0,
+        temperature_k: 296.0,
+        pressure_hpa: 500.0,
+        ..PreparedSublayer::default()
+    }];
+    let mut line_absorber = PreparedLineAbsorber {
+        species: AbsorberSpecies::O2,
+        line_list: SpectroscopyLineList {
+            lines: vec![weak_o2_line()],
+            strong_lines: Some(vec![strong_o2_line(760.5, 1)]),
+            relaxation_matrix: Some(RelaxationMatrix {
+                line_count: 1,
+                wt0: vec![0.05],
+                bw: vec![0.0],
+            }),
+            ..SpectroscopyLineList::default()
+        },
+        number_densities_cm3: vec![1.0e18],
+        strong_line_states: Vec::new(),
+        column_density_factor: 1.0,
+    };
+    prepare_line_absorber_strong_line_states(&mut line_absorber, &sublayers).unwrap();
+    let expected = line_absorber.sigma_at_sublayer(760.5, 296.0, 500.0, 0)
+        * 1.0e18
+        * sublayers[0].path_length_cm;
+    let prepared = PreparedOpticalState {
+        line_absorbers: vec![line_absorber],
+        ..PreparedOpticalState::default()
+    };
+
+    let evaluated =
+        evaluate_layer_at_wavelength(&prepared, None, 0.0, 760.5, 0, &sublayers).unwrap();
+
+    assert_close(
+        evaluated.breakdown.gas_absorption_optical_depth,
+        expected,
+        1.0e-34,
     );
 }
 

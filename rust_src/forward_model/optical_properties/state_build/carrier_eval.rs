@@ -658,10 +658,11 @@ fn weighted_spectroscopy_evaluation_at_support_row(
         if weight <= 0.0 {
             continue;
         }
-        let evaluation = line_absorber.line_list.evaluate_at(
+        let evaluation = line_absorber.evaluate_at_sublayer(
             wavelength_nm,
             sublayer.temperature_k,
             sublayer.pressure_hpa,
+            global_sublayer_index,
         );
         total_weight += weight;
         add_weighted_evaluation(&mut weighted, evaluation, weight);

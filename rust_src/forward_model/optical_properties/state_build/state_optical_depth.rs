@@ -261,10 +261,11 @@ fn gas_absorption_optical_depth_at_sublayer(
             if absorber_density_cm3 <= 0.0 {
                 continue;
             }
-            optical_depth += line_absorber.line_list.sigma_at(
+            optical_depth += line_absorber.sigma_at_sublayer(
                 wavelength_nm,
                 sublayer.temperature_k,
                 sublayer.pressure_hpa,
+                global_sublayer_index,
             ) * absorber_density_cm3
                 * sublayer.path_length_cm;
         }

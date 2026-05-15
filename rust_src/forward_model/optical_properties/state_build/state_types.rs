@@ -7,7 +7,10 @@ use crate::{
         atmospheric_types::AbsorberSpecies,
         instrument::OperationalCrossSectionLut,
         reference::airmass_phase::PhaseSupportKind,
-        reference_data::{CrossSectionTable, SpectroscopyLineList},
+        reference_data::{
+            CrossSectionTable, SpectroscopyEvaluation, SpectroscopyLineList,
+            StrongLinePreparedState,
+        },
     },
 };
 
@@ -34,7 +37,61 @@ pub struct PreparedLineAbsorber {
     pub species: AbsorberSpecies,
     pub line_list: SpectroscopyLineList,
     pub number_densities_cm3: Vec<f64>,
+    pub strong_line_states: Vec<Option<StrongLinePreparedState>>,
     pub column_density_factor: f64,
+}
+
+impl PreparedLineAbsorber {
+    pub fn strong_line_state_at(&self, sublayer_index: usize) -> Option<&StrongLinePreparedState> {
+        self.strong_line_states
+            .get(sublayer_index)
+            .and_then(Option::as_ref)
+    }
+
+    pub fn evaluate_at_sublayer(
+        &self,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        sublayer_index: usize,
+    ) -> SpectroscopyEvaluation {
+        let Some(strong_line_state) = self.strong_line_state_at(sublayer_index) else {
+            return self
+                .line_list
+                .evaluate_at(wavelength_nm, temperature_k, pressure_hpa);
+        };
+
+        let mut evaluation = crate::input::reference::spectroscopy::line_list_eval::total_sigma_with_prepared_profile_state(
+            &self.line_list,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+            Some(strong_line_state),
+            None,
+        );
+        let upper = self
+            .line_list
+            .evaluate_at(wavelength_nm, temperature_k + 0.5, pressure_hpa);
+        let lower = self.line_list.evaluate_at(
+            wavelength_nm,
+            (temperature_k - 0.5).max(150.0),
+            pressure_hpa,
+        );
+        evaluation.d_sigma_d_temperature_cm2_per_molecule_per_k =
+            upper.total_sigma_cm2_per_molecule - lower.total_sigma_cm2_per_molecule;
+        evaluation
+    }
+
+    pub fn sigma_at_sublayer(
+        &self,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+        sublayer_index: usize,
+    ) -> f64 {
+        self.evaluate_at_sublayer(wavelength_nm, temperature_k, pressure_hpa, sublayer_index)
+            .total_sigma_cm2_per_molecule
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

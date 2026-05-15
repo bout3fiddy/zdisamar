@@ -140,8 +140,32 @@ pub fn prepare_line_absorber(
         species: active_absorber.species,
         line_list,
         number_densities_cm3: vec![0.0; sublayer_count],
+        strong_line_states: Vec::new(),
         column_density_factor: 0.0,
     })
+}
+
+pub fn prepare_line_absorber_strong_line_states(
+    line_absorber: &mut PreparedLineAbsorber,
+    sublayers: &[super::state_types::PreparedSublayer],
+) -> Result<(), errors::Error> {
+    if !line_absorber.line_list.has_strong_line_sidecars() {
+        line_absorber.strong_line_states.clear();
+        return Ok(());
+    }
+
+    let mut states = Vec::with_capacity(sublayers.len());
+    for sublayer in sublayers {
+        let Some(state) = line_absorber
+            .line_list
+            .prepare_strong_line_state(sublayer.temperature_k, sublayer.pressure_hpa)
+        else {
+            return Err(errors::Error::InvalidRequest);
+        };
+        states.push(Some(state));
+    }
+    line_absorber.strong_line_states = states;
+    Ok(())
 }
 
 pub fn prepare_line_absorber_line_list(
