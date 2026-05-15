@@ -113,7 +113,7 @@ fn summary_report_copies_product_summary_fields() {
 }
 
 #[test]
-fn summary_report_writer_matches_zig_field_names() {
+fn summary_report_writer_matches_public_field_names() {
     let path = std::env::temp_dir().join(format!(
         "zdisamar-summary-report-{}.json",
         std::process::id()
@@ -180,7 +180,7 @@ fn o2_line_contributions_report_weak_and_strong_rows() {
 }
 
 #[test]
-fn instrument_response_reports_disabled_native_sampling_like_zig() {
+fn instrument_response_reports_disabled_native_sampling() {
     let mut scene = Scene::default();
     scene.spectral_grid.start_nm = 760.0;
     scene.spectral_grid.end_nm = 762.0;
@@ -263,7 +263,7 @@ fn instrument_response_rejects_empty_requests() {
 }
 
 #[test]
-fn atmospheric_budget_reports_layer_totals_like_zig() {
+fn atmospheric_budget_reports_layer_totals() {
     let scene = Scene::default();
     let prepared = PreparedOpticalState {
         layers: vec![PreparedLayer {

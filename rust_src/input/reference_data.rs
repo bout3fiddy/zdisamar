@@ -135,7 +135,7 @@ impl ClimatologyProfile {
             }
 
             // The altitude grid depends on gravity at the grid-point altitude, so
-            // Zig iterates a few times instead of assuming one fixed scale height.
+            // Iterate a few times instead of assuming one fixed scale height.
             let chi2 = dense_altitudes_km
                 .iter()
                 .zip(&previous_altitudes_km)

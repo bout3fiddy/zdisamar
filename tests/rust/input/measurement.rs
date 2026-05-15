@@ -66,7 +66,7 @@ fn measurement_sample_selection_honors_excluded_spectral_windows() {
 }
 
 #[test]
-fn measurement_labels_and_covariance_flags_match_zig_semantics() {
+fn measurement_labels_and_covariance_flags_match_public_semantics() {
     assert_eq!(Quantity::parse("reflectance"), Ok(Quantity::Reflectance));
     assert_eq!(
         Quantity::parse("bad_quantity"),

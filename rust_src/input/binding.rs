@@ -40,7 +40,7 @@ impl IngestRef {
         let output_name = output_name.to_owned();
         Self {
             full_name,
-            // Zig stores these as slices into full_name; owned strings keep the Rust value movable.
+            // Owned strings keep bindings movable while preserving the split full-name view.
             ingest_name,
             output_name,
         }

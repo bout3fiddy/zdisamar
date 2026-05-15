@@ -3,11 +3,8 @@
 .ipynb_checkpoints/
 
 # Build outputs and caches
-.zig-cache/
-.zig-cache-int/
-zig-cache/
-zig-out/
 target/
+dist/
 out/
 __pycache__/
 .pytest_cache/

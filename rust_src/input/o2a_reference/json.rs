@@ -834,39 +834,3 @@ fn output_kind_label(kind: OutputKind) -> &'static str {
         OutputKind::GeneratedSpectrumCsv => "generated_spectrum_csv",
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_o2a_input_json_round_trips_core_fields() {
-        let json = render_default_input_json().unwrap();
-        let parsed = parse_input_json(json.as_bytes()).unwrap();
-
-        assert_eq!(parsed.scene_id, "o2a_disamar_reference_python");
-        assert_eq!(parsed.geometry.model, geometry::Model::PseudoSpherical);
-        assert_eq!(parsed.observation.sampling, SamplingMode::Native);
-        assert_eq!(
-            parsed.observation.builtin_line_shape,
-            BuiltinLineShapeKind::FlatTopN4
-        );
-        assert_eq!(parsed.rtm_controls.scattering, ScatteringMode::Multiple);
-        assert!(parsed.intervals[0].top_altitude_km.is_nan());
-        assert_eq!(parsed.o2.isotopes_sim, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn parser_rejects_unknown_fields() {
-        let mut value: Value = serde_json::from_str(&render_default_input_json().unwrap()).unwrap();
-        value
-            .as_object_mut()
-            .unwrap()
-            .insert("ignored".to_string(), json!(1));
-
-        assert_eq!(
-            parse_input_json(value.to_string().as_bytes()),
-            Err(JsonError::Shape)
-        );
-    }
-}

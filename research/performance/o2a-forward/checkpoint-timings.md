@@ -2,24 +2,22 @@
 
 ## Measurement Environment
 
-```text
+```
 date        2026-05-06
 machine     Mac mini, Mac16,10
 chip        Apple M4
 cores       10 total, 4 performance + 6 efficiency
 memory      24 GB
 os          macOS 26.3.1, Darwin 25.3.0, arm64
-zig         0.15.2
 ```
 
 ## Run
 
-```sh
-MODE=all OUT=/tmp/zdisamar-perf-checkpoints.tsv \
-  research/performance/o2a-forward/run-checkpoint-timings.sh
-```
+The checkpoint script was tied to the retired source-specific build surface and
+was removed during the Rust port cleanup. The rows below remain historical
+measurement evidence.
 
-The script writes this shape:
+The retained table uses this shape:
 
 ```text
 checkpoint  prepare_s  forward_s  total_s

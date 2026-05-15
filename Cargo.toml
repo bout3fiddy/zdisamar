@@ -156,6 +156,10 @@ path = "tests/rust/output/tables.rs"
 name = "root_api"
 path = "tests/rust/root_api.rs"
 
+[[test]]
+name = "api_c"
+path = "tests/rust/api/c.rs"
+
 [dependencies]
 rayon = "1.11"
 serde_json = "1.0"

@@ -182,9 +182,7 @@ fn prepare_profile_line_states(
     }
 
     if context.spectroscopy_profile_temperatures_k.is_empty() {
-        // Zig reserves this storage for later sublayer preparation when no
-        // spectroscopy profile was supplied. Rust avoids uninitialized slots, so
-        // the actual states are created once sublayer temperatures are known.
+        // Keep this storage empty until sublayer temperatures are known.
         state.strong_line_states = Vec::new();
         return Ok(());
     }

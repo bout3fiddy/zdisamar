@@ -1,6 +1,6 @@
 # zdisamar
 
-`zdisamar` is a Zig implementation of the oxygen A-band radiative-transfer
+`zdisamar` is a Rust implementation of the oxygen A-band radiative-transfer
 model used in DISAMAR aerosol-layer-height retrieval studies. It calculates
 top-of-atmosphere reflectance and reflectance derivatives for scenes in which
 oxygen absorption, aerosol scattering, surface reflection, and instrument
@@ -15,7 +15,8 @@ The Python wrapper is demonstrated in executable notebooks under
 [`scripts/demo/`](./scripts/demo/). Build the native library first:
 
 ```bash
-zig build
+cargo build --release
+uv run python scripts/sync-python-package.py
 ```
 
 Then open the notebooks:
@@ -190,7 +191,7 @@ counts are in
 ## Production Status And Next Work
 
 The stable implementation today is the O2 A RTM: typed inputs, bundled
-reference data, the Zig library and CLI helpers, Python wrapper demos, spectra
+reference data, the Rust native library, Python wrapper demos, spectra
 validation, and benchmark artifacts.
 
 The optimal-estimation retrieval code currently supports the aerosol-only
@@ -211,10 +212,11 @@ optimization.
 
 | Path | Purpose |
 | --- | --- |
-| `src/input/` | atmosphere, geometry, surface, spectroscopy, instrument, and reference-data inputs |
-| `src/forward_model/` | RTM internals: optical properties, radiative transfer, instrument-grid calculation, and implementations |
-| `src/output/` | diagnostic reports and spectrum serialization |
-| `src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
+| `rust_src/input/` | atmosphere, geometry, surface, spectroscopy, instrument, and reference-data inputs |
+| `rust_src/forward_model/` | RTM internals: optical properties, radiative transfer, instrument-grid calculation, and implementations |
+| `rust_src/output/` | diagnostic reports and spectrum serialization |
+| `rust_src/common/` | shared units, errors, interpolation, quadrature, and linear algebra |
+| `rust_src/api/` | C ABI used by the Python package |
 | `data/` | tracked O2 A bundles and reference assets |
 | `tests/` | O2 A executable checks |
 | `validation/` | O2 A compatibility, benchmark, and reference evidence |
@@ -226,35 +228,43 @@ optimization.
 
 Prerequisites:
 
-- Zig `0.15.2` or newer. The repo declares `minimum_zig_version = "0.15.2"` in
-  [`build.zig.zon`](./build.zig.zon).
+- Rust stable toolchain with Cargo.
 - [`uv`](https://docs.astral.sh/uv/) for Python-based helpers.
 
-Build the library and CLI:
+Build the Rust library:
 
 ```bash
-zig build
+cargo build --release
 ```
 
-This produces the CLI helpers at `./zig-out/bin/zdisamar` and
-`./zig-out/bin/zdisamar-o2a-plot-spectrum`.
+Sync the Python package with the native library:
+
+```bash
+uv run python scripts/sync-python-package.py
+```
 
 Run the fast local verification loop:
 
 ```bash
-zig build check
+cargo test
 ```
 
 Run the broader fast presubmit:
 
 ```bash
-zig build test-fast
+cargo clippy --all-targets --all-features -- -D warnings
+prek run --all-files
 ```
 
 Run the full verification baseline:
 
 ```bash
-zig build test
+cargo test
+uv run validation/spectra/validate_spectra.py
+uv run validation/spectra/validate_fast_mode_spectra.py
+uv run validation/optimal_estimation/validate_optimal_estimation.py
+uv run validation/optimal_estimation/sweep_optimal_estimation.py
+uv run validation/optimal_estimation/validate_fast_mode_optimal_estimation.py
 ```
 
 Regenerate the tracked O2 A comparison bundle after changing the O2 A RTM or
@@ -262,19 +272,6 @@ Jacobian validation outputs:
 
 ```bash
 uv run validation/spectra/validate_spectra.py
-```
-
-For temporary Zig caches, use the ephemeral wrapper:
-
-```bash
-./scripts/zig-build-ephemeral.sh check
-./scripts/zig-build-ephemeral.sh test-fast --summary all
-```
-
-To reclaim space from prior runs:
-
-```bash
-./scripts/clean-zig-caches.sh
 ```
 
 ## Recommended Reading

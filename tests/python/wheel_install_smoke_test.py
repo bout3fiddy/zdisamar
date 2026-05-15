@@ -50,10 +50,10 @@ def main() -> int:
             assert "spectral_grid=755-776 nm (701 samples)" in case_repr
             assert "ReferenceAsset(" not in case_repr
 
-            # Linux wheel regression: this call crosses Python -> C -> Zig and
+            # Linux wheel regression: this call crosses Python -> C -> Rust and
             # starts native worker threads. Without libc/pthread linkage in the
             # shared library, Linux can fail here even when the same code works
-            # as a standalone Zig executable or on macOS.
+            # on macOS.
             reference_spectrum = rtm.spectrum(reference_case)
             assert int(reference_spectrum.wavelength_nm.size) == 701
             assert np.all(np.isfinite(reference_spectrum.reflectance))

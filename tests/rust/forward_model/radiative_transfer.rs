@@ -197,7 +197,7 @@ fn source_interfaces_derive_boundary_weights_from_layers() {
 }
 
 #[test]
-fn pseudo_spherical_grid_and_derivative_helpers_match_zig_contracts() {
+fn pseudo_spherical_grid_and_derivative_helpers_match_contracts() {
     let grid = PseudoSphericalGrid {
         samples: vec![
             PseudoSphericalSample::default(),

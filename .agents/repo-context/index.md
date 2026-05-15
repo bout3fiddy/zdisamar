@@ -1,22 +1,23 @@
 # Repo Context Index
 
 owner: zdisamar
-last_verified: 2026-05-06
+last_verified: 2026-05-15
 
 ## Current Shape
 
 - Public flow: input -> forward model -> output.
-- Source code: `src/input/`, `src/forward_model/`, `src/output/`, `src/common/`, `src/validation/disamar_reference/`.
+- Source code: `rust_src/input/`, `rust_src/forward_model/`, `rust_src/output/`, `rust_src/common/`, `rust_src/api/`.
 - Scientific assets: `data/reference_data/`.
 - Tracked DISAMAR-reference evidence: `validation/`.
 - Performance research notes and demo notebooks: `research/performance/`.
 
 ## Verification Baseline
 
-- `zig build check`: fast local baseline.
-- `zig build test-fast`: broader fast presubmit lane.
-- `zig build test`: full retained verification baseline.
-- `zig build o2a-plot-bundle`: regenerate tracked O2 A comparison plots.
+- `cargo test`: fast local baseline.
+- `cargo clippy --all-targets --all-features -- -D warnings`: Rust lint gate.
+- `prek run --all-files`: full pre-commit gate.
+- `uv run validation/spectra/validate_spectra.py`: regenerate tracked O2 A spectra plots.
+- `uv run validation/optimal_estimation/validate_optimal_estimation.py`: focused OE validation.
 
 ## Local-Only Areas
 

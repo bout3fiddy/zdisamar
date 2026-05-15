@@ -37,15 +37,6 @@ under `research/performance/` or `validation/outputs/`.
 
 ## Regeneration
 
-Current forward bottleneck trace:
-
-```sh
-research/performance/o2a-forward/run-labos-bottleneck-trace.sh
-```
-
-Historical checkpoint timing:
-
-```sh
-MODE=all OUT=/tmp/zdisamar-perf-checkpoints.tsv \
-  research/performance/o2a-forward/run-checkpoint-timings.sh
-```
+The retained trace summaries are historical evidence. The old source-specific
+trace scripts were removed with the Rust port cleanup; refresh this section only
+when a new Rust-native tracing workflow is added.

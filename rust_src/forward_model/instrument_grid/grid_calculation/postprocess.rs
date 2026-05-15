@@ -83,8 +83,7 @@ pub fn apply_channel_corrections(
                 scratch,
             )?;
         } else {
-            // The current signal can be its own stray-light reference in Zig.
-            // Rust needs a snapshot so the correction can read old values while writing new ones.
+            // Snapshot the signal so the correction can read old values while writing new ones.
             let source_signal = signal.to_vec();
             calibration::apply_stray_light_nodes(
                 &controls.stray_light_nodes,

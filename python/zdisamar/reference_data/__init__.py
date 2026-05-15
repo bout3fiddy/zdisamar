@@ -16,8 +16,9 @@ def root() -> Path:
         return Path(_RESOURCE_STACK.enter_context(resources.as_file(packaged)))
 
     raise FileNotFoundError(
-        "zdisamar reference-data assets are not packaged; run `zig build` before "
-        "using the source checkout or install a built wheel"
+        "zdisamar reference-data assets are not packaged; run "
+        "`uv run python scripts/sync-python-package.py` before using the source "
+        "checkout or install a built wheel"
     )
 
 

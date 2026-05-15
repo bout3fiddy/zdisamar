@@ -29,6 +29,6 @@ The public Python runtime surface is:
 - `zdisamar.inverse_method.optimal_estimation` for inverse-method data classes
   and the Rodgers-style optimal-estimation implementation.
 
-The Python package loads the Zig-built binding and reference data from packaged
+The Python package loads the Rust-built binding and reference data from packaged
 resources. Runtime callers do not pass shared-library paths and do not depend on
 the source tree layout.

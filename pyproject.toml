@@ -25,7 +25,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "Programming Language :: Zig",
+    "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
 dependencies = [
@@ -75,8 +75,6 @@ line-length = 100
 extend-exclude = [
     "vendor",
     "out",
-    "zig-out",
-    ".zig-cache",
     "docs/workpackages",
     "validation/.cache",
     "validation/function_diff",

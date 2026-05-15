@@ -32,6 +32,6 @@ they describe. O2 A parity evidence lives under `validation/`.
 
 ## Reference-Data Ingestion
 
-The typed loaders in `src/input/reference_data/ingest/` consume these tracked
-assets and validate their digests against the bundle manifests before preparing
-them for the RTM.
+The typed loaders in `rust_src/input/reference_data.rs` and
+`rust_src/input/reference/` consume these tracked assets and validate their
+digests against the bundle manifests before preparing them for the RTM.

@@ -1,3 +1,4 @@
+use serde_json::{Value, json};
 use zdisamar::{
     forward_model::{
         instrument_grid::{InstrumentGridProduct, InstrumentGridSummary},
@@ -8,15 +9,15 @@ use zdisamar::{
         geometry,
         instrument::{BuiltinLineShapeKind, IntegrationMode, SamplingMode, SlitIndex},
         o2a_reference::{
-            self, AssessmentVerdict, PlanError, PlanSpec, ReferenceSample, SolarSpectrumSample,
-            TrendState, TrendTolerances,
+            self, AssessmentVerdict, JsonError, PlanError, PlanSpec, ReferenceSample,
+            SolarSpectrumSample, TrendState, TrendTolerances,
         },
         scene::DerivativeMode,
     },
 };
 
 #[test]
-fn default_o2a_reference_input_matches_zig_reference_case() {
+fn default_o2a_reference_input_matches_retained_reference_case() {
     let input = o2a_reference::default_input();
 
     input.validate().unwrap();
@@ -50,6 +51,38 @@ fn default_o2a_reference_input_matches_zig_reference_case() {
     assert!(input.o2o2.enabled);
     assert_eq!(input.rtm_controls.n_streams, 20);
     assert!(input.rtm_controls.use_spherical_correction);
+}
+
+#[test]
+fn default_o2a_input_json_round_trips_core_fields() {
+    let json = o2a_reference::render_default_input_json().unwrap();
+    let parsed = o2a_reference::parse_input_json(json.as_bytes()).unwrap();
+
+    assert_eq!(parsed.scene_id, "o2a_disamar_reference_python");
+    assert_eq!(parsed.geometry.model, geometry::Model::PseudoSpherical);
+    assert_eq!(parsed.observation.sampling, SamplingMode::Native);
+    assert_eq!(
+        parsed.observation.builtin_line_shape,
+        BuiltinLineShapeKind::FlatTopN4
+    );
+    assert_eq!(parsed.rtm_controls.scattering, ScatteringMode::Multiple);
+    assert!(parsed.intervals[0].top_altitude_km.is_nan());
+    assert_eq!(parsed.o2.isotopes_sim, vec![1, 2, 3]);
+}
+
+#[test]
+fn parser_rejects_unknown_fields() {
+    let mut value: Value =
+        serde_json::from_str(&o2a_reference::render_default_input_json().unwrap()).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("ignored".to_string(), json!(1));
+
+    assert_eq!(
+        o2a_reference::parse_input_json(value.to_string().as_bytes()),
+        Err(JsonError::Shape)
+    );
 }
 
 #[test]

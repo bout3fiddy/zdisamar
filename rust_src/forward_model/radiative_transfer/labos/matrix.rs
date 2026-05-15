@@ -269,7 +269,7 @@ fn invert_gauss_block(
         pivot_offset[i] = i * n_gauss;
     }
 
-    // Pivoted LU mirrors the Zig path. It is small enough to stay stack-local,
+    // Pivoted LU is small enough to stay stack-local,
     // which matters because doubling calls this many times per RT layer.
     for col in 0..n_gauss {
         let mut max_val = block[pivot_offset[col] + col].abs();

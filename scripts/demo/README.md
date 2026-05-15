@@ -14,7 +14,8 @@ uv run --with jupyterlab --with ipykernel python -m jupyter lab scripts/demo
 Build the native shared library first when a notebook calls the Python wrapper:
 
 ```bash
-zig build
+cargo build --release
+uv run python scripts/sync-python-package.py
 ```
 
 ## Notebooks

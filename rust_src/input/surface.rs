@@ -49,7 +49,7 @@ pub struct Surface {
 
 impl Surface {
     pub fn validate(&self) -> Result<(), errors::Error> {
-        // Albedo is unitless reflectance; current Zig parity only bounds finite values by compare.
+        // Albedo is unitless reflectance; validation only bounds finite values by compare.
         if self.albedo < 0.0 || self.albedo > 1.0 {
             return Err(errors::Error::InvalidRequest);
         }

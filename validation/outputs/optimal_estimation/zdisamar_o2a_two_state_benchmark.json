@@ -2,46 +2,46 @@
   "iterations": [
     {
       "index": 1,
-      "rtm_and_jacobian_s": 1.7701149589847773,
-      "solver_update_s": 0.0024520420120097697,
-      "total_iteration_s": 1.772578208008781
+      "rtm_and_jacobian_s": 1.8094684589887038,
+      "solver_update_s": 0.00019579200306907296,
+      "total_iteration_s": 1.8096717920270748
     },
     {
       "index": 2,
-      "rtm_and_jacobian_s": 1.817436249984894,
-      "solver_update_s": 0.0001662920112721622,
-      "total_iteration_s": 1.8176105830352753
+      "rtm_and_jacobian_s": 1.8383072090218775,
+      "solver_update_s": 0.0001611249754205346,
+      "total_iteration_s": 1.8384760419721715
     },
     {
       "index": 3,
-      "rtm_and_jacobian_s": 1.7981912500108592,
-      "solver_update_s": 0.00016024999786168337,
-      "total_iteration_s": 1.7983567499904893
+      "rtm_and_jacobian_s": 1.84580529097002,
+      "solver_update_s": 0.00017216696869581938,
+      "total_iteration_s": 1.8459848749917
     },
     {
       "index": 4,
-      "rtm_and_jacobian_s": 1.839382541947998,
-      "solver_update_s": 0.00020762503845617175,
-      "total_iteration_s": 1.8395979579654522
+      "rtm_and_jacobian_s": 1.870876542001497,
+      "solver_update_s": 0.00015779200475662947,
+      "total_iteration_s": 1.8710402920260094
     }
   ],
   "phases_s": {
-    "build_case_s": 2.845795825123787e-05,
-    "build_measurement_s": 1.751201624982059,
-    "build_pressure_altitude_profile_s": 0.8392290829797275,
-    "build_state_vector_s": 1.1958007235080004e-05,
-    "build_summary_s": 7.029197877272964e-05,
-    "load_reference_s": 8.487503509968519e-05,
-    "retrieval_s": 7.233487333985977,
-    "session_create_s": 0.9140687080216594,
-    "total_s": 10.739512124971952,
-    "write_summary_s": 0.0012460410362109542
+    "build_case_s": 2.0749983377754688e-05,
+    "build_measurement_s": 1.857776916003786,
+    "build_pressure_altitude_profile_s": 0.9157757089706138,
+    "build_state_vector_s": 1.7625046893954277e-05,
+    "build_summary_s": 6.554200081154704e-05,
+    "load_reference_s": 0.0001390419784002006,
+    "retrieval_s": 7.365560459031258,
+    "session_create_s": 0.9960914580151439,
+    "total_s": 11.136519958032295,
+    "write_summary_s": 0.0009983329800888896
   },
   "retrieval": {
-    "first_use_retrieval_s": 8.147556042007636,
+    "first_use_retrieval_s": 8.361651917046402,
     "iterations": 4,
-    "retrieval_s": 7.233487333985977,
-    "rtm_and_jacobian_s": 7.225125000928529,
-    "setup_s": 0.9140687080216594
+    "retrieval_s": 7.365560459031258,
+    "rtm_and_jacobian_s": 7.364457500982098,
+    "setup_s": 0.9960914580151439
   }
 }

@@ -21,7 +21,7 @@ cache.spectrum(jacobian=True, jacobian_state_names=state_names)
 requested state IDs, runs the Jacobian calculation with a derivative-state mask,
 and compacts the returned Jacobian to the requested columns.
 
-Some Zig layers still use fixed internal Jacobian storage, but the
+Some Rust layers still use fixed internal Jacobian storage, but the
 retrieval-facing result is state-vector sized. This keeps the Python optimal
 estimation matrices aligned with the retrieval state and avoids carrying unused
 surface-albedo columns through aerosol-only retrievals.

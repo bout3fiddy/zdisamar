@@ -80,9 +80,8 @@ The validation tree is split by target:
 
 ## Baseline Commands
 
-- `zig build test`
-- `zig build test-validation-o2a`
-- `zig build test-validation-o2a-vendor`
+- `cargo test`
+- `cargo clippy --all-targets --all-features -- -D warnings`
 - `uv run validation/spectra/validate_spectra.py`
 - `uv run validation/spectra/validate_fast_mode_spectra.py`
 - `uv run validation/optimal_estimation/validate_optimal_estimation.py`
@@ -91,7 +90,7 @@ The validation tree is split by target:
 - `uv run validation/optimal_estimation/paired_disamar_zdisamar_sweep.py`
 
 The validation scripts own their plots and tracked summaries. They are invoked
-directly with `uv run ...`, not through `zig build`.
+directly with `uv run ...`, not through Cargo.
 
 ## Residual Note
 
@@ -102,6 +101,6 @@ the bundle is `1e-13` max absolute residual.
 ## Baseline Case
 
 Validation lanes use the typed O2 A baseline exposed by `zdisamar.defaultO2AInput()`
-and mirrored in `validation/o2a/case.py`. Keep Zig validation
-tests and Python validation scripts aligned with that case instead of introducing
-a second serialized validation input.
+and mirrored in `validation/o2a/case.py`. Keep Rust tests and Python validation
+scripts aligned with that case instead of introducing a second serialized
+validation input.

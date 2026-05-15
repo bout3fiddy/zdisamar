@@ -45,7 +45,7 @@ Each dataset is intended to be:
 
 ## Typed Scientific Structures
 
-`src/input/ReferenceData.zig` is the main in-memory surface for reference data. It defines structures such as:
+`rust_src/input/reference_data.rs` and `rust_src/input/reference/` are the main in-memory surfaces for reference data. They define structures such as:
 
 - `ClimatologyProfile`
 - `CrossSectionTable`
@@ -109,8 +109,8 @@ The current bundle and runtime layer is therefore not an implementation convenie
 
 To follow the reference-data path:
 
-1. read `src/input/reference_data/ingest/reference_assets.zig`,
-2. read `src/input/ReferenceData.zig`,
-3. read `src/input/reference_data/bundled/load.zig`,
-4. read the optical-property construction code in the Zig numerical tree,
+1. read `rust_src/input/reference_data.rs`,
+2. read the loaders under `rust_src/input/reference/`,
+3. read `rust_src/input/o2a_reference/`,
+4. read the optical-property construction code in the Rust numerical tree,
 5. inspect `data/reference_data/*/bundle_manifest.json` for representative datasets.

@@ -23,14 +23,14 @@
   },
   "scenes": [
     {
-      "fast_rtm_s": 2.19632874999661,
+      "fast_rtm_s": 2.304348291014321,
       "max_abs_residual": 0.0002202547582665082,
       "max_abs_residual_over_noise": 0.5195311470498414,
       "max_abs_residual_wavelength_nm": 767.76,
       "median_abs_residual_over_noise": 0.05042009247880589,
-      "reference_rtm_s": 3.766155458986759,
+      "reference_rtm_s": 3.839786374999676,
       "rmse": 4.0966060653649326e-05,
-      "rtm_speedup_s": 1.5698267089901492,
+      "rtm_speedup_s": 1.5354380839853548,
       "scene": "baseline",
       "scene_parameters": {
         "aerosol_mid_pressure_hpa": 510.0,
@@ -43,14 +43,14 @@
       }
     },
     {
-      "fast_rtm_s": 2.1184866669937037,
+      "fast_rtm_s": 2.1543385409750044,
       "max_abs_residual": 0.0004022626475058688,
       "max_abs_residual_over_noise": 0.7406995353887538,
       "max_abs_residual_wavelength_nm": 767.76,
       "median_abs_residual_over_noise": 0.06450811514895388,
-      "reference_rtm_s": 3.227568832982797,
+      "reference_rtm_s": 3.299824667046778,
       "rmse": 7.10350394377568e-05,
-      "rtm_speedup_s": 1.1090821659890935,
+      "rtm_speedup_s": 1.1454861260717735,
       "scene": "bright surface",
       "scene_parameters": {
         "aerosol_mid_pressure_hpa": 720.0,
@@ -63,14 +63,14 @@
       }
     },
     {
-      "fast_rtm_s": 2.5044795419671573,
+      "fast_rtm_s": 2.5822026249952614,
       "max_abs_residual": 0.000496309882024315,
       "max_abs_residual_over_noise": 1.5998557397433921,
       "max_abs_residual_wavelength_nm": 762.84,
       "median_abs_residual_over_noise": 0.1360202052379439,
-      "reference_rtm_s": 4.574128249951173,
+      "reference_rtm_s": 4.759117709007114,
       "rmse": 0.00013489886396294984,
-      "rtm_speedup_s": 2.0696487079840153,
+      "rtm_speedup_s": 2.1769150840118527,
       "scene": "oblique aerosol",
       "scene_parameters": {
         "aerosol_mid_pressure_hpa": 329.192074869615,
@@ -83,14 +83,14 @@
       }
     },
     {
-      "fast_rtm_s": 2.4288934159558266,
+      "fast_rtm_s": 2.5109830839792266,
       "max_abs_residual": 0.0003442267781891828,
       "max_abs_residual_over_noise": 1.101487590419226,
       "max_abs_residual_wavelength_nm": 768.0,
       "median_abs_residual_over_noise": 0.09371220365620361,
-      "reference_rtm_s": 4.409957916999701,
+      "reference_rtm_s": 4.709470917005092,
       "rmse": 9.200012152281349e-05,
-      "rtm_speedup_s": 1.9810645010438748,
+      "rtm_speedup_s": 2.1984878330258653,
       "scene": "low sun dark surface",
       "scene_parameters": {
         "aerosol_mid_pressure_hpa": 410.0,

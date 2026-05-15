@@ -1,68 +1,68 @@
 {
   "cache": {
-    "first_use_retrieval_s": 15.434355542063713,
+    "first_use_retrieval_s": 16.08576233300846,
     "reused_retrieval": {
       "converged": true,
       "iterations": 3,
       "iterations_detail": [
         {
           "index": 1,
-          "rtm_and_jacobian_s": 4.817297999979928,
-          "solver_update_s": 0.0001931249862536788,
-          "total_iteration_s": 4.817501334007829
+          "rtm_and_jacobian_s": 4.9021821659989655,
+          "solver_update_s": 0.0002205410273745656,
+          "total_iteration_s": 4.902414083015174
         },
         {
           "index": 2,
-          "rtm_and_jacobian_s": 4.789218166959472,
-          "solver_update_s": 0.00017029198352247477,
-          "total_iteration_s": 4.789396208012477
+          "rtm_and_jacobian_s": 5.252832750033122,
+          "solver_update_s": 0.0001917920308187604,
+          "total_iteration_s": 5.253033542016055
         },
         {
           "index": 3,
-          "rtm_and_jacobian_s": 4.872390250035096,
-          "solver_update_s": 0.0001622499548830092,
-          "total_iteration_s": 4.87255724996794
+          "rtm_and_jacobian_s": 4.935168458032422,
+          "solver_update_s": 0.0001633340143598616,
+          "total_iteration_s": 4.935337833012454
         }
       ],
-      "other_retrieval_s": 0.0005165411275811493,
-      "retrieval_plus_lazy_final_evaluation_s": 19.252435082977172,
+      "other_retrieval_s": 0.0004960838705301285,
+      "retrieval_plus_lazy_final_evaluation_s": 19.97218383301515,
       "retrieved": {
         "aerosol_layer_mid_pressure_hpa": 329.1908915406733,
         "aerosol_optical_depth": 1.96819459063108
       },
-      "rtm_and_jacobian_s": 14.478906416974496,
-      "solver_update_s": 0.0005256669246591628,
+      "rtm_and_jacobian_s": 15.090183374064509,
+      "solver_update_s": 0.0005756670725531876,
       "state_names": [
         "aerosol_optical_depth",
         "aerosol_layer_mid_pressure_hpa"
       ],
-      "wall_s": 14.479948625026736
+      "wall_s": 15.091255125007592
     },
-    "setup_s": 0.9544069170369767
+    "setup_s": 0.9945072080008686
   },
   "direct_rtm_call_probe": {
     "jacobian_increment_s": {
-      "max": 0.4848057080525905,
-      "mean": 0.3575436663930304,
-      "median": 0.3945857919752598,
-      "min": 0.17144766595447436
+      "max": 0.278500999964308,
+      "mean": -0.2966223586234264,
+      "median": 0.15794562496012077,
+      "min": -1.8431090839440003
     },
     "probe_runs": 5,
     "rtm_and_jacobian_s": {
-      "max": 5.102010417031124,
-      "mean": 4.950996483396739,
-      "median": 4.921313834027387,
-      "min": 4.8527064579539
+      "max": 4.884706541954074,
+      "mean": 4.822146025183611,
+      "median": 4.81298574997345,
+      "min": 4.768501875048969
     },
     "rtm_only_s": {
-      "max": 4.681258791999426,
-      "mean": 4.593452817003708,
-      "median": 4.6068460419774055,
-      "min": 4.526728042052127
+      "max": 6.611610958992969,
+      "mean": 5.118768383807037,
+      "median": 4.643150000018068,
+      "min": 4.564939333999064
     }
   },
-  "lazy_final_evaluation_s": 4.772486457950436,
-  "measurement_build_s": 4.473444417002611,
+  "lazy_final_evaluation_s": 4.880928708007559,
+  "measurement_build_s": 4.5767088329885155,
   "reference_case": 71,
   "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
   "scene": {

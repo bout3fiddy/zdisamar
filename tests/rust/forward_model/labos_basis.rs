@@ -10,7 +10,7 @@ fn assert_close(actual: f64, expected: f64, tolerance: f64) {
 }
 
 #[test]
-fn fixed_size_matrix_and_vector_helpers_match_zig_layout() {
+fn fixed_size_matrix_and_vector_helpers_match_labos_layout() {
     let mut matrix = Mat::identity(3);
     assert_eq!(matrix.n, 3);
     assert_eq!(matrix.data.len(), MAX_N2);

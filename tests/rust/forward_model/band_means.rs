@@ -33,7 +33,7 @@ fn linear_lut() -> OperationalCrossSectionLut {
 }
 
 #[test]
-fn weighted_window_mean_matches_zig_denominator_guard() {
+fn weighted_window_mean_matches_denominator_guard() {
     assert_close(
         compute_weighted_window_mean(&[2.0, 6.0], &[1.0, 3.0]),
         5.0,
@@ -98,7 +98,7 @@ fn operational_band_mean_prefers_weighted_operational_refspec_grid() {
 }
 
 #[test]
-fn line_band_means_default_matches_zig_zero_state() {
+fn line_band_means_default_matches_zero_state() {
     assert_eq!(
         LineBandMeans::default(),
         LineBandMeans {

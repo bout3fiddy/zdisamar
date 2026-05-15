@@ -174,8 +174,7 @@ struct LowResolutionSamplingIdentity {
 fn hash_wavelengths(wavelengths_nm: &[f64]) -> u64 {
     let mut hasher = WyHash::with_seed(0);
     for wavelength_nm in wavelengths_nm {
-        // Zig hashes the raw in-memory f64 bytes. Native-endian bytes keep this
-        // cache key aligned with that same process-local representation.
+        // Native-endian bytes keep this cache key tied to the process-local f64 representation.
         hasher.write(&wavelength_nm.to_ne_bytes());
     }
     hasher.finish()

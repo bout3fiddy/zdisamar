@@ -8,7 +8,7 @@ RTM+jacobian work remains the retrieval elapsed time.
 
 ## Jacobian Internals
 
-The retrieval-facing Jacobian is state-vector sized. Some lower Zig layers still
+The retrieval-facing Jacobian is state-vector sized. Some lower Rust layers still
 use fixed internal storage. There may be more latency available if derivative
 state masks remove more internal work rather than only compacting the public
 result.

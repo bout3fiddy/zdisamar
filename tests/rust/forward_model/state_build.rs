@@ -933,7 +933,7 @@ fn evaluated_layer_maps_to_radiative_transfer_input() {
 }
 
 #[test]
-fn prepared_sublayer_and_shared_geometry_match_zig_defaults() {
+fn prepared_sublayer_and_shared_geometry_match_reference_defaults() {
     let sublayer = PreparedSublayer {
         oxygen_number_density_cm3: 2.0,
         ..PreparedSublayer::default()
@@ -3113,7 +3113,7 @@ fn shared_geometry_builds_reduced_rtm_levels_and_interval_weights() {
 }
 
 #[test]
-fn shared_geometry_helpers_match_zig_boundary_semantics() {
+fn shared_geometry_helpers_match_boundary_semantics() {
     let rule = resolve_gauss_rule(1).unwrap();
     assert_close(rule.nodes[0], 0.0, 1.0e-14);
     assert_close(rule.weights[0], 2.0, 1.0e-14);

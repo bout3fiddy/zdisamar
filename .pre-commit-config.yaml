@@ -5,8 +5,6 @@ exclude: |
   (?x)^(
     vendor/.*|
     out/.*|
-    zig-out/.*|
-    \.zig-cache/.*|
     data/reference_data/.*|
     docs/workpackages/.*|
     validation/(\.cache|function_diff|latest|runs|scratch|tmp|work)/.*
@@ -68,11 +66,12 @@ repos:
         pass_filenames: false
         verbose: true
 
-      - id: zig-fmt
-        name: zig fmt
-        entry: zig fmt --check
+      - id: no-inline-rust-src-tests
+        name: no inline rust_src tests
+        entry: scripts/check-no-inline-src-tests.sh
         language: system
-        files: '\.(zig|zon)$'
+        files: '^(rust_src/|tests/rust/|scripts/check-no-inline-src-tests\.sh)'
+        pass_filenames: false
 
       - id: cargo-fmt
         name: cargo fmt

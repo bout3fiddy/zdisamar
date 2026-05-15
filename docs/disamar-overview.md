@@ -42,19 +42,19 @@ The 2024 geometry-dependent Lambert-equivalent-reflectivity climatology paper is
 
 The scientific vocabulary in the DISAMAR literature is specific. The main terms that appear throughout this repository are these.
 
-The definitions below describe the scientific target vocabulary. They should not be read as a claim that every current Zig routine is already a method-faithful reproduction of that literature.
+The definitions below describe the scientific target vocabulary. They should not be read as a claim that every current Rust routine is already a method-faithful reproduction of that literature.
 
 ### Doubling-adding
 
 Doubling-adding is a multiple-scattering method for layered atmospheres. Each atmospheric layer is represented through reflection, transmission, and source terms; larger stacks are then assembled by recursively combining layers. The method is attractive for satellite retrieval work because it handles strong multiple scattering in a numerically stable way while keeping layer interfaces explicit.
 
-In the current Zig tree, the adding label identifies the doubling-adding radiative-transfer family. Public documentation should describe it as a radiative-transfer method, not as an implementation route.
+In the current Rust tree, the adding label identifies the doubling-adding radiative-transfer family. Public documentation should describe it as a radiative-transfer method, not as an implementation route.
 
 ### LABOS
 
 LABOS stands for layer-based orders of scattering. In practical terms it is an order-of-scattering formulation organized layer by layer, which makes it useful when a full multiple-scattering solution is not the only quantity of interest and when controlled approximations, perturbations, or derivative-like diagnostics are needed. In the DISAMAR literature, doubling-adding and LABOS are complementary radiative-transfer methods rather than competing codebases.
 
-In the current Zig tree, the LABOS-labeled path identifies the layer-based orders-of-scattering method family.
+In the current Rust tree, the LABOS-labeled path identifies the layer-based orders-of-scattering method family.
 
 ### Optimal estimation
 
@@ -86,11 +86,11 @@ The RTM runtime is separate from DISMAS retrieval execution.
 The current implementation is organized around O2 A wavelength-band cases, RTM
 execution, and inverse methods.
 
-- `src/input/` carries the typed scene and observation description.
+- `rust_src/input/` carries the typed scene and observation description.
 - `python/zdisamar/wavelength_bands/` carries wavelength-band case surfaces.
 - `python/zdisamar/rtm/` carries packaged RTM execution helpers.
-- `src/input/reference_data/` carries the scientific input surfaces needed to prepare execution without letting file I/O leak into numerical routines.
-- the Zig numerical tree carries optical-property construction, radiative
+- `rust_src/input/reference_data.rs` and `rust_src/input/reference/` carry the scientific input surfaces needed to prepare execution without letting file I/O leak into numerical routines.
+- the Rust numerical tree carries optical-property construction, radiative
   transfer, interpolation, quadrature, spectra, and linear algebra.
 
 The important point is that DISAMAR in this repository is the scientific model

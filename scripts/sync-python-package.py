@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Copy generated Python package resources into the source package tree."""
+"""Build or copy generated Python package resources into the source package tree."""
 
 import argparse
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -12,7 +13,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--binding",
         type=Path,
-        required=True,
+        default=None,
         help="Built zdisamar C shared-library artifact.",
     )
 
@@ -38,6 +39,15 @@ def main() -> int:
 
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
+
+    if args.binding is None:
+        sys.path.insert(0, str(repo_root))
+        import hatch_build
+
+        print(hatch_build.sync_python_package(str(repo_root)))
+
+        return 0
+
     package_root = repo_root / "python" / "zdisamar"
     library_source = args.binding
 

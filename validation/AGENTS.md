@@ -11,7 +11,7 @@
 - Use Altair for validation plots. Do not add Matplotlib back to validation scripts.
 - Keep DISAMAR baseline retrieval configs on `aerosolLayerHeight 0`. `aerosolLayerHeight 1` activates a Fortran DISAMAR shortcut path, and these validation lanes are meant to compare zdisamar against the normal physical inverse problem instead.
 - Keep tracked benchmark outputs under `validation/outputs/`; these files are generated evidence and should only be refreshed by the validation scripts.
-- Invoke validation scripts directly with `uv run ...`; do not add one-off Python validation or plotting scripts to `zig build`.
+- Invoke validation scripts directly with `uv run ...`; do not add one-off Python validation or plotting scripts to Cargo.
 - The committed O2 A spectra comparison evidence lives under `validation/outputs/spectra/`. Regenerate it with `uv run validation/spectra/validate_spectra.py`; do not hand-edit its generated contents.
 - Validation thresholds are sacred contracts, not tuning knobs. Do not loosen a
   threshold to make a failing lane pass. If a threshold fails, fix the
