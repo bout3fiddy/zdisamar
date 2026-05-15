@@ -1,6 +1,6 @@
 pub use super::attenuation::{
     AttenArray, DynamicAttenArray, fill_attenuation, fill_attenuation_dynamic,
-    fill_attenuation_dynamic_with_grid,
+    fill_attenuation_dynamic_with_grid, fill_attenuation_tangent_dynamic,
 };
 pub use super::execute::{execute, execute_with_workspace};
 pub use super::layers::{

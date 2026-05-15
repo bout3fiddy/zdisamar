@@ -1,7 +1,10 @@
 use std::vec::Vec as StdVec;
 
 use super::types::{Geometry, MAX_NMUTOT};
-use crate::forward_model::radiative_transfer::common_types::{LayerInput, PseudoSphericalGrid};
+use crate::forward_model::{
+    jacobian::{self, State},
+    radiative_transfer::common_types::{LayerInput, PseudoSphericalGrid},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttenArray {
@@ -295,4 +298,69 @@ pub fn fill_attenuation_dynamic_with_grid(
     }
 
     attenuation
+}
+
+pub fn fill_attenuation_tangent_dynamic(
+    layers: &[LayerInput],
+    state: State,
+    geometry: &Geometry,
+) -> DynamicAttenArray {
+    let nlayer = layers.len();
+    let nlevel = nlayer + 1;
+    let mut attenuation = DynamicAttenArray {
+        data: vec![0.0; geometry.nmutot * nlevel * nlevel],
+        nmutot: geometry.nmutot,
+        nlevel,
+    };
+
+    for il_to_0 in 0..nlayer {
+        let il_to = il_to_0 + 1;
+        let mut il_from_idx = il_to;
+        while il_from_idx >= 1 {
+            let layer_idx = il_from_idx - 1;
+            for imu in 0..geometry.nmutot {
+                let u = geometry.u[imu].max(1.0e-6);
+                let trans = (-layers[layer_idx].optical_depth / u).exp();
+                let dtrans =
+                    trans * (-jacobian::get(layers[layer_idx].optical_depth_jacobian, state) / u);
+                let value = attenuation.get(imu, il_from_idx, il_to) * trans
+                    + cumulative_base_transmittance(layers, geometry, imu, il_from_idx, il_to)
+                        * dtrans;
+                attenuation.set(imu, il_from_idx - 1, il_to, value);
+            }
+            il_from_idx -= 1;
+        }
+    }
+
+    for il_to in 0..nlevel {
+        for il_from in il_to..nlevel {
+            for imu in 0..geometry.nmutot {
+                attenuation.set(imu, il_from, il_to, attenuation.get(imu, il_to, il_from));
+            }
+        }
+    }
+
+    attenuation
+}
+
+fn cumulative_base_transmittance(
+    layers: &[LayerInput],
+    geometry: &Geometry,
+    imu: usize,
+    from_level: usize,
+    to_level: usize,
+) -> f64 {
+    let mut value = 1.0;
+    if from_level >= to_level {
+        return value;
+    }
+    let u = geometry.u[imu].max(1.0e-6);
+    for layer in layers
+        .iter()
+        .take(to_level.min(layers.len()))
+        .skip(from_level)
+    {
+        value *= (-layer.optical_depth / u).exp();
+    }
+    value
 }

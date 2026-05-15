@@ -1,7 +1,11 @@
-use zdisamar::forward_model::radiative_transfer::{
-    common_types::{LayerInput, PseudoSphericalGrid, PseudoSphericalSample},
-    labos::{
-        Geometry, fill_attenuation, fill_attenuation_dynamic, fill_attenuation_dynamic_with_grid,
+use zdisamar::forward_model::{
+    jacobian::{self, State},
+    radiative_transfer::{
+        common_types::{LayerInput, PseudoSphericalGrid, PseudoSphericalSample},
+        labos::{
+            Geometry, fill_attenuation, fill_attenuation_dynamic,
+            fill_attenuation_dynamic_with_grid, fill_attenuation_tangent_dynamic,
+        },
     },
 };
 
@@ -102,4 +106,34 @@ fn pseudo_spherical_grid_overrides_top_level_dynamic_attenuation() {
 
     assert_ne!(plane.get(0, 2, 0), curved.get(0, 2, 0));
     assert_close(curved.get(0, 2, 2), 1.0, 0.0);
+}
+
+#[test]
+fn tangent_dynamic_attenuation_follows_layer_optical_depth_jacobian() {
+    let geometry = Geometry::init(4, 0.58, 0.64);
+    let mut first = LayerInput {
+        optical_depth: 0.2,
+        ..LayerInput::default()
+    };
+    jacobian::set(
+        &mut first.optical_depth_jacobian,
+        State::AerosolLayerMidPressureHpa,
+        0.03,
+    );
+    let layers = vec![
+        first,
+        LayerInput {
+            optical_depth: 0.3,
+            ..LayerInput::default()
+        },
+    ];
+
+    let tangent =
+        fill_attenuation_tangent_dynamic(&layers, State::AerosolLayerMidPressureHpa, &geometry);
+    let imu = 0;
+    let u = geometry.u[imu].max(1.0e-6);
+    let expected = (-(0.2 + 0.3) / u).exp() * (-0.03 / u);
+
+    assert_close(tangent.get(imu, 0, 2), expected, 1.0e-12);
+    assert_close(tangent.get(imu, 2, 0), expected, 1.0e-12);
 }
