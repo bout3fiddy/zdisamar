@@ -1,16 +1,101 @@
 use crate::common::math::interpolation::spline;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpectroscopyLine {
-    pub gas_index: u8,
+    pub gas_index: u16,
     pub isotope_number: u8,
+    pub abundance_fraction: f64,
+    pub vendor_filter_metadata_from_source: bool,
     pub center_wavelength_nm: f64,
+    pub center_wavenumber_cm1: Option<f64>,
     pub line_strength_cm2_per_molecule: f64,
+    pub air_half_width_nm: f64,
+    pub air_half_width_cm1: Option<f64>,
+    pub temperature_exponent: f64,
+    pub lower_state_energy_cm1: f64,
+    pub pressure_shift_nm: f64,
+    pub pressure_shift_cm1: Option<f64>,
+    pub line_mixing_coefficient: f64,
+    pub branch_ic1: Option<u8>,
+    pub branch_ic2: Option<u8>,
+    pub rotational_nf: Option<u8>,
+}
+
+impl Default for SpectroscopyLine {
+    fn default() -> Self {
+        Self {
+            gas_index: 0,
+            isotope_number: 1,
+            abundance_fraction: 1.0,
+            vendor_filter_metadata_from_source: false,
+            center_wavelength_nm: 0.0,
+            center_wavenumber_cm1: None,
+            line_strength_cm2_per_molecule: 0.0,
+            air_half_width_nm: 0.0,
+            air_half_width_cm1: None,
+            temperature_exponent: 0.0,
+            lower_state_energy_cm1: 0.0,
+            pressure_shift_nm: 0.0,
+            pressure_shift_cm1: None,
+            line_mixing_coefficient: 0.0,
+            branch_ic1: None,
+            branch_ic2: None,
+            rotational_nf: None,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SpectroscopyLineList {
     pub lines: Vec<SpectroscopyLine>,
+    pub lines_sorted_ascending: bool,
+    pub runtime_controls: SpectroscopyRuntimeControls,
+}
+
+impl SpectroscopyLineList {
+    pub fn sigma_at(&self, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) -> f64 {
+        self.evaluate_at(wavelength_nm, temperature_k, pressure_hpa)
+            .total_sigma_cm2_per_molecule
+    }
+
+    pub fn evaluate_at(
+        &self,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) -> SpectroscopyEvaluation {
+        crate::input::reference::spectroscopy::line_list_eval::evaluate_at(
+            self,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpectroscopyRuntimeControls {
+    pub gas_index: Option<u16>,
+    pub active_isotopes: Vec<u8>,
+    pub threshold_line_scale: Option<f64>,
+    pub cutoff_cm1: Option<f64>,
+    pub cutoff_grid_wavelengths_nm: Vec<f64>,
+    pub cutoff_grid_wavenumbers_cm1: Vec<f64>,
+    pub line_mixing_factor: f64,
+}
+
+impl Default for SpectroscopyRuntimeControls {
+    fn default() -> Self {
+        Self {
+            gas_index: None,
+            active_isotopes: Vec::new(),
+            threshold_line_scale: None,
+            cutoff_cm1: None,
+            cutoff_grid_wavelengths_nm: Vec::new(),
+            cutoff_grid_wavenumbers_cm1: Vec::new(),
+            line_mixing_factor: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]

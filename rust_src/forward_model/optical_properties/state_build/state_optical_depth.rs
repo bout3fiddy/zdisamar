@@ -8,7 +8,10 @@ use super::{
 use crate::{
     common::errors,
     forward_model::optical_properties::shared::phase_functions,
-    input::{reference::rayleigh, reference_data::interpolate_cross_section_sigma, scene::Scene},
+    input::{
+        atmospheric_types::AbsorberSpecies, reference::rayleigh,
+        reference_data::interpolate_cross_section_sigma, scene::Scene,
+    },
 };
 
 pub fn optical_depth_breakdown_at_wavelength(
@@ -236,18 +239,36 @@ fn gas_absorption_optical_depth_at_sublayer(
     }
 
     let line_optical_depth = if !prepared.line_absorbers.is_empty() {
-        if !prepared.operational_o2_lut.enabled() {
-            // The line-list evaluator is not ported yet. This branch supports
-            // operational O2 only, so line absorbers without that LUT must not
-            // silently disappear.
-            return Err(errors::Error::InvalidRequest);
+        let mut optical_depth = 0.0;
+        if prepared.operational_o2_lut.enabled() {
+            optical_depth += prepared.operational_o2_lut.sigma_at(
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+            ) * sublayer.oxygen_number_density_cm3
+                * sublayer.path_length_cm;
         }
-        prepared.operational_o2_lut.sigma_at(
-            wavelength_nm,
-            sublayer.temperature_k,
-            sublayer.pressure_hpa,
-        ) * sublayer.oxygen_number_density_cm3
-            * sublayer.path_length_cm
+        for line_absorber in &prepared.line_absorbers {
+            if prepared.operational_o2_lut.enabled() && line_absorber.species == AbsorberSpecies::O2
+            {
+                continue;
+            }
+            let absorber_density_cm3 = line_absorber
+                .number_densities_cm3
+                .get(global_sublayer_index)
+                .copied()
+                .unwrap_or(0.0);
+            if absorber_density_cm3 <= 0.0 {
+                continue;
+            }
+            optical_depth += line_absorber.line_list.sigma_at(
+                wavelength_nm,
+                sublayer.temperature_k,
+                sublayer.pressure_hpa,
+            ) * absorber_density_cm3
+                * sublayer.path_length_cm;
+        }
+        optical_depth
     } else {
         let spectroscopy_sigma = weighted_spectroscopy_evaluation_at_wavelength(
             prepared,

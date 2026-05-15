@@ -658,9 +658,13 @@ fn weighted_spectroscopy_evaluation_at_support_row(
         if weight <= 0.0 {
             continue;
         }
-        // The Rust port does not have the HITRAN evaluator yet. This keeps
-        // non-operational line absorbers from being silently removed.
-        return Err(errors::Error::InvalidRequest);
+        let evaluation = line_absorber.line_list.evaluate_at(
+            wavelength_nm,
+            sublayer.temperature_k,
+            sublayer.pressure_hpa,
+        );
+        total_weight += weight;
+        add_weighted_evaluation(&mut weighted, evaluation, weight);
     }
 
     if total_weight <= 0.0 {
@@ -705,7 +709,12 @@ fn weighted_spectroscopy_evaluation_at_altitude(
         if weight <= 0.0 {
             continue;
         }
-        return Err(errors::Error::InvalidRequest);
+        let evaluation =
+            line_absorber
+                .line_list
+                .evaluate_at(wavelength_nm, temperature_k, pressure_hpa);
+        total_weight += weight;
+        add_weighted_evaluation(&mut weighted, evaluation, weight);
     }
 
     if total_weight <= 0.0 {

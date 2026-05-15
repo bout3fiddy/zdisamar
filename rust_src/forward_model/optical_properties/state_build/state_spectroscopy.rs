@@ -1,9 +1,7 @@
 use super::{PreparedOpticalState, operational_o2_evaluation_at_wavelength};
 use crate::{
     common::errors,
-    input::reference_data::{
-        SpectroscopyEvaluation, SpectroscopyLineList, interpolate_cross_section_sigma,
-    },
+    input::reference_data::{SpectroscopyEvaluation, interpolate_cross_section_sigma},
 };
 
 pub fn total_cross_section_at_wavelength(
@@ -99,8 +97,6 @@ pub fn weighted_spectroscopy_evaluation_at_wavelength(
     temperature_k: f64,
     pressure_hpa: f64,
 ) -> Result<SpectroscopyEvaluation, errors::Error> {
-    reject_unported_line_list_inputs(prepared.spectroscopy_lines.as_ref(), prepared)?;
-
     let mut total_weight = 0.0;
     let mut weighted = zero_spectroscopy_evaluation();
 
@@ -117,6 +113,47 @@ pub fn weighted_spectroscopy_evaluation_at_wavelength(
             prepared.oxygen_column_density_factor,
         );
         total_weight += prepared.oxygen_column_density_factor;
+    }
+
+    for line_absorber in &prepared.line_absorbers {
+        if prepared.operational_o2_lut.enabled()
+            && line_absorber.species == crate::input::atmospheric_types::AbsorberSpecies::O2
+        {
+            continue;
+        }
+        if line_absorber.line_list.lines.is_empty() {
+            continue;
+        }
+        let weight = line_absorber.column_density_factor;
+        if weight <= 0.0 {
+            continue;
+        }
+        let evaluation =
+            line_absorber
+                .line_list
+                .evaluate_at(wavelength_nm, temperature_k, pressure_hpa);
+        add_weighted_evaluation(&mut weighted, evaluation, weight);
+        total_weight += weight;
+    }
+
+    let standalone_line_list =
+        if !prepared.operational_o2_lut.enabled() && prepared.line_absorbers.is_empty() {
+            prepared
+                .spectroscopy_lines
+                .as_ref()
+                .filter(|line_list| !line_list.lines.is_empty())
+        } else {
+            None
+        };
+    if let Some(line_list) = standalone_line_list {
+        let evaluation = line_list.evaluate_at(wavelength_nm, temperature_k, pressure_hpa);
+        let weight = if prepared.column_density_factor > 0.0 {
+            prepared.column_density_factor
+        } else {
+            1.0
+        };
+        add_weighted_evaluation(&mut weighted, evaluation, weight);
+        total_weight += weight;
     }
 
     if total_weight <= 0.0 {
@@ -144,23 +181,6 @@ pub fn zero_spectroscopy_evaluation() -> SpectroscopyEvaluation {
         total_sigma_cm2_per_molecule: 0.0,
         d_sigma_d_temperature_cm2_per_molecule_per_k: 0.0,
     }
-}
-
-fn reject_unported_line_list_inputs(
-    spectroscopy_lines: Option<&SpectroscopyLineList>,
-    prepared: &PreparedOpticalState,
-) -> Result<(), errors::Error> {
-    let has_standalone_lines =
-        spectroscopy_lines.is_some_and(|line_list| !line_list.lines.is_empty());
-    if has_standalone_lines
-        || (!prepared.line_absorbers.is_empty() && !prepared.operational_o2_lut.enabled())
-    {
-        // The HITRAN evaluator is not ported yet. Returning an error keeps the
-        // Rust path from silently dropping line absorption or inventing a fake
-        // line shape.
-        return Err(errors::Error::InvalidRequest);
-    }
-    Ok(())
 }
 
 fn add_weighted_evaluation(

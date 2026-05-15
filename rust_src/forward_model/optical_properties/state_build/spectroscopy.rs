@@ -160,6 +160,11 @@ pub fn resolve_active_line_species(
     let Some(spectroscopy_lines) = line_list else {
         return Ok(None);
     };
+    if let Some(gas_index) = spectroscopy_lines.runtime_controls.gas_index {
+        return species_for_hitran_index(gas_index)
+            .ok_or(errors::Error::InvalidRequest)
+            .map(Some);
+    }
     infer_line_species(&spectroscopy_lines.lines)
 }
 
@@ -217,6 +222,7 @@ pub fn sort_line_list(line_list: &mut SpectroscopyLineList) {
         left.center_wavelength_nm
             .total_cmp(&right.center_wavelength_nm)
     });
+    line_list.lines_sorted_ascending = true;
 }
 
 fn default_volume_mixing_ratio_for_scene(_scene: &Scene, species: AbsorberSpecies) -> Option<f64> {
@@ -239,7 +245,7 @@ fn infer_line_species(
     {
         return Ok(None);
     }
-    species_for_hitran_index(u16::from(first_line.gas_index))
+    species_for_hitran_index(first_line.gas_index)
         .ok_or(errors::Error::InvalidRequest)
         .map(Some)
 }

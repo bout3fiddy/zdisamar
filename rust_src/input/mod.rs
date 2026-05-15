@@ -6,6 +6,7 @@ pub mod bands;
 pub mod binding;
 pub mod cloud;
 pub mod geometry;
+pub mod hitran_partition_tables;
 pub mod instrument;
 pub mod measurement;
 pub mod o2a_reference;

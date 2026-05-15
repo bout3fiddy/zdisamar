@@ -1,5 +1,4 @@
 use zdisamar::{
-    common::errors,
     forward_model::{
         jacobian::{self, State},
         optical_properties::{
@@ -76,6 +75,21 @@ fn scalar_lut(
         max_temperature_k: 320.0,
         min_pressure_hpa: 200.0,
         max_pressure_hpa: 1000.0,
+    }
+}
+
+fn weak_o2_line() -> SpectroscopyLine {
+    SpectroscopyLine {
+        gas_index: 7,
+        isotope_number: 1,
+        center_wavelength_nm: 760.5,
+        center_wavenumber_cm1: Some(1.0e7 / 760.5),
+        line_strength_cm2_per_molecule: 1.0e-24,
+        air_half_width_cm1: Some(0.05),
+        temperature_exponent: 0.75,
+        lower_state_energy_cm1: 10.0,
+        pressure_shift_cm1: Some(0.0),
+        ..SpectroscopyLine::default()
     }
 }
 
@@ -450,11 +464,14 @@ fn carrier_eval_interpolates_active_and_quadrature_particles_by_scattering() {
 }
 
 #[test]
-fn carrier_eval_rejects_unported_line_absorber_without_operational_lut() {
+fn carrier_eval_uses_weak_line_absorber_without_operational_lut() {
     let prepared = PreparedOpticalState {
         line_absorbers: vec![PreparedLineAbsorber {
             species: AbsorberSpecies::O2,
-            line_list: SpectroscopyLineList::default(),
+            line_list: SpectroscopyLineList {
+                lines: vec![weak_o2_line()],
+                ..SpectroscopyLineList::default()
+            },
             number_densities_cm3: vec![1.0e18],
             column_density_factor: 1.0,
         }],
@@ -464,16 +481,23 @@ fn carrier_eval_rejects_unported_line_absorber_without_operational_lut() {
         global_sublayer_index: 0,
         path_length_cm: 100_000.0,
         absorber_number_density_cm3: 1.0e18,
+        temperature_k: 296.0,
+        pressure_hpa: 500.0,
         ..PreparedSublayer::default()
     };
 
-    assert_eq!(
-        shared_optical_carrier_at_support_row(&prepared, 760.0, sublayer, 0).unwrap_err(),
-        errors::Error::InvalidRequest,
+    let support_row = shared_optical_carrier_at_support_row(&prepared, 760.5, sublayer, 0).unwrap();
+    let altitude = shared_optical_carrier_at_altitude(&prepared, 760.5, &[sublayer], 0.0).unwrap();
+
+    assert_close(
+        support_row.gas_absorption_optical_depth_per_km,
+        1.090_784_048_534_016,
+        1.0e-12,
     );
-    assert_eq!(
-        shared_optical_carrier_at_altitude(&prepared, 760.0, &[sublayer], 0.0).unwrap_err(),
-        errors::Error::InvalidRequest,
+    assert_close(
+        altitude.gas_absorption_optical_depth_per_km,
+        1.090_784_048_534_016,
+        1.0e-12,
     );
 }
 
@@ -663,6 +687,7 @@ fn spectroscopy_helpers_resolve_species_and_profiles() {
                 ..SpectroscopyLine::default()
             },
         ],
+        ..SpectroscopyLineList::default()
     };
     sort_line_list(&mut line_list);
     assert_close(line_list.lines[0].center_wavelength_nm, 760.0, 0.0);
@@ -838,17 +863,15 @@ fn state_spectroscopy_uses_operational_o2_without_fake_line_list_physics() {
 }
 
 #[test]
-fn state_spectroscopy_errors_when_only_unported_line_physics_is_available() {
+fn state_spectroscopy_evaluates_weak_line_absorber() {
     let prepared = PreparedOpticalState {
+        effective_temperature_k: 296.0,
+        effective_pressure_hpa: 500.0,
         line_absorbers: vec![PreparedLineAbsorber {
             species: AbsorberSpecies::O2,
             line_list: SpectroscopyLineList {
-                lines: vec![SpectroscopyLine {
-                    gas_index: 7,
-                    isotope_number: 1,
-                    center_wavelength_nm: 760.5,
-                    line_strength_cm2_per_molecule: 1.0e-24,
-                }],
+                lines: vec![weak_o2_line()],
+                ..SpectroscopyLineList::default()
             },
             number_densities_cm3: Vec::new(),
             column_density_factor: 1.0,
@@ -856,9 +879,25 @@ fn state_spectroscopy_errors_when_only_unported_line_physics_is_available() {
         ..PreparedOpticalState::default()
     };
 
-    assert_eq!(
-        effective_spectroscopy_evaluation_at_wavelength(&prepared, 760.5).unwrap_err(),
-        errors::Error::InvalidRequest,
+    let evaluation = effective_spectroscopy_evaluation_at_wavelength(&prepared, 760.5).unwrap();
+
+    assert_close(
+        evaluation.total_sigma_cm2_per_molecule,
+        1.090_784_048_534_016e-23,
+        1.0e-36,
+    );
+
+    let colder = PreparedOpticalState {
+        effective_temperature_k: 250.0,
+        effective_pressure_hpa: 500.0,
+        ..prepared
+    };
+    let colder_evaluation =
+        effective_spectroscopy_evaluation_at_wavelength(&colder, 760.5).unwrap();
+    assert_close(
+        colder_evaluation.total_sigma_cm2_per_molecule,
+        1.181_268_936_599_625e-23,
+        1.0e-36,
     );
 }
 
@@ -1014,24 +1053,33 @@ fn state_optical_depth_evaluates_and_aggregates_sublayers() {
 }
 
 #[test]
-fn state_optical_depth_rejects_unported_line_absorbers_in_sublayers() {
+fn state_optical_depth_uses_weak_line_absorbers_in_sublayers() {
     let prepared = PreparedOpticalState {
         line_absorbers: vec![PreparedLineAbsorber {
             species: AbsorberSpecies::O2,
-            line_list: SpectroscopyLineList::default(),
-            number_densities_cm3: vec![1.0],
+            line_list: SpectroscopyLineList {
+                lines: vec![weak_o2_line()],
+                ..SpectroscopyLineList::default()
+            },
+            number_densities_cm3: vec![1.0e18],
             column_density_factor: 1.0,
         }],
         ..PreparedOpticalState::default()
     };
     let sublayers = vec![PreparedSublayer {
-        path_length_cm: 1.0,
+        path_length_cm: 100_000.0,
+        temperature_k: 296.0,
+        pressure_hpa: 500.0,
         ..PreparedSublayer::default()
     }];
 
-    assert_eq!(
-        evaluate_layer_at_wavelength(&prepared, None, 0.0, 760.0, 0, &sublayers).unwrap_err(),
-        errors::Error::InvalidRequest,
+    let evaluated =
+        evaluate_layer_at_wavelength(&prepared, None, 0.0, 760.5, 0, &sublayers).unwrap();
+
+    assert_close(
+        evaluated.breakdown.gas_absorption_optical_depth,
+        1.090_784_048_534_016,
+        1.0e-12,
     );
 }
 
