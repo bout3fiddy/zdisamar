@@ -1,7 +1,9 @@
 pub mod absorbers;
+pub mod accumulation;
 pub mod carrier_eval;
 pub mod context;
 pub mod evaluation;
+pub mod finalize;
 pub mod forward_layers;
 pub mod operational_o2;
 pub mod prepared_state;
@@ -18,6 +20,7 @@ pub mod state_types;
 pub mod vertical_grid;
 
 pub use absorbers::{AbsorberBuildState, build_absorbers};
+pub use accumulation::{AccumulationResult, PreparedMeans};
 pub use carrier_eval::{
     InterpolatedQuadratureState, PreparedQuadratureCarrier, SharedBoundaryCarrier,
     SharedOpticalCarrier, interpolate_quadrature_state_at_altitude, quadrature_carrier_at_altitude,
@@ -26,6 +29,7 @@ pub use carrier_eval::{
 };
 pub use context::{PreparationContext, PreparationInputs};
 pub use evaluation::{accumulate_breakdown, layer_input_from_evaluated};
+pub use finalize::assemble;
 pub use forward_layers::{
     fill_forward_layers_at_wavelength, forward_input_from_optical_depths, to_forward_input,
     to_forward_input_at_wavelength, to_forward_input_at_wavelength_with_layers,

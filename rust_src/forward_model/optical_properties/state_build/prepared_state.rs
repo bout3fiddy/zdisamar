@@ -17,6 +17,7 @@ use crate::{
         reference::airmass_phase::PhaseSupportKind,
         reference_data::{
             CollisionInducedAbsorptionTable, CrossSectionPoint, SpectroscopyLineList,
+            StrongLinePreparedState, WeakLinePreparedState,
         },
     },
 };
@@ -25,6 +26,9 @@ use crate::{
 pub struct PreparedOpticalState {
     pub layers: Vec<PreparedLayer>,
     pub sublayers: Option<Vec<PreparedSublayer>>,
+    pub strong_line_states: Vec<StrongLinePreparedState>,
+    pub spectroscopy_profile_strong_line_states: Vec<StrongLinePreparedState>,
+    pub spectroscopy_profile_weak_line_states: Vec<WeakLinePreparedState>,
     pub shared_rtm_geometry: SharedRtmGeometry,
     pub continuum_points: Vec<CrossSectionPoint>,
     pub collision_induced_absorption: Option<CollisionInducedAbsorptionTable>,
@@ -80,6 +84,9 @@ impl Default for PreparedOpticalState {
         Self {
             layers: Vec::new(),
             sublayers: None,
+            strong_line_states: Vec::new(),
+            spectroscopy_profile_strong_line_states: Vec::new(),
+            spectroscopy_profile_weak_line_states: Vec::new(),
             shared_rtm_geometry: SharedRtmGeometry::default(),
             continuum_points: Vec::new(),
             collision_induced_absorption: None,

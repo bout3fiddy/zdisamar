@@ -2,14 +2,15 @@ use zdisamar::{
     forward_model::{
         jacobian::{self, State},
         optical_properties::{
-            shared::phase_functions,
+            shared::{band_means::LineBandMeans, phase_functions},
             state_build::{
-                CrossSectionRepresentationKind, EvaluatedLayer, INVALID_SUPPORT_ROW_INDEX,
-                OpticalDepthBreakdown, PreparationContext, PreparationInputs,
-                PreparedCrossSectionAbsorber, PreparedCrossSectionRepresentation, PreparedLayer,
-                PreparedLineAbsorber, PreparedOpticalState, PreparedSublayer,
-                PseudoSphericalBuffers, SharedRtmGeometry, SharedRtmLayerGeometry,
-                SharedRtmLevelGeometry, accumulate_breakdown, build_absorbers,
+                AccumulationResult, CrossSectionRepresentationKind, EvaluatedLayer,
+                INVALID_SUPPORT_ROW_INDEX, OpticalDepthBreakdown, PreparationContext,
+                PreparationInputs, PreparedCrossSectionAbsorber,
+                PreparedCrossSectionRepresentation, PreparedLayer, PreparedLineAbsorber,
+                PreparedMeans, PreparedOpticalState, PreparedSublayer, PseudoSphericalBuffers,
+                SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
+                accumulate_breakdown, assemble, build_absorbers,
                 build_shared_rtm_geometry_from_layers, build_vertical_grid,
                 collect_active_cross_section_absorbers, collect_active_line_absorbers,
                 collision_induced_sigma_at_wavelength, continuum_carrier_density_at_sublayer,
@@ -54,7 +55,7 @@ use zdisamar::{
         instrument::{IntegrationMode, MeasurementPipeline, OperationalCrossSectionLut},
         observation_model::ObservationModel,
         reference::{
-            airmass_phase::{AirmassFactorLut, AirmassFactorPoint},
+            airmass_phase::{AirmassFactorLut, AirmassFactorPoint, PhaseSupportKind},
             rayleigh,
         },
         reference_data::{
@@ -466,6 +467,125 @@ fn absorber_build_state_prepares_active_absorbers_from_context() {
         12.0,
         1.0e-14,
     );
+}
+
+#[test]
+fn finalize_assembles_prepared_optical_state_from_context_and_absorbers() {
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 762.0,
+            sample_count: 3,
+        },
+        atmosphere: Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 2,
+            ..Atmosphere::default()
+        },
+        absorbers: AbsorberSet {
+            items: vec![
+                Absorber {
+                    id: "o2-lines".to_string(),
+                    species: "o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::LineByLine,
+                        ..Spectroscopy::default()
+                    },
+                    ..Absorber::default()
+                },
+                Absorber {
+                    id: "o2o2-continuum".to_string(),
+                    species: "o2o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::CrossSections,
+                        ..Spectroscopy::default()
+                    },
+                    ..Absorber::default()
+                },
+            ],
+        },
+        ..Scene::default()
+    };
+    let profile = simple_profile();
+    let cross_sections = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 10.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 14.0,
+            },
+        ],
+    };
+    let lut = AirmassFactorLut::default();
+    let line_list = SpectroscopyLineList {
+        lines: vec![weak_o2_line()],
+        ..SpectroscopyLineList::default()
+    };
+    let mut context = PreparationContext::init(
+        &scene,
+        PreparationInputs {
+            profile: &profile,
+            spectroscopy_profile: None,
+            cross_sections: &cross_sections,
+            lut: &lut,
+            collision_induced_absorption: None,
+            spectroscopy_lines: Some(&line_list),
+            aerosol_mie: None,
+            cloud_mie: None,
+        },
+    )
+    .unwrap();
+    let absorbers = build_absorbers(&mut context).unwrap();
+    let accumulation = AccumulationResult {
+        means: PreparedMeans {
+            cross_section_mean_cm2_per_molecule: 1.0,
+            line_means: LineBandMeans {
+                line_mean_cross_section_cm2_per_molecule: 2.0,
+                line_mixing_mean_cross_section_cm2_per_molecule: 0.5,
+            },
+            cia_mean_cross_section_cm5_per_molecule2: 0.1,
+            effective_air_mass_factor: 1.25,
+            effective_single_scatter_albedo: 0.2,
+            effective_temperature_k: 250.0,
+            effective_pressure_hpa: 700.0,
+            air_column_density_factor: 3.0,
+            oxygen_column_density_factor: 4.0,
+            column_density_factor: 5.0,
+            cia_pair_path_factor_cm5: 6.0,
+            gas_optical_depth: 0.7,
+            cia_optical_depth: 0.01,
+            aerosol_optical_depth: 0.02,
+            aerosol_base_optical_depth: 0.03,
+            cloud_optical_depth: 0.04,
+            cloud_base_optical_depth: 0.05,
+            d_optical_depth_d_temperature: 0.06,
+            total_optical_depth: 0.8,
+            depolarization_factor: 0.1,
+        },
+    };
+
+    let prepared = assemble(context, absorbers, accumulation);
+
+    assert_eq!(prepared.layers.len(), 2);
+    assert_eq!(prepared.sublayers.as_ref().unwrap().len(), 4);
+    assert_eq!(prepared.cross_section_absorbers.len(), 1);
+    assert!(prepared.spectroscopy_lines.is_some());
+    assert_eq!(prepared.continuum_owner_species, Some(AbsorberSpecies::O2));
+    assert_close(prepared.mean_cross_section_cm2_per_molecule, 3.5, 0.0);
+    assert_close(prepared.line_mean_cross_section_cm2_per_molecule, 2.0, 0.0);
+    assert_close(
+        prepared.line_mixing_mean_cross_section_cm2_per_molecule,
+        0.5,
+        0.0,
+    );
+    assert_close(prepared.effective_air_mass_factor, 1.25, 0.0);
+    assert_close(prepared.effective_temperature_k, 250.0, 0.0);
+    assert_close(prepared.total_optical_depth, 0.8, 0.0);
+    assert_eq!(prepared.aerosol_phase_support, PhaseSupportKind::None);
+    assert_eq!(prepared.cloud_phase_support, PhaseSupportKind::None);
 }
 
 #[test]
