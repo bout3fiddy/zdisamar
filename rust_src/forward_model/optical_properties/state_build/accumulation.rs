@@ -1,4 +1,5 @@
-use crate::forward_model::optical_properties::shared::band_means::LineBandMeans;
+use super::{AbsorberBuildState, PreparationContext, layer_accumulation};
+use crate::{common::errors, forward_model::optical_properties::shared::band_means::LineBandMeans};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct PreparedMeans {
@@ -27,4 +28,13 @@ pub struct PreparedMeans {
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct AccumulationResult {
     pub means: PreparedMeans,
+}
+
+pub fn accumulate(
+    context: &mut PreparationContext<'_>,
+    absorbers: &mut AbsorberBuildState<'_>,
+) -> Result<AccumulationResult, errors::Error> {
+    let layer_totals = layer_accumulation::populate(context, absorbers)?;
+    let means = layer_accumulation::compute_prepared_means(context, absorbers, layer_totals);
+    Ok(AccumulationResult { means })
 }

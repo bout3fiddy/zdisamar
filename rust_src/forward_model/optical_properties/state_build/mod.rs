@@ -5,6 +5,7 @@ pub mod context;
 pub mod evaluation;
 pub mod finalize;
 pub mod forward_layers;
+pub mod layer_accumulation;
 pub mod operational_o2;
 pub mod prepared_state;
 pub mod pseudo_spherical;
@@ -20,7 +21,7 @@ pub mod state_types;
 pub mod vertical_grid;
 
 pub use absorbers::{AbsorberBuildState, build_absorbers};
-pub use accumulation::{AccumulationResult, PreparedMeans};
+pub use accumulation::{AccumulationResult, PreparedMeans, accumulate};
 pub use carrier_eval::{
     InterpolatedQuadratureState, PreparedQuadratureCarrier, SharedBoundaryCarrier,
     SharedOpticalCarrier, interpolate_quadrature_state_at_altitude, quadrature_carrier_at_altitude,

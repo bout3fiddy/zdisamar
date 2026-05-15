@@ -9,7 +9,7 @@ use zdisamar::{
                 PreparationInputs, PreparedCrossSectionAbsorber,
                 PreparedCrossSectionRepresentation, PreparedLayer, PreparedLineAbsorber,
                 PreparedMeans, PreparedOpticalState, PreparedSublayer, PseudoSphericalBuffers,
-                SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
+                SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry, accumulate,
                 accumulate_breakdown, assemble, build_absorbers,
                 build_shared_rtm_geometry_from_layers, build_vertical_grid,
                 collect_active_cross_section_absorbers, collect_active_line_absorbers,
@@ -467,6 +467,95 @@ fn absorber_build_state_prepares_active_absorbers_from_context() {
         12.0,
         1.0e-14,
     );
+}
+
+#[test]
+fn accumulation_populates_layers_sublayers_and_prepared_means() {
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 762.0,
+            sample_count: 3,
+        },
+        atmosphere: Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 2,
+            ..Atmosphere::default()
+        },
+        absorbers: AbsorberSet {
+            items: vec![
+                Absorber {
+                    id: "o2-lines".to_string(),
+                    species: "o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::LineByLine,
+                        ..Spectroscopy::default()
+                    },
+                    volume_mixing_ratio_profile_ppmv: vec![[1000.0, 209_460.0]],
+                    ..Absorber::default()
+                },
+                Absorber {
+                    id: "o2o2-continuum".to_string(),
+                    species: "o2o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::CrossSections,
+                        ..Spectroscopy::default()
+                    },
+                    volume_mixing_ratio_profile_ppmv: vec![[1000.0, 1.0]],
+                    ..Absorber::default()
+                },
+            ],
+        },
+        ..Scene::default()
+    };
+    let profile = simple_profile();
+    let cross_sections = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 1.0e-24,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 2.0e-24,
+            },
+        ],
+    };
+    let lut = AirmassFactorLut::default();
+    let line_list = SpectroscopyLineList {
+        lines: vec![weak_o2_line()],
+        ..SpectroscopyLineList::default()
+    };
+    let mut context = PreparationContext::init(
+        &scene,
+        PreparationInputs {
+            profile: &profile,
+            spectroscopy_profile: None,
+            cross_sections: &cross_sections,
+            lut: &lut,
+            collision_induced_absorption: None,
+            spectroscopy_lines: Some(&line_list),
+            aerosol_mie: None,
+            cloud_mie: None,
+        },
+    )
+    .unwrap();
+    let mut absorbers = build_absorbers(&mut context).unwrap();
+
+    let accumulation = accumulate(&mut context, &mut absorbers).unwrap();
+
+    assert!(context.sublayers[0].number_density_cm3 > 0.0);
+    assert!(context.sublayers[0].oxygen_number_density_cm3 > 0.0);
+    assert!(context.sublayers[0].path_length_cm > 0.0);
+    assert!(context.layers[0].optical_depth > 0.0);
+    assert!(context.layers[0].gas_optical_depth > 0.0);
+    assert!(accumulation.means.effective_temperature_k > 0.0);
+    assert!(accumulation.means.effective_pressure_hpa > 0.0);
+    assert!(accumulation.means.effective_air_mass_factor > 0.0);
+    assert!(accumulation.means.air_column_density_factor > 0.0);
+    assert!(accumulation.means.oxygen_column_density_factor > 0.0);
+    assert!(accumulation.means.total_optical_depth > 0.0);
+    assert!(absorbers.owned_cross_section_absorbers[0].column_density_factor > 0.0);
 }
 
 #[test]
