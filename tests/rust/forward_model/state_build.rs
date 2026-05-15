@@ -25,9 +25,9 @@ use zdisamar::{
                 operational_o2_evaluation_at_wavelength, optical_depth_breakdown_at_wavelength,
                 particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
                 prepare_line_absorber, prepare_line_absorber_line_list,
-                prepare_line_absorber_strong_line_states, prepared_scalar_for_sublayer,
-                quadrature_carrier_at_altitude, resolve_active_line_species,
-                resolve_continuum_owner_species, resolve_gauss_rule,
+                prepare_line_absorber_strong_line_states, prepare_line_absorbers,
+                prepared_scalar_for_sublayer, quadrature_carrier_at_altitude,
+                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
                 shared_active_carrier_at_level, shared_boundary_carrier_at_level,
                 shared_optical_carrier_at_altitude, shared_optical_carrier_at_support_row,
                 sort_line_list, species_mixing_ratio_at_pressure,
@@ -751,6 +751,19 @@ fn spectroscopy_helpers_collect_active_absorbers_from_scene() {
             .lines
             .is_empty()
     );
+    let prepared_line_absorbers = prepare_line_absorbers(
+        &line_absorbers,
+        &source_line_list,
+        3,
+        &OperationalCrossSectionLut::default(),
+    )
+    .unwrap();
+    assert_eq!(prepared_line_absorbers.len(), 1);
+    assert_eq!(
+        prepared_line_absorbers[0].number_densities_cm3,
+        vec![0.0; 3]
+    );
+    assert_eq!(prepared_line_absorbers[0].line_list.lines.len(), 1);
 
     let active_cross_sections = collect_active_cross_section_absorbers(&scene, &fallback_table);
     assert_eq!(active_cross_sections.len(), 2);

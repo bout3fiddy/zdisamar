@@ -145,6 +145,27 @@ pub fn prepare_line_absorber(
     })
 }
 
+pub fn prepare_line_absorbers(
+    active_absorbers: &[ActiveLineAbsorber],
+    line_list: &SpectroscopyLineList,
+    sublayer_count: usize,
+    operational_o2_lut: &OperationalCrossSectionLut,
+) -> Result<Vec<PreparedLineAbsorber>, errors::Error> {
+    active_absorbers
+        .iter()
+        .map(|active_absorber| {
+            let use_operational_o2_lut =
+                operational_o2_lut.enabled() && active_absorber.species == AbsorberSpecies::O2;
+            prepare_line_absorber(
+                active_absorber,
+                line_list,
+                sublayer_count,
+                use_operational_o2_lut,
+            )
+        })
+        .collect()
+}
+
 pub fn prepare_line_absorber_strong_line_states(
     line_absorber: &mut PreparedLineAbsorber,
     sublayers: &[super::state_types::PreparedSublayer],
