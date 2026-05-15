@@ -20,6 +20,10 @@ name = "common_math_quadrature"
 path = "tests/rust/common/math_quadrature.rs"
 
 [[test]]
+name = "common_math_interpolation"
+path = "tests/rust/common/math_interpolation.rs"
+
+[[test]]
 name = "input_atmospheric_types"
 path = "tests/rust/input/atmospheric_types.rs"
 
