@@ -6,12 +6,16 @@ use zdisamar::{
         optical_properties::state_build::{
             PreparedLayer, PreparedOpticalState, PreparedSublayer, PreparedSupportRowKind,
         },
+        radiative_transfer::{
+            common_route,
+            common_types::{DispatchRequest, ExecutionMode, RadiativeTransferControls},
+        },
     },
     input::{
         atmosphere::PartitionLabel,
         instrument::IntegrationMode,
         reference_data::{CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable},
-        scene::Scene,
+        scene::{DerivativeMode, Scene},
     },
     output::{
         self, CHANNEL_MASK_IRRADIANCE, CHANNEL_MASK_RADIANCE, InstrumentResponseRow, SummaryReport,
@@ -269,4 +273,74 @@ fn o2_o2_cia_rows_are_derived_from_sublayer_budget() {
     assert_close(rows[0].cia_optical_depth, 0.4, 1.0e-14);
     assert_close(rows[0].cia_share_of_total_absorption, 1.0, 1.0e-14);
     assert_close(rows[0].cia_share_of_total_optical_depth, 1.0, 1.0e-12);
+}
+
+#[test]
+fn radiative_transfer_diagnostics_accumulate_depth_and_interpolate_spectrum() {
+    let mut scene = Scene::default();
+    scene.geometry.solar_zenith_deg = 60.0;
+    scene.geometry.viewing_zenith_deg = 0.0;
+    let prepared = PreparedOpticalState {
+        layers: vec![
+            PreparedLayer {
+                layer_index: 0,
+                altitude_km: 2.0,
+                gas_optical_depth: 0.2,
+                gas_scattering_optical_depth: 0.1,
+                ..PreparedLayer::default()
+            },
+            PreparedLayer {
+                layer_index: 1,
+                altitude_km: 1.0,
+                gas_optical_depth: 0.3,
+                gas_scattering_optical_depth: 0.1,
+                ..PreparedLayer::default()
+            },
+        ],
+        ..PreparedOpticalState::default()
+    };
+    let route = common_route::prepare_route(DispatchRequest {
+        execution_mode: ExecutionMode::Scalar,
+        derivative_mode: DerivativeMode::None,
+        rtm_controls: RadiativeTransferControls {
+            n_streams: 8,
+            integrate_source_function: false,
+            ..RadiativeTransferControls::default()
+        },
+        ..DispatchRequest::default()
+    })
+    .unwrap();
+    let spectrum = output::SpectrumView {
+        wavelength_nm: &[759.0, 761.0],
+        reflectance: &[0.2, 0.4],
+        radiance: &[10.0, 14.0],
+    };
+
+    let rows = output::build_radiative_transfer_diagnostics(
+        &scene,
+        &prepared,
+        route,
+        &[760.0],
+        Some(spectrum),
+    )
+    .unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_close(rows[0].pseudo_spherical_airmass_factor, 3.0, 1.0e-14);
+    assert_eq!(rows[0].n_streams, 8);
+    assert_eq!(rows[0].integrate_source_function, 0);
+    assert_close(rows[0].cumulative_optical_depth_above, 0.0, 1.0e-14);
+    assert_close(
+        rows[0].mid_layer_transmission_proxy,
+        (-0.3_f64).exp(),
+        1.0e-14,
+    );
+    assert_close(
+        rows[0].direct_surface_transmission_proxy,
+        (-0.6_f64).exp(),
+        1.0e-14,
+    );
+    assert_close(rows[0].final_reflectance, 0.3, 1.0e-14);
+    assert_close(rows[0].final_radiance, 12.0, 1.0e-14);
+    assert_close(rows[1].cumulative_optical_depth_above, 0.2, 1.0e-14);
 }
