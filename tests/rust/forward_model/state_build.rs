@@ -9,7 +9,7 @@ use zdisamar::{
                 PreparedCrossSectionAbsorber, PreparedCrossSectionRepresentation, PreparedLayer,
                 PreparedLineAbsorber, PreparedOpticalState, PreparedSublayer,
                 PseudoSphericalBuffers, SharedRtmGeometry, SharedRtmLayerGeometry,
-                SharedRtmLevelGeometry, accumulate_breakdown,
+                SharedRtmLevelGeometry, accumulate_breakdown, build_absorbers,
                 build_shared_rtm_geometry_from_layers, build_vertical_grid,
                 collect_active_cross_section_absorbers, collect_active_line_absorbers,
                 collision_induced_sigma_at_wavelength, continuum_carrier_density_at_sublayer,
@@ -53,7 +53,10 @@ use zdisamar::{
         instrument::SpectralChannelControls,
         instrument::{IntegrationMode, MeasurementPipeline, OperationalCrossSectionLut},
         observation_model::ObservationModel,
-        reference::{airmass_phase::AirmassFactorLut, rayleigh},
+        reference::{
+            airmass_phase::{AirmassFactorLut, AirmassFactorPoint},
+            rayleigh,
+        },
         reference_data::{
             ClimatologyPoint, ClimatologyProfile, CollisionInducedAbsorptionPoint,
             CollisionInducedAbsorptionTable, CrossSectionPoint, CrossSectionTable,
@@ -364,6 +367,105 @@ fn preparation_context_materializes_vertical_grid_and_owned_inputs() {
     );
     assert_eq!(context.spectroscopy_lines.as_ref().unwrap().lines.len(), 1);
     assert_close(context.midpoint_nm, 760.5, 0.0);
+}
+
+#[test]
+fn absorber_build_state_prepares_active_absorbers_from_context() {
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 762.0,
+            sample_count: 3,
+        },
+        atmosphere: Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 2,
+            ..Atmosphere::default()
+        },
+        absorbers: AbsorberSet {
+            items: vec![
+                Absorber {
+                    id: "o2-lines".to_string(),
+                    species: "o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::LineByLine,
+                        ..Spectroscopy::default()
+                    },
+                    volume_mixing_ratio_profile_ppmv: vec![[1000.0, 209_460.0]],
+                    ..Absorber::default()
+                },
+                Absorber {
+                    id: "o2o2-continuum".to_string(),
+                    species: "o2o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::CrossSections,
+                        ..Spectroscopy::default()
+                    },
+                    ..Absorber::default()
+                },
+            ],
+        },
+        ..Scene::default()
+    };
+    let profile = simple_profile();
+    let cross_sections = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 10.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 14.0,
+            },
+        ],
+    };
+    let lut = AirmassFactorLut {
+        points: vec![AirmassFactorPoint {
+            solar_zenith_deg: 0.0,
+            view_zenith_deg: 0.0,
+            relative_azimuth_deg: 0.0,
+            airmass_factor: 1.5,
+        }],
+    };
+    let line_list = SpectroscopyLineList {
+        lines: vec![weak_o2_line()],
+        ..SpectroscopyLineList::default()
+    };
+    let mut context = PreparationContext::init(
+        &scene,
+        PreparationInputs {
+            profile: &profile,
+            spectroscopy_profile: None,
+            cross_sections: &cross_sections,
+            lut: &lut,
+            collision_induced_absorption: None,
+            spectroscopy_lines: Some(&line_list),
+            aerosol_mie: None,
+            cloud_mie: None,
+        },
+    )
+    .unwrap();
+
+    let state = build_absorbers(&mut context).unwrap();
+
+    assert!(context.spectroscopy_lines.is_none());
+    assert_eq!(state.active_line_absorbers.len(), 1);
+    assert_eq!(state.active_cross_section_absorbers.len(), 1);
+    assert_eq!(state.owned_cross_section_absorbers.len(), 1);
+    assert_eq!(state.owned_line_absorbers.len(), 0);
+    assert_eq!(state.owned_lines.as_ref().unwrap().lines.len(), 1);
+    assert_eq!(state.active_line_species, Some(AbsorberSpecies::O2));
+    assert_eq!(state.continuum_owner_species, Some(AbsorberSpecies::O2));
+    assert!(state.has_line_absorbers);
+    assert_close(state.mean_sigma, 0.0, 0.0);
+    assert_close(state.midpoint_continuum_sigma, 0.0, 0.0);
+    assert_close(state.air_mass_factor, 1.5, 0.0);
+    assert_close(
+        state.owned_cross_section_absorbers[0].sigma_at(761.0, 250.0, 700.0),
+        12.0,
+        1.0e-14,
+    );
 }
 
 #[test]

@@ -1,3 +1,4 @@
+pub mod absorbers;
 pub mod carrier_eval;
 pub mod context;
 pub mod evaluation;
@@ -16,6 +17,7 @@ pub mod state_spectroscopy;
 pub mod state_types;
 pub mod vertical_grid;
 
+pub use absorbers::{AbsorberBuildState, build_absorbers};
 pub use carrier_eval::{
     InterpolatedQuadratureState, PreparedQuadratureCarrier, SharedBoundaryCarrier,
     SharedOpticalCarrier, interpolate_quadrature_state_at_altitude, quadrature_carrier_at_altitude,
