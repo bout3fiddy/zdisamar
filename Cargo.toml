@@ -99,5 +99,9 @@ path = "tests/rust/forward_model/labos_attenuation.rs"
 name = "forward_model_labos_phase_basis"
 path = "tests/rust/forward_model/labos_phase_basis.rs"
 
+[[test]]
+name = "forward_model_labos_reflectance"
+path = "tests/rust/forward_model/labos_reflectance.rs"
+
 [dependencies]
 wyhash = "0.6.0"
