@@ -2,6 +2,7 @@ use zdisamar::{
     forward_model::{
         jacobian::{self, State},
         optical_properties::{
+            self,
             shared::{band_means::LineBandMeans, phase_functions},
             state_build::{
                 AccumulationResult, CrossSectionRepresentationKind, EvaluatedLayer,
@@ -556,6 +557,87 @@ fn accumulation_populates_layers_sublayers_and_prepared_means() {
     assert!(accumulation.means.oxygen_column_density_factor > 0.0);
     assert!(accumulation.means.total_optical_depth > 0.0);
     assert!(absorbers.owned_cross_section_absorbers[0].column_density_factor > 0.0);
+}
+
+#[test]
+fn optical_prepare_builds_owned_prepared_state_from_scene_inputs() {
+    let scene = Scene {
+        spectral_grid: SpectralGrid {
+            start_nm: 760.0,
+            end_nm: 762.0,
+            sample_count: 3,
+        },
+        atmosphere: Atmosphere {
+            layer_count: 2,
+            sublayer_divisions: 2,
+            ..Atmosphere::default()
+        },
+        absorbers: AbsorberSet {
+            items: vec![
+                Absorber {
+                    id: "o2-lines".to_string(),
+                    species: "o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::LineByLine,
+                        ..Spectroscopy::default()
+                    },
+                    volume_mixing_ratio_profile_ppmv: vec![[1000.0, 209_460.0]],
+                    ..Absorber::default()
+                },
+                Absorber {
+                    id: "o2o2-continuum".to_string(),
+                    species: "o2o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::CrossSections,
+                        ..Spectroscopy::default()
+                    },
+                    volume_mixing_ratio_profile_ppmv: vec![[1000.0, 1.0]],
+                    ..Absorber::default()
+                },
+            ],
+        },
+        ..Scene::default()
+    };
+    let profile = simple_profile();
+    let cross_sections = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 1.0e-24,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 2.0e-24,
+            },
+        ],
+    };
+    let lut = AirmassFactorLut::default();
+    let line_list = SpectroscopyLineList {
+        lines: vec![weak_o2_line()],
+        ..SpectroscopyLineList::default()
+    };
+
+    let prepared = optical_properties::prepare(
+        &scene,
+        PreparationInputs {
+            profile: &profile,
+            spectroscopy_profile: None,
+            cross_sections: &cross_sections,
+            lut: &lut,
+            collision_induced_absorption: None,
+            spectroscopy_lines: Some(&line_list),
+            aerosol_mie: None,
+            cloud_mie: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(prepared.layers.len(), 2);
+    assert_eq!(prepared.sublayers.as_ref().unwrap().len(), 4);
+    assert!(prepared.total_optical_depth > 0.0);
+    assert!(prepared.mean_cross_section_cm2_per_molecule > 0.0);
+    assert!(prepared.air_column_density_factor > 0.0);
+    assert_eq!(prepared.continuum_points, cross_sections.points);
 }
 
 #[test]

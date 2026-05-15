@@ -1,5 +1,6 @@
 pub mod absorbers;
 pub mod accumulation;
+pub mod builder;
 pub mod carrier_eval;
 pub mod context;
 pub mod evaluation;
@@ -22,6 +23,7 @@ pub mod vertical_grid;
 
 pub use absorbers::{AbsorberBuildState, build_absorbers};
 pub use accumulation::{AccumulationResult, PreparedMeans, accumulate};
+pub use builder::prepare;
 pub use carrier_eval::{
     InterpolatedQuadratureState, PreparedQuadratureCarrier, SharedBoundaryCarrier,
     SharedOpticalCarrier, interpolate_quadrature_state_at_altitude, quadrature_carrier_at_altitude,
