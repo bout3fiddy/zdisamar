@@ -1,7 +1,7 @@
 use zdisamar::{
     forward_model::{
         instrument_grid::{InstrumentGridProduct, InstrumentGridSummary},
-        radiative_transfer::common_types::ExecutionMode,
+        radiative_transfer::common_types::{ExecutionMode, ScatteringMode},
     },
     input::{
         atmosphere::ParticlePlacementSemantics,
@@ -372,6 +372,45 @@ fn o2a_runtime_prepares_resolved_vendor_case() {
             .shared_rtm_geometry
             .is_valid_for(prepared.prepared.layers.len())
     );
+}
+
+#[test]
+fn o2a_runtime_runs_resolved_vendor_reflectance_case() {
+    let mut input = o2a_reference::default_input();
+    input.spectral_grid.start_nm = 760.0;
+    input.spectral_grid.end_nm = 760.06;
+    input.spectral_grid.sample_count = 3;
+    input.rtm_controls.scattering = ScatteringMode::None;
+    input.observation.adaptive_reference_grid.points_per_fwhm = 1;
+    input
+        .observation
+        .adaptive_reference_grid
+        .strong_line_min_divisions = 1;
+    input
+        .observation
+        .adaptive_reference_grid
+        .strong_line_max_divisions = 1;
+    input.o2.line_list_asset.path =
+        "data/reference_data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par".to_string();
+    input.o2.strong_lines_asset.path =
+        "data/reference_data/cross_sections/o2a_lisa_sdf_subset.dat".to_string();
+    input.o2.line_mixing_asset.path =
+        "data/reference_data/cross_sections/o2a_lisa_rmf_subset.dat".to_string();
+    input.o2o2.cia_asset.as_mut().unwrap().path =
+        "data/reference_data/cross_sections/o2o2_bira_o2a_subset.dat".to_string();
+
+    let case = o2a_reference::run_resolved_vendor_o2a_reflectance_case(&input).unwrap();
+
+    assert_eq!(case.product.summary.sample_count, 3);
+    assert_eq!(case.product.wavelengths, vec![760.0, 760.03, 760.06]);
+    assert_eq!(case.product.radiance.len(), 3);
+    assert_eq!(case.product.irradiance.len(), 3);
+    assert_eq!(case.product.reflectance.len(), 3);
+    assert!(case.product.radiance.iter().all(|value| value.is_finite()));
+    assert!(case.product.irradiance.iter().all(|value| *value > 0.0));
+    assert!(case.product.reflectance.iter().all(|value| *value > 0.0));
+    assert!(case.product.summary.mean_reflectance > 0.0);
+    assert!(case.product.jacobian.is_none());
 }
 
 #[test]

@@ -1,8 +1,12 @@
-use super::response::{default_kernel_half_span_nm, spectral_response_weight};
+use super::{
+    adaptive_plan,
+    response::{default_kernel_half_span_nm, spectral_response_weight},
+};
 use crate::{
     forward_model::instrument_grid::grid_calculation::spectral_eval::{
         DEFAULT_INTEGRATION_SAMPLE_COUNT, IntegrationKernel, MAX_INTEGRATION_SAMPLE_COUNT,
     },
+    forward_model::optical_properties::PreparedOpticalState,
     input::{
         instrument::{IntegrationMode, SamplingMode, SpectralChannel},
         scene::Scene,
@@ -13,7 +17,7 @@ pub const DEFAULT_SLIT_KERNEL: [f64; DEFAULT_INTEGRATION_SAMPLE_COUNT] = [1.0, 4
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    UnsupportedAdaptiveIntegration,
+    DisamarKernelRealizationFailed,
 }
 
 pub fn uses_integrated_instrument_sampling(scene: &Scene, channel: SpectralChannel) -> bool {
@@ -33,6 +37,7 @@ pub fn uses_integrated_instrument_sampling(scene: &Scene, channel: SpectralChann
 
 pub fn integration_for_wavelength_checked(
     scene: &Scene,
+    prepared: Option<&PreparedOpticalState>,
     channel: SpectralChannel,
     nominal_wavelength_nm: f64,
 ) -> Result<IntegrationKernel, Error> {
@@ -62,19 +67,52 @@ pub fn integration_for_wavelength_checked(
         return Ok(kernel_from_written_samples(offsets, weights, sample_count));
     }
 
-    if response.integration_mode == IntegrationMode::DisamarHrGrid
-        || response.integration_mode == IntegrationMode::Adaptive
-    {
-        return Err(Error::UnsupportedAdaptiveIntegration);
+    if response.integration_mode == IntegrationMode::DisamarHrGrid {
+        if let Some(prepared) = prepared {
+            if let Some(kernel) = adaptive_plan::build_adaptive_integration_kernel(
+                scene,
+                prepared,
+                &response,
+                nominal_wavelength_nm,
+                channel == SpectralChannel::Irradiance,
+            ) {
+                return Ok(kernel);
+            }
+        } else if let Some(kernel) = adaptive_plan::build_disamar_realized_kernel(
+            scene,
+            &response,
+            nominal_wavelength_nm,
+            channel == SpectralChannel::Irradiance,
+        ) {
+            return Ok(kernel);
+        }
+        return Err(Error::DisamarKernelRealizationFailed);
     }
 
-    if matches!(
+    let prefer_explicit_hr_grid = matches!(
         response.integration_mode,
         IntegrationMode::Auto | IntegrationMode::ExplicitHrGrid
-    ) && response.high_resolution_step_nm > 0.0
+    );
+    if prefer_explicit_hr_grid
+        && response.high_resolution_step_nm > 0.0
         && response.high_resolution_half_span_nm > 0.0
     {
         return Ok(explicit_high_resolution_kernel(&response));
+    }
+
+    if let Some(prepared) = prepared
+        && (response.integration_mode == IntegrationMode::Adaptive
+            || response.high_resolution_step_nm == 0.0
+            || response.high_resolution_half_span_nm == 0.0)
+        && let Some(kernel) = adaptive_plan::build_adaptive_integration_kernel(
+            scene,
+            prepared,
+            &response,
+            nominal_wavelength_nm,
+            channel == SpectralChannel::Irradiance,
+        )
+    {
+        return Ok(kernel);
     }
 
     if matches!(

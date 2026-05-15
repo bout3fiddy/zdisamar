@@ -3,8 +3,12 @@ use super::{
     slit_kernel_for_scene, uses_integrated_instrument_sampling,
 };
 use crate::{
-    forward_model::instrument_grid::{
-        grid_calculation::spectral_eval::IntegrationKernel, spectral_math::calibration::Calibration,
+    forward_model::{
+        instrument_grid::{
+            grid_calculation::spectral_eval::IntegrationKernel,
+            spectral_math::calibration::Calibration,
+        },
+        optical_properties::PreparedOpticalState,
     },
     input::{instrument::SpectralChannel, scene::Scene},
 };
@@ -16,8 +20,12 @@ pub struct Implementation {
     pub id: &'static str,
     pub calibration_for_scene: fn(&Scene, SpectralChannel) -> Calibration,
     pub uses_integrated_sampling: fn(&Scene, SpectralChannel) -> bool,
-    pub integration_for_wavelength:
-        fn(&Scene, SpectralChannel, f64) -> Result<IntegrationKernel, Error>,
+    pub integration_for_wavelength: fn(
+        &Scene,
+        Option<&PreparedOpticalState>,
+        SpectralChannel,
+        f64,
+    ) -> Result<IntegrationKernel, Error>,
     pub slit_kernel_for_scene: fn(&Scene, SpectralChannel) -> [f64; 5],
 }
 

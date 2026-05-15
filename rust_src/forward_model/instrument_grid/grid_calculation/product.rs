@@ -24,7 +24,7 @@ pub fn warm_product_workspace(
     storage: &mut ProductStorage,
     scene: &Scene,
     route: Route,
-    _prepared: &PreparedOpticalState,
+    prepared: &PreparedOpticalState,
     implementations: Implementations,
 ) -> Result<(), simulate::Error> {
     scene.validate()?;
@@ -40,8 +40,12 @@ pub fn warm_product_workspace(
         explicit_wavelengths_nm: scene.observation_model.measured_wavelengths_nm.clone(),
     };
     axis.validate()?;
-    storage.wavelength_sampling =
-        wavelength_sampling::build_wavelength_sampling(scene, &axis, implementations.instrument)?;
+    storage.wavelength_sampling = wavelength_sampling::build_wavelength_sampling(
+        scene,
+        &axis,
+        prepared,
+        implementations.instrument,
+    )?;
     storage.forward_misses =
         wavelength_sampling::collect_unique_forward_misses(&storage.wavelength_sampling);
     storage.wavelength_plan_valid = true;

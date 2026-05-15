@@ -663,8 +663,13 @@ fn simulate_product_uses_resolved_line_shape_integration_kernels() {
         .irradiance
         .response
         .instrument_line_shape = line_shape;
-    let kernel =
-        integration_for_wavelength_checked(&scene, SpectralChannel::Radiance, 760.0).unwrap();
+    let kernel = integration_for_wavelength_checked(
+        &scene,
+        Some(&prepared),
+        SpectralChannel::Radiance,
+        760.0,
+    )
+    .unwrap();
     assert!(kernel.enabled);
     assert_eq!(kernel.sample_count, 2);
     assert_close(kernel.weights[0], 0.25, 1.0e-14);
@@ -858,7 +863,8 @@ fn generic_instrument_provider_matches_scene_controls() {
     ));
 
     let integration =
-        (provider.integration_for_wavelength)(&scene, SpectralChannel::Radiance, 761.0).unwrap();
+        (provider.integration_for_wavelength)(&scene, None, SpectralChannel::Radiance, 761.0)
+            .unwrap();
     assert!(integration.enabled);
     assert_eq!(integration.sample_count, 5);
 
@@ -1046,7 +1052,9 @@ fn wavelength_sampling_applies_channel_shift_and_collects_forward_misses() {
         explicit_wavelengths_nm: Vec::new(),
     };
 
-    let plans = build_wavelength_sampling(&scene, &axis, provider).unwrap();
+    let plans =
+        build_wavelength_sampling(&scene, &axis, &PreparedOpticalState::default(), provider)
+            .unwrap();
 
     assert_eq!(plans.len(), 2);
     assert_close(plans[0].nominal_wavelength_nm, 760.0, 0.0);

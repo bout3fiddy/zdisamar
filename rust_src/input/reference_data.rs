@@ -685,6 +685,20 @@ impl Default for SpectroscopyRuntimeControls {
     }
 }
 
+impl SpectroscopyRuntimeControls {
+    pub fn threshold_strength(&self, lines: &[SpectroscopyLine]) -> Option<f64> {
+        let scale = self.threshold_line_scale?;
+        if lines.is_empty() {
+            return None;
+        }
+        let max_strength = lines
+            .iter()
+            .map(|line| line.line_strength_cm2_per_molecule)
+            .fold(0.0, f64::max);
+        Some(max_strength * scale)
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct SpectroscopyEvaluation {
     pub weak_line_sigma_cm2_per_molecule: f64,

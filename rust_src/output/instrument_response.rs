@@ -73,15 +73,12 @@ pub fn build(
 fn append_response_rows(
     rows: &mut Vec<InstrumentResponseRow>,
     scene: &Scene,
-    _prepared: &PreparedOpticalState,
+    prepared: &PreparedOpticalState,
     channel: SpectralChannel,
     nominal_wavelength_nm: f64,
 ) -> Result<(), Error> {
-    // The Zig API receives prepared optics here. The current Rust resolver only
-    // needs scene controls, but keeping the argument preserves the diagnostic
-    // boundary for table builders that do need prepared state.
     let response_sampling =
-        integration_for_wavelength_checked(scene, channel, nominal_wavelength_nm)?;
+        integration_for_wavelength_checked(scene, Some(prepared), channel, nominal_wavelength_nm)?;
     let response = scene
         .observation_model
         .resolved_channel_controls(channel)

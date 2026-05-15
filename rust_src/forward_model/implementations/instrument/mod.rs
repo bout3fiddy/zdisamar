@@ -1,3 +1,4 @@
+pub mod adaptive_plan;
 pub mod calibration;
 pub mod implementation;
 pub mod integration;

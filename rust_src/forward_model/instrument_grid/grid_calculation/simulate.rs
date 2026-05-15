@@ -143,8 +143,12 @@ pub fn simulate_product_with_implementations(
     axis.validate()?;
     let instrument_provider = implementations.instrument;
     let noise_provider = implementations.noise;
-    let wavelength_sampling =
-        wavelength_sampling::build_wavelength_sampling(scene, &axis, instrument_provider)?;
+    let wavelength_sampling = wavelength_sampling::build_wavelength_sampling(
+        scene,
+        &axis,
+        prepared,
+        instrument_provider,
+    )?;
 
     let sample_count = scene.spectral_grid.sample_count as usize;
     let transport_layer_count = storage::resolved_transport_layer_count(route, prepared);

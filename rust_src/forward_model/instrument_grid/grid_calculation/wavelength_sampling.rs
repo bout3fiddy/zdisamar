@@ -9,6 +9,7 @@ use crate::{
             calibration::shifted_wavelength,
             grid::{self, ResolvedAxis},
         },
+        optical_properties::PreparedOpticalState,
     },
     input::{instrument::SpectralChannel, scene::Scene},
 };
@@ -35,6 +36,7 @@ impl From<instrument::Error> for Error {
 pub fn build_wavelength_sampling(
     scene: &Scene,
     resolved_axis: &ResolvedAxis,
+    prepared: &PreparedOpticalState,
     instrument: instrument::Implementation,
 ) -> Result<Vec<WavelengthSampling>, Error> {
     resolved_axis.validate()?;
@@ -47,11 +49,13 @@ pub fn build_wavelength_sampling(
         let nominal_wavelength_nm = resolved_axis.sample_at(index as u32)?;
         let radiance_integration = (instrument.integration_for_wavelength)(
             scene,
+            Some(prepared),
             SpectralChannel::Radiance,
             nominal_wavelength_nm,
         )?;
         let irradiance_integration = (instrument.integration_for_wavelength)(
             scene,
+            Some(prepared),
             SpectralChannel::Irradiance,
             nominal_wavelength_nm,
         )?;

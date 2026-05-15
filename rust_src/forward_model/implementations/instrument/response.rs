@@ -4,6 +4,14 @@ pub fn default_kernel_half_span_nm(fwhm_nm: f64) -> f64 {
     (3.0 * fwhm_nm.max(1.0e-4)).max(1.0e-4)
 }
 
+pub fn adaptive_kernel_half_span_nm(response: &SpectralResponse) -> f64 {
+    if response.high_resolution_half_span_nm > 0.0 {
+        response.high_resolution_half_span_nm
+    } else {
+        default_kernel_half_span_nm(response.fwhm_nm)
+    }
+}
+
 pub fn spectral_response_weight(response: &SpectralResponse, offset_nm: f64) -> f64 {
     let fwhm_nm = response.fwhm_nm.max(1.0e-4);
     match response.slit_index {
