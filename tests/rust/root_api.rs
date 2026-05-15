@@ -1,5 +1,11 @@
+use std::ffi::CStr;
+
 use zdisamar::{
     PreparedO2A,
+    api::c::{
+        ZdsSpectrum, zds_context_create, zds_context_destroy, zds_last_error, zds_run_spectrum,
+        zds_spectrum_free,
+    },
     forward_model::{
         optical_properties::{PreparedOpticalState, PreparedSublayer},
         radiative_transfer::{
@@ -36,6 +42,25 @@ fn root_o2a_api_exposes_default_prepare_and_session_run_boundaries() {
     assert_eq!(session_product.reflectance, product.reflectance);
     assert!(storage.wavelength_plan_valid);
     assert!(storage.forward_misses_valid);
+}
+
+#[test]
+fn c_api_context_lifecycle_reports_missing_prepared_case() {
+    let ctx = zds_context_create();
+    assert!(!ctx.is_null());
+
+    let mut raw = ZdsSpectrum::default();
+    assert_ne!(unsafe { zds_run_spectrum(ctx, &mut raw) }, 0);
+
+    let message = unsafe { CStr::from_ptr(zds_last_error(ctx)) }
+        .to_str()
+        .unwrap();
+    assert!(message.contains("no prepared O2A case loaded"));
+
+    unsafe {
+        zds_spectrum_free(ctx, &mut raw);
+        zds_context_destroy(ctx);
+    }
 }
 
 fn synthetic_prepared_o2a() -> PreparedO2A {

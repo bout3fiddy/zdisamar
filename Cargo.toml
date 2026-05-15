@@ -6,6 +6,7 @@ edition = "2024"
 [lib]
 name = "zdisamar"
 path = "rust_src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [[test]]
 name = "common_units"
