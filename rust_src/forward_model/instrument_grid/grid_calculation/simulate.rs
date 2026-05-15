@@ -1,0 +1,199 @@
+use crate::{
+    common::errors,
+    forward_model::{
+        instrument_grid::{
+            grid_calculation::{
+                forward_input::ForwardInputBuffers,
+                spectral_forward::{self, compute_forward_sample_at_wavelength},
+                storage,
+                types::{InstrumentGridProduct, InstrumentGridSummary},
+            },
+            spectral_math::grid::{self, ResolvedAxis, SpectralGrid},
+        },
+        jacobian,
+        optical_properties::state_build::PreparedOpticalState,
+        radiative_transfer::common_types::{
+            LayerInput, PseudoSphericalSample, Route, RtmQuadratureLevel, SourceInterfaceInput,
+        },
+    },
+    input::{reference::solar_irradiance, scene::Scene},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    Scene(errors::Error),
+    Grid(grid::Error),
+    ForwardSample(spectral_forward::Error),
+}
+
+impl From<errors::Error> for Error {
+    fn from(value: errors::Error) -> Self {
+        Self::Scene(value)
+    }
+}
+
+impl From<grid::Error> for Error {
+    fn from(value: grid::Error) -> Self {
+        Self::Grid(value)
+    }
+}
+
+impl From<spectral_forward::Error> for Error {
+    fn from(value: spectral_forward::Error) -> Self {
+        Self::ForwardSample(value)
+    }
+}
+
+struct RunningSummary {
+    radiance_sum: f64,
+    irradiance_sum: f64,
+    reflectance_sum: f64,
+    noise_sum: f64,
+    jacobian_sum: jacobian::Vector,
+}
+
+impl RunningSummary {
+    fn new() -> Self {
+        Self {
+            radiance_sum: 0.0,
+            irradiance_sum: 0.0,
+            reflectance_sum: 0.0,
+            noise_sum: 0.0,
+            jacobian_sum: jacobian::zero(),
+        }
+    }
+
+    fn to_summary(
+        &self,
+        wavelengths: &[f64],
+        has_noise_sigma: bool,
+        mean_jacobian: Option<jacobian::Vector>,
+    ) -> InstrumentGridSummary {
+        let denominator = wavelengths.len() as f64;
+        InstrumentGridSummary {
+            sample_count: wavelengths.len() as u32,
+            wavelength_start_nm: wavelengths[0],
+            wavelength_end_nm: wavelengths[wavelengths.len() - 1],
+            mean_radiance: self.radiance_sum / denominator,
+            mean_irradiance: self.irradiance_sum / denominator,
+            mean_reflectance: self.reflectance_sum / denominator,
+            mean_noise_sigma: if has_noise_sigma {
+                self.noise_sum / denominator
+            } else {
+                0.0
+            },
+            mean_jacobian,
+        }
+    }
+}
+
+pub fn simulate_product(
+    scene: &Scene,
+    route: Route,
+    prepared: &PreparedOpticalState,
+) -> Result<InstrumentGridProduct, Error> {
+    scene.validate()?;
+    let axis = ResolvedAxis {
+        base: SpectralGrid {
+            start_nm: scene.spectral_grid.start_nm,
+            end_nm: scene.spectral_grid.end_nm,
+            sample_count: scene.spectral_grid.sample_count,
+        },
+        explicit_wavelengths_nm: scene.observation_model.measured_wavelengths_nm.clone(),
+    };
+    axis.validate()?;
+
+    let sample_count = scene.spectral_grid.sample_count as usize;
+    let transport_layer_count = storage::resolved_transport_layer_count(route, prepared);
+    let pseudo_spherical_sample_count =
+        storage::resolved_pseudo_spherical_sample_count(scene, route, prepared);
+    let mut layer_inputs = vec![LayerInput::default(); transport_layer_count];
+    let mut pseudo_spherical_layers = vec![LayerInput::default(); pseudo_spherical_sample_count];
+    let mut source_interfaces = vec![SourceInterfaceInput::default(); transport_layer_count + 1];
+    let mut rtm_quadrature_levels = vec![RtmQuadratureLevel::default(); transport_layer_count + 1];
+    let mut pseudo_spherical_samples =
+        vec![PseudoSphericalSample::default(); pseudo_spherical_sample_count];
+    let mut pseudo_spherical_level_starts = vec![0; transport_layer_count + 1];
+    let mut pseudo_spherical_level_altitudes = vec![0.0; transport_layer_count + 1];
+
+    let mut wavelengths = vec![0.0; sample_count];
+    let mut radiance = vec![0.0; sample_count];
+    let mut irradiance = vec![0.0; sample_count];
+    let mut reflectance = vec![0.0; sample_count];
+    let noise_sigma = vec![0.0; sample_count];
+    let wants_jacobian = route.derivative_mode != crate::input::scene::DerivativeMode::None;
+    let mut jacobian_values =
+        wants_jacobian.then(|| vec![0.0; sample_count * jacobian::STATE_COUNT]);
+    let mut summary = RunningSummary::new();
+    let solar_cosine = scene.geometry.solar_cosine_at_altitude(0.0);
+
+    for index in 0..sample_count {
+        let wavelength_nm = axis.sample_at(index as u32)?;
+        let sample = compute_forward_sample_at_wavelength(
+            scene,
+            route,
+            prepared,
+            wavelength_nm,
+            ForwardInputBuffers {
+                layer_inputs: &mut layer_inputs,
+                pseudo_spherical_layers: &mut pseudo_spherical_layers,
+                source_interfaces: &mut source_interfaces,
+                rtm_quadrature_levels: &mut rtm_quadrature_levels,
+                pseudo_spherical_samples: &mut pseudo_spherical_samples,
+                pseudo_spherical_level_starts: &mut pseudo_spherical_level_starts,
+                pseudo_spherical_level_altitudes: &mut pseudo_spherical_level_altitudes,
+            },
+        )?;
+        let sample_irradiance = solar_irradiance::irradiance_at_wavelength(scene, wavelength_nm);
+        let sample_reflectance = if sample_irradiance > 0.0 && solar_cosine > 0.0 {
+            sample.radiance * std::f64::consts::PI / (sample_irradiance * solar_cosine)
+        } else {
+            0.0
+        };
+
+        wavelengths[index] = wavelength_nm;
+        radiance[index] = sample.radiance;
+        irradiance[index] = sample_irradiance;
+        reflectance[index] = sample_reflectance;
+        summary.radiance_sum += sample.radiance;
+        summary.irradiance_sum += sample_irradiance;
+        summary.reflectance_sum += sample_reflectance;
+        if let Some(values) = &mut jacobian_values {
+            let start = index * jacobian::STATE_COUNT;
+            values[start..start + jacobian::STATE_COUNT].copy_from_slice(&sample.jacobian);
+            jacobian::add_scaled(&mut summary.jacobian_sum, sample.jacobian, 1.0);
+        }
+    }
+
+    let mean_jacobian = jacobian_values.as_ref().map(|_| {
+        let mut mean = summary.jacobian_sum;
+        for value in &mut mean {
+            *value /= sample_count as f64;
+        }
+        mean
+    });
+    let product_summary = summary.to_summary(&wavelengths, false, mean_jacobian);
+    Ok(InstrumentGridProduct {
+        summary: product_summary,
+        wavelengths,
+        radiance,
+        irradiance,
+        reflectance,
+        noise_sigma,
+        radiance_noise_sigma: Vec::new(),
+        irradiance_noise_sigma: Vec::new(),
+        reflectance_noise_sigma: Vec::new(),
+        jacobian: jacobian_values,
+        effective_air_mass_factor: prepared.effective_air_mass_factor,
+        effective_single_scatter_albedo: prepared.effective_single_scatter_albedo,
+        effective_temperature_k: prepared.effective_temperature_k,
+        effective_pressure_hpa: prepared.effective_pressure_hpa,
+        gas_optical_depth: prepared.gas_optical_depth,
+        cia_optical_depth: prepared.cia_optical_depth,
+        aerosol_optical_depth: prepared.aerosol_optical_depth,
+        cloud_optical_depth: prepared.cloud_optical_depth,
+        total_optical_depth: prepared.total_optical_depth,
+        depolarization_factor: prepared.depolarization_factor,
+        d_optical_depth_d_temperature: prepared.d_optical_depth_d_temperature,
+    })
+}

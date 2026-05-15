@@ -3,6 +3,7 @@ use zdisamar::{
         instrument_grid::grid_calculation::forward_input::{
             ForwardInputBuffers, configured_forward_input,
         },
+        instrument_grid::grid_calculation::simulate::simulate_product,
         instrument_grid::grid_calculation::spectral_forward::compute_forward_sample_at_wavelength,
         instrument_grid::grid_calculation::storage::{
             Buffers, Error as StorageError, pseudo_spherical_sample_count_hint,
@@ -404,4 +405,40 @@ fn compute_forward_sample_runs_configured_input_and_labos_radiance() {
         1.0,
     );
     assert_eq!(sample.jacobian, jacobian::zero());
+}
+
+#[test]
+fn simulate_product_runs_forward_samples_on_scene_axis() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        }]),
+        effective_air_mass_factor: 2.0,
+        effective_single_scatter_albedo: 0.9,
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.surface.albedo = 0.23;
+    scene.spectral_grid.start_nm = 759.0;
+    scene.spectral_grid.end_nm = 761.0;
+    scene.spectral_grid.sample_count = 3;
+    let mut route = route();
+    route.rtm_controls.scattering = ScatteringMode::None;
+    route.rtm_controls.integrate_source_function = false;
+
+    let product = simulate_product(&scene, route, &prepared).unwrap();
+
+    assert_eq!(product.wavelengths, vec![759.0, 760.0, 761.0]);
+    assert_eq!(product.radiance.len(), 3);
+    assert_eq!(product.irradiance.len(), 3);
+    assert_eq!(product.reflectance.len(), 3);
+    for reflectance in product.reflectance {
+        assert_close(reflectance, 0.23, 1.0e-14);
+    }
+    assert_close(product.summary.mean_reflectance, 0.23, 1.0e-14);
+    assert_close(product.effective_air_mass_factor, 2.0, 0.0);
+    assert_close(product.effective_single_scatter_albedo, 0.9, 0.0);
+    assert!(product.jacobian.is_none());
 }
