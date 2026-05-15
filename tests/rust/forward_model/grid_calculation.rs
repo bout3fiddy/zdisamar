@@ -1,7 +1,11 @@
 use zdisamar::{
     forward_model::{
-        implementations::instrument::{
-            DEFAULT_SLIT_KERNEL, GENERIC_RESPONSE_ID, integration_for_wavelength_checked, resolve,
+        implementations::{
+            instrument::{
+                DEFAULT_SLIT_KERNEL, GENERIC_RESPONSE_ID, integration_for_wavelength_checked,
+                resolve,
+            },
+            noise as noise_provider,
         },
         instrument_grid::grid_calculation::cache::SpectralEvaluationCache,
         instrument_grid::grid_calculation::forward_input::{
@@ -36,7 +40,9 @@ use zdisamar::{
     },
     input::{
         atmosphere::{IntervalSemantics, VerticalInterval},
-        instrument::{InstrumentLineShape, IntegrationMode, SlitIndex, SpectralChannel},
+        instrument::{
+            InstrumentLineShape, IntegrationMode, NoiseModelKind, SlitIndex, SpectralChannel,
+        },
         observation_model::ObservationRegime,
         reference_data::CrossSectionPoint,
         scene::{DerivativeMode, Scene},
@@ -653,6 +659,72 @@ fn generic_instrument_provider_matches_scene_controls() {
     assert_close(slit_kernel.iter().sum::<f64>(), 1.0, 1.0e-14);
     assert!(slit_kernel[2] > slit_kernel[1]);
     assert!(slit_kernel[1] > slit_kernel[0]);
+}
+
+#[test]
+fn noise_provider_materializes_scene_and_zero_sigma() {
+    let scene_provider = noise_provider::resolve(noise_provider::SCENE_NOISE_ID).unwrap();
+    let none_provider = noise_provider::resolve(noise_provider::NONE_NOISE_ID).unwrap();
+    assert_eq!(scene_provider.id, noise_provider::SCENE_NOISE_ID);
+    assert_eq!(none_provider.id, noise_provider::NONE_NOISE_ID);
+
+    let mut scene = Scene::default();
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .explicit = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .noise
+        .enabled = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .noise
+        .model = NoiseModelKind::ShotNoise;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .noise
+        .electrons_per_count = 4.0;
+
+    assert!((scene_provider.materializes_sigma)(
+        &scene,
+        SpectralChannel::Radiance
+    ));
+    let wavelengths_nm = [760.0, 761.0];
+    let signal = [4.0, 9.0];
+    let mut output = [0.0, 0.0];
+    (scene_provider.materialize_sigma)(
+        &scene,
+        SpectralChannel::Radiance,
+        &wavelengths_nm,
+        &signal,
+        &mut output,
+    )
+    .unwrap();
+    assert_close(output[0], 1.0, 1.0e-14);
+    assert_close(output[1], 1.5, 1.0e-14);
+
+    assert!(!(none_provider.materializes_sigma)(
+        &scene,
+        SpectralChannel::Radiance
+    ));
+    output = [-1.0, -1.0];
+    (none_provider.materialize_sigma)(
+        &scene,
+        SpectralChannel::Radiance,
+        &wavelengths_nm,
+        &signal,
+        &mut output,
+    )
+    .unwrap();
+    assert_eq!(output, [0.0, 0.0]);
 }
 
 #[test]
