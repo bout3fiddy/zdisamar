@@ -223,6 +223,37 @@ fn o2a_runtime_builds_trace_gas_spectroscopy_profile_from_dense_altitudes() {
 }
 
 #[test]
+fn o2a_runtime_loads_vendor_spectroscopy_sidecars() {
+    let mut input = o2a_reference::default_input();
+    input.o2.line_list_asset.path =
+        "data/reference_data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par".to_string();
+    input.o2.strong_lines_asset.path =
+        "data/reference_data/cross_sections/o2a_lisa_sdf_subset.dat".to_string();
+    input.o2.line_mixing_asset.path =
+        "data/reference_data/cross_sections/o2a_lisa_rmf_subset.dat".to_string();
+
+    let line_list = o2a_reference::load_resolved_vendor_o2a_line_list(&input.o2).unwrap();
+
+    assert_eq!(line_list.lines.len(), 52);
+    assert_eq!(line_list.strong_lines.as_ref().unwrap().len(), 8);
+    assert_eq!(line_list.relaxation_matrix.as_ref().unwrap().line_count, 8);
+    assert!(line_list.has_strong_line_sidecars());
+    assert!(line_list.vendor_strong_line_partition);
+
+    let first_line = line_list.lines[0];
+    assert_eq!(first_line.gas_index, 7);
+    assert_eq!(first_line.isotope_number, 1);
+    assert_eq!(first_line.branch_ic1, Some(5));
+    assert_eq!(first_line.branch_ic2, Some(1));
+    assert_eq!(first_line.rotational_nf, Some(3));
+    assert!(first_line.center_wavenumber_cm1.unwrap() > 12_900.0);
+
+    let first_strong = line_list.strong_lines.as_ref().unwrap()[0];
+    assert_eq!(first_strong.rotational_index_m1, -35);
+    assert!(first_strong.air_half_width_cm1 > 0.0);
+}
+
+#[test]
 fn o2a_runtime_builds_scene_and_route_from_resolved_case() {
     let input = o2a_reference::default_input();
     let raw_solar_spectrum = vec![
