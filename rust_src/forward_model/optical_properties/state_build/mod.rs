@@ -4,6 +4,7 @@ pub mod prepared_state;
 pub mod shared_geometry;
 pub mod source_interfaces;
 pub mod spectroscopy;
+pub mod state_optical_depth;
 pub mod state_scalar;
 pub mod state_spectroscopy;
 pub mod state_types;
@@ -21,6 +22,11 @@ pub use spectroscopy::{
     DEFAULT_O2_VOLUME_MIXING_RATIO, collect_active_cross_section_absorbers,
     collect_active_line_absorbers, prepare_cross_section_absorbers, resolve_active_line_species,
     resolve_continuum_owner_species, sort_line_list, species_mixing_ratio_at_pressure,
+};
+pub use state_optical_depth::{
+    aerosol_optical_depth_at_wavelength, cloud_optical_depth_at_wavelength,
+    collision_induced_optical_depth_at_wavelength, gas_optical_depth_at_wavelength,
+    optical_depth_breakdown_at_wavelength, total_optical_depth_at_wavelength,
 };
 pub use state_scalar::{
     interpolate_prepared_scalar_at_altitude, particle_optical_depth_at_wavelength,

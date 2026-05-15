@@ -17,10 +17,11 @@ use zdisamar::{
                 interpolate_prepared_scalar_at_altitude, interval_altitude_at_node,
                 interval_weight_km, last_active_support_row_index, layer_input_from_evaluated,
                 level_altitude_from_sublayers, operational_o2_evaluation_at_wavelength,
-                particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
-                prepared_scalar_for_sublayer, resolve_active_line_species,
-                resolve_continuum_owner_species, resolve_gauss_rule, sort_line_list,
-                species_mixing_ratio_at_pressure, total_cross_section_at_wavelength,
+                optical_depth_breakdown_at_wavelength, particle_optical_depth_at_wavelength,
+                prepare_cross_section_absorbers, prepared_scalar_for_sublayer,
+                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
+                sort_line_list, species_mixing_ratio_at_pressure,
+                total_cross_section_at_wavelength, total_optical_depth_at_wavelength,
                 weighted_cross_section_sigma_at_wavelength, zero_spectroscopy_evaluation,
             },
         },
@@ -32,6 +33,7 @@ use zdisamar::{
         atmospheric_types::AbsorberSpecies,
         bands::{SpectralBand, SpectralBandSet},
         instrument::OperationalCrossSectionLut,
+        reference::rayleigh,
         reference_data::{
             CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
             CrossSectionTable, SpectroscopyLine, SpectroscopyLineList,
@@ -614,6 +616,70 @@ fn state_spectroscopy_adds_continuum_and_supported_line_sigma() {
         1.0e-14,
     );
     assert_eq!(zero_spectroscopy_evaluation(), Default::default(),);
+}
+
+#[test]
+fn state_optical_depth_builds_single_layer_breakdown() {
+    let prepared = PreparedOpticalState {
+        continuum_points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 1.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 761.0,
+                sigma_cm2_per_molecule: 2.0,
+            },
+        ],
+        operational_o2_lut: scalar_lut(760.0, 10.0, 761.0, 20.0),
+        operational_o2o2_lut: scalar_lut(760.0, 0.2, 761.0, 0.4),
+        effective_temperature_k: 250.0,
+        effective_pressure_hpa: 500.0,
+        column_density_factor: 2.0,
+        air_column_density_factor: 3.0,
+        cia_pair_path_factor_cm5: 4.0,
+        aerosol_optical_depth: 0.5,
+        aerosol_reference_wavelength_nm: 760.5,
+        aerosol_angstrom_exponent: 0.0,
+        aerosol_single_scatter_albedo: 0.8,
+        cloud_optical_depth: 0.25,
+        cloud_reference_wavelength_nm: 760.5,
+        cloud_angstrom_exponent: 0.0,
+        cloud_single_scatter_albedo: 0.4,
+        ..PreparedOpticalState::default()
+    };
+
+    let breakdown = optical_depth_breakdown_at_wavelength(&prepared, 760.5).unwrap();
+
+    assert_close(breakdown.gas_absorption_optical_depth, 33.0, 1.0e-14);
+    assert_close(
+        breakdown.gas_scattering_optical_depth,
+        rayleigh::cross_section_cm2(760.5) * 3.0,
+        1.0e-30,
+    );
+    assert_close(breakdown.cia_optical_depth, 1.2, 1.0e-14);
+    assert_close(breakdown.aerosol_optical_depth, 0.5, 1.0e-14);
+    assert_close(breakdown.aerosol_scattering_optical_depth, 0.4, 1.0e-14);
+    assert_close(breakdown.cloud_optical_depth, 0.25, 1.0e-14);
+    assert_close(breakdown.cloud_scattering_optical_depth, 0.1, 1.0e-14);
+    assert_close(
+        total_optical_depth_at_wavelength(&prepared, 760.5).unwrap(),
+        breakdown.total_optical_depth(),
+        1.0e-14,
+    );
+}
+
+#[test]
+fn state_optical_depth_rejects_sublayers_until_layer_evaluator_is_ported() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer::default()]),
+        ..PreparedOpticalState::default()
+    };
+
+    assert_eq!(
+        optical_depth_breakdown_at_wavelength(&prepared, 760.5).unwrap_err(),
+        errors::Error::InvalidRequest,
+    );
 }
 
 #[test]
