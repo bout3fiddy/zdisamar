@@ -9,6 +9,8 @@ use crate::{
     },
 };
 
+pub const DEFAULT_SLIT_KERNEL: [f64; DEFAULT_INTEGRATION_SAMPLE_COUNT] = [1.0, 4.0, 6.0, 4.0, 1.0];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     UnsupportedAdaptiveIntegration,
@@ -83,6 +85,35 @@ pub fn integration_for_wavelength_checked(
     }
 
     Ok(default_slit_kernel(&response))
+}
+
+pub fn slit_kernel_for_scene(scene: &Scene, channel: SpectralChannel) -> [f64; 5] {
+    let response = scene
+        .observation_model
+        .resolved_channel_controls(channel)
+        .response;
+    if response.fwhm_nm <= 0.0 {
+        return DEFAULT_SLIT_KERNEL;
+    }
+
+    let sample_spacing_nm = if scene.spectral_grid.sample_count <= 1 {
+        1.0
+    } else {
+        (scene.spectral_grid.end_nm - scene.spectral_grid.start_nm)
+            / f64::from(scene.spectral_grid.sample_count - 1)
+    };
+    let mut kernel = [0.0; DEFAULT_INTEGRATION_SAMPLE_COUNT];
+    let mut sum = 0.0;
+    for (index, value) in kernel.iter_mut().enumerate() {
+        let offset_samples = index as f64 - 2.0;
+        let offset_nm = offset_samples * sample_spacing_nm;
+        *value = spectral_response_weight(&response, offset_nm);
+        sum += *value;
+    }
+    for value in &mut kernel {
+        *value /= sum;
+    }
+    kernel
 }
 
 fn kernel_from_written_samples(

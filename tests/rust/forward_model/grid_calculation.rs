@@ -1,6 +1,8 @@
 use zdisamar::{
     forward_model::{
-        implementations::instrument::integration_for_wavelength_checked,
+        implementations::instrument::{
+            DEFAULT_SLIT_KERNEL, GENERIC_RESPONSE_ID, integration_for_wavelength_checked, resolve,
+        },
         instrument_grid::grid_calculation::cache::SpectralEvaluationCache,
         instrument_grid::grid_calculation::forward_input::{
             ForwardInputBuffers, configured_forward_input,
@@ -30,7 +32,7 @@ use zdisamar::{
     },
     input::{
         atmosphere::{IntervalSemantics, VerticalInterval},
-        instrument::{InstrumentLineShape, IntegrationMode, SpectralChannel},
+        instrument::{InstrumentLineShape, IntegrationMode, SlitIndex, SpectralChannel},
         observation_model::ObservationRegime,
         reference_data::CrossSectionPoint,
         scene::{DerivativeMode, Scene},
@@ -570,6 +572,83 @@ fn simulate_product_uses_resolved_line_shape_integration_kernels() {
     for reflectance in product.reflectance {
         assert_close(reflectance, 0.23, 1.0e-14);
     }
+}
+
+#[test]
+fn generic_instrument_provider_matches_scene_controls() {
+    let provider = resolve(GENERIC_RESPONSE_ID).unwrap();
+    assert_eq!(provider.id, GENERIC_RESPONSE_ID);
+
+    let mut scene = Scene::default();
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 762.0;
+    scene.spectral_grid.sample_count = 5;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .explicit = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .multiplicative_offset = 1.25;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .additive_offset = 0.5;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .wavelength_shift_nm = 0.03;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .stray_light = 0.02;
+
+    let calibration = (provider.calibration_for_scene)(&scene, SpectralChannel::Radiance);
+    assert_close(calibration.gain, 1.25, 0.0);
+    assert_close(calibration.offset, 0.5, 0.0);
+    assert_close(calibration.wavelength_shift_nm, 0.03, 0.0);
+    assert_close(calibration.stray_light, 0.02, 0.0);
+    assert!(!(provider.uses_integrated_sampling)(
+        &scene,
+        SpectralChannel::Radiance
+    ));
+    assert_eq!(
+        (provider.slit_kernel_for_scene)(&scene, SpectralChannel::Radiance),
+        DEFAULT_SLIT_KERNEL
+    );
+
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .response
+        .fwhm_nm = 0.6;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .response
+        .slit_index = SlitIndex::GaussianModulated;
+    assert!((provider.uses_integrated_sampling)(
+        &scene,
+        SpectralChannel::Radiance
+    ));
+
+    let integration =
+        (provider.integration_for_wavelength)(&scene, SpectralChannel::Radiance, 761.0).unwrap();
+    assert!(integration.enabled);
+    assert_eq!(integration.sample_count, 5);
+
+    let slit_kernel = (provider.slit_kernel_for_scene)(&scene, SpectralChannel::Radiance);
+    assert_close(slit_kernel.iter().sum::<f64>(), 1.0, 1.0e-14);
+    assert!(slit_kernel[2] > slit_kernel[1]);
+    assert!(slit_kernel[1] > slit_kernel[0]);
 }
 
 #[test]
