@@ -17,6 +17,10 @@ use zdisamar::{
             Buffers, Error as StorageError, pseudo_spherical_sample_count_hint,
             resolved_pseudo_spherical_sample_count, transport_layer_count_hint, validate_buffers,
         },
+        instrument_grid::grid_calculation::wavelength_sampling::{
+            build_wavelength_sampling, collect_unique_forward_misses,
+        },
+        instrument_grid::spectral_math::grid::{ResolvedAxis, SpectralGrid},
         jacobian,
         method::Method,
         optical_properties::shared::phase_functions,
@@ -649,6 +653,67 @@ fn generic_instrument_provider_matches_scene_controls() {
     assert_close(slit_kernel.iter().sum::<f64>(), 1.0, 1.0e-14);
     assert!(slit_kernel[2] > slit_kernel[1]);
     assert!(slit_kernel[1] > slit_kernel[0]);
+}
+
+#[test]
+fn wavelength_sampling_applies_channel_shift_and_collects_forward_misses() {
+    let provider = resolve(GENERIC_RESPONSE_ID).unwrap();
+    let mut scene = Scene::default();
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 761.0;
+    scene.spectral_grid.sample_count = 2;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .explicit = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .wavelength_shift_nm = 0.1;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .response
+        .instrument_line_shape = InstrumentLineShape {
+        sample_count: 2,
+        offsets_nm: vec![-0.1, 0.2],
+        weights: vec![1.0, 3.0],
+    };
+    let axis = ResolvedAxis {
+        base: SpectralGrid {
+            start_nm: scene.spectral_grid.start_nm,
+            end_nm: scene.spectral_grid.end_nm,
+            sample_count: scene.spectral_grid.sample_count,
+        },
+        explicit_wavelengths_nm: Vec::new(),
+    };
+
+    let plans = build_wavelength_sampling(&scene, &axis, provider).unwrap();
+
+    assert_eq!(plans.len(), 2);
+    assert_close(plans[0].nominal_wavelength_nm, 760.0, 0.0);
+    assert_close(plans[0].radiance_wavelength_nm, 760.1, 1.0e-14);
+    assert_close(plans[0].irradiance_wavelength_nm, 760.0, 0.0);
+    assert_eq!(plans[0].radiance_integration.sample_count, 2);
+    assert_close(plans[0].radiance_integration.weights[0], 0.25, 1.0e-14);
+    assert_close(plans[0].radiance_integration.weights[1], 0.75, 1.0e-14);
+
+    let misses = collect_unique_forward_misses(&plans);
+
+    assert_eq!(misses.len(), 4);
+    assert_close(misses[0].wavelength_nm, 760.0, 1.0e-14);
+    assert_close(misses[1].wavelength_nm, 760.3, 1.0e-12);
+    assert_close(misses[2].wavelength_nm, 761.0, 1.0e-14);
+    assert_close(misses[3].wavelength_nm, 761.3, 1.0e-12);
+    for miss in misses {
+        assert_eq!(
+            miss.key,
+            SpectralEvaluationCache::key_for(miss.wavelength_nm)
+        );
+    }
 }
 
 #[test]

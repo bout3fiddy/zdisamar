@@ -1,7 +1,7 @@
 use crate::{
     common::errors,
     forward_model::{
-        implementations::instrument::integration_for_wavelength_checked,
+        implementations::instrument,
         instrument_grid::{
             grid_calculation::{
                 cache::SpectralEvaluationCache,
@@ -11,6 +11,7 @@ use crate::{
                 },
                 storage,
                 types::{InstrumentGridProduct, InstrumentGridSummary},
+                wavelength_sampling,
             },
             spectral_math::grid::{self, ResolvedAxis, SpectralGrid},
         },
@@ -20,7 +21,7 @@ use crate::{
             LayerInput, PseudoSphericalSample, Route, RtmQuadratureLevel, SourceInterfaceInput,
         },
     },
-    input::{instrument::SpectralChannel, scene::Scene},
+    input::scene::Scene,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +30,8 @@ pub enum Error {
     Grid(grid::Error),
     SpectralEval(spectral_eval::Error),
     InstrumentIntegration(crate::forward_model::implementations::instrument::Error),
+    InstrumentProvider,
+    WavelengthSampling(wavelength_sampling::Error),
 }
 
 impl From<errors::Error> for Error {
@@ -52,6 +55,12 @@ impl From<spectral_eval::Error> for Error {
 impl From<crate::forward_model::implementations::instrument::Error> for Error {
     fn from(value: crate::forward_model::implementations::instrument::Error) -> Self {
         Self::InstrumentIntegration(value)
+    }
+}
+
+impl From<wavelength_sampling::Error> for Error {
+    fn from(value: wavelength_sampling::Error) -> Self {
+        Self::WavelengthSampling(value)
     }
 }
 
@@ -113,6 +122,10 @@ pub fn simulate_product(
         explicit_wavelengths_nm: scene.observation_model.measured_wavelengths_nm.clone(),
     };
     axis.validate()?;
+    let instrument_provider =
+        instrument::resolve(instrument::GENERIC_RESPONSE_ID).ok_or(Error::InstrumentProvider)?;
+    let wavelength_sampling =
+        wavelength_sampling::build_wavelength_sampling(scene, &axis, instrument_provider)?;
 
     let sample_count = scene.spectral_grid.sample_count as usize;
     let transport_layer_count = storage::resolved_transport_layer_count(route, prepared);
@@ -148,26 +161,21 @@ pub fn simulate_product(
         pseudo_spherical_level_altitudes: &mut pseudo_spherical_level_altitudes,
     };
 
-    for index in 0..sample_count {
-        let wavelength_nm = axis.sample_at(index as u32)?;
-        let radiance_integration =
-            integration_for_wavelength_checked(scene, SpectralChannel::Radiance, wavelength_nm)?;
+    for (index, plan) in wavelength_sampling.iter().enumerate() {
         let sample = integrate_forward_at_nominal(
             scene,
             route,
             prepared,
-            wavelength_nm,
+            plan.radiance_wavelength_nm,
             &mut forward_buffers,
             &mut cache,
-            &radiance_integration,
+            &plan.radiance_integration,
         )?;
-        let irradiance_integration =
-            integration_for_wavelength_checked(scene, SpectralChannel::Irradiance, wavelength_nm)?;
         let sample_irradiance = integrate_irradiance_at_nominal(
             scene,
-            wavelength_nm,
+            plan.irradiance_wavelength_nm,
             &mut cache,
-            &irradiance_integration,
+            &plan.irradiance_integration,
         )?;
         let sample_reflectance = if sample_irradiance > 0.0 && solar_cosine > 0.0 {
             sample.radiance * std::f64::consts::PI / (sample_irradiance * solar_cosine)
@@ -175,7 +183,7 @@ pub fn simulate_product(
             0.0
         };
 
-        wavelengths[index] = wavelength_nm;
+        wavelengths[index] = plan.nominal_wavelength_nm;
         radiance[index] = sample.radiance;
         irradiance[index] = sample_irradiance;
         reflectance[index] = sample_reflectance;
