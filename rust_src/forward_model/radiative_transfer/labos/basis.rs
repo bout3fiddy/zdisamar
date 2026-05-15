@@ -2,6 +2,10 @@ pub use super::attenuation::{
     AttenArray, DynamicAttenArray, fill_attenuation, fill_attenuation_dynamic,
     fill_attenuation_dynamic_with_grid,
 };
+pub use super::layers::{
+    fill_layer_effective_scattering_suffixes, fill_layer_phase_max_indices, fill_surface,
+    renormalize_zero_fourier_phase_kernel, zero_fourier_integral,
+};
 pub use super::matrix::{
     esmul, esmul_semul, esmul_semul_add, mat_add, mat_add_esmul, mat_add_esmul3, mat_add_semul3,
     qseries, qseries_known_nonzero_product, semul, semul_add, smul, smul_add_semul3,
