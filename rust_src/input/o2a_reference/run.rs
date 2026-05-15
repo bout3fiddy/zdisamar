@@ -20,7 +20,11 @@ use crate::{
             SpectralChannelControls, SpectralResponse,
         },
         observation_model::ObservationModel,
-        reference_data::{ClimatologyPoint, ClimatologyProfile},
+        reference::airmass_phase::{AirmassFactorLut, AirmassFactorPoint},
+        reference_data::{
+            ClimatologyPoint, ClimatologyProfile, CollisionInducedAbsorptionPoint,
+            CollisionInducedAbsorptionTable,
+        },
         scene::Scene,
         surface::Surface,
     },
@@ -165,6 +169,94 @@ pub fn build_vendor_trace_gas_spectroscopy_profile(
             })
             .collect(),
     }
+}
+
+pub fn load_cia_table(asset: &ExternalAsset) -> Result<CollisionInducedAbsorptionTable, Error> {
+    if asset.format != "bira_cia" {
+        return Err(Error::InvalidData);
+    }
+
+    let bytes = fs::read_to_string(&asset.path)?;
+    let mut numeric_header_index = 0;
+    let mut scale_factor = 0.0;
+    let mut expected_data_rows = None;
+    let mut points = Vec::new();
+
+    for line in bytes.lines() {
+        let stripped = line.trim_matches(['\r', ' ', '\t']);
+        if stripped.is_empty() || stripped.starts_with('#') {
+            continue;
+        }
+
+        let mut tokens = stripped.split_whitespace();
+        let Some(first_token) = tokens.next() else {
+            continue;
+        };
+        if first_token.starts_with('!') {
+            continue;
+        }
+
+        if numeric_header_index < 3 {
+            let numeric_value = first_token.parse::<f64>()?;
+            match numeric_header_index {
+                0 => scale_factor = numeric_value,
+                1 => {}
+                2 => expected_data_rows = Some(numeric_value as usize),
+                _ => unreachable!(),
+            }
+            numeric_header_index += 1;
+            continue;
+        }
+
+        points.push(CollisionInducedAbsorptionPoint {
+            wavelength_nm: first_token.parse()?,
+            a0: parse_token_f64(tokens.next())?,
+            a1: parse_token_f64(tokens.next())?,
+            a2: parse_token_f64(tokens.next())?,
+        });
+    }
+
+    if numeric_header_index < 3 || points.is_empty() {
+        return Err(Error::InvalidData);
+    }
+    if expected_data_rows.is_some_and(|expected| points.len() < expected) {
+        return Err(Error::InvalidData);
+    }
+
+    Ok(CollisionInducedAbsorptionTable {
+        points,
+        scale_factor_cm5_per_molecule2: scale_factor,
+    })
+}
+
+pub fn load_airmass_factor_lut(asset: &ExternalAsset) -> Result<AirmassFactorLut, Error> {
+    if asset.format != "csv" {
+        return Err(Error::InvalidData);
+    }
+
+    let bytes = fs::read_to_string(&asset.path)?;
+    let mut points = Vec::new();
+
+    for line in bytes.lines().skip(1) {
+        let trimmed = line.trim_matches(['\r', ' ', '\t']);
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut columns = trimmed.split(',');
+        points.push(AirmassFactorPoint {
+            solar_zenith_deg: parse_csv_f64(columns.next())?,
+            view_zenith_deg: parse_csv_f64(columns.next())?,
+            relative_azimuth_deg: parse_csv_f64(columns.next())?,
+            airmass_factor: parse_csv_f64(columns.next())?,
+        });
+    }
+
+    if points.is_empty() {
+        return Err(Error::InvalidData);
+    }
+
+    Ok(AirmassFactorLut { points })
 }
 
 pub fn build_resolved_vendor_o2a_scene(
@@ -365,4 +457,11 @@ fn parse_csv_f64(value: Option<&str>) -> Result<f64, Error> {
         return Err(Error::InvalidData);
     };
     Ok(value.trim_matches([' ', '\t']).parse()?)
+}
+
+fn parse_token_f64(value: Option<&str>) -> Result<f64, Error> {
+    let Some(value) = value else {
+        return Err(Error::InvalidData);
+    };
+    Ok(value.parse()?)
 }

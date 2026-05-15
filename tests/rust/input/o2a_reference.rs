@@ -138,6 +138,35 @@ fn o2a_runtime_loaders_parse_reference_and_solar_csv() {
     assert_eq!(profile.rows.len(), 2);
     assert_eq!(profile.rows[0].pressure_hpa, 1000.0);
     assert_eq!(profile.rows[1].temperature_k, 230.0);
+
+    let cia_path = temp_csv_path("zdisamar-rust-cia.dat");
+    std::fs::write(
+        &cia_path,
+        "1.0E-46 ! scale factor\n0 ! header lines\n2 ! data lines\n755.0 1.0 0.1 0.01\n756.0 2.0 0.2 0.02\n",
+    )
+    .unwrap();
+    let mut input = o2a_reference::default_input();
+    input.o2o2.cia_asset.as_mut().unwrap().path = cia_path.to_string_lossy().into_owned();
+    let cia = o2a_reference::load_cia_table(input.o2o2.cia_asset.as_ref().unwrap()).unwrap();
+    std::fs::remove_file(&cia_path).unwrap();
+
+    assert_eq!(cia.points.len(), 2);
+    assert_eq!(cia.scale_factor_cm5_per_molecule2, 1.0e-46);
+    assert_eq!(cia.points[1].a2, 0.02);
+
+    let airmass_path = temp_csv_path("zdisamar-rust-airmass.csv");
+    std::fs::write(
+        &airmass_path,
+        "solar_zenith_deg,view_zenith_deg,relative_azimuth_deg,airmass_factor\n20.0,0.0,0.0,1.064\n60.0,20.0,60.0,1.756\n",
+    )
+    .unwrap();
+    let mut input = o2a_reference::default_input();
+    input.inputs.airmass_factor_lut.path = airmass_path.to_string_lossy().into_owned();
+    let lut = o2a_reference::load_airmass_factor_lut(&input.inputs.airmass_factor_lut).unwrap();
+    std::fs::remove_file(&airmass_path).unwrap();
+
+    assert_eq!(lut.points.len(), 2);
+    assert_eq!(lut.nearest(58.0, 19.0, 61.0), 1.756);
 }
 
 #[test]
