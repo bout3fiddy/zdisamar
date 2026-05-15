@@ -1,0 +1,109 @@
+use super::{
+    EvaluatedLayer, OpticalDepthBreakdown, PHASE_COEFFICIENT_COUNT, PreparedOpticalState,
+    PreparedSublayer, SharedOpticalCarrier, SharedRtmLayerGeometry,
+    shared_optical_carrier_at_support_row,
+};
+use crate::{
+    common::errors,
+    forward_model::optical_properties::shared::phase_functions::{self, PhaseCoefficients},
+    input::scene::Scene,
+};
+
+pub fn accumulate_shared_carrier(
+    breakdown: &mut OpticalDepthBreakdown,
+    phase_numerator: &mut PhaseCoefficients,
+    carrier: SharedOpticalCarrier,
+    weight_km: f64,
+) {
+    let weighted_gas_absorption = carrier.gas_absorption_optical_depth_per_km * weight_km;
+    let weighted_gas_scattering = carrier.gas_scattering_optical_depth_per_km * weight_km;
+    let weighted_cia = carrier.cia_optical_depth_per_km * weight_km;
+    let weighted_aerosol = carrier.aerosol_optical_depth_per_km * weight_km;
+    let weighted_aerosol_scattering = carrier.aerosol_scattering_optical_depth_per_km * weight_km;
+    let weighted_cloud = carrier.cloud_optical_depth_per_km * weight_km;
+    let weighted_cloud_scattering = carrier.cloud_scattering_optical_depth_per_km * weight_km;
+
+    breakdown.gas_absorption_optical_depth += weighted_gas_absorption;
+    breakdown.gas_scattering_optical_depth += weighted_gas_scattering;
+    breakdown.cia_optical_depth += weighted_cia;
+    breakdown.aerosol_optical_depth += weighted_aerosol;
+    breakdown.aerosol_scattering_optical_depth += weighted_aerosol_scattering;
+    breakdown.cloud_optical_depth += weighted_cloud;
+    breakdown.cloud_scattering_optical_depth += weighted_cloud_scattering;
+
+    let weighted_scattering =
+        weighted_gas_scattering + weighted_aerosol_scattering + weighted_cloud_scattering;
+    if weighted_scattering <= 0.0 {
+        return;
+    }
+    for (index, value) in phase_numerator.iter_mut().enumerate() {
+        *value += weighted_scattering * carrier.phase_coefficients[index];
+    }
+}
+
+pub fn evaluated_layer_from_shared_carrier(
+    scene: &Scene,
+    wavelength_nm: f64,
+    altitude_km: f64,
+    breakdown: OpticalDepthBreakdown,
+    phase_numerator: PhaseCoefficients,
+) -> EvaluatedLayer {
+    let total_scattering = breakdown.total_scattering_optical_depth();
+    let mut phase_coefficients =
+        phase_functions::gas_phase_coefficients_at_wavelength(wavelength_nm);
+    if total_scattering > 0.0 {
+        for index in 0..PHASE_COEFFICIENT_COUNT {
+            phase_coefficients[index] = phase_numerator[index] / total_scattering;
+        }
+        phase_coefficients[0] = 1.0;
+    }
+
+    EvaluatedLayer {
+        breakdown,
+        phase_coefficients,
+        solar_mu: scene.geometry.solar_cosine_at_altitude(altitude_km),
+        view_mu: scene.geometry.viewing_cosine_at_altitude(altitude_km),
+    }
+}
+
+pub fn evaluate_reduced_layer_from_support_rows(
+    prepared: &PreparedOpticalState,
+    scene: &Scene,
+    wavelength_nm: f64,
+    support_sublayers: &[PreparedSublayer],
+    layer_geometry: SharedRtmLayerGeometry,
+) -> Result<EvaluatedLayer, errors::Error> {
+    let mut breakdown = OpticalDepthBreakdown::default();
+    let mut phase_numerator = [0.0; PHASE_COEFFICIENT_COUNT];
+    if support_sublayers.len() < 2 {
+        return Ok(evaluated_layer_from_shared_carrier(
+            scene,
+            wavelength_nm,
+            layer_geometry.midpoint_altitude_km,
+            breakdown,
+            phase_numerator,
+        ));
+    }
+
+    for support_sublayer in &support_sublayers[1..support_sublayers.len() - 1] {
+        let weight_km = (support_sublayer.path_length_cm / 1.0e5).max(0.0);
+        if weight_km <= 0.0 {
+            continue;
+        }
+        let carrier = shared_optical_carrier_at_support_row(
+            prepared,
+            wavelength_nm,
+            *support_sublayer,
+            support_sublayer.global_sublayer_index as usize,
+        )?;
+        accumulate_shared_carrier(&mut breakdown, &mut phase_numerator, carrier, weight_km);
+    }
+
+    Ok(evaluated_layer_from_shared_carrier(
+        scene,
+        wavelength_nm,
+        layer_geometry.midpoint_altitude_km,
+        breakdown,
+        phase_numerator,
+    ))
+}

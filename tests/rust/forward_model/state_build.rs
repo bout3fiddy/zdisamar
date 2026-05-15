@@ -1171,23 +1171,118 @@ fn forward_layers_fill_sublayer_grid_and_return_forward_input_layers() {
 }
 
 #[test]
-fn forward_layers_reject_shared_rtm_grid_until_carrier_path_is_ported() {
+fn forward_layers_fill_reduced_shared_rtm_grid_from_support_rows() {
+    let sublayers = vec![
+        PreparedSublayer {
+            global_sublayer_index: 0,
+            altitude_km: 0.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 1,
+            altitude_km: 1.0,
+            absorber_number_density_cm3: 2.0e18,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 0.5,
+            aerosol_phase_coefficients: phase_functions::hg_phase_coefficients(0.2),
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 2,
+            altitude_km: 2.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 3,
+            altitude_km: 3.0,
+            absorber_number_density_cm3: 4.0e18,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.2,
+            aerosol_single_scatter_albedo: 0.25,
+            aerosol_phase_coefficients: phase_functions::hg_phase_coefficients(0.6),
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 4,
+            altitude_km: 4.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
     let prepared = PreparedOpticalState {
-        layers: vec![PreparedLayer {
-            sublayer_start_index: 0,
-            sublayer_count: 2,
-            ..PreparedLayer::default()
+        layers: vec![
+            PreparedLayer {
+                sublayer_start_index: 0,
+                sublayer_count: 3,
+                altitude_km: 1.0,
+                bottom_altitude_km: 0.0,
+                top_altitude_km: 2.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+            PreparedLayer {
+                sublayer_start_index: 2,
+                sublayer_count: 3,
+                altitude_km: 3.0,
+                bottom_altitude_km: 2.0,
+                top_altitude_km: 4.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+        ],
+        sublayers: Some(sublayers),
+        continuum_points: vec![CrossSectionPoint {
+            wavelength_nm: 760.0,
+            sigma_cm2_per_molecule: 1.0e-24,
         }],
-        sublayers: Some(vec![PreparedSublayer::default()]),
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
         interval_semantics: IntervalSemantics::ExplicitPressureBounds,
         ..PreparedOpticalState::default()
     };
-    let mut layer_inputs = vec![LayerInput::default()];
+    let mut scene = Scene::default();
+    scene.aerosol.optical_depth = 1.0;
+    let mut layer_inputs = vec![LayerInput::default(), LayerInput::default()];
 
-    assert_eq!(
-        fill_forward_layers_at_wavelength(&prepared, &Scene::default(), 760.0, &mut layer_inputs)
-            .unwrap_err(),
-        errors::Error::InvalidRequest,
+    let totals =
+        fill_forward_layers_at_wavelength(&prepared, &scene, 760.0, &mut layer_inputs).unwrap();
+
+    assert!(prepared.interval_semantics_use_reduced_shared_rtm_layers());
+    assert_close(layer_inputs[0].gas_absorption_optical_depth, 0.2, 1.0e-14);
+    assert_close(layer_inputs[0].aerosol_optical_depth, 0.1, 1.0e-14);
+    assert_close(
+        layer_inputs[0].aerosol_scattering_optical_depth,
+        0.05,
+        1.0e-14,
+    );
+    assert_close(
+        layer_inputs[0].phase_coefficients[1],
+        phase_functions::hg_phase_coefficients(0.2)[1],
+        1.0e-14,
+    );
+    assert_close(layer_inputs[1].gas_absorption_optical_depth, 0.4, 1.0e-14);
+    assert_close(layer_inputs[1].aerosol_optical_depth, 0.2, 1.0e-14);
+    assert_close(
+        layer_inputs[1].aerosol_scattering_optical_depth,
+        0.05,
+        1.0e-14,
+    );
+    assert_close(
+        layer_inputs[1].phase_coefficients[1],
+        phase_functions::hg_phase_coefficients(0.6)[1],
+        1.0e-14,
+    );
+    assert_close(totals.total_optical_depth(), 0.9, 1.0e-14);
+    assert_close(
+        jacobian::get(
+            layer_inputs[1].scattering_optical_depth_jacobian,
+            State::AerosolOpticalDepth,
+        ),
+        0.05,
+        1.0e-14,
     );
 }
 

@@ -1,7 +1,8 @@
 use super::{
-    OpticalDepthBreakdown, PreparedOpticalState, PreparedSublayer, accumulate_breakdown,
-    evaluate_layer_at_wavelength, layer_input_from_evaluated,
-    optical_depth_breakdown_at_wavelength, particle_optical_depth_at_wavelength,
+    OpticalDepthBreakdown, PreparedOpticalState, PreparedSublayer, SharedRtmLayerGeometry,
+    accumulate_breakdown, evaluate_layer_at_wavelength, evaluate_reduced_layer_from_support_rows,
+    layer_input_from_evaluated, optical_depth_breakdown_at_wavelength,
+    particle_optical_depth_at_wavelength,
 };
 use crate::{
     common::errors,
@@ -135,10 +136,13 @@ fn fill_sublayer_forward_layers_at_wavelength(
     if prepared.interval_semantics_use_reduced_shared_rtm_layers()
         && layer_inputs.len() == prepared.layers.len()
     {
-        // Reduced shared-RTM layers must be evaluated from support-row carriers.
-        // That path is separate from the ordinary sublayer integration and is
-        // not ported yet.
-        return Err(errors::Error::InvalidRequest);
+        return fill_reduced_shared_rtm_layers_at_wavelength(
+            prepared,
+            scene,
+            wavelength_nm,
+            sublayers,
+            layer_inputs,
+        );
     }
 
     let mut totals = OpticalDepthBreakdown::default();
@@ -177,6 +181,61 @@ fn fill_sublayer_forward_layers_at_wavelength(
             wavelength_nm,
             start_index,
             &sublayers[start_index..end_index],
+        )?;
+        *layer_input = layer_input_from_evaluated(evaluated);
+        attach_aerosol_optical_depth_jacobian(scene, layer_input);
+        accumulate_breakdown(&mut totals, evaluated.breakdown);
+    }
+    Ok(totals)
+}
+
+fn fill_reduced_shared_rtm_layers_at_wavelength(
+    prepared: &PreparedOpticalState,
+    scene: &Scene,
+    wavelength_nm: f64,
+    sublayers: &[PreparedSublayer],
+    layer_inputs: &mut [LayerInput],
+) -> Result<OpticalDepthBreakdown, errors::Error> {
+    if layer_inputs.len() != prepared.layers.len() {
+        return Err(errors::Error::InvalidRequest);
+    }
+
+    let mut totals = OpticalDepthBreakdown::default();
+    for (layer_index, (layer, layer_input)) in prepared
+        .layers
+        .iter()
+        .copied()
+        .zip(layer_inputs.iter_mut())
+        .enumerate()
+    {
+        let layer_geometry = prepared
+            .shared_rtm_geometry
+            .layers
+            .get(layer_index)
+            .copied()
+            .unwrap_or(SharedRtmLayerGeometry {
+                lower_altitude_km: layer.bottom_altitude_km,
+                upper_altitude_km: layer.top_altitude_km,
+                midpoint_altitude_km: layer.altitude_km,
+                thickness_km: (layer.top_altitude_km - layer.bottom_altitude_km).max(0.0),
+                support_start_index: layer.sublayer_start_index,
+                support_count: layer.sublayer_count,
+            });
+        let support_start_index = layer_geometry.support_start_index as usize;
+        let support_count = layer_geometry.support_count as usize;
+        let support_end_index = support_start_index + support_count;
+        let Some(support_sublayers) = sublayers.get(support_start_index..support_end_index) else {
+            return Err(errors::Error::InvalidRequest);
+        };
+
+        // DISAMAR builds shared RTM layer depth from prepared support rows.
+        // Rebuilding a fresh subgrid here changes line-shoulder absorption.
+        let evaluated = evaluate_reduced_layer_from_support_rows(
+            prepared,
+            scene,
+            wavelength_nm,
+            support_sublayers,
+            layer_geometry,
         )?;
         *layer_input = layer_input_from_evaluated(evaluated);
         attach_aerosol_optical_depth_jacobian(scene, layer_input);
