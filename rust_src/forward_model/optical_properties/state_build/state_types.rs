@@ -2,12 +2,116 @@ use crate::{
     common::lut_controls,
     forward_model::optical_properties::shared::phase_functions::{self, PhaseCoefficients},
     input::{
+        absorber::{AbsorptionRepresentation, LineGasControls},
         atmosphere::{FractionControl, PartitionLabel},
+        atmospheric_types::AbsorberSpecies,
+        instrument::OperationalCrossSectionLut,
         reference::airmass_phase::PhaseSupportKind,
+        reference_data::{CrossSectionTable, SpectroscopyLineList},
     },
 };
 
 pub const PHASE_COEFFICIENT_COUNT: usize = phase_functions::PHASE_COEFFICIENT_COUNT;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActiveLineAbsorber {
+    pub species: AbsorberSpecies,
+    pub controls: LineGasControls,
+    pub volume_mixing_ratio_profile_ppmv: Vec<[f64; 2]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ActiveCrossSectionAbsorber<'a> {
+    pub species: AbsorberSpecies,
+    pub representation: AbsorptionRepresentation<'a>,
+    pub volume_mixing_ratio_profile_ppmv: &'a [[f64; 2]],
+    pub use_effective_cross_section: bool,
+    pub polynomial_order: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedLineAbsorber {
+    pub species: AbsorberSpecies,
+    pub line_list: SpectroscopyLineList,
+    pub number_densities_cm3: Vec<f64>,
+    pub column_density_factor: f64,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum CrossSectionRepresentationKind {
+    #[default]
+    Table,
+    Lut,
+    EffectiveTable,
+    EffectiveLut,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PreparedCrossSectionRepresentation {
+    Table(CrossSectionTable),
+    Lut(OperationalCrossSectionLut),
+}
+
+impl Default for PreparedCrossSectionRepresentation {
+    fn default() -> Self {
+        Self::Table(CrossSectionTable::default())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedCrossSectionAbsorber {
+    pub species: AbsorberSpecies,
+    pub representation_kind: CrossSectionRepresentationKind,
+    pub polynomial_order: u32,
+    pub representation: PreparedCrossSectionRepresentation,
+    pub number_densities_cm3: Vec<f64>,
+    pub column_density_factor: f64,
+}
+
+impl PreparedCrossSectionAbsorber {
+    pub fn sigma_at(&self, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) -> f64 {
+        match &self.representation {
+            PreparedCrossSectionRepresentation::Table(table) => {
+                table.interpolate_sigma(wavelength_nm)
+            }
+            PreparedCrossSectionRepresentation::Lut(lut) => {
+                lut.sigma_at(wavelength_nm, temperature_k, pressure_hpa)
+            }
+        }
+    }
+
+    pub fn d_sigma_d_temperature_at(
+        &self,
+        wavelength_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) -> f64 {
+        match &self.representation {
+            PreparedCrossSectionRepresentation::Table(_) => 0.0,
+            PreparedCrossSectionRepresentation::Lut(lut) => {
+                lut.d_sigma_d_temperature_at(wavelength_nm, temperature_k, pressure_hpa)
+            }
+        }
+    }
+
+    pub fn mean_sigma_in_range(
+        &self,
+        start_nm: f64,
+        end_nm: f64,
+        temperature_k: f64,
+        pressure_hpa: f64,
+    ) -> f64 {
+        match &self.representation {
+            PreparedCrossSectionRepresentation::Table(table) => {
+                table.mean_sigma_in_range(start_nm, end_nm)
+            }
+            PreparedCrossSectionRepresentation::Lut(lut) => {
+                let midpoint_nm = (start_nm + end_nm) * 0.5;
+                lut.sigma_at(midpoint_nm, temperature_k, pressure_hpa)
+            }
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct PreparedLayer {

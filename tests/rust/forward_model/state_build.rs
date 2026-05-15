@@ -4,14 +4,20 @@ use zdisamar::{
         optical_properties::{
             shared::phase_functions,
             state_build::{
-                EvaluatedLayer, OpticalDepthBreakdown, PreparedSublayer, SharedRtmGeometry,
-                SharedRtmLayerGeometry, SharedRtmLevelGeometry, accumulate_breakdown,
-                interpolate_prepared_scalar_at_altitude, layer_input_from_evaluated,
-                particle_optical_depth_at_wavelength, prepared_scalar_for_sublayer,
+                CrossSectionRepresentationKind, EvaluatedLayer, OpticalDepthBreakdown,
+                PreparedCrossSectionAbsorber, PreparedCrossSectionRepresentation, PreparedSublayer,
+                SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
+                accumulate_breakdown, interpolate_prepared_scalar_at_altitude,
+                layer_input_from_evaluated, particle_optical_depth_at_wavelength,
+                prepared_scalar_for_sublayer,
             },
         },
     },
-    input::atmosphere::{FractionControl, FractionKind, FractionTarget},
+    input::{
+        atmosphere::{FractionControl, FractionKind, FractionTarget},
+        atmospheric_types::AbsorberSpecies,
+        reference_data::{CrossSectionPoint, CrossSectionTable},
+    },
 };
 
 fn assert_close(actual: f64, expected: f64, tolerance: f64) {
@@ -185,6 +191,42 @@ fn particle_optical_depth_uses_base_or_effective_fraction_semantics() {
     assert_close(
         particle_optical_depth_at_wavelength(0.2, 0.1, 760.0, 0.0, &control, 770.0),
         0.1,
+        1.0e-14,
+    );
+}
+
+#[test]
+fn prepared_cross_section_absorber_uses_typed_representation() {
+    let table = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 1.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 3.0,
+            },
+        ],
+    };
+    let absorber = PreparedCrossSectionAbsorber {
+        species: AbsorberSpecies::O2O2,
+        representation_kind: CrossSectionRepresentationKind::Table,
+        polynomial_order: 0,
+        representation: PreparedCrossSectionRepresentation::Table(table),
+        number_densities_cm3: vec![1.0e18, 2.0e18],
+        column_density_factor: 1.5,
+    };
+
+    assert_close(absorber.sigma_at(761.0, 220.0, 500.0), 2.0, 1.0e-14);
+    assert_close(
+        absorber.d_sigma_d_temperature_at(761.0, 220.0, 500.0),
+        0.0,
+        0.0,
+    );
+    assert_close(
+        absorber.mean_sigma_in_range(760.0, 762.0, 220.0, 500.0),
+        2.0,
         1.0e-14,
     );
 }

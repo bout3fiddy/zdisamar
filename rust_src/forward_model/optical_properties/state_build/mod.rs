@@ -8,7 +8,9 @@ pub use state_scalar::{
     prepared_scalar_for_sublayer,
 };
 pub use state_types::{
-    EvaluatedLayer, GeneratedLutAsset, GeneratedLutAssetKind, OpticalDepthBreakdown,
-    PHASE_COEFFICIENT_COUNT, PreparedLayer, PreparedStateFractions, PreparedSublayer,
-    PreparedSupportRowKind, SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
+    ActiveCrossSectionAbsorber, ActiveLineAbsorber, CrossSectionRepresentationKind, EvaluatedLayer,
+    GeneratedLutAsset, GeneratedLutAssetKind, OpticalDepthBreakdown, PHASE_COEFFICIENT_COUNT,
+    PreparedCrossSectionAbsorber, PreparedCrossSectionRepresentation, PreparedLayer,
+    PreparedLineAbsorber, PreparedStateFractions, PreparedSublayer, PreparedSupportRowKind,
+    SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
 };

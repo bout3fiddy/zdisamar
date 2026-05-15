@@ -2,6 +2,7 @@ use zdisamar::input::reference::airmass_phase::{
     AirmassFactorLut, AirmassFactorPoint, Error, MiePhasePoint, MiePhaseTable,
     spectral_profile_from_optical_depth,
 };
+use zdisamar::input::reference_data::{CrossSectionPoint, CrossSectionTable};
 
 fn assert_close(actual: f64, expected: f64, tolerance: f64) {
     assert!(
@@ -78,4 +79,32 @@ fn spectral_profile_preserves_requested_mean() {
         spectral_profile_from_optical_depth(&wavelengths, 2.0, &proxy[..2]),
         Err(Error::ShapeMismatch)
     );
+}
+
+#[test]
+fn cross_section_table_interpolates_and_averages_ranges() {
+    let table = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 1.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 3.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 764.0,
+                sigma_cm2_per_molecule: 5.0,
+            },
+        ],
+    };
+
+    assert_close(table.interpolate_sigma(761.0), 2.0, 1.0e-14);
+    assert_close(table.interpolate_sigma(700.0), 1.0, 0.0);
+    assert_close(table.interpolate_sigma(800.0), 5.0, 0.0);
+    assert_eq!(table.bracket_for_wavelength(761.0), Some((0, 1)));
+    assert_close(table.sigma_at_high_resolution(763.0), 4.0, 1.0e-14);
+    assert_close(table.mean_sigma_in_range(760.0, 762.0), 2.0, 1.0e-14);
+    assert_close(table.mean_sigma_in_range(765.0, 766.0), 5.0, 0.0);
 }
