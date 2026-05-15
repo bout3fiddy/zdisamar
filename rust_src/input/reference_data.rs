@@ -45,14 +45,24 @@ impl Default for SpectroscopyLine {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpectroscopyLineList {
     pub lines: Vec<SpectroscopyLine>,
+    pub strong_lines: Option<Vec<SpectroscopyStrongLine>>,
+    pub relaxation_matrix: Option<RelaxationMatrix>,
+    pub strong_line_tolerance_nm: f64,
     pub lines_sorted_ascending: bool,
+    pub preserve_anchor_weak_lines: bool,
+    pub vendor_strong_line_partition: bool,
+    pub strong_line_match_by_line: Option<Vec<Option<u16>>>,
     pub runtime_controls: SpectroscopyRuntimeControls,
 }
 
 impl SpectroscopyLineList {
+    pub fn has_strong_line_sidecars(&self) -> bool {
+        self.strong_lines.is_some() && self.relaxation_matrix.is_some()
+    }
+
     pub fn sigma_at(&self, wavelength_nm: f64, temperature_k: f64, pressure_hpa: f64) -> f64 {
         self.evaluate_at(wavelength_nm, temperature_k, pressure_hpa)
             .total_sigma_cm2_per_molecule
@@ -70,6 +80,74 @@ impl SpectroscopyLineList {
             temperature_k,
             pressure_hpa,
         )
+    }
+}
+
+impl Default for SpectroscopyLineList {
+    fn default() -> Self {
+        Self {
+            lines: Vec::new(),
+            strong_lines: None,
+            relaxation_matrix: None,
+            strong_line_tolerance_nm: 0.01,
+            lines_sorted_ascending: false,
+            preserve_anchor_weak_lines: false,
+            vendor_strong_line_partition: false,
+            strong_line_match_by_line: None,
+            runtime_controls: SpectroscopyRuntimeControls::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpectroscopyStrongLine {
+    pub center_wavenumber_cm1: f64,
+    pub center_wavelength_nm: f64,
+    pub population_t0: f64,
+    pub dipole_ratio: f64,
+    pub dipole_t0: f64,
+    pub lower_state_energy_cm1: f64,
+    pub air_half_width_cm1: f64,
+    pub air_half_width_nm: f64,
+    pub temperature_exponent: f64,
+    pub pressure_shift_cm1: f64,
+    pub pressure_shift_nm: f64,
+    pub rotational_index_m1: i32,
+}
+
+impl Default for SpectroscopyStrongLine {
+    fn default() -> Self {
+        Self {
+            center_wavenumber_cm1: 0.0,
+            center_wavelength_nm: 0.0,
+            population_t0: 0.0,
+            dipole_ratio: 0.0,
+            dipole_t0: 0.0,
+            lower_state_energy_cm1: 0.0,
+            air_half_width_cm1: 0.0,
+            air_half_width_nm: 0.0,
+            temperature_exponent: 0.0,
+            pressure_shift_cm1: 0.0,
+            pressure_shift_nm: 0.0,
+            rotational_index_m1: 0,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct RelaxationMatrix {
+    pub line_count: usize,
+    pub wt0: Vec<f64>,
+    pub bw: Vec<f64>,
+}
+
+impl RelaxationMatrix {
+    pub fn weight_at(&self, row: usize, col: usize) -> f64 {
+        self.wt0[row * self.line_count + col]
+    }
+
+    pub fn temperature_exponent_at(&self, row: usize, col: usize) -> f64 {
+        self.bw[row * self.line_count + col]
     }
 }
 

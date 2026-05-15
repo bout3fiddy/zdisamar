@@ -1,11 +1,15 @@
 pub mod line_list_eval;
+pub mod line_list_ops;
 pub mod physics_core;
 pub mod strong_lines;
+pub mod support;
 
+pub const MAX_STRONG_LINE_SIDECARS: usize = 128;
 pub const HITRAN_REFERENCE_TEMPERATURE_K: f64 = 296.0;
 pub const HITRAN_BOLTZMANN_CONSTANT_J_PER_K: f64 = 1.3806488e-23;
 pub const HITRAN_BOLTZMANN_CONSTANT_CM3_HPA_PER_K: f64 = 1.380658e-19;
 pub const HITRAN_HC_OVER_KB_CM_K: f64 = 1.4387770;
+pub const HITRAN_O2_LINE_MIXING_HC_OVER_KB_CM_K: f64 = 1.43877696;
 // DISAMAR uses this truncated literal inside HITRAN line-shape normalization.
 #[allow(clippy::approx_constant)]
 pub const HITRAN_PI: f64 = 3.1415926536;

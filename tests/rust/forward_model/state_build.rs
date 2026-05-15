@@ -47,7 +47,8 @@ use zdisamar::{
         reference::rayleigh,
         reference_data::{
             CollisionInducedAbsorptionPoint, CollisionInducedAbsorptionTable, CrossSectionPoint,
-            CrossSectionTable, SpectroscopyLine, SpectroscopyLineList,
+            CrossSectionTable, RelaxationMatrix, SpectroscopyLine, SpectroscopyLineList,
+            SpectroscopyStrongLine,
         },
         scene::Scene,
     },
@@ -90,6 +91,23 @@ fn weak_o2_line() -> SpectroscopyLine {
         lower_state_energy_cm1: 10.0,
         pressure_shift_cm1: Some(0.0),
         ..SpectroscopyLine::default()
+    }
+}
+
+fn strong_o2_line(center_wavelength_nm: f64, rotational_index_m1: i32) -> SpectroscopyStrongLine {
+    SpectroscopyStrongLine {
+        center_wavenumber_cm1: 1.0e7 / center_wavelength_nm,
+        center_wavelength_nm,
+        population_t0: 1.0e-20,
+        dipole_ratio: 1.0,
+        dipole_t0: 1.0e-5,
+        lower_state_energy_cm1: 10.0,
+        air_half_width_cm1: 0.05,
+        air_half_width_nm: 0.0,
+        temperature_exponent: 0.75,
+        pressure_shift_cm1: 0.0,
+        pressure_shift_nm: 0.0,
+        rotational_index_m1,
     }
 }
 
@@ -898,6 +916,96 @@ fn state_spectroscopy_evaluates_weak_line_absorber() {
         colder_evaluation.total_sigma_cm2_per_molecule,
         1.181_268_936_599_625e-23,
         1.0e-36,
+    );
+}
+
+#[test]
+fn state_spectroscopy_evaluates_o2_strong_line_sidecars() {
+    let prepared = PreparedOpticalState {
+        effective_temperature_k: 296.0,
+        effective_pressure_hpa: 500.0,
+        line_absorbers: vec![PreparedLineAbsorber {
+            species: AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList {
+                lines: vec![weak_o2_line()],
+                strong_lines: Some(vec![strong_o2_line(760.5, 1)]),
+                relaxation_matrix: Some(RelaxationMatrix {
+                    line_count: 1,
+                    wt0: vec![0.05],
+                    bw: vec![0.0],
+                }),
+                ..SpectroscopyLineList::default()
+            },
+            number_densities_cm3: Vec::new(),
+            column_density_factor: 1.0,
+        }],
+        ..PreparedOpticalState::default()
+    };
+
+    let evaluation = effective_spectroscopy_evaluation_at_wavelength(&prepared, 760.5).unwrap();
+
+    assert_close(evaluation.weak_line_sigma_cm2_per_molecule, 0.0, 0.0);
+    assert_close(
+        evaluation.strong_line_sigma_cm2_per_molecule,
+        5.786_354_609_661_759e-45,
+        1.0e-57,
+    );
+    assert_close(evaluation.line_mixing_sigma_cm2_per_molecule, 0.0, 0.0);
+    assert_close(
+        evaluation.total_sigma_cm2_per_molecule,
+        5.786_354_609_661_759e-45,
+        1.0e-57,
+    );
+}
+
+#[test]
+fn state_spectroscopy_evaluates_o2_line_mixing_sidecars() {
+    let prepared = PreparedOpticalState {
+        effective_temperature_k: 296.0,
+        effective_pressure_hpa: 500.0,
+        line_absorbers: vec![PreparedLineAbsorber {
+            species: AbsorberSpecies::O2,
+            line_list: SpectroscopyLineList {
+                lines: vec![
+                    weak_o2_line(),
+                    SpectroscopyLine {
+                        center_wavelength_nm: 760.6,
+                        center_wavenumber_cm1: Some(1.0e7 / 760.6),
+                        line_strength_cm2_per_molecule: 0.8e-24,
+                        ..weak_o2_line()
+                    },
+                ],
+                strong_lines: Some(vec![strong_o2_line(760.5, 1), strong_o2_line(760.6, 2)]),
+                relaxation_matrix: Some(RelaxationMatrix {
+                    line_count: 2,
+                    wt0: vec![0.05, 0.004, 0.003, 0.05],
+                    bw: vec![0.0, 0.0, 0.0, 0.0],
+                }),
+                ..SpectroscopyLineList::default()
+            },
+            number_densities_cm3: Vec::new(),
+            column_density_factor: 1.0,
+        }],
+        ..PreparedOpticalState::default()
+    };
+
+    let evaluation = effective_spectroscopy_evaluation_at_wavelength(&prepared, 760.55).unwrap();
+
+    assert_close(evaluation.weak_line_sigma_cm2_per_molecule, 0.0, 0.0);
+    assert_close(
+        evaluation.strong_line_sigma_cm2_per_molecule,
+        1.114_580_867_855_714_5e-47,
+        1.0e-59,
+    );
+    assert_close(
+        evaluation.line_mixing_sigma_cm2_per_molecule,
+        2.716_577_280_167_648_3e-48,
+        1.0e-59,
+    );
+    assert_close(
+        evaluation.total_sigma_cm2_per_molecule,
+        1.386_238_595_872_479_4e-47,
+        1.0e-59,
     );
 }
 
