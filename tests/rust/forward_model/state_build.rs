@@ -10,15 +10,17 @@ use zdisamar::{
                 SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
                 accumulate_breakdown, build_shared_rtm_geometry_from_layers,
                 collect_active_cross_section_absorbers, collect_active_line_absorbers,
-                first_active_support_row_index, interpolate_prepared_scalar_at_altitude,
-                interval_altitude_at_node, interval_weight_km, last_active_support_row_index,
-                layer_input_from_evaluated, level_altitude_from_sublayers,
-                operational_o2_evaluation_at_wavelength, particle_optical_depth_at_wavelength,
-                prepare_cross_section_absorbers, prepared_scalar_for_sublayer,
-                resolve_active_line_species, resolve_continuum_owner_species, resolve_gauss_rule,
-                sort_line_list, species_mixing_ratio_at_pressure,
+                fill_source_interfaces_from_prepared_layers, first_active_support_row_index,
+                interpolate_prepared_scalar_at_altitude, interval_altitude_at_node,
+                interval_weight_km, last_active_support_row_index, layer_input_from_evaluated,
+                level_altitude_from_sublayers, operational_o2_evaluation_at_wavelength,
+                particle_optical_depth_at_wavelength, prepare_cross_section_absorbers,
+                prepared_scalar_for_sublayer, resolve_active_line_species,
+                resolve_continuum_owner_species, resolve_gauss_rule, sort_line_list,
+                species_mixing_ratio_at_pressure,
             },
         },
+        radiative_transfer::common_types::{LayerInput, SourceInterfaceInput},
     },
     input::{
         absorber::{Absorber, AbsorberSet, LineGasControls, Spectroscopy, SpectroscopyMode},
@@ -542,4 +544,118 @@ fn shared_geometry_helpers_match_zig_boundary_semantics() {
     assert_close(level_altitude_from_sublayers(&sublayers, 1), 2.0, 0.0);
     assert_close(level_altitude_from_sublayers(&sublayers, 2), 4.0, 0.0);
     assert_close(level_altitude_from_sublayers(&[], 0), 0.0, 0.0);
+}
+
+#[test]
+fn source_interfaces_use_sublayer_rtm_weight_when_inputs_are_sublayers() {
+    let mut phase = phase_functions::gas_phase_coefficients();
+    phase[2] = 0.25;
+    let layer_inputs = vec![
+        LayerInput {
+            scattering_optical_depth: 2.0,
+            phase_coefficients: phase_functions::gas_phase_coefficients(),
+            ..LayerInput::default()
+        },
+        LayerInput {
+            scattering_optical_depth: 6.0,
+            phase_coefficients: phase,
+            ..LayerInput::default()
+        },
+    ];
+    let sublayers = vec![
+        PreparedSublayer {
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            path_length_cm: 300_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let mut interfaces = vec![SourceInterfaceInput::default(); 3];
+
+    fill_source_interfaces_from_prepared_layers(
+        &layer_inputs,
+        Some(&sublayers),
+        &[],
+        &mut interfaces,
+    );
+
+    assert_close(interfaces[1].source_weight, 0.0, 0.0);
+    assert_close(interfaces[1].rtm_weight, 3.0, 0.0);
+    assert_close(interfaces[1].ksca_above, 2.0, 1.0e-14);
+    assert_eq!(interfaces[1].phase_coefficients_above, phase);
+    assert_close(interfaces[2].source_weight, 3.0, 0.0);
+}
+
+#[test]
+fn source_interfaces_sum_support_sublayers_for_layer_inputs() {
+    let mut phase = phase_functions::gas_phase_coefficients();
+    phase[3] = 0.125;
+    let layer_inputs = vec![
+        LayerInput {
+            scattering_optical_depth: 1.0,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            scattering_optical_depth: 8.0,
+            phase_coefficients: phase,
+            ..LayerInput::default()
+        },
+        LayerInput {
+            scattering_optical_depth: 4.0,
+            phase_coefficients: phase,
+            ..LayerInput::default()
+        },
+    ];
+    let sublayers = vec![
+        PreparedSublayer {
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            path_length_cm: 300_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let layers = vec![
+        PreparedLayer {
+            sublayer_start_index: 0,
+            sublayer_count: 1,
+            ..PreparedLayer::default()
+        },
+        PreparedLayer {
+            sublayer_start_index: 1,
+            sublayer_count: 2,
+            ..PreparedLayer::default()
+        },
+        PreparedLayer {
+            sublayer_start_index: 0,
+            sublayer_count: 0,
+            ..PreparedLayer::default()
+        },
+    ];
+    let mut interfaces = vec![SourceInterfaceInput::default(); 4];
+
+    fill_source_interfaces_from_prepared_layers(
+        &layer_inputs,
+        Some(&sublayers),
+        &layers,
+        &mut interfaces,
+    );
+
+    assert_close(interfaces[1].rtm_weight, 4.0, 0.0);
+    assert_close(interfaces[1].ksca_above, 2.0, 1.0e-14);
+    assert_eq!(interfaces[1].phase_coefficients_above, phase);
+    assert_close(interfaces[2].source_weight, 0.0, 0.0);
+    assert_close(interfaces[2].rtm_weight, 0.0, 0.0);
+    assert_eq!(interfaces[2].phase_coefficients_above, phase);
 }

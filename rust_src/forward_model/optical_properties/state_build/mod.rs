@@ -1,6 +1,7 @@
 pub mod evaluation;
 pub mod operational_o2;
 pub mod shared_geometry;
+pub mod source_interfaces;
 pub mod spectroscopy;
 pub mod state_scalar;
 pub mod state_types;
@@ -12,6 +13,7 @@ pub use shared_geometry::{
     first_active_support_row_index, interval_altitude_at_node, interval_weight_km,
     last_active_support_row_index, level_altitude_from_sublayers, resolve_gauss_rule,
 };
+pub use source_interfaces::fill_source_interfaces_from_prepared_layers;
 pub use spectroscopy::{
     DEFAULT_O2_VOLUME_MIXING_RATIO, collect_active_cross_section_absorbers,
     collect_active_line_absorbers, prepare_cross_section_absorbers, resolve_active_line_species,
