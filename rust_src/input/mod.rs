@@ -10,6 +10,7 @@ pub mod instrument;
 pub mod measurement;
 pub mod observation_legacy_support;
 pub mod observation_model;
+pub mod reference;
 pub mod reference_data;
 pub mod scene;
 pub mod spectrum;
