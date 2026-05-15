@@ -1,7 +1,7 @@
 use crate::{
     common::errors,
     forward_model::{
-        implementations::{instrument, noise},
+        implementations::root as implementation_root,
         instrument_grid::{
             grid_calculation::{
                 cache::SpectralEvaluationCache,
@@ -11,7 +11,7 @@ use crate::{
                     self, integrate_forward_at_nominal, integrate_irradiance_at_nominal,
                 },
                 storage,
-                types::{InstrumentGridProduct, InstrumentGridSummary},
+                types::{Implementations, InstrumentGridProduct, InstrumentGridSummary},
                 wavelength_sampling,
             },
             spectral_math::{
@@ -34,8 +34,6 @@ pub enum Error {
     Grid(grid::Error),
     SpectralEval(spectral_eval::Error),
     InstrumentIntegration(crate::forward_model::implementations::instrument::Error),
-    InstrumentProvider,
-    NoiseProvider,
     Postprocess(postprocess::Error),
     WavelengthSampling(wavelength_sampling::Error),
 }
@@ -124,6 +122,15 @@ pub fn simulate_product(
     route: Route,
     prepared: &PreparedOpticalState,
 ) -> Result<InstrumentGridProduct, Error> {
+    simulate_product_with_implementations(scene, route, prepared, implementation_root::exact())
+}
+
+pub fn simulate_product_with_implementations(
+    scene: &Scene,
+    route: Route,
+    prepared: &PreparedOpticalState,
+    implementations: Implementations,
+) -> Result<InstrumentGridProduct, Error> {
     scene.validate()?;
     let axis = ResolvedAxis {
         base: SpectralGrid {
@@ -134,9 +141,8 @@ pub fn simulate_product(
         explicit_wavelengths_nm: scene.observation_model.measured_wavelengths_nm.clone(),
     };
     axis.validate()?;
-    let instrument_provider =
-        instrument::resolve(instrument::GENERIC_RESPONSE_ID).ok_or(Error::InstrumentProvider)?;
-    let noise_provider = noise::resolve(noise::SCENE_NOISE_ID).ok_or(Error::NoiseProvider)?;
+    let instrument_provider = implementations.instrument;
+    let noise_provider = implementations.noise;
     let wavelength_sampling =
         wavelength_sampling::build_wavelength_sampling(scene, &axis, instrument_provider)?;
 

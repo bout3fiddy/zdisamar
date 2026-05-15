@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod forward_input;
 pub mod postprocess;
+pub mod product;
 pub mod simulate;
 pub mod spectral_eval;
 pub mod spectral_forward;

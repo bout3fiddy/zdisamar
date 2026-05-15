@@ -5,7 +5,7 @@ use zdisamar::{
                 DEFAULT_SLIT_KERNEL, GENERIC_RESPONSE_ID, integration_for_wavelength_checked,
                 resolve,
             },
-            noise as noise_provider,
+            noise as noise_provider, root as implementation_root,
         },
         instrument_grid::grid_calculation::cache::SpectralEvaluationCache,
         instrument_grid::grid_calculation::forward_input::{
@@ -15,6 +15,7 @@ use zdisamar::{
             apply_channel_corrections, apply_channel_jacobian_corrections,
             materialize_channel_sigma,
         },
+        instrument_grid::grid_calculation::product as grid_product,
         instrument_grid::grid_calculation::simulate::simulate_product,
         instrument_grid::grid_calculation::spectral_eval::{
             IntegrationKernel, cached_irradiance_at_wavelength, integrate_forward_at_nominal,
@@ -626,6 +627,33 @@ fn simulate_product_applies_radiance_channel_corrections() {
         assert_close(reflectance, 0.46, 1.0e-14);
     }
     assert_close(product.summary.mean_reflectance, 0.46, 1.0e-14);
+}
+
+#[test]
+fn product_wrapper_uses_explicit_implementation_bindings() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        }]),
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.surface.albedo = 0.19;
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 761.0;
+    scene.spectral_grid.sample_count = 2;
+    let mut route = route();
+    route.rtm_controls.scattering = ScatteringMode::None;
+    route.rtm_controls.integrate_source_function = false;
+
+    let product =
+        grid_product::simulate_product(&scene, route, &prepared, implementation_root::exact())
+            .unwrap();
+
+    assert_close(product.summary.mean_reflectance, 0.19, 1.0e-14);
+    assert_eq!(product.wavelengths, vec![760.0, 761.0]);
 }
 
 #[test]
