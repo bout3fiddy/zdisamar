@@ -7,16 +7,25 @@ use zdisamar::{
                 CrossSectionRepresentationKind, EvaluatedLayer, OpticalDepthBreakdown,
                 PreparedCrossSectionAbsorber, PreparedCrossSectionRepresentation, PreparedSublayer,
                 SharedRtmGeometry, SharedRtmLayerGeometry, SharedRtmLevelGeometry,
-                accumulate_breakdown, interpolate_prepared_scalar_at_altitude,
+                accumulate_breakdown, collect_active_cross_section_absorbers,
+                collect_active_line_absorbers, interpolate_prepared_scalar_at_altitude,
                 layer_input_from_evaluated, particle_optical_depth_at_wavelength,
-                prepared_scalar_for_sublayer,
+                prepare_cross_section_absorbers, prepared_scalar_for_sublayer,
+                resolve_active_line_species, resolve_continuum_owner_species, sort_line_list,
+                species_mixing_ratio_at_pressure,
             },
         },
     },
     input::{
+        absorber::{Absorber, AbsorberSet, LineGasControls, Spectroscopy, SpectroscopyMode},
         atmosphere::{FractionControl, FractionKind, FractionTarget},
         atmospheric_types::AbsorberSpecies,
-        reference_data::{CrossSectionPoint, CrossSectionTable},
+        bands::{SpectralBand, SpectralBandSet},
+        instrument::OperationalCrossSectionLut,
+        reference_data::{
+            CrossSectionPoint, CrossSectionTable, SpectroscopyLine, SpectroscopyLineList,
+        },
+        scene::Scene,
     },
 };
 
@@ -228,5 +237,174 @@ fn prepared_cross_section_absorber_uses_typed_representation() {
         absorber.mean_sigma_in_range(760.0, 762.0, 220.0, 500.0),
         2.0,
         1.0e-14,
+    );
+}
+
+#[test]
+fn spectroscopy_helpers_collect_active_absorbers_from_scene() {
+    let explicit_table = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 1.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 3.0,
+            },
+        ],
+    };
+    let fallback_table = CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: 760.0,
+                sigma_cm2_per_molecule: 10.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: 762.0,
+                sigma_cm2_per_molecule: 14.0,
+            },
+        ],
+    };
+    let mut scene = Scene {
+        bands: SpectralBandSet {
+            items: vec![SpectralBand {
+                id: "o2-a".to_string(),
+                start_nm: 759.0,
+                end_nm: 770.0,
+                step_nm: 0.1,
+                exclude: Vec::new(),
+            }],
+        },
+        absorbers: AbsorberSet {
+            items: vec![
+                Absorber {
+                    id: "o2".to_string(),
+                    species: "o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::LineByLine,
+                        line_gas_controls: LineGasControls {
+                            threshold_line_sim: Some(0.05),
+                            ..LineGasControls::default()
+                        },
+                        ..Spectroscopy::default()
+                    },
+                    volume_mixing_ratio_profile_ppmv: vec![[1000.0, 209_460.0]],
+                    ..Absorber::default()
+                },
+                Absorber {
+                    id: "o2o2-table".to_string(),
+                    species: "o2o2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::CrossSections,
+                        resolved_cross_section_table: Some(explicit_table),
+                        ..Spectroscopy::default()
+                    },
+                    volume_mixing_ratio_profile_ppmv: vec![[1000.0, 1.0]],
+                    ..Absorber::default()
+                },
+                Absorber {
+                    id: "o2o2-fallback".to_string(),
+                    species: "O2-O2".to_string(),
+                    spectroscopy: Spectroscopy {
+                        mode: SpectroscopyMode::CrossSections,
+                        ..Spectroscopy::default()
+                    },
+                    ..Absorber::default()
+                },
+            ],
+        },
+        ..Scene::default()
+    };
+    scene
+        .observation_model
+        .cross_section_fit
+        .xsec_strong_absorption_bands = vec![true];
+    scene
+        .observation_model
+        .cross_section_fit
+        .polynomial_degree_bands = vec![3];
+
+    let line_absorbers = collect_active_line_absorbers(&scene);
+    assert_eq!(line_absorbers.len(), 1);
+    assert_eq!(line_absorbers[0].species, AbsorberSpecies::O2);
+    assert_eq!(line_absorbers[0].controls.threshold_line_sim, Some(0.05));
+
+    let active_cross_sections = collect_active_cross_section_absorbers(&scene, &fallback_table);
+    assert_eq!(active_cross_sections.len(), 2);
+    assert!(active_cross_sections[0].use_effective_cross_section);
+    assert_eq!(active_cross_sections[0].polynomial_order, 3);
+
+    let prepared = prepare_cross_section_absorbers(&active_cross_sections, 4).unwrap();
+    assert_eq!(prepared.len(), 2);
+    assert_eq!(
+        prepared[0].representation_kind,
+        CrossSectionRepresentationKind::EffectiveTable
+    );
+    assert_eq!(prepared[0].number_densities_cm3, vec![0.0; 4]);
+    assert_close(prepared[0].sigma_at(761.0, 220.0, 500.0), 2.0, 1.0e-14);
+    assert_close(prepared[1].sigma_at(761.0, 220.0, 500.0), 12.0, 1.0e-14);
+}
+
+#[test]
+fn spectroscopy_helpers_resolve_species_and_profiles() {
+    let mut line_list = SpectroscopyLineList {
+        lines: vec![
+            SpectroscopyLine {
+                gas_index: 7,
+                center_wavelength_nm: 762.0,
+                ..SpectroscopyLine::default()
+            },
+            SpectroscopyLine {
+                gas_index: 7,
+                center_wavelength_nm: 760.0,
+                ..SpectroscopyLine::default()
+            },
+        ],
+    };
+    sort_line_list(&mut line_list);
+    assert_close(line_list.lines[0].center_wavelength_nm, 760.0, 0.0);
+
+    assert_eq!(
+        resolve_active_line_species(
+            None,
+            Some(&line_list),
+            &OperationalCrossSectionLut::default()
+        )
+        .unwrap(),
+        Some(AbsorberSpecies::O2)
+    );
+    assert_eq!(
+        resolve_continuum_owner_species(None, &[], &OperationalCrossSectionLut::default()),
+        None
+    );
+
+    let scene = Scene {
+        absorbers: AbsorberSet {
+            items: vec![Absorber {
+                id: "o2".to_string(),
+                species: "o2".to_string(),
+                volume_mixing_ratio_profile_ppmv: vec![[1000.0, 100_000.0], [500.0, 200_000.0]],
+                ..Absorber::default()
+            }],
+        },
+        ..Scene::default()
+    };
+    assert_close(
+        species_mixing_ratio_at_pressure(&scene, AbsorberSpecies::O2, &[], 750.0, None).unwrap(),
+        0.15,
+        1.0e-14,
+    );
+    assert_close(
+        species_mixing_ratio_at_pressure(
+            &scene,
+            AbsorberSpecies::O2,
+            &[[100.0, -5.0]],
+            100.0,
+            None,
+        )
+        .unwrap(),
+        0.0,
+        0.0,
     );
 }
