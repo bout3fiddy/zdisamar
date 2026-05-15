@@ -1,26 +1,38 @@
 use zdisamar::{
     forward_model::{
+        instrument_grid::grid_calculation::forward_input::{
+            ForwardInputBuffers, configured_forward_input,
+        },
         instrument_grid::grid_calculation::storage::{
-            Buffers, Error, pseudo_spherical_sample_count_hint,
+            Buffers, Error as StorageError, pseudo_spherical_sample_count_hint,
             resolved_pseudo_spherical_sample_count, transport_layer_count_hint, validate_buffers,
         },
         jacobian,
+        optical_properties::shared::phase_functions,
         optical_properties::state_build::{
             PreparedLayer, PreparedOpticalState, PreparedSublayer, SharedRtmGeometry,
             SharedRtmLayerGeometry,
         },
         radiative_transfer::common_types::{
-            ExecutionMode, LayerInput, RadiativeTransferControls, Route, RtmQuadratureLevel,
-            SourceInterfaceInput, TransportFamily,
+            ExecutionMode, LayerInput, PseudoSphericalSample, RadiativeTransferControls, Route,
+            RtmQuadratureLevel, SourceInterfaceInput, TransportFamily,
         },
     },
     input::{
         atmosphere::{IntervalSemantics, VerticalInterval},
         instrument::IntegrationMode,
         observation_model::ObservationRegime,
+        reference_data::CrossSectionPoint,
         scene::{DerivativeMode, Scene},
     },
 };
+
+fn assert_close(actual: f64, expected: f64, tolerance: f64) {
+    assert!(
+        (actual - expected).abs() <= tolerance,
+        "actual={actual:?} expected={expected:?} tolerance={tolerance:?}"
+    );
+}
 
 fn route() -> Route {
     Route {
@@ -153,6 +165,194 @@ fn storage_validate_buffers_checks_required_and_optional_shapes() {
     };
     assert_eq!(
         validate_buffers(sample_count, &bad_buffers),
-        Err(Error::ShapeMismatch),
+        Err(StorageError::ShapeMismatch),
     );
+}
+
+#[test]
+fn configured_forward_input_uses_source_interfaces_when_integrated_source_is_disabled() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![
+            PreparedSublayer {
+                altitude_km: 1.0,
+                absorber_number_density_cm3: 2.0e18,
+                path_length_cm: 100_000.0,
+                aerosol_optical_depth: 0.1,
+                aerosol_single_scatter_albedo: 0.5,
+                ..PreparedSublayer::default()
+            },
+            PreparedSublayer {
+                altitude_km: 2.0,
+                absorber_number_density_cm3: 3.0e18,
+                path_length_cm: 100_000.0,
+                aerosol_optical_depth: 0.2,
+                aerosol_single_scatter_albedo: 0.5,
+                ..PreparedSublayer::default()
+            },
+        ]),
+        continuum_points: vec![CrossSectionPoint {
+            wavelength_nm: 760.0,
+            sigma_cm2_per_molecule: 1.0e-24,
+        }],
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        ..PreparedOpticalState::default()
+    };
+    let mut route = route();
+    route.rtm_controls.integrate_source_function = false;
+    let scene = Scene::default();
+    let mut layers = vec![LayerInput::default(); 2];
+    let mut pseudo_layers = vec![LayerInput::default(); 2];
+    let mut source_interfaces = vec![SourceInterfaceInput::default(); 3];
+    let mut rtm_levels = vec![RtmQuadratureLevel::default(); 3];
+    let mut pseudo_samples = vec![PseudoSphericalSample::default(); 2];
+    let mut pseudo_starts = vec![0; 3];
+    let mut pseudo_altitudes = vec![0.0; 3];
+
+    let input = configured_forward_input(
+        &scene,
+        route,
+        &prepared,
+        760.0,
+        ForwardInputBuffers {
+            layer_inputs: &mut layers,
+            pseudo_spherical_layers: &mut pseudo_layers,
+            source_interfaces: &mut source_interfaces,
+            rtm_quadrature_levels: &mut rtm_levels,
+            pseudo_spherical_samples: &mut pseudo_samples,
+            pseudo_spherical_level_starts: &mut pseudo_starts,
+            pseudo_spherical_level_altitudes: &mut pseudo_altitudes,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(input.layers.len(), 2);
+    assert_eq!(input.source_interfaces.len(), 3);
+    assert!(input.rtm_quadrature.levels.is_empty());
+    assert_close(input.layers[0].optical_depth, 0.3, 1.0e-14);
+    assert_close(input.source_interfaces[1].rtm_weight, 1.0, 1.0e-14);
+}
+
+#[test]
+fn configured_forward_input_attaches_rtm_quadrature_and_pseudo_spherical_grid() {
+    let mut below_phase = phase_functions::zero_phase_coefficients();
+    below_phase[1] = 0.2;
+    let mut above_phase = phase_functions::zero_phase_coefficients();
+    above_phase[1] = 0.8;
+    let sublayers = vec![
+        PreparedSublayer {
+            global_sublayer_index: 0,
+            altitude_km: 0.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 1,
+            altitude_km: 1.0,
+            absorber_number_density_cm3: 2.0e18,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.1,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: below_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 2,
+            altitude_km: 2.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 3,
+            altitude_km: 3.0,
+            absorber_number_density_cm3: 4.0e18,
+            path_length_cm: 100_000.0,
+            aerosol_optical_depth: 0.3,
+            aerosol_single_scatter_albedo: 1.0,
+            aerosol_phase_coefficients: above_phase,
+            ..PreparedSublayer::default()
+        },
+        PreparedSublayer {
+            global_sublayer_index: 4,
+            altitude_km: 4.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        },
+    ];
+    let mut prepared = PreparedOpticalState {
+        layers: vec![
+            PreparedLayer {
+                sublayer_start_index: 0,
+                sublayer_count: 3,
+                bottom_altitude_km: 0.0,
+                top_altitude_km: 2.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+            PreparedLayer {
+                sublayer_start_index: 2,
+                sublayer_count: 3,
+                bottom_altitude_km: 2.0,
+                top_altitude_km: 4.0,
+                interval_index_1based: 1,
+                ..PreparedLayer::default()
+            },
+        ],
+        sublayers: Some(sublayers),
+        continuum_points: vec![CrossSectionPoint {
+            wavelength_nm: 760.0,
+            sigma_cm2_per_molecule: 1.0e-24,
+        }],
+        aerosol_optical_depth: 0.4,
+        aerosol_reference_wavelength_nm: 760.0,
+        cloud_reference_wavelength_nm: 760.0,
+        interval_semantics: IntervalSemantics::ExplicitPressureBounds,
+        ..PreparedOpticalState::default()
+    };
+    prepared.ensure_shared_rtm_geometry_cache().unwrap();
+    let mut route = route();
+    route.rtm_controls.use_spherical_correction = true;
+    let mut scene = Scene::default();
+    scene.atmosphere.sublayer_divisions = 1;
+    let mut layers = vec![LayerInput::default(); 2];
+    let mut pseudo_layers = vec![LayerInput::default(); 2];
+    let mut source_interfaces = vec![SourceInterfaceInput::default(); 3];
+    let mut rtm_levels = vec![RtmQuadratureLevel::default(); 3];
+    let mut pseudo_samples = vec![PseudoSphericalSample::default(); 2];
+    let mut pseudo_starts = vec![0; 3];
+    let mut pseudo_altitudes = vec![0.0; 3];
+
+    let input = configured_forward_input(
+        &scene,
+        route,
+        &prepared,
+        760.0,
+        ForwardInputBuffers {
+            layer_inputs: &mut layers,
+            pseudo_spherical_layers: &mut pseudo_layers,
+            source_interfaces: &mut source_interfaces,
+            rtm_quadrature_levels: &mut rtm_levels,
+            pseudo_spherical_samples: &mut pseudo_samples,
+            pseudo_spherical_level_starts: &mut pseudo_starts,
+            pseudo_spherical_level_altitudes: &mut pseudo_altitudes,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(input.layers.len(), 2);
+    assert!(input.source_interfaces.is_empty());
+    assert!(input.rtm_quadrature.is_valid_for(2));
+    assert!(input.pseudo_spherical_grid.is_valid_for(2));
+    assert_close(input.rtm_quadrature.levels[1].ksca, 0.3, 1.0e-14);
+    assert_close(
+        input.pseudo_spherical_grid.samples[0].optical_depth,
+        0.3,
+        1.0e-14,
+    );
+    assert_close(
+        input.pseudo_spherical_grid.samples[1].optical_depth,
+        0.7,
+        1.0e-14,
+    );
+    assert_eq!(input.rtm_controls, route.rtm_controls);
 }
