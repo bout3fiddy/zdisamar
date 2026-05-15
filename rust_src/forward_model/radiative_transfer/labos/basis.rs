@@ -7,6 +7,11 @@ pub use super::matrix::{
     qseries, qseries_known_nonzero_product, semul, semul_add, smul, smul_add_semul3,
     smul_add_semul3_known_right_trace, smul_into, smul_known_traces, smul_known_traces_if_nonzero,
 };
+pub use super::orders::{
+    AttenuationLookup, OrdersResult, OrdersResultView, OrdersWorkspace, dot_gauss,
+    orders_scat_into, orders_scat_into_with_active, orders_scat_into_with_active_local_sum,
+    orders_scat_into_with_local_sum, orders_scat_transport_into,
+};
 pub use super::phase_basis::{
     FourierPlmBasis, PhaseKernel, PhaseKernelRow, fill_zplus_zmin, fill_zplus_zmin_from_basis,
     fill_zplus_zmin_from_basis_limited, fill_zplus_zmin_row_from_basis_limited,
