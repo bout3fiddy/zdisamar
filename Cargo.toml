@@ -157,4 +157,5 @@ name = "root_api"
 path = "tests/rust/root_api.rs"
 
 [dependencies]
+serde_json = "1.0"
 wyhash = "0.6.0"

@@ -423,6 +423,42 @@ pub extern "C" fn zds_prepare_default_o2a(ctx: *mut Context) -> c_int {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+///
+/// `json_ptr` must point to `json_len` readable bytes when `json_len` is nonzero.
+pub unsafe extern "C" fn zds_prepare_o2a_json(
+    ctx: *mut Context,
+    json_ptr: *const u8,
+    json_len: usize,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    if json_ptr.is_null() {
+        return fail(resolved, "null input JSON");
+    }
+    if json_len == 0 {
+        return fail(resolved, "empty input JSON");
+    }
+    let json = unsafe { std::slice::from_raw_parts(json_ptr, json_len) };
+    let input = match crate::o2a::parse_input_json(json) {
+        Ok(input) => input,
+        Err(err) => return fail(resolved, format!("failed to parse O2A JSON: {err:?}")),
+    };
+
+    match crate::prepare_o2a(&input) {
+        Ok(prepared) => {
+            resolved.clear_results();
+            resolved.o2a_session_storage = crate::O2ASessionStorage::default();
+            resolved.prepared = Some(prepared);
+            resolved.clear_error();
+            ZDS_OK
+        }
+        Err(err) => fail(resolved, format!("failed to prepare O2A case: {err:?}")),
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn zds_warm_o2a_session(ctx: *mut Context) -> c_int {
     let Some(resolved) = context_mut(ctx) else {
         return ZDS_FAILURE;
@@ -438,6 +474,47 @@ pub extern "C" fn zds_warm_o2a_session(ctx: *mut Context) -> c_int {
         }
         Err(err) => fail(resolved, format!("failed to warm O2A session: {err:?}")),
     }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// When `out` is non-null, it must point to `capacity` writable bytes. `out_len`
+/// may be null or writable for one `usize`.
+pub unsafe extern "C" fn zds_default_o2a_input_json(
+    ctx: *mut Context,
+    out: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    let json = match crate::o2a::render_default_input_json() {
+        Ok(json) => json,
+        Err(err) => {
+            return fail(
+                resolved,
+                format!("failed to render default O2A JSON: {err:?}"),
+            );
+        }
+    };
+    if !out_len.is_null() {
+        unsafe {
+            *out_len = json.len();
+        }
+    }
+    if !out.is_null() {
+        if capacity < json.len() + 1 {
+            return fail(resolved, "buffer too small");
+        }
+        unsafe {
+            ptr::copy_nonoverlapping(json.as_ptr(), out, json.len());
+            *out.add(json.len()) = 0;
+        }
+    }
+    resolved.clear_error();
+    ZDS_OK
 }
 
 #[unsafe(no_mangle)]
@@ -1354,6 +1431,32 @@ mod tests {
         assert_eq!(report.wavelength_start_nm, 760.0);
         assert_eq!(report.wavelength_end_nm, 761.0);
         assert_eq!(report.mean_reflectance, 0.5);
+    }
+
+    #[test]
+    fn default_o2a_json_can_prepare_context() {
+        let mut ctx = Context::default();
+        let mut len = 0_usize;
+
+        assert_eq!(
+            unsafe { zds_default_o2a_input_json(&mut ctx, ptr::null_mut(), 0, &mut len) },
+            ZDS_OK
+        );
+        assert!(len > 0);
+
+        let mut buffer = vec![0_u8; len + 1];
+        assert_eq!(
+            unsafe {
+                zds_default_o2a_input_json(&mut ctx, buffer.as_mut_ptr(), buffer.len(), &mut len)
+            },
+            ZDS_OK
+        );
+        assert_eq!(buffer[len], 0);
+        assert_eq!(
+            unsafe { zds_prepare_o2a_json(&mut ctx, buffer.as_ptr(), len) },
+            ZDS_OK
+        );
+        assert!(ctx.prepared.is_some());
     }
 
     #[test]

@@ -1,3 +1,4 @@
+pub mod json;
 pub mod metrics;
 pub mod run;
 pub mod types;
@@ -15,6 +16,7 @@ use crate::{
     },
 };
 
+pub use json::{JsonError, parse_input_json, render_default_input_json, render_input_json};
 pub use metrics::{
     AssessmentOutcome, AssessmentTrend, AssessmentVerdict, ComparisonMetrics, RangeExtremum,
     TrendState, TrendTolerances, assess_against_baseline, compare_absolute_ceiling,
