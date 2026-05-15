@@ -85,12 +85,12 @@ class Result:
     history: tuple[Iteration, ...]
     posterior_covariance: np.ndarray
     averaging_kernel: np.ndarray
-    initial_state: np.ndarray | None = None
     timing: tuple[IterationTiming, ...] = ()
     measurement: Measurement | None = None
     final_evaluation: RtmEvaluation | None = None
     last_evaluated_state: np.ndarray | None = None
     last_evaluation: RtmEvaluation | None = None
+    initial_state: np.ndarray | None = None
     _final_evaluation_factory: Callable[[], RtmEvaluation] | None = field(
         default=None,
         repr=False,

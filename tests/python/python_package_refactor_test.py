@@ -129,7 +129,7 @@ def assert_optimal_estimation_grid_mismatch_rejected() -> None:
 def assert_optimal_estimation_result_dataclass() -> None:
 
     import numpy as np
-    from zdisamar.inverse_method.optimal_estimation.retrieval import Result
+    from zdisamar.inverse_method.optimal_estimation.retrieval import IterationTiming, Result
     from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 
     first = cast(RtmEvaluation, object())
@@ -148,6 +148,20 @@ def assert_optimal_estimation_result_dataclass() -> None:
     assert replace(result, final_evaluation=second).final_evaluation is second
     assert replace(result, final_evaluation=None).final_evaluation is None
     assert "final_evaluation" in {field.name for field in fields(result)}
+
+    timing = (IterationTiming(1, 2.0, 3.0, 5.0),)
+    positional = Result(
+        (),
+        np.array([], dtype=np.float64),
+        0,
+        True,
+        (),
+        np.empty((0, 0), dtype=np.float64),
+        np.empty((0, 0), dtype=np.float64),
+        timing,
+    )
+    assert positional.timing is timing
+    assert positional.initial_state is None
 
 
 def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
