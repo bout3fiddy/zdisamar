@@ -3,8 +3,8 @@ use std::ffi::CStr;
 use zdisamar::{
     PreparedO2A,
     api::c::{
-        ZdsSpectrum, zds_context_create, zds_context_destroy, zds_last_error, zds_run_spectrum,
-        zds_spectrum_free,
+        ZdsDiagnosticReport, ZdsSpectrum, zds_context_create, zds_context_destroy, zds_last_error,
+        zds_run_spectrum, zds_spectrum_free, zds_spectrum_report,
     },
     forward_model::{
         optical_properties::{PreparedOpticalState, PreparedSublayer},
@@ -58,6 +58,8 @@ fn c_api_context_lifecycle_reports_missing_prepared_case() {
     assert!(message.contains("no prepared O2A case loaded"));
 
     unsafe {
+        let mut report = ZdsDiagnosticReport::default();
+        assert_ne!(zds_spectrum_report(ctx, &raw, &mut report), 0);
         zds_spectrum_free(ctx, &mut raw);
         zds_context_destroy(ctx);
     }

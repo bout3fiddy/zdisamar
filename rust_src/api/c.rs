@@ -21,6 +21,17 @@ pub struct ZdsSpectrum {
     pub result_handle: *mut c_void,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct ZdsDiagnosticReport {
+    pub sample_count: u32,
+    pub wavelength_start_nm: f64,
+    pub wavelength_end_nm: f64,
+    pub mean_radiance: f64,
+    pub mean_irradiance: f64,
+    pub mean_reflectance: f64,
+}
+
 impl Default for ZdsSpectrum {
     fn default() -> Self {
         Self {
@@ -61,6 +72,13 @@ impl Context {
         self.results.clear();
     }
 
+    fn result_for_handle(&self, handle: *const crate::Output) -> Option<&crate::Output> {
+        self.results
+            .iter()
+            .map(Box::as_ref)
+            .find(|product| ptr::eq(*product, handle))
+    }
+
     fn set_error(&mut self, message: impl AsRef<str>) {
         self.last_error = c_string_lossy(message.as_ref());
     }
@@ -73,6 +91,48 @@ impl Context {
 #[unsafe(no_mangle)]
 pub extern "C" fn zds_context_create() -> *mut Context {
     Box::into_raw(Box::<Context>::default())
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `ctx` must be live, `spectrum` must come from that context, and `out` must be writable.
+pub unsafe extern "C" fn zds_spectrum_report(
+    ctx: *mut Context,
+    spectrum: *const ZdsSpectrum,
+    out: *mut ZdsDiagnosticReport,
+) -> c_int {
+    let Some(resolved) = context_mut(ctx) else {
+        return ZDS_FAILURE;
+    };
+    if spectrum.is_null() {
+        return fail(resolved, "null spectrum");
+    }
+    if out.is_null() {
+        return fail(resolved, "null diagnostic report");
+    }
+
+    let handle = unsafe { (*spectrum).result_handle.cast::<crate::Output>() };
+    if handle.is_null() {
+        return fail(resolved, "spectrum is closed");
+    }
+    let Some(product) = resolved.result_for_handle(handle) else {
+        return fail(resolved, "unknown spectrum result");
+    };
+    let report = crate::report::summary_report_from_product(product);
+
+    unsafe {
+        *out = ZdsDiagnosticReport {
+            sample_count: report.sample_count,
+            wavelength_start_nm: report.wavelength_start_nm,
+            wavelength_end_nm: report.wavelength_end_nm,
+            mean_radiance: report.mean_radiance,
+            mean_irradiance: report.mean_irradiance,
+            mean_reflectance: report.mean_reflectance,
+        };
+    }
+    resolved.clear_error();
+    ZDS_OK
 }
 
 #[unsafe(no_mangle)]
@@ -240,4 +300,68 @@ fn empty_error() -> CString {
 fn c_string_lossy(message: &str) -> CString {
     let sanitized = message.replace('\0', " ");
     CString::new(sanitized).expect("nul bytes were removed")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::forward_model::instrument_grid::InstrumentGridSummary;
+
+    #[test]
+    fn spectrum_report_reads_owned_result_handle() {
+        let product = crate::Output {
+            summary: InstrumentGridSummary {
+                sample_count: 2,
+                wavelength_start_nm: 760.0,
+                wavelength_end_nm: 761.0,
+                mean_radiance: 1.0,
+                mean_irradiance: 2.0,
+                mean_reflectance: 0.5,
+                mean_noise_sigma: 0.0,
+                mean_jacobian: None,
+            },
+            wavelengths: vec![760.0, 761.0],
+            radiance: vec![1.0, 1.0],
+            irradiance: vec![2.0, 2.0],
+            reflectance: vec![0.5, 0.5],
+            noise_sigma: Vec::new(),
+            radiance_noise_sigma: Vec::new(),
+            irradiance_noise_sigma: Vec::new(),
+            reflectance_noise_sigma: Vec::new(),
+            jacobian: None,
+            effective_air_mass_factor: 0.0,
+            effective_single_scatter_albedo: 0.0,
+            effective_temperature_k: 0.0,
+            effective_pressure_hpa: 0.0,
+            gas_optical_depth: 0.0,
+            cia_optical_depth: 0.0,
+            aerosol_optical_depth: 0.0,
+            cloud_optical_depth: 0.0,
+            total_optical_depth: 0.0,
+            depolarization_factor: 0.0,
+            d_optical_depth_d_temperature: 0.0,
+        };
+        let mut ctx = Context::default();
+        ctx.results.push(Box::new(product));
+        let handle = ctx.results[0].as_ref() as *const crate::Output as *mut c_void;
+        let spectrum = ZdsSpectrum {
+            len: 2,
+            wavelength_nm: ctx.results[0].wavelengths.as_ptr(),
+            radiance: ctx.results[0].radiance.as_ptr(),
+            irradiance: ctx.results[0].irradiance.as_ptr(),
+            reflectance: ctx.results[0].reflectance.as_ptr(),
+            jacobian: ptr::null(),
+            jacobian_state_count: 0,
+            result_handle: handle,
+        };
+        let mut report = ZdsDiagnosticReport::default();
+
+        let status = unsafe { zds_spectrum_report(&mut ctx, &spectrum, &mut report) };
+
+        assert_eq!(status, ZDS_OK);
+        assert_eq!(report.sample_count, 2);
+        assert_eq!(report.wavelength_start_nm, 760.0);
+        assert_eq!(report.wavelength_end_nm, 761.0);
+        assert_eq!(report.mean_reflectance, 0.5);
+    }
 }
