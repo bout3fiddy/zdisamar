@@ -6,6 +6,11 @@ use crate::{
         geometry,
         instrument::{AdaptiveReferenceGrid, BuiltinLineShapeKind, NoiseModelKind, SamplingMode},
         observation_model::ObservationRegime,
+        reference::airmass_phase::AirmassFactorLut,
+        reference_data::{
+            ClimatologyProfile, CollisionInducedAbsorptionTable, CrossSectionTable,
+            SpectroscopyLineList,
+        },
         spectrum::SpectralGrid,
     },
 };
@@ -181,6 +186,18 @@ pub struct ResolvedVendorO2ACase {
     pub rtm_controls: RadiativeTransferControls,
     pub outputs: Vec<OutputRequest>,
     pub validation: ValidationPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedVendorO2AInputs {
+    pub profile: ClimatologyProfile,
+    pub spectroscopy_profile: ClimatologyProfile,
+    pub cross_sections: CrossSectionTable,
+    pub line_list: SpectroscopyLineList,
+    pub cia_table: Option<CollisionInducedAbsorptionTable>,
+    pub lut: AirmassFactorLut,
+    pub reference: Vec<ReferenceSample>,
+    pub raw_solar_spectrum: Vec<SolarSpectrumSample>,
 }
 
 impl ResolvedVendorO2ACase {

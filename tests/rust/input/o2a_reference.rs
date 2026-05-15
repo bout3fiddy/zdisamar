@@ -254,6 +254,30 @@ fn o2a_runtime_loads_vendor_spectroscopy_sidecars() {
 }
 
 #[test]
+fn o2a_runtime_loads_resolved_input_bundle() {
+    let mut input = o2a_reference::default_input();
+    input.o2.line_list_asset.path =
+        "data/reference_data/cross_sections/o2a_hitran_subset_07_hit08_tropomi.par".to_string();
+    input.o2.strong_lines_asset.path =
+        "data/reference_data/cross_sections/o2a_lisa_sdf_subset.dat".to_string();
+    input.o2.line_mixing_asset.path =
+        "data/reference_data/cross_sections/o2a_lisa_rmf_subset.dat".to_string();
+    input.o2o2.cia_asset.as_mut().unwrap().path =
+        "data/reference_data/cross_sections/o2o2_bira_o2a_subset.dat".to_string();
+
+    let loaded = o2a_reference::load_resolved_vendor_o2a_inputs(&input).unwrap();
+
+    assert!(loaded.profile.rows.len() > loaded.spectroscopy_profile.rows.len());
+    assert_eq!(loaded.cross_sections.points.len(), 3);
+    assert_eq!(loaded.cross_sections.points[1].wavelength_nm, 764.5);
+    assert_eq!(loaded.line_list.lines.len(), 52);
+    assert!(loaded.cia_table.as_ref().unwrap().points.len() > 300);
+    assert_eq!(loaded.lut.points.len(), 5);
+    assert_eq!(loaded.reference.len(), 701);
+    assert!(loaded.raw_solar_spectrum.len() > 2_000);
+}
+
+#[test]
 fn o2a_runtime_builds_scene_and_route_from_resolved_case() {
     let input = o2a_reference::default_input();
     let raw_solar_spectrum = vec![

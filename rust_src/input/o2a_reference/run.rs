@@ -24,8 +24,8 @@ use crate::{
         reference::spectroscopy::line_list_ops,
         reference_data::{
             ClimatologyPoint, ClimatologyProfile, CollisionInducedAbsorptionPoint,
-            CollisionInducedAbsorptionTable, RelaxationMatrix, SpectroscopyLine,
-            SpectroscopyLineList, SpectroscopyStrongLine,
+            CollisionInducedAbsorptionTable, CrossSectionPoint, CrossSectionTable,
+            RelaxationMatrix, SpectroscopyLine, SpectroscopyLineList, SpectroscopyStrongLine,
         },
         scene::Scene,
         surface::Surface,
@@ -33,7 +33,8 @@ use crate::{
 };
 
 use super::types::{
-    ExternalAsset, LineGasSpec, ReferenceSample, ResolvedVendorO2ACase, SolarSpectrumSample,
+    ExternalAsset, LineGasSpec, LoadedVendorO2AInputs, ReferenceSample, ResolvedVendorO2ACase,
+    SolarSpectrumSample,
 };
 
 #[derive(Debug)]
@@ -71,6 +72,28 @@ impl From<common_types::Error> for Error {
 }
 
 pub type Route = common_types::Route;
+
+pub fn zero_continuum_table(start_nm: f64, end_nm: f64) -> CrossSectionTable {
+    let midpoint_nm = (start_nm + end_nm) * 0.5;
+    // The values are zero, but the wavelength support still matters because
+    // downstream interpolation expects a real table shape.
+    CrossSectionTable {
+        points: vec![
+            CrossSectionPoint {
+                wavelength_nm: start_nm,
+                sigma_cm2_per_molecule: 0.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: midpoint_nm,
+                sigma_cm2_per_molecule: 0.0,
+            },
+            CrossSectionPoint {
+                wavelength_nm: end_nm,
+                sigma_cm2_per_molecule: 0.0,
+            },
+        ],
+    }
+}
 
 pub fn load_reference_samples(path: &str) -> Result<Vec<ReferenceSample>, Error> {
     let bytes = fs::read_to_string(path)?;
@@ -269,6 +292,37 @@ pub fn load_resolved_vendor_o2a_line_list(
     let relaxation_matrix = load_spectroscopy_relaxation_matrix(&spec.line_mixing_asset)?;
     attach_strong_line_sidecars(&mut line_list, strong_lines, relaxation_matrix)?;
     Ok(line_list)
+}
+
+pub fn load_resolved_vendor_o2a_inputs(
+    resolved: &ResolvedVendorO2ACase,
+) -> Result<LoadedVendorO2AInputs, Error> {
+    let profile = load_climatology_profile(&resolved.inputs.atmosphere_profile)?;
+    let dense_profile = profile.densify_vendor_pressure_grid(resolved.surface_pressure_hpa)?;
+    let spectroscopy_profile =
+        build_vendor_trace_gas_spectroscopy_profile(&profile, &dense_profile);
+    let cross_sections = zero_continuum_table(758.0, 771.0);
+    let line_list = load_resolved_vendor_o2a_line_list(&resolved.o2)?;
+    let cia_table = if resolved.o2o2.enabled {
+        let cia_asset = resolved.o2o2.cia_asset.as_ref().ok_or(Error::InvalidData)?;
+        Some(load_cia_table(cia_asset)?)
+    } else {
+        None
+    };
+    let lut = load_airmass_factor_lut(&resolved.inputs.airmass_factor_lut)?;
+    let reference = load_reference_samples(&resolved.inputs.vendor_reference_csv.path)?;
+    let raw_solar_spectrum = load_solar_spectrum_samples(&resolved.inputs.raw_solar_reference)?;
+
+    Ok(LoadedVendorO2AInputs {
+        profile: dense_profile,
+        spectroscopy_profile,
+        cross_sections,
+        line_list,
+        cia_table,
+        lut,
+        reference,
+        raw_solar_spectrum,
+    })
 }
 
 pub fn load_spectroscopy_line_list(asset: &ExternalAsset) -> Result<SpectroscopyLineList, Error> {
