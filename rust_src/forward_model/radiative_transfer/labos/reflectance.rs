@@ -1,8 +1,9 @@
 use super::{
     phase_basis::{FourierPlmBasis, PhaseKernel, fill_zplus_zmin_row_from_basis_limited},
-    types::{Geometry, MAX_NMUTOT, UdField},
+    types::{Geometry, MAX_NMUTOT, UdField, UdLocal},
 };
 use crate::forward_model::{
+    jacobian::{self, State},
     optical_properties::shared::phase_functions::{self, PhaseCoefficients},
     radiative_transfer::{
         common_route,
@@ -16,6 +17,18 @@ use crate::forward_model::{
 struct PhaseRows {
     zplus: [f64; MAX_NMUTOT],
     zmin: [f64; MAX_NMUTOT],
+}
+
+struct ScatteringSourceRowSums {
+    pplusplus_ed: f64,
+    pminplus_ed: f64,
+    pminmin_u: f64,
+    pplusmin_u: f64,
+}
+
+struct AerosolIntervalBounds {
+    bottom: usize,
+    top: usize,
 }
 
 pub fn fill_adjacent_layer_phase_max_indices(
@@ -168,6 +181,452 @@ pub fn calc_integrated_reflectance_with_basis(
         reflectance += ud[0].e.get(view_idx) * ud[0].u.col[solar_col].get(view_idx);
     }
     reflectance
+}
+
+fn absorption_interface_weighting(
+    ud: &[UdField],
+    ud_sum_local: &[UdLocal],
+    rtm_quadrature: &RtmQuadratureGrid,
+    ilevel: usize,
+    use_pseudo_spherical: bool,
+    geometry: &Geometry,
+) -> f64 {
+    let view_col = 0;
+    let solar_col = 1;
+    let view_idx = geometry.view_idx();
+    let solar_idx = geometry.n_gauss + 1;
+    let level = ud[ilevel];
+    let mut sum = 0.0;
+
+    for i_gauss in 0..geometry.n_gauss {
+        let mu = geometry.u[i_gauss].max(1.0e-12);
+        sum -= (level.u.col[view_col].get(i_gauss) * level.d.col[solar_col].get(i_gauss)
+            + level.d.col[view_col].get(i_gauss) * level.u.col[solar_col].get(i_gauss))
+            / mu;
+    }
+    sum -= level.u.col[solar_col].get(view_idx) * level.e.get(view_idx)
+        / geometry.u[view_idx].max(1.0e-12);
+
+    if use_pseudo_spherical
+        && ud_sum_local.len() >= ud.len()
+        && rtm_quadrature.levels.len() >= ud.len()
+    {
+        let earth_radius_km = 6371.0;
+        let solar_mu = geometry.u[solar_idx].max(1.0e-12);
+        let y_k = earth_radius_km + rtm_quadrature.levels[ilevel].altitude_km;
+        let mut pseudo_direct_sum = 0.0;
+        let mut level_index = ilevel + 1;
+        while level_index > 0 {
+            level_index -= 1;
+            let y_l = earth_radius_km + rtm_quadrature.levels[level_index].altitude_km;
+            let denominator = (y_k * y_k - y_l * y_l * (1.0 - solar_mu * solar_mu))
+                .abs()
+                .sqrt();
+            let solar_slant_inverse = if denominator > 0.0 {
+                y_k / denominator
+            } else {
+                0.0
+            };
+            pseudo_direct_sum += ud_sum_local[level_index].u.col[view_col].get(solar_idx)
+                * ud[level_index].e.get(solar_idx)
+                * solar_slant_inverse;
+        }
+        sum -= pseudo_direct_sum;
+    } else {
+        sum -= level.u.col[view_col].get(solar_idx) * level.e.get(solar_idx)
+            / geometry.u[solar_idx].max(1.0e-12);
+    }
+
+    sum
+}
+
+fn scattering_source_row_sums(
+    scaled_phase_coefficients: PhaseCoefficients,
+    max_phase_index: usize,
+    level: &UdField,
+    i_fourier: usize,
+    geometry: &Geometry,
+    plm_basis: &FourierPlmBasis,
+    row_index: usize,
+) -> ScatteringSourceRowSums {
+    let solar_col = 1;
+    let solar_idx = geometry.n_gauss + 1;
+    let rows = fill_zplus_zmin_row_from_basis_limited(
+        i_fourier,
+        scaled_phase_coefficients,
+        max_phase_index,
+        geometry,
+        plm_basis,
+        row_index,
+    );
+    let mu_row = geometry.u[row_index].max(1.0e-12);
+    let mut sums = ScatteringSourceRowSums {
+        pplusplus_ed: 0.0,
+        pminplus_ed: 0.0,
+        pminmin_u: 0.0,
+        pplusmin_u: 0.0,
+    };
+
+    for imu in 0..geometry.n_gauss {
+        let mu_col = geometry.u[imu].max(1.0e-12);
+        let pplus = (0.25 * rows.zplus[imu] / mu_row) / mu_col;
+        let pmin = (0.25 * rows.zmin[imu] / mu_row) / mu_col;
+        sums.pplusplus_ed += pplus * level.d.col[solar_col].get(imu);
+        sums.pminplus_ed += pmin * level.d.col[solar_col].get(imu);
+        sums.pminmin_u += pplus * level.u.col[solar_col].get(imu);
+        sums.pplusmin_u += pmin * level.u.col[solar_col].get(imu);
+    }
+
+    let mu_solar = geometry.u[solar_idx].max(1.0e-12);
+    let pplus_direct = (0.25 * rows.zplus[solar_idx] / mu_row) / mu_solar;
+    let pmin_direct = (0.25 * rows.zmin[solar_idx] / mu_row) / mu_solar;
+    sums.pplusplus_ed += pplus_direct * level.e.get(solar_idx);
+    sums.pminplus_ed += pmin_direct * level.e.get(solar_idx);
+    sums
+}
+
+fn scattering_source_weighting_from_scaled_phase(
+    scaled_phase_coefficients: PhaseCoefficients,
+    max_phase_index: usize,
+    ud: &[UdField],
+    ilevel: usize,
+    i_fourier: usize,
+    geometry: &Geometry,
+    plm_basis: &FourierPlmBasis,
+) -> f64 {
+    let view_col = 0;
+    let view_idx = geometry.view_idx();
+    let level = &ud[ilevel];
+    let mut sum = 0.0;
+
+    for row_index in 0..geometry.n_gauss {
+        let row = scattering_source_row_sums(
+            scaled_phase_coefficients,
+            max_phase_index,
+            level,
+            i_fourier,
+            geometry,
+            plm_basis,
+            row_index,
+        );
+        sum += level.d.col[view_col].get(row_index) * (row.pminplus_ed + row.pminmin_u)
+            + level.u.col[view_col].get(row_index) * (row.pplusplus_ed + row.pplusmin_u);
+    }
+
+    let view_row = scattering_source_row_sums(
+        scaled_phase_coefficients,
+        max_phase_index,
+        level,
+        i_fourier,
+        geometry,
+        plm_basis,
+        view_idx,
+    );
+    sum += level.e.get(view_idx) * (view_row.pminplus_ed + view_row.pminmin_u);
+    sum
+}
+
+fn active_aerosol_interior_bounds(
+    rtm_quadrature: &RtmQuadratureGrid,
+    end_level: usize,
+) -> Option<AerosolIntervalBounds> {
+    let state_index = jacobian::state_index(State::AerosolOpticalDepth);
+    let mut first_active = None;
+    let mut last_active = None;
+    for ilevel in 0..=end_level {
+        if rtm_quadrature.levels[ilevel].ksca_phase_coefficient_jacobian[state_index][0] <= 0.0 {
+            continue;
+        }
+        if first_active.is_none() {
+            first_active = Some(ilevel);
+        }
+        last_active = Some(ilevel);
+    }
+    let first = first_active?;
+    let last = last_active?;
+    if first == 0 || last + 1 > end_level {
+        return None;
+    }
+    Some(AerosolIntervalBounds {
+        bottom: first - 1,
+        top: last + 1,
+    })
+}
+
+fn aerosol_single_scattering_albedo(layers: &[LayerInput]) -> f64 {
+    let aerosol_optical_depth: f64 = layers
+        .iter()
+        .map(|layer| layer.aerosol_optical_depth.max(0.0))
+        .sum();
+    let aerosol_scattering_optical_depth: f64 = layers
+        .iter()
+        .map(|layer| layer.aerosol_scattering_optical_depth.max(0.0))
+        .sum();
+    if aerosol_optical_depth <= 0.0 {
+        return 1.0;
+    }
+    (aerosol_scattering_optical_depth / aerosol_optical_depth).clamp(0.0, 1.0)
+}
+
+fn unit_phase_coefficients_from_scaled(
+    scaled_phase_coefficients: PhaseCoefficients,
+) -> PhaseCoefficients {
+    let mut unit = phase_functions::zero_phase_coefficients();
+    let scale = scaled_phase_coefficients[0];
+    if scale <= 0.0 {
+        return unit;
+    }
+    for (index, value) in unit.iter_mut().enumerate() {
+        *value = scaled_phase_coefficients[index] / scale;
+    }
+    unit
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scattering_coefficient_interface_weighting(
+    scaled_phase_coefficients: PhaseCoefficients,
+    ud: &[UdField],
+    ud_sum_local: &[UdLocal],
+    rtm_quadrature: &RtmQuadratureGrid,
+    ilevel: usize,
+    i_fourier: usize,
+    use_pseudo_spherical: bool,
+    geometry: &Geometry,
+    plm_basis: &FourierPlmBasis,
+) -> f64 {
+    let unit_phase_coefficients = unit_phase_coefficients_from_scaled(scaled_phase_coefficients);
+    if unit_phase_coefficients[0] == 0.0 {
+        return 0.0;
+    }
+    let max_phase_index = max_phase_coefficient_index(&unit_phase_coefficients);
+    if i_fourier > max_phase_index {
+        return 0.0;
+    }
+    scattering_source_weighting_from_scaled_phase(
+        unit_phase_coefficients,
+        max_phase_index,
+        ud,
+        ilevel,
+        i_fourier,
+        geometry,
+        plm_basis,
+    ) + absorption_interface_weighting(
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        ilevel,
+        use_pseudo_spherical,
+        geometry,
+    )
+}
+
+fn aerosol_total_extinction_interface_weighting(
+    scattering_weighting: f64,
+    absorption_weighting: f64,
+    aerosol_ssa: f64,
+) -> f64 {
+    aerosol_ssa * scattering_weighting + (1.0 - aerosol_ssa) * absorption_weighting
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn calc_aerosol_optical_depth_weighting_with_basis(
+    layers: &[LayerInput],
+    rtm_quadrature: &RtmQuadratureGrid,
+    ud: &[UdField],
+    ud_sum_local: &[UdLocal],
+    end_level: usize,
+    i_fourier: usize,
+    use_pseudo_spherical: bool,
+    geometry: &Geometry,
+    plm_basis: &FourierPlmBasis,
+    _adjacent_layer_phase_max_indices: Option<&[usize]>,
+) -> f64 {
+    if !rtm_quadrature.is_valid_for(layers.len()) {
+        return 0.0;
+    }
+    if let Some(bounds) = active_aerosol_interior_bounds(rtm_quadrature, end_level) {
+        if bounds.top <= bounds.bottom + 1 {
+            return 0.0;
+        }
+        let aerosol_ssa = aerosol_single_scattering_albedo(layers);
+        let needs_absorption_weighting = (1.0 - aerosol_ssa) != 0.0;
+        let denominator = rtm_quadrature.levels[bounds.top - 1].altitude_km
+            - rtm_quadrature.levels[bounds.bottom].altitude_km;
+        if denominator <= 0.0 {
+            return 0.0;
+        }
+
+        let mut previous = aerosol_total_extinction_interface_weighting(
+            scattering_coefficient_interface_weighting(
+                rtm_quadrature.levels[bounds.bottom].aerosol_ksca_phase_above_per_km,
+                ud,
+                ud_sum_local,
+                rtm_quadrature,
+                bounds.bottom,
+                i_fourier,
+                use_pseudo_spherical,
+                geometry,
+                plm_basis,
+            ),
+            if needs_absorption_weighting {
+                absorption_interface_weighting(
+                    ud,
+                    ud_sum_local,
+                    rtm_quadrature,
+                    bounds.bottom,
+                    use_pseudo_spherical,
+                    geometry,
+                )
+            } else {
+                0.0
+            },
+            aerosol_ssa,
+        );
+        let mut integral = 0.0;
+        for ilevel in bounds.bottom + 1..bounds.top {
+            let current = aerosol_total_extinction_interface_weighting(
+                scattering_coefficient_interface_weighting(
+                    rtm_quadrature.levels[ilevel].aerosol_ksca_phase_above_per_km,
+                    ud,
+                    ud_sum_local,
+                    rtm_quadrature,
+                    ilevel,
+                    i_fourier,
+                    use_pseudo_spherical,
+                    geometry,
+                    plm_basis,
+                ),
+                if needs_absorption_weighting {
+                    absorption_interface_weighting(
+                        ud,
+                        ud_sum_local,
+                        rtm_quadrature,
+                        ilevel,
+                        use_pseudo_spherical,
+                        geometry,
+                    )
+                } else {
+                    0.0
+                },
+                aerosol_ssa,
+            );
+            let dz = rtm_quadrature.levels[ilevel].altitude_km
+                - rtm_quadrature.levels[ilevel - 1].altitude_km;
+            if dz > 0.0 {
+                integral += 0.5 * (previous + current) * dz;
+            }
+            previous = current;
+        }
+        return integral / denominator;
+    }
+
+    let state_index = jacobian::state_index(State::AerosolOpticalDepth);
+    let mut weighting = 0.0;
+    for ilevel in 0..=end_level {
+        let level = &rtm_quadrature.levels[ilevel];
+        if level.weight <= 0.0 {
+            continue;
+        }
+        let scaled_phase_coefficients = level.ksca_phase_coefficient_jacobian[state_index];
+        let d_sca_d_tau = scaled_phase_coefficients[0];
+        if d_sca_d_tau == 0.0 {
+            continue;
+        }
+        let source_max_phase_index = max_phase_coefficient_index(&scaled_phase_coefficients);
+        if i_fourier > source_max_phase_index {
+            continue;
+        }
+        let source_weighting = scattering_source_weighting_from_scaled_phase(
+            scaled_phase_coefficients,
+            source_max_phase_index,
+            ud,
+            ilevel,
+            i_fourier,
+            geometry,
+            plm_basis,
+        );
+        let extinction_weighting = d_sca_d_tau
+            * absorption_interface_weighting(
+                ud,
+                ud_sum_local,
+                rtm_quadrature,
+                ilevel,
+                use_pseudo_spherical,
+                geometry,
+            );
+        weighting += level.weight * (source_weighting + extinction_weighting);
+    }
+    weighting
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn calc_aerosol_layer_pressure_shift_weighting_with_basis(
+    layers: &[LayerInput],
+    rtm_quadrature: &RtmQuadratureGrid,
+    ud: &[UdField],
+    ud_sum_local: &[UdLocal],
+    end_level: usize,
+    i_fourier: usize,
+    use_pseudo_spherical: bool,
+    geometry: &Geometry,
+    plm_basis: &FourierPlmBasis,
+) -> f64 {
+    if !rtm_quadrature.is_valid_for(layers.len()) {
+        return 0.0;
+    }
+    let Some(bounds) = active_aerosol_interior_bounds(rtm_quadrature, end_level) else {
+        return 0.0;
+    };
+    let aerosol_ssa = aerosol_single_scattering_albedo(layers);
+    let top_sca_weighting = scattering_coefficient_interface_weighting(
+        rtm_quadrature.levels[bounds.top].aerosol_ksca_phase_below_per_km,
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        bounds.top,
+        i_fourier,
+        use_pseudo_spherical,
+        geometry,
+        plm_basis,
+    );
+    let bottom_sca_weighting = scattering_coefficient_interface_weighting(
+        rtm_quadrature.levels[bounds.bottom].aerosol_ksca_phase_above_per_km,
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        bounds.bottom,
+        i_fourier,
+        use_pseudo_spherical,
+        geometry,
+        plm_basis,
+    );
+    let ksca = rtm_quadrature.levels[bounds.top].aerosol_ksca_phase_below_per_km[0];
+    let kabs = if aerosol_ssa > 0.0 {
+        ksca * (1.0 - aerosol_ssa) / aerosol_ssa
+    } else {
+        0.0
+    };
+    if kabs == 0.0 {
+        return (top_sca_weighting - bottom_sca_weighting) * ksca;
+    }
+    let top_abs_weighting = absorption_interface_weighting(
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        bounds.top,
+        use_pseudo_spherical,
+        geometry,
+    );
+    let bottom_abs_weighting = absorption_interface_weighting(
+        ud,
+        ud_sum_local,
+        rtm_quadrature,
+        bounds.bottom,
+        use_pseudo_spherical,
+        geometry,
+    );
+    (top_sca_weighting - bottom_sca_weighting) * ksca
+        + (top_abs_weighting - bottom_abs_weighting) * kabs
 }
 
 fn level_source(
