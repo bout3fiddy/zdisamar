@@ -1,5 +1,6 @@
 use zdisamar::{
     forward_model::{
+        implementations::instrument::integration_for_wavelength_checked,
         instrument_grid::grid_calculation::cache::SpectralEvaluationCache,
         instrument_grid::grid_calculation::forward_input::{
             ForwardInputBuffers, configured_forward_input,
@@ -29,7 +30,7 @@ use zdisamar::{
     },
     input::{
         atmosphere::{IntervalSemantics, VerticalInterval},
-        instrument::IntegrationMode,
+        instrument::{InstrumentLineShape, IntegrationMode, SpectralChannel},
         observation_model::ObservationRegime,
         reference_data::CrossSectionPoint,
         scene::{DerivativeMode, Scene},
@@ -510,6 +511,65 @@ fn simulate_product_runs_forward_samples_on_scene_axis() {
     assert_close(product.effective_air_mass_factor, 2.0, 0.0);
     assert_close(product.effective_single_scatter_albedo, 0.9, 0.0);
     assert!(product.jacobian.is_none());
+}
+
+#[test]
+fn simulate_product_uses_resolved_line_shape_integration_kernels() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        }]),
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.surface.albedo = 0.23;
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 761.0;
+    scene.spectral_grid.sample_count = 2;
+    let line_shape = InstrumentLineShape {
+        sample_count: 2,
+        offsets_nm: vec![-1.0, 1.0],
+        weights: vec![1.0, 3.0],
+    };
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .explicit = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .response
+        .instrument_line_shape = line_shape.clone();
+    scene
+        .observation_model
+        .measurement_pipeline
+        .irradiance
+        .explicit = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .irradiance
+        .response
+        .instrument_line_shape = line_shape;
+    let kernel =
+        integration_for_wavelength_checked(&scene, SpectralChannel::Radiance, 760.0).unwrap();
+    assert!(kernel.enabled);
+    assert_eq!(kernel.sample_count, 2);
+    assert_close(kernel.weights[0], 0.25, 1.0e-14);
+    assert_close(kernel.weights[1], 0.75, 1.0e-14);
+    let mut route = route();
+    route.rtm_controls.scattering = ScatteringMode::None;
+    route.rtm_controls.integrate_source_function = false;
+
+    let product = simulate_product(&scene, route, &prepared).unwrap();
+
+    for reflectance in product.reflectance {
+        assert_close(reflectance, 0.23, 1.0e-14);
+    }
 }
 
 #[test]
