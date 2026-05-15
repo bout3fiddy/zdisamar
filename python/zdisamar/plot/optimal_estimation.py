@@ -192,7 +192,7 @@ def _convergence(result):
             tooltip=[
                 alt.Tooltip("iteration:O", title="Iteration"),
                 alt.Tooltip("state:N", title="State"),
-                alt.Tooltip("axis_title:N", title="State unit"),
+                alt.Tooltip("unit:N", title="State unit"),
                 alt.Tooltip("value:Q", title="Value", format=".6g"),
                 alt.Tooltip(
                     "state_vector_convergence:Q",
