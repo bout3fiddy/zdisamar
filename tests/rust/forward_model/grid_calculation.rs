@@ -10,6 +10,7 @@ use zdisamar::{
             resolved_pseudo_spherical_sample_count, transport_layer_count_hint, validate_buffers,
         },
         jacobian,
+        method::Method,
         optical_properties::shared::phase_functions,
         optical_properties::state_build::{
             PreparedLayer, PreparedOpticalState, PreparedSublayer, SharedRtmGeometry,
@@ -19,6 +20,7 @@ use zdisamar::{
             ExecutionMode, LayerInput, PseudoSphericalSample, RadiativeTransferControls, Route,
             RtmQuadratureLevel, ScatteringMode, SourceInterfaceInput, TransportFamily,
         },
+        run_spectrum,
     },
     input::{
         atmosphere::{IntervalSemantics, VerticalInterval},
@@ -441,4 +443,31 @@ fn simulate_product_runs_forward_samples_on_scene_axis() {
     assert_close(product.effective_air_mass_factor, 2.0, 0.0);
     assert_close(product.effective_single_scatter_albedo, 0.9, 0.0);
     assert!(product.jacobian.is_none());
+}
+
+#[test]
+fn run_spectrum_exposes_exact_spectrum_product_path() {
+    let prepared = PreparedOpticalState {
+        sublayers: Some(vec![PreparedSublayer {
+            altitude_km: 1.0,
+            path_length_cm: 100_000.0,
+            ..PreparedSublayer::default()
+        }]),
+        ..PreparedOpticalState::default()
+    };
+    let mut scene = Scene::default();
+    scene.surface.albedo = 0.17;
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 761.0;
+    scene.spectral_grid.sample_count = 2;
+    let controls = RadiativeTransferControls {
+        scattering: ScatteringMode::None,
+        integrate_source_function: false,
+        ..RadiativeTransferControls::default()
+    };
+
+    let product = run_spectrum::run(&scene, &prepared, Method::Exact, controls).unwrap();
+
+    assert_eq!(product.wavelengths, vec![760.0, 761.0]);
+    assert_close(product.summary.mean_reflectance, 0.17, 1.0e-14);
 }
