@@ -17,7 +17,7 @@ pub use super::matrix::{
 pub use super::orders::{
     AttenuationLookup, OrdersResult, OrdersResultView, OrdersWorkspace, dot_gauss,
     orders_scat_into, orders_scat_into_with_active, orders_scat_into_with_active_local_sum,
-    orders_scat_into_with_local_sum, orders_scat_transport_into,
+    orders_scat_into_with_local_sum, orders_scat_tangent, orders_scat_transport_into,
 };
 pub use super::phase_basis::{
     FourierPlmBasis, PhaseKernel, PhaseKernelRow, fill_zplus_zmin, fill_zplus_zmin_from_basis,
