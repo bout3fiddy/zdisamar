@@ -6,10 +6,10 @@ use zdisamar::{
     input::{
         atmosphere::ParticlePlacementSemantics,
         geometry,
-        instrument::{BuiltinLineShapeKind, SamplingMode},
+        instrument::{BuiltinLineShapeKind, IntegrationMode, SamplingMode, SlitIndex},
         o2a_reference::{
-            self, AssessmentVerdict, PlanError, PlanSpec, ReferenceSample, TrendState,
-            TrendTolerances,
+            self, AssessmentVerdict, PlanError, PlanSpec, ReferenceSample, SolarSpectrumSample,
+            TrendState, TrendTolerances,
         },
         scene::DerivativeMode,
     },
@@ -88,6 +88,110 @@ fn o2a_plan_spec_rejects_unsupported_modes() {
         plan.validate().unwrap_err(),
         PlanError::UnsupportedExecutionMode
     );
+}
+
+#[test]
+fn o2a_runtime_loaders_parse_reference_and_solar_csv() {
+    let reference_path = temp_csv_path("zdisamar-rust-reference.csv");
+    std::fs::write(
+        &reference_path,
+        "wavelength_nm,irradiance,radiance,reflectance\n755.0,1.0,2.0,0.2\n756.0,3.0,4.0,0.4\n",
+    )
+    .unwrap();
+    let reference =
+        o2a_reference::load_reference_samples(reference_path.to_str().unwrap()).unwrap();
+    std::fs::remove_file(&reference_path).unwrap();
+
+    assert_eq!(reference.len(), 2);
+    assert_eq!(reference[0].wavelength_nm, 755.0);
+    assert_eq!(reference[0].irradiance, 1.0);
+    assert_eq!(reference[1].reflectance, 0.4);
+
+    let solar_path = temp_csv_path("zdisamar-rust-solar.csv");
+    std::fs::write(
+        &solar_path,
+        "wavelength_nm,irradiance\n754.5,10.0\n755.0,11.0\n776.5,12.0\n",
+    )
+    .unwrap();
+    let mut input = o2a_reference::default_input();
+    input.inputs.raw_solar_reference.path = solar_path.to_string_lossy().into_owned();
+    let solar =
+        o2a_reference::load_solar_spectrum_samples(&input.inputs.raw_solar_reference).unwrap();
+    std::fs::remove_file(&solar_path).unwrap();
+
+    assert_eq!(solar.len(), 3);
+    assert_eq!(solar[2].wavelength_nm, 776.5);
+    assert_eq!(solar[2].irradiance, 12.0);
+}
+
+#[test]
+fn o2a_runtime_builds_scene_and_route_from_resolved_case() {
+    let input = o2a_reference::default_input();
+    let raw_solar_spectrum = vec![
+        SolarSpectrumSample {
+            wavelength_nm: 754.0,
+            irradiance: 9.0,
+        },
+        SolarSpectrumSample {
+            wavelength_nm: 754.5,
+            irradiance: 10.0,
+        },
+        SolarSpectrumSample {
+            wavelength_nm: 755.0,
+            irradiance: 11.0,
+        },
+        SolarSpectrumSample {
+            wavelength_nm: 760.0,
+            irradiance: 12.0,
+        },
+        SolarSpectrumSample {
+            wavelength_nm: 776.0,
+            irradiance: 13.0,
+        },
+        SolarSpectrumSample {
+            wavelength_nm: 776.5,
+            irradiance: 14.0,
+        },
+        SolarSpectrumSample {
+            wavelength_nm: 777.0,
+            irradiance: 15.0,
+        },
+    ];
+
+    let scene =
+        o2a_reference::build_resolved_vendor_o2a_scene(&input, &raw_solar_spectrum).unwrap();
+    let route = o2a_reference::prepare_resolved_vendor_o2a_route(&scene, &input).unwrap();
+
+    assert_eq!(scene.id, "o2a_disamar_reference_python");
+    assert_eq!(scene.atmosphere.interval_grid.intervals.len(), 3);
+    assert_eq!(scene.atmosphere.interval_grid.fit_interval_index_1based, 2);
+    assert_eq!(scene.absorbers.items.len(), 1);
+    assert_eq!(scene.absorbers.items[0].id, "o2");
+    assert_eq!(
+        scene.absorbers.items[0]
+            .spectroscopy
+            .line_gas_controls
+            .isotopes_sim,
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        scene
+            .observation_model
+            .operational_solar_spectrum
+            .wavelengths_nm,
+        vec![754.5, 755.0, 760.0, 776.0, 776.5]
+    );
+    let response = &scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .response;
+    assert!(response.explicit);
+    assert_eq!(response.slit_index, SlitIndex::FlatTopN4);
+    assert_eq!(response.integration_mode, IntegrationMode::DisamarHrGrid);
+    assert_eq!(route.execution_mode, ExecutionMode::Scalar);
+    assert_eq!(route.derivative_mode, DerivativeMode::None);
+    assert_eq!(route.rtm_controls.n_streams, 20);
 }
 
 #[test]
@@ -190,4 +294,10 @@ fn product_with_reflectance(wavelengths: Vec<f64>, reflectance: Vec<f64>) -> Ins
         depolarization_factor: 0.0,
         d_optical_depth_d_temperature: 0.0,
     }
+}
+
+fn temp_csv_path(name: &str) -> std::path::PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!("{}-{}", std::process::id(), name));
+    path
 }

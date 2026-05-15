@@ -1,4 +1,5 @@
 pub mod metrics;
+pub mod run;
 pub mod types;
 
 use crate::{
@@ -20,6 +21,11 @@ pub use metrics::{
     compare_higher_is_better, compare_lower_is_better, compute_comparison_metrics,
     interpolate_vector, max_reference_in_range, max_vector_in_range, mean_reference_in_range,
     mean_vector_in_range, min_reference_in_range, min_vector_in_range,
+};
+pub use run::{
+    Error as RunError, Route, build_o2_absorber_set, build_resolved_vendor_o2a_scene,
+    load_reference_samples, load_solar_spectrum_samples, prepare_resolved_vendor_o2a_route,
+    reference_spectral_response, retain_solar_support,
 };
 pub use types::{
     AerosolSpec, CiaSpec, ExternalAsset, GeometrySpec, InputsSpec, LineGasSpec, Metadata,
