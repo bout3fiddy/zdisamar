@@ -1,5 +1,10 @@
 use crate::{
     forward_model::{
+        instrument_grid::grid_calculation::{
+            cache::SpectralEvaluationCache,
+            types::Implementations,
+            wavelength_plan::{ForwardCacheMiss, WavelengthSampling},
+        },
         jacobian,
         optical_properties::state_build::PreparedOpticalState,
         radiative_transfer::common_types::{
@@ -37,6 +42,176 @@ pub struct Buffers<'a> {
     pub radiance_noise_sigma: Option<&'a [f64]>,
     pub irradiance_noise_sigma: Option<&'a [f64]>,
     pub reflectance_noise_sigma: Option<&'a [f64]>,
+}
+
+#[derive(Debug)]
+pub struct BuffersMut<'a> {
+    pub wavelengths: &'a mut [f64],
+    pub radiance: &'a mut [f64],
+    pub irradiance: &'a mut [f64],
+    pub reflectance: &'a mut [f64],
+    pub scratch: &'a mut [f64],
+    pub scratch_aux: &'a mut [f64],
+    pub layer_inputs: &'a mut [LayerInput],
+    pub pseudo_spherical_layers: &'a mut [LayerInput],
+    pub source_interfaces: &'a mut [SourceInterfaceInput],
+    pub rtm_quadrature_levels: &'a mut [RtmQuadratureLevel],
+    pub pseudo_spherical_samples: &'a mut [PseudoSphericalSample],
+    pub pseudo_spherical_level_starts: &'a mut [usize],
+    pub pseudo_spherical_level_altitudes: &'a mut [f64],
+    pub jacobian: Option<&'a mut [f64]>,
+    pub noise_sigma: Option<&'a mut [f64]>,
+    pub radiance_noise_sigma: Option<&'a mut [f64]>,
+    pub irradiance_noise_sigma: Option<&'a mut [f64]>,
+    pub reflectance_noise_sigma: Option<&'a mut [f64]>,
+}
+
+#[derive(Debug, Default)]
+pub struct SummaryStorage {
+    pub wavelengths: Vec<f64>,
+    pub radiance: Vec<f64>,
+    pub irradiance: Vec<f64>,
+    pub reflectance: Vec<f64>,
+    pub scratch: Vec<f64>,
+    pub scratch_aux: Vec<f64>,
+    pub layer_inputs: Vec<LayerInput>,
+    pub pseudo_spherical_layers: Vec<LayerInput>,
+    pub source_interfaces: Vec<SourceInterfaceInput>,
+    pub rtm_quadrature_levels: Vec<RtmQuadratureLevel>,
+    pub pseudo_spherical_samples: Vec<PseudoSphericalSample>,
+    pub pseudo_spherical_level_starts: Vec<usize>,
+    pub pseudo_spherical_level_altitudes: Vec<f64>,
+    pub jacobian: Vec<f64>,
+    pub noise_sigma: Vec<f64>,
+    pub radiance_noise_sigma: Vec<f64>,
+    pub irradiance_noise_sigma: Vec<f64>,
+    pub reflectance_noise_sigma: Vec<f64>,
+    pub evaluation_cache: SpectralEvaluationCache,
+    pub wavelength_sampling: Vec<WavelengthSampling>,
+    pub forward_misses: Vec<ForwardCacheMiss>,
+    pub wavelength_plan_key: u64,
+    pub wavelength_plan_valid: bool,
+    pub forward_misses_valid: bool,
+    pub profile_spectroscopy_cache_key: u64,
+    pub profile_spectroscopy_cache_valid: bool,
+}
+
+pub type ProductStorage = SummaryStorage;
+
+impl SummaryStorage {
+    pub fn invalidate_wavelength_plan(&mut self) {
+        self.wavelength_sampling.clear();
+        self.forward_misses.clear();
+        self.wavelength_plan_key = 0;
+        self.wavelength_plan_valid = false;
+        self.forward_misses_valid = false;
+        self.profile_spectroscopy_cache_key = 0;
+        self.profile_spectroscopy_cache_valid = false;
+    }
+
+    pub fn spectral_cache(&mut self) -> &mut SpectralEvaluationCache {
+        self.evaluation_cache.reset();
+        &mut self.evaluation_cache
+    }
+
+    pub fn buffers(
+        &mut self,
+        scene: &Scene,
+        route: Route,
+        implementations: Implementations,
+    ) -> BuffersMut<'_> {
+        let sample_count = scene.spectral_grid.sample_count as usize;
+        let layer_count = transport_layer_count_hint(scene, route);
+        let pseudo_spherical_sample_count = pseudo_spherical_sample_count_hint(scene, route);
+        let wants_jacobian = route.derivative_mode != crate::input::scene::DerivativeMode::None;
+        let wants_radiance_noise =
+            (implementations.noise.materializes_sigma)(scene, SpectralChannel::Radiance);
+        let wants_irradiance_noise =
+            (implementations.noise.materializes_sigma)(scene, SpectralChannel::Irradiance);
+        let wants_noise = wants_radiance_noise
+            || wants_irradiance_noise
+            || reflectance_calibration_enabled(scene);
+
+        resize_with_default(&mut self.wavelengths, sample_count);
+        resize_with_default(&mut self.radiance, sample_count);
+        resize_with_default(&mut self.irradiance, sample_count);
+        resize_with_default(&mut self.reflectance, sample_count);
+        resize_with_default(&mut self.scratch, sample_count);
+        resize_with_default(&mut self.scratch_aux, sample_count);
+        resize_with_default(&mut self.layer_inputs, layer_count);
+        resize_with_default(
+            &mut self.pseudo_spherical_layers,
+            pseudo_spherical_sample_count,
+        );
+        resize_with_default(&mut self.source_interfaces, layer_count + 1);
+        resize_with_default(&mut self.rtm_quadrature_levels, layer_count + 1);
+        resize_with_default(
+            &mut self.pseudo_spherical_samples,
+            pseudo_spherical_sample_count,
+        );
+        resize_with_default(&mut self.pseudo_spherical_level_starts, layer_count + 1);
+        resize_with_default(&mut self.pseudo_spherical_level_altitudes, layer_count + 1);
+        if wants_jacobian {
+            resize_with_default(&mut self.jacobian, sample_count * jacobian::STATE_COUNT);
+        }
+        if wants_noise {
+            resize_with_default(&mut self.noise_sigma, sample_count);
+            resize_with_default(&mut self.radiance_noise_sigma, sample_count);
+            resize_with_default(&mut self.irradiance_noise_sigma, sample_count);
+            resize_with_default(&mut self.reflectance_noise_sigma, sample_count);
+        }
+
+        BuffersMut {
+            wavelengths: &mut self.wavelengths[..sample_count],
+            radiance: &mut self.radiance[..sample_count],
+            irradiance: &mut self.irradiance[..sample_count],
+            reflectance: &mut self.reflectance[..sample_count],
+            scratch: &mut self.scratch[..sample_count],
+            scratch_aux: &mut self.scratch_aux[..sample_count],
+            layer_inputs: &mut self.layer_inputs[..layer_count],
+            pseudo_spherical_layers: &mut self.pseudo_spherical_layers
+                [..pseudo_spherical_sample_count],
+            source_interfaces: &mut self.source_interfaces[..layer_count + 1],
+            rtm_quadrature_levels: &mut self.rtm_quadrature_levels[..layer_count + 1],
+            pseudo_spherical_samples: &mut self.pseudo_spherical_samples
+                [..pseudo_spherical_sample_count],
+            pseudo_spherical_level_starts: &mut self.pseudo_spherical_level_starts
+                [..layer_count + 1],
+            pseudo_spherical_level_altitudes: &mut self.pseudo_spherical_level_altitudes
+                [..layer_count + 1],
+            jacobian: if wants_jacobian {
+                Some(&mut self.jacobian[..sample_count * jacobian::STATE_COUNT])
+            } else {
+                None
+            },
+            noise_sigma: if wants_noise {
+                Some(&mut self.noise_sigma[..sample_count])
+            } else {
+                None
+            },
+            radiance_noise_sigma: if wants_noise {
+                Some(&mut self.radiance_noise_sigma[..sample_count])
+            } else {
+                None
+            },
+            irradiance_noise_sigma: if wants_noise {
+                Some(&mut self.irradiance_noise_sigma[..sample_count])
+            } else {
+                None
+            },
+            reflectance_noise_sigma: if wants_noise {
+                Some(&mut self.reflectance_noise_sigma[..sample_count])
+            } else {
+                None
+            },
+        }
+    }
+}
+
+fn resize_with_default<T: Default>(buffer: &mut Vec<T>, len: usize) {
+    if buffer.len() < len {
+        buffer.resize_with(len, T::default);
+    }
 }
 
 pub fn transport_layer_count_hint(scene: &Scene, route: Route) -> usize {

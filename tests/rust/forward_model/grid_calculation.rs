@@ -23,8 +23,12 @@ use zdisamar::{
         },
         instrument_grid::grid_calculation::spectral_forward::compute_forward_sample_at_wavelength,
         instrument_grid::grid_calculation::storage::{
-            Buffers, Error as StorageError, pseudo_spherical_sample_count_hint,
-            resolved_pseudo_spherical_sample_count, transport_layer_count_hint, validate_buffers,
+            Buffers, Error as StorageError, ProductStorage, SummaryStorage,
+            pseudo_spherical_sample_count_hint, resolved_pseudo_spherical_sample_count,
+            transport_layer_count_hint, validate_buffers,
+        },
+        instrument_grid::grid_calculation::wavelength_plan::{
+            ForwardCacheMiss, WavelengthSampling,
         },
         instrument_grid::grid_calculation::wavelength_sampling::{
             build_wavelength_sampling, collect_unique_forward_misses,
@@ -197,6 +201,90 @@ fn storage_validate_buffers_checks_required_and_optional_shapes() {
         validate_buffers(sample_count, &bad_buffers),
         Err(StorageError::ShapeMismatch),
     );
+}
+
+#[test]
+fn summary_storage_allocates_reusable_buffers_and_invalidates_plan_state() {
+    let mut scene = Scene::default();
+    scene.spectral_grid.start_nm = 760.0;
+    scene.spectral_grid.end_nm = 762.0;
+    scene.spectral_grid.sample_count = 3;
+    scene.atmosphere.layer_count = 2;
+    scene.atmosphere.sublayer_divisions = 1;
+    let mut storage = SummaryStorage::default();
+
+    {
+        let buffers = storage.buffers(&scene, route(), implementation_root::exact());
+        assert_eq!(buffers.wavelengths.len(), 3);
+        assert_eq!(buffers.radiance.len(), 3);
+        assert_eq!(buffers.layer_inputs.len(), 2);
+        assert_eq!(buffers.source_interfaces.len(), 3);
+        assert!(buffers.jacobian.is_none());
+        assert!(buffers.noise_sigma.is_none());
+    }
+    assert_eq!(storage.wavelengths.len(), 3);
+    assert_eq!(storage.layer_inputs.len(), 2);
+
+    storage.evaluation_cache.put_irradiance(760.0, 1.0);
+    assert_eq!(storage.evaluation_cache.irradiance_len(), 1);
+    assert_eq!(storage.spectral_cache().irradiance_len(), 0);
+
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .explicit = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .noise
+        .enabled = true;
+    scene
+        .observation_model
+        .measurement_pipeline
+        .radiance
+        .noise
+        .model = NoiseModelKind::ShotNoise;
+    let mut derivative_route = route();
+    derivative_route.derivative_mode = DerivativeMode::SemiAnalytical;
+    {
+        let buffers = storage.buffers(&scene, derivative_route, implementation_root::exact());
+        assert_eq!(buffers.jacobian.unwrap().len(), 3 * jacobian::STATE_COUNT);
+        assert_eq!(buffers.noise_sigma.unwrap().len(), 3);
+        assert_eq!(buffers.radiance_noise_sigma.unwrap().len(), 3);
+        assert_eq!(buffers.irradiance_noise_sigma.unwrap().len(), 3);
+        assert_eq!(buffers.reflectance_noise_sigma.unwrap().len(), 3);
+    }
+
+    storage.wavelength_sampling.push(WavelengthSampling {
+        nominal_wavelength_nm: 760.0,
+        radiance_wavelength_nm: 760.0,
+        irradiance_wavelength_nm: 760.0,
+        radiance_integration: IntegrationKernel::disabled(),
+        irradiance_integration: IntegrationKernel::disabled(),
+    });
+    storage.forward_misses.push(ForwardCacheMiss {
+        key: SpectralEvaluationCache::key_for(760.0),
+        wavelength_nm: 760.0,
+    });
+    storage.wavelength_plan_key = 42;
+    storage.wavelength_plan_valid = true;
+    storage.forward_misses_valid = true;
+    storage.profile_spectroscopy_cache_key = 24;
+    storage.profile_spectroscopy_cache_valid = true;
+
+    storage.invalidate_wavelength_plan();
+
+    assert!(storage.wavelength_sampling.is_empty());
+    assert!(storage.forward_misses.is_empty());
+    assert_eq!(storage.wavelength_plan_key, 0);
+    assert!(!storage.wavelength_plan_valid);
+    assert!(!storage.forward_misses_valid);
+    assert_eq!(storage.profile_spectroscopy_cache_key, 0);
+    assert!(!storage.profile_spectroscopy_cache_valid);
+
+    let _: ProductStorage = SummaryStorage::default();
 }
 
 #[test]
