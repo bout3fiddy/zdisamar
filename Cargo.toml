@@ -52,6 +52,10 @@ name = "input_measurement"
 path = "tests/rust/input/measurement.rs"
 
 [[test]]
+name = "input_reference"
+path = "tests/rust/input/reference.rs"
+
+[[test]]
 name = "input_observation_model"
 path = "tests/rust/input/observation_model.rs"
 
@@ -78,6 +82,10 @@ path = "tests/rust/forward_model/spectral_math.rs"
 [[test]]
 name = "forward_model_phase_functions"
 path = "tests/rust/forward_model/phase_functions.rs"
+
+[[test]]
+name = "forward_model_state_build"
+path = "tests/rust/forward_model/state_build.rs"
 
 [[test]]
 name = "forward_model_radiative_transfer"
