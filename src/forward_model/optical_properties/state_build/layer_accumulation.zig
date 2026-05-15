@@ -10,6 +10,7 @@ const State = @import("state.zig");
 const ParticleProfiles = @import("../shared/particle_profiles.zig");
 const PhaseFunctions = @import("../shared/phase_functions.zig");
 const Trace = @import("../../performance_trace.zig");
+const work_partition = @import("../../work_partition.zig");
 const ClimatologyProfile = @import("../../../input/reference/climatology.zig").ClimatologyProfile;
 const spline = @import("../../../common/math/interpolation/spline.zig");
 const internal = @import("internal.zig");
@@ -36,22 +37,6 @@ const ParitySupportRowErrorState = struct {
     }
 };
 
-const ParitySupportRowQueue = struct {
-    mutex: std.Thread.Mutex = .{},
-    next_index: usize = 0,
-    len: usize,
-
-    fn next(self: *ParitySupportRowQueue) ?struct { start: usize, end: usize } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.next_index >= self.len) return null;
-        const start = self.next_index;
-        const end = @min(start + parity_support_row_chunk_size, self.len);
-        self.next_index = end;
-        return .{ .start = start, .end = end };
-    }
-};
-
 const ParitySupportRowWorker = struct {
     allocator: Allocator,
     context: *Context,
@@ -67,7 +52,7 @@ const ParitySupportRowWorker = struct {
     cloud_extinction_scale: f64,
     aerosol_fraction: f64,
     cloud_fraction: f64,
-    queue: *ParitySupportRowQueue,
+    queue: *work_partition.ChunkQueue,
     error_state: *ParitySupportRowErrorState,
     worker_index: usize,
     totals: LayerAccumulation = .{},
@@ -464,7 +449,7 @@ fn populateParitySupportRowsParallel(
     }
 
     var error_state = ParitySupportRowErrorState{};
-    var queue: ParitySupportRowQueue = .{ .len = context.sublayers.len };
+    var queue = work_partition.ChunkQueue.init(context.sublayers.len, parity_support_row_chunk_size);
     var worker_buffer: [Trace.max_workers]ParitySupportRowWorker = undefined;
     var thread_buffer: [Trace.max_workers - 1]std.Thread = undefined;
     const workers = worker_buffer[0..worker_count];
@@ -622,9 +607,7 @@ fn canParallelPopulateParitySupportRows(
 }
 
 fn preferredParitySupportRowWorkerCount(row_count: usize) usize {
-    if (row_count < min_parallel_parity_support_row_count) return 1;
-    const cpu_count = std.Thread.getCpuCount() catch 1;
-    return @min(Trace.max_workers, @min(cpu_count, @max(@as(usize, 1), row_count / min_parallel_parity_support_row_count)));
+    return work_partition.preferredWorkerCount(row_count, min_parallel_parity_support_row_count);
 }
 
 fn layerIndexForSublayer(context: *const Context, write_index: usize) usize {

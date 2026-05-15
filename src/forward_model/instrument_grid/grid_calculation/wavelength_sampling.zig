@@ -10,6 +10,7 @@ const Storage = @import("storage.zig");
 const IntegrationKernel = @import("../../implementations/instrument.zig").IntegrationKernel;
 const instrument_integration = @import("../../implementations/instrument/integration.zig");
 const Trace = @import("../../performance_trace.zig");
+const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
@@ -30,22 +31,6 @@ const WavelengthSamplingErrorState = struct {
     }
 };
 
-const WavelengthSamplingQueue = struct {
-    mutex: std.Thread.Mutex = .{},
-    next_index: usize = 0,
-    len: usize,
-
-    fn next(self: *WavelengthSamplingQueue) ?struct { start: usize, end: usize } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.next_index >= self.len) return null;
-        const start = self.next_index;
-        const end = @min(start + wavelength_sampling_chunk_size, self.len);
-        self.next_index = end;
-        return .{ .start = start, .end = end };
-    }
-};
-
 const WavelengthSamplingWorker = struct {
     scene: *const Scene,
     prepared: *const OpticsPreparation.PreparedOpticalState,
@@ -56,7 +41,7 @@ const WavelengthSamplingWorker = struct {
     radiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
     irradiance_adaptive_cache: *const instrument_integration.AdaptiveKernelCache,
     plans: []WavelengthSampling,
-    queue: *WavelengthSamplingQueue,
+    queue: *work_partition.ChunkQueue,
     error_state: *WavelengthSamplingErrorState,
     worker_index: usize,
 };
@@ -149,7 +134,7 @@ fn fillWavelengthSamplingPlans(
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
     defer allocator.free(threads);
 
-    var queue: WavelengthSamplingQueue = .{ .len = plans.len };
+    var queue = work_partition.ChunkQueue.init(plans.len, wavelength_sampling_chunk_size);
     var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
         workers[worker_index] = .{
@@ -325,9 +310,7 @@ fn resolvedSampleAtAssumeValid(resolved_axis: *const grid.ResolvedAxis, index: u
 }
 
 fn preferredWavelengthSamplingWorkerCount(sample_count: usize) usize {
-    if (sample_count < min_parallel_wavelength_sample_count) return 1;
-    const cpu_count = std.Thread.getCpuCount() catch 1;
-    return @min(Trace.max_workers, @min(cpu_count, @max(@as(usize, 1), sample_count / min_parallel_wavelength_sample_count)));
+    return work_partition.preferredWorkerCount(sample_count, min_parallel_wavelength_sample_count);
 }
 
 pub fn collectUniqueForwardMisses(

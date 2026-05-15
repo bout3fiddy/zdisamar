@@ -23,7 +23,29 @@ def synced_library_path(root: str) -> Path:
     return candidates[0]
 
 
+def platform_tag_for_zig_target(zig_target: str | None) -> str | None:
+
+    if zig_target == "x86_64-linux-gnu":
+        return "linux_x86_64"
+
+    if zig_target == "aarch64-linux-gnu":
+        return "linux_aarch64"
+
+    if zig_target == "x86_64-windows-gnu":
+        return "win_amd64"
+
+    if zig_target == "aarch64-windows-gnu":
+        return "win_arm64"
+
+    return None
+
+
 def platform_tag(build_config: Any) -> str:
+
+    target_platform = platform_tag_for_zig_target(os.environ.get("ZDISAMAR_ZIG_TARGET"))
+
+    if target_platform is not None:
+        return target_platform
 
     from packaging.tags import sys_tags
 
@@ -57,10 +79,8 @@ class NativeWheelHook(BuildHookInterface):
         if zig_target:
             command.append(f"-Dtarget={zig_target}")
 
-        runtime_optimize = os.environ.get("ZDISAMAR_ZIG_RUNTIME_OPTIMIZE")
-
-        if runtime_optimize:
-            command.append(f"-Druntime-optimize={runtime_optimize}")
+        optimize = os.environ.get("ZDISAMAR_ZIG_OPTIMIZE", "ReleaseFast")
+        command.append(f"-Doptimize={optimize}")
 
         subprocess.run(command, cwd=self.root, check=True)
         library = synced_library_path(self.root)

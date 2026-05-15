@@ -12,6 +12,7 @@ const Types = @import("types.zig");
 const Storage = @import("storage.zig");
 const Plan = @import("wavelength_plan.zig");
 const solar_compat = @import("../../../input/reference_data/solar_irradiance.zig");
+const work_partition = @import("../../work_partition.zig");
 
 const Allocator = std.mem.Allocator;
 const Error = Storage.Error;
@@ -107,22 +108,6 @@ const ForwardPrefetchErrorState = struct {
     }
 };
 
-const ForwardPrefetchQueue = struct {
-    mutex: std.Thread.Mutex = .{},
-    next_index: usize = 0,
-    len: usize,
-
-    fn next(self: *ForwardPrefetchQueue) ?struct { start: usize, end: usize } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        if (self.next_index >= self.len) return null;
-        const start = self.next_index;
-        const end = @min(start + forward_prefetch_chunk_size, self.len);
-        self.next_index = end;
-        return .{ .start = start, .end = end };
-    }
-};
-
 const ForwardPrefetchWorker = struct {
     scene: *const Scene,
     route: common.Route,
@@ -132,8 +117,9 @@ const ForwardPrefetchWorker = struct {
     misses: []const ForwardCacheMiss,
     profile_spectroscopy_caches: []const SpectroscopyState.ProfileNodeSpectroscopyCache,
     results: []ForwardIntegratedSample,
-    queue: *ForwardPrefetchQueue,
     error_state: *ForwardPrefetchErrorState,
+    start_index: usize,
+    end_index: usize,
     worker_index: usize = 0,
 };
 
@@ -316,7 +302,13 @@ fn prefetchForwardWorkerMain(worker: *ForwardPrefetchWorker) void {
     };
     defer scratch.deinit(allocator);
 
-    while (worker.queue.next()) |chunk| {
+    var chunk_start = worker.start_index;
+    while (chunk_start < worker.end_index) {
+        const chunk = .{
+            .start = chunk_start,
+            .end = @min(chunk_start + forward_prefetch_chunk_size, worker.end_index),
+        };
+        chunk_start = chunk.end;
         {
             const chunk_zone = Trace.deepStaticZone(@src(), "forward_prefetch.chunk");
             chunk_zone.value(@intCast(chunk.end - chunk.start));
@@ -412,9 +404,8 @@ pub fn prefetchForwardSamples(
     const threads = try allocator.alloc(std.Thread, worker_count - 1);
     defer allocator.free(threads);
 
-    var queue: ForwardPrefetchQueue = .{ .len = misses.len };
-    var started_thread_count: usize = 0;
     for (0..worker_count) |worker_index| {
+        const range = work_partition.staticRange(misses.len, worker_count, worker_index);
         workers[worker_index] = .{
             .scene = scene,
             .route = route,
@@ -424,31 +415,31 @@ pub fn prefetchForwardSamples(
             .misses = misses,
             .profile_spectroscopy_caches = profile_spectroscopy_caches,
             .results = results,
-            .queue = &queue,
             .error_state = &error_state,
+            .start_index = range.start,
+            .end_index = range.end,
             .worker_index = worker_index,
         };
-        if (worker_index + 1 < worker_count) {
-            threads[started_thread_count] = std.Thread.spawn(
-                .{},
-                prefetchForwardWorkerMain,
-                .{&workers[worker_index]},
-            ) catch {
-                prefetchForwardWorkerMain(&workers[worker_index]);
-                continue;
-            };
-            started_thread_count += 1;
-        } else {
-            prefetchForwardWorkerMain(&workers[worker_index]);
-        }
     }
+
+    var started_thread_count: usize = 0;
+    for (0..worker_count - 1) |worker_index| {
+        threads[started_thread_count] = std.Thread.spawn(
+            .{},
+            prefetchForwardWorkerMain,
+            .{&workers[worker_index]},
+        ) catch {
+            prefetchForwardWorkerMain(&workers[worker_index]);
+            continue;
+        };
+        started_thread_count += 1;
+    }
+    prefetchForwardWorkerMain(&workers[worker_count - 1]);
     for (threads[0..started_thread_count]) |thread| thread.join();
     if (error_state.err) |err| return err;
 }
 
 // PUB FOR TEST: re-exported via measurement/internal.zig.
 pub fn preferredForwardWorkerCount(miss_count: usize) usize {
-    if (miss_count < min_parallel_forward_miss_count) return 1;
-    const cpu_count = std.Thread.getCpuCount() catch 1;
-    return @min(cpu_count, @max(@as(usize, 1), miss_count / min_parallel_forward_miss_count));
+    return work_partition.preferredWorkerCount(miss_count, min_parallel_forward_miss_count);
 }

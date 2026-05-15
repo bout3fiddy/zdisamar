@@ -3,19 +3,7 @@
 
 import argparse
 import shutil
-import sys
 from pathlib import Path
-
-
-def library_filename() -> str:
-
-    if sys.platform == "darwin":
-        return "libzdisamar_c.dylib"
-
-    if sys.platform == "win32":
-        return "zdisamar_c.dll"
-
-    return "libzdisamar_c.so"
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,7 +47,7 @@ def main() -> int:
     bindings_dir = package_root / "bindings"
     bindings_dir.mkdir(parents=True, exist_ok=True)
     remove_stale_bindings(bindings_dir)
-    shutil.copy2(library_source, bindings_dir / library_filename())
+    shutil.copy2(library_source, bindings_dir / library_source.name)
     copy_tree(repo_root / "data" / "reference_data", package_root / "reference_data" / "assets")
 
     return 0

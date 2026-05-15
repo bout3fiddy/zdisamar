@@ -45,6 +45,7 @@ pub const common = struct {
 
 pub const forward_model = struct {
     pub const performance_trace = @import("forward_model/performance_trace.zig");
+    pub const work_partition = @import("forward_model/work_partition.zig");
 
     pub const optical_properties = struct {
         const root = @import("forward_model/optical_properties/root.zig");
