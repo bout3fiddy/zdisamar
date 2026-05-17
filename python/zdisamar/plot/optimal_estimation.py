@@ -61,6 +61,10 @@ class OptimalEstimationPlot(PlotAccessor):
 
         return self._finish(_measurement_fit(self._target), save=save)
 
+    def residual(self, save: str | Path | None = None):
+
+        return self._finish(_residual(self._target), save=save)
+
     def jacobian(self, save: str | Path | None = None, *, columns: int = 2):
 
         return self._finish(_jacobian(self._target, columns=columns), save=save)
@@ -331,6 +335,28 @@ def _measurement_fit_tooltips():
         alt.Tooltip("retrieved_model:Q", title="Retrieved model", format=".8g"),
         alt.Tooltip("residual:Q", title="Residual", format=".8g"),
     ]
+
+
+def _residual(result):
+
+    data = _fit_frame(result)
+    data, _, y = scaled_y(data, "residual", "Residual")
+
+    chart = wavelength_line_chart(
+        data,
+        y,
+        [
+            alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
+            alt.Tooltip("residual:Q", title="Residual", format=".8g"),
+        ],
+        color=PLOT.colors["red"],
+    ).properties(
+        title=PLOT.title("Final residual"),
+        width=PLOT.diagnostic_width,
+        height=PLOT.height,
+    )
+
+    return _with_axis_multiplier(chart, data["residual"])
 
 
 def _jacobian(result, *, columns: int):

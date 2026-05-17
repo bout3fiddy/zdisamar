@@ -77,6 +77,11 @@ def main() -> int:
     assert "Residual" in fit_spec
     assert "residual_scaled" not in fit_spec
 
+    residual = result.plot.residual().to_dict()
+    residual_spec = json.dumps(residual)
+    assert residual["title"]["text"] == "Final residual"
+    assert "residual_scaled" not in residual_spec
+
     jacobian = result.plot.jacobian().to_dict()
     jacobian_spec = json.dumps(jacobian)
     assert jacobian["title"]["text"] == "Final reflectance Jacobians"
