@@ -264,69 +264,80 @@ fn doDouble(
     E: *basis.Vec,
 ) void {
     var b = b_start;
+    var r_storage: basis.Mat = undefined;
+    var t_storage: basis.Mat = undefined;
+    var current_r = R;
+    var current_t = T;
+    var next_r = &r_storage;
+    var next_t = &t_storage;
+    var final_in_scratch = false;
+
     for (0..ndouble) |_| {
         Trace.plotU("doubling_steps", 1);
-        const trace_r = gaussTrace(n, n_gauss, R);
-        const trace_t = gaussTrace(n, n_gauss, T);
+        const trace_r = gaussTrace(n, n_gauss, current_r);
+        const trace_t = gaussTrace(n, n_gauss, current_t);
         const q_is_zero = @abs(trace_r * trace_r) <= threshold_mul;
 
+        var d_storage: basis.Mat = undefined;
         const D = if (q_is_zero) blk: {
             Trace.plotU("doubling_qseries_skipped", 1);
-            break :blk T.*;
+            break :blk current_t;
         } else blk: {
             Trace.plotU("doubling_qseries_nonzero", 1);
             Trace.plotU("matrix_qseries", 1);
             Trace.plotU("matrix_smul_q_product", 1);
             Trace.plotU("matrix_smul_add_semul3", 1);
-            const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, R, R);
-            break :blk basis.smulAddSemul3KnownRightTrace(n, n_gauss, threshold_mul, &Q, E, T, trace_t);
+            const Q = basis.qseriesKnownNonzeroProduct(n, n_gauss, current_r, current_r);
+            basis.smulAddSemul3KnownRightTraceInto(&d_storage, n, n_gauss, threshold_mul, &Q, E, current_t, trace_t);
+            break :blk &d_storage;
         };
-        const trace_d = if (q_is_zero) trace_t else gaussTrace(n, n_gauss, &D);
+        const trace_d = if (q_is_zero) trace_t else gaussTrace(n, n_gauss, D);
 
         Trace.plotU("matrix_smul_rd", 1);
-        var rd: basis.Mat = undefined;
-        const rd_nonzero = basis.smulIntoKnownTracesIfNonzero(&rd, n, n_gauss, threshold_mul, trace_r, trace_d, R, &D);
+        const rd_nonzero = @abs(trace_r * trace_d) > threshold_mul;
 
-        const U = if (rd_nonzero) blk: {
+        var U: basis.Mat = undefined;
+        if (rd_nonzero) {
             Trace.plotU("matrix_smul_rd_nonzero", 1);
             Trace.plotU("matrix_semul_add", 1);
-            break :blk basis.semulAdd(n, R, E, &rd);
-        } else blk: {
+            basis.semulAddProductKnownNonzeroInto(&U, n, n_gauss, current_r, E, D);
+        } else {
             Trace.plotU("matrix_semul", 1);
-            break :blk basis.semul(n, R, E);
-        };
+            basis.semulInto(&U, n, current_r, E);
+        }
         const trace_u = gaussTrace(n, n_gauss, &U);
 
         Trace.plotU("matrix_smul_tu", 1);
-        var tu: basis.Mat = undefined;
-        const tu_nonzero = basis.smulIntoKnownTracesIfNonzero(&tu, n, n_gauss, threshold_mul, trace_t, trace_u, T, &U);
+        const tu_nonzero = @abs(trace_t * trace_u) > threshold_mul;
 
-        const R_new = if (tu_nonzero) blk: {
+        if (tu_nonzero) {
             Trace.plotU("matrix_smul_tu_nonzero", 1);
             Trace.plotU("matrix_mat_add_esmul3", 1);
-            break :blk basis.matAddEsmul3(n, R, E, &U, &tu);
-        } else blk: {
+            basis.matAddEsmul3ProductKnownNonzeroInto(next_r, n, n_gauss, current_r, E, &U, current_t);
+        } else {
             Trace.plotU("matrix_mat_add_esmul", 1);
-            break :blk basis.matAddEsmul(n, R, E, &U);
-        };
+            basis.matAddEsmulInto(next_r, n, current_r, E, &U);
+        }
 
         Trace.plotU("matrix_smul_td", 1);
-        var td: basis.Mat = undefined;
-        const td_nonzero = basis.smulIntoKnownTracesIfNonzero(&td, n, n_gauss, threshold_mul, trace_t, trace_d, T, &D);
+        const td_nonzero = @abs(trace_t * trace_d) > threshold_mul;
 
-        const T_new = if (td_nonzero) blk: {
+        if (td_nonzero) {
             Trace.plotU("matrix_smul_td_nonzero", 1);
             Trace.plotU("matrix_esmul_semul_add", 1);
-            break :blk basis.esmulSemulAdd(n, E, &D, T, &td);
-        } else blk: {
+            basis.esmulSemulAddProductKnownNonzeroInto(next_t, n, n_gauss, E, D, current_t);
+        } else {
             Trace.plotU("matrix_esmul_semul", 1);
-            break :blk basis.esmulSemul(n, E, &D, T);
-        };
+            basis.esmulSemulInto(next_t, n, E, D, current_t);
+        }
 
-        // PARITY: DISAMAR's whole-array assignments evaluate both RHS values
-        // from the pre-step operators before storing the doubled layer state.
-        R.* = R_new;
-        T.* = T_new;
+        const previous_r = current_r;
+        const previous_t = current_t;
+        current_r = next_r;
+        current_t = next_t;
+        next_r = previous_r;
+        next_t = previous_t;
+        final_in_scratch = !final_in_scratch;
 
         b *= 2.0;
         if (b < 0.001) {
@@ -337,6 +348,11 @@ fn doDouble(
             Trace.plotU("doubling_square_evals", @intCast(n));
             squareAttenuation(n, E);
         }
+    }
+
+    if (final_in_scratch) {
+        R.* = current_r.*;
+        T.* = current_t.*;
     }
 }
 

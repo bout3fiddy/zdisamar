@@ -252,6 +252,20 @@ pub inline fn smulAddSemul3KnownRightTrace(n: usize, n_gauss: usize, threshold_m
     return semulAdd(n, a, e, c);
 }
 
+pub inline fn smulAddSemul3KnownRightTraceInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    threshold_mul: f64,
+    a: *const Mat,
+    e: *const Vec,
+    c: *const Mat,
+    trace_c: f64,
+) void {
+    if (n == 12 and n_gauss == 10) return smulAddSemul3_12KnownRightTraceInto(out, threshold_mul, a, e, c, trace_c);
+    out.* = smulAddSemul3KnownRightTrace(n, n_gauss, threshold_mul, a, e, c, trace_c);
+}
+
 pub inline fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) Mat {
     if (n == 12) return matAddEsmul3_12(a, e, b, c);
     var result = Mat{ .data = undefined, .n = n };
@@ -265,6 +279,33 @@ pub inline fn matAddEsmul3(n: usize, a: *const Mat, e: *const Vec, b: *const Mat
     return result;
 }
 
+pub inline fn matAddEsmul3Into(noalias out: *Mat, n: usize, a: *const Mat, e: *const Vec, b: *const Mat, c: *const Mat) void {
+    if (n == 12) return matAddEsmul3_12Into(out, a, e, b, c);
+    out.* = matAddEsmul3(n, a, e, b, c);
+}
+
+pub inline fn matAddEsmul3ProductKnownNonzeroInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    a: *const Mat,
+    e: *const Vec,
+    b: *const Mat,
+    c: *const Mat,
+) void {
+    if (n == 12 and n_gauss == 10) return matAddEsmul3ProductKnownNonzero12x10Into(out, a, e, b, c);
+
+    out.* = .{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        for (0..n) |i| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |k| product += c.data[i * n + k] * b.data[k * n + j];
+            const idx = i * n + j;
+            out.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + product;
+        }
+    }
+}
+
 pub inline fn matAddEsmul(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
     if (n == 12) return matAddEsmul12(a, e, b);
     var result = Mat{ .data = undefined, .n = n };
@@ -276,6 +317,11 @@ pub inline fn matAddEsmul(n: usize, a: *const Mat, e: *const Vec, b: *const Mat)
         }
     }
     return result;
+}
+
+pub inline fn matAddEsmulInto(noalias out: *Mat, n: usize, a: *const Mat, e: *const Vec, b: *const Mat) void {
+    if (n == 12) return matAddEsmul12Into(out, a, e, b);
+    out.* = matAddEsmul(n, a, e, b);
 }
 
 pub inline fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Mat {
@@ -292,6 +338,37 @@ pub inline fn semulAdd(n: usize, a: *const Mat, e: *const Vec, b: *const Mat) Ma
     return result;
 }
 
+pub inline fn semulAddInto(noalias out: *Mat, n: usize, a: *const Mat, e: *const Vec, b: *const Mat) void {
+    if (n == 12) return semulAdd12Into(out, a, e, b);
+    out.* = semulAdd(n, a, e, b);
+}
+
+pub inline fn semulAddProductKnownNonzeroInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    a: *const Mat,
+    e: *const Vec,
+    b: *const Mat,
+) void {
+    if (n == 12 and n_gauss == 10) return semulAddProductKnownNonzero12x10Into(out, a, e, b);
+
+    out.* = .{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        for (0..n) |i| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |k| product += a.data[i * n + k] * b.data[k * n + j];
+            const idx = i * n + j;
+            out.data[idx] = a.data[idx] * ej + product;
+        }
+    }
+}
+
+pub inline fn semulInto(noalias out: *Mat, n: usize, a: *const Mat, e: *const Vec) void {
+    out.* = semul(n, a, e);
+}
+
 pub inline fn esmulSemul(n: usize, e: *const Vec, a: *const Mat, b: *const Mat) Mat {
     if (n == 12) return esmulSemul12(e, a, b);
     var result = Mat{ .data = undefined, .n = n };
@@ -306,6 +383,11 @@ pub inline fn esmulSemul(n: usize, e: *const Vec, a: *const Mat, b: *const Mat) 
     return result;
 }
 
+pub inline fn esmulSemulInto(noalias out: *Mat, n: usize, e: *const Vec, a: *const Mat, b: *const Mat) void {
+    if (n == 12) return esmulSemul12Into(out, e, a, b);
+    out.* = esmulSemul(n, e, a, b);
+}
+
 pub inline fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) Mat {
     if (n == 12) return esmulSemulAdd12(e, a, b, c);
     var result = Mat{ .data = undefined, .n = n };
@@ -318,6 +400,33 @@ pub inline fn esmulSemulAdd(n: usize, e: *const Vec, a: *const Mat, b: *const Ma
         }
     }
     return result;
+}
+
+pub inline fn esmulSemulAddInto(noalias out: *Mat, n: usize, e: *const Vec, a: *const Mat, b: *const Mat, c: *const Mat) void {
+    if (n == 12) return esmulSemulAdd12Into(out, e, a, b, c);
+    out.* = esmulSemulAdd(n, e, a, b, c);
+}
+
+pub inline fn esmulSemulAddProductKnownNonzeroInto(
+    noalias out: *Mat,
+    n: usize,
+    n_gauss: usize,
+    e: *const Vec,
+    a: *const Mat,
+    b: *const Mat,
+) void {
+    if (n == 12 and n_gauss == 10) return esmulSemulAddProductKnownNonzero12x10Into(out, e, a, b);
+
+    out.* = .{ .data = undefined, .n = n };
+    for (0..n) |j| {
+        const ej = e.data[j];
+        for (0..n) |i| {
+            var product: f64 = 0.0;
+            for (0..n_gauss) |k| product += b.data[i * n + k] * a.data[k * n + j];
+            const idx = i * n + j;
+            out.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * ej) + product;
+        }
+    }
 }
 
 fn esmul12(e: *const Vec, a: *const Mat) Mat {
@@ -398,8 +507,29 @@ fn smulAddSemul3_12KnownRightTrace(threshold_mul: f64, a: *const Mat, e: *const 
     return smulAddSemul3_12KnownTraces(threshold_mul, a, e, c, tra, trc);
 }
 
+fn smulAddSemul3_12KnownRightTraceInto(noalias result: *Mat, threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, trc: f64) void {
+    var tra = a.data[0];
+    tra += a.data[13];
+    tra += a.data[26];
+    tra += a.data[39];
+    tra += a.data[52];
+    tra += a.data[65];
+    tra += a.data[78];
+    tra += a.data[91];
+    tra += a.data[104];
+    tra += a.data[117];
+
+    smulAddSemul3_12KnownTracesInto(result, threshold_mul, a, e, c, tra, trc);
+}
+
 fn smulAddSemul3_12KnownTraces(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, tra: f64, trc: f64) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
+    smulAddSemul3_12KnownTracesInto(&result, threshold_mul, a, e, c, tra, trc);
+    return result;
+}
+
+fn smulAddSemul3_12KnownTracesInto(noalias result: *Mat, threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const Mat, tra: f64, trc: f64) void {
+    result.* = .{ .data = undefined, .n = 12 };
     if (@abs(tra * trc) <= threshold_mul) {
         inline for (0..12) |j| {
             const ej = e.data[j];
@@ -409,7 +539,7 @@ fn smulAddSemul3_12KnownTraces(threshold_mul: f64, a: *const Mat, e: *const Vec,
                 idx += 12;
             }
         }
-        return result;
+        return;
     }
 
     inline for (0..12) |i| {
@@ -449,11 +579,16 @@ fn smulAddSemul3_12KnownTraces(threshold_mul: f64, a: *const Mat, e: *const Vec,
             result.data[idx] = (c.data[idx] + a.data[idx] * e.data[j]) + s;
         }
     }
-    return result;
 }
 
 fn matAddEsmul3_12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat, noalias c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
+    matAddEsmul3_12Into(&result, a, e, b, c);
+    return result;
+}
+
+fn matAddEsmul3_12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat, noalias c: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
         const ei = e.data[i];
@@ -462,11 +597,16 @@ fn matAddEsmul3_12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *con
             result.data[idx] = (a.data[idx] + ei * b.data[idx]) + c.data[idx];
         }
     }
-    return result;
 }
 
 fn matAddEsmul12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
+    matAddEsmul12Into(&result, a, e, b);
+    return result;
+}
+
+fn matAddEsmul12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
         const ei = e.data[i];
@@ -475,11 +615,57 @@ fn matAddEsmul12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const
             result.data[idx] = a.data[idx] + ei * b.data[idx];
         }
     }
-    return result;
+}
+
+fn matAddEsmul3ProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat, noalias c: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+        const c0 = c.data[row];
+        const c1 = c.data[row + 1];
+        const c2 = c.data[row + 2];
+        const c3 = c.data[row + 3];
+        const c4 = c.data[row + 4];
+        const c5 = c.data[row + 5];
+        const c6 = c.data[row + 6];
+        const c7 = c.data[row + 7];
+        const c8 = c.data[row + 8];
+        const c9 = c.data[row + 9];
+        const b0 = b.data[0..12];
+        const b1 = b.data[12..24];
+        const b2 = b.data[24..36];
+        const b3 = b.data[36..48];
+        const b4 = b.data[48..60];
+        const b5 = b.data[60..72];
+        const b6 = b.data[72..84];
+        const b7 = b.data[84..96];
+        const b8 = b.data[96..108];
+        const b9 = b.data[108..120];
+        inline for (0..12) |j| {
+            var product = c0 * b0[j];
+            product += c1 * b1[j];
+            product += c2 * b2[j];
+            product += c3 * b3[j];
+            product += c4 * b4[j];
+            product += c5 * b5[j];
+            product += c6 * b6[j];
+            product += c7 * b7[j];
+            product += c8 * b8[j];
+            product += c9 * b9[j];
+            const idx = row + j;
+            result.data[idx] = (a.data[idx] + e.data[i] * b.data[idx]) + product;
+        }
+    }
 }
 
 fn semulAdd12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
+    semulAdd12Into(&result, a, e, b);
+    return result;
+}
+
+fn semulAdd12Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |j| {
         const ej = e.data[j];
         var idx = j;
@@ -488,11 +674,57 @@ fn semulAdd12(noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Ma
             idx += 12;
         }
     }
-    return result;
+}
+
+fn semulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias a: *const Mat, noalias e: *const Vec, noalias b: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+        const a0 = a.data[row];
+        const a1 = a.data[row + 1];
+        const a2 = a.data[row + 2];
+        const a3 = a.data[row + 3];
+        const a4 = a.data[row + 4];
+        const a5 = a.data[row + 5];
+        const a6 = a.data[row + 6];
+        const a7 = a.data[row + 7];
+        const a8 = a.data[row + 8];
+        const a9 = a.data[row + 9];
+        const b0 = b.data[0..12];
+        const b1 = b.data[12..24];
+        const b2 = b.data[24..36];
+        const b3 = b.data[36..48];
+        const b4 = b.data[48..60];
+        const b5 = b.data[60..72];
+        const b6 = b.data[72..84];
+        const b7 = b.data[84..96];
+        const b8 = b.data[96..108];
+        const b9 = b.data[108..120];
+        inline for (0..12) |j| {
+            var product = a0 * b0[j];
+            product += a1 * b1[j];
+            product += a2 * b2[j];
+            product += a3 * b3[j];
+            product += a4 * b4[j];
+            product += a5 * b5[j];
+            product += a6 * b6[j];
+            product += a7 * b7[j];
+            product += a8 * b8[j];
+            product += a9 * b9[j];
+            const idx = row + j;
+            result.data[idx] = a.data[idx] * e.data[j] + product;
+        }
+    }
 }
 
 fn esmulSemul12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
+    esmulSemul12Into(&result, e, a, b);
+    return result;
+}
+
+fn esmulSemul12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
         const ei = e.data[i];
@@ -502,11 +734,16 @@ fn esmulSemul12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *const 
             result.data[idx] = ei * a.data[idx] + b.data[idx] * ej;
         }
     }
-    return result;
 }
 
 fn esmulSemulAdd12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat, noalias c: *const Mat) Mat {
     var result = Mat{ .data = undefined, .n = 12 };
+    esmulSemulAdd12Into(&result, e, a, b, c);
+    return result;
+}
+
+fn esmulSemulAdd12Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat, noalias c: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
     inline for (0..12) |i| {
         const row = i * 12;
         const ei = e.data[i];
@@ -516,7 +753,47 @@ fn esmulSemulAdd12(noalias e: *const Vec, noalias a: *const Mat, noalias b: *con
             result.data[idx] = (ei * a.data[idx] + b.data[idx] * ej) + c.data[idx];
         }
     }
-    return result;
+}
+
+fn esmulSemulAddProductKnownNonzero12x10Into(noalias result: *Mat, noalias e: *const Vec, noalias a: *const Mat, noalias b: *const Mat) void {
+    result.* = .{ .data = undefined, .n = 12 };
+    inline for (0..12) |i| {
+        const row = i * 12;
+        const b0 = b.data[row];
+        const b1 = b.data[row + 1];
+        const b2 = b.data[row + 2];
+        const b3 = b.data[row + 3];
+        const b4 = b.data[row + 4];
+        const b5 = b.data[row + 5];
+        const b6 = b.data[row + 6];
+        const b7 = b.data[row + 7];
+        const b8 = b.data[row + 8];
+        const b9 = b.data[row + 9];
+        const a0 = a.data[0..12];
+        const a1 = a.data[12..24];
+        const a2 = a.data[24..36];
+        const a3 = a.data[36..48];
+        const a4 = a.data[48..60];
+        const a5 = a.data[60..72];
+        const a6 = a.data[72..84];
+        const a7 = a.data[84..96];
+        const a8 = a.data[96..108];
+        const a9 = a.data[108..120];
+        inline for (0..12) |j| {
+            var product = b0 * a0[j];
+            product += b1 * a1[j];
+            product += b2 * a2[j];
+            product += b3 * a3[j];
+            product += b4 * a4[j];
+            product += b5 * a5[j];
+            product += b6 * a6[j];
+            product += b7 * a7[j];
+            product += b8 * a8[j];
+            product += b9 * a9[j];
+            const idx = row + j;
+            result.data[idx] = (e.data[i] * a.data[idx] + b.data[idx] * e.data[j]) + product;
+        }
+    }
 }
 
 pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
