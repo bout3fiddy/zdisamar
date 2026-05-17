@@ -315,9 +315,6 @@ def _measurement_residual_panel(data):
             alt.Tooltip("residual:Q", title="Residual", format=".8g"),
         ],
         color=PLOT.colors["red"],
-    ).properties(
-        width=PLOT.diagnostic_width,
-        height=MEASUREMENT_RESIDUAL_HEIGHT,
     )
     zero = (
         alt.Chart(zero_data)
@@ -329,7 +326,10 @@ def _measurement_residual_panel(data):
         .encode(y=f"{plot_field}:Q")
     )
 
-    chart = zero + residual
+    chart = (zero + residual).properties(
+        width=PLOT.diagnostic_width,
+        height=MEASUREMENT_RESIDUAL_HEIGHT,
+    )
 
     return _with_axis_multiplier(chart, plot_data[plot_field])
 

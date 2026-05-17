@@ -4,6 +4,7 @@ import numpy as np
 from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Measurement, Result
 from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
 from zdisamar.plot.axes import finite_padded_scale, scaled_y
+from zdisamar.plot.optimal_estimation import MEASUREMENT_RESIDUAL_HEIGHT
 from zdisamar.plot.properties import PLOT
 
 
@@ -77,6 +78,8 @@ def main() -> int:
     assert '"point"' in fit_spec
     assert "Residual" in fit_spec
     assert "residual_scaled" not in fit_spec
+    assert fit["vconcat"][1]["width"] == PLOT.diagnostic_width
+    assert fit["vconcat"][1]["height"] == MEASUREMENT_RESIDUAL_HEIGHT
 
     residual = result.plot.residual().to_dict()
     residual_spec = json.dumps(residual)
