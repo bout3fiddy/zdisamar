@@ -43,7 +43,14 @@ def marker_rules(data):
     )
 
 
-def scaled_y(data, field: str, title: str | None, *, axis: alt.Axis | None = None):
+def scaled_y(
+    data,
+    field: str,
+    title: str | None,
+    *,
+    axis: alt.Axis | None = None,
+    compact_axis: bool = False,
+):
     """Return a y encoding without altering the plotted values."""
 
     values = data[field]
@@ -54,13 +61,20 @@ def scaled_y(data, field: str, title: str | None, *, axis: alt.Axis | None = Non
         alt.Y(
             f"{field}:Q",
             title=title,
-            axis=axis or numeric_axis(values, tickCount=PLOT.y_axis_tick_count),
+            axis=axis or _default_numeric_axis(values, PLOT.y_axis_tick_count, compact_axis),
             scale=finite_padded_scale(values),
         ),
     )
 
 
-def scaled_x(data, field: str, title: str | None, *, axis: alt.Axis | None = None):
+def scaled_x(
+    data,
+    field: str,
+    title: str | None,
+    *,
+    axis: alt.Axis | None = None,
+    compact_axis: bool = False,
+):
     """Return an x encoding without altering the plotted values."""
 
     values = data[field]
@@ -71,7 +85,7 @@ def scaled_x(data, field: str, title: str | None, *, axis: alt.Axis | None = Non
         alt.X(
             f"{field}:Q",
             title=title,
-            axis=axis or numeric_axis(values, tickCount=PLOT.x_axis_tick_count),
+            axis=axis or _default_numeric_axis(values, PLOT.x_axis_tick_count, compact_axis),
             scale=finite_padded_scale(values),
         ),
     )
@@ -87,9 +101,18 @@ def finite_padded_scale(values):
 
     low = min(finite)
     high = max(finite)
-    pad = max(abs(low) * 0.05, 1.0) if low == high else (high - low) * 0.04
+
+    pad = max(abs(low) * 0.05, 1.0e-12) if low == high else (high - low) * 0.04
 
     return alt.Scale(domain=[low - pad, high + pad], zero=False)
+
+
+def _default_numeric_axis(values, tick_count: int, compact_axis: bool) -> alt.Axis:
+
+    if compact_axis:
+        return numeric_axis(values, tickCount=tick_count)
+
+    return alt.Axis(format=".4g", tickCount=tick_count)
 
 
 def numeric_axis(values, *, tickCount: int):  # noqa: N803

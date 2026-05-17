@@ -3,6 +3,7 @@ import json
 import numpy as np
 from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Measurement, Result
 from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
+from zdisamar.plot.axes import finite_padded_scale, scaled_y
 from zdisamar.plot.properties import PLOT
 
 
@@ -94,6 +95,13 @@ def main() -> int:
     assert "Reflectance jacobian" not in jacobian_spec
     assert "dR/d\\u03c4" in jacobian_spec
     assert "dR/dp (hPa\\u207b\\u00b9)" in jacobian_spec
+
+    _, _, plain_tiny_y = scaled_y({"tiny": [1.0e-5, 2.0e-5]}, "tiny", "Tiny")
+    assert "labelExpr" not in json.dumps(plain_tiny_y.to_dict())
+
+    flat_tiny_domain = finite_padded_scale([1.0e-5, 1.0e-5]).to_dict()["domain"]
+    assert flat_tiny_domain[0] > 0.0
+    assert flat_tiny_domain[1] < 2.0e-5
 
     theme = PLOT.theme()["config"]
     assert theme["axisX"]["grid"] is False

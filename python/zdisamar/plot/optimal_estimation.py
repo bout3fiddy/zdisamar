@@ -185,7 +185,12 @@ def _convergence(result):
 
     for index, state_name in enumerate(result.state_names):
         panel_data = data[data["state_name"] == state_name].copy()
-        panel_data, _, y = scaled_y(panel_data, "value", STATE_TRACE_Y_TITLE)
+        panel_data, _, y = scaled_y(
+            panel_data,
+            "value",
+            STATE_TRACE_Y_TITLE,
+            compact_axis=True,
+        )
         chart = (
             alt.Chart(panel_data)
             .mark_line(point=True, color=_state_color_at(index), strokeWidth=2.0)
@@ -288,16 +293,18 @@ def _measurement_fit_panel(data):
         )
     )
 
-    return (retrieved + measurement).properties(
+    chart = (retrieved + measurement).properties(
         title=PLOT.panel_title("Retrieved model with measurement samples"),
         width=PLOT.diagnostic_width,
         height=MEASUREMENT_FIT_HEIGHT,
     )
 
+    return _with_axis_multiplier(chart, reflectance_values)
+
 
 def _measurement_residual_panel(data):
 
-    plot_data, plot_field, y = scaled_y(data, "residual", "Residual")
+    plot_data, plot_field, y = scaled_y(data, "residual", "Residual", compact_axis=True)
     zero_data = plot_data.iloc[[0]].copy()
     zero_data[plot_field] = 0.0
     residual = wavelength_line_chart(
@@ -340,7 +347,7 @@ def _measurement_fit_tooltips():
 def _residual(result):
 
     data = _fit_frame(result)
-    data, _, y = scaled_y(data, "residual", "Residual")
+    data, _, y = scaled_y(data, "residual", "Residual", compact_axis=True)
 
     chart = wavelength_line_chart(
         data,
@@ -368,7 +375,12 @@ def _jacobian(result, *, columns: int):
     for index, state_name in enumerate(result.state_names):
         panel_data = data[data["state_name"] == state_name].copy()
         derivative_title = _state_derivative_title(state_name)
-        panel_data, _, y = scaled_y(panel_data, "reflectance_jacobian", derivative_title)
+        panel_data, _, y = scaled_y(
+            panel_data,
+            "reflectance_jacobian",
+            derivative_title,
+            compact_axis=True,
+        )
         chart = (
             alt.Chart(panel_data)
             .mark_line(color=_state_color_at(index), strokeWidth=1.7)
