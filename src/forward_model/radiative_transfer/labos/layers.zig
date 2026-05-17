@@ -325,10 +325,18 @@ fn doDouble(
         if (td_nonzero) {
             Trace.plotU("matrix_smul_td_nonzero", 1);
             Trace.plotU("matrix_esmul_semul_add", 1);
-            basis.esmulSemulAddProductKnownNonzeroInto(next_t, n, n_gauss, E, D, current_t);
+            if (q_is_zero) {
+                basis.esmulSemulSelfAddProductKnownNonzeroInto(next_t, n, n_gauss, E, current_t);
+            } else {
+                basis.esmulSemulAddProductKnownNonzeroInto(next_t, n, n_gauss, E, D, current_t);
+            }
         } else {
             Trace.plotU("matrix_esmul_semul", 1);
-            basis.esmulSemulInto(next_t, n, E, D, current_t);
+            if (q_is_zero) {
+                basis.esmulSemulSelfInto(next_t, n, E, current_t);
+            } else {
+                basis.esmulSemulInto(next_t, n, E, D, current_t);
+            }
         }
 
         const previous_r = current_r;
