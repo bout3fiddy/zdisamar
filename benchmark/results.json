@@ -408,11 +408,6 @@
   },
   "created_at_unix_s": 1779048500.856496,
   "finished_at_unix_s": 1779049063.866723,
-  "git": {
-    "branch": "codex/consolidated-o2a-benchmark",
-    "commit": "61bdbf482d936b9bb2ead6f34ae4b79fde600d5b",
-    "dirty_before_run": true
-  },
   "native_binding": {
     "command": "zig build sync-python-package -Doptimize=ReleaseFast",
     "elapsed_s": 0.23282483394723386
@@ -481,7 +476,7 @@
     "retrieval_sweep_session_count": 100
   },
   "run_id": "2994b362fc33431585d29855e8cb586f",
-  "schema_version": 1,
+  "schema_version": 2,
   "scratch_db": "benchmark/.runs/benchmark.sqlite",
   "total_benchmark_wall_s": 562.775048624957
 }

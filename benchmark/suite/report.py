@@ -73,7 +73,6 @@ def build_results(
         "scratch_db": "benchmark/.runs/benchmark.sqlite",
         "run_controls": config.run_controls(),
         "native_binding": native_binding,
-        "git": run["git"],
         "cases": {
             "forward_no_session": forward["no_session"],
             "forward_session": forward["session"],
