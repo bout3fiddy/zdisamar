@@ -10,7 +10,7 @@ class PlotProperties:
 
     width = 1311
     height = 465
-    diagnostic_width = 980
+    diagnostic_width = 760
     theme_name = "zdisamar_validation"
     font = "Menlo, Monaco, Consolas, Liberation Mono, DejaVu Sans Mono, monospace"
     markers_nm = (755.0, 760.76, 776.0)

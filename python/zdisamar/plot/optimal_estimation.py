@@ -184,7 +184,7 @@ def _convergence(result):
             panel_data,
             "value",
             STATE_TRACE_Y_TITLE,
-            axis=_numeric_axis(format="~f"),
+            axis=_numeric_axis(),
         )
         charts.append(
             alt.Chart(panel_data)
@@ -257,7 +257,7 @@ def _measurement_fit_panel(data):
             y=alt.Y(
                 "retrieved_model:Q",
                 title="Reflectance",
-                axis=_numeric_axis(format="~f"),
+                axis=_numeric_axis(),
                 scale=finite_padded_scale(reflectance_values),
             ),
             tooltip=_measurement_fit_tooltips(),
@@ -353,7 +353,7 @@ def _jacobian(result, *, columns: int):
             panel_data,
             "reflectance_jacobian",
             JACOBIAN_Y_TITLE,
-            axis=_numeric_axis(format="~f"),
+            axis=_numeric_axis(),
         )
         charts.append(
             alt.Chart(panel_data)
@@ -464,6 +464,6 @@ def wrap_panel_charts(charts, *, columns: int, title: str):
     return chart.resolve_scale(y="independent").properties(title=title)
 
 
-def _numeric_axis(*, format: str):
+def _numeric_axis():
 
-    return alt.Axis(format=format, tickCount=PLOT.y_axis_tick_count)
+    return alt.Axis(tickCount=PLOT.y_axis_tick_count)

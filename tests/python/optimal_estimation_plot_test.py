@@ -75,8 +75,8 @@ def main() -> int:
     assert jacobian["title"] == "Final reflectance Jacobians"
     assert len(jacobian["hconcat"]) == 2
     assert jacobian["resolve"]["scale"]["y"] == "independent"
-    assert "x 1e-5" in jacobian_spec
-    assert "Jacobian x 1e-5" in jacobian_spec
+    assert "reflectance_jacobian_scaled" not in jacobian_spec
+    assert "Jacobian x" not in jacobian_spec
     assert "Reflectance jacobian" in jacobian_spec
 
     theme = PLOT.theme()["config"]

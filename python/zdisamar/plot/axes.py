@@ -1,7 +1,5 @@
 """Shared Altair axis and O2 A wavelength helpers."""
 
-import math
-
 import altair as alt
 
 from . import fields
@@ -18,7 +16,7 @@ def wavelength_x():
     return alt.X(
         f"{fields.WAVELENGTH_NM}:Q",
         title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
-        axis=alt.Axis(format="~f", grid=False, tickCount=6, tickMinStep=5),
+        axis=alt.Axis(grid=False, tickCount=6, tickMinStep=5),
         scale=alt.Scale(zero=False),
     )
 
@@ -44,51 +42,31 @@ def marker_rules(data):
 
 
 def scaled_y(data, field: str, title: str | None, *, axis: alt.Axis | None = None):
-    """Return data and a y encoding with one shared exponent in the axis title."""
-
-    plot_data = data
-    plot_field = field
-    scale_factor = axis_scale_factor(data[field])
-
-    if scale_factor != 1.0:
-        plot_field = f"{field}_scaled"
-        plot_data = data.copy()
-        plot_data[plot_field] = data[field].astype(float) / scale_factor
-        title = axis_scale_title(title, scale_factor)
+    """Return a y encoding without altering the plotted values."""
 
     return (
-        plot_data,
-        plot_field,
+        data,
+        field,
         alt.Y(
-            f"{plot_field}:Q",
+            f"{field}:Q",
             title=title,
-            axis=axis or alt.Axis(format="~f", tickCount=PLOT.y_axis_tick_count),
-            scale=finite_padded_scale(plot_data[plot_field]),
+            axis=axis or alt.Axis(tickCount=PLOT.y_axis_tick_count),
+            scale=finite_padded_scale(data[field]),
         ),
     )
 
 
 def scaled_x(data, field: str, title: str | None, *, axis: alt.Axis | None = None):
-    """Return data and an x encoding with one shared exponent in the axis title."""
-
-    plot_data = data
-    plot_field = field
-    scale_factor = axis_scale_factor(data[field])
-
-    if scale_factor != 1.0:
-        plot_field = f"{field}_scaled"
-        plot_data = data.copy()
-        plot_data[plot_field] = data[field].astype(float) / scale_factor
-        title = axis_scale_title(title, scale_factor)
+    """Return an x encoding without altering the plotted values."""
 
     return (
-        plot_data,
-        plot_field,
+        data,
+        field,
         alt.X(
-            f"{plot_field}:Q",
+            f"{field}:Q",
             title=title,
-            axis=axis or alt.Axis(format="~f", tickCount=PLOT.x_axis_tick_count),
-            scale=finite_padded_scale(plot_data[plot_field]),
+            axis=axis or alt.Axis(tickCount=PLOT.x_axis_tick_count),
+            scale=finite_padded_scale(data[field]),
         ),
     )
 
@@ -108,42 +86,8 @@ def finite_padded_scale(values):
     return alt.Scale(domain=[low - pad, high + pad], zero=False)
 
 
-def axis_scale_factor(values) -> float:
-    """Use one scientific multiplier for axes with very small or large values."""
-
-    finite = _finite_values(values)
-
-    if not finite:
-        return 1.0
-
-    max_abs = max(abs(value) for value in finite)
-
-    if max_abs == 0.0 or 1.0e-2 <= max_abs < 1.0e4:
-        return 1.0
-
-    exponent = int(math.floor(math.log10(max_abs)))
-
-    return 10.0**exponent
-
-
-def axis_scale_label(scale_factor: float) -> str:
-
-    exponent = int(round(math.log10(scale_factor)))
-    exponent_text = str(exponent)
-
-    return f"1e{exponent_text}"
-
-
-def axis_scale_title(title: str | None, scale_factor: float) -> str:
-
-    scale_label = axis_scale_label(scale_factor)
-
-    if title is None:
-        return f"x {scale_label}"
-
-    return f"{title} x {scale_label}"
-
-
 def _finite_values(values) -> list[float]:
+
+    import math
 
     return [float(value) for value in values if math.isfinite(float(value))]
