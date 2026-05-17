@@ -18,7 +18,7 @@ def wavelength_x():
     return alt.X(
         f"{fields.WAVELENGTH_NM}:Q",
         title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
-        axis=alt.Axis(grid=False, tickCount=6, tickMinStep=5),
+        axis=alt.Axis(format="~f", grid=False, tickCount=6, tickMinStep=5),
         scale=alt.Scale(zero=False),
     )
 
@@ -43,7 +43,7 @@ def marker_rules(data):
     )
 
 
-def scaled_y(data, field: str, title: str, *, axis: alt.Axis | None = None):
+def scaled_y(data, field: str, title: str | None, *, axis: alt.Axis | None = None):
     """Return data and a y encoding with one shared exponent in the axis title."""
 
     plot_data = data
@@ -54,7 +54,7 @@ def scaled_y(data, field: str, title: str, *, axis: alt.Axis | None = None):
         plot_field = f"{field}_scaled"
         plot_data = data.copy()
         plot_data[plot_field] = data[field].astype(float) / scale_factor
-        title = f"{title} ({axis_scale_label(scale_factor)})"
+        title = axis_scale_title(title, scale_factor)
 
     return (
         plot_data,
@@ -62,13 +62,13 @@ def scaled_y(data, field: str, title: str, *, axis: alt.Axis | None = None):
         alt.Y(
             f"{plot_field}:Q",
             title=title,
-            axis=axis or alt.Axis(format=".4g", tickCount=PLOT.y_axis_tick_count),
+            axis=axis or alt.Axis(format="~f", tickCount=PLOT.y_axis_tick_count),
             scale=finite_padded_scale(plot_data[plot_field]),
         ),
     )
 
 
-def scaled_x(data, field: str, title: str, *, axis: alt.Axis | None = None):
+def scaled_x(data, field: str, title: str | None, *, axis: alt.Axis | None = None):
     """Return data and an x encoding with one shared exponent in the axis title."""
 
     plot_data = data
@@ -79,7 +79,7 @@ def scaled_x(data, field: str, title: str, *, axis: alt.Axis | None = None):
         plot_field = f"{field}_scaled"
         plot_data = data.copy()
         plot_data[plot_field] = data[field].astype(float) / scale_factor
-        title = f"{title} ({axis_scale_label(scale_factor)})"
+        title = axis_scale_title(title, scale_factor)
 
     return (
         plot_data,
@@ -87,7 +87,7 @@ def scaled_x(data, field: str, title: str, *, axis: alt.Axis | None = None):
         alt.X(
             f"{plot_field}:Q",
             title=title,
-            axis=axis or alt.Axis(format=".4g", tickCount=PLOT.x_axis_tick_count),
+            axis=axis or alt.Axis(format="~f", tickCount=PLOT.x_axis_tick_count),
             scale=finite_padded_scale(plot_data[plot_field]),
         ),
     )
@@ -131,7 +131,17 @@ def axis_scale_label(scale_factor: float) -> str:
     exponent = int(round(math.log10(scale_factor)))
     exponent_text = str(exponent)
 
-    return f"x1e{exponent_text}"
+    return f"1e{exponent_text}"
+
+
+def axis_scale_title(title: str | None, scale_factor: float) -> str:
+
+    scale_label = axis_scale_label(scale_factor)
+
+    if title is None:
+        return f"x {scale_label}"
+
+    return f"{title} x {scale_label}"
 
 
 def _finite_values(values) -> list[float]:

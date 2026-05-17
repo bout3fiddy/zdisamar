@@ -184,7 +184,7 @@ def _convergence(result):
             panel_data,
             "value",
             STATE_TRACE_Y_TITLE,
-            axis=_numeric_axis(format=".6g"),
+            axis=_numeric_axis(format="~f"),
         )
         charts.append(
             alt.Chart(panel_data)
@@ -196,21 +196,21 @@ def _convergence(result):
                     alt.Tooltip("iteration:O", title="Iteration"),
                     alt.Tooltip("state:N", title="State"),
                     alt.Tooltip("unit:N", title="State unit"),
-                    alt.Tooltip("value:Q", title="Value", format=".6g"),
+                    alt.Tooltip("value:Q", title="Value", format="~g"),
                     alt.Tooltip(
                         "state_vector_convergence:Q",
                         title="State-vector convergence",
-                        format=".6g",
+                        format="~g",
                     ),
                     alt.Tooltip(
                         "chi2_reflectance:Q",
                         title="Reflectance chi-square",
-                        format=".6g",
+                        format="~g",
                     ),
                     alt.Tooltip(
                         "chi2_state_vector:Q",
                         title="State chi-square",
-                        format=".6g",
+                        format="~g",
                     ),
                 ],
             )
@@ -257,7 +257,7 @@ def _measurement_fit_panel(data):
             y=alt.Y(
                 "retrieved_model:Q",
                 title="Reflectance",
-                axis=_numeric_axis(format=".4g"),
+                axis=_numeric_axis(format="~f"),
                 scale=finite_padded_scale(reflectance_values),
             ),
             tooltip=_measurement_fit_tooltips(),
@@ -280,7 +280,7 @@ def _measurement_fit_panel(data):
 
     return (retrieved + measurement).properties(
         title="Retrieved model with measurement samples",
-        width=PLOT.width,
+        width=PLOT.diagnostic_width,
         height=MEASUREMENT_FIT_HEIGHT,
     )
 
@@ -299,7 +299,7 @@ def _measurement_residual_panel(data):
         ],
         color=PLOT.colors["red"],
     ).properties(
-        width=PLOT.width,
+        width=PLOT.diagnostic_width,
         height=MEASUREMENT_RESIDUAL_HEIGHT,
     )
     zero = (
@@ -353,7 +353,7 @@ def _jacobian(result, *, columns: int):
             panel_data,
             "reflectance_jacobian",
             JACOBIAN_Y_TITLE,
-            axis=_numeric_axis(format=".4g"),
+            axis=_numeric_axis(format="~f"),
         )
         charts.append(
             alt.Chart(panel_data)
@@ -450,13 +450,13 @@ def _state_columns(result) -> int:
 
 def _panel_width(columns: int) -> int:
 
-    return max(320, int(PLOT.width / max(1, columns)) - 45)
+    return max(320, int(PLOT.diagnostic_width / max(1, columns)) - 45)
 
 
 def wrap_panel_charts(charts, *, columns: int, title: str):
 
     rows = [
-        alt.hconcat(*charts[start : start + columns], spacing=52, bounds="flush")
+        alt.hconcat(*charts[start : start + columns], spacing=92, bounds="flush")
         for start in range(0, len(charts), columns)
     ]
     chart = rows[0] if len(rows) == 1 else alt.vconcat(*rows, spacing=32, bounds="flush")

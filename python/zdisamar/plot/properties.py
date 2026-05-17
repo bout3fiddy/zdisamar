@@ -10,6 +10,7 @@ class PlotProperties:
 
     width = 1311
     height = 465
+    diagnostic_width = 980
     theme_name = "zdisamar_validation"
     font = "Menlo, Monaco, Consolas, Liberation Mono, DejaVu Sans Mono, monospace"
     markers_nm = (755.0, 760.76, 776.0)
@@ -117,6 +118,7 @@ class PlotProperties:
                     "titleColor": "black",
                     "titleFont": self.font,
                     "titleFontSize": self.axis_title_font_size,
+                    "titlePadding": 12,
                 },
                 "axisX": {
                     "grid": False,
