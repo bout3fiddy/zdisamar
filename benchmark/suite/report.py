@@ -1,0 +1,269 @@
+"""Final JSON report generation."""
+
+import json
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+from . import config
+from .db import BenchmarkDb
+from .stats import json_ready
+
+
+def git_metadata() -> dict[str, Any]:
+
+    return {
+        "branch": git_output("rev-parse", "--abbrev-ref", "HEAD"),
+        "commit": git_output("rev-parse", "HEAD"),
+        "dirty_before_run": bool(git_output("status", "--short")),
+    }
+
+
+def git_output(*args: str) -> str:
+
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=config.REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    return completed.stdout.strip()
+
+
+def build_results(
+    db: BenchmarkDb,
+    run_id: str,
+    *,
+    total_benchmark_wall_s: float,
+) -> dict[str, Any]:
+
+    run = db.run_payload(run_id)
+    summaries = db.summaries(run_id)
+    native_binding = summaries["native_binding"]
+    forward = {
+        "no_session": summaries["forward_no_session"],
+        "session": summaries["forward_session"],
+        "fast_mode": summaries["forward_fast_mode"],
+    }
+    retrieval = {
+        "single": {
+            "session": summaries["retrieval_session"],
+            "fast_mode": summaries["retrieval_fast_mode"],
+            "fast_minus_session": summaries["retrieval_fast_minus_session_single_case"],
+        },
+        "sweep": {
+            "session": summaries["retrieval_sweep_session"],
+            "fast_mode": summaries["retrieval_sweep_fast_mode"],
+            "fast_minus_session": summaries["retrieval_sweep_fast_minus_session"],
+        },
+    }
+
+    return {
+        "schema_version": config.SCHEMA_VERSION,
+        "benchmark": config.BENCHMARK_NAME,
+        "run_id": run_id,
+        "created_at_unix_s": run["started_at_unix_s"],
+        "finished_at_unix_s": run["finished_at_unix_s"] or time.time(),
+        "total_benchmark_wall_s": total_benchmark_wall_s,
+        "command": config.COMMAND,
+        "output": "benchmark/results.json",
+        "scratch_db": "benchmark/.runs/benchmark.sqlite",
+        "run_controls": config.run_controls(),
+        "native_binding": native_binding,
+        "cases": {
+            "forward_no_session": forward["no_session"],
+            "forward_session": forward["session"],
+            "forward_fast_mode": forward["fast_mode"],
+            "retrieval_session": retrieval["single"]["session"],
+            "retrieval_fast_mode": retrieval["single"]["fast_mode"],
+            "retrieval_sweep_session": retrieval["sweep"]["session"],
+            "retrieval_sweep_fast_mode": retrieval["sweep"]["fast_mode"],
+        },
+        "comparisons": {
+            "retrieval_fast_minus_session_single_case": retrieval["single"]["fast_minus_session"],
+            "retrieval_sweep_fast_minus_session": retrieval["sweep"]["fast_minus_session"],
+        },
+        "report": build_compact_report(forward, retrieval),
+    }
+
+
+def build_compact_report(
+    forward: dict[str, Any],
+    retrieval: dict[str, Any],
+) -> dict[str, list[dict[str, str]]]:
+
+    no_session = forward["no_session"]
+    session = forward["session"]
+    fast_forward = forward["fast_mode"]
+    retrieval_session = retrieval["single"]["session"]
+    retrieval_fast = retrieval["single"]["fast_mode"]
+    retrieval_sweep = retrieval["sweep"]
+    fast_sweep_timing = retrieval_sweep["fast_mode"]["timing_s"]["first_use_total_s"]
+
+    return {
+        "case_rows": [
+            {
+                "case": "Forward, no session",
+                "timing": f"median {no_session['timing_s']['median']:.3f}s",
+                "residuals": format_forward_residuals(no_session),
+            },
+            {
+                "case": "Forward, session",
+                "timing": (
+                    f"setup {session['timing_s']['setup_s']:.3f}s; "
+                    f"cached run {session['timing_s']['cached_run_s']['median']:.3f}s; "
+                    f"first-use {session['timing_s']['first_use_total_s']:.3f}s"
+                ),
+                "residuals": format_session_delta(session),
+            },
+            {
+                "case": "Forward, fast mode",
+                "timing": (
+                    "baseline reference "
+                    f"{fast_forward['timing_s']['baseline_reference_run_s']['median']:.3f}s; "
+                    "4-scene fast median "
+                    f"{fast_forward['timing_s']['four_scene_fast_total_s']['median']:.3f}s"
+                ),
+                "residuals": format_fast_forward_residuals(fast_forward),
+            },
+            {
+                "case": "OE, session",
+                "timing": (
+                    f"retrieval {retrieval_session['timing_s']['retrieval_s']['median']:.6f}s; "
+                    "RTM+jac "
+                    f"{retrieval_session['timing_s']['rtm_and_jacobian_s']['median']:.6f}s; "
+                    f"setup {retrieval_session['timing_s']['setup_s']['median']:.6f}s"
+                ),
+                "residuals": format_retrieval_truth_residuals(retrieval_session),
+            },
+            {
+                "case": "OE, fast mode",
+                "timing": (
+                    "100-case median "
+                    f"{fast_sweep_timing['median']:.6f}s; "
+                    f"mean {fast_sweep_timing['mean']:.6f}s; "
+                    f"range {fast_sweep_timing['min']:.6f}-"
+                    f"{fast_sweep_timing['max']:.6f}s"
+                ),
+                "residuals": format_fast_retrieval_residuals(
+                    retrieval_fast,
+                    retrieval_sweep,
+                ),
+            },
+        ],
+        "total_wall_clock_rows": total_wall_rows(forward, retrieval),
+    }
+
+
+def format_forward_residuals(case: dict[str, Any]) -> str:
+
+    metrics = case["residuals"]["disamar_reference"]["series"]
+    worst = case["residuals"]["disamar_reference"]["worst_interior_max_abs"]
+    reflectance = metrics["RTM reflectance"]["max_abs_residual"]
+
+    return f"DISAMAR fixture worst interior max_abs {worst:.3e}; RTM reflectance {reflectance:.3e}"
+
+
+def format_session_delta(case: dict[str, Any]) -> str:
+
+    delta = case["residuals"]["vs_no_session"]
+
+    return (
+        "vs no-session: "
+        f"radiance max_abs {delta['radiance_max_abs']:.3e}; "
+        f"reflectance max_abs {delta['reflectance_max_abs']:.3e}"
+    )
+
+
+def format_fast_forward_residuals(case: dict[str, Any]) -> str:
+
+    residual_payload = case["residuals"]
+    worst = residual_payload["worst_scene"]
+
+    return (
+        f"baseline max_abs {residual_payload['baseline_max_abs']:.3e}; "
+        f"4-scene worst {worst['max_abs_residual']:.3e}, "
+        f"{worst['max_abs_residual_over_noise']:.3f}x noise"
+    )
+
+
+def format_retrieval_truth_residuals(case: dict[str, Any]) -> str:
+
+    residual_payload = case["residuals"]
+
+    return (
+        f"AOD diff {residual_payload['aerosol_optical_depth_abs_diff']:.3e}; "
+        "mid-pressure diff "
+        f"{residual_payload['aerosol_layer_mid_pressure_abs_diff_hpa']:.3e} hPa"
+    )
+
+
+def format_fast_retrieval_residuals(
+    fast: dict[str, Any],
+    sweep: dict[str, Any],
+) -> str:
+
+    single = fast["residuals"]
+    delta = sweep["fast_minus_session"]
+
+    return (
+        f"single fast-vs-session AOD delta {single['aerosol_optical_depth_delta']:.3e}; "
+        f"sweep max AOD delta {delta['aerosol_optical_depth_delta']['max_abs']:.3e}; "
+        f"pressure delta {delta['aerosol_mid_pressure_delta_hpa']['max_abs']:.3e} hPa"
+    )
+
+
+def total_wall_rows(
+    forward: dict[str, Any],
+    retrieval: dict[str, Any],
+) -> list[dict[str, str]]:
+
+    sweep = retrieval["sweep"]
+
+    return [
+        {
+            "benchmark": "Forward, no session",
+            "total": f"{forward['no_session']['timing_s']['median']:.3f}s per baseline run median",
+        },
+        {
+            "benchmark": "Forward, session",
+            "total": (
+                f"{forward['session']['timing_s']['first_use_total_s']:.3f}s first-use total, "
+                f"or {forward['session']['timing_s']['cached_run_s']['median']:.3f}s "
+                "cached run only"
+            ),
+        },
+        {
+            "benchmark": "Forward, fast mode",
+            "total": (
+                f"{forward['fast_mode']['timing_s']['four_scene_fast_total_s']['median']:.3f}s "
+                "median over 4 scenes"
+            ),
+        },
+        {
+            "benchmark": "OE, no fast mode",
+            "total": f"{sweep['session']['timing_s']['total_wall_s']:.3f}s over 100 retrievals",
+        },
+        {
+            "benchmark": "OE, fast mode",
+            "total": f"{sweep['fast_mode']['timing_s']['total_wall_s']:.3f}s over 100 retrievals",
+        },
+        {
+            "benchmark": "OE fast-mode savings",
+            "total": (
+                f"{sweep['fast_minus_session']['total_retrieval_wall_s_saved']:.3f}s "
+                "over 100 retrievals"
+            ),
+        },
+    ]
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(json_ready(payload), indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)

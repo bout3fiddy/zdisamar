@@ -1,0 +1,482 @@
+{
+  "benchmark": "zdisamar_current",
+  "cases": {
+    "forward_fast_mode": {
+      "kind": "forward",
+      "label": "Forward, fast mode",
+      "mode": "fast_mode",
+      "residuals": {
+        "baseline_max_abs": 0.00022025475826664698,
+        "reference": "normal zdisamar forward",
+        "scenes": {
+          "baseline": {
+            "max_abs_residual": 0.00022025475826664698,
+            "max_abs_residual_over_noise": 0.5195311470498195,
+            "max_abs_residual_wavelength_nm": 767.76,
+            "median_abs_residual_over_noise": 0.050420092478728064,
+            "rmse": 4.0966060653644834e-05,
+            "scene": "baseline"
+          },
+          "bright surface": {
+            "max_abs_residual": 0.00040226264750597984,
+            "max_abs_residual_over_noise": 0.7406995353889582,
+            "max_abs_residual_wavelength_nm": 767.76,
+            "median_abs_residual_over_noise": 0.06450811514929494,
+            "rmse": 7.103503943774169e-05,
+            "scene": "bright surface"
+          },
+          "low sun dark surface": {
+            "max_abs_residual": 0.00034422677818976566,
+            "max_abs_residual_over_noise": 1.101487590418814,
+            "max_abs_residual_wavelength_nm": 768.0,
+            "median_abs_residual_over_noise": 0.09371220365631139,
+            "rmse": 9.20001215229802e-05,
+            "scene": "low sun dark surface"
+          },
+          "oblique aerosol": {
+            "max_abs_residual": 0.0004963098820243983,
+            "max_abs_residual_over_noise": 1.5998557397432949,
+            "max_abs_residual_wavelength_nm": 762.84,
+            "median_abs_residual_over_noise": 0.13602020523773029,
+            "rmse": 0.00013489886396297307,
+            "scene": "oblique aerosol"
+          }
+        },
+        "worst_scene": {
+          "max_abs_residual": 0.0004963098820243983,
+          "max_abs_residual_over_noise": 1.5998557397432949,
+          "max_abs_residual_wavelength_nm": 762.84,
+          "median_abs_residual_over_noise": 0.13602020523773029,
+          "rmse": 0.00013489886396297307,
+          "scene": "oblique aerosol"
+        }
+      },
+      "timing_s": {
+        "baseline_reference_run_s": {
+          "max": 1.0058659160276875,
+          "mean": 1.0058659160276875,
+          "median": 1.0058659160276875,
+          "min": 1.0058659160276875,
+          "p90": 1.0058659160276875,
+          "runs": 1,
+          "total": 1.0058659160276875
+        },
+        "four_scene_fast_total_s": {
+          "max": 2.573981331894174,
+          "mean": 2.2733226789860055,
+          "median": 2.2332630425225943,
+          "min": 2.189154749037698,
+          "p90": 2.3521562701440417,
+          "runs": 10,
+          "total": 22.733226789860055
+        }
+      }
+    },
+    "forward_no_session": {
+      "kind": "forward",
+      "label": "Forward, no session",
+      "mode": "no_session",
+      "residuals": {
+        "disamar_reference": {
+          "series": {
+            "RTM reflectance": {
+              "full_grid_max_abs_residual": 6.475375791126226e-14,
+              "max_abs_residual": 3.4389158187764224e-14,
+              "max_abs_wavelength_nm": 769.6,
+              "mean_signed": 2.4979873010297126e-16,
+              "rmse": 3.4900974260031413e-15
+            },
+            "dR/d aerosol layer mid pressure": {
+              "full_grid_max_abs_residual": 8.758944726133355e-15,
+              "max_abs_residual": 1.036589603487393e-15,
+              "max_abs_wavelength_nm": 758.04,
+              "mean_signed": 5.869308007312555e-19,
+              "rmse": 6.810031625807788e-17
+            },
+            "dR/d aerosol optical depth": {
+              "full_grid_max_abs_residual": 9.700087955089032e-13,
+              "max_abs_residual": 7.787520628355082e-14,
+              "max_abs_wavelength_nm": 758.04,
+              "mean_signed": 3.867665979238473e-16,
+              "rmse": 4.791782252405949e-15
+            }
+          },
+          "worst_interior_max_abs": 7.787520628355082e-14
+        }
+      },
+      "timing_s": {
+        "max": 0.6959730840753764,
+        "mean": 0.4890224627102725,
+        "median": 0.4713902085204609,
+        "min": 0.4499513750197366,
+        "p90": 0.5036371584166772,
+        "runs": 10,
+        "total": 4.890224627102725
+      }
+    },
+    "forward_session": {
+      "kind": "forward",
+      "label": "Forward, session",
+      "mode": "session",
+      "residuals": {
+        "vs_no_session": {
+          "irradiance_max_abs": 0.0,
+          "radiance_max_abs": 0.0,
+          "reflectance_jacobian_aerosol_layer_mid_pressure_hpa_max_abs": 0.0,
+          "reflectance_jacobian_aerosol_optical_depth_max_abs": 0.0,
+          "reflectance_max_abs": 0.0
+        }
+      },
+      "timing_s": {
+        "cached_run_s": {
+          "max": 0.19837629201356322,
+          "mean": 0.18991629171650856,
+          "median": 0.18922741652932018,
+          "min": 0.1822968750493601,
+          "p90": 0.19541457921732217,
+          "runs": 10,
+          "total": 1.8991629171650857
+        },
+        "first_cached_run_s": 0.18646816699765623,
+        "first_use_total_s": 0.46321174991317093,
+        "setup_s": 0.2767435829155147
+      }
+    },
+    "retrieval_fast_mode": {
+      "kind": "optimal_estimation",
+      "label": "OE, fast mode",
+      "mode": "fast_mode",
+      "residuals": {
+        "aerosol_layer_mid_pressure_delta_hpa": -1.1097679635541908,
+        "aerosol_optical_depth_delta": 0.0001977080375759055
+      },
+      "timing_s": {
+        "first_use_total_s": {
+          "max": 1.1390278750332072,
+          "mean": 0.931681482901331,
+          "median": 0.898105144908186,
+          "min": 0.878535041003488,
+          "p90": 0.9706929252948612,
+          "runs": 10,
+          "total": 9.31681482901331
+        },
+        "retrieval_s": {
+          "max": 0.7350867500063032,
+          "mean": 0.6840490538976155,
+          "median": 0.666743520530872,
+          "min": 0.6473996249260381,
+          "p90": 0.7228427000227384,
+          "runs": 10,
+          "total": 6.840490538976155
+        },
+        "rtm_and_jacobian_s": {
+          "max": 0.7338589988648891,
+          "mean": 0.6830401667975821,
+          "median": 0.6657581249601208,
+          "min": 0.6464370420435444,
+          "p90": 0.7218093875562772,
+          "runs": 10,
+          "total": 6.830401667975821
+        },
+        "setup_s": {
+          "max": 0.40394112502690405,
+          "mean": 0.24763242900371552,
+          "median": 0.23031399998581037,
+          "min": 0.22564791608601809,
+          "p90": 0.2530848502647131,
+          "runs": 10,
+          "total": 2.476324290037155
+        }
+      }
+    },
+    "retrieval_session": {
+      "kind": "optimal_estimation",
+      "label": "OE, session",
+      "mode": "session",
+      "residuals": {
+        "aerosol_layer_mid_pressure_abs_diff_hpa": 0.0001733292689323207,
+        "aerosol_layer_top_pressure_abs_diff_hpa": 0.0001733292689323207,
+        "aerosol_optical_depth_abs_diff": 8.698699699438706e-08
+      },
+      "timing_s": {
+        "first_use_total_s": {
+          "max": 1.4216645420528948,
+          "mean": 1.191857745789457,
+          "median": 1.1399317085160874,
+          "min": 1.094559916993603,
+          "p90": 1.4170773913152517,
+          "runs": 10,
+          "total": 11.918577457894571
+        },
+        "retrieval_s": {
+          "max": 1.1449331670301035,
+          "mean": 0.8957918123807758,
+          "median": 0.8627952705137432,
+          "min": 0.8202558750053868,
+          "p90": 1.034632128837984,
+          "runs": 10,
+          "total": 8.957918123807758
+        },
+        "rtm_and_jacobian_s": {
+          "max": 1.1435850010020658,
+          "mean": 0.8946526245796121,
+          "median": 0.8618289165315218,
+          "min": 0.8192700401414186,
+          "p90": 1.032788174599409,
+          "runs": 10,
+          "total": 8.946526245796122
+        },
+        "setup_s": {
+          "max": 0.39419124997220933,
+          "mean": 0.2960659334086813,
+          "median": 0.2827241250197403,
+          "min": 0.2737063749227673,
+          "p90": 0.3167982250684872,
+          "runs": 10,
+          "total": 2.960659334086813
+        }
+      }
+    },
+    "retrieval_sweep_fast_mode": {
+      "converged_count": 100,
+      "kind": "optimal_estimation_sweep",
+      "label": "OE sweep, fast mode",
+      "mode": "fast_mode",
+      "residuals": {
+        "truth_aerosol_mid_pressure_abs_error_hpa": {
+          "max_abs": 5.552768793148061,
+          "mean_abs": 0.8375196644658319,
+          "median_abs": 0.38016708914426545,
+          "runs": 100
+        },
+        "truth_aerosol_optical_depth_abs_error": {
+          "max_abs": 0.007392208479108764,
+          "mean_abs": 0.000943745069192585,
+          "median_abs": 0.0005603416041895237,
+          "runs": 100
+        },
+        "worst_aerosol_mid_pressure_case": {
+          "abs_value": 5.552768793148061,
+          "case": 98
+        },
+        "worst_aerosol_optical_depth_case": {
+          "abs_value": 0.007392208479108764,
+          "case": 98
+        }
+      },
+      "run_count": 100,
+      "timing_s": {
+        "first_use_total_s": {
+          "max": 2.155717583023943,
+          "mean": 1.3684372641844675,
+          "median": 1.4076446459512226,
+          "min": 0.886684334021993,
+          "p90": 1.5442812757799402,
+          "runs": 100,
+          "total": 136.84372641844675
+        },
+        "retrieval_s": {
+          "max": 1.9308972919825464,
+          "mean": 1.1352808587858454,
+          "median": 1.1735315620317124,
+          "min": 0.6616990839829668,
+          "p90": 1.3083366005332209,
+          "runs": 100,
+          "total": 113.52808587858453
+        },
+        "rtm_and_jacobian_s": {
+          "max": 1.9298430000199005,
+          "mean": 1.1344776641426142,
+          "median": 1.1726984789711423,
+          "min": 0.6610593749210238,
+          "p90": 1.3075342199066655,
+          "runs": 100,
+          "total": 113.44776641426142
+        },
+        "total_wall_s": 136.84372641844675
+      }
+    },
+    "retrieval_sweep_session": {
+      "converged_count": 100,
+      "kind": "optimal_estimation_sweep",
+      "label": "OE sweep, session",
+      "mode": "session",
+      "residuals": {
+        "truth_aerosol_mid_pressure_abs_error_hpa": {
+          "max_abs": 0.2717610167425164,
+          "mean_abs": 0.010103955091170179,
+          "median_abs": 0.001949585522822872,
+          "runs": 100
+        },
+        "truth_aerosol_optical_depth_abs_error": {
+          "max_abs": 0.0001521199368497983,
+          "mean_abs": 6.510944120704937e-06,
+          "median_abs": 8.0363837295927e-07,
+          "runs": 100
+        },
+        "worst_aerosol_mid_pressure_case": {
+          "abs_value": 0.2717610167425164,
+          "case": 86
+        },
+        "worst_aerosol_optical_depth_case": {
+          "abs_value": 0.0001521199368497983,
+          "case": 86
+        }
+      },
+      "run_count": 100,
+      "timing_s": {
+        "first_use_total_s": {
+          "max": 3.776333499001339,
+          "mean": 2.678277871252503,
+          "median": 2.7804428535164334,
+          "min": 1.3528017080388963,
+          "p90": 3.1233158262562943,
+          "runs": 100,
+          "total": 267.8277871252503
+        },
+        "retrieval_s": {
+          "max": 3.2663223329000175,
+          "mean": 2.385334612063598,
+          "median": 2.4809008330339566,
+          "min": 1.078131292015314,
+          "p90": 2.8339307792368347,
+          "runs": 100,
+          "total": 238.5334612063598
+        },
+        "rtm_and_jacobian_s": {
+          "max": 3.2653703739633784,
+          "mean": 2.3845195849740413,
+          "median": 2.480107521463651,
+          "min": 1.0775167079409584,
+          "p90": 2.8330909291398716,
+          "runs": 100,
+          "total": 238.45195849740412
+        },
+        "total_wall_s": 267.8277871252503
+      }
+    }
+  },
+  "command": "uv run benchmark/run_benchmark.py",
+  "comparisons": {
+    "retrieval_fast_minus_session_single_case": {
+      "aerosol_layer_mid_pressure_delta_hpa": -1.1097679635541908,
+      "aerosol_optical_depth_delta": 0.0001977080375759055
+    },
+    "retrieval_sweep_fast_minus_session": {
+      "aerosol_mid_pressure_delta_hpa": {
+        "max": 2.0065110199258243,
+        "max_abs": 5.542105997168278,
+        "mean": -0.7309152609633628,
+        "median": -0.3717589517915201,
+        "min": -5.542105997168278,
+        "runs": 100
+      },
+      "aerosol_optical_depth_delta": {
+        "max": 0.0060854673854460195,
+        "max_abs": 0.007394244518298454,
+        "mean": 0.000251559673986292,
+        "median": 0.0003021565091962941,
+        "min": -0.007394244518298454,
+        "runs": 100
+      },
+      "first_use_total_speedup_s": {
+        "max": 2.2970092070754617,
+        "max_abs": 2.2970092070754617,
+        "mean": 1.3098406070680357,
+        "median": 1.3787813750095665,
+        "min": 0.46611737401690334,
+        "runs": 100
+      },
+      "retrieval_speedup_s": {
+        "max": 2.0147684579715133,
+        "max_abs": 2.0147684579715133,
+        "mean": 1.2500537532777525,
+        "median": 1.3260418740101159,
+        "min": 0.41643220803234726,
+        "runs": 100
+      },
+      "rtm_jacobian_speedup_s": {
+        "max": 2.0146190819796175,
+        "max_abs": 2.0146190819796175,
+        "mean": 1.250041920831427,
+        "median": 1.3260227095452137,
+        "min": 0.4164573330199346,
+        "runs": 100
+      },
+      "total_retrieval_wall_s_saved": 130.98406070680358
+    }
+  },
+  "created_at_unix_s": 1779048500.856496,
+  "finished_at_unix_s": 1779049063.866723,
+  "native_binding": {
+    "command": "zig build sync-python-package -Doptimize=ReleaseFast",
+    "elapsed_s": 0.23282483394723386
+  },
+  "output": "benchmark/results.json",
+  "report": {
+    "case_rows": [
+      {
+        "case": "Forward, no session",
+        "residuals": "DISAMAR fixture worst interior max_abs 7.788e-14; RTM reflectance 3.439e-14",
+        "timing": "median 0.471s"
+      },
+      {
+        "case": "Forward, session",
+        "residuals": "vs no-session: radiance max_abs 0.000e+00; reflectance max_abs 0.000e+00",
+        "timing": "setup 0.277s; cached run 0.189s; first-use 0.463s"
+      },
+      {
+        "case": "Forward, fast mode",
+        "residuals": "baseline max_abs 2.203e-04; 4-scene worst 4.963e-04, 1.600x noise",
+        "timing": "baseline reference 1.006s; 4-scene fast median 2.233s"
+      },
+      {
+        "case": "OE, session",
+        "residuals": "AOD diff 8.699e-08; mid-pressure diff 1.733e-04 hPa",
+        "timing": "retrieval 0.862795s; RTM+jac 0.861829s; setup 0.282724s"
+      },
+      {
+        "case": "OE, fast mode",
+        "residuals": "single fast-vs-session AOD delta 1.977e-04; sweep max AOD delta 7.394e-03; pressure delta 5.542e+00 hPa",
+        "timing": "100-case median 1.407645s; mean 1.368437s; range 0.886684-2.155718s"
+      }
+    ],
+    "total_wall_clock_rows": [
+      {
+        "benchmark": "Forward, no session",
+        "total": "0.471s per baseline run median"
+      },
+      {
+        "benchmark": "Forward, session",
+        "total": "0.463s first-use total, or 0.189s cached run only"
+      },
+      {
+        "benchmark": "Forward, fast mode",
+        "total": "2.233s median over 4 scenes"
+      },
+      {
+        "benchmark": "OE, no fast mode",
+        "total": "267.828s over 100 retrievals"
+      },
+      {
+        "benchmark": "OE, fast mode",
+        "total": "136.844s over 100 retrievals"
+      },
+      {
+        "benchmark": "OE fast-mode savings",
+        "total": "130.984s over 100 retrievals"
+      }
+    ]
+  },
+  "run_controls": {
+    "fortran_disamar_runs": false,
+    "forward_repeats": 10,
+    "retrieval_single_case_repeats": 10,
+    "retrieval_sweep_fast_mode_count": 100,
+    "retrieval_sweep_session_count": 100
+  },
+  "run_id": "2994b362fc33431585d29855e8cb586f",
+  "schema_version": 2,
+  "scratch_db": "benchmark/.runs/benchmark.sqlite",
+  "total_benchmark_wall_s": 562.775048624957
+}
