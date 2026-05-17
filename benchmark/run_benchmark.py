@@ -22,6 +22,7 @@ from suite.progress import Progress  # noqa: E402
 
 
 def main() -> int:
+
     db = BenchmarkDb(config.DB_PATH)
     run_id = db.create_run(git=report.git_metadata(), command=config.COMMAND)
     progress = Progress(db, run_id)

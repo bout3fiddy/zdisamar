@@ -7,6 +7,7 @@ import numpy as np
 
 
 def timing_stats(values: Iterable[float]) -> dict[str, float | int]:
+
     data = np.asarray(list(values), dtype=np.float64)
 
     if data.size == 0:
@@ -24,6 +25,7 @@ def timing_stats(values: Iterable[float]) -> dict[str, float | int]:
 
 
 def abs_stats(values: Iterable[float]) -> dict[str, float | int]:
+
     data = np.abs(np.asarray(list(values), dtype=np.float64))
 
     if data.size == 0:
@@ -38,6 +40,7 @@ def abs_stats(values: Iterable[float]) -> dict[str, float | int]:
 
 
 def signed_stats(values: Iterable[float]) -> dict[str, float | int]:
+
     data = np.asarray(list(values), dtype=np.float64)
 
     if data.size == 0:
@@ -54,6 +57,7 @@ def signed_stats(values: Iterable[float]) -> dict[str, float | int]:
 
 
 def json_ready(value: Any) -> Any:
+
     if isinstance(value, dict):
         return {str(key): json_ready(item) for key, item in value.items()}
 

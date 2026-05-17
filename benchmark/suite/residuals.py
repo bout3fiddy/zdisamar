@@ -18,6 +18,7 @@ def reference_spectrum_metrics(
     case: Any,
     spectrum: Spectrum,
 ) -> dict[str, Any]:
+
     pressure_scale = mid_pressure_jacobian_scale(case)
     radiance_reference = load_csv(config.RADIANCE_REFERENCE_PATH)
     jacobian_reference = load_csv(config.REFLECTANCE_JACOBIAN_REFERENCE_PATH)
@@ -61,6 +62,7 @@ def reference_spectrum_metrics(
 
 
 def spectrum_delta_metrics(reference: Spectrum, current: Spectrum) -> dict[str, float]:
+
     payload = {
         "radiance_max_abs": max_abs(current.radiance - reference.radiance),
         "irradiance_max_abs": max_abs(current.irradiance - reference.irradiance),
@@ -77,6 +79,7 @@ def spectrum_delta_metrics(reference: Spectrum, current: Spectrum) -> dict[str, 
 
 
 def fast_scene_metrics(label: str, reference: Spectrum, fast: Spectrum) -> dict[str, Any]:
+
     residual = fast.reflectance - reference.reflectance
     metric = residual_metrics(reference.wavelength_nm, residual)
     noise = components_from_spectrum(
@@ -102,6 +105,7 @@ def truth_residual(
     result: Any,
     layer_thickness: float,
 ) -> dict[str, float]:
+
     retrieved = reference.get("truth", reference["retrieved"])
     mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
     top_pressure = mid_pressure - 0.5 * layer_thickness
@@ -120,17 +124,17 @@ def truth_residual(
 
 
 def result_delta(current: Any, reference: Any) -> dict[str, float]:
+
     return {
         "aerosol_optical_depth_delta": current.value("aerosol_optical_depth")
         - reference.value("aerosol_optical_depth"),
-        "aerosol_layer_mid_pressure_delta_hpa": current.value(
-            "aerosol_layer_mid_pressure_hpa"
-        )
+        "aerosol_layer_mid_pressure_delta_hpa": current.value("aerosol_layer_mid_pressure_hpa")
         - reference.value("aerosol_layer_mid_pressure_hpa"),
     }
 
 
 def mid_pressure_jacobian_scale(case: Any) -> float:
+
     profile = band_retrieval.pressure_altitude_profile_from_case(case)
     aerosol_mid_pressure_hpa = 0.5 * (
         case.aerosol.placement.top_pressure_hpa + case.aerosol.placement.bottom_pressure_hpa
@@ -140,6 +144,7 @@ def mid_pressure_jacobian_scale(case: Any) -> float:
 
 
 def metric_payload(wavelength_nm: np.ndarray, residual: np.ndarray) -> dict[str, float]:
+
     interior = slice(
         config.SPECTRA_EDGE_EXCLUSION_COUNT,
         len(wavelength_nm) - config.SPECTRA_EDGE_EXCLUSION_COUNT,
@@ -157,8 +162,10 @@ def metric_payload(wavelength_nm: np.ndarray, residual: np.ndarray) -> dict[str,
 
 
 def max_abs(values: np.ndarray) -> float:
+
     return float(np.max(np.abs(values)))
 
 
 def load_csv(path: Path) -> np.ndarray:
+
     return np.genfromtxt(path, delimiter=",", names=True, dtype=np.float64)

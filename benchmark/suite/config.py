@@ -42,6 +42,7 @@ REFERENCE_COLUMNS = {
 
 
 def run_controls() -> dict[str, bool | int]:
+
     return {
         "forward_repeats": FORWARD_REPEATS,
         "retrieval_single_case_repeats": RETRIEVAL_REPEATS,

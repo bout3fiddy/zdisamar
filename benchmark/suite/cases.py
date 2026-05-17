@@ -29,6 +29,7 @@ class SweepCase:
 
 
 def forward_case() -> Any:
+
     case = build_o2a_jacobian_case(band)
     band_baseline.configure_case(case)
 
@@ -36,6 +37,7 @@ def forward_case() -> Any:
 
 
 def scene_cases() -> list[tuple[SceneSpec, Any]]:
+
     base = build_o2a_case(band)
     band_baseline.configure_case(base)
 
@@ -54,6 +56,7 @@ def scene_cases() -> list[tuple[SceneSpec, Any]]:
 
 
 def retrieval_case() -> tuple[Any, dict[str, Any]]:
+
     reference = json.loads(config.REFERENCE_OE_PATH.read_text())
     case = build_o2a_case(band, jacobian_reference_layer=True)
     band_baseline.configure_case(case)
@@ -62,6 +65,7 @@ def retrieval_case() -> tuple[Any, dict[str, Any]]:
 
 
 def sweep_cases() -> list[SweepCase]:
+
     base = build_o2a_case(band, jacobian_reference_layer=True)
     band_baseline.configure_case(base)
     rows = []
@@ -87,10 +91,12 @@ def sweep_cases() -> list[SweepCase]:
 
 
 def fast_case(case: Any) -> Any:
+
     return copy.deepcopy(case).with_fast_mode()
 
 
 def scene_specs() -> list[SceneSpec]:
+
     return [
         SceneSpec(
             label="baseline",

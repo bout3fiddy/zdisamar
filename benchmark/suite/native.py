@@ -8,6 +8,7 @@ from . import config
 
 
 def sync_release_fast() -> dict[str, Any]:
+
     command = ["zig", "build", "sync-python-package", "-Doptimize=ReleaseFast"]
     start = time.perf_counter()
     subprocess.run(command, cwd=config.REPO_ROOT, check=True)

@@ -13,6 +13,7 @@ from .timing import timed
 
 
 def run(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any]:
+
     case = cases.forward_case()
     no_session = run_no_session(db, progress, run_id, case)
     session = run_session(db, progress, run_id, case, no_session["sample"])
@@ -31,6 +32,7 @@ def run_no_session(
     run_id: str,
     case: Any,
 ) -> dict[str, Any]:
+
     phase = "forward/no-session"
     progress.log(phase, f"start {config.FORWARD_REPEATS} repeats")
     samples = []
@@ -83,6 +85,7 @@ def run_session(
     case: Any,
     no_session_sample: Any,
 ) -> dict[str, Any]:
+
     phase = "forward/session"
     progress.log(phase, "start")
     setup_start = time.perf_counter()
@@ -157,6 +160,7 @@ def run_session(
 
 
 def run_fast_mode(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any]:
+
     phase = "forward/fast-mode"
     scene_cases = cases.scene_cases()
     progress.log(phase, f"start {len(scene_cases)} scenes")

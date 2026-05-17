@@ -12,6 +12,7 @@ from .stats import json_ready
 
 
 def git_metadata() -> dict[str, Any]:
+
     return {
         "branch": git_output("rev-parse", "--abbrev-ref", "HEAD"),
         "commit": git_output("rev-parse", "HEAD"),
@@ -20,6 +21,7 @@ def git_metadata() -> dict[str, Any]:
 
 
 def git_output(*args: str) -> str:
+
     completed = subprocess.run(
         ["git", *args],
         cwd=config.REPO_ROOT,
@@ -37,6 +39,7 @@ def build_results(
     *,
     total_benchmark_wall_s: float,
 ) -> dict[str, Any]:
+
     run = db.run_payload(run_id)
     summaries = db.summaries(run_id)
     native_binding = summaries["native_binding"]
@@ -81,9 +84,7 @@ def build_results(
             "retrieval_sweep_fast_mode": retrieval["sweep"]["fast_mode"],
         },
         "comparisons": {
-            "retrieval_fast_minus_session_single_case": retrieval["single"][
-                "fast_minus_session"
-            ],
+            "retrieval_fast_minus_session_single_case": retrieval["single"]["fast_minus_session"],
             "retrieval_sweep_fast_minus_session": retrieval["sweep"]["fast_minus_session"],
         },
         "report": build_compact_report(forward, retrieval),
@@ -94,6 +95,7 @@ def build_compact_report(
     forward: dict[str, Any],
     retrieval: dict[str, Any],
 ) -> dict[str, list[dict[str, str]]]:
+
     no_session = forward["no_session"]
     session = forward["session"]
     fast_forward = forward["fast_mode"]
@@ -158,17 +160,16 @@ def build_compact_report(
 
 
 def format_forward_residuals(case: dict[str, Any]) -> str:
+
     metrics = case["residuals"]["disamar_reference"]["series"]
     worst = case["residuals"]["disamar_reference"]["worst_interior_max_abs"]
     reflectance = metrics["RTM reflectance"]["max_abs_residual"]
 
-    return (
-        f"DISAMAR fixture worst interior max_abs {worst:.3e}; "
-        f"RTM reflectance {reflectance:.3e}"
-    )
+    return f"DISAMAR fixture worst interior max_abs {worst:.3e}; RTM reflectance {reflectance:.3e}"
 
 
 def format_session_delta(case: dict[str, Any]) -> str:
+
     delta = case["residuals"]["vs_no_session"]
 
     return (
@@ -179,6 +180,7 @@ def format_session_delta(case: dict[str, Any]) -> str:
 
 
 def format_fast_forward_residuals(case: dict[str, Any]) -> str:
+
     residual_payload = case["residuals"]
     worst = residual_payload["worst_scene"]
 
@@ -190,6 +192,7 @@ def format_fast_forward_residuals(case: dict[str, Any]) -> str:
 
 
 def format_retrieval_truth_residuals(case: dict[str, Any]) -> str:
+
     residual_payload = case["residuals"]
 
     return (
@@ -203,6 +206,7 @@ def format_fast_retrieval_residuals(
     fast: dict[str, Any],
     sweep: dict[str, Any],
 ) -> str:
+
     single = fast["residuals"]
     delta = sweep["fast_minus_session"]
 
@@ -217,6 +221,7 @@ def total_wall_rows(
     forward: dict[str, Any],
     retrieval: dict[str, Any],
 ) -> list[dict[str, str]]:
+
     sweep = retrieval["sweep"]
 
     return [
@@ -258,6 +263,7 @@ def total_wall_rows(
 
 
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(json_ready(payload), indent=2, sort_keys=True) + "\n")

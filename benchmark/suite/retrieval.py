@@ -16,6 +16,7 @@ from .stats import abs_stats, signed_stats, timing_stats
 
 
 def run(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any]:
+
     single = run_single_case(db, progress, run_id)
     sweep = run_sweep(db, progress, run_id)
 
@@ -23,6 +24,7 @@ def run(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any]:
 
 
 def run_single_case(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any]:
+
     phase = "retrieval/single"
     progress.log(phase, f"start {config.RETRIEVAL_REPEATS} repeats")
     case, reference = cases.retrieval_case()
@@ -65,8 +67,7 @@ def run_single_case(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[st
         for repeat in range(1, config.RETRIEVAL_REPEATS + 1)
     ]
     layer_thickness = (
-        case.aerosol.placement.bottom_pressure_hpa
-        - case.aerosol.placement.top_pressure_hpa
+        case.aerosol.placement.bottom_pressure_hpa - case.aerosol.placement.top_pressure_hpa
     )
     session_result = session_runs[-1]["result"]
     fast_result = fast_runs[-1]["result"]
@@ -92,6 +93,7 @@ def run_single_case(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[st
 
 
 def run_sweep(db: BenchmarkDb, progress: Progress, run_id: str) -> dict[str, Any]:
+
     phase = "retrieval/sweep"
     sweep_cases = cases.sweep_cases()
     progress.log(phase, f"start {len(sweep_cases)} cases x 2 modes")
@@ -161,6 +163,7 @@ def run_once(
     measurement: Any,
     state_vector: Any,
 ) -> dict[str, Any]:
+
     setup_start = time.perf_counter()
 
     with rtm.SessionCache(case) as cache:
@@ -216,6 +219,7 @@ def single_summary(
     runs: list[dict[str, Any]],
     result_residuals: dict[str, float],
 ) -> dict[str, Any]:
+
     return {
         "label": label,
         "kind": "optimal_estimation",
@@ -231,6 +235,7 @@ def single_summary(
 
 
 def sweep_summary(label: str, mode: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+
     return {
         "label": label,
         "kind": "optimal_estimation_sweep",
@@ -263,6 +268,7 @@ def sweep_summary(label: str, mode: str, rows: list[dict[str, Any]]) -> dict[str
 
 
 def sweep_row(index: int, truth: dict[str, float], run: dict[str, Any]) -> dict[str, Any]:
+
     result = run["result"]
     retrieved_aod = result.value("aerosol_optical_depth")
     retrieved_mid_pressure = result.value("aerosol_layer_mid_pressure_hpa")
@@ -286,6 +292,7 @@ def sweep_delta(
     session_rows: list[dict[str, Any]],
     fast_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
+
     aod_deltas = []
     pressure_deltas = []
     retrieval_savings = []
@@ -315,6 +322,7 @@ def sweep_delta(
 
 
 def worst_abs_case(rows: list[dict[str, Any]], key: str) -> dict[str, float | int]:
+
     worst = max(rows, key=lambda row: abs(float(row[key])))
 
     return {"case": int(worst["case"]), "abs_value": abs(float(worst[key]))}

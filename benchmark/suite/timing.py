@@ -6,6 +6,7 @@ from typing import Any
 
 
 def timed(callback: Callable[[], Any]) -> tuple[float, Any]:
+
     start = time.perf_counter()
     value = callback()
 
