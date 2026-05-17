@@ -4,7 +4,7 @@ from pathlib import Path
 
 import altair as alt
 
-from .axes import finite_padded_scale, scaled_y, wavelength_x
+from .axes import axis_multiplier_text, finite_padded_scale, numeric_axis, scaled_y, wavelength_x
 from .charts import wavelength_line_chart
 from .properties import PLOT, PlotAccessor
 
@@ -32,13 +32,18 @@ STATE_PANEL_TITLES = {
     "aerosol_layer_mid_pressure_hpa": "Layer mid-pressure (hPa)",
 }
 
+STATE_DERIVATIVE_TITLES = {
+    "surface_albedo": "dR/dA",
+    "aerosol_optical_depth": "dR/dτ",
+    "aerosol_layer_mid_pressure_hpa": "dR/dp (hPa⁻¹)",
+}
+
 JACOBIAN_PANEL_HEIGHT = 320
 STATE_TRACE_PANEL_HEIGHT = 300
 STATE_TRACE_COLUMNS = 2
 MEASUREMENT_FIT_HEIGHT = 315
 MEASUREMENT_RESIDUAL_HEIGHT = 170
-STATE_TRACE_Y_TITLE = "Value"
-JACOBIAN_Y_TITLE = "Jacobian"
+STATE_TRACE_Y_TITLE = None
 
 
 class OptimalEstimationPlot(PlotAccessor):
@@ -55,10 +60,6 @@ class OptimalEstimationPlot(PlotAccessor):
     def measurement_fit(self, save: str | Path | None = None):
 
         return self._finish(_measurement_fit(self._target), save=save)
-
-    def residual(self, save: str | Path | None = None):
-
-        return self._finish(_residual(self._target), save=save)
 
     def jacobian(self, save: str | Path | None = None, *, columns: int = 2):
 
@@ -180,17 +181,21 @@ def _convergence(result):
 
     for index, state_name in enumerate(result.state_names):
         panel_data = data[data["state_name"] == state_name].copy()
-        panel_data, _, y = scaled_y(
-            panel_data,
-            "value",
-            STATE_TRACE_Y_TITLE,
-            axis=_numeric_axis(),
-        )
-        charts.append(
+        panel_data, _, y = scaled_y(panel_data, "value", STATE_TRACE_Y_TITLE)
+        chart = (
             alt.Chart(panel_data)
             .mark_line(point=True, color=_state_color_at(index), strokeWidth=2.0)
             .encode(
-                x=alt.X("iteration:O", title="Iteration", axis=alt.Axis(grid=False)),
+                x=alt.X(
+                    "iteration:O",
+                    title="Iteration",
+                    axis=alt.Axis(
+                        grid=False,
+                        labelAlign="center",
+                        labelAngle=0,
+                        labelBaseline="top",
+                    ),
+                ),
                 y=y,
                 tooltip=[
                     alt.Tooltip("iteration:O", title="Iteration"),
@@ -215,11 +220,12 @@ def _convergence(result):
                 ],
             )
             .properties(
-                title=_state_panel_title(state_name),
+                title=PLOT.panel_title(_state_panel_title(state_name)),
                 width=_panel_width(columns),
                 height=STATE_TRACE_PANEL_HEIGHT,
             )
         )
+        charts.append(_with_axis_multiplier(chart, panel_data["value"]))
 
     return wrap_panel_charts(
         charts,
@@ -235,9 +241,9 @@ def _measurement_fit(result):
     residual = _measurement_residual_panel(data)
 
     return (
-        alt.vconcat(top, residual, spacing=20, bounds="flush")
+        alt.vconcat(top, residual, spacing=44, bounds="flush")
         .resolve_scale(x="shared")
-        .properties(title="Measurement fit")
+        .properties(title=PLOT.title("Measurement fit"))
     )
 
 
@@ -257,7 +263,7 @@ def _measurement_fit_panel(data):
             y=alt.Y(
                 "retrieved_model:Q",
                 title="Reflectance",
-                axis=_numeric_axis(),
+                axis=numeric_axis(reflectance_values, tickCount=PLOT.y_axis_tick_count),
                 scale=finite_padded_scale(reflectance_values),
             ),
             tooltip=_measurement_fit_tooltips(),
@@ -279,7 +285,7 @@ def _measurement_fit_panel(data):
     )
 
     return (retrieved + measurement).properties(
-        title="Retrieved model with measurement samples",
+        title=PLOT.panel_title("Retrieved model with measurement samples"),
         width=PLOT.diagnostic_width,
         height=MEASUREMENT_FIT_HEIGHT,
     )
@@ -312,7 +318,9 @@ def _measurement_residual_panel(data):
         .encode(y=f"{plot_field}:Q")
     )
 
-    return zero + residual
+    chart = zero + residual
+
+    return _with_axis_multiplier(chart, plot_data[plot_field])
 
 
 def _measurement_fit_tooltips():
@@ -325,22 +333,6 @@ def _measurement_fit_tooltips():
     ]
 
 
-def _residual(result):
-
-    data = _fit_frame(result)
-    data, _, y = scaled_y(data, "residual", "Measurement - retrieved reflectance")
-
-    return wavelength_line_chart(
-        data,
-        y,
-        [
-            alt.Tooltip("wavelength_nm:Q", title="Wavelength (nm)", format=".4f"),
-            alt.Tooltip("residual:Q", title="Residual", format=".8g"),
-        ],
-        color=PLOT.colors["red"],
-    ).properties(**PLOT.chart("Final residual"))
-
-
 def _jacobian(result, *, columns: int):
 
     data = jacobian_frame(result)
@@ -349,13 +341,9 @@ def _jacobian(result, *, columns: int):
 
     for index, state_name in enumerate(result.state_names):
         panel_data = data[data["state_name"] == state_name].copy()
-        panel_data, _, y = scaled_y(
-            panel_data,
-            "reflectance_jacobian",
-            JACOBIAN_Y_TITLE,
-            axis=_numeric_axis(),
-        )
-        charts.append(
+        derivative_title = _state_derivative_title(state_name)
+        panel_data, _, y = scaled_y(panel_data, "reflectance_jacobian", derivative_title)
+        chart = (
             alt.Chart(panel_data)
             .mark_line(color=_state_color_at(index), strokeWidth=1.7)
             .encode(
@@ -367,17 +355,18 @@ def _jacobian(result, *, columns: int):
                     alt.Tooltip("unit:N", title="State unit"),
                     alt.Tooltip(
                         "reflectance_jacobian:Q",
-                        title="Reflectance jacobian",
+                        title=derivative_title,
                         format=".8g",
                     ),
                 ],
             )
             .properties(
-                title=_state_panel_title(state_name),
+                title=PLOT.panel_title(_state_panel_title(state_name)),
                 width=_panel_width(columns),
                 height=JACOBIAN_PANEL_HEIGHT,
             )
         )
+        charts.append(_with_axis_multiplier(chart, panel_data["reflectance_jacobian"]))
 
     return wrap_panel_charts(
         charts,
@@ -426,6 +415,11 @@ def _state_panel_title(state_name: str) -> str:
     return STATE_PANEL_TITLES.get(state_name, _state_axis_title(state_name))
 
 
+def _state_derivative_title(state_name: str) -> str:
+
+    return STATE_DERIVATIVE_TITLES.get(state_name, "dR/dx")
+
+
 def _state_color_at(index: int) -> str:
 
     return _color_range(index + 1)[index]
@@ -448,22 +442,27 @@ def _state_columns(result) -> int:
     return min(STATE_TRACE_COLUMNS, max(1, len(result.state_names)))
 
 
+def _with_axis_multiplier(chart, values):
+
+    multiplier = axis_multiplier_text(values)
+
+    if multiplier is None:
+        return chart
+
+    return chart + multiplier
+
+
 def _panel_width(columns: int) -> int:
 
-    return max(320, int(PLOT.diagnostic_width / max(1, columns)) - 45)
+    return max(300, int(PLOT.diagnostic_width / max(1, columns)) - 35)
 
 
 def wrap_panel_charts(charts, *, columns: int, title: str):
 
     rows = [
-        alt.hconcat(*charts[start : start + columns], spacing=92, bounds="flush")
+        alt.hconcat(*charts[start : start + columns], spacing=112, bounds="flush")
         for start in range(0, len(charts), columns)
     ]
     chart = rows[0] if len(rows) == 1 else alt.vconcat(*rows, spacing=32, bounds="flush")
 
-    return chart.resolve_scale(y="independent").properties(title=title)
-
-
-def _numeric_axis():
-
-    return alt.Axis(tickCount=PLOT.y_axis_tick_count)
+    return chart.resolve_scale(y="independent").properties(title=PLOT.title(title))
