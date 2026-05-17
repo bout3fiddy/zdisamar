@@ -18,7 +18,7 @@ def wavelength_x():
     return alt.X(
         f"{fields.WAVELENGTH_NM}:Q",
         title=fields.QUANTITY_LABELS[fields.WAVELENGTH_NM],
-        axis=alt.Axis(tickMinStep=5),
+        axis=alt.Axis(grid=False, tickCount=6, tickMinStep=5),
         scale=alt.Scale(zero=False),
     )
 
@@ -43,52 +43,50 @@ def marker_rules(data):
     )
 
 
-def scaled_y(data, field: str, title: str, *, axis: alt.Axis | None = None):
-    """Return data and a y encoding with one shared exponent in the axis title."""
+def scaled_y(
+    data,
+    field: str,
+    title: str | None,
+    *,
+    axis: alt.Axis | None = None,
+    compact_axis: bool = False,
+):
+    """Return a y encoding without altering the plotted values."""
 
-    plot_data = data
-    plot_field = field
-    scale_factor = _axis_scale_factor(data[field])
-
-    if scale_factor != 1.0:
-        plot_field = f"{field}_scaled"
-        plot_data = data.copy()
-        plot_data[plot_field] = data[field].astype(float) / scale_factor
-        title = f"{title} ({_scale_label(scale_factor)})"
+    values = data[field]
 
     return (
-        plot_data,
-        plot_field,
+        data,
+        field,
         alt.Y(
-            f"{plot_field}:Q",
+            f"{field}:Q",
             title=title,
-            axis=axis or alt.Axis(format=".4g"),
-            scale=finite_padded_scale(plot_data[plot_field]),
+            axis=axis or _default_numeric_axis(values, PLOT.y_axis_tick_count, compact_axis),
+            scale=finite_padded_scale(values),
         ),
     )
 
 
-def scaled_x(data, field: str, title: str, *, axis: alt.Axis | None = None):
-    """Return data and an x encoding with one shared exponent in the axis title."""
+def scaled_x(
+    data,
+    field: str,
+    title: str | None,
+    *,
+    axis: alt.Axis | None = None,
+    compact_axis: bool = False,
+):
+    """Return an x encoding without altering the plotted values."""
 
-    plot_data = data
-    plot_field = field
-    scale_factor = _axis_scale_factor(data[field])
-
-    if scale_factor != 1.0:
-        plot_field = f"{field}_scaled"
-        plot_data = data.copy()
-        plot_data[plot_field] = data[field].astype(float) / scale_factor
-        title = f"{title} ({_scale_label(scale_factor)})"
+    values = data[field]
 
     return (
-        plot_data,
-        plot_field,
+        data,
+        field,
         alt.X(
-            f"{plot_field}:Q",
+            f"{field}:Q",
             title=title,
-            axis=axis or alt.Axis(format=".4g"),
-            scale=finite_padded_scale(plot_data[plot_field]),
+            axis=axis or _default_numeric_axis(values, PLOT.x_axis_tick_count, compact_axis),
+            scale=finite_padded_scale(values),
         ),
     )
 
@@ -103,33 +101,79 @@ def finite_padded_scale(values):
 
     low = min(finite)
     high = max(finite)
-    pad = max(abs(low) * 0.05, 1.0) if low == high else (high - low) * 0.04
+
+    pad = max(abs(low) * 0.05, 1.0e-12) if low == high else (high - low) * 0.04
 
     return alt.Scale(domain=[low - pad, high + pad], zero=False)
 
 
-def _axis_scale_factor(values) -> float:
+def _default_numeric_axis(values, tick_count: int, compact_axis: bool) -> alt.Axis:
+
+    if compact_axis:
+        return numeric_axis(values, tickCount=tick_count)
+
+    return alt.Axis(format=".4g", tickCount=tick_count)
+
+
+def numeric_axis(values, *, tickCount: int):  # noqa: N803
+    """Return a compact numeric axis without changing plotted data values."""
+
+    exponent = axis_exponent(values)
+
+    if exponent is None:
+        return alt.Axis(format="~f", tickCount=tickCount)
+
+    scale = 10.0**exponent
+
+    return alt.Axis(
+        labelExpr=f"format(datum.value / {scale:.16e}, '~g')",
+        tickCount=tickCount,
+    )
+
+
+def axis_multiplier_text(values):
+    """Place one scientific multiplier near the axis for compact tick labels."""
+
+    exponent = axis_exponent(values)
+
+    if exponent is None:
+        return None
+
+    import pandas as pd
+
+    return (
+        alt.Chart(pd.DataFrame({"axis_multiplier": [f"x1e{exponent}"]}))
+        .mark_text(
+            align="left",
+            baseline="bottom",
+            color="black",
+            dx=0,
+            dy=-10,
+            font=PLOT.font,
+            fontSize=PLOT.axis_label_font_size,
+        )
+        .encode(
+            x=alt.value(0),
+            y=alt.value(0),
+            text="axis_multiplier:N",
+        )
+    )
+
+
+def axis_exponent(values) -> int | None:
+    """Use one power-of-ten multiplier for very small or large tick labels."""
 
     finite = _finite_values(values)
 
     if not finite:
-        return 1.0
+        return None
 
     max_abs = max(abs(value) for value in finite)
 
-    if max_abs == 0.0 or 1.0e-2 <= max_abs < 1.0e4:
-        return 1.0
+    if max_abs == 0.0 or 1.0e-3 <= max_abs < 1.0e3:
+        return None
 
-    exponent = int(math.floor(math.log10(max_abs) / 3.0) * 3)
-
-    return 10.0**exponent
-
-
-def _scale_label(scale_factor: float) -> str:
-
-    exponent = int(round(math.log10(scale_factor)))
-
-    return f"1e{exponent:+d}"
+    return int(math.floor(math.log10(max_abs)))
 
 
 def _finite_values(values) -> list[float]:

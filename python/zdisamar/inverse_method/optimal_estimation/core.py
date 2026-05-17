@@ -165,6 +165,7 @@ def retrieve(
         history=tuple(history),
         posterior_covariance=posterior,
         averaging_kernel=averaging_kernel,
+        initial_state=state_vector.initial_state(),
         timing=tuple(timing),
         last_evaluated_state=last_evaluated_state,
         last_evaluation=last_evaluation,

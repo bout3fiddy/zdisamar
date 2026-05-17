@@ -10,6 +10,7 @@ class PlotProperties:
 
     width = 1311
     height = 465
+    diagnostic_width = 620
     theme_name = "zdisamar_validation"
     font = "Menlo, Monaco, Consolas, Liberation Mono, DejaVu Sans Mono, monospace"
     markers_nm = (755.0, 760.76, 776.0)
@@ -23,10 +24,14 @@ class PlotProperties:
     minimum_point_size = 35
     noise_band_opacity = 0.45
     png_scale_factor = 4.0
-    axis_label_font_size = 16
-    axis_title_font_size = 20
-    legend_font_size = 16
-    title_font_size = 20
+    grid_opacity = 0.10
+    x_axis_tick_count = 6
+    y_axis_tick_count = 5
+    axis_label_font_size = 12
+    axis_title_font_size = 15
+    legend_font_size = 12
+    panel_title_font_size = 18
+    title_font_size = 22
     colors = {
         "blue": "#1f77b4",
         "orange": "#ff7f0e",
@@ -65,7 +70,27 @@ class PlotProperties:
 
     def chart(self, title: str) -> dict[str, object]:
 
-        return {"width": self.width, "height": self.height, "title": title}
+        return {"width": self.width, "height": self.height, "title": self.title(title)}
+
+    def title(self, text: str):
+
+        return alt.TitleParams(
+            text=text,
+            anchor="middle",
+            font=self.font,
+            fontSize=self.title_font_size,
+            fontWeight="normal",
+        )
+
+    def panel_title(self, text: str):
+
+        return alt.TitleParams(
+            text=text,
+            anchor="middle",
+            font=self.font,
+            fontSize=self.panel_title_font_size,
+            fontWeight="normal",
+        )
 
     def theme(self):
 
@@ -106,7 +131,7 @@ class PlotProperties:
                     "domainColor": "black",
                     "grid": True,
                     "gridColor": self.colors["grid"],
-                    "gridOpacity": 0.25,
+                    "gridOpacity": self.grid_opacity,
                     "labelColor": "black",
                     "labelFont": self.font,
                     "labelFontSize": self.axis_label_font_size,
@@ -114,6 +139,15 @@ class PlotProperties:
                     "titleColor": "black",
                     "titleFont": self.font,
                     "titleFontSize": self.axis_title_font_size,
+                    "titlePadding": 12,
+                },
+                "axisX": {
+                    "grid": False,
+                    "tickCount": self.x_axis_tick_count,
+                },
+                "axisY": {
+                    "grid": True,
+                    "tickCount": self.y_axis_tick_count,
                 },
                 "legend": {
                     "labelColor": "black",

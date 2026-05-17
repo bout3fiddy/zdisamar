@@ -90,6 +90,7 @@ class Result:
     final_evaluation: RtmEvaluation | None = None
     last_evaluated_state: np.ndarray | None = None
     last_evaluation: RtmEvaluation | None = None
+    initial_state: np.ndarray | None = None
     _final_evaluation_factory: Callable[[], RtmEvaluation] | None = field(
         default=None,
         repr=False,
